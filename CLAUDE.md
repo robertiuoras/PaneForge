@@ -44,8 +44,16 @@ rather than shipping again.
 
 Two things stop an automatic release, both reported by name: master not typechecking, and
 a lane that conflicts with master. A conflicting lane is left out and keeps its mark - the
-rest still goes out - so resolve it with `git merge master` in that lane and it rides the
-next one.
+rest still goes out.
+
+You will normally meet that conflict long before the release does. `ready` merges master
+into your lane first and refuses to mark anything shippable until that merge is clean, so
+the files are listed to you while you still have the context: resolve them, `git add`,
+`git commit`, run `ready` again. `rerere` is on, so the resolution you do once is replayed
+when the release merges your lane back the other way. Claiming a lane also heals it (an
+unfinished merge left by a dead chat is aborted, a branch whose work master already has is
+reset to master) and every lane merges master again after each release. Never leave a lane
+sitting in a conflicted merge: it is the one state no other chat is allowed to touch.
 
 `npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
 still exists for a release you want right now, but nothing should need it.

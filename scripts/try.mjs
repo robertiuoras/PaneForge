@@ -38,6 +38,13 @@ function defaultProfile() {
 }
 const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? defaultProfile()).trim()
 
+// Anything this script does not use is Electron's. The one that matters is
+// --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
+// itself out can be checked against the real window instead of a screenshot of it.
+const passThrough = args.filter(
+  (a) => !['--keep', '--minimized', '-m'].includes(a) && !a.startsWith('--profile=')
+)
+
 const electron = join(
   root,
   'node_modules',
@@ -69,7 +76,7 @@ console.log(`== Launching the ${profile} copy`)
 // the app starts, loads, calls win.show(), and stays invisible forever. Verified:
 // the window existed with the right title and IsWindowVisible was false. electron.exe
 // is a GUI-subsystem binary, so there is no console to hide anyway.
-spawn(electron, ['.', ...(minimized ? ['--minimized'] : [])], {
+spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
   cwd: root,
   detached: true,
   stdio: 'ignore',

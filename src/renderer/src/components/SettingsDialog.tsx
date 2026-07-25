@@ -161,8 +161,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.mouseSelect}
                   onChange={(v) => onChange({ mouseSelect: v })}
-                  label="The mouse always selects and scrolls"
-                  hint="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing and the wheel scrolling the agent instead of the pane. Turn this off to give them the mouse back."
+                  label="A drag always selects text"
+                  hint="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing. Turn this off to give them the drag back. The wheel scrolls this pane either way."
                 />
                 <Switch
                   checked={config.autoFixUi}

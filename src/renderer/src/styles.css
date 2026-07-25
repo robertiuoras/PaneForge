@@ -139,8 +139,8 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .dot.idle.ready { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
 .dot.exited { background: #55555f; }
 
-/* Runtime of a live session, ticking once a second. Tabular figures so the row
-   does not jitter as the digits change. */
+/* Length of the turn a session is running, ticking once a second. Tabular
+   figures so the row does not jitter as the digits change. */
 .elapsed {
   margin-left: auto; flex: none; color: var(--muted); font-size: 10.5px;
   font-variant-numeric: tabular-nums; opacity: 0.8;

@@ -644,7 +644,9 @@ export default function App(): JSX.Element {
         )}
 
         <div className="section">
-          Running ({sessions.length}){waiting > 0 && <span className="badge">{waiting} waiting</span>}
+          {/* "Running" read as "these are all busy" on a list of idle panes. */}
+          Sessions ({sessions.length})
+          {waiting > 0 && <span className="badge">{waiting} waiting</span>}
         </div>
         <div className="list">
           {sessions.map((s, i) => (

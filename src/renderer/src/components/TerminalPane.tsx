@@ -10,7 +10,8 @@ interface Props {
   fontSize: number
   /** put a mouse selection straight on the clipboard, the way most terminals do */
   copyOnSelect: boolean
-  /** let the mouse select and scroll even while the agent has mouse reporting on */
+  /** let a plain drag select text even while the agent has mouse reporting on (the wheel
+   *  always scrolls this pane - that is not a setting) */
   mouseSelect: boolean
   /** repaint by itself once a resize settles */
   autoFixUi: boolean
@@ -269,7 +270,12 @@ export default function TerminalPane({
       // vim, less and anything else on the alternate screen has no scrollback here, so the
       // wheel belongs to the app. Otherwise scroll this terminal ourselves: xterm skips its
       // own viewport entirely while the agent is asking for mouse events.
-      if (mouseSelectRef.current && mouseGrabbed() && t.buffer.active.type !== 'alternate') {
+      //
+      // This does NOT depend on the mouse-select setting. That setting is about drag
+      // selection; tying the wheel to it meant that with it off, a wheel anywhere over the
+      // text went to the agent and only the strip of pixels over the scrollbar scrolled the
+      // pane - the whole middle and left of a pane read as "scrolling is stuck".
+      if (mouseGrabbed() && t.buffer.active.type !== 'alternate') {
         e.preventDefault()
         e.stopPropagation()
         const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / 40
