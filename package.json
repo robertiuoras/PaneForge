@@ -17,9 +17,9 @@
     "dist:mac": "electron-vite build && electron-builder --mac --publish never",
     "release": "electron-vite build && electron-builder --publish always",
     "try": "node scripts/try.mjs",
-    "twin": "node scripts/twin.mjs",
     "setup": "node scripts/setup.mjs",
-    "ship": "node scripts/ship.mjs"
+    "ship": "node scripts/lane.mjs ship",
+    "lane": "node scripts/lane.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
