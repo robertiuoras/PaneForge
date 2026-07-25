@@ -302,6 +302,9 @@ export interface Api {
   reveal(path: string): void
   openInEditor(path: string): Promise<string | null>
   openExternal(url: string): void
+  /** write to the OS clipboard (renderer has no navigator.clipboard under file://) */
+  copyText(text: string): void
+  readClipboard(): Promise<string>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
 

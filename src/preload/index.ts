@@ -37,6 +37,8 @@ const api: Api = {
   reveal: (path) => ipcRenderer.send('shell:reveal', path),
   openInEditor: (path) => ipcRenderer.invoke('shell:editor', path),
   openExternal: (url) => ipcRenderer.send('shell:external', url),
+  copyText: (text) => ipcRenderer.send('clipboard:write', text),
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   gitInfo: (path) => ipcRenderer.invoke('git:info', path),
 
   adminStatus: () => ipcRenderer.invoke('admin:status'),

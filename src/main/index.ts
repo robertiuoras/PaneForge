@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -201,6 +202,13 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 })
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
+// The renderer runs from file:// in production, which is not a secure context, so
+// navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
+ipcMain.on('clipboard:write', (_e, text: string) => {
+  if (typeof text === 'string' && text.length) clipboard.writeText(text)
+})
+ipcMain.handle('clipboard:read', () => clipboard.readText())
+
 ipcMain.on('shell:external', (_e, url: string) => {
   // Only ever open real web links: a file:// or custom scheme from the renderer
   // would be a way to launch arbitrary local programs.
