@@ -16,6 +16,7 @@
     "dist:win": "electron-vite build && electron-builder --win --publish never",
     "dist:mac": "electron-vite build && electron-builder --mac --publish never",
     "release": "electron-vite build && electron-builder --publish always",
+    "try": "node scripts/try.mjs",
     "setup": "node scripts/setup.mjs",
     "ship": "node scripts/ship.mjs"
   },

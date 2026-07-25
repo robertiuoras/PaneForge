@@ -280,6 +280,8 @@ export interface Config {
   voice: VoiceConfig
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
+  /** panes to reopen on next launch, written just before an update restart */
+  restoreSessions?: StartSessionRequest[]
   window: WindowBounds
 }
 
@@ -330,6 +332,8 @@ export interface Api {
   /** file picker that wires an existing binary up as an agent override */
   locateAgent(id: string): Promise<string | null>
 
+  /** named profile this window runs under ('' = the normal installed app) */
+  profile(): Promise<string>
   updateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   installUpdate(): void

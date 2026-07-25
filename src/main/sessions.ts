@@ -63,6 +63,21 @@ export class SessionManager extends EventEmitter {
     return this.sessions.get(id)?.buffer ?? ''
   }
 
+  /**
+   * What it would take to open these panes again - used to carry the workspace
+   * across an update restart. The original launch prompt is dropped on purpose:
+   * replaying it would re-run work the agent already did before the restart.
+   */
+  snapshot(): StartSessionRequest[] {
+    return [...this.sessions.values()].map((s) => ({
+      cwd: s.meta.cwd,
+      title: s.meta.title,
+      agent: s.meta.agent,
+      model: s.meta.model,
+      role: s.meta.role
+    }))
+  }
+
   start(req: StartSessionRequest): Session {
     if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
     const agent: Agent = req.agent ?? 'claude'

@@ -45,6 +45,7 @@ const api: Api = {
   adminEnable: () => ipcRenderer.invoke('admin:enable'),
   adminDisable: () => ipcRenderer.invoke('admin:disable'),
   relaunchAsAdmin: () => ipcRenderer.send('app:relaunchAsAdmin'),
+  profile: () => ipcRenderer.invoke('app:profile'),
 
   installAgent: (id) => ipcRenderer.invoke('agents:install', id),
   locateAgent: (id) => ipcRenderer.invoke('agents:locate', id),

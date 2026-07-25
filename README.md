@@ -86,15 +86,46 @@ GitHub Actions then builds Windows and macOS and publishes both to a Release, wh
 is the same feed running copies poll. Everyone is offered the update within half an
 hour. Sharing with someone else is just sending them the Releases link.
 
+On Windows the download is quiet and so is the install: accepting the update runs the
+installer silently, with no setup window, and PaneForge comes back on its own with
+the panes it had open, each one resuming its agent's last conversation. macOS cannot
+self-replace an unsigned app, so there the same prompt hands over the download page.
+
 ## Dev
 
 ```
 npm run dev        # electron-vite dev with HMR
+npm run try        # build, then open a SECOND PaneForge beside the live one
+npm run try -- --keep   # skip the build, just open it again
 npm run typecheck
 npm run smoke      # headless proof the pty layer can drive `claude`
 npm run smoke -- --cmd codex --args "resume --last"
 npm run package    # unpacked Windows build, no shortcuts
 ```
+
+### Two copies at once
+
+PaneForge is developed from an agent running inside PaneForge, so closing the app to
+test a change would kill the session doing the work. Named profiles make that
+unnecessary:
+
+```
+PANEFORGE_PROFILE=dev   # or --profile=dev
+```
+
+A profile moves `userData` aside (`PaneForge-dev`), which gives that copy its own
+single-instance lock, its own config, workspaces and history, and its own taskbar
+button. Its config is seeded once from the live app so it does not open blank, and
+the two drift apart after that - an experiment in the test copy can never corrupt the
+real one. The window is titled `PaneForge - dev` and the version badge carries a
+`DEV` tag, because the two windows are otherwise identical.
+
+`npm run dev` and `npm run try` set the profile themselves; an unpackaged run is a
+build under test by definition and can never collide with the installed app.
+
+`npm run try` deliberately launches `node_modules/electron`, not a packaged exe:
+Windows Smart App Control blocks freshly built unsigned binaries, that Electron is
+already trusted, and skipping electron-builder makes it start in seconds.
 
 Agents live in one place: `src/shared/agents.ts`. A new CLI is one entry - binary,
 launch args, resume args, model flag, install command, colour - and it appears in
@@ -104,9 +135,11 @@ needs a rebuild.
 `PaneForge.exe --open <path>` (or `PANEFORGE_OPEN=<path>`) starts a session in that
 folder on launch; a second launch focuses the window already open.
 
-State lives in `%APPDATA%\PaneForge\config.json` (macOS: `~/Library/Application
-Support/PaneForge`): workspaces, settings, window geometry. Transcripts sit next to
-it in `history/`.
+State lives in `%APPDATA%\claude-orchestrator\config.json` (macOS: `~/Library/
+Application Support/claude-orchestrator`): workspaces, settings, window geometry.
+Transcripts sit next to it in `history/`. The folder is named after the package, not
+the product - renaming it now would strand everyone's saved workspaces. A named
+profile appends its name: `claude-orchestrator-dev`.
 
 Not built yet: git worktree isolation, diff/merge review, reattaching to sessions
 after an app restart (see `PLAN.md`).

@@ -18,6 +18,7 @@ import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
+import { initProfile, profileName, titleSuffix } from './profile'
 import { refreshPath, runCommand } from './install'
 import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
 import * as history from './history'
@@ -36,9 +37,11 @@ import type {
 const manager = new SessionManager()
 let win: BrowserWindow | null = null
 
-// Windows ties notifications and the taskbar entry to this id; without it the
-// toasts show up as "electron.app.Electron" and get grouped with other Electron apps.
-app.setAppUserModelId('com.robert.paneforge')
+// Runs before anything reads userData: a named profile (`--profile=dev`) moves the
+// whole profile aside so a second PaneForge can run beside the live one. It also sets
+// the Windows app id, which ties notifications and the taskbar entry to this app -
+// without it the toasts show up as "electron.app.Electron".
+const profile = initProfile()
 
 // A second launch (double-clicked shortcut) should raise the window we already have,
 // not start a second app with its own set of agents.
@@ -72,7 +75,9 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     backgroundColor: '#101014',
-    title: 'PaneForge',
+    // The suffix is the only thing separating two identical windows on the taskbar
+    // when a test build is running next to the live one.
+    title: `PaneForge${titleSuffix()}`,
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -80,6 +85,15 @@ function createWindow(): void {
       contextIsolation: true
     }
   })
+
+  // The page title wins over the BrowserWindow one the moment the renderer loads, so
+  // a profile has to re-apply its suffix each time the document title changes.
+  if (profile) {
+    win.on('page-title-updated', (e, title) => {
+      e.preventDefault()
+      win?.setTitle(title.includes(titleSuffix()) ? title : `${title}${titleSuffix()}`)
+    })
+  }
 
   if (cfg.window.maximized) win.maximize()
   win.on('ready-to-show', () => win?.show())
@@ -262,6 +276,7 @@ ipcMain.handle('admin:disable', () => {
   setConfig({ adminMode: false })
   return r
 })
+ipcMain.handle('app:profile', () => profileName())
 ipcMain.on('app:relaunchAsAdmin', () => {
   // With admin mode set up, the scheduled task starts an elevated instance with no
   // prompt. Without it, fall back to the one-off UAC dialog.
@@ -360,6 +375,9 @@ ipcMain.handle('agents:locate', async (_e, id: string) => {
 ipcMain.handle('update:state', () => getUpdateState())
 ipcMain.handle('update:check', () => checkForUpdates())
 ipcMain.on('update:install', () => {
+  // Remembered before the panes die, replayed by restoreSessions() on the next
+  // launch: an update should feel like the app blinked, not like it wiped the desk.
+  setConfig({ restoreSessions: manager.snapshot() })
   history.flush()
   manager.killAll()
   installUpdate()
@@ -435,6 +453,25 @@ function openFromArgs(argv: string[]): void {
   }
 }
 
+/**
+ * Bring back the panes an update closed. Each one resumes the agent's own last
+ * conversation (`claude --continue`), so the restart costs a redraw rather than the
+ * thread you were in. Cleared first: a crash while restoring must not leave the app
+ * re-opening the same panes on every launch.
+ */
+function restoreSessions(): void {
+  const pending = getConfig().restoreSessions ?? []
+  if (!pending.length) return
+  setConfig({ restoreSessions: [] })
+  for (const req of pending) {
+    try {
+      manager.start({ ...req, resume: true })
+    } catch {
+      // Folder moved or the agent is no longer installed - skip that pane only.
+    }
+  }
+}
+
 app.whenReady().then(() => {
   const cfg = getConfig()
   history.setHistoryEnabled(cfg.saveHistory)
@@ -442,6 +479,7 @@ app.whenReady().then(() => {
   createWindow()
   applyVoiceHotkey(cfg)
   initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
+  restoreSessions()
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
   app.on('activate', () => {

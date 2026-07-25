@@ -45,9 +45,13 @@ function view(s: UpdateState | null): View {
 
 export default function VersionBadge(): JSX.Element {
   const [state, setState] = useState<UpdateState | null>(null)
+  // A test copy running beside the live app looks identical; this is the readout that
+  // says which one you are typing into.
+  const [profile, setProfile] = useState('')
 
   useEffect(() => {
     api.updateState().then(setState)
+    api.profile().then(setProfile)
     return api.onUpdate(setState)
   }, [])
 
@@ -61,6 +65,11 @@ export default function VersionBadge(): JSX.Element {
   return (
     <button className={'version' + (v.tone ? ' ' + v.tone : '')} onClick={click} title={v.title}>
       <span className="v-num">v{state?.current ?? '…'}</span>
+      {profile && (
+        <span className="v-profile" title={`Separate ${profile} profile - your live PaneForge is untouched`}>
+          {profile}
+        </span>
+      )}
       {v.text && <span className="v-state">{v.text}</span>}
     </button>
   )

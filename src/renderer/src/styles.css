@@ -187,6 +187,13 @@ button.small { padding: 5px 9px; font-size: 11px; }
 }
 .version:hover { background: #ffffff09; color: var(--text); }
 .v-num { font-variant-numeric: tabular-nums; }
+/* Only rendered in a named profile, so it doubles as the "this is the test copy"
+   marker - loud on purpose, since the two windows are otherwise identical. */
+.v-profile {
+  padding: 0 5px; border-radius: 99px; text-transform: uppercase; font-size: 9px;
+  font-weight: 700; letter-spacing: 0.6px;
+  color: var(--warn); border: 1px solid #f0b42944; background: #f0b4291f;
+}
 .v-state {
   margin-left: auto; padding: 0 6px; border-radius: 99px;
   border: 1px solid var(--line); background: #ffffff08;

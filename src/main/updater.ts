@@ -132,9 +132,12 @@ export async function checkForUpdates(): Promise<UpdateState> {
 export function installUpdate(): void {
   const u = load()
   if (!u || state.phase !== 'ready') return
-  // isSilent false on Windows shows the installer's own progress; forceRunAfter
-  // brings the app back up so the user is not left staring at a closed window.
-  u.quitAndInstall(false, true)
+  // Silent: the NSIS installer runs with no window at all, so an update looks like the
+  // app blinking rather than a setup wizard taking over the screen. forceRunAfter
+  // brings PaneForge straight back up. Both flags matter - a non-silent install shows
+  // the progress dialog, and without forceRunAfter a silent one just leaves you with
+  // no app. (The build is oneClick NSIS, which needs no answers from the user.)
+  u.quitAndInstall(true, true)
 }
 
 function notes(raw: unknown): string | undefined {
