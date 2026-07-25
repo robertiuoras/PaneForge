@@ -67,6 +67,12 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     term.current = t
     fit.current = f
 
+    // Debug handle. Given --remote-debugging-port, an agent can read cols/rows, call fit,
+    // and check where the viewport sits, instead of guessing at pixel bugs from screenshots.
+    // The window loads no remote content, so nothing untrusted can reach it.
+    const dbg = window as unknown as { __pf?: Record<string, unknown> }
+    dbg.__pf = { ...(dbg.__pf ?? {}), [sessionId]: { term: t, fit: f, host: host.current } }
+
     t.onData((d) => api.write(sessionId, d))
 
     t.onSelectionChange(() => {
@@ -173,11 +179,23 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
-      if (b) t.write(b)
+      // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
+      if (b) t.write(b, () => t.scrollToBottom())
     })
 
+    // Stay pinned to the bottom while the agent is talking. xterm only follows new output
+    // when the viewport sits exactly on the last line, and a single wheel notch, a reflow,
+    // or a resize is enough to leave it a line short - after which every further line lands
+    // in scrollback that the scrollbar already believes it has reached. The turn looks like
+    // it stopped, and any keypress brings it back, because scrollOnUserInput does what the
+    // write should have. Within a line of the bottom counts as following.
     const off = api.onData((id, data) => {
-      if (id === sessionId) t.write(data)
+      if (id !== sessionId) return
+      const buf = t.buffer.active
+      const following = buf.baseY - buf.viewportY <= 1
+      t.write(data, () => {
+        if (following) t.scrollToBottom()
+      })
     })
 
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
