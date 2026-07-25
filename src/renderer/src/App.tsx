@@ -5,11 +5,12 @@ import AgentPicker from './components/AgentPicker'
 import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
+import ConfirmDialog from './components/ConfirmDialog'
 import { Segmented } from './components/Controls'
 import Elapsed from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import TerminalPane from './components/TerminalPane'
+import TerminalPane, { paneRepair } from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
@@ -21,6 +22,16 @@ import { playChime } from './useChime'
 import { useVoice } from './useVoice'
 
 const api = window.api
+
+/** A pending question for the in-app confirm/prompt dialog. */
+interface AskState {
+  title: string
+  body?: string
+  confirmLabel?: string
+  danger?: boolean
+  input?: { placeholder?: string; defaultValue?: string }
+  onConfirm: (value: string) => void
+}
 
 export default function App(): JSX.Element {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -37,6 +48,10 @@ export default function App(): JSX.Element {
   const [swarm, setSwarm] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  // One in-app dialog stands in for window.confirm and window.prompt. Both of those
+  // draw Chromium's system box, which looks nothing like the app and blocks the
+  // renderer while it is open.
+  const [ask, setAsk] = useState<AskState | null>(null)
   const broadcastBox = useRef<HTMLInputElement>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
@@ -183,12 +198,22 @@ export default function App(): JSX.Element {
 
   const saveRunningAsWorkspace = useCallback(() => {
     if (!config || sessions.length === 0) return
-    const name = window.prompt('Workspace name', sessions.map((s) => s.title).join(' + ').slice(0, 40))
-    if (!name?.trim()) return
-    saveWorkspace(
-      name.trim(),
-      sessions.map((s) => ({ cwd: s.cwd, title: s.title, agent: s.agent, model: s.model }))
-    )
+    setAsk({
+      title: 'Save these sessions as a workspace',
+      body: `${sessions.length} panes, reopened together next time you launch it.`,
+      confirmLabel: 'Save',
+      input: {
+        placeholder: 'Workspace name',
+        defaultValue: sessions.map((s) => s.title).join(' + ').slice(0, 40)
+      },
+      onConfirm: (name) => {
+        setAsk(null)
+        saveWorkspace(
+          name,
+          sessions.map((s) => ({ cwd: s.cwd, title: s.title, agent: s.agent, model: s.model }))
+        )
+      }
+    })
   }, [config, sessions, saveWorkspace])
 
   /**
@@ -199,14 +224,22 @@ export default function App(): JSX.Element {
     (s: Session, agent: string, model: string) => {
       if (s.agent === agent && (s.model ?? '') === model) return
       const label = agents.find((a) => a.id === agent)?.label ?? agent
-      if (
-        s.status !== 'exited' &&
-        !window.confirm(`Restart "${s.title}" with ${label}${model ? ` (${model})` : ''}? The current run ends.`)
-      )
-        return
-      api.switchAgent(s.id, agent, model || undefined)
-      rememberModel(agent, model)
-      flash(`${s.title} → ${label}${model ? ` · ${model}` : ''}`)
+      const go = (): void => {
+        api.switchAgent(s.id, agent, model || undefined)
+        rememberModel(agent, model)
+        flash(`${s.title} → ${label}${model ? ` · ${model}` : ''}`)
+      }
+      if (s.status === 'exited') return go()
+      setAsk({
+        title: `Switch ${s.title} to ${label}${model ? ` (${model})` : ''}?`,
+        body: 'The run in this pane ends and the new CLI starts in the same folder.',
+        confirmLabel: 'Switch',
+        danger: true,
+        onConfirm: () => {
+          setAsk(null)
+          go()
+        }
+      })
     },
     [agents, flash, rememberModel]
   )
@@ -215,10 +248,36 @@ export default function App(): JSX.Element {
     (id: string) => {
       const s = sessions.find((x) => x.id === id)
       if (!s) return
-      if (config?.confirmClose && s.status !== 'exited' && !window.confirm(`Close "${s.title}"?`)) return
-      api.killSession(id)
+      if (!config?.confirmClose || s.status === 'exited') return api.killSession(id)
+      setAsk({
+        title: `Close ${s.title}?`,
+        body: `${s.agent} is still running in ${s.cwd}. Closing ends it - the conversation stays in history.`,
+        confirmLabel: 'Close session',
+        danger: true,
+        onConfirm: () => {
+          setAsk(null)
+          api.killSession(id)
+        }
+      })
     },
     [sessions, config]
+  )
+
+  /**
+   * Put a pane's drawing back together without losing the run: refit, make the agent
+   * repaint its whole frame, and land on the newest line. The pane does the work; this
+   * only says which one.
+   */
+  const fixUi = useCallback(
+    (id?: string | null) => {
+      const target = id ?? activeRef.current
+      if (!target) return flash('Nothing focused - open a pane first.')
+      const repair = paneRepair.get(target)
+      if (!repair) return flash('That pane is not ready yet.')
+      repair()
+      flash('Display repaired.')
+    },
+    [flash]
   )
 
   const grid = config?.grid ?? false
@@ -232,6 +291,12 @@ export default function App(): JSX.Element {
         // An open dropdown owns Escape: closing the dialog under it would be a
         // surprise. Same for the palette, which is always the topmost layer.
         if (document.querySelector('.select-menu')) return
+        // A question sits on top of whatever asked it, so Escape answers that first
+        // and leaves the dialog underneath alone.
+        if (ask) {
+          setAsk(null)
+          return
+        }
         if (palette) {
           setPalette(false)
           return
@@ -273,6 +338,9 @@ export default function App(): JSX.Element {
       } else if (k === 'w' && activeId && !typing) {
         e.preventDefault()
         close(activeId)
+      } else if (k === 'l' && e.shiftKey) {
+        e.preventDefault()
+        fixUi(activeId)
       } else if (k === 'r' && e.shiftKey && activeId) {
         e.preventDefault()
         api.restartSession(activeId)
@@ -313,7 +381,7 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette, flash])
+  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette, flash, ask, fixUi])
 
   /**
    * Everything the app can do, as one searchable list. The sidebar only scales to a
@@ -417,13 +485,27 @@ export default function App(): JSX.Element {
           run: () => api.restartSession(active.id)
         },
         {
+          id: 'fix-ui',
+          group: 'This pane',
+          title: 'Fix the display',
+          hint: 'refit and make the agent repaint - keeps the run',
+          keys: 'Ctrl Shift L',
+          run: () => fixUi(active.id)
+        },
+        {
           id: 'editor',
           group: 'This pane',
           title: 'Open folder in editor',
           hint: active.cwd,
           run: () => api.openInEditor(active.cwd).then((err) => err && flash(err))
         },
-        { id: 'reveal', group: 'This pane', title: 'Open folder in Explorer', run: () => api.reveal(active.cwd) },
+        {
+          id: 'reveal',
+          group: 'This pane',
+          title: 'Open folder in Explorer',
+          hint: 'drop files there, or drag them straight onto the pane',
+          run: () => api.reveal(active.cwd)
+        },
         {
           id: 'board',
           group: 'This pane',
@@ -456,6 +538,7 @@ export default function App(): JSX.Element {
     switchAgent,
     close,
     flash,
+    fixUi,
     saveRunningAsWorkspace
   ])
 
@@ -698,8 +781,19 @@ export default function App(): JSX.Element {
                 <button className="icon" title="Restart agent (Ctrl Shift R)" onClick={() => api.restartSession(s.id)}>
                   ⟳
                 </button>
-                <button className="icon" title="Open folder" onClick={() => api.reveal(s.cwd)}>
-                  ▤
+                <button
+                  className="icon fix"
+                  title="Fix the display: refit and repaint, keeping the run (Ctrl Shift L)"
+                  onClick={() => fixUi(s.id)}
+                >
+                  Fix
+                </button>
+                <button
+                  className="icon"
+                  title={`Open ${s.cwd} in Explorer - drop files there, or drag them onto this pane`}
+                  onClick={() => api.reveal(s.cwd)}
+                >
+                  📁
                 </button>
                 <button
                   className="icon"
@@ -718,6 +812,8 @@ export default function App(): JSX.Element {
               visible={visibleIds.has(s.id)}
               fontSize={config?.fontSize ?? 13}
               copyOnSelect={config?.copyOnSelect ?? true}
+              mouseSelect={config?.mouseSelect ?? true}
+              autoFixUi={config?.autoFixUi ?? true}
             />
           </div>
         ))}
@@ -808,6 +904,17 @@ export default function App(): JSX.Element {
             start([{ cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true }])
           }}
           onClose={() => setHistory(false)}
+        />
+      )}
+      {ask && (
+        <ConfirmDialog
+          title={ask.title}
+          body={ask.body}
+          confirmLabel={ask.confirmLabel}
+          danger={ask.danger}
+          input={ask.input}
+          onConfirm={ask.onConfirm}
+          onCancel={() => setAsk(null)}
         />
       )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}

@@ -214,6 +214,8 @@ ipcMain.on('pty:broadcast', (_e, text: string) => manager.broadcast(text))
 ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
   manager.resize(id, cols, rows)
 )
+ipcMain.on('pty:redraw', (_e, id: string) => manager.redraw(id))
+ipcMain.on('sessions:busy', (_e, id: string, busy: boolean) => manager.setBusyOnScreen(id, busy))
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 

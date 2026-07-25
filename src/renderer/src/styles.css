@@ -236,11 +236,35 @@ button.small { padding: 5px 9px; font-size: 11px; }
    (870px tall): padding here proposes 57 rows whose last row still lands 12px clear of the
    clipped edge, while padding on .xterm proposes 56 and clips the last row by 3px - the fit
    addon's assumed cell height runs a shade larger than the height a row actually renders at.
-   Padding on .xterm also paints the inset in the terminal background instead of the pane's. */
-/* No inset on the right: the scrollbar lives at the host's content edge, and 7px of padding
-   there pushed it into the middle of nowhere - you had to aim 17px in from the pane border
-   for a bar that looks like it hugs the edge. Flush right, the pane border is the aim point. */
-.xterm-host { flex: 1; min-height: 0; padding: 7px 0 7px 7px; user-select: text; position: relative; }
+   Padding on .xterm also paints the inset in the terminal background instead of the pane's.
+   No inset on the right, though: the scrollbar lives at the host's content edge, and 7px of
+   padding there pushed it into the middle of nowhere - you had to aim 17px in from the pane
+   border for a bar that looks like it hugs it. Flush right, the border is the aim point. */
+.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.xterm-host { flex: 1; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
+
+/* Dropping files onto a pane types their paths at the prompt. */
+.xterm-wrap.dropping::after {
+  content: ''; position: absolute; inset: 4px; pointer-events: none;
+  border: 1.5px dashed color-mix(in srgb, var(--agent) 70%, transparent);
+  border-radius: var(--r); background: color-mix(in srgb, var(--agent) 8%, transparent);
+}
+.drop-hint {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  padding: 8px 14px; font-size: 12px; pointer-events: none; box-shadow: var(--shadow);
+}
+
+/* Only visible once the view has left the tail: one click back to the newest line. */
+.jump-newest {
+  position: absolute; right: 22px; bottom: 12px;
+  background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 5px 12px; font-size: 11px; cursor: pointer;
+  box-shadow: var(--shadow); animation: rise var(--fast);
+}
+.jump-newest:hover { border-color: var(--accent); }
+.icon.fix { font-size: 10.5px; font-weight: 600; letter-spacing: 0.3px; }
 
 /* The terminal's scrollbar is the one that gets dragged - 20k lines of scrollback
    behind a 10px hairline was a target you had to aim at. Wider, higher contrast,
@@ -257,20 +281,6 @@ button.small { padding: 5px 9px; font-size: 11px; }
 }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #ffffff80; background-clip: content-box; }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: content-box; }
-
-/* Shown only while the pane is not following the tail. xterm resizes its scroll area on the
-   next render, so during a live turn the "bottom" you drag to is already stale by a line or
-   two - this lands on the real last line in one click and starts following again. */
-.jump-bottom {
-  position: absolute; right: 26px; bottom: 12px; z-index: 20;
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 11px 5px 9px; border-radius: 99px;
-  background: color-mix(in srgb, var(--accent) 88%, #000);
-  color: #0b0b0f; font-size: 11px; font-weight: 600; cursor: pointer;
-  border: 1px solid #ffffff26; box-shadow: 0 6px 18px #0009;
-}
-.jump-bottom:hover { background: var(--accent); }
-.jump-bottom .jb-arrow { font-size: 12px; line-height: 1; }
 
 .git-badge {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
@@ -351,6 +361,18 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .proj-age { color: var(--muted); font-size: 11px; margin-left: 12px; flex: none; font-variant-numeric: tabular-nums; }
 .dialog-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dialog-row .primary { margin-left: auto; }
+
+/* ---- confirm / prompt ---- */
+.confirm-overlay { place-items: center; padding: 0 0 6vh; }
+.dialog.confirm { width: 440px; gap: 14px; }
+.dialog.confirm .dialog-head strong { font-size: 15px; }
+.confirm-body { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.dialog.confirm .dialog-row { justify-content: flex-end; }
+button.primary.danger {
+  background: linear-gradient(180deg, #5c2b34, #45222a);
+  border-color: #ff8f8f4d; color: #ffd7d7;
+}
+button.primary.danger:hover { background: linear-gradient(180deg, #6d323d, #512730); border-color: #ff8f8f80; }
 
 .setting { display: flex; flex-direction: column; gap: 7px; }
 .setting > label {

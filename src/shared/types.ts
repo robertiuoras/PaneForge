@@ -260,6 +260,14 @@ export interface Config {
   fontSize: number
   /** a mouse selection in a pane goes straight to the clipboard */
   copyOnSelect: boolean
+  /**
+   * Drag-select text even while the agent has mouse reporting on. Claude Code and
+   * Codex both grab the mouse, which is what makes a plain drag select nothing and
+   * the wheel stick halfway up the scrollback.
+   */
+  mouseSelect: boolean
+  /** repaint a pane by itself when its size settles, so a resize cannot leave it garbled */
+  autoFixUi: boolean
   /** OS notification + taskbar flash when a session goes quiet in the background */
   notifyOnIdle: boolean
   /** soft chime when a session finishes its turn or asks you something */
@@ -303,6 +311,13 @@ export interface Api {
   /** send the same line to every live session */
   broadcast(text: string): void
   resize(id: string, cols: number, rows: number): void
+  /** poke the pty size so a full-screen CLI redraws itself from scratch */
+  redraw(id: string): void
+  /**
+   * The pane telling main whether the agent still looks busy on screen. Only the
+   * renderer can see the rendered frame, and "still working" must not chime.
+   */
+  setBusy(id: string, busy: boolean): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   clearAttention(id: string): void
@@ -319,6 +334,11 @@ export interface Api {
   readClipboard(): Promise<string>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
+  /**
+   * Absolute path of a dropped File. Electron removed File.path, so the real path
+   * only comes from webUtils in the preload.
+   */
+  pathForFile(file: File): string
 
   /** elevation state plus the no-UAC launch task */
   adminStatus(): Promise<AdminStatus>

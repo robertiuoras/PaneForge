@@ -159,6 +159,18 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes."
                 />
                 <Switch
+                  checked={config.mouseSelect}
+                  onChange={(v) => onChange({ mouseSelect: v })}
+                  label="The mouse always selects and scrolls"
+                  hint="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing and the wheel scrolling the agent instead of the pane. Turn this off to give them the mouse back."
+                />
+                <Switch
+                  checked={config.autoFixUi}
+                  onChange={(v) => onChange({ autoFixUi: v })}
+                  label="Repair a pane's display after a resize"
+                  hint="Makes the agent repaint its whole frame once the size settles, so a resize cannot leave torn boxes behind. Ctrl+Shift+L does it on demand."
+                />
+                <Switch
                   checked={config.notifyOnIdle}
                   onChange={(v) => onChange({ notifyOnIdle: v })}
                   label="Notify me when a background session goes quiet"
