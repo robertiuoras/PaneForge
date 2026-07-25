@@ -34,6 +34,12 @@ export interface Session {
   status: SessionStatus
   /** epoch ms of the most recent pty output */
   lastOutput: number
+  /**
+   * epoch ms the current (or last) turn began - the moment output started after a
+   * quiet stretch. With `lastOutput` this is how long the agent actually worked,
+   * which is what the sidebar clock shows; session age is `createdAt`.
+   */
+  turnStartedAt?: number
   createdAt: number
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */

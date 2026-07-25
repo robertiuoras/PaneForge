@@ -635,7 +635,9 @@ export default function App(): JSX.Element {
         )}
 
         <div className="section">
-          Running ({sessions.length}){waiting > 0 && <span className="badge">{waiting} waiting</span>}
+          {/* "Running" read as "these are all busy" on a list of idle panes. */}
+          Sessions ({sessions.length})
+          {waiting > 0 && <span className="badge">{waiting} waiting</span>}
         </div>
         <div className="list">
           {sessions.map((s, i) => (
@@ -674,9 +676,18 @@ export default function App(): JSX.Element {
                   {s.model ? <span className="chip">{s.model}</span> : null}
                   {s.status === 'exited' ? (
                     <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                  ) : (
-                    <Elapsed since={s.createdAt} />
-                  )}
+                  ) : s.status === 'working' && s.turnStartedAt ? (
+                    // Counts only while the agent is actually producing output.
+                    <Elapsed since={s.turnStartedAt} title="How long this turn has been running" />
+                  ) : s.turnStartedAt ? (
+                    // Turn over: freeze on what it took instead of ticking on forever.
+                    <Elapsed
+                      since={s.turnStartedAt}
+                      until={s.lastOutput}
+                      className="elapsed done"
+                      title="How long the last turn took"
+                    />
+                  ) : null}
                 </div>
               </div>
               {s.status === 'exited' && (

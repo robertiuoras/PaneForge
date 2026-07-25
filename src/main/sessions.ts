@@ -30,6 +30,16 @@ const IDLE_AFTER_MS = 4000
  * silence than the idle dot needs.
  */
 const ATTENTION_AFTER_MS = 25_000
+/**
+ * Output we caused ourselves, not work the agent is doing. Opening a pane refits
+ * the terminal, resizes the pty and focuses it, and a full-screen CLI answers all
+ * three with a complete repaint. That repaint used to flip a pane from "waiting
+ * for you" to "working" every time you clicked it - green dot, ticking clock, on a
+ * session sitting at an empty prompt. Output that lands this soon after something
+ * *we* sent leaves the status and the quiet clock untouched. Typing clears the
+ * window immediately, so a real turn still lights up at once.
+ */
+const REPAINT_GRACE_MS = 1200
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
 const BUFFER_LIMIT = 400_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
@@ -59,6 +69,8 @@ interface Live {
    * sat in the background.
    */
   ackedAt: number
+  /** epoch ms until which incoming output is treated as a repaint we triggered */
+  repaintUntil: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -122,7 +134,8 @@ export class SessionManager extends EventEmitter {
       cols: 120,
       rows: 30,
       busyUntil: 0,
-      ackedAt: 0
+      ackedAt: 0,
+      repaintUntil: 0
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -193,6 +206,8 @@ export class SessionManager extends EventEmitter {
     live.ackedAt = 0
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.meta.turnStartedAt = undefined
+    live.repaintUntil = 0
     this.emit('data', id, RESET)
     this.attach(live)
     recordStart(live.meta)
@@ -226,7 +241,15 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return
     live.proc.write(data)
-    if (!isTyping(data)) return
+    if (!isTyping(data)) {
+      // Terminal chatter - focus reports, cursor/device replies sent when a pane
+      // is shown or hidden. The CLI answers them with a redraw; that redraw is
+      // not the agent starting work.
+      live.repaintUntil = Date.now() + REPAINT_GRACE_MS
+      return
+    }
+    // A real keystroke: whatever comes back next IS work.
+    live.repaintUntil = 0
     // Typing into a pane is both "I have asked it something" (so its next quiet
     // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
     if (!live.meta.engaged || live.meta.attention) {
@@ -256,6 +279,8 @@ export class SessionManager extends EventEmitter {
     if (!s || s.meta.status === 'exited') return
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
+    // Showing a pane refits it and lands here; the CLI repaints in response.
+    s.repaintUntil = Date.now() + REPAINT_GRACE_MS
     try {
       s.proc.resize(s.cols, s.rows)
     } catch {
@@ -356,8 +381,16 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       live.buffer = (live.buffer + data).slice(-BUFFER_LIMIT)
       recordData(id, data)
+      const now = Date.now()
       const wasIdle = meta.status !== 'working'
-      meta.lastOutput = Date.now()
+      // A repaint we asked for is not a turn: paint it, but do not touch the
+      // status, the turn clock or the quiet clock the attention nudge runs on.
+      if (wasIdle && now < live.repaintUntil) {
+        this.emit('data', id, data)
+        return
+      }
+      if (wasIdle) meta.turnStartedAt = now
+      meta.lastOutput = now
       meta.status = 'working'
       this.emit('data', id, data)
       if (wasIdle) this.emitSessions()
