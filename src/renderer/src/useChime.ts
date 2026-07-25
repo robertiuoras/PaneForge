@@ -44,8 +44,15 @@ function note(ac: AudioContext, freq: number, at: number, gain: number, dur: num
   }
 }
 
+let lastPlayed = 0
+
 /** Two rising notes, about half a second end to end. `volume` is 0..1. */
 export function playChime(volume = 1): void {
+  // A swarm finishing together would otherwise pile four bells on top of each
+  // other, which sounds like an alarm rather than a nudge.
+  const wall = Date.now()
+  if (wall - lastPlayed < 900) return
+  lastPlayed = wall
   const ac = audio()
   if (!ac) return
   const g = Math.max(0, Math.min(1, volume)) * 0.13
