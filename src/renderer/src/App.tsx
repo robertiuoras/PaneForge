@@ -526,12 +526,33 @@ export default function App(): JSX.Element {
       )
 
     if (sessions.length)
-      out.push({
-        id: 'save-ws',
-        group: 'Actions',
-        title: 'Save running sessions as a workspace',
-        run: saveRunningAsWorkspace
-      })
+      out.push(
+        {
+          id: 'save-ws',
+          group: 'Actions',
+          title: 'Save running sessions as a workspace',
+          run: saveRunningAsWorkspace
+        },
+        {
+          // Closing a workspace one Ctrl-W at a time is the tedious half of a day's
+          // work ending; one command with one prompt is the whole thing.
+          id: 'close-all',
+          group: 'Actions',
+          title: sessions.length === 1 ? 'Close the last pane' : `Close all ${sessions.length} panes`,
+          hint: 'ends every run - the transcripts stay in history',
+          run: () =>
+            setAsk({
+              title: sessions.length === 1 ? 'Close the last pane?' : `Close all ${sessions.length} panes?`,
+              body: 'Every agent still running ends. The conversations stay in history.',
+              confirmLabel: 'Close them all',
+              danger: true,
+              onConfirm: () => {
+                setAsk(null)
+                for (const s of sessions) api.killSession(s.id)
+              }
+            })
+        }
+      )
 
     return out
   }, [

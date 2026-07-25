@@ -300,6 +300,12 @@ export interface Config {
   adminMode: boolean
   /** check GitHub releases in the background and offer the update */
   autoUpdate: boolean
+  /**
+   * Reopen the panes an update closed. Off means a restart is a clean desk, which
+   * is the only way to get rid of a set of panes that otherwise comes back every
+   * time the app updates itself.
+   */
+  restoreAfterUpdate: boolean
   /** keep a searchable transcript of every pane */
   saveHistory: boolean
   /** delete stored transcripts older than this; 0 keeps everything */
