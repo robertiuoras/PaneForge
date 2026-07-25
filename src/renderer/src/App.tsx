@@ -7,7 +7,7 @@ import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
 import { Segmented } from './components/Controls'
-import Elapsed from './components/Elapsed'
+import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import TerminalPane, { paneRepair } from './components/TerminalPane'
@@ -156,6 +156,15 @@ export default function App(): JSX.Element {
       const started = await api.startSessions(reqs)
       if (started.length) setActiveId(started[started.length - 1].id)
       if (started.length < reqs.length) flash('Some folders could not be opened.')
+      // A launch that quietly moved folder has to say so once - the pane header and
+      // the sidebar chip show where it landed, but only if you go looking.
+      const noted = started.filter((s) => s.laneNote)
+      if (noted.length === 1) {
+        const s = noted[0]
+        flash(s.lane ? `${s.cwd.split(/[\\/]/).pop()} - ${s.laneNote}` : (s.laneNote as string))
+      } else if (noted.length > 1) {
+        flash(`${noted.length} sessions moved into their own worktree lanes.`)
+      }
       rememberModel(reqs[0]?.agent, reqs[0]?.model)
     },
     [flash, rememberModel]
@@ -672,11 +681,23 @@ export default function App(): JSX.Element {
                   <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
                   {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
                   {s.model ? <span className="chip">{s.model}</span> : null}
+                  {s.lane ? (
+                    <span className="chip lane" title={`Worktree lane - ${s.cwd}`}>
+                      {s.lane}
+                    </span>
+                  ) : null}
                   {s.status === 'exited' ? (
                     <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                  ) : (
-                    <Elapsed since={s.createdAt} />
-                  )}
+                  ) : s.runSince ? (
+                    // Counts only while the agent is working on something. A clock
+                    // that ran from launch kept ticking through an idle night and
+                    // read as "still busy" at a glance.
+                    <Elapsed since={s.runSince} title="This turn" />
+                  ) : s.lastRunMs !== undefined ? (
+                    <span className="elapsed done" title="Last turn">
+                      {formatElapsed(s.lastRunMs)}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -768,6 +789,11 @@ export default function App(): JSX.Element {
                 {s.title}
               </span>
               {s.role && <span className="chip role">{s.role}</span>}
+              {s.lane && (
+                <span className="chip lane" title="Own git worktree, so this pane cannot clash with the other session in this project">
+                  lane {s.lane}
+                </span>
+              )}
               <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">

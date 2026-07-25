@@ -46,6 +46,21 @@ export interface Session {
   engaged?: boolean
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
+  /**
+   * Epoch ms the current turn started, undefined whenever the agent is not working.
+   * "How long has this run been going" is the number worth watching; time since the
+   * pane was opened kept counting through days of idling and told you nothing.
+   */
+  runSince?: number
+  /** How long the last finished turn took (ms), shown frozen once it ends. */
+  lastRunMs?: number
+  /** worktree lane suffix ("w2") when this session runs in an auto-created lane */
+  lane?: string
+  /**
+   * What was decided about sharing the folder, when it is worth saying out loud -
+   * a lane that was created, or a clash that could not be split (not a repo).
+   */
+  laneNote?: string
 }
 
 export interface StartSessionRequest {
@@ -61,6 +76,10 @@ export interface StartSessionRequest {
   promptDelay?: number
   /** swarm role label, carried onto the session for the pane header */
   role?: string
+  /** filled in by the main process when the launch was moved into a worktree lane */
+  lane?: string
+  /** one-line explanation of the lane decision, shown as a toast after launch */
+  laneNote?: string
 }
 
 /** One saved project inside a workspace. */
@@ -286,6 +305,12 @@ export interface Config {
   /** delete stored transcripts older than this; 0 keeps everything */
   historyDays: number
   voice: VoiceConfig
+  /**
+   * Put a second session in the same git repo into its own worktree lane, so two
+   * agents can work at once without overwriting each other. Off means both share
+   * the folder, which is only safe when one of them is read-only.
+   */
+  autoLane: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** panes to reopen on next launch, written just before an update restart */

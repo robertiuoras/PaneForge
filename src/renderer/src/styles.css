@@ -145,6 +145,11 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   margin-left: auto; flex: none; color: var(--muted); font-size: 10.5px;
   font-variant-numeric: tabular-nums; opacity: 0.8;
 }
+/* The same slot once the turn is over: frozen, and dim enough that a still
+   number never reads as a running one. */
+.elapsed.done { opacity: 0.42; }
+/* Auto-created worktree lane, so two agents in one project are visibly apart. */
+.chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 

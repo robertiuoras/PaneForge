@@ -16,6 +16,7 @@ import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
+import { resolveLane } from './lanes'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import { initProfile, profileName, startMode, titleSuffix } from './profile'
@@ -189,12 +190,40 @@ manager.on('attention', (s: Session) => {
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => manager.list())
-ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => manager.start(req))
+/**
+ * Move a second session in the same folder into its own git worktree, so two
+ * agents in one project cannot overwrite each other's edits or race the index.
+ * Folders already held by live sessions are what "in use" means, so a lane freed
+ * by a closed session gets reused instead of a new one piling up.
+ *
+ * A swarm is deliberately exempt: its roles are briefed to share one checkout.
+ */
+function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSessionRequest {
+  if (!getConfig().autoLane) return req
+  const taken = [
+    ...manager
+      .list()
+      .filter((s) => s.status !== 'exited')
+      .map((s) => s.cwd),
+    ...extraTaken
+  ]
+  const lane = resolveLane(req.cwd, taken)
+  if (lane.cwd === req.cwd) return lane.note ? { ...req, laneNote: lane.note } : req
+  return { ...req, cwd: lane.cwd, lane: lane.lane, laneNote: `Opened lane ${lane.lane} on ${lane.branch}` }
+}
+
+ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => manager.start(laneFor(req)))
 ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
   const out: Session[] = []
+  // Folders claimed earlier in this same batch count as taken: two panes launched
+  // together for one project must land in different lanes, and the session list
+  // has not caught up mid-loop.
+  const claimed: string[] = []
   for (const r of reqs) {
     try {
-      out.push(manager.start(r))
+      const req = laneFor(r, claimed)
+      claimed.push(req.cwd)
+      out.push(manager.start(req))
     } catch {
       // One missing folder should not abort the rest of a workspace launch.
     }
