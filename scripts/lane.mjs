@@ -58,7 +58,8 @@ const MAIN = dirname(commonDir)
 const STATE = join(commonDir, 'paneforge-lanes.json')
 
 /** Lane pool. `main` first: one chat alone should never be pushed onto a branch. */
-const POOL = ['main', 'a', 'b']
+// Worktrees are only created when a lane is first handed out, so headroom is free.
+const POOL = ['main', 'a', 'b', 'c']
 const laneDir = (id) => (id === 'main' ? MAIN : join(dirname(MAIN), `${basename(MAIN)}-${id}`))
 const laneBranch = (id) => (id === 'main' ? 'master' : `lane-${id}`)
 /** Matches scripts/try.mjs, which derives the PaneForge profile from the folder name. */
