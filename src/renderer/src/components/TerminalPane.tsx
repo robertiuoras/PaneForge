@@ -8,16 +8,25 @@ interface Props {
   sessionId: string
   visible: boolean
   fontSize: number
+  /** put a mouse selection straight on the clipboard, the way most terminals do */
+  copyOnSelect: boolean
 }
+
+// On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
+const isMac = navigator.userAgent.includes('Mac')
 
 /**
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
-export default function TerminalPane({ sessionId, visible, fontSize }: Props): JSX.Element {
+export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelect }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
+  // Read inside listeners that are attached once per session, so flipping the
+  // setting takes effect without tearing the terminal down.
+  const copyOnSelectRef = useRef(copyOnSelect)
+  copyOnSelectRef.current = copyOnSelect
   // Full-screen TUIs (Claude Code, vim) repaint constantly and xterm drops the
   // selection on the next buffer change, so the highlight vanishes before the user
   // can hit Ctrl+C. Remember the last real selection and copy that instead.
@@ -52,30 +61,54 @@ export default function TerminalPane({ sessionId, visible, fontSize }: Props): J
       if (s) lastSelection.current = s
     })
 
-    const copySelection = (): boolean => {
-      const sel = t.getSelection() || lastSelection.current
-      if (!sel) return false
+    // The last text this pane put on the clipboard from a *remembered* selection. Copying
+    // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
+    const copied = { current: '' }
+
+    const copySelection = (keepHighlight = false): boolean => {
+      // A visible highlight always wins: Ctrl+C copies it and drops it, so the very next
+      // Ctrl+C is an interrupt again. One extra keypress, never a lost prompt.
+      const live = t.getSelection()
+      if (live) {
+        api.copyText(live)
+        if (!keepHighlight) t.clearSelection()
+        lastSelection.current = ''
+        copied.current = live
+        return true
+      }
+      const sel = lastSelection.current
+      if (!sel || sel === copied.current) return false
       api.copyText(sel)
-      // One-shot: after a copy, the next bare Ctrl+C must reach the agent as SIGINT.
+      copied.current = sel
       lastSelection.current = ''
-      t.clearSelection()
       return true
     }
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
-        if (text) t.paste(text)
+        if (text) {
+          t.paste(text)
+          return
+        }
+        // No text usually means an image on the clipboard. Claude Code reads the OS
+        // clipboard itself when it sees a raw ^V, so forward the key rather than
+        // swallowing it - otherwise pasting screenshots stops working.
+        api.write(sessionId, '\x16')
       })
     }
 
     t.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown' || !e.ctrlKey || e.altKey) return true
+      if (e.type !== 'keydown' || e.altKey) return true
+      const mod = isMac ? e.metaKey : e.ctrlKey
+      if (!mod) return true
       const key = e.key.toLowerCase()
 
       if (key === 'c') {
-        // Ctrl+Shift+C always copies. Bare Ctrl+C copies only when there is a
-        // pending selection, otherwise it stays an interrupt.
-        if (!copySelection()) return true
+        // Cmd+C and Ctrl+Shift+C are copy-only. A bare Ctrl+C copies when there is
+        // a pending selection and otherwise stays the agent's interrupt, so nothing
+        // can silently swallow SIGINT.
+        const copied = copySelection()
+        if (!copied && !e.shiftKey && !isMac) return true
         e.preventDefault()
         return false
       }
@@ -95,10 +128,23 @@ export default function TerminalPane({ sessionId, visible, fontSize }: Props): J
     const onKeyClearsSelection = (e: KeyboardEvent): void => {
       if (e.ctrlKey || e.altKey || e.metaKey) return
       lastSelection.current = ''
+      copied.current = ''
     }
     const onMouseDown = (e: MouseEvent): void => {
       if (e.button === 2) return
       lastSelection.current = ''
+      copied.current = ''
+    }
+    // Copy on select, the way Windows Terminal and every Linux terminal do it: let go
+    // of the mouse and the text is already on the clipboard, so Ctrl+C never has to
+    // double as copy. Single stray characters are ignored - those are misclicks.
+    const onMouseUp = (): void => {
+      if (!copyOnSelectRef.current) return
+      const sel = t.getSelection()
+      if (sel.trim().length < 2) return
+      // Keep the highlight: it is the only feedback that the copy happened, and a
+      // following Ctrl+C should still copy rather than interrupt.
+      copySelection(true)
     }
     // Right-click: copy when something is selected, paste when nothing is.
     const onContextMenu = (e: MouseEvent): void => {
@@ -108,6 +154,7 @@ export default function TerminalPane({ sessionId, visible, fontSize }: Props): J
     const el = host.current
     el.addEventListener('keydown', onKeyClearsSelection, true)
     el.addEventListener('mousedown', onMouseDown, true)
+    el.addEventListener('mouseup', onMouseUp)
     el.addEventListener('contextmenu', onContextMenu)
 
     // Replay whatever the pty printed before this pane existed (new pane on an
@@ -138,6 +185,7 @@ export default function TerminalPane({ sessionId, visible, fontSize }: Props): J
       ro.disconnect()
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', onMouseDown, true)
+      el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('contextmenu', onContextMenu)
       t.dispose()
     }

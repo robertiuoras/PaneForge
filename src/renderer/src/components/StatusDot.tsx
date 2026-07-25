@@ -7,6 +7,15 @@ const LABEL: Record<SessionStatus, string> = {
   exited: 'exited'
 }
 
-export default function StatusDot({ status }: { status: SessionStatus }): JSX.Element {
-  return <span className={`dot ${status}`} title={LABEL[status]} />
+interface Props {
+  status: SessionStatus
+  /** false for a CLI that has only drawn its own prompt and been asked nothing */
+  engaged?: boolean
+}
+
+export default function StatusDot({ status, engaged = true }: Props): JSX.Element {
+  // "Waiting for you" on a pane that has done nothing yet reads as if it finished
+  // work you never gave it, so an untouched CLI says "ready" instead.
+  const label = status === 'idle' && !engaged ? 'ready - type to start' : LABEL[status]
+  return <span className={`dot ${status}` + (status === 'idle' && !engaged ? ' ready' : '')} title={label} />
 }

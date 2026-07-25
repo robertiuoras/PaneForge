@@ -91,6 +91,11 @@ const api: Api = {
     ipcRenderer.on('update:changed', h)
     return () => ipcRenderer.off('update:changed', h)
   },
+  onAttention: (cb) => {
+    const h = (_e: unknown, s: Session) => cb(s)
+    ipcRenderer.on('sessions:attention', h)
+    return () => ipcRenderer.off('sessions:attention', h)
+  },
   onVoiceHotkey: (cb) => {
     const h = (): void => cb()
     ipcRenderer.on('voice:hotkey', h)

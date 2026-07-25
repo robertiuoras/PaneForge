@@ -52,9 +52,16 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function createWindow(): void {
-  // No application menu: its default accelerators (Ctrl+R reload, Ctrl+W close) would
-  // fire before the app's own shortcuts and reload the UI out from under the agents.
-  Menu.setApplicationMenu(null)
+  // Windows and Linux get no application menu: its default accelerators (Ctrl+R reload,
+  // Ctrl+W close) fire before the app's own shortcuts and would reload the UI out from
+  // under the agents; clipboard keys work in text fields there without one. macOS has no
+  // clipboard at all without a menu, and Cmd there cannot collide with the terminal's
+  // Ctrl+C, so it gets the standard edit menu.
+  Menu.setApplicationMenu(
+    process.platform === 'darwin'
+      ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
+      : null
+  )
   const cfg = getConfig()
   win = new BrowserWindow({
     width: cfg.window.width,
@@ -118,12 +125,21 @@ manager.on('sessions', (sessions: Session[]) => {
   win?.webContents.send('sessions:changed', sessions)
 })
 manager.on('attention', (s: Session) => {
+  // The chime is the renderer's job (Web Audio gives a far nicer sound than the
+  // Windows toast ding) and it plays whether or not the app has focus: the point
+  // is to tell you a turn ended while you were reading something else on screen.
+  win?.webContents.send('sessions:attention', s)
   if (!getConfig().notifyOnIdle) return
-  // Only nag when you are not already looking at the app.
+  // The toast and the taskbar flash only make sense when you are elsewhere.
   if (win?.isFocused()) return
   win?.flashFrame(true)
   if (Notification.isSupported()) {
-    new Notification({ title: `${s.title} is waiting`, body: `${s.agent} finished or needs input.` })
+    new Notification({
+      title: `${s.title} is waiting`,
+      body: `${s.agent} finished or needs input.`,
+      // Our own chime already played; the system ding on top of it is noise.
+      silent: true
+    })
       .on('click', focusWindow)
       .show()
   }

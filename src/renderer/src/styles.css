@@ -135,7 +135,16 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .dot.starting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
 .dot.working { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; animation: pulse 2s ease-in-out infinite; }
 .dot.idle { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+/* Quiet but never asked anything: "ready", not "waiting on you". */
+.dot.idle.ready { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
 .dot.exited { background: #55555f; }
+
+/* Runtime of a live session, ticking once a second. Tabular figures so the row
+   does not jitter as the digits change. */
+.elapsed {
+  margin-left: auto; flex: none; color: var(--muted); font-size: 10.5px;
+  font-variant-numeric: tabular-nums; opacity: 0.8;
+}
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
@@ -167,6 +176,24 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .search-btn svg { flex: none; }
 .kbd { margin-left: auto; color: var(--muted); font-size: 10.5px; letter-spacing: 0.3px; }
 .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* Always-visible "what am I running, is it current". Quiet by default, coloured
+   only when it has something to say. */
+.version {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: none; border: none; cursor: pointer; padding: 2px 3px;
+  color: var(--muted); font-size: 10.5px; letter-spacing: 0.2px;
+  border-radius: var(--r-sm); transition: background var(--fast), color var(--fast);
+}
+.version:hover { background: #ffffff09; color: var(--text); }
+.v-num { font-variant-numeric: tabular-nums; }
+.v-state {
+  margin-left: auto; padding: 0 6px; border-radius: 99px;
+  border: 1px solid var(--line); background: #ffffff08;
+}
+.version.ok .v-state { color: var(--ok); border-color: #35d07f2e; background: #35d07f14; }
+.version.warn .v-state { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
+.version.accent .v-state { color: var(--accent); border-color: #8b9dff33; background: var(--accent-dim); }
 .broadcast { font-size: 12px; }
 
 /* ---- panes ---- */
@@ -199,6 +226,19 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
 .pt-actions { display: flex; gap: 1px; flex: none; align-items: center; }
 .xterm-host { flex: 1; min-height: 0; padding: 7px; user-select: text; }
+
+/* The terminal's scrollbar is the one that gets dragged - 20k lines of scrollback
+   behind a 10px hairline was a target you had to aim at. Wider, higher contrast,
+   and with a floor on the thumb so a long buffer still leaves something grabbable. */
+.xterm .xterm-viewport { scrollbar-width: auto; scrollbar-color: #ffffff40 #ffffff08; }
+.xterm .xterm-viewport::-webkit-scrollbar { width: 15px; }
+.xterm .xterm-viewport::-webkit-scrollbar-track { background: #ffffff08; border-radius: 9px; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #ffffff40; border: 4px solid transparent; background-clip: content-box;
+  border-radius: 10px; min-height: 44px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #ffffff73; background-clip: content-box; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: content-box; }
 
 .git-badge {
   display: inline-flex; align-items: center; gap: 5px; flex: none;

@@ -69,6 +69,9 @@ export class SessionManager extends EventEmitter {
       status: 'starting',
       lastOutput: Date.now(),
       createdAt: Date.now(),
+      // A launch with a prompt is engaged from the start; a bare CLI is not doing
+      // anything for you yet, so its first quiet moment is not "finished".
+      engaged: Boolean(req.prompt),
       role: req.role
     }
     const live: Live = { meta, proc: this.spawn(req, agent, 120, 30), buffer: '', req, cols: 120, rows: 30 }
@@ -136,6 +139,7 @@ export class SessionManager extends EventEmitter {
     live.meta.status = 'starting'
     live.meta.exitCode = undefined
     live.meta.attention = false
+    live.meta.engaged = Boolean(live.req.prompt)
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
     this.emit('data', id, RESET)
@@ -168,7 +172,16 @@ export class SessionManager extends EventEmitter {
   }
 
   write(id: string, data: string): void {
-    this.sessions.get(id)?.proc.write(data)
+    const live = this.sessions.get(id)
+    if (!live) return
+    live.proc.write(data)
+    // Typing into a pane is both "I have asked it something" (so its next quiet
+    // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
+    if (!live.meta.engaged || live.meta.attention) {
+      live.meta.engaged = true
+      live.meta.attention = false
+      this.emitSessions()
+    }
   }
 
   /** Same line to every live session - "/clear" or a shared instruction in one go. */
@@ -177,10 +190,13 @@ export class SessionManager extends EventEmitter {
       if (s.meta.status === 'exited') continue
       try {
         s.proc.write(text + '\r')
+        s.meta.engaged = true
+        s.meta.attention = false
       } catch {
         /* dying pty */
       }
     }
+    this.emitSessions()
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -274,9 +290,14 @@ export class SessionManager extends EventEmitter {
     for (const { meta } of this.sessions.values()) {
       if (meta.status === 'working' && Date.now() - meta.lastOutput > IDLE_AFTER_MS) {
         meta.status = 'idle'
-        meta.attention = true
-        this.emit('attention', meta)
         changed = true
+        // A CLI that has only painted its own welcome screen is quiet, not done:
+        // raising attention there made every fresh Codex pane claim to be waiting
+        // on you the moment it finished drawing.
+        if (meta.engaged) {
+          meta.attention = true
+          this.emit('attention', meta)
+        }
       } else if (meta.status === 'starting' && Date.now() - meta.createdAt > IDLE_AFTER_MS * 3) {
         meta.status = 'idle'
         changed = true

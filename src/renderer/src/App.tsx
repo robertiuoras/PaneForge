@@ -6,6 +6,7 @@ import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import { Segmented } from './components/Controls'
+import Elapsed from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import TerminalPane from './components/TerminalPane'
@@ -15,6 +16,8 @@ import ShortcutsDialog from './components/ShortcutsDialog'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
+import VersionBadge from './components/VersionBadge'
+import { playChime } from './useChime'
 import { useVoice } from './useVoice'
 
 const api = window.api
@@ -71,6 +74,20 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (activeId) api.clearAttention(activeId)
   }, [activeId, sessions])
+
+  // The chime is the one alert that fires even while the app has focus: a turn
+  // ending in a pane you are not currently reading is exactly what the taskbar
+  // flash cannot tell you. Read through a ref so toggling the setting does not
+  // resubscribe (and so the listener is attached exactly once).
+  const soundOn = useRef(true)
+  soundOn.current = config?.soundOnIdle ?? true
+  useEffect(
+    () =>
+      api.onAttention(() => {
+        if (soundOn.current) playChime()
+      }),
+    []
+  )
 
   const patchConfig = useCallback((patch: Partial<Config>) => {
     // Apply locally first so sliders and checkboxes feel instant; main echoes back.
@@ -540,7 +557,7 @@ export default function App(): JSX.Element {
               onClick={() => setActiveId(s.id)}
               onDoubleClick={() => setRenaming(s.id)}
             >
-              <StatusDot status={s.status} />
+              <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
                 {renaming === s.id ? (
                   <input
@@ -567,7 +584,11 @@ export default function App(): JSX.Element {
                   <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
                   {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
                   {s.model ? <span className="chip">{s.model}</span> : null}
-                  {s.status === 'exited' ? <span className="chip dead">exited {s.exitCode ?? ''}</span> : null}
+                  {s.status === 'exited' ? (
+                    <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                  ) : (
+                    <Elapsed since={s.createdAt} />
+                  )}
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -632,6 +653,7 @@ export default function App(): JSX.Element {
             Save workspace
           </button>
         </div>
+        <VersionBadge />
       </aside>
 
       <main
@@ -652,7 +674,7 @@ export default function App(): JSX.Element {
             onMouseDown={() => setActiveId(s.id)}
           >
             <div className="pane-title">
-              <StatusDot status={s.status} />
+              <StatusDot status={s.status} engaged={s.engaged} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>
                 {s.title}
@@ -690,6 +712,7 @@ export default function App(): JSX.Element {
               sessionId={s.id}
               visible={visibleIds.has(s.id)}
               fontSize={config?.fontSize ?? 13}
+              copyOnSelect={config?.copyOnSelect ?? true}
             />
           </div>
         ))}

@@ -153,10 +153,22 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
               <div className="switches">
                 <Switch
+                  checked={config.copyOnSelect}
+                  onChange={(v) => onChange({ copyOnSelect: v })}
+                  label="Selecting text in a pane copies it"
+                  hint="Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes."
+                />
+                <Switch
                   checked={config.notifyOnIdle}
                   onChange={(v) => onChange({ notifyOnIdle: v })}
                   label="Notify me when a background session goes quiet"
                   hint="Taskbar flash plus a system notification, only while the app is not focused."
+                />
+                <Switch
+                  checked={config.soundOnIdle}
+                  onChange={(v) => onChange({ soundOnIdle: v })}
+                  label="Chime when a session finishes its turn"
+                  hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
                   checked={config.confirmClose}

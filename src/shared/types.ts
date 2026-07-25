@@ -38,6 +38,12 @@ export interface Session {
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */
   attention?: boolean
+  /**
+   * Something has been asked of this session (a queued prompt, or you typed into
+   * it). A freshly launched CLI that has only drawn its own banner is quiet but
+   * has finished nothing, so it must not raise attention or chime.
+   */
+  engaged?: boolean
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
 }
@@ -252,8 +258,12 @@ export interface Config {
   customAgents: AgentSpec[]
   /** terminal font size, shared by every pane */
   fontSize: number
+  /** a mouse selection in a pane goes straight to the clipboard */
+  copyOnSelect: boolean
   /** OS notification + taskbar flash when a session goes quiet in the background */
   notifyOnIdle: boolean
+  /** soft chime when a session finishes its turn or asks you something */
+  soundOnIdle: boolean
   /** show every session at once instead of one at a time */
   grid: boolean
   /** ask before closing a session that is still running */
@@ -346,6 +356,8 @@ export interface Api {
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void
+  /** a session just went quiet after doing something - drives the chime */
+  onAttention(cb: (s: Session) => void): () => void
   /** global push-to-talk hotkey fired from the main process */
   onVoiceHotkey(cb: () => void): () => void
 }
