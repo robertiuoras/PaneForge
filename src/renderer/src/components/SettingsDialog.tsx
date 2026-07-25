@@ -459,8 +459,14 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       Restart and update
                     </button>
                   ) : (
-                    <button className="ghost" onClick={() => api.checkForUpdates()}>
-                      Check now
+                    <button
+                      className="ghost"
+                      // Pressing this during a download used to start a second one and
+                      // break both, which is what "check failed" really was.
+                      disabled={update?.phase === 'checking' || update?.phase === 'downloading'}
+                      onClick={() => api.checkForUpdates()}
+                    >
+                      {update?.phase === 'downloading' ? 'Downloading…' : 'Check now'}
                     </button>
                   )}
                 </div>

@@ -11,6 +11,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke": "node scripts/smoke-pty.mjs",
+    "test:updater": "node scripts/updater-test.mjs",
     "postinstall": "electron-builder install-app-deps",
     "package": "electron-vite build && electron-builder --win --dir",
     "dist:win": "electron-vite build && electron-builder --win --publish never",

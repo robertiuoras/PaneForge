@@ -6,7 +6,7 @@
 // In `npm run dev` there is no update metadata next to the binary, so the whole
 // thing reports 'unsupported' instead of throwing on every launch.
 
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, statSync, truncateSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { UpdateState } from '../shared/types'
@@ -19,6 +19,23 @@ let state: UpdateState = { phase: 'idle', current: app.getVersion() }
 let emit: Emit = () => undefined
 let wired = false
 let timer: NodeJS.Timeout | null = null
+let retry: NodeJS.Timeout | null = null
+
+// electron-updater's own log line, kept next to the app's data. Without it an update
+// failure is invisible after the fact: the message lives only in a renderer tooltip,
+// and the next check overwrites it. One capped file makes the failure readable later.
+const LOG = () => join(app.getPath('userData'), 'updater.log')
+
+function log(...parts: unknown[]): void {
+  try {
+    const file = LOG()
+    // 256 KB is dozens of update cycles; past that the head is worthless anyway.
+    if (existsSync(file) && statSync(file).size > 256_000) truncateSync(file, 0)
+    appendFileSync(file, `${new Date().toISOString()} ${parts.map(String).join(' ')}\n`)
+  } catch {
+    // Logging must never be the thing that breaks an update.
+  }
+}
 
 // Typed loosely on purpose: electron-updater is a runtime dependency of the
 // packaged app, and requiring it eagerly would break `electron-vite dev`.
@@ -47,8 +64,17 @@ function load(): Updater | null {
 }
 
 function set(patch: Partial<UpdateState>): void {
+  const before = state.phase
   state = { ...state, ...patch, current: app.getVersion() }
+  if (state.phase !== before || patch.error) {
+    log('state', state.phase, state.version ?? '', state.error ?? '')
+  }
   emit(state)
+}
+
+/** A check or a download is already running - starting a second one is what breaks it. */
+function busy(): boolean {
+  return state.phase === 'checking' || state.phase === 'downloading'
 }
 
 export function getUpdateState(): UpdateState {
@@ -81,6 +107,12 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     u.autoDownload = process.platform !== 'darwin'
     // Installing on quit would swap the app out from under running agent panes.
     u.autoInstallOnAppQuit = false
+    u.logger = {
+      info: (m: unknown) => log('info', m),
+      warn: (m: unknown) => log('warn', m),
+      error: (m: unknown) => log('error', m),
+      debug: () => undefined
+    }
     u.on('checking-for-update', () => set({ phase: 'checking', error: undefined }))
     u.on('update-available', (info: { version: string; releaseNotes?: string }) =>
       set({
@@ -98,7 +130,15 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     u.on('update-downloaded', (info: { version: string; releaseNotes?: string }) =>
       set({ phase: 'ready', version: info?.version, percent: 100, notes: notes(info?.releaseNotes) })
     )
-    u.on('error', (e: Error) => set({ phase: 'error', error: e?.message ?? String(e) }))
+    u.on('error', (e: Error) => {
+      set({ phase: 'error', error: e?.message ?? String(e), percent: undefined })
+      // An 80 MB download dies for boring reasons - a dropped wifi packet, a locked
+      // temp file. Left alone the badge reads "check failed" until it is clicked,
+      // which looks like the update system is dead. Try again quietly once.
+      if (retry) clearTimeout(retry)
+      retry = setTimeout(() => void checkForUpdates(), 3 * 60_000)
+      retry.unref?.()
+    })
   }
   setAutoCheck(enabled)
 }
@@ -120,6 +160,18 @@ export function setAutoCheck(enabled: boolean): void {
 export async function checkForUpdates(): Promise<UpdateState> {
   const u = load()
   if (!app.isPackaged || !u) return state
+  // The bug this guards: with autoDownload on, every check that finds a new version
+  // starts a download. A second check fired while the first 80 MB is still in flight
+  // starts a SECOND download into the same temp file, and the pair kill each other
+  // ("checksum mismatch" / EPERM), so the badge reads "check failed" while the app
+  // was in fact updating fine. Clicking the badge again only made it worse. So while
+  // a check or download is running, or a build is already downloaded and waiting for
+  // a restart, say so instead of starting over.
+  if (busy() || state.phase === 'ready') return state
+  if (retry) {
+    clearTimeout(retry)
+    retry = null
+  }
   try {
     set({ phase: 'checking', error: undefined })
     await u.checkForUpdates()

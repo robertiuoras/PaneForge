@@ -34,7 +34,13 @@ function view(s: UpdateState | null): View {
     case 'ready':
       return { text: `${s.version} ready`, tone: 'accent', title: 'Click to restart into the new version' }
     case 'error':
-      return { text: 'check failed', tone: 'warn', title: s.error ?? 'The update check failed - click to retry' }
+      // Most failures here are a broken download, not a broken check, and the reason
+      // only ever lived in this tooltip. Say which, and that it retries on its own.
+      return {
+        text: 'update failed',
+        tone: 'warn',
+        title: (s.error ? s.error + '\n\n' : '') + 'Retries by itself in a few minutes - click to try now'
+      }
     case 'unsupported':
       // A folder build has no update feed, so "up to date" would be a lie.
       return { text: 'local build', tone: 'warn', title: s.error ?? 'Not an installed build - it cannot update itself' }
@@ -59,6 +65,9 @@ export default function VersionBadge(): JSX.Element {
   const click = (): void => {
     if (state?.phase === 'ready') return api.installUpdate()
     if (state?.phase === 'available' && state.url) return api.openExternal(state.url)
+    // Clicking mid-download used to restart it and break both copies; main now
+    // refuses, and the badge already shows the percentage, so this is just quiet.
+    if (state?.phase === 'checking' || state?.phase === 'downloading') return
     void api.checkForUpdates().then(setState)
   }
 
