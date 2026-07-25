@@ -103,7 +103,10 @@ export class SessionManager extends EventEmitter {
       title: s.meta.title,
       agent: s.meta.agent,
       model: s.meta.model,
-      role: s.meta.role
+      role: s.meta.role,
+      // Already the lane's own folder: reopening must land back in it, not be
+      // treated as a fresh clash and pushed one lane further along.
+      lane: s.meta.lane
     }))
   }
 
@@ -124,7 +127,9 @@ export class SessionManager extends EventEmitter {
       // A launch with a prompt is engaged from the start; a bare CLI is not doing
       // anything for you yet, so its first quiet moment is not "finished".
       engaged: Boolean(req.prompt),
-      role: req.role
+      role: req.role,
+      lane: req.lane,
+      laneNote: req.laneNote
     }
     const live: Live = {
       meta,
@@ -204,9 +209,10 @@ export class SessionManager extends EventEmitter {
     live.meta.engaged = Boolean(live.req.prompt)
     live.busyUntil = 0
     live.ackedAt = 0
+    live.meta.runSince = undefined
+    live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
-    live.meta.turnStartedAt = undefined
     live.repaintUntil = 0
     this.emit('data', id, RESET)
     this.attach(live)
@@ -250,13 +256,38 @@ export class SessionManager extends EventEmitter {
     }
     // A real keystroke: whatever comes back next IS work.
     live.repaintUntil = 0
+    // Submitting is what starts the clock. The pane's busy footer confirms it a
+    // moment later, but a turn that is still drawing its first frame is already
+    // running, and starting here is what makes the readout mean "since I asked".
+    const submitted = data.includes('\r') || data.includes('\n')
+    if (submitted) this.beginRun(live)
     // Typing into a pane is both "I have asked it something" (so its next quiet
     // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
     if (!live.meta.engaged || live.meta.attention) {
       live.meta.engaged = true
       live.meta.attention = false
       this.emitSessions()
+    } else if (submitted) {
+      this.emitSessions()
     }
+  }
+
+  /**
+   * Start of a turn. Idempotent: the submit keystroke and the pane's busy footer
+   * both report the same turn, and whichever lands first owns the start time.
+   */
+  private beginRun(live: Live): void {
+    if (live.meta.runSince) return
+    live.meta.runSince = Date.now()
+    live.meta.lastRunMs = undefined
+  }
+
+  /** End of a turn: freeze what it took and stop counting. */
+  private endRun(live: Live): boolean {
+    if (!live.meta.runSince) return false
+    live.meta.lastRunMs = Date.now() - live.meta.runSince
+    live.meta.runSince = undefined
+    return true
   }
 
   /** Same line to every live session - "/clear" or a shared instruction in one go. */
@@ -267,6 +298,7 @@ export class SessionManager extends EventEmitter {
         s.proc.write(text + '\r')
         s.meta.engaged = true
         s.meta.attention = false
+        this.beginRun(s)
       } catch {
         /* dying pty */
       }
@@ -322,6 +354,17 @@ export class SessionManager extends EventEmitter {
     // arrives, so it stays honest, and if the pane goes away entirely the session is
     // not muted forever.
     s.busyUntil = busy ? Date.now() + 600_000 : 0
+    // The footer is the honest turn boundary, so it drives the run clock too: it
+    // starts a turn the app never saw typed (a queued prompt, /clear, a resumed
+    // session) and ends one the instant the agent stops saying it is running.
+    if (busy) {
+      if (!s.meta.runSince) {
+        this.beginRun(s)
+        this.emitSessions()
+      }
+    } else if (this.endRun(s)) {
+      this.emitSessions()
+    }
   }
 
   clearAttention(id: string): void {
@@ -384,12 +427,14 @@ export class SessionManager extends EventEmitter {
       const now = Date.now()
       const wasIdle = meta.status !== 'working'
       // A repaint we asked for is not a turn: paint it, but do not touch the
-      // status, the turn clock or the quiet clock the attention nudge runs on.
+      // status or the quiet clock the attention nudge runs on.
       if (wasIdle && now < live.repaintUntil) {
         this.emit('data', id, data)
         return
       }
-      if (wasIdle) meta.turnStartedAt = now
+      // Output alone deliberately does not start the run clock: a CLI painting its
+      // own banner is not working for you. Submitting a prompt starts it, and the
+      // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
       meta.status = 'working'
       this.emit('data', id, data)
@@ -400,6 +445,7 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       meta.status = 'exited'
       meta.exitCode = exitCode
+      this.endRun(live)
       recordEnd(id)
       this.emitSessions()
     })
@@ -417,6 +463,12 @@ export class SessionManager extends EventEmitter {
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      // Backstop for the run clock: an agent whose footer this app cannot read (or
+      // a pane that was torn down mid-turn) would otherwise count forever. Quiet,
+      // and nothing on screen claiming to be busy, is the end of the turn.
+      if (meta.runSince && live.busyUntil < now && quiet > IDLE_AFTER_MS) {
+        if (this.endRun(live)) changed = true
+      }
       if (meta.status === 'working' && quiet > IDLE_AFTER_MS) {
         meta.status = 'idle'
         changed = true

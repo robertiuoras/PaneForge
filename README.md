@@ -48,6 +48,12 @@ Re-run after any source change. Needs Node 20+.
 - **Swarm (Ctrl Shift S)** - one mission, one pane per role (Planner, Builder,
   Reviewer, Tester), each told what it owns so they stop editing the same file.
   Roles are editable and remembered.
+- **Worktree lanes** - open a second session in a project you already have open and
+  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`) with your `.env`
+  files copied across. Two agents can build different features in one repo at the
+  same time without overwriting each other or racing the git index. The pane says
+  which lane it is in; merge the branch back when you are done. Off by one switch in
+  Settings, and a folder that is not a repo is left shared with a warning.
 - **Board (Ctrl Shift K)** - tasks and shared memory for a project, stored in that
   project's `.paneforge/` folder so the agents running there can read it. Every
   agent started in a folder with memory is told to read it first.
