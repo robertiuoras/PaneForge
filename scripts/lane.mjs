@@ -111,6 +111,16 @@ function reap(state) {
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) delete state.lanes[id]
   }
   if (state.release && now() - state.release.at > LOCK_MS) state.release = null
+  // A conflict or a ready mark for work master already has is noise that never clears
+  // itself: it made `status` report a lane as conflicted long after the conflict was
+  // resolved, and left chats resolving something that had already gone out. Usually
+  // zero iterations - this only walks lanes that are actually flagged.
+  for (const id of Object.keys(state.conflicts)) {
+    if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.conflicts[id]
+  }
+  for (const id of Object.keys(state.ready)) {
+    if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.ready[id]
+  }
   return state
 }
 
