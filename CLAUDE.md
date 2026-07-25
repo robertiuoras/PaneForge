@@ -27,16 +27,28 @@ worktree `claude-orchestrator-a` / `-b` on `lane-a` / `lane-b`. Work only in the
 were given; writing into another chat's checkout is refused by a PreToolUse hook, not by
 convention. `node scripts/lane.mjs status` shows who holds what.
 
-## Releasing is batched, never per-chat
+## Releasing happens by itself
+
+There is one command, and it is not a release:
 
 ```
 node scripts/lane.mjs ready --session <id>   # this lane's work is done and verified
-npm run ship                                 # merges every ready lane into ONE version
 ```
 
-`npm version`, `git tag vX`, and pushing a version tag by hand are blocked. A second chat
-that ships while a release is running is told its work is already included and stops -
-that is deliberate, do not retry it.
+`ready` marks the lane and then tries the release. It goes out when no chat is mid-work
+any more - clean lanes, nothing uncommitted, nothing finished-but-unmarked - so whoever
+finishes last releases for everyone, in ONE version bump. While another chat is still
+editing it says so and does nothing; that chat's own `ready` (or the end of its session,
+which marks committed work done on the way out) cuts the release instead. Wait for it
+rather than shipping again.
+
+Two things stop an automatic release, both reported by name: master not typechecking, and
+a lane that conflicts with master. A conflicting lane is left out and keeps its mark - the
+rest still goes out - so resolve it with `git merge master` in that lane and it rides the
+next one.
+
+`npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
+still exists for a release you want right now, but nothing should need it.
 
 ## Checks
 

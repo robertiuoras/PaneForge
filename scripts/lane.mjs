@@ -29,9 +29,14 @@
 //   node scripts/lane.mjs status
 //   node scripts/lane.mjs ready --session <id>     mark this lane's branch shippable
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
+//   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
 //   node scripts/lane.mjs release --session <id>   give the lane back (SessionEnd)
+//
+// Nothing above is typed by hand. `ready` and `release` both end in `autoship`, so the
+// release happens by itself the moment the LAST chat with unfinished PaneForge work
+// stops having any: whoever finishes last cuts the version, for everyone.
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -84,11 +89,12 @@ function read() {
     const s = JSON.parse(readFileSync(STATE, 'utf8'))
     s.lanes ??= {}
     s.ready ??= {}
+    s.conflicts ??= {}
     s.release ??= null
     s.lastShip ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, release: null, lastShip: null }
+    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null }
   }
 }
 
@@ -217,38 +223,159 @@ function guard(session, path) {
   )
 }
 
+// ---------------------------------------------------------------- what a lane holds
+
+/** Commits on master that no tag has gone out with yet. */
+function unreleasedOnMaster() {
+  try {
+    const version = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).version
+    const r = gitSafe(MAIN, 'rev-list', '--count', `v${version}..HEAD`)
+    return r.ok ? Number(r.out) : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Commits in a lane that master does not already have the CHANGE of.
+ *
+ * `rev-list --count` counts commit ids, and a lane whose history was rewritten (a rebase
+ * anywhere near it) is full of new ids for changes master shipped long ago - a lane that
+ * reads as 5 commits of work forever, blocking releases and merging nothing. `git cherry`
+ * compares patches, so a duplicate counts as what it is: already released.
+ */
+function aheadOf(branch) {
+  const r = gitSafe(MAIN, 'cherry', 'master', branch)
+  if (!r.ok) return 0
+  return r.out.split('\n').filter((l) => l.startsWith('+')).length
+}
+
+/** Work sitting in a lane: uncommitted files, and commits the release does not have. */
+function laneWork(id) {
+  const dir = laneDir(id)
+  if (!existsSync(dir)) return { dirty: false, ahead: 0 }
+  const dirty = Boolean(gitSafe(dir, 'status', '--porcelain').out)
+  if (id === 'main') return { dirty, ahead: unreleasedOnMaster() }
+  return { dirty, ahead: aheadOf(laneBranch(id)) }
+}
+
+/**
+ * Chats that would lose by a release happening right now: still holding a lane, work in
+ * it, and not done with it. Half-finished work is the only reason to wait - a lane that
+ * is idle, or already marked ready, is no reason for everyone else's work to sit.
+ */
+function busyLanes(state) {
+  return Object.keys(state.lanes).filter((id) => {
+    if (state.ready[id]) return false
+    const w = laneWork(id)
+    return w.dirty || w.ahead > 0
+  })
+}
+
+/** Anything a release would actually put out. */
+function shippable(state) {
+  if (unreleasedOnMaster() > 0) return true
+  return Object.keys(state.ready).some((id) => id !== 'main' && laneWork(id).ahead > 0)
+}
+
+/** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
+function typecheckFailure() {
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  if (!pkg.scripts?.typecheck) return null
+  // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
+  const r = spawnSync('npm run --silent typecheck', {
+    cwd: MAIN,
+    encoding: 'utf8',
+    timeout: 150_000,
+    shell: true
+  })
+  if (r.status === 0) return null
+  const detail = `${r.stdout ?? ''}${r.stderr ?? ''}`
+    .split('\n')
+    .filter((l) => /error TS/.test(l))
+    .slice(0, 3)
+    .join('; ')
+  return `master does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
+}
+
+/**
+ * The release nobody has to ask for. Called at the end of `ready` and of `release`, so
+ * the version goes out the moment the last chat with unfinished work finishes it - and
+ * silently does nothing while any chat is still mid-edit.
+ */
+function autoship(kind = 'patch', session = 'auto') {
+  const state = reap(read())
+  if (state.release) return { shipped: false, reason: 'another chat is mid-release' }
+  const busy = busyLanes(state)
+  if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.join(', ')}` }
+  if (!shippable(state)) return { shipped: false, reason: 'nothing to release' }
+  // Nobody is watching an automatic release, so it checks itself first. A tag that fails
+  // to compile costs a broken GitHub build and a version number that never produced an
+  // installer - and the next chat inherits both.
+  const broken = typecheckFailure()
+  if (broken) return { shipped: false, reason: broken }
+  try {
+    return ship(kind, session)
+  } catch (e) {
+    // A release that cannot go out must never break the hook that asked for it.
+    return { shipped: false, reason: e.message }
+  }
+}
+
+function markReady(state, id) {
+  const dir = laneDir(id)
+  if (id === 'main') {
+    state.ready.main = { at: now(), commit: git(dir, 'rev-parse', 'HEAD') }
+    return { lane: id, note: 'master is the release branch - nothing to merge' }
+  }
+  const ahead = aheadOf(laneBranch(id))
+  if (!ahead) throw new Error(`lane ${id} has no commits master does not already have`)
+  state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: ahead }
+  return { lane: id, commits: ahead, note: 'goes out with the next release, not a separate one' }
+}
+
 function ready(session) {
   const state = reap(read())
   const mine = Object.entries(state.lanes).find(([, c]) => c.session === session)
   if (!mine) throw new Error('this session holds no lane')
   const [id] = mine
-  const dir = laneDir(id)
-  const dirty = git(dir, 'status', '--porcelain')
+  const dirty = git(laneDir(id), 'status', '--porcelain')
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
-  if (id === 'main') {
-    state.ready.main = { at: now(), commit: git(dir, 'rev-parse', 'HEAD') }
-    write(state)
-    return { lane: id, note: 'master is the release branch - nothing to merge, ship when you want' }
-  }
-  const ahead = git(MAIN, 'rev-list', '--count', `master..${laneBranch(id)}`)
-  if (ahead === '0') throw new Error(`lane ${id} has no commits master does not already have`)
-  state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: Number(ahead) }
+  const marked = markReady(state, id)
   write(state)
-  return { lane: id, commits: Number(ahead), note: 'will go out with the next ship, no separate release' }
+  // Last one out cuts the release. If another chat is still mid-edit this is a no-op
+  // and THEIR `ready` (or the end of their session) will cut it instead.
+  return { ...marked, release: autoship('patch', session) }
 }
 
 function releaseClaim(session) {
   const state = reap(read())
   let freed = null
+  let marked = null
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
+      // A chat that ends with committed, clean work meant that work to go out - it just
+      // never said so. Uncommitted work is the opposite: nobody released half an edit.
+      const w = laneWork(id)
+      if (!state.ready[id] && !w.dirty && w.ahead > 0) {
+        try {
+          marked = markReady(state, id)
+        } catch {
+          /* nothing mergeable - leave it */
+        }
+      }
       delete state.lanes[id]
       freed = id
     }
   }
   if (state.release?.session === session) state.release = null
   write(state)
-  return { freed }
+  return { freed, marked, release: autoship('patch', session) }
 }
 
 function ship(kind, session) {
@@ -272,17 +399,22 @@ function ship(kind, session) {
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
     const merged = []
+    const conflicts = {}
     for (const [id, mark] of Object.entries(state.ready)) {
       if (id === 'main') continue
       const branch = laneBranch(id)
-      const ahead = gitSafe(MAIN, 'rev-list', '--count', `master..${branch}`)
-      if (!ahead.ok || ahead.out === '0') continue
+      const ahead = aheadOf(branch)
+      if (!ahead) continue
       const m = gitSafe(MAIN, 'merge', '--no-ff', '-m', `merge lane ${id}`, branch)
       if (!m.ok) {
+        // One lane that cannot merge used to stop everyone's release. It does not any
+        // more: the conflict is that lane's problem, it stays marked ready, and it is
+        // reported by name so the next chat in it fixes it. Everything else goes out.
         gitSafe(MAIN, 'merge', '--abort')
-        throw new Error(`lane ${id} conflicts with master. Resolve it in ${laneDir(id)} first:\n${m.out}`)
+        conflicts[id] = { at: now(), dir: laneDir(id), detail: m.out.split('\n').slice(0, 6).join('\n') }
+        continue
       }
-      merged.push({ lane: id, commits: Number(ahead.out), commit: mark.commit })
+      merged.push({ lane: id, commits: ahead, commit: mark.commit })
     }
 
     const pkgPath = join(MAIN, 'package.json')
@@ -297,7 +429,11 @@ function ship(kind, session) {
 
     const unreleased = git(MAIN, 'rev-list', '--count', `v${pkg.version}..HEAD`)
     if (unreleased === '0') {
-      return { shipped: false, reason: `nothing new since v${pkg.version}` }
+      const s = read()
+      s.conflicts = conflicts
+      s.release = null
+      write(s)
+      return { shipped: false, reason: `nothing new since v${pkg.version}`, conflicts }
     }
 
     pkg.version = next
@@ -319,12 +455,15 @@ function ship(kind, session) {
     }
 
     const fresh = read()
-    fresh.ready = {}
+    // A lane that could not merge keeps its ready mark: its work still has to go out,
+    // in the next release, once someone has resolved it.
+    fresh.ready = Object.fromEntries(Object.entries(fresh.ready).filter(([id]) => conflicts[id]))
+    fresh.conflicts = conflicts
     fresh.release = null
     fresh.lastShip = { version: next, at: now(), lanes: merged.map((m) => m.lane) }
     write(fresh)
 
-    return { shipped: true, version: next, merged, rebased }
+    return { shipped: true, version: next, merged, rebased, conflicts }
   } catch (e) {
     const s = read()
     if (s.release?.session === (session ?? 'unknown')) {
@@ -335,19 +474,29 @@ function ship(kind, session) {
   }
 }
 
-function status() {
+function status(session) {
   const state = reap(read())
   return {
     main: MAIN,
-    lanes: POOL.map((id) => ({
-      lane: id,
-      dir: laneDir(id),
-      branch: laneBranch(id),
-      exists: existsSync(laneDir(id)),
-      heldBy: state.lanes[id]?.session ?? null,
-      from: state.lanes[id]?.cwd ?? null,
-      ready: Boolean(state.ready[id])
-    })),
+    lanes: POOL.map((id) => {
+      const w = laneWork(id)
+      return {
+        lane: id,
+        dir: laneDir(id),
+        branch: laneBranch(id),
+        exists: existsSync(laneDir(id)),
+        heldBy: state.lanes[id]?.session ?? null,
+        mine: session ? state.lanes[id]?.session === session : undefined,
+        from: state.lanes[id]?.cwd ?? null,
+        ready: Boolean(state.ready[id]),
+        conflicted: Boolean(state.conflicts[id]),
+        dirty: w.dirty,
+        ahead: w.ahead
+      }
+    }),
+    // Why a finished lane has not gone out yet, in one field.
+    blockedBy: busyLanes(state),
+    pending: shippable(state),
     release: state.release,
     lastShip: state.lastShip
   }
@@ -362,6 +511,22 @@ const arg = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.l
 
 try {
   const session = arg('session')
+  const sayRelease = (r) => {
+    if (!r) return
+    if (r.shipped) {
+      console.log(`Released v${r.version} automatically${r.merged?.length ? ` (lanes ${r.merged.map((m) => m.lane).join(', ')})` : ''}.`)
+      console.log('GitHub is building Windows and macOS. Running copies update within 30 minutes.')
+    } else if (r.reason && r.reason !== 'nothing to release') {
+      console.log(`No release yet: ${r.reason}`)
+    }
+    for (const [id, c] of Object.entries(r.conflicts ?? {})) {
+      console.log(
+        `Lane ${id} is finished but conflicts with master, so it was left out of the release. ` +
+          `Resolve it in ${c.dir} (git merge master), commit, and it goes out with the next one.`
+      )
+    }
+  }
+
   if (cmd === 'claim') console.log(JSON.stringify(claim(session, arg('cwd'), arg('prefer')), null, 2))
   else if (cmd === 'guard') {
     const reason = guard(session, arg('path'))
@@ -369,8 +534,15 @@ try {
       console.log(reason)
       process.exit(2)
     }
-  } else if (cmd === 'ready') console.log(JSON.stringify(ready(session), null, 2))
-  else if (cmd === 'release') console.log(JSON.stringify(releaseClaim(session), null, 2))
+  } else if (cmd === 'ready') {
+    const r = ready(session)
+    console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
+    sayRelease(r.release)
+  } else if (cmd === 'release') {
+    const r = releaseClaim(session)
+    if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
+    sayRelease(r.release)
+  } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'patch').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {
     const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'patch').toLowerCase(), session)
     if (r.shipped) {
@@ -381,7 +553,7 @@ try {
     } else {
       console.log(`Not shipped: ${r.reason}`)
     }
-  } else if (cmd === 'status') console.log(JSON.stringify(status(), null, 2))
+  } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)
     process.exit(1)
