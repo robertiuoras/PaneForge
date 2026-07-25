@@ -123,6 +123,11 @@ real one. The window is titled `PaneForge - dev` and the version badge carries a
 `npm run dev` and `npm run try` set the profile themselves; an unpackaged run is a
 build under test by definition and can never collide with the installed app.
 
+A profile window opens **without taking focus** - it is usually launched by an agent
+running in the live app, and a test window stealing the keyboard mid-sentence is worse
+than no test window. `npm run try -- --minimized` goes further and leaves it in the
+taskbar until you click it.
+
 `npm run try` deliberately launches `node_modules/electron`, not a packaged exe:
 Windows Smart App Control blocks freshly built unsigned binaries, that Electron is
 already trusted, and skipping electron-builder makes it start in seconds.
