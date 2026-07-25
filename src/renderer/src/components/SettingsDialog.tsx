@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import type { Agent, Config } from '@shared/types'
+import AgentLogo from './AgentLogo'
+import Select from './Select'
+import { Switch } from './Controls'
 
 const api = window.api
 
@@ -77,17 +80,19 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
         <div className="setting">
           <label>Default agent</label>
-          <select
+          <Select
             value={config.defaultAgent}
-            onChange={(e) => onChange({ defaultAgent: e.target.value as Agent })}
-          >
-            {agents.map((a) => (
-              <option key={a.id} value={a.id} disabled={!a.available}>
-                {a.label}
-                {a.available ? '' : ' (not installed)'}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => onChange({ defaultAgent: v as Agent })}
+            menuWidth={300}
+            options={agents.map((a) => ({
+              value: a.id,
+              label: a.label,
+              hint: a.available ? undefined : 'not installed',
+              disabled: !a.available,
+              group: a.custom ? 'Custom' : 'Installed',
+              icon: <AgentLogo id={a.id} spec={a} size={15} muted={!a.available} />
+            }))}
+          />
         </div>
 
         <div className="setting">
@@ -95,7 +100,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
           <div className="agent-grid">
             {agents.map((a) => (
               <div key={a.id} className={'agent-card' + (a.available ? '' : ' off')}>
-                <span className="agent-dot" style={{ background: a.color }} />
+                <AgentLogo id={a.id} spec={a} size={22} tile muted={!a.available} />
                 <span className="agent-name">{a.label}</span>
                 {a.custom && <span className="tag">custom</span>}
                 <span className="hint">
@@ -134,32 +139,25 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
           />
         </div>
 
-        <label className="check">
-          <input
-            type="checkbox"
+        <div className="switches">
+          <Switch
             checked={config.notifyOnIdle}
-            onChange={(e) => onChange({ notifyOnIdle: e.target.checked })}
+            onChange={(v) => onChange({ notifyOnIdle: v })}
+            label="Notify me when a background session goes quiet"
+            hint="Taskbar flash plus a Windows notification, only while the app is not focused."
           />
-          Notify me when a background session goes quiet
-        </label>
-
-        <label className="check">
-          <input
-            type="checkbox"
+          <Switch
             checked={config.confirmClose}
-            onChange={(e) => onChange({ confirmClose: e.target.checked })}
+            onChange={(v) => onChange({ confirmClose: v })}
+            label="Ask before closing a running session"
+            hint="Exited panes always close without a prompt."
           />
-          Ask before closing a session that is still running
-        </label>
-
-        <label className="check">
-          <input
-            type="checkbox"
+          <Switch
             checked={config.launchAtLogin}
-            onChange={(e) => onChange({ launchAtLogin: e.target.checked })}
+            onChange={(v) => onChange({ launchAtLogin: v })}
+            label="Start PaneForge when Windows starts"
           />
-          Start PaneForge when Windows starts
-        </label>
+        </div>
 
         <div className="setting">
           <label>Privileges</label>

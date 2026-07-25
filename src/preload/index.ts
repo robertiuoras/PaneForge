@@ -26,6 +26,7 @@ const api: Api = {
 
   reveal: (path) => ipcRenderer.send('shell:reveal', path),
   openInEditor: (path) => ipcRenderer.invoke('shell:editor', path),
+  gitInfo: (path) => ipcRenderer.invoke('git:info', path),
   isAdmin: () => ipcRenderer.invoke('app:isAdmin'),
   relaunchAsAdmin: () => ipcRenderer.send('app:relaunchAsAdmin'),
 

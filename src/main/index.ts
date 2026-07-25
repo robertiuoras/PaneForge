@@ -5,6 +5,7 @@ import { SessionManager } from './sessions'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { invalidateAgents, listAgents } from './agents'
+import { gitInfo } from './git'
 import { which } from './which'
 import type { Config, Session, StartSessionRequest } from '../shared/types'
 
@@ -170,6 +171,8 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
   shell.openPath(path)
   return 'No `cursor` or `code` on PATH - opened the folder instead.'
 })
+
+ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
 
 ipcMain.handle('app:isAdmin', () => isAdmin())
 ipcMain.on('app:relaunchAsAdmin', () => {

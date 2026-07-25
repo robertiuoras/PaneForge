@@ -67,6 +67,17 @@ export interface Preset {
   items: PresetItem[]
 }
 
+/** Repo state of a session's folder, null when the folder is not a git checkout. */
+export interface GitInfo {
+  branch: string
+  ahead: number
+  behind: number
+  /** changed paths, staged or not, untracked included */
+  dirty: number
+  staged: number
+  detached: boolean
+}
+
 export interface WindowBounds {
   x?: number
   y?: number
@@ -124,6 +135,8 @@ export interface Api {
 
   reveal(path: string): void
   openInEditor(path: string): Promise<string | null>
+  /** branch + dirty count for a folder; null when it is not a repo */
+  gitInfo(path: string): Promise<GitInfo | null>
   isAdmin(): Promise<boolean>
   relaunchAsAdmin(): void
 

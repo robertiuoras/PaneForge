@@ -3,6 +3,7 @@ interface Props {
 }
 
 const KEYS: [string, string][] = [
+  ['Ctrl K', 'Command palette: jump to a session, start a project, run any action'],
   ['Ctrl T', 'New session (tick several projects to start them together)'],
   ['Ctrl W', 'Close the focused session'],
   ['Ctrl Shift R', 'Restart the focused agent in place'],

@@ -1,17 +1,25 @@
 // One command to go from a fresh clone to a working desktop app:
 //   npm run setup
-// Installs deps if needed, builds the packaged exe, then points a Desktop and Start
-// Menu shortcut at it. Safe to re-run after any source change - it rebuilds in place,
-// so the existing shortcut keeps working without being recreated.
+// Installs deps if needed, builds the packaged exe, then points the Desktop, Start Menu
+// and taskbar shortcuts at it. Safe to re-run after any source change.
+//
+// Each run builds into its own `dist/b<stamp>` folder and repoints the shortcuts, rather
+// than overwriting one fixed folder. That is what lets PaneForge be developed from a
+// Claude session running inside PaneForge: electron-builder cannot touch the exe of a
+// running app, and killing the app would kill the session doing the work. The running
+// instance keeps its old files; the next launch picks up the new build.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const exe = join(root, 'dist', 'win-unpacked', 'PaneForge.exe')
+const APP_ID = 'com.robert.paneforge'
+const stamp = Date.now().toString(36)
+const outDir = join('dist', `b${stamp}`)
+const exe = join(root, outDir, 'win-unpacked', 'PaneForge.exe')
 
 function step(label) {
   process.stdout.write(`\n== ${label}\n`)
@@ -32,17 +40,9 @@ if (!existsSync(join(root, 'node_modules'))) {
   step('Dependencies present, skipping npm install')
 }
 
-// electron-builder wipes dist/win-unpacked, which fails with "Access is denied" while
-// the app is open - so close it first instead of making that the user's problem.
-if (process.platform === 'win32') {
-  step('Closing PaneForge if it is running')
-  spawnSync('powershell', ['-NoProfile', '-Command', "Get-Process PaneForge -ErrorAction SilentlyContinue | Stop-Process -Force"], {
-    stdio: 'ignore'
-  })
-}
-
-step('Building the app')
-run('npm', ['run', 'package'])
+step(`Building the app into ${outDir}`)
+run('npm', ['run', 'build'])
+run('npx', ['electron-builder', '--win', '--dir', `-c.directories.output=${outDir}`])
 
 if (!existsSync(exe)) {
   console.error(`\nBuild finished but ${exe} is missing. Nothing to link.`)
@@ -55,13 +55,27 @@ if (process.platform !== 'win32') {
   process.exit(0)
 }
 
-step('Creating shortcuts')
+step('Pointing shortcuts at the new build')
 const startMenu = join(homedir(), 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs')
 mkdirSync(startMenu, { recursive: true })
+// The taskbar pin is a real .lnk too, so retargeting it keeps the pin working instead of
+// leaving it aimed at a build that is about to be pruned.
+const pinned = join(
+  homedir(),
+  'AppData',
+  'Roaming',
+  'Microsoft',
+  'Internet Explorer',
+  'Quick Launch',
+  'User Pinned',
+  'TaskBar',
+  'PaneForge.lnk'
+)
 const targets = [join(homedir(), 'Desktop', 'PaneForge.lnk'), join(startMenu, 'PaneForge.lnk')]
+const all = [...targets, ...(existsSync(pinned) ? [pinned] : [])]
 
 // WScript.Shell is the only dependency-free way to write a .lnk on Windows.
-const ps = targets
+const ps = all
   .map(
     (lnk) => `
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}')
@@ -83,25 +97,11 @@ try {
 }
 
 // Every shortcut needs the same AppUserModelID the app sets in src/main/index.ts, or
-// Windows treats the pin and the running window as two different apps and shows two
-// taskbar buttons. Includes the taskbar pin itself, which Windows copied from an
-// earlier (unstamped) shortcut.
+// Windows identifies the pin by exe path and the window by app id, and draws two
+// taskbar buttons for one app.
 step('Tagging shortcuts with the app id')
-const APP_ID = 'com.robert.paneforge'
-const pinned = join(
-  homedir(),
-  'AppData',
-  'Roaming',
-  'Microsoft',
-  'Internet Explorer',
-  'Quick Launch',
-  'User Pinned',
-  'TaskBar',
-  'PaneForge.lnk'
-)
 const setAumid = join(root, 'scripts', 'set-aumid.ps1')
-for (const lnk of [...targets, pinned]) {
-  if (!existsSync(lnk)) continue
+for (const lnk of all) {
   const r = spawnSync(
     'powershell',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', setAumid, '-Lnk', lnk, '-Id', APP_ID],
@@ -110,9 +110,31 @@ for (const lnk of [...targets, pinned]) {
   if (r.status !== 0) console.error(`Could not tag ${lnk} - it may open as a second taskbar item.`)
 }
 
+step('Pruning old builds')
+const dist = join(root, 'dist')
+for (const name of readdirSync(dist, { withFileTypes: true })) {
+  if (!name.isDirectory() || name.name === `b${stamp}`) continue
+  try {
+    rmSync(join(dist, name.name), { recursive: true, force: true })
+    console.log(`removed ${name.name}`)
+  } catch {
+    // The build a running instance was started from stays locked. Harmless: the next
+    // run prunes it once that instance has been closed.
+    console.log(`kept ${name.name} (in use)`)
+  }
+}
+
+const running = spawnSync('powershell', ['-NoProfile', '-Command', '(Get-Process PaneForge -ErrorAction SilentlyContinue).Count'], {
+  encoding: 'utf8'
+})
+const isRunning = Number((running.stdout ?? '0').trim()) > 0
+
 step('Done')
 console.log(`PaneForge is installed.
   exe        ${exe}
-  shortcuts  ${targets.join('\n             ')}
-
-Open it from the Desktop or the Start Menu. Press F1 inside the app for shortcuts.`)
+  shortcuts  ${all.join('\n             ')}
+${
+  isRunning
+    ? '\nAn older PaneForge is still running and keeps its own files. Close it and open it\nagain (taskbar, Desktop or Start Menu) to get this build.'
+    : '\nOpen it from the taskbar, Desktop or Start Menu. Press F1 inside the app for shortcuts.'
+}`)

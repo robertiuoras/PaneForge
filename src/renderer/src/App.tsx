@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { Config, Preset, Project, Session, StartSessionRequest } from '@shared/types'
 import AgentPicker from './components/AgentPicker'
+import AgentLogo, { AppLogo } from './components/AgentLogo'
+import CommandPalette, { type Command } from './components/CommandPalette'
+import { Segmented } from './components/Controls'
+import GitBadge from './components/GitBadge'
 import TerminalPane from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import SettingsDialog from './components/SettingsDialog'
@@ -19,6 +23,7 @@ export default function App(): JSX.Element {
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
   const [help, setHelp] = useState(false)
+  const [palette, setPalette] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const broadcastBox = useRef<HTMLInputElement>(null)
@@ -172,6 +177,13 @@ export default function App(): JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '')
       if (e.key === 'Escape') {
+        // An open dropdown owns Escape: closing the dialog under it would be a
+        // surprise. Same for the palette, which is always the topmost layer.
+        if (document.querySelector('.select-menu')) return
+        if (palette) {
+          setPalette(false)
+          return
+        }
         setPicking(false)
         setSettings(false)
         setHelp(false)
@@ -189,6 +201,9 @@ export default function App(): JSX.Element {
       if (k === 't') {
         e.preventDefault()
         setPicking(true)
+      } else if (k === 'k' || (k === 'p' && e.shiftKey)) {
+        e.preventDefault()
+        setPalette((p) => !p)
       } else if (k === 'w' && activeId && !typing) {
         e.preventDefault()
         close(activeId)
@@ -232,7 +247,128 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent])
+  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette])
+
+  /**
+   * Everything the app can do, as one searchable list. The sidebar only scales to a
+   * handful of sessions and the project list lives behind a dialog, so this is the
+   * fast path once more than a couple of things are open.
+   */
+  const commands = useMemo<Command[]>(() => {
+    const active = sessions.find((s) => s.id === activeId)
+    const logo = (id: string): JSX.Element => (
+      <AgentLogo id={id} spec={agents.find((a) => a.id === id)} size={15} />
+    )
+    const out: Command[] = []
+
+    for (const s of sessions)
+      out.push({
+        id: `focus:${s.id}`,
+        group: 'Open sessions',
+        title: s.title,
+        hint: s.cwd,
+        icon: logo(s.agent),
+        run: () => setActiveId(s.id)
+      })
+
+    for (const p of config?.presets ?? [])
+      out.push({
+        id: `preset:${p.id}`,
+        group: 'Workspaces',
+        title: `Launch ${p.name}`,
+        hint: `${p.items.length} projects`,
+        run: () => launchPreset(p)
+      })
+
+    const dflt = config?.defaultAgent ?? 'claude'
+    for (const p of projects.slice(0, 40))
+      out.push({
+        id: `start:${p.path}`,
+        group: 'Start a project',
+        title: p.name,
+        hint: p.path,
+        icon: logo(dflt),
+        run: () =>
+          start([
+            { cwd: p.path, title: p.name, agent: dflt, model: config?.defaultModels[dflt] || undefined }
+          ])
+      })
+
+    if (active)
+      for (const a of agents.filter((x) => x.available && x.id !== active.agent))
+        out.push({
+          id: `swap:${a.id}`,
+          group: 'This pane',
+          title: `Run ${a.label} here`,
+          hint: active.title,
+          icon: logo(a.id),
+          run: () => switchAgent(active, a.id, config?.defaultModels[a.id] ?? '')
+        })
+
+    out.push(
+      { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
+      {
+        id: 'grid',
+        group: 'Actions',
+        title: grid ? 'Show one pane at a time' : 'Show every pane in a grid',
+        keys: 'Ctrl G',
+        run: () => patchConfig({ grid: !grid })
+      },
+      {
+        id: 'broadcast',
+        group: 'Actions',
+        title: 'Send a line to every session',
+        keys: 'Ctrl B',
+        run: () => broadcastBox.current?.focus()
+      },
+      { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
+      { id: 'keys', group: 'Actions', title: 'Keyboard shortcuts', keys: 'F1', run: () => setHelp(true) }
+    )
+
+    if (active)
+      out.push(
+        {
+          id: 'restart',
+          group: 'This pane',
+          title: `Restart ${active.title}`,
+          keys: 'Ctrl Shift R',
+          run: () => api.restartSession(active.id)
+        },
+        {
+          id: 'editor',
+          group: 'This pane',
+          title: 'Open folder in editor',
+          hint: active.cwd,
+          run: () => api.openInEditor(active.cwd).then((err) => err && flash(err))
+        },
+        { id: 'reveal', group: 'This pane', title: 'Open folder in Explorer', run: () => api.reveal(active.cwd) },
+        { id: 'close', group: 'This pane', title: `Close ${active.title}`, keys: 'Ctrl W', run: () => close(active.id) }
+      )
+
+    if (sessions.length)
+      out.push({
+        id: 'save-ws',
+        group: 'Actions',
+        title: 'Save running sessions as a workspace',
+        run: saveRunningAsWorkspace
+      })
+
+    return out
+  }, [
+    sessions,
+    activeId,
+    agents,
+    projects,
+    config,
+    grid,
+    patchConfig,
+    launchPreset,
+    start,
+    switchAgent,
+    close,
+    flash,
+    saveRunningAsWorkspace
+  ])
 
   const visibleIds = useMemo(
     () => new Set(grid ? sessions.map((s) => s.id) : sessions.filter((s) => s.id === activeId).map((s) => s.id)),
@@ -255,7 +391,10 @@ export default function App(): JSX.Element {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <span>PaneForge</span>
+          <span className="brand-name">
+            <AppLogo size={17} />
+            PaneForge
+          </span>
           <span className="icons">
             <button className="icon" title="Settings (Ctrl ,)" onClick={() => setSettings(true)}>
               ⚙
@@ -267,7 +406,14 @@ export default function App(): JSX.Element {
         </div>
 
         <button className="primary" onClick={() => setPicking(true)}>
-          + New session <span className="kbd">Ctrl T</span>
+          <span className="plus">+</span> New session <span className="kbd">Ctrl T</span>
+        </button>
+        <button className="ghost search-btn" onClick={() => setPalette(true)}>
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          Search sessions and actions <span className="kbd">Ctrl K</span>
         </button>
 
         {config && config.presets.length > 0 && (
@@ -331,13 +477,10 @@ export default function App(): JSX.Element {
                   </div>
                 )}
                 <div className="row-sub">
-                  <span
-                    className="agent-dot"
-                    style={{ background: agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99' }}
-                  />
+                  <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
                   {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
-                  {s.model ? ` · ${s.model}` : ''}
-                  {s.status === 'exited' ? ` - exited ${s.exitCode ?? ''}` : ''}
+                  {s.model ? <span className="chip">{s.model}</span> : null}
+                  {s.status === 'exited' ? <span className="chip dead">exited {s.exitCode ?? ''}</span> : null}
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -375,12 +518,16 @@ export default function App(): JSX.Element {
         />
 
         <div className="foot">
-          <label className="grid-toggle">
-            <input type="checkbox" checked={grid} onChange={(e) => patchConfig({ grid: e.target.checked })} />
-            Grid view
-          </label>
+          <Segmented
+            value={grid ? 'grid' : 'single'}
+            onChange={(v) => patchConfig({ grid: v === 'grid' })}
+            options={[
+              { value: 'single', label: 'Focus', title: 'One pane at a time (Ctrl G)' },
+              { value: 'grid', label: 'Grid', title: 'Every pane at once (Ctrl G)' }
+            ]}
+          />
           <button className="ghost small" onClick={saveRunningAsWorkspace} disabled={!sessions.length}>
-            Save as workspace
+            Save workspace
           </button>
         </div>
       </aside>
@@ -397,13 +544,18 @@ export default function App(): JSX.Element {
             className={
               'pane' + (visibleIds.has(s.id) ? '' : ' hidden') + (grid && s.id === activeId ? ' focused' : '')
             }
+            // The agent's brand colour drives this pane's accent, so a grid of four
+            // panes is readable without checking the labels.
+            style={{ '--agent': agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99' } as React.CSSProperties}
             onMouseDown={() => setActiveId(s.id)}
           >
             <div className="pane-title">
               <StatusDot status={s.status} />
+              <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>
                 {s.title}
               </span>
+              <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
                 <AgentPicker
@@ -440,9 +592,30 @@ export default function App(): JSX.Element {
         ))}
         {sessions.length === 0 && (
           <div className="placeholder">
+            <div className="ph-logo">
+              <AppLogo size={44} />
+            </div>
             <h1>PaneForge</h1>
             <p>Start only the sessions you need. Ctrl T, tick a few projects, Enter.</p>
-            <p className="hint">F1 for every shortcut.</p>
+            <div className="ph-agents">
+              {agents
+                .filter((a) => a.available && a.id !== 'shell')
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    className="ph-agent"
+                    title={`New session with ${a.label}`}
+                    onClick={() => {
+                      patchConfig({ defaultAgent: a.id })
+                      setPicking(true)
+                    }}
+                  >
+                    <AgentLogo id={a.id} spec={a} size={26} tile />
+                    <span>{a.label}</span>
+                  </button>
+                ))}
+            </div>
+            <p className="hint">Ctrl K to search everything. F1 for every shortcut.</p>
           </div>
         )}
       </main>
@@ -472,6 +645,7 @@ export default function App(): JSX.Element {
         />
       )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
+      {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
     </div>
   )
 }

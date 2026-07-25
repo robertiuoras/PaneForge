@@ -2,6 +2,8 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { Agent, Project, StartSessionRequest } from '@shared/types'
 import AgentPicker from './AgentPicker'
+import AgentLogo from './AgentLogo'
+import { Checkbox } from './Controls'
 
 interface Props {
   projects: Project[]
@@ -123,15 +125,8 @@ export default function NewSessionDialog({
                 go(p)
               }}
             >
-              <span
-                className="tick"
-                data-tick="1"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  toggle(p.path)
-                }}
-              >
-                {ticked.includes(p.path) ? '[x]' : '[ ]'}
+              <span className="tick" data-tick="1" onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={ticked.includes(p.path)} onChange={() => toggle(p.path)} />
               </span>
               <span className="proj-name">{p.name}</span>
               {!p.isGit && <span className="tag">no git</span>}
@@ -150,15 +145,13 @@ export default function NewSessionDialog({
         />
 
         <div className="dialog-row">
-          <label title={canResume ? '' : `${agents.find((a) => a.id === agent)?.label ?? agent} has no resume flag`}>
-            <input
-              type="checkbox"
-              checked={resume && canResume}
-              disabled={!canResume}
-              onChange={(e) => setResume(e.target.checked)}
-            />
-            Resume last session
-          </label>
+          <Checkbox
+            checked={resume && canResume}
+            disabled={!canResume}
+            onChange={setResume}
+            label="Resume last session"
+            title={canResume ? '' : `${agents.find((a) => a.id === agent)?.label ?? agent} has no resume flag`}
+          />
           <AgentPicker
             agents={agents}
             agent={agent}
@@ -173,6 +166,7 @@ export default function NewSessionDialog({
             Save as workspace
           </button>
           <button className="primary" onClick={() => go()}>
+            <AgentLogo id={agent} spec={agents.find((a) => a.id === agent)} size={14} />
             Start {ticked.length > 1 ? `${ticked.length} sessions` : ''}
           </button>
         </div>
