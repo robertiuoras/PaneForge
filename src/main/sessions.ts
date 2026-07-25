@@ -324,7 +324,8 @@ export class SessionManager extends EventEmitter {
  */
 function isTyping(data: string): boolean {
   if (!data || data.startsWith('\x1b')) return false
-  return data === '\r' || data === '\n' || /[\x20-\x7e -￿]/.test(data)
+  // Anything that is not a control byte counts, so accented and CJK input works.
+  return data === '\r' || data === '\n' || /[^\x00-\x1f\x7f]/.test(data)
 }
 
 function agentEnv(): Record<string, string> {

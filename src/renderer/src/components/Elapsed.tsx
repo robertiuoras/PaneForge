@@ -9,19 +9,32 @@ import { useEffect, useState } from 'react'
 const subs = new Set<(t: number) => void>()
 let timer: ReturnType<typeof setInterval> | null = null
 
+function tick(): void {
+  const now = Date.now()
+  for (const s of subs) s(now)
+}
+
+// Chromium throttles timers in an occluded window to about one a minute, so the
+// readout can be a minute stale the moment you look at it again. Catching focus
+// and visibility changes makes it correct as soon as it is on screen.
+function wake(): void {
+  if (subs.size) tick()
+}
+
 function subscribe(fn: (t: number) => void): () => void {
   subs.add(fn)
   if (!timer) {
-    timer = setInterval(() => {
-      const now = Date.now()
-      for (const s of subs) s(now)
-    }, 1000)
+    timer = setInterval(tick, 1000)
+    window.addEventListener('focus', wake)
+    document.addEventListener('visibilitychange', wake)
   }
   return () => {
     subs.delete(fn)
     if (subs.size === 0 && timer) {
       clearInterval(timer)
       timer = null
+      window.removeEventListener('focus', wake)
+      document.removeEventListener('visibilitychange', wake)
     }
   }
 }
