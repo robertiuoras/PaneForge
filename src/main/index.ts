@@ -417,7 +417,9 @@ ipcMain.handle('update:check', () => checkForUpdates())
 ipcMain.on('update:install', () => {
   // Remembered before the panes die, replayed by restoreSessions() on the next
   // launch: an update should feel like the app blinked, not like it wiped the desk.
-  setConfig({ restoreSessions: manager.snapshot() })
+  // Unless the user turned that off - the app updates itself several times a day, so
+  // an always-on restore makes a set of panes impossible to be rid of by restarting.
+  setConfig({ restoreSessions: getConfig().restoreAfterUpdate ? manager.snapshot() : [] })
   history.flush()
   manager.killAll()
   installUpdate()

@@ -96,18 +96,25 @@ export class SessionManager extends EventEmitter {
    * What it would take to open these panes again - used to carry the workspace
    * across an update restart. The original launch prompt is dropped on purpose:
    * replaying it would re-run work the agent already did before the restart.
+   *
+   * Exited panes are left out. They stay in the list so an ended run can be revived
+   * in place, but restoring one would silently start a fresh agent in a pane the
+   * user had already finished with - which is how a workspace grows a tab per
+   * update until the window is full of CLIs nobody asked for.
    */
   snapshot(): StartSessionRequest[] {
-    return [...this.sessions.values()].map((s) => ({
-      cwd: s.meta.cwd,
-      title: s.meta.title,
-      agent: s.meta.agent,
-      model: s.meta.model,
-      role: s.meta.role,
-      // Already the lane's own folder: reopening must land back in it, not be
-      // treated as a fresh clash and pushed one lane further along.
-      lane: s.meta.lane
-    }))
+    return [...this.sessions.values()]
+      .filter((s) => s.meta.status !== 'exited')
+      .map((s) => ({
+        cwd: s.meta.cwd,
+        title: s.meta.title,
+        agent: s.meta.agent,
+        model: s.meta.model,
+        role: s.meta.role,
+        // Already the lane's own folder: reopening must land back in it, not be
+        // treated as a fresh clash and pushed one lane further along.
+        lane: s.meta.lane
+      }))
   }
 
   start(req: StartSessionRequest): Session {

@@ -477,6 +477,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     label="Check for updates in the background"
                     hint="Downloads quietly, then asks before restarting."
                   />
+                  <Switch
+                    checked={config.restoreAfterUpdate}
+                    onChange={(v) => onChange({ restoreAfterUpdate: v })}
+                    label="Reopen my panes after an update restart"
+                    hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
+                  />
                 </div>
               </div>
 

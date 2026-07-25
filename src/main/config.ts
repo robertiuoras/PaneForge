@@ -70,6 +70,7 @@ function defaults(): Config {
     launchAtLogin: false,
     adminMode: false,
     autoUpdate: true,
+    restoreAfterUpdate: true,
     saveHistory: true,
     historyDays: 30,
     autoLane: true,
