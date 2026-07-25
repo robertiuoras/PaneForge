@@ -812,6 +812,8 @@ export default function App(): JSX.Element {
               visible={visibleIds.has(s.id)}
               fontSize={config?.fontSize ?? 13}
               copyOnSelect={config?.copyOnSelect ?? true}
+              mouseSelect={config?.mouseSelect ?? true}
+              autoFixUi={config?.autoFixUi ?? true}
             />
           </div>
         ))}
@@ -902,6 +904,17 @@ export default function App(): JSX.Element {
             start([{ cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true }])
           }}
           onClose={() => setHistory(false)}
+        />
+      )}
+      {ask && (
+        <ConfirmDialog
+          title={ask.title}
+          body={ask.body}
+          confirmLabel={ask.confirmLabel}
+          danger={ask.danger}
+          input={ask.input}
+          onConfirm={ask.onConfirm}
+          onCancel={() => setAsk(null)}
         />
       )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
