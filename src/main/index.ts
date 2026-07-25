@@ -18,7 +18,7 @@ import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
-import { initProfile, profileName, titleSuffix } from './profile'
+import { initProfile, profileName, startMode, titleSuffix } from './profile'
 import { refreshPath, runCommand } from './install'
 import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
 import * as history from './history'
@@ -96,7 +96,16 @@ function createWindow(): void {
   }
 
   if (cfg.window.maximized) win.maximize()
-  win.on('ready-to-show', () => win?.show())
+  win.on('ready-to-show', () => {
+    const mode = startMode()
+    if (mode === 'normal') return win?.show()
+    // showInactive draws the window without pulling focus off the app you are typing
+    // in. minimize() after it, rather than instead of it, because minimizing a window
+    // that has never been shown leaves it in a state Windows will not restore from
+    // the taskbar.
+    win?.showInactive()
+    if (mode === 'minimized') win?.minimize()
+  })
   win.on('focus', () => win?.flashFrame(false))
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later

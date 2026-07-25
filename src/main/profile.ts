@@ -60,6 +60,21 @@ export function profileName(): string {
   return current
 }
 
+/**
+ * How the first window should appear.
+ *
+ * A test copy is started by an agent working in the live app, so it must never take
+ * the keyboard away from whatever is being typed there: a named profile shows its
+ * window without activating it, and `--minimized` keeps it off the screen entirely
+ * until it is clicked. The installed app still opens normally - you launched it.
+ */
+export function startMode(): 'normal' | 'inactive' | 'minimized' {
+  const flag = process.argv.includes('--minimized') || process.env.PANEFORGE_START === 'minimized'
+  if (flag) return 'minimized'
+  if (process.env.PANEFORGE_START === 'normal') return 'normal'
+  return current ? 'inactive' : 'normal'
+}
+
 /** " - dev" for window titles, '' for the normal app. */
 export function titleSuffix(): string {
   return current ? ` - ${current}` : ''

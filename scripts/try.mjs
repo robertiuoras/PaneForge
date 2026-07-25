@@ -1,6 +1,11 @@
 // Open the working copy as a SECOND PaneForge, beside the one you are sitting in:
-//   npm run try            build, then launch it as the `dev` profile
-//   npm run try -- --keep  skip the build and just launch what is already in out/
+//   npm run try                 build, then launch it as the `dev` profile
+//   npm run try -- --keep       skip the build and just launch what is already in out/
+//   npm run try -- --minimized  open it minimized - nothing appears until you click it
+//
+// The window never takes focus either way. This is normally run by an agent working in
+// the live app, and a test window stealing the keyboard mid-sentence is worse than no
+// test window at all.
 //
 // Why this exists: PaneForge is developed from a Claude session running inside
 // PaneForge. Testing a change used to mean closing the app that hosts the agent doing
@@ -21,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
+const minimized = args.includes('--minimized') || args.includes('-m')
 const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 'dev').trim()
 
 const electron = join(
@@ -54,7 +60,7 @@ console.log(`== Launching the ${profile} copy`)
 // the app starts, loads, calls win.show(), and stays invisible forever. Verified:
 // the window existed with the right title and IsWindowVisible was false. electron.exe
 // is a GUI-subsystem binary, so there is no console to hide anyway.
-spawn(electron, ['.'], {
+spawn(electron, ['.', ...(minimized ? ['--minimized'] : [])], {
   cwd: root,
   detached: true,
   stdio: 'ignore',
@@ -62,5 +68,10 @@ spawn(electron, ['.'], {
 }).unref()
 
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.
+${
+  minimized
+    ? 'It stays minimized - click it in the taskbar when you want it.'
+    : 'It will not take focus: keep typing where you are, it just appears behind.'
+}
 Your live app is untouched: separate settings, separate workspaces, separate panes.
 Close the test window when you are done - nothing to clean up.`)
