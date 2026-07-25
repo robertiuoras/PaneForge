@@ -120,10 +120,38 @@ export default function TerminalPane({
     // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
     // or letting go of a scrollbar drag above the last line. Typing resumes it, which is
     // what xterm's own scrollOnUserInput already implies.
-    const atBottom = (): boolean => t.buffer.active.baseY - t.buffer.active.viewportY <= 0
+    //
+    // The slack matters. xterm grows its scroll area on the next render, so during a live
+    // turn the bottom you drag the thumb to is one or two lines short of the bottom that
+    // exists by the time you let go - land there and the pane silently stops following, and
+    // reaching the real last line means waiting for the view to settle and dragging again.
+    // Anything inside two lines of the tail counts as "meant the bottom" and snaps to it.
+    const TAIL_SLACK = 2
+    const distanceFromTail = (): number => t.buffer.active.baseY - t.buffer.active.viewportY
+    const atBottom = (): boolean => distanceFromTail() <= 0
+    const nearBottom = (): boolean => distanceFromTail() <= TAIL_SLACK
+
+    // Single place that decides "is this pane following, and does the pill show". Used
+    // wherever a gesture has *ended*, so it may snap the remaining line or two.
+    const settleFollow = (): void => {
+      const follow = nearBottom()
+      pinned.current = follow
+      if (follow && !atBottom()) t.scrollToBottom()
+      setScrolledUp(!follow)
+    }
+    // The view's real position is the single source of truth for following, so a drag, a
+    // wheel notch, a keyboard scroll and a write all end up judged the same way. No snap
+    // here: this fires *during* a drag, and yanking the view out from under the mouse is
+    // worse than a stale pill for one frame.
+    t.onScroll(() => {
+      const follow = nearBottom()
+      pinned.current = follow
+      setScrolledUp(!follow)
+    })
 
     t.onData((d) => {
       pinned.current = true
+      setScrolledUp(false)
       api.write(sessionId, d)
     })
 
@@ -131,8 +159,6 @@ export default function TerminalPane({
       const s = t.getSelection()
       if (s) lastSelection.current = s
     })
-
-    t.onScroll(() => setScrolledUp(!atBottom()))
 
     // The last text this pane put on the clipboard from a *remembered* selection. Copying
     // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
@@ -249,14 +275,19 @@ export default function TerminalPane({
         const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / 40
         t.scrollLines(Math.trunc(lines) || (e.deltaY < 0 ? -1 : 1))
       }
-      if (e.deltaY < 0) pinned.current = false
-      else if (atBottom()) pinned.current = true
-      setScrolledUp(!atBottom())
+      // Only the immediate read - the wheel fires before the viewport moves, and onScroll
+      // settles the final answer once it has. Wheeling down is left to onScroll, which
+      // snaps nothing but does pick the follow back up at the tail.
+      if (e.deltaY < 0) {
+        pinned.current = false
+        setScrolledUp(true)
+      }
     }
     const onMouseUp = (): void => {
       // Covers a scrollbar drag and a selection drag alike: wherever the view ended up is
-      // now the intent.
-      pinned.current = atBottom()
+      // now the intent - and a drag that got within a line or two of the tail meant the
+      // tail, so it snaps the rest of the way instead of stopping just short.
+      settleFollow()
       if (!copyOnSelectRef.current) return
       const sel = t.getSelection()
       if (sel.trim().length < 2) return
@@ -470,6 +501,9 @@ export default function TerminalPane({
         <button
           className="jump-newest"
           title="Back to the newest output"
+          // The terminal must not lose focus mid-turn, and a mousedown inside the pane would
+          // also start a selection drag.
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             pinned.current = true
             term.current?.scrollToBottom()
