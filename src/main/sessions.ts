@@ -28,8 +28,18 @@ const IDLE_AFTER_MS = 4000
  * slow API round trip - and every one of those gaps used to raise attention and
  * chime, so one prompt could ring a dozen times. End of turn is a much longer
  * silence than the idle dot needs.
+ *
+ * This is the backstop, used when nothing on screen ever told us the turn ended.
  */
 const ATTENTION_AFTER_MS = 25_000
+/**
+ * The same wait, for a pane whose own footer told us the turn is over ("esc to
+ * interrupt" disappeared). That is the honest end-of-turn signal, so waiting the
+ * full backstop after it just makes the nudge feel late. It is still a wait and
+ * not instant because the footer can blink off for a frame between two tool calls;
+ * any blink back on re-arms the busy deadline and blocks the raise entirely.
+ */
+const ATTENTION_AFTER_FOOTER_MS = 12_000
 /**
  * Output we caused ourselves, not work the agent is doing. Opening a pane refits
  * the terminal, resizes the pty and focuses it, and a full-screen CLI answers all
@@ -71,6 +81,24 @@ interface Live {
   ackedAt: number
   /** epoch ms until which incoming output is treated as a repaint we triggered */
   repaintUntil: number
+  /**
+   * Has a real turn happened since the user last looked at this pane?
+   *
+   * This is what stops the chime firing at random. Attention used to hang off
+   * "engaged plus 25 seconds of quiet", and `engaged` is sticky for the life of the
+   * session, so ANY stray byte a CLI printed on its own - a rotating tip, a context
+   * meter, a redraw after a window event - restarted the cycle and rang the bell
+   * about a pane that had been sitting at an empty prompt for an hour. A turn is
+   * something that was actually started: a submitted prompt, or the agent's own
+   * footer saying it is running. Nothing else can raise your hand.
+   */
+  turnPending: boolean
+  /**
+   * When the pane's footer last stopped saying "running". Zero when the footer has
+   * never been readable for this session (an agent whose UI we cannot parse), which
+   * is what selects the slower backstop wait instead.
+   */
+  footerEndedAt: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -147,7 +175,9 @@ export class SessionManager extends EventEmitter {
       rows: 30,
       busyUntil: 0,
       ackedAt: 0,
-      repaintUntil: 0
+      repaintUntil: 0,
+      turnPending: false,
+      footerEndedAt: 0
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -216,6 +246,8 @@ export class SessionManager extends EventEmitter {
     live.meta.engaged = Boolean(live.req.prompt)
     live.busyUntil = 0
     live.ackedAt = 0
+    live.turnPending = false
+    live.footerEndedAt = 0
     live.meta.runSince = undefined
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
@@ -284,6 +316,11 @@ export class SessionManager extends EventEmitter {
    * both report the same turn, and whichever lands first owns the start time.
    */
   private beginRun(live: Live): void {
+    // Set even when a turn is already counting: this is the flag that says "there is
+    // something here worth telling you about when it goes quiet", and a second prompt
+    // sent into a running turn is still work you are waiting on.
+    live.turnPending = true
+    live.footerEndedAt = 0
     if (live.meta.runSince) return
     live.meta.runSince = Date.now()
     live.meta.lastRunMs = undefined
@@ -357,21 +394,31 @@ export class SessionManager extends EventEmitter {
   setBusyOnScreen(id: string, busy: boolean): void {
     const s = this.sessions.get(id)
     if (!s) return
-    // Long deadline rather than a plain flag: the pane re-states this whenever output
-    // arrives, so it stays honest, and if the pane goes away entirely the session is
-    // not muted forever.
-    s.busyUntil = busy ? Date.now() + 600_000 : 0
+    const now = Date.now()
+    // Deadline rather than a flag, and a short one: the pane re-states a true reading
+    // every two minutes while the agent is running, so three minutes of silence from
+    // the pane means the pane is gone, not that the turn is still going. The old ten
+    // minute deadline was longer than the heartbeat by so much that a pane torn down
+    // mid-turn left its session frozen as "working" for the rest of the ten minutes.
+    s.busyUntil = busy ? now + 180_000 : 0
     // The footer is the honest turn boundary, so it drives the run clock too: it
     // starts a turn the app never saw typed (a queued prompt, /clear, a resumed
     // session) and ends one the instant the agent stops saying it is running.
     if (busy) {
-      if (!s.meta.runSince) {
-        this.beginRun(s)
-        this.emitSessions()
-      }
-    } else if (this.endRun(s)) {
-      this.emitSessions()
+      const wasRunning = Boolean(s.meta.runSince)
+      this.beginRun(s)
+      // A silent tool call produces no output for minutes, and the idle sweep used to
+      // grey the dot out in the middle of it - the pane read as finished while the
+      // agent was demonstrably still working. On-screen busy outranks the quiet clock.
+      const wasWorking = s.meta.status === 'working'
+      if (s.meta.status !== 'exited') s.meta.status = 'working'
+      if (!wasRunning || !wasWorking) this.emitSessions()
+      return
     }
+    // Remember when the footer went quiet, so the nudge can come sooner than the
+    // blind backstop for the agents whose UI we can actually read.
+    if (!s.footerEndedAt) s.footerEndedAt = now
+    if (this.endRun(s)) this.emitSessions()
   }
 
   clearAttention(id: string): void {
@@ -380,7 +427,14 @@ export class SessionManager extends EventEmitter {
     // Recorded even when nothing was raised: the pane you are looking at acknowledges
     // itself continuously, and this is what stops the sweep raising it again a second
     // later off the same silence.
-    s.ackedAt = Date.now()
+    const now = Date.now()
+    s.ackedAt = now
+    // Watching a pane that has already finished spends the turn: you have seen what it
+    // did, so the next quiet stretch is not a fresh reason to ring. Deliberately NOT
+    // done while the turn is still running - looking at a pane for a second on the way
+    // past must not cancel the nudge for work that has not finished yet, which is the
+    // whole point of the feature ("ask it, go and do something else").
+    if (!s.meta.runSince && s.busyUntil < now) s.turnPending = false
     if (!s.meta.attention) return
     s.meta.attention = false
     this.emitSessions()
@@ -470,13 +524,21 @@ export class SessionManager extends EventEmitter {
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      // Does the pane's own footer still say the agent is running? This outranks the
+      // quiet clock everywhere below: silence during a five minute tool call is not
+      // the same thing as silence at an empty prompt, and treating them alike is what
+      // made the dot go grey mid-turn and the bell ring over a running agent.
+      const busyOnScreen = live.busyUntil > now
       // Backstop for the run clock: an agent whose footer this app cannot read (or
       // a pane that was torn down mid-turn) would otherwise count forever. Quiet,
       // and nothing on screen claiming to be busy, is the end of the turn.
-      if (meta.runSince && live.busyUntil < now && quiet > IDLE_AFTER_MS) {
+      if (meta.runSince && !busyOnScreen && quiet > IDLE_AFTER_MS) {
         if (this.endRun(live)) changed = true
       }
-      if (meta.status === 'working' && quiet > IDLE_AFTER_MS) {
+      if (busyOnScreen && meta.status !== 'working' && meta.status !== 'exited') {
+        meta.status = 'working'
+        changed = true
+      } else if (meta.status === 'working' && !busyOnScreen && quiet > IDLE_AFTER_MS) {
         meta.status = 'idle'
         changed = true
       } else if (meta.status === 'starting' && now - meta.createdAt > IDLE_AFTER_MS * 3) {
@@ -492,15 +554,28 @@ export class SessionManager extends EventEmitter {
       // still reads "esc to interrupt" is mid-turn no matter how long it has been
       // silent, and that silence - a long tool call, a slow API - is exactly what
       // used to chime early.
+      //
+      // turnPending is the gate that stops the bell going off at random: without it
+      // any byte a CLI printed to itself was enough to restart the quiet clock on a
+      // session that had been idle for hours, and the app would announce it as
+      // "waiting for you". Nothing raises a hand now unless a turn was really run.
+      // The run clock must also have stopped, so "waiting" can never contradict the
+      // ticking timer next to it in the same row.
+      const needQuiet = live.footerEndedAt ? ATTENTION_AFTER_FOOTER_MS : ATTENTION_AFTER_MS
       if (
         meta.status === 'idle' &&
+        live.turnPending &&
+        !meta.runSince &&
         meta.engaged &&
         !meta.attention &&
-        live.busyUntil < now &&
+        !busyOnScreen &&
         meta.lastOutput > meta.createdAt &&
         meta.lastOutput > live.ackedAt &&
-        quiet > ATTENTION_AFTER_MS
+        quiet > needQuiet
       ) {
+        // One raise per turn. Anything the agent prints afterwards is the same
+        // finished turn, not a new one, so it cannot ring twice.
+        live.turnPending = false
         meta.attention = true
         this.emit('attention', meta)
         changed = true

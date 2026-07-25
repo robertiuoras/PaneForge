@@ -61,3 +61,14 @@ still exists for a release you want right now, but nothing should need it.
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
+
+## Gotchas that look like mistakes
+
+`package.json` `description` is the bare word "PaneForge" on purpose. electron-builder
+writes it into the exe's FileDescription, which is the name Windows Task Manager shows,
+and a tagline there read as a second app called "run every coding agent you own in one
+window". The tagline lives in the README instead.
+
+`git status` for the pane badges must stay async (`execFile`, not `spawnSync`). Sync
+spawns block the main process, which owns the window message loop, and Windows answers a
+stalled message loop by swapping the pointer for the busy cursor.

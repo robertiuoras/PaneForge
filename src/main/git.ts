@@ -5,34 +5,57 @@
 // One `git status` per folder answers all of it, and results are cached briefly so a
 // grid of panes polling at the same time costs one process, not one each.
 
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import type { GitInfo } from '../shared/types'
 
-const TTL = 2500
+const TTL = 6000
 const cache = new Map<string, { at: number; info: GitInfo | null }>()
+// One `git status` in flight per folder. Without this a grid of panes whose polls
+// drift into the same tick each start their own process against the same repo.
+const inFlight = new Map<string, Promise<GitInfo | null>>()
 
-export function gitInfo(cwd: string): GitInfo | null {
+export async function gitInfo(cwd: string): Promise<GitInfo | null> {
   const hit = cache.get(cwd)
   const now = Date.now()
   if (hit && now - hit.at < TTL) return hit.info
 
-  const info = read(cwd)
-  cache.set(cwd, { at: now, info })
-  return info
+  const running = inFlight.get(cwd)
+  if (running) return running
+
+  const job = read(cwd)
+    .then((info) => {
+      cache.set(cwd, { at: Date.now(), info })
+      return info
+    })
+    .finally(() => inFlight.delete(cwd))
+  inFlight.set(cwd, job)
+  return job
 }
 
-function read(cwd: string): GitInfo | null {
+/**
+ * Deliberately async.
+ *
+ * This used to be spawnSync, which blocks the Electron MAIN process - the process that
+ * owns the window's message loop. A status on a large working tree takes anywhere from
+ * 30ms to several hundred, it ran once every few seconds for every visible pane, and
+ * Windows answers a message loop that stops answering by swapping the pointer for the
+ * busy cursor. That is the "hourglass sticks near the edge of the pane until I move the
+ * mouse" the app was reported for. Nothing here is on a critical path, so it waits.
+ */
+async function read(cwd: string): Promise<GitInfo | null> {
   let out: string
   try {
-    const r = spawnSync('git', ['status', '--porcelain=v1', '--branch', '--untracked-files=all'], {
-      cwd,
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 4000
+    out = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'git',
+        ['status', '--porcelain=v1', '--branch', '--untracked-files=all'],
+        { cwd, encoding: 'utf8', windowsHide: true, timeout: 4000, maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout))
+      )
     })
-    if (r.status !== 0 || !r.stdout) return null
-    out = r.stdout
+    if (!out) return null
   } catch {
+    // Not a repo, git missing, or a status slow enough to hit the timeout.
     return null
   }
 

@@ -11,6 +11,10 @@ const api = window.api
 export default function UpdateToast(): JSX.Element | null {
   const [state, setState] = useState<UpdateState | null>(null)
   const [dismissed, setDismissed] = useState<string>('')
+  // The click has to say something immediately. Main hides the window as its first act
+  // now, but the frame between the click and that still belonged to a card that looked
+  // like it had ignored the press, which is what "it lags and then closes" was.
+  const [restarting, setRestarting] = useState(false)
 
   useEffect(() => {
     api.updateState().then(setState)
@@ -36,12 +40,25 @@ export default function UpdateToast(): JSX.Element | null {
         {state.notes && <pre className="ut-notes">{state.notes}</pre>}
       </div>
       <div className="ut-actions">
-        <button className="ghost small" onClick={() => setDismissed(state.version as string)}>
+        <button
+          className="ghost small"
+          disabled={restarting}
+          onClick={() => setDismissed(state.version as string)}
+        >
           Later
         </button>
         {ready ? (
-          <button className="primary small" onClick={() => api.installUpdate()}>
-            Restart now
+          <button
+            className="primary small"
+            disabled={restarting}
+            onClick={() => {
+              setRestarting(true)
+              // One frame of paint before main starts tearing panes down, so the button
+              // is visibly in its "working" state rather than frozen mid-press.
+              requestAnimationFrame(() => api.installUpdate())
+            }}
+          >
+            {restarting ? 'Restarting…' : 'Restart now'}
           </button>
         ) : (
           <button className="primary small" onClick={() => state.url && api.openExternal(state.url)}>

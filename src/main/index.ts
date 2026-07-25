@@ -415,6 +415,19 @@ ipcMain.handle('agents:locate', async (_e, id: string) => {
 ipcMain.handle('update:state', () => getUpdateState())
 ipcMain.handle('update:check', () => checkForUpdates())
 ipcMain.on('update:install', () => {
+  // Get off the screen FIRST. Everything below is unavoidable work - snapshotting the
+  // workspace, flushing transcripts, killing N ptys one at a time - and on Windows it
+  // adds up to a second or two during which the window sits there ignoring the mouse.
+  // That reads as "Restart now hung, then crashed". Hiding is instant, so the app now
+  // vanishes on the click and does the teardown with nothing left to look at.
+  if (alive()) {
+    try {
+      win!.setSkipTaskbar(true)
+      win!.hide()
+    } catch {
+      /* window already going away */
+    }
+  }
   // Remembered before the panes die, replayed by restoreSessions() on the next
   // launch: an update should feel like the app blinked, not like it wiped the desk.
   // Unless the user turned that off - the app updates itself several times a day, so

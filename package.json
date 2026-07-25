@@ -2,7 +2,7 @@
   "name": "claude-orchestrator",
   "version": "0.3.12",
   "private": true,
-  "description": "PaneForge - run every coding agent you own in one window",
+  "description": "PaneForge",
   "author": "Robert",
   "main": "./out/main/index.js",
   "scripts": {

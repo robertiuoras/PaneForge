@@ -1,7 +1,11 @@
+import { useCallback, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import { modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
+import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import AgentLogo from './AgentLogo'
+import InstallConsole from './InstallConsole'
 import Select, { type SelectOption } from './Select'
+
+const api = window.api
 
 interface Props {
   agents: AgentInfo[]
@@ -27,7 +31,7 @@ export default function AgentPicker({ agents, agent, model, onChange, small }: P
   const agentOptions: SelectOption[] = agents.map((a) => ({
     value: a.id,
     label: a.label,
-    hint: a.available ? a.note : a.install || a.installWin || a.installMac ? 'not installed - one click in Settings' : 'not on PATH',
+    hint: a.available ? a.note : installCommand(a) ? 'not installed - Install it below' : 'not on PATH',
     disabled: !a.available,
     // Free CLIs get their own group: the point of the group is to make "I have no
     // subscription today" a one-glance answer rather than a research project.
@@ -72,5 +76,84 @@ export default function AgentPicker({ agents, agent, model, onChange, small }: P
         />
       )}
     </span>
+  )
+}
+
+interface BarProps {
+  agents: AgentInfo[]
+  /**
+   * Re-probe the agent list. The owning dialog holds the copy this bar and the picker
+   * both read, so the freshly installed CLI becomes selectable without a reopen.
+   */
+  onInstalled?: () => void
+}
+
+/**
+ * A row of "Install" pills for the CLIs this machine is missing, so a missing agent
+ * can be fixed from the dialog that just told you it was missing instead of sending
+ * you to Settings. Only agents PaneForge knows how to install get a pill: a button
+ * that cannot work is worse than no button, and the picker still shows the rest.
+ */
+export function AgentInstallBar({ agents, onInstalled }: BarProps): JSX.Element | null {
+  // Which log is on screen, and whether that install is still running. They are
+  // separate because a failed install must leave its output up to be read.
+  const [log, setLog] = useState('')
+  const [running, setRunning] = useState('')
+  const [error, setError] = useState('')
+  // Bumped per click so retrying the SAME agent remounts the console and actually
+  // runs the install again, instead of re-showing the dead log.
+  const [attempt, setAttempt] = useState(0)
+
+  const missing = agents.filter((a) => !a.available && installCommand(a))
+
+  const done = useCallback(
+    (ok: boolean) => {
+      setRunning('')
+      if (!ok) return setError('That install did not finish - the log above says why.')
+      setLog('')
+      setError('')
+      onInstalled?.()
+    },
+    [onInstalled]
+  )
+
+  if (!missing.length && !log) return null
+
+  return (
+    <div className="install-bar">
+      {missing.length > 0 && (
+        <>
+          <span className="hint">Not installed:</span>
+          {missing.map((a) => (
+            <button
+              key={a.id}
+              className="pill"
+              // One install at a time: two npm installs racing each other on the same
+              // prefix is how you end up with neither.
+              disabled={running !== ''}
+              title={installCommand(a)}
+              onClick={() => {
+                setError('')
+                setLog(a.id)
+                setRunning(a.id)
+                setAttempt((n) => n + 1)
+              }}
+            >
+              <AgentLogo id={a.id} spec={a} size={12} muted={running !== a.id} />
+              {running === a.id ? 'Installing...' : `Install ${a.label}`}
+            </button>
+          ))}
+        </>
+      )}
+      {log && (
+        <InstallConsole
+          key={log + attempt}
+          agentId={log}
+          onDone={done}
+          start={(id) => void api.installAgent(id)}
+        />
+      )}
+      {error && <span className="install-err">{error}</span>}
+    </div>
   )
 }

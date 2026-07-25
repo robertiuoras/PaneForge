@@ -77,6 +77,33 @@ function busy(): boolean {
   return state.phase === 'checking' || state.phase === 'downloading'
 }
 
+// One failed check reaches this module as a burst of identical errors; these two
+// collapse the burst into a single reported failure.
+let lastError = ''
+let lastErrorAt = 0
+// How many times in a row the feed has 404'd while a release finishes uploading.
+let publishRetries = 0
+
+/**
+ * A release whose assets have not finished uploading yet.
+ *
+ * GitHub publishes the tag the moment the release is created and the 80 MB installer
+ * plus its latest.yml land seconds to minutes later. electron-updater asks for the
+ * metadata in that gap, gets a 404, and reports it exactly like a broken update - which
+ * is what put "check failed" in the corner of the app every single time a new version
+ * went out, at the one moment the user was most likely to click it.
+ */
+function isPublishing(message: string): boolean {
+  return /latest(-mac|-linux)?\.yml/i.test(message) && /404/.test(message)
+}
+
+/** Single owner of the "try again later" timer, so retries cannot stack up. */
+function schedule(ms: number): void {
+  if (retry) clearTimeout(retry)
+  retry = setTimeout(() => void checkForUpdates(), ms)
+  retry.unref?.()
+}
+
 export function getUpdateState(): UpdateState {
   return state
 }
@@ -114,7 +141,9 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       debug: () => undefined
     }
     u.on('checking-for-update', () => set({ phase: 'checking', error: undefined }))
-    u.on('update-available', (info: { version: string; releaseNotes?: string }) =>
+    u.on('update-available', (info: { version: string; releaseNotes?: string }) => {
+      publishRetries = 0
+      lastError = ''
       set({
         phase: process.platform === 'darwin' ? 'available' : 'downloading',
         version: info?.version,
@@ -122,8 +151,12 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
         notes: notes(info?.releaseNotes),
         url: `${RELEASES_URL}/tag/v${info?.version ?? ''}`
       })
-    )
-    u.on('update-not-available', () => set({ phase: 'none', version: undefined, percent: undefined }))
+    })
+    u.on('update-not-available', () => {
+      publishRetries = 0
+      lastError = ''
+      set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
+    })
     u.on('download-progress', (p: { percent: number }) =>
       set({ phase: 'downloading', percent: Math.round(p?.percent ?? 0) })
     )
@@ -131,13 +164,33 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       set({ phase: 'ready', version: info?.version, percent: 100, notes: notes(info?.releaseNotes) })
     )
     u.on('error', (e: Error) => {
-      set({ phase: 'error', error: e?.message ?? String(e), percent: undefined })
+      const message = e?.message ?? String(e)
+      // electron-updater fires this several times for one failed check (the feed, the
+      // block map, the retry inside its own http executor). Eight identical events in
+      // two seconds all reached the badge, and each one re-armed the retry, so a single
+      // bad check turned into a loop. One failure is one failure.
+      if (message === lastError && Date.now() - lastErrorAt < 5_000) return
+      lastError = message
+      lastErrorAt = Date.now()
+
+      if (isPublishing(message)) {
+        // The release tag is on GitHub but its assets are still uploading, so
+        // latest.yml 404s for the first minute or two after a release goes out. That is
+        // the single most common thing this app has ever shown as "check failed", and
+        // it is not a failure at all: there is simply nothing installable yet. Say
+        // nothing alarming and look again shortly, because there WILL be an update.
+        publishRetries++
+        set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
+        log('publishing', `assets not up yet (try ${publishRetries})`, message.slice(0, 120))
+        if (publishRetries <= 12) return schedule(45_000)
+        publishRetries = 0
+      }
+
+      set({ phase: 'error', error: message, percent: undefined })
       // An 80 MB download dies for boring reasons - a dropped wifi packet, a locked
-      // temp file. Left alone the badge reads "check failed" until it is clicked,
-      // which looks like the update system is dead. Try again quietly once.
-      if (retry) clearTimeout(retry)
-      retry = setTimeout(() => void checkForUpdates(), 3 * 60_000)
-      retry.unref?.()
+      // temp file. Left alone the badge reads "update failed" until it is clicked,
+      // which looks like the update system is dead. Try again quietly.
+      schedule(3 * 60_000)
     })
   }
   setAutoCheck(enabled)

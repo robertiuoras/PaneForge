@@ -21,13 +21,23 @@ export default function GitBadge({ cwd, active }: Props): JSX.Element | null {
     if (!active) return
     let live = true
     const poll = (): void => {
+      // A hidden or minimised window has nobody reading this badge, and every poll is a
+      // `git status` process against a real working tree. Skipping them is most of the
+      // idle cost of a window sitting in the background with four panes open.
+      if (document.hidden) return
       api.gitInfo(cwd).then((g) => live && setInfo(g))
     }
     poll()
-    const t = window.setInterval(poll, 4000)
+    // Matched to the main process cache, so a grid of panes costs one status per repo
+    // per tick rather than one per pane.
+    const t = window.setInterval(poll, 6000)
+    // Coming back to the window should be current straight away rather than up to six
+    // seconds stale, and Chromium throttles the interval to a crawl while hidden anyway.
+    document.addEventListener('visibilitychange', poll)
     return () => {
       live = false
       window.clearInterval(t)
+      document.removeEventListener('visibilitychange', poll)
     }
   }, [cwd, active])
 

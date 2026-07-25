@@ -6,6 +6,12 @@ interface Props {
   /** which install stream to show; '' hides the panel */
   agentId: string
   onDone: (ok: boolean) => void
+  /**
+   * Kicks the install off from inside this component, right after the listener is
+   * attached. Callers that start it themselves before mounting the console lose the
+   * first chunks of output, which is the part that says why nothing happened.
+   */
+  start?: (agentId: string) => void
 }
 
 /**
@@ -13,15 +19,19 @@ interface Props {
  * spinner: installers fail for boring reasons (no npm, no python, a proxy) and the
  * only useful thing to show is what the installer actually said.
  */
-export default function InstallConsole({ agentId, onDone }: Props): JSX.Element | null {
+export default function InstallConsole({ agentId, onDone, start }: Props): JSX.Element | null {
   const [text, setText] = useState('')
   const [running, setRunning] = useState(true)
   const box = useRef<HTMLPreElement>(null)
+  // Held in a ref so an inline arrow from the caller cannot re-trigger the effect,
+  // which would start the same install a second time.
+  const kick = useRef(start)
+  kick.current = start
 
   useEffect(() => {
     setText('')
     setRunning(true)
-    return api.onInstall((e) => {
+    const off = api.onInstall((e) => {
       if (e.agentId !== agentId) return
       if (e.chunk) setText((t) => (t + e.chunk).slice(-20_000))
       if (e.done) {
@@ -29,6 +39,8 @@ export default function InstallConsole({ agentId, onDone }: Props): JSX.Element 
         onDone(Boolean(e.ok))
       }
     })
+    kick.current?.(agentId)
+    return off
   }, [agentId, onDone])
 
   // Follow the tail, the way a terminal does.

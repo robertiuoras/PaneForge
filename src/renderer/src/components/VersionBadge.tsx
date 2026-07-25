@@ -54,6 +54,9 @@ export default function VersionBadge(): JSX.Element {
   // A test copy running beside the live app looks identical; this is the readout that
   // says which one you are typing into.
   const [profile, setProfile] = useState('')
+  // Same reason as the update card: the restart does real work before the window goes,
+  // and a badge that does not change on click reads as a press that did nothing.
+  const [restarting, setRestarting] = useState(false)
 
   useEffect(() => {
     api.updateState().then(setState)
@@ -63,7 +66,12 @@ export default function VersionBadge(): JSX.Element {
 
   const v = view(state)
   const click = (): void => {
-    if (state?.phase === 'ready') return api.installUpdate()
+    if (restarting) return
+    if (state?.phase === 'ready') {
+      setRestarting(true)
+      requestAnimationFrame(() => api.installUpdate())
+      return
+    }
     if (state?.phase === 'available' && state.url) return api.openExternal(state.url)
     // Clicking mid-download used to restart it and break both copies; main now
     // refuses, and the badge already shows the percentage, so this is just quiet.
@@ -79,7 +87,7 @@ export default function VersionBadge(): JSX.Element {
           {profile}
         </span>
       )}
-      {v.text && <span className="v-state">{v.text}</span>}
+      {(restarting || v.text) && <span className="v-state">{restarting ? 'restarting…' : v.text}</span>}
     </button>
   )
 }

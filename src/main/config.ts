@@ -93,12 +93,29 @@ export function getConfig(): Config {
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
       // An empty roles array in an old config would leave the swarm dialog blank.
-      swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles
+      swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles,
+      defaultModels: migrateModels(raw.defaultModels)
     }
   } catch {
     cache = base
   }
   return cache
+}
+
+/**
+ * Rewrite model ids that no longer exist as separate models.
+ *
+ * `claude-opus-5[1m]` was listed beside `claude-opus-5` as if the 1M context window
+ * were a different model to pick. It is not: plain Opus 5 already has it. Anyone who
+ * picked the old id has it saved as their default for the claude agent, and without
+ * this it keeps launching under a name the picker no longer shows.
+ */
+function migrateModels(saved?: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = { ...(saved ?? {}) }
+  for (const [agent, model] of Object.entries(out)) {
+    if (model === 'claude-opus-5[1m]') out[agent] = 'claude-opus-5'
+  }
+  return out
 }
 
 export function setConfig(patch: Partial<Config>): Config {

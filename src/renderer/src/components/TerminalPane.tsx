@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import './TerminalPane.css'
 
 const api = window.api
 
@@ -40,15 +41,50 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): void {
   if (pinned) t.scrollToBottom()
 }
 
-/** The text on screen right now - not the scrollback, and not wherever the user scrolled. */
-function screenText(t: Terminal): string {
+/**
+ * The bottom `rows` rows on screen right now - not the scrollback, and not wherever the
+ * user scrolled. Only the bottom of the frame is read because that is the only place a
+ * "still running" footer ever appears, and translating every visible row of every pane
+ * several times a second is enough main-thread work that Windows leaves the mouse on the
+ * busy cursor between bursts.
+ */
+function screenText(t: Terminal, rows: number): string {
   const buf = t.buffer.active
   let out = ''
-  for (let i = 0; i < t.rows; i++) {
+  for (let i = Math.max(0, t.rows - rows); i < t.rows; i++) {
     const line = buf.getLine(buf.baseY + i)
     if (line) out += line.translateToString(true) + '\n'
   }
   return out
+}
+
+/** How far up from the last row the busy footer can be. Generous - it is usually 1-3. */
+const BUSY_ROWS = 10
+
+/**
+ * How often a pane re-states that it is still busy. The main process holds "busy" as a
+ * deadline rather than a flag, so silence eventually reads as finished - which is the right
+ * default for a pane that crashed or was closed, and wrong for a turn that is simply taking
+ * a long time. Well under that deadline so a few dropped ticks cost nothing.
+ */
+const BUSY_RESTATE = 120_000
+
+/** A prompt that was submitted to this pane, pinned to the buffer line it was sent on. */
+interface Mark {
+  id: number
+  marker: IMarker
+  text: string
+  at: number
+}
+
+/**
+ * What a rail tag reads out on hover. The time is the point of it as much as the text is -
+ * "what did I ask at 14:32" is how you find a prompt again hours into a run.
+ */
+function markLabel(m: Mark): string {
+  const time = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const text = m.text.length > 160 ? m.text.slice(0, 159) + '…' : m.text
+  return time + '  ' + text
 }
 
 /** Quote a dropped path only when it needs it, so an agent reads it as one argument. */
@@ -89,6 +125,39 @@ export default function TerminalPane({
   // Only for the "back to newest" pill: the scroll position itself lives in xterm.
   const [scrolledUp, setScrolledUp] = useState(false)
   const [dropping, setDropping] = useState(false)
+  // Every prompt submitted to this pane, oldest first. State rather than a ref because the
+  // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
+  const [marks, setMarks] = useState<Mark[]>([])
+  // How many buffer lines this pane spans (scrollback + screen). It is the denominator that
+  // turns a marker's absolute line into a height on the rail, so it has to follow the buffer.
+  const [total, setTotal] = useState(1)
+  // Which tag just got clicked, so it can light up long enough to be seen.
+  const [flash, setFlash] = useState(-1)
+  const flashTimer = useRef<number | undefined>(undefined)
+
+  const syncTotal = (): void => {
+    const t = term.current
+    if (t) setTotal(t.buffer.active.baseY + t.rows)
+  }
+
+  /**
+   * Jump the view to where a prompt was submitted. Going back into history is exactly the
+   * gesture that means "stop following the tail" - if the pane kept snapping to the newest
+   * line the click would undo itself on the agent's next write.
+   */
+  const jumpTo = (m: Mark): void => {
+    const t = term.current
+    if (!t || m.marker.line < 0) return
+    // One line of lead-in so the prompt itself is not glued to the top edge.
+    t.scrollToLine(Math.max(0, m.marker.line - 1))
+    pinned.current = false
+    setScrolledUp(true)
+    setFlash(m.id)
+    window.clearTimeout(flashTimer.current)
+    flashTimer.current = window.setTimeout(() => setFlash(-1), 600)
+  }
+
+  useEffect(() => () => window.clearTimeout(flashTimer.current), [])
 
   useEffect(() => {
     if (!host.current) return
@@ -140,6 +209,102 @@ export default function TerminalPane({
       if (follow && !atBottom()) t.scrollToBottom()
       setScrolledUp(!follow)
     }
+    /**
+     * Prompt markers. xterm only ever sees keystrokes - there is no "here is the line you
+     * submitted" event - so the prompt has to be rebuilt from the bytes on their way to the
+     * pty. What it buys is a table of contents down the edge of the pane: every prompt of
+     * this run, at the height in the buffer where it was sent, hoverable and clickable.
+     *
+     * The list is owned by this plain array, not by React state. Markers are disposed from
+     * two directions (the cap here, and xterm trimming scrollback), and doing that from
+     * inside a state updater would be a side effect in a function React is free to re-run.
+     */
+    const MARK_CAP = 80
+    const list: Mark[] = []
+    let pending = ''
+    let dead = false
+    const publish = (): void => {
+      if (!dead) setMarks(list.slice())
+    }
+
+    const addMark = (text: string): void => {
+      // Anchored to the row the cursor is on at submit time. xterm keeps a marker's line
+      // right as the buffer scrolls and tells us when that line falls out of scrollback,
+      // neither of which a plain line number could do.
+      const marker = t.registerMarker(0)
+      if (!marker) return
+      const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
+      marker.onDispose(() => {
+        const i = list.indexOf(entry)
+        if (i < 0) return
+        list.splice(i, 1)
+        publish()
+      })
+      list.push(entry)
+      // Past this many the tags are a solid bar and stop being aimable, so the oldest go.
+      while (list.length > MARK_CAP) list.shift()?.marker.dispose()
+      publish()
+      syncTotal()
+    }
+
+    // What xterm wraps a paste in while the agent has bracketed paste on, which Claude Code
+    // and Codex both do - so this, not a run of key events, is the normal path for a pasted
+    // prompt. The closing wrapper can land in the same chunk or not, hence the optional tail.
+    const BRACKETED = /^\x1b\[200~([\s\S]*?)(?:\x1b\[201~)?$/
+    // A prompt longer than this is not readable in a hover label anyway, and the pending
+    // buffer must not grow without bound on a session that never submits.
+    const MAX_PROMPT = 400
+    // A pasted prompt is one prompt however many lines it had, so its newlines join it up
+    // rather than submitting it.
+    const join = (s: string): string => (pending + s).replace(/[\r\n]+/g, ' ').slice(0, MAX_PROMPT)
+
+    const feedInput = (d: string): void => {
+      const paste = BRACKETED.exec(d)
+      if (paste) {
+        pending = join(paste[1])
+        return
+      }
+      // Arrow keys, function keys, alt+enter - never prompt text.
+      if (d.charCodeAt(0) === 0x1b) return
+      // Anything longer than a keystroke arrived in one piece, so it is pasted or composed
+      // text rather than a key.
+      if (d.length > 1) {
+        pending = join(d)
+        return
+      }
+      if (d === '\x7f' || d === '\b') {
+        pending = pending.slice(0, -1)
+        return
+      }
+      // Ctrl+C and Ctrl+U both throw the line away, so the rail has to as well.
+      if (d === '\x03' || d === '\x15') {
+        pending = ''
+        return
+      }
+      if (d === '\r' || d === '\n') {
+        const text = pending.trim()
+        pending = ''
+        // A bare Enter is a confirmation or an accepted menu item, and a lone character is
+        // a menu key. Tagging either would bury the real prompts.
+        if (text.length > 1) addMark(text)
+        return
+      }
+      // Tab, and every other control byte that is not handled above.
+      if (d.charCodeAt(0) < 0x20) return
+      pending = (pending + d).slice(0, MAX_PROMPT)
+    }
+
+    // The rail's scale changes as output arrives and as the view moves, but a write only
+    // ever shifts a tag by a pixel or two - a setState per burst is not worth that.
+    let lastTotal = 0
+    const bumpTotal = (): void => {
+      if (!list.length) return
+      const now = Date.now()
+      if (now - lastTotal < 250) return
+      lastTotal = now
+      syncTotal()
+    }
+
     // The view's real position is the single source of truth for following, so a drag, a
     // wheel notch, a keyboard scroll and a write all end up judged the same way. No snap
     // here: this fires *during* a drag, and yanking the view out from under the mouse is
@@ -148,11 +313,13 @@ export default function TerminalPane({
       const follow = nearBottom()
       pinned.current = follow
       setScrolledUp(!follow)
+      bumpTotal()
     })
 
     t.onData((d) => {
       pinned.current = true
       setScrolledUp(false)
+      feedInput(d)
       api.write(sessionId, d)
     })
 
@@ -313,11 +480,19 @@ export default function TerminalPane({
     el.addEventListener('wheel', onWheel, { capture: true, passive: false })
     el.addEventListener('contextmenu', onContextMenu)
 
+    // Whether this pane has ever had anything to read. A pane that has printed nothing
+    // cannot be showing a busy footer, and scanning its empty rows on every tick is pure
+    // main-thread cost with a guaranteed answer.
+    let sawOutput = false
+
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
       // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
-      if (b) t.write(b, () => t.scrollToBottom())
+      if (b) {
+        sawOutput = true
+        t.write(b, () => t.scrollToBottom())
+      }
     })
 
     /**
@@ -332,22 +507,35 @@ export default function TerminalPane({
      */
     let busy = false
     let lastBusyCheck = 0
+    // When the main process last heard anything about this pane's busy state.
+    let lastReport = 0
     let settle2: number | undefined
     const checkBusy = (): void => {
-      lastBusyCheck = Date.now()
+      if (!sawOutput) return
+      const at = Date.now()
+      lastBusyCheck = at
       let now = false
       try {
-        now = BUSY_FOOTER.test(screenText(t))
+        now = BUSY_FOOTER.test(screenText(t, BUSY_ROWS))
       } catch {
         return
       }
-      if (now === busy) return
+      // Still busy and quiet about it for a while. Reporting only on change was enough
+      // until a turn outlived the deadline the main process sets from a `true`, at which
+      // point the pane went grey and got announced as waiting for you while the agent was
+      // visibly still working - a long tool call is exactly when nothing changes. Saying
+      // it again costs one IPC message every couple of minutes.
+      //
+      // A `false` needs no repeat: that clears the deadline outright.
+      if (now === busy && !(now && at - lastReport > BUSY_RESTATE)) return
       busy = now
+      lastReport = at
       api.setBusy(sessionId, now)
     }
 
     const off = api.onData((id, data) => {
       if (id !== sessionId) return
+      sawOutput = true
       // Once per burst while output is flowing, and once more after it stops: the frame
       // that decides "finished or still working" is the last one drawn.
       if (Date.now() - lastBusyCheck > 600) checkBusy()
@@ -361,6 +549,9 @@ export default function TerminalPane({
       // write should have). Intent cannot drift, so this recovers by itself.
       t.write(data, () => {
         if (pinned.current) t.scrollToBottom()
+        // Same callback so the rail is measured against a buffer that has already grown,
+        // rather than one write behind it.
+        bumpTotal()
       })
     })
 
@@ -418,7 +609,10 @@ export default function TerminalPane({
     // the rendered frame, and without this a long silent tool call looks exactly like a
     // finished turn - which is what made the chime fire in the middle of an answer.
     // Backstop for anything the output path missed - a repaint xterm made on its own,
-    // or a pane that mounted onto an already-quiet session.
+    // or a pane that mounted onto an already-quiet session. It is also the only thing
+    // running during a long silent tool call, which makes it what carries the periodic
+    // "still busy" re-state to the main process. Slowing it down would let a long turn
+    // time out and announce itself as finished.
     const busyTick = window.setInterval(checkBusy, 4000)
     checkBusy()
 
@@ -435,6 +629,10 @@ export default function TerminalPane({
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('wheel', onWheel, true)
       el.removeEventListener('contextmenu', onContextMenu)
+      // Emptied first so the onDispose handlers find nothing to remove and skip publishing
+      // into a component that is on its way out.
+      dead = true
+      for (const m of list.splice(0)) m.marker.dispose()
       t.dispose()
     }
   }, [sessionId])
@@ -447,6 +645,8 @@ export default function TerminalPane({
     try {
       if (fit.current) refit(t, fit.current, pinned.current)
       api.resize(sessionId, t.cols, t.rows)
+      // Fewer or more rows means a different scale for the rail.
+      syncTotal()
     } catch {
       /* hidden pane - the visibility effect will refit it */
     }
@@ -461,6 +661,8 @@ export default function TerminalPane({
         if (term.current && fit.current) {
           refit(term.current, fit.current, pinned.current)
           api.resize(sessionId, term.current.cols, term.current.rows)
+          // The buffer kept growing while this pane was hidden, so the rail is stale.
+          syncTotal()
         }
         term.current?.focus()
       } catch {
@@ -503,6 +705,39 @@ export default function TerminalPane({
       onDrop={onDrop}
     >
       <div className="xterm-host" ref={host} />
+      {/* Rendered before the pill and the drop hint on purpose: all three are positioned,
+          so DOM order is what keeps a tag near the tail from painting over the pill. */}
+      {marks.length > 0 && (
+        <div className="mark-rail">
+          {marks.map((m, i) => {
+            const line = m.marker.line
+            // -1 means xterm disposed it a frame before the state caught up.
+            if (line < 0) return null
+            const pct = Math.min(100, Math.max(0, (line / Math.max(1, total - 1)) * 100))
+            const label = markLabel(m)
+            return (
+              <button
+                key={m.id}
+                className={
+                  'mark' +
+                  // The newest tag stays lit: at a glance it is what the agent is working on.
+                  (i === marks.length - 1 ? ' newest' : '') +
+                  (flash === m.id ? ' flash' : '')
+                }
+                style={{ top: pct + '%' }}
+                title={label}
+                aria-label={label}
+                // Same reason as the pill: a mousedown inside the pane would take focus off
+                // the terminal and start a selection drag.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => jumpTo(m)}
+              >
+                <span className="mark-tip">{label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {scrolledUp && (
         <button
           className="jump-newest"

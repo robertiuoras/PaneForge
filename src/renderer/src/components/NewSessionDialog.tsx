@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { Agent, Project, StartSessionRequest } from '@shared/types'
-import AgentPicker from './AgentPicker'
+import AgentPicker, { AgentInstallBar } from './AgentPicker'
 import AgentLogo from './AgentLogo'
 import { Checkbox } from './Controls'
+
+const api = window.api
 
 interface Props {
   projects: Project[]
@@ -25,11 +27,18 @@ export default function NewSessionDialog({
   projects,
   defaultAgent,
   defaultModels,
-  agents,
+  agents: probed,
   onStart,
   onSaveWorkspace,
   onCancel
 }: Props): JSX.Element {
+  // The app re-probes agents when this dialog opens, which is too early for a CLI
+  // installed from inside it. Re-probing locally lets the fresh install show up in
+  // the picker straight away, without closing and reopening.
+  const [live, setLive] = useState<AgentInfo[] | null>(null)
+  const agents = live ?? probed
+  const reprobe = useCallback(() => void api.listAgents().then(setLive), [])
+
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const [ticked, setTicked] = useState<string[]>([])
@@ -143,6 +152,8 @@ export default function NewSessionDialog({
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && go()}
         />
+
+        <AgentInstallBar agents={agents} onInstalled={reprobe} />
 
         <div className="dialog-row">
           <Checkbox

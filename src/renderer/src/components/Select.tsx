@@ -51,6 +51,7 @@ export default function Select({
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const [rect, setRect] = useState<DOMRect | null>(null)
+  const [natural, setNatural] = useState(0)
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
@@ -113,6 +114,20 @@ export default function Select({
     }
   }, [open, showSearch])
 
+  // How tall the popup WANTS to be, measured rather than guessed: groups, hints and
+  // the filter box all change the height, and the flip decision below is only right
+  // if it knows whether the whole list would actually fit underneath the trigger.
+  useLayoutEffect(() => {
+    if (!open || !menu.current) {
+      setNatural(0)
+      return
+    }
+    const scroll = menu.current.querySelector<HTMLElement>('.select-scroll')
+    const box = menu.current.querySelector<HTMLElement>('.select-search')
+    // 10px = the popup's own 5px padding, top and bottom; 4px = the search margin.
+    setNatural((scroll?.scrollHeight ?? 0) + (box ? box.offsetHeight + 4 : 0) + 10)
+  }, [open, rect !== null, shown.length, showSearch])
+
   // Keep the highlighted row in view during arrow navigation.
   useEffect(() => {
     if (!open) return
@@ -169,8 +184,20 @@ export default function Select({
   }
 
   const width = Math.max(menuWidth ?? 0, rect?.width ?? 0, 190)
-  const below = rect ? window.innerHeight - rect.bottom : 0
-  const flip = below < 240 && rect !== null && rect.top > below
+
+  // Room left on each side of the trigger once the 6px gap and an 8px margin off the
+  // window edge are taken out. Recomputed on every render, and the resize/scroll
+  // listeners above re-render by replacing rect, so a shrinking window re-fits the
+  // popup instead of letting it run off the bottom with its last rows unreachable.
+  const roomBelow = rect ? Math.max(0, window.innerHeight - rect.bottom - 14) : 0
+  const roomAbove = rect ? Math.max(0, rect.top - 14) : 0
+  // Flip only when it genuinely helps: there is more room above AND the list does not
+  // already fit below. natural is 0 on the very first pass (nothing measured yet),
+  // which reads as "it fits" and opens downwards, the common case.
+  const flip = rect !== null && roomBelow < roomAbove && roomBelow < natural
+  // A floor of 140px keeps a few rows plus a scrollbar on a very short window rather
+  // than a useless sliver; below that the popup is allowed to reach past the margin.
+  const maxHeight = Math.max(140, flip ? roomAbove : roomBelow)
   let last: string | undefined
 
   return (
@@ -208,8 +235,9 @@ export default function Select({
             tabIndex={-1}
             onKeyDown={onKey}
             style={{
-              left: Math.min(rect.left, window.innerWidth - width - 8),
+              left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
               width,
+              maxHeight,
               ...(flip ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 })
             }}
           >

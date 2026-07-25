@@ -85,9 +85,23 @@ export default function App(): JSX.Element {
     else if (!sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id)
   }, [sessions, activeId])
 
-  // Looking at a pane counts as acknowledging it.
+  // Looking at a pane counts as acknowledging it - but only while you are actually
+  // looking. This used to acknowledge the focused pane on every session update no
+  // matter what, so a minimised window silently marked the pane you happened to leave
+  // selected as "seen", and the one alert that mattered (a turn finishing while you
+  // were in another app) was the one that never fired.
   useEffect(() => {
-    if (activeId) api.clearAttention(activeId)
+    const ack = (): void => {
+      if (!activeId || document.hidden || !document.hasFocus()) return
+      api.clearAttention(activeId)
+    }
+    ack()
+    window.addEventListener('focus', ack)
+    document.addEventListener('visibilitychange', ack)
+    return () => {
+      window.removeEventListener('focus', ack)
+      document.removeEventListener('visibilitychange', ack)
+    }
   }, [activeId, sessions])
 
   // The chime is the one alert that fires even while the app has focus: a turn
@@ -104,7 +118,12 @@ export default function App(): JSX.Element {
   useEffect(
     () =>
       api.onAttention((s) => {
-        if (soundOn.current && s.id !== activeIdRef.current) playChime()
+        if (!soundOn.current) return
+        // Silent only for the pane you are demonstrably watching right now. With the
+        // window in the background there is no such pane, so the selected one is as
+        // worth announcing as any other.
+        const watching = s.id === activeIdRef.current && !document.hidden && document.hasFocus()
+        if (!watching) playChime()
       }),
     []
   )
@@ -579,6 +598,10 @@ export default function App(): JSX.Element {
   // Near-square layout, same rule the old .bat grid used, but for whatever N is open.
   const cols = grid ? Math.max(1, Math.ceil(Math.sqrt(sessions.length))) : 1
   const waiting = sessions.filter((s) => s.attention).length
+  // "Working" is now the agent's own on-screen state rather than "something was printed
+  // in the last four seconds", so it stays honest through a long silent tool call and
+  // does not claim a pane sitting at an empty prompt is busy.
+  const working = sessions.filter((s) => s.status === 'working').length
 
   const sendBroadcast = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key !== 'Enter') return
@@ -667,7 +690,16 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           Sessions ({sessions.length})
-          {waiting > 0 && <span className="badge">{waiting} waiting</span>}
+          {working > 0 && (
+            <span className="badge run" title="Agents whose own footer says they are still running">
+              {working} working
+            </span>
+          )}
+          {waiting > 0 && (
+            <span className="badge" title="Turns that finished while you were looking elsewhere">
+              {waiting} waiting
+            </span>
+          )}
         </div>
         <div className="list">
           {sessions.map((s, i) => (

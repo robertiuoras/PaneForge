@@ -1,0 +1,104 @@
+/* Everything that belongs to one terminal pane's own chrome. The pane's frame, the pill
+   and the shared scrollbar theming live in styles.css; this file is the marker rail plus
+   the cursor rules that only make sense next to it. */
+
+/* The prompt marker rail: one tag per prompt sent to this agent, at the height in the
+   buffer where it was sent. It is a pane's table of contents - what did I ask, and where
+   did it start. It sits in the gutter just left of xterm's scrollbar (17px there, see the
+   scrollbar block in styles.css) so it never covers the thing you drag. */
+.mark-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 17px;
+  width: 14px;
+  /* Only the tags are targets. The rest of the strip is terminal, and swallowing clicks
+     over it would put a dead column down the side of every pane. */
+  pointer-events: none;
+  cursor: default;
+}
+
+.mark {
+  position: absolute;
+  right: 3px;
+  width: 8px;
+  height: 3px;
+  /* Centred on the line it marks rather than hanging below it. */
+  margin-top: -1px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  /* The agent's own colour, so a grid of panes still reads as separate agents. */
+  background: var(--agent, #8b8b99);
+  opacity: 0.55;
+  pointer-events: auto;
+  cursor: pointer;
+  transition:
+    opacity var(--fast),
+    width var(--fast);
+}
+
+/* The newest prompt stays lit: it is the one the agent is working on. */
+.mark:hover,
+.mark.newest {
+  opacity: 1;
+}
+.mark:hover {
+  width: 12px;
+}
+/* Brief confirmation that a click landed, since the jump itself can be subtle in a pane
+   that was already near that part of the buffer. */
+.mark.flash {
+  opacity: 1;
+  background: var(--accent);
+}
+
+/* The prompt text, opened to the left so it never runs off the window edge. Kept to one
+   line - this is a reminder of what was asked, not the prompt in full. */
+.mark-tip {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  padding: 4px 9px;
+  font-size: 11px;
+  /* display:none rather than opacity alone: a hidden label must not sit over the terminal
+     eating mouse events for a column 320px wide. */
+  display: none;
+  pointer-events: none;
+}
+.mark:hover .mark-tip {
+  display: block;
+}
+
+/* The pane wrapper and the scrollbar's own pseudo-elements declared no cursor at all, so
+   they inherited whatever Chromium last set - and while the renderer is blocked that is the
+   Windows busy cursor, which then sat over the right edge of the pane until the mouse moved
+   far enough to hit an element that does declare one. Every surface now names its cursor.
+
+   The viewport keeps the arrow rather than the I-beam: the viewport IS the scrolling box,
+   so its own column of pixels is the scrollbar. xterm says the same thing already; this
+   repeats it at a specificity that nothing in the pane can undercut. Same for the text
+   area, except while the agent has mouse reporting on - there the arrow is xterm telling
+   you the drag belongs to the agent, and overriding that would be a lie. */
+.xterm-wrap {
+  cursor: text;
+}
+.xterm-wrap .xterm:not(.enable-mouse-events) .xterm-screen {
+  cursor: text;
+}
+.xterm-wrap .xterm-viewport,
+.xterm-wrap .xterm-viewport::-webkit-scrollbar,
+.xterm-wrap .xterm-viewport::-webkit-scrollbar-track,
+.xterm-wrap .xterm-viewport::-webkit-scrollbar-thumb {
+  cursor: default;
+}

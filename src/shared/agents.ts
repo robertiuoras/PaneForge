@@ -72,8 +72,10 @@ export interface AgentInfo extends AgentSpec {
 // let you pin an exact generation (Opus 5 vs Opus 4.8) rather than only the moving
 // `opus` alias, because "latest" changes under you mid-project.
 const CLAUDE_MODELS: ModelChoice[] = [
-  { value: 'claude-opus-5', label: 'Opus 5', hint: 'newest, most capable' },
-  { value: 'claude-opus-5[1m]', label: 'Opus 5 (1M context)', hint: 'huge context window' },
+  // No separate "[1m]" entry: plain claude-opus-5 already carries the 1M token
+  // context window, so listing it twice only made the picker look like a choice
+  // between two different models when both launch the same one.
+  { value: 'claude-opus-5', label: 'Opus 5', hint: 'newest, 1M context' },
   { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6', label: 'Opus 4.6' },
