@@ -72,3 +72,20 @@ window". The tagline lives in the README instead.
 `git status` for the pane badges must stay async (`execFile`, not `spawnSync`). Sync
 spawns block the main process, which owns the window message loop, and Windows answers a
 stalled message loop by swapping the pointer for the busy cursor.
+
+## Checking a layout change without screenshots
+
+Screenshots cannot answer "is the last row reachable", and a session that takes ten of
+them costs more than the fix. Ask the real window instead:
+
+```
+npm run try -- --keep --minimized --remote-debugging-port=9333
+npm run probe -- --height 560 "(() => { const d=document.querySelector('.dialog'); const r=d.getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
+npm run try -- --close
+```
+
+`--height`/`--width` drive Chromium's device metrics override, so a short-window check
+needs no window manager and puts the size back afterwards. The expression is evaluated
+in the renderer with `awaitPromise`, so an async arrow that clicks through a dialog and
+then measures works as one argument. `window.__pf[sessionId]` gives a pane's live
+`term` and `fit`, which is how pane behaviour is checked without a screenshot.

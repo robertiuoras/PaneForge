@@ -20,7 +20,8 @@
     "try": "node scripts/try.mjs",
     "setup": "node scripts/setup.mjs",
     "ship": "node scripts/lane.mjs ship",
-    "lane": "node scripts/lane.mjs"
+    "lane": "node scripts/lane.mjs",
+    "probe": "node scripts/probe.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
