@@ -85,6 +85,11 @@ function createWindow(): void {
   win.on('ready-to-show', () => win?.show())
   win.on('focus', () => win?.flashFrame(false))
   win.on('close', rememberBounds)
+  // Without this the module keeps a destroyed BrowserWindow, and every later
+  // `win?.` call throws "Object has been destroyed" instead of no-opping.
+  win.on('closed', () => {
+    win = null
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -101,38 +106,51 @@ function createWindow(): void {
   }
 }
 
+// The window can be gone (quit) or destroyed-but-still-referenced (teardown order)
+// while pty output and session events are still in flight.
+function alive(): boolean {
+  return !!win && !win.isDestroyed() && !win.webContents.isDestroyed()
+}
+
+function send(channel: string, ...args: unknown[]): void {
+  if (!alive()) return
+  win!.webContents.send(channel, ...args)
+}
+
 function rememberBounds(): void {
-  if (!win) return
-  const maximized = win.isMaximized()
+  if (!alive()) return
+  const w = win!
+  const maximized = w.isMaximized()
   // getBounds() on a maximized window returns the screen size, which would make the
   // restored window unrestorable, so keep the normal bounds instead.
-  const b = maximized ? win.getNormalBounds() : win.getBounds()
+  const b = maximized ? w.getNormalBounds() : w.getBounds()
   setConfig({ window: { x: b.x, y: b.y, width: b.width, height: b.height, maximized } })
 }
 
 function focusWindow(): void {
-  if (!win) return createWindow()
-  if (win.isMinimized()) win.restore()
-  win.focus()
+  if (!alive()) return createWindow()
+  const w = win!
+  if (w.isMinimized()) w.restore()
+  w.focus()
 }
 
-// Fan pty output and session-list changes out to the renderer. Sent unconditionally;
-// a destroyed window just drops them.
+// Fan pty output and session-list changes out to the renderer. A dead window drops
+// them: send() checks first, because webContents.send() on a destroyed window throws.
 manager.on('data', (id: string, data: string) => {
-  win?.webContents.send('pty:data', id, data)
+  send('pty:data', id, data)
 })
 manager.on('sessions', (sessions: Session[]) => {
-  win?.webContents.send('sessions:changed', sessions)
+  send('sessions:changed', sessions)
 })
 manager.on('attention', (s: Session) => {
   // The chime is the renderer's job (Web Audio gives a far nicer sound than the
   // Windows toast ding) and it plays whether or not the app has focus: the point
   // is to tell you a turn ended while you were reading something else on screen.
-  win?.webContents.send('sessions:attention', s)
+  send('sessions:attention', s)
   if (!getConfig().notifyOnIdle) return
   // The toast and the taskbar flash only make sense when you are elsewhere.
-  if (win?.isFocused()) return
-  win?.flashFrame(true)
+  if (!alive() || win!.isFocused()) return
+  win!.flashFrame(true)
   if (Notification.isSupported()) {
     new Notification({
       title: `${s.title} is waiting`,
@@ -185,7 +203,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
-  win?.webContents.send('config:changed', next)
+  send('config:changed', next)
   return next
 })
 ipcMain.handle('config:pickRoot', async () => {
@@ -280,7 +298,7 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
   const spec = specFor(id)
   const command = installCommand(spec)
   if (!command) {
-    win?.webContents.send('agents:install-event', {
+    send('agents:install-event', {
       agentId: id,
       chunk: `${spec.label} has no scripted installer. Open its docs and install it, then hit Rescan.\r\n`,
       done: true,
@@ -289,11 +307,11 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
     return
   }
   installing.add(id)
-  win?.webContents.send('agents:install-event', { agentId: id, chunk: `> ${command}\r\n\r\n` })
+  send('agents:install-event', { agentId: id, chunk: `> ${command}\r\n\r\n` })
   await new Promise<void>((resolve) => {
     runCommand(
       command,
-      (chunk) => win?.webContents.send('agents:install-event', { agentId: id, chunk }),
+      (chunk) => send('agents:install-event', { agentId: id, chunk }),
       (code) => {
         installing.delete(id)
         // A brand new install folder is only on the PATH of new processes, so pull
@@ -301,7 +319,7 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
         refreshPath()
         invalidateAgents()
         const found = which(spec.bin) !== spec.bin
-        win?.webContents.send('agents:install-event', {
+        send('agents:install-event', {
           agentId: id,
           chunk: found
             ? `\r\n${spec.label} is ready.\r\n`
@@ -333,7 +351,7 @@ ipcMain.handle('agents:locate', async (_e, id: string) => {
   const next = [...cfg.customAgents.filter((c) => c.id !== id), { ...spec, bin, custom: true }]
   setConfig({ customAgents: next })
   invalidateAgents()
-  win?.webContents.send('config:changed', getConfig())
+  send('config:changed', getConfig())
   return bin
 })
 
@@ -369,15 +387,15 @@ ipcMain.handle('voice:transcribe', (_e, wav: ArrayBuffer) => {
 })
 ipcMain.handle('voice:install', async () => {
   const command = voice.installCommand()
-  win?.webContents.send('agents:install-event', { agentId: '__voice__', chunk: `> ${command}\r\n\r\n` })
+  send('agents:install-event', { agentId: '__voice__', chunk: `> ${command}\r\n\r\n` })
   await new Promise<void>((resolve) => {
     runCommand(
       command,
-      (chunk) => win?.webContents.send('agents:install-event', { agentId: '__voice__', chunk }),
+      (chunk) => send('agents:install-event', { agentId: '__voice__', chunk }),
       () => {
         refreshPath()
         const ok = voice.voiceStatus().available
-        win?.webContents.send('agents:install-event', {
+        send('agents:install-event', {
           agentId: '__voice__',
           chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
           done: true,
@@ -397,7 +415,7 @@ function applyVoiceHotkey(cfg: Config): void {
   try {
     globalShortcut.register(accel, () => {
       focusWindow()
-      win?.webContents.send('voice:hotkey')
+      send('voice:hotkey')
     })
   } catch {
     /* another app owns the combo - the in-app mic button still works */
@@ -423,7 +441,7 @@ app.whenReady().then(() => {
   history.prune(cfg.historyDays)
   createWindow()
   applyVoiceHotkey(cfg)
-  initUpdater((s: UpdateState) => win?.webContents.send('update:changed', s), cfg.autoUpdate)
+  initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
   app.on('activate', () => {
