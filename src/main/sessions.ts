@@ -42,6 +42,12 @@ interface Live {
   req: StartSessionRequest
   cols: number
   rows: number
+  /**
+   * What the pane can see and this process cannot: the agent's own footer still
+   * says it is running ("esc to interrupt"). A long tool call is silent for
+   * minutes, which used to look exactly like a finished turn and chimed for it.
+   */
+  busyOnScreen: boolean
 }
 
 export class SessionManager extends EventEmitter {
@@ -97,7 +103,15 @@ export class SessionManager extends EventEmitter {
       engaged: Boolean(req.prompt),
       role: req.role
     }
-    const live: Live = { meta, proc: this.spawn(req, agent, 120, 30), buffer: '', req, cols: 120, rows: 30 }
+    const live: Live = {
+      meta,
+      proc: this.spawn(req, agent, 120, 30),
+      buffer: '',
+      req,
+      cols: 120,
+      rows: 30,
+      busyOnScreen: false
+    }
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)
@@ -235,6 +249,35 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Poke the size and put it straight back. A full-screen CLI redraws its whole
+   * frame on SIGWINCH, which is the only reliable way to fix a pane that got
+   * garbled - torn box drawing, doubled lines - by a resize the app half-missed.
+   */
+  redraw(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s || s.meta.status === 'exited') return
+    try {
+      s.proc.resize(Math.max(20, s.cols - 1), s.rows)
+      setTimeout(() => {
+        try {
+          if (this.sessions.get(id) === s) s.proc.resize(s.cols, s.rows)
+        } catch {
+          /* pty died between the two halves of the nudge */
+        }
+      }, 90)
+    } catch {
+      /* already gone */
+    }
+  }
+
+  /** The renderer's read of whether the agent's own UI still says it is running. */
+  setBusyOnScreen(id: string, busy: boolean): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    s.busyOnScreen = busy
+  }
+
   clearAttention(id: string): void {
     const s = this.sessions.get(id)
     if (!s?.meta.attention) return
@@ -312,7 +355,8 @@ export class SessionManager extends EventEmitter {
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
-    for (const { meta } of this.sessions.values()) {
+    for (const live of this.sessions.values()) {
+      const { meta } = live
       const quiet = now - meta.lastOutput
       if (meta.status === 'working' && quiet > IDLE_AFTER_MS) {
         meta.status = 'idle'
@@ -326,10 +370,15 @@ export class SessionManager extends EventEmitter {
       // quiet, not done: `engaged` keeps a fresh pane from claiming to be waiting
       // on you the moment it finishes drawing, and lastOutput moving past
       // createdAt keeps a pane that has printed nothing at all out of it.
+      // busyOnScreen is the last gate and the strongest one: a pane whose footer
+      // still reads "esc to interrupt" is mid-turn no matter how long it has been
+      // silent, and that silence - a long tool call, a slow API - is exactly what
+      // used to chime early.
       if (
         meta.status === 'idle' &&
         meta.engaged &&
         !meta.attention &&
+        !live.busyOnScreen &&
         meta.lastOutput > meta.createdAt &&
         quiet > ATTENTION_AFTER_MS
       ) {

@@ -1,7 +1,7 @@
 // The only bridge between the renderer and Node. contextIsolation stays on, so the
 // UI gets this narrow typed surface instead of ipcRenderer itself.
 
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   Api,
   Config,
@@ -28,6 +28,8 @@ const api: Api = {
   write: (id, data) => ipcRenderer.send('pty:write', id, data),
   broadcast: (text) => ipcRenderer.send('pty:broadcast', text),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
+  redraw: (id) => ipcRenderer.send('pty:redraw', id),
+  setBusy: (id, busy) => ipcRenderer.send('sessions:busy', id, busy),
   startSwarm: (req: SwarmRequest) => ipcRenderer.invoke('sessions:swarm', req),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -40,6 +42,15 @@ const api: Api = {
   copyText: (text) => ipcRenderer.send('clipboard:write', text),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   gitInfo: (path) => ipcRenderer.invoke('git:info', path),
+  // File.path was removed from Electron's File objects; webUtils is the only way
+  // a dropped file's real path reaches the renderer.
+  pathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
 
   adminStatus: () => ipcRenderer.invoke('admin:status'),
   adminEnable: () => ipcRenderer.invoke('admin:enable'),

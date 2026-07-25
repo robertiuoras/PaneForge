@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 
@@ -10,10 +10,24 @@ interface Props {
   fontSize: number
   /** put a mouse selection straight on the clipboard, the way most terminals do */
   copyOnSelect: boolean
+  /** let the mouse select and scroll even while the agent has mouse reporting on */
+  mouseSelect: boolean
+  /** repaint by itself once a resize settles */
+  autoFixUi: boolean
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 const isMac = navigator.userAgent.includes('Mac')
+
+/**
+ * Panes register their repair function here, so the toolbar button, the shortcut and the
+ * command palette can all reach the focused pane without threading a ref through App.
+ */
+export const paneRepair = new Map<string, () => void>()
+
+/** Every CLI's "still running" footer. While this is on screen the turn is not over. */
+const BUSY_FOOTER =
+  /esc to interrupt|esc to cancel|ctrl\+c to (stop|interrupt|cancel)|press esc to stop|working…|thinking…|esc interrupt/i
 
 /**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
@@ -25,11 +39,34 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): void {
   if (pinned) t.scrollToBottom()
 }
 
+/** The text on screen right now - not the scrollback, and not wherever the user scrolled. */
+function screenText(t: Terminal): string {
+  const buf = t.buffer.active
+  let out = ''
+  for (let i = 0; i < t.rows; i++) {
+    const line = buf.getLine(buf.baseY + i)
+    if (line) out += line.translateToString(true) + '\n'
+  }
+  return out
+}
+
+/** Quote a dropped path only when it needs it, so an agent reads it as one argument. */
+function quote(p: string): string {
+  return /[\s'"]/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p
+}
+
 /**
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
-export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelect }: Props): JSX.Element {
+export default function TerminalPane({
+  sessionId,
+  visible,
+  fontSize,
+  copyOnSelect,
+  mouseSelect,
+  autoFixUi
+}: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
@@ -37,6 +74,10 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
   // setting takes effect without tearing the terminal down.
   const copyOnSelectRef = useRef(copyOnSelect)
   copyOnSelectRef.current = copyOnSelect
+  const mouseSelectRef = useRef(mouseSelect)
+  mouseSelectRef.current = mouseSelect
+  const autoFixRef = useRef(autoFixUi)
+  autoFixRef.current = autoFixUi
   // Full-screen TUIs (Claude Code, vim) repaint constantly and xterm drops the
   // selection on the next buffer change, so the highlight vanishes before the user
   // can hit Ctrl+C. Remember the last real selection and copy that instead.
@@ -44,6 +85,9 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
   // Whether this pane is following the tail. A ref because the resize and font-size effects
   // need it too, and it must survive without re-running the effect that owns the terminal.
   const pinned = useRef(true)
+  // Only for the "back to newest" pill: the scroll position itself lives in xterm.
+  const [scrolledUp, setScrolledUp] = useState(false)
+  const [dropping, setDropping] = useState(false)
 
   useEffect(() => {
     if (!host.current) return
@@ -87,6 +131,8 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       const s = t.getSelection()
       if (s) lastSelection.current = s
     })
+
+    t.onScroll(() => setScrolledUp(!atBottom()))
 
     // The last text this pane put on the clipboard from a *remembered* selection. Copying
     // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
@@ -162,14 +208,50 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       lastSelection.current = ''
       copied.current = ''
     }
-    // Copy on select, the way Windows Terminal and every Linux terminal do it: let go
-    // of the mouse and the text is already on the clipboard, so Ctrl+C never has to
-    // double as copy. Single stray characters are ignored - those are misclicks.
+
+    const el = host.current
+
+    /**
+     * Claude Code and Codex turn mouse reporting on, and xterm then hands the mouse to
+     * them wholesale: a drag selects nothing, so there is nothing to copy, and the wheel
+     * is forwarded to the agent instead of scrolling this terminal - which is how a pane
+     * ends up stuck a few lines up with no way back down.
+     *
+     * xterm already has the escape hatch: holding Shift forces a selection and stops the
+     * event reaching the app. It is just hidden behind a modifier nobody knows about.
+     * Marking the event as shifted before xterm's own handlers see it makes a plain drag
+     * behave like every other terminal, and turning the setting off gives the agent its
+     * mouse back.
+     */
+    const mouseGrabbed = (): boolean => t.element?.classList.contains('enable-mouse-events') ?? false
+
+    const forceSelectable = (e: MouseEvent): void => {
+      if (!mouseSelectRef.current || !mouseGrabbed()) return
+      if (e.button !== 0 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
+      try {
+        // An own property shadows the prototype getter, so xterm - which sees this event
+        // after this capture-phase listener - reads it as a Shift-drag.
+        Object.defineProperty(e, 'shiftKey', { value: true, configurable: true })
+      } catch {
+        /* a synthetic event that will not take the override */
+      }
+    }
+
     // Wheel up is the one gesture that means "stop following"; wheeling back down to the
     // last line resumes it. Nothing a write does can flip either way.
     const onWheel = (e: WheelEvent): void => {
+      // vim, less and anything else on the alternate screen has no scrollback here, so the
+      // wheel belongs to the app. Otherwise scroll this terminal ourselves: xterm skips its
+      // own viewport entirely while the agent is asking for mouse events.
+      if (mouseSelectRef.current && mouseGrabbed() && t.buffer.active.type !== 'alternate') {
+        e.preventDefault()
+        e.stopPropagation()
+        const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / 40
+        t.scrollLines(Math.trunc(lines) || (e.deltaY < 0 ? -1 : 1))
+      }
       if (e.deltaY < 0) pinned.current = false
       else if (atBottom()) pinned.current = true
+      setScrolledUp(!atBottom())
     }
     const onMouseUp = (): void => {
       // Covers a scrollbar drag and a selection drag alike: wherever the view ended up is
@@ -187,11 +269,11 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       e.preventDefault()
       if (!copySelection()) pasteClipboard()
     }
-    const el = host.current
     el.addEventListener('keydown', onKeyClearsSelection, true)
+    el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mousedown', onMouseDown, true)
     el.addEventListener('mouseup', onMouseUp)
-    el.addEventListener('wheel', onWheel, true)
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false })
     el.addEventListener('contextmenu', onContextMenu)
 
     // Replay whatever the pty printed before this pane existed (new pane on an
@@ -214,8 +296,30 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       })
     })
 
+    /**
+     * Full repair of a pane that drew itself wrong: measure again, tell the pty the true
+     * size, make the agent repaint its whole frame, then repaint our side and land on the
+     * newest line. Everything a manual restart used to be needed for, without losing the run.
+     */
+    const repair = (): void => {
+      try {
+        pinned.current = true
+        refit(t, f, true)
+        api.resize(sessionId, t.cols, t.rows)
+        api.redraw(sessionId)
+        t.refresh(0, t.rows - 1)
+        t.scrollToBottom()
+        setScrolledUp(false)
+      } catch {
+        /* hidden or detached - the visibility effect refits it */
+      }
+    }
+    paneRepair.set(sessionId, repair)
+
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
     // the agent's output permanently, so resizes only run while the pane is shown.
+    const mountedAt = Date.now()
+    let settle: number | undefined
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       try {
@@ -224,13 +328,48 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       } catch {
         /* element detached mid-measure */
       }
+      // A resize is where panes get garbled: the agent redraws against a size it half
+      // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
+      // whole frame again. Held off for the first seconds so a CLI still painting its
+      // welcome screen is not poked mid-paint.
+      window.clearTimeout(settle)
+      settle = window.setTimeout(() => {
+        if (!autoFixRef.current || Date.now() - mountedAt < 3000) return
+        if (!host.current?.offsetParent) return
+        api.redraw(sessionId)
+        try {
+          t.refresh(0, t.rows - 1)
+        } catch {
+          /* detached */
+        }
+      }, 400)
     })
     ro.observe(host.current)
+
+    // Whether the agent's own footer still says it is running. The main process cannot see
+    // the rendered frame, and without this a long silent tool call looks exactly like a
+    // finished turn - which is what made the chime fire in the middle of an answer.
+    let busy = false
+    const busyTick = window.setInterval(() => {
+      let now = false
+      try {
+        now = BUSY_FOOTER.test(screenText(t))
+      } catch {
+        return
+      }
+      if (now === busy) return
+      busy = now
+      api.setBusy(sessionId, now)
+    }, 1500)
 
     return () => {
       off()
       ro.disconnect()
+      window.clearTimeout(settle)
+      window.clearInterval(busyTick)
+      paneRepair.delete(sessionId)
       el.removeEventListener('keydown', onKeyClearsSelection, true)
+      el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('wheel', onWheel, true)
@@ -270,5 +409,54 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     return () => cancelAnimationFrame(id)
   }, [visible, sessionId])
 
-  return <div className="xterm-host" ref={host} />
+  /**
+   * Dropping files types their paths at the prompt. Getting a screenshot or a PDF in front
+   * of an agent otherwise means finding the folder by hand and typing the path; here it is
+   * drag, drop, Enter. Nothing is sent for you - the paths land in the input box so they
+   * can be described first.
+   */
+  const onDrop = (e: React.DragEvent): void => {
+    e.preventDefault()
+    setDropping(false)
+    const paths = Array.from(e.dataTransfer.files)
+      .map((file) => api.pathForFile(file))
+      .filter(Boolean)
+    if (!paths.length) return
+    api.write(sessionId, paths.map(quote).join(' ') + ' ')
+    term.current?.focus()
+  }
+
+  return (
+    <div
+      className={'xterm-wrap' + (dropping ? ' dropping' : '')}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+        setDropping(true)
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return
+        setDropping(false)
+      }}
+      onDrop={onDrop}
+    >
+      <div className="xterm-host" ref={host} />
+      {scrolledUp && (
+        <button
+          className="jump-newest"
+          title="Back to the newest output"
+          onClick={() => {
+            pinned.current = true
+            term.current?.scrollToBottom()
+            setScrolledUp(false)
+            term.current?.focus()
+          }}
+        >
+          ↓ Newest
+        </button>
+      )}
+      {dropping && <div className="drop-hint">Drop files to put their paths in the prompt</div>}
+    </div>
+  )
 }
