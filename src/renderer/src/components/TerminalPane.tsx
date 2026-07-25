@@ -16,16 +16,13 @@ interface Props {
 const isMac = navigator.userAgent.includes('Mac')
 
 /**
- * Refit, and stay pinned to the bottom if that is where the view already was. A resize
- * changes how many rows fit while xterm leaves the viewport offset alone, which strands
- * the newest output below the fold until some keypress happens to scroll it back.
- * Someone reading scrollback is left where they are.
+ * Refit, and land back on the newest line if this pane was following it. A resize changes
+ * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
+ * the view ends up a line short of the tail. Someone reading scrollback is left alone.
  */
-function refit(t: Terminal, f: FitAddon): void {
-  const buf = t.buffer.active
-  const atBottom = buf.viewportY >= buf.baseY
+function refit(t: Terminal, f: FitAddon, pinned: boolean): void {
   f.fit()
-  if (atBottom) t.scrollToBottom()
+  if (pinned) t.scrollToBottom()
 }
 
 /**
@@ -44,6 +41,9 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
   // selection on the next buffer change, so the highlight vanishes before the user
   // can hit Ctrl+C. Remember the last real selection and copy that instead.
   const lastSelection = useRef('')
+  // Whether this pane is following the tail. A ref because the resize and font-size effects
+  // need it too, and it must survive without re-running the effect that owns the terminal.
+  const pinned = useRef(true)
 
   useEffect(() => {
     if (!host.current) return
@@ -67,7 +67,21 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     term.current = t
     fit.current = f
 
-    t.onData((d) => api.write(sessionId, d))
+    // Debug handle. Given --remote-debugging-port, an agent can read cols/rows, call fit,
+    // and check where the viewport sits, instead of guessing at pixel bugs from screenshots.
+    // The window loads no remote content, so nothing untrusted can reach it.
+    const dbg = window as unknown as { __pf?: Record<string, unknown> }
+    dbg.__pf = { ...(dbg.__pf ?? {}), [sessionId]: { term: t, fit: f, host: host.current } }
+
+    // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
+    // or letting go of a scrollbar drag above the last line. Typing resumes it, which is
+    // what xterm's own scrollOnUserInput already implies.
+    const atBottom = (): boolean => t.buffer.active.baseY - t.buffer.active.viewportY <= 0
+
+    t.onData((d) => {
+      pinned.current = true
+      api.write(sessionId, d)
+    })
 
     t.onSelectionChange(() => {
       const s = t.getSelection()
@@ -151,7 +165,16 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     // Copy on select, the way Windows Terminal and every Linux terminal do it: let go
     // of the mouse and the text is already on the clipboard, so Ctrl+C never has to
     // double as copy. Single stray characters are ignored - those are misclicks.
+    // Wheel up is the one gesture that means "stop following"; wheeling back down to the
+    // last line resumes it. Nothing a write does can flip either way.
+    const onWheel = (e: WheelEvent): void => {
+      if (e.deltaY < 0) pinned.current = false
+      else if (atBottom()) pinned.current = true
+    }
     const onMouseUp = (): void => {
+      // Covers a scrollbar drag and a selection drag alike: wherever the view ended up is
+      // now the intent.
+      pinned.current = atBottom()
       if (!copyOnSelectRef.current) return
       const sel = t.getSelection()
       if (sel.trim().length < 2) return
@@ -168,16 +191,27 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     el.addEventListener('keydown', onKeyClearsSelection, true)
     el.addEventListener('mousedown', onMouseDown, true)
     el.addEventListener('mouseup', onMouseUp)
+    el.addEventListener('wheel', onWheel, true)
     el.addEventListener('contextmenu', onContextMenu)
 
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
-      if (b) t.write(b)
+      // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
+      if (b) t.write(b, () => t.scrollToBottom())
     })
 
     const off = api.onData((id, data) => {
-      if (id === sessionId) t.write(data)
+      if (id !== sessionId) return
+      // Follow the tail unless the user deliberately went looking at scrollback. xterm's own
+      // rule is "follow only while the viewport sits exactly on the last line", and a wheel
+      // notch, a reflow or a resize is enough to leave it a line short - from then on every
+      // line lands in scrollback the scrollbar already believes it has reached, the turn
+      // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
+      // write should have). Intent cannot drift, so this recovers by itself.
+      t.write(data, () => {
+        if (pinned.current) t.scrollToBottom()
+      })
     })
 
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
@@ -185,7 +219,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       try {
-        refit(t, f)
+        refit(t, f, pinned.current)
         api.resize(sessionId, t.cols, t.rows)
       } catch {
         /* element detached mid-measure */
@@ -199,6 +233,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', onMouseDown, true)
       el.removeEventListener('mouseup', onMouseUp)
+      el.removeEventListener('wheel', onWheel, true)
       el.removeEventListener('contextmenu', onContextMenu)
       t.dispose()
     }
@@ -210,7 +245,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     if (!t || t.options.fontSize === fontSize) return
     t.options.fontSize = fontSize
     try {
-      if (fit.current) refit(t, fit.current)
+      if (fit.current) refit(t, fit.current, pinned.current)
       api.resize(sessionId, t.cols, t.rows)
     } catch {
       /* hidden pane - the visibility effect will refit it */
@@ -224,7 +259,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     const id = requestAnimationFrame(() => {
       try {
         if (term.current && fit.current) {
-          refit(term.current, fit.current)
+          refit(term.current, fit.current, pinned.current)
           api.resize(sessionId, term.current.cols, term.current.rows)
         }
         term.current?.focus()
