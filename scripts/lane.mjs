@@ -114,6 +114,87 @@ function reap(state) {
   return state
 }
 
+// ---------------------------------------------------------------- keeping lanes mergeable
+
+/**
+ * Resolve once, replay forever.
+ *
+ * A lane merges master and its chat fixes the conflict; the release later merges that lane
+ * INTO master and meets the same conflict from the other side. rerere replays the recorded
+ * resolution, so the second half of every conflict is settled without anyone being asked.
+ * The setting lives in the shared .git dir, so every worktree inherits it.
+ */
+function enableRerere() {
+  gitSafe(MAIN, 'config', 'rerere.enabled', 'true')
+  gitSafe(MAIN, 'config', 'rerere.autoupdate', 'true')
+}
+
+/**
+ * Bring one lane up to master.
+ *
+ * Conflicts are cheap here and expensive later: in the lane, the chat that wrote the code is
+ * alive and holding the context. At release time it is a stranger's problem, the lane sits
+ * conflicted for hours, and auto-sync starts shouting about unmerged files. So lanes catch
+ * up early and often, and a conflict is left IN the lane for its own chat to resolve.
+ *
+ * Returns { moved, conflicts, dirty } - conflicts is the unmerged file list.
+ */
+function catchUp(id, { keepConflict = false } = {}) {
+  const dir = laneDir(id)
+  if (id === 'main' || !existsSync(dir)) return { moved: false, conflicts: [], dirty: false }
+  // Never merge on top of someone's uncommitted edit.
+  if (gitSafe(dir, 'status', '--porcelain').out) return { moved: false, conflicts: [], dirty: true }
+  // Already contains master -> nothing to do (and no empty merge commit).
+  if (gitSafe(dir, 'merge-base', '--is-ancestor', 'master', 'HEAD').ok) {
+    return { moved: false, conflicts: [], dirty: false }
+  }
+  enableRerere()
+  const m = gitSafe(dir, 'merge', '--no-edit', 'master')
+  if (m.ok) return { moved: true, conflicts: [], dirty: false }
+  const conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+    .out.split('\n')
+    .filter(Boolean)
+  // The half-merge is only left in the tree for the chat that asked to finish this lane
+  // (`ready`), which is the one moment someone is there to resolve it. Every other caller
+  // gets the lane back the way it found it - a conflicted checkout nobody owns is what
+  // stalled lane-b for a day and made auto-sync pop "unmerged files" every run.
+  if (!keepConflict || !conflicts.length) gitSafe(dir, 'merge', '--abort')
+  return { moved: false, conflicts, dirty: false }
+}
+
+/**
+ * Make a free lane safe to hand to a new chat.
+ *
+ * A lane released by a chat that stopped mid-merge used to stay conflicted forever: no chat
+ * owned it, so nobody resolved it, and every auto-sync run tripped over it. Nothing here can
+ * lose work - it only touches a lane no live session holds, only aborts a merge that was
+ * never finished, and only resets a branch whose commits master already has.
+ */
+function healLane(id) {
+  const dir = laneDir(id)
+  if (id === 'main' || !existsSync(dir)) return null
+  const did = []
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) {
+    gitSafe(dir, 'merge', '--abort')
+    did.push('aborted an unfinished merge')
+  }
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) {
+    gitSafe(dir, 'rebase', '--abort')
+    did.push('aborted an unfinished rebase')
+  }
+  const clean = !gitSafe(dir, 'status', '--porcelain').out
+  if (clean && aheadOf(laneBranch(id)) === 0) {
+    // Every change in this lane is already in master: start the next chat from master
+    // instead of from a branch full of commits that only look unshipped.
+    if (gitSafe(dir, 'reset', '--hard', 'master').ok) did.push('reset to master')
+  } else if (clean) {
+    const c = catchUp(id)
+    if (c.moved) did.push('merged master')
+    if (c.conflicts.length) did.push(`conflicts with master in ${c.conflicts.join(', ')}`)
+  }
+  return did.length ? did.join(', ') : null
+}
+
 // ---------------------------------------------------------------- worktree setup
 
 function ensureWorktree(id) {
@@ -169,9 +250,19 @@ function claim(session, cwd, prefer) {
   }
 
   const dir = ensureWorktree(free)
+  enableRerere()
+  // A lane is handed over clean and current, never mid-merge and never stale: whatever the
+  // last chat left behind is settled here, before this one writes a line.
+  const healed = healLane(free)
+  if (healed) {
+    delete state.conflicts[free]
+    if (/conflicts with master/.test(healed)) {
+      state.conflicts[free] = { at: now(), dir, detail: healed }
+    }
+  }
   state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now() }
   write(state)
-  return { lane: free, dir, branch: laneBranch(free), profile: laneProfile(free), fresh: true }
+  return { lane: free, dir, branch: laneBranch(free), profile: laneProfile(free), fresh: true, healed }
 }
 
 /**
@@ -346,7 +437,23 @@ function ready(session) {
   const [id] = mine
   const dirty = git(laneDir(id), 'status', '--porcelain')
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
+
+  // Merge master in HERE, while this chat is still around, rather than letting the release
+  // discover the conflict later with nobody left who knows the code. Resolving it now also
+  // teaches rerere the answer, so the release's own merge replays it untouched.
+  const caught = catchUp(id, { keepConflict: true })
+  if (caught.conflicts.length) {
+    state.conflicts[id] = { at: now(), dir: laneDir(id), detail: caught.conflicts.join(', ') }
+    write(state)
+    throw new Error(
+      `lane ${id} and master both changed:\n  ${caught.conflicts.join('\n  ')}\n` +
+        `The merge is open in ${laneDir(id)}. Resolve those files, ` +
+        `\`git add\` them, \`git commit\`, then run ready again - the release then merges by itself.`
+    )
+  }
+
   const marked = markReady(state, id)
+  delete state.conflicts[id]
   write(state)
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
@@ -363,10 +470,17 @@ function releaseClaim(session) {
       // never said so. Uncommitted work is the opposite: nobody released half an edit.
       const w = laneWork(id)
       if (!state.ready[id] && !w.dirty && w.ahead > 0) {
-        try {
-          marked = markReady(state, id)
-        } catch {
-          /* nothing mergeable - leave it */
+        // Same catch-up as `ready`, minus anyone to resolve a conflict: if it does not merge
+        // cleanly it is recorded by name instead of being marked ready and failing later.
+        const caught = catchUp(id)
+        if (caught.conflicts.length) {
+          state.conflicts[id] = { at: now(), dir: laneDir(id), detail: caught.conflicts.join(', ') }
+        } else {
+          try {
+            marked = markReady(state, id)
+          } catch {
+            /* nothing mergeable - leave it */
+          }
         }
       }
       delete state.lanes[id]
@@ -444,14 +558,19 @@ function ship(kind, session) {
     git(MAIN, 'push')
     git(MAIN, 'push', 'origin', `v${next}`)
 
-    // Every lane that just shipped catches up to master, so the next feature in that
-    // lane does not start from a stale base and conflict on the release commit.
+    // Every lane that just shipped catches up to master, so the next feature in that lane
+    // does not start from a stale base and conflict on the release commit. A real merge, not
+    // ff-only: a lane with its own commits can never fast-forward, which is exactly the lane
+    // that drifts and conflicts. A lane that cannot merge cleanly is recorded and told to
+    // its own chat, not silently skipped.
     const rebased = []
     for (const id of POOL) {
-      if (id === 'main' || !existsSync(laneDir(id))) continue
-      const dir = laneDir(id)
-      if (git(dir, 'status', '--porcelain')) continue
-      if (gitSafe(dir, 'merge', '--ff-only', 'master').ok) rebased.push(id)
+      if (id === 'main') continue
+      const c = catchUp(id)
+      if (c.moved) rebased.push(id)
+      if (c.conflicts.length) {
+        conflicts[id] = { at: now(), dir: laneDir(id), detail: `master merge: ${c.conflicts.join(', ')}` }
+      }
     }
 
     const fresh = read()
