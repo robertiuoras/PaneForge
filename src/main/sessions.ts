@@ -46,8 +46,19 @@ interface Live {
    * What the pane can see and this process cannot: the agent's own footer still
    * says it is running ("esc to interrupt"). A long tool call is silent for
    * minutes, which used to look exactly like a finished turn and chimed for it.
+   *
+   * Kept as a deadline rather than a flag: the pane re-states it while the agent is
+   * busy, so a pane that is torn down mid-turn cannot leave a session muted forever.
    */
-  busyOnScreen: boolean
+  busyUntil: number
+  /**
+   * When the user last acknowledged this pane. Attention is only raised for output
+   * newer than that, which is what makes it once per quiet stretch: the focused pane
+   * acknowledges itself on every session update, and without this the sweep re-raised
+   * it a second later, forever - one system notification per second while the window
+   * sat in the background.
+   */
+  ackedAt: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -110,7 +121,8 @@ export class SessionManager extends EventEmitter {
       req,
       cols: 120,
       rows: 30,
-      busyOnScreen: false
+      busyUntil: 0,
+      ackedAt: 0
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -177,6 +189,8 @@ export class SessionManager extends EventEmitter {
     live.meta.exitCode = undefined
     live.meta.attention = false
     live.meta.engaged = Boolean(live.req.prompt)
+    live.busyUntil = 0
+    live.ackedAt = 0
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
     this.emit('data', id, RESET)
@@ -271,16 +285,28 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  /** The renderer's read of whether the agent's own UI still says it is running. */
+  /**
+   * The renderer's read of whether the agent's own UI still says it is running. Panes
+   * repeat it every second or so, so the deadline it sets expires by itself if the pane
+   * goes away.
+   */
   setBusyOnScreen(id: string, busy: boolean): void {
     const s = this.sessions.get(id)
     if (!s) return
-    s.busyOnScreen = busy
+    // Long deadline rather than a plain flag: the pane re-states this whenever output
+    // arrives, so it stays honest, and if the pane goes away entirely the session is
+    // not muted forever.
+    s.busyUntil = busy ? Date.now() + 600_000 : 0
   }
 
   clearAttention(id: string): void {
     const s = this.sessions.get(id)
-    if (!s?.meta.attention) return
+    if (!s) return
+    // Recorded even when nothing was raised: the pane you are looking at acknowledges
+    // itself continuously, and this is what stops the sweep raising it again a second
+    // later off the same silence.
+    s.ackedAt = Date.now()
+    if (!s.meta.attention) return
     s.meta.attention = false
     this.emitSessions()
   }
@@ -378,8 +404,9 @@ export class SessionManager extends EventEmitter {
         meta.status === 'idle' &&
         meta.engaged &&
         !meta.attention &&
-        !live.busyOnScreen &&
+        live.busyUntil < now &&
         meta.lastOutput > meta.createdAt &&
+        meta.lastOutput > live.ackedAt &&
         quiet > ATTENTION_AFTER_MS
       ) {
         meta.attention = true

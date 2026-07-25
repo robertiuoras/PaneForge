@@ -283,8 +283,39 @@ export default function TerminalPane({
       if (b) t.write(b, () => t.scrollToBottom())
     })
 
+    /**
+     * Whether the agent's own footer still says it is running. The main process cannot
+     * see the rendered frame, and without this a long silent tool call looks exactly like
+     * a finished turn - which is what made the chime fire in the middle of an answer.
+     *
+     * Driven by output rather than by a timer: a minimized window has its timers throttled
+     * to about once a minute, and a minimized window is precisely when the chime matters.
+     * Output arrives over IPC, which is not throttled, so the check runs right after the
+     * frame that would decide it.
+     */
+    let busy = false
+    let lastBusyCheck = 0
+    let settle2: number | undefined
+    const checkBusy = (): void => {
+      lastBusyCheck = Date.now()
+      let now = false
+      try {
+        now = BUSY_FOOTER.test(screenText(t))
+      } catch {
+        return
+      }
+      if (now === busy) return
+      busy = now
+      api.setBusy(sessionId, now)
+    }
+
     const off = api.onData((id, data) => {
       if (id !== sessionId) return
+      // Once per burst while output is flowing, and once more after it stops: the frame
+      // that decides "finished or still working" is the last one drawn.
+      if (Date.now() - lastBusyCheck > 600) checkBusy()
+      window.clearTimeout(settle2)
+      settle2 = window.setTimeout(checkBusy, 900)
       // Follow the tail unless the user deliberately went looking at scrollback. xterm's own
       // rule is "follow only while the viewport sits exactly on the last line", and a wheel
       // notch, a reflow or a resize is enough to leave it a line short - from then on every
@@ -349,23 +380,16 @@ export default function TerminalPane({
     // Whether the agent's own footer still says it is running. The main process cannot see
     // the rendered frame, and without this a long silent tool call looks exactly like a
     // finished turn - which is what made the chime fire in the middle of an answer.
-    let busy = false
-    const busyTick = window.setInterval(() => {
-      let now = false
-      try {
-        now = BUSY_FOOTER.test(screenText(t))
-      } catch {
-        return
-      }
-      if (now === busy) return
-      busy = now
-      api.setBusy(sessionId, now)
-    }, 1500)
+    // Backstop for anything the output path missed - a repaint xterm made on its own,
+    // or a pane that mounted onto an already-quiet session.
+    const busyTick = window.setInterval(checkBusy, 4000)
+    checkBusy()
 
     return () => {
       off()
       ro.disconnect()
       window.clearTimeout(settle)
+      window.clearTimeout(settle2)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       el.removeEventListener('keydown', onKeyClearsSelection, true)
