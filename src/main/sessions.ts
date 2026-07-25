@@ -175,6 +175,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return
     live.proc.write(data)
+    if (!isTyping(data)) return
     // Typing into a pane is both "I have asked it something" (so its next quiet
     // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
     if (!live.meta.engaged || live.meta.attention) {
@@ -309,6 +310,21 @@ export class SessionManager extends EventEmitter {
   private emitSessions(): void {
     this.emit('sessions', this.list())
   }
+}
+
+/**
+ * Did a human put this in the pane, or is it the terminal talking to the agent?
+ *
+ * xterm answers the CLI's own startup queries - device attributes, cursor
+ * position, colour support - through the very same write path as a keystroke.
+ * Counting those as "you asked it something" made every pane engaged within a
+ * second of launching, which is exactly the false "waiting for you" this is
+ * meant to prevent. Escape-prefixed replies and lone control bytes do not count;
+ * printable text and a bare Enter do.
+ */
+function isTyping(data: string): boolean {
+  if (!data || data.startsWith('\x1b')) return false
+  return data === '\r' || data === '\n' || /[\x20-\x7e -￿]/.test(data)
 }
 
 function agentEnv(): Record<string, string> {
