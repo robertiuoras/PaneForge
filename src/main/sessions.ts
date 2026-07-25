@@ -20,8 +20,16 @@ import type {
   SwarmRequest
 } from '../shared/types'
 
-/** How long output must stay quiet before a session counts as waiting for you. */
+/** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
+/**
+ * How long it must stay quiet before the pane is treated as *waiting for you*.
+ * A single turn goes quiet many times - the model thinking, a long tool call, a
+ * slow API round trip - and every one of those gaps used to raise attention and
+ * chime, so one prompt could ring a dozen times. End of turn is a much longer
+ * silence than the idle dot needs.
+ */
+const ATTENTION_AFTER_MS = 25_000
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
 const BUFFER_LIMIT = 400_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
@@ -288,19 +296,30 @@ export class SessionManager extends EventEmitter {
 
   private sweepIdle(): void {
     let changed = false
+    const now = Date.now()
     for (const { meta } of this.sessions.values()) {
-      if (meta.status === 'working' && Date.now() - meta.lastOutput > IDLE_AFTER_MS) {
+      const quiet = now - meta.lastOutput
+      if (meta.status === 'working' && quiet > IDLE_AFTER_MS) {
         meta.status = 'idle'
         changed = true
-        // A CLI that has only painted its own welcome screen is quiet, not done:
-        // raising attention there made every fresh Codex pane claim to be waiting
-        // on you the moment it finished drawing.
-        if (meta.engaged) {
-          meta.attention = true
-          this.emit('attention', meta)
-        }
-      } else if (meta.status === 'starting' && Date.now() - meta.createdAt > IDLE_AFTER_MS * 3) {
+      } else if (meta.status === 'starting' && now - meta.createdAt > IDLE_AFTER_MS * 3) {
         meta.status = 'idle'
+        changed = true
+      }
+      // Raised once per quiet stretch, never re-raised until output resumes and
+      // goes quiet again. A CLI that has only painted its own welcome screen is
+      // quiet, not done: `engaged` keeps a fresh pane from claiming to be waiting
+      // on you the moment it finishes drawing, and lastOutput moving past
+      // createdAt keeps a pane that has printed nothing at all out of it.
+      if (
+        meta.status === 'idle' &&
+        meta.engaged &&
+        !meta.attention &&
+        meta.lastOutput > meta.createdAt &&
+        quiet > ATTENTION_AFTER_MS
+      ) {
+        meta.attention = true
+        this.emit('attention', meta)
         changed = true
       }
     }

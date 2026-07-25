@@ -81,10 +81,15 @@ export default function App(): JSX.Element {
   // resubscribe (and so the listener is attached exactly once).
   const soundOn = useRef(true)
   soundOn.current = config?.soundOnIdle ?? true
+  // The pane already on screen is acknowledged the moment it raises its hand
+  // (the effect above clears it), so chiming for it is noise about something you
+  // are already watching.
+  const activeIdRef = useRef<string | null>(null)
+  activeIdRef.current = activeId
   useEffect(
     () =>
-      api.onAttention(() => {
-        if (soundOn.current) playChime()
+      api.onAttention((s) => {
+        if (soundOn.current && s.id !== activeIdRef.current) playChime()
       }),
     []
   )
