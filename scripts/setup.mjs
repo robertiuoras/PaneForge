@@ -82,6 +82,34 @@ try {
   process.exit(1)
 }
 
+// Every shortcut needs the same AppUserModelID the app sets in src/main/index.ts, or
+// Windows treats the pin and the running window as two different apps and shows two
+// taskbar buttons. Includes the taskbar pin itself, which Windows copied from an
+// earlier (unstamped) shortcut.
+step('Tagging shortcuts with the app id')
+const APP_ID = 'com.robert.paneforge'
+const pinned = join(
+  homedir(),
+  'AppData',
+  'Roaming',
+  'Microsoft',
+  'Internet Explorer',
+  'Quick Launch',
+  'User Pinned',
+  'TaskBar',
+  'PaneForge.lnk'
+)
+const setAumid = join(root, 'scripts', 'set-aumid.ps1')
+for (const lnk of [...targets, pinned]) {
+  if (!existsSync(lnk)) continue
+  const r = spawnSync(
+    'powershell',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', setAumid, '-Lnk', lnk, '-Id', APP_ID],
+    { stdio: 'inherit' }
+  )
+  if (r.status !== 0) console.error(`Could not tag ${lnk} - it may open as a second taskbar item.`)
+}
+
 step('Done')
 console.log(`PaneForge is installed.
   exe        ${exe}
