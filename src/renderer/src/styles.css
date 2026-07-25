@@ -232,7 +232,12 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .pt-name { color: var(--text); white-space: nowrap; font-weight: 550; }
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
 .pt-actions { display: flex; gap: 1px; flex: none; align-items: center; }
-.xterm-host { flex: 1; min-height: 0; padding: 7px; user-select: text; }
+/* The inset sits on the .xterm element, never on this host. The fit addon measures the
+   host's border-box height and subtracts only the padding it finds on .xterm, so padding
+   here made it propose a row and a column too many: the newest line landed past the
+   pane's clipped edge, already at the bottom of the scrollback, unreachable by scrolling. */
+.xterm-host { flex: 1; min-height: 0; user-select: text; }
+.xterm-host .xterm { padding: 7px; }
 
 /* The terminal's scrollbar is the one that gets dragged - 20k lines of scrollback
    behind a 10px hairline was a target you had to aim at. Wider, higher contrast,

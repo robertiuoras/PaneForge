@@ -16,6 +16,19 @@ interface Props {
 const isMac = navigator.userAgent.includes('Mac')
 
 /**
+ * Refit, and stay pinned to the bottom if that is where the view already was. A resize
+ * changes how many rows fit while xterm leaves the viewport offset alone, which strands
+ * the newest output below the fold until some keypress happens to scroll it back.
+ * Someone reading scrollback is left where they are.
+ */
+function refit(t: Terminal, f: FitAddon): void {
+  const buf = t.buffer.active
+  const atBottom = buf.viewportY >= buf.baseY
+  f.fit()
+  if (atBottom) t.scrollToBottom()
+}
+
+/**
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
@@ -172,7 +185,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       try {
-        f.fit()
+        refit(t, f)
         api.resize(sessionId, t.cols, t.rows)
       } catch {
         /* element detached mid-measure */
@@ -197,7 +210,7 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     if (!t || t.options.fontSize === fontSize) return
     t.options.fontSize = fontSize
     try {
-      fit.current?.fit()
+      if (fit.current) refit(t, fit.current)
       api.resize(sessionId, t.cols, t.rows)
     } catch {
       /* hidden pane - the visibility effect will refit it */
@@ -210,8 +223,10 @@ export default function TerminalPane({ sessionId, visible, fontSize, copyOnSelec
     if (!visible) return
     const id = requestAnimationFrame(() => {
       try {
-        fit.current?.fit()
-        if (term.current) api.resize(sessionId, term.current.cols, term.current.rows)
+        if (term.current && fit.current) {
+          refit(term.current, fit.current)
+          api.resize(sessionId, term.current.cols, term.current.rows)
+        }
         term.current?.focus()
       } catch {
         /* not laid out yet */
