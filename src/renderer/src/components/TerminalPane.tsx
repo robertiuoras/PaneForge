@@ -7,13 +7,14 @@ const api = window.api
 interface Props {
   sessionId: string
   visible: boolean
+  fontSize: number
 }
 
 /**
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
-export default function TerminalPane({ sessionId, visible }: Props): JSX.Element {
+export default function TerminalPane({ sessionId, visible, fontSize }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
@@ -22,7 +23,7 @@ export default function TerminalPane({ sessionId, visible }: Props): JSX.Element
     if (!host.current) return
     const t = new Terminal({
       fontFamily: 'Cascadia Mono, Consolas, monospace',
-      fontSize: 13,
+      fontSize,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 20000,
@@ -65,6 +66,19 @@ export default function TerminalPane({ sessionId, visible }: Props): JSX.Element
       t.dispose()
     }
   }, [sessionId])
+
+  // Font size is a live setting: change it and every pane re-lays out immediately.
+  useEffect(() => {
+    const t = term.current
+    if (!t || t.options.fontSize === fontSize) return
+    t.options.fontSize = fontSize
+    try {
+      fit.current?.fit()
+      api.resize(sessionId, t.cols, t.rows)
+    } catch {
+      /* hidden pane - the visibility effect will refit it */
+    }
+  }, [fontSize, sessionId])
 
   // Re-fit when this pane becomes visible again: the terminal was not measurable
   // while hidden, so its cols/rows can be stale.

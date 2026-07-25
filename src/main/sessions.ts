@@ -4,6 +4,7 @@
 // Everything here runs in the Electron MAIN process. The renderer never touches a
 // pty directly - it sends keystrokes over IPC and receives output events back.
 
+import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
@@ -13,11 +14,16 @@ import type { Agent, Session, SessionStatus, StartSessionRequest } from '../shar
 const IDLE_AFTER_MS = 4000
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
 const BUFFER_LIMIT = 400_000
+/** Full terminal reset - written on restart so the pane does not stack two runs. */
+const RESET = '\x1bc'
 
 interface Live {
   meta: Session
   proc: pty.IPty
   buffer: string
+  req: StartSessionRequest
+  cols: number
+  rows: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -40,20 +46,9 @@ export class SessionManager extends EventEmitter {
   }
 
   start(req: StartSessionRequest): Session {
+    if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
     const agent: Agent = req.agent ?? 'claude'
     const id = `s${++this.seq}-${Date.now().toString(36)}`
-    const args = req.resume ? ['--continue'] : []
-
-    // Spawn the agent binary directly (not through cmd.exe): one less process in the
-    // tree, so killing the session actually kills the agent instead of orphaning it.
-    // shell:true equivalents on Windows also swallow Ctrl-C.
-    const proc = pty.spawn(agentCommand(agent), args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: req.cwd,
-      env: agentEnv()
-    })
 
     const meta: Session = {
       id,
@@ -64,45 +59,81 @@ export class SessionManager extends EventEmitter {
       lastOutput: Date.now(),
       createdAt: Date.now()
     }
-    const live: Live = { meta, proc, buffer: '' }
+    const live: Live = { meta, proc: this.spawn(req, agent, 120, 30), buffer: '', req, cols: 120, rows: 30 }
     this.sessions.set(id, live)
-
-    proc.onData((data) => {
-      live.buffer = (live.buffer + data).slice(-BUFFER_LIMIT)
-      const wasIdle = meta.status !== 'working'
-      meta.lastOutput = Date.now()
-      meta.status = 'working'
-      this.emit('data', id, data)
-      if (wasIdle) this.emitSessions()
-    })
-
-    proc.onExit(({ exitCode }) => {
-      meta.status = 'exited'
-      meta.exitCode = exitCode
-      this.emitSessions()
-    })
-
-    if (req.prompt) {
-      // The agent needs a moment to draw its input box before it accepts keys.
-      setTimeout(() => this.write(id, req.prompt + '\r'), 2500)
-    }
+    this.attach(live)
+    this.queuePrompt(id, req.prompt)
 
     this.emitSessions()
     return meta
+  }
+
+  /**
+   * Kill and respawn the agent under the same id, so the pane, its position and the
+   * user's selection all survive. Used for "restart" and for reviving an exited run.
+   */
+  restart(id: string): Session | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    try {
+      live.proc.kill()
+    } catch {
+      /* already dead */
+    }
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.buffer = RESET
+    live.meta.status = 'starting'
+    live.meta.exitCode = undefined
+    live.meta.attention = false
+    live.meta.createdAt = Date.now()
+    live.meta.lastOutput = Date.now()
+    this.emit('data', id, RESET)
+    this.attach(live)
+    this.queuePrompt(id, live.req.prompt)
+    this.emitSessions()
+    return live.meta
+  }
+
+  rename(id: string, title: string): void {
+    const s = this.sessions.get(id)
+    if (!s || !title.trim()) return
+    s.meta.title = title.trim().slice(0, 60)
+    this.emitSessions()
   }
 
   write(id: string, data: string): void {
     this.sessions.get(id)?.proc.write(data)
   }
 
+  /** Same line to every live session - "/clear" or a shared instruction in one go. */
+  broadcast(text: string): void {
+    for (const s of this.sessions.values()) {
+      if (s.meta.status === 'exited') continue
+      try {
+        s.proc.write(text + '\r')
+      } catch {
+        /* dying pty */
+      }
+    }
+  }
+
   resize(id: string, cols: number, rows: number): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
+    s.cols = Math.max(cols, 20)
+    s.rows = Math.max(rows, 5)
     try {
-      s.proc.resize(Math.max(cols, 20), Math.max(rows, 5))
+      s.proc.resize(s.cols, s.rows)
     } catch {
       // pty already gone between the renderer's measure and this call - harmless.
     }
+  }
+
+  clearAttention(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s?.meta.attention) return
+    s.meta.attention = false
+    this.emitSessions()
   }
 
   kill(id: string): void {
@@ -121,11 +152,57 @@ export class SessionManager extends EventEmitter {
     for (const id of [...this.sessions.keys()]) this.kill(id)
   }
 
+  private spawn(req: StartSessionRequest, agent: Agent, cols: number, rows: number): pty.IPty {
+    // Spawn the agent binary directly (not through cmd.exe): one less process in the
+    // tree, so killing the session actually kills the agent instead of orphaning it.
+    // shell:true equivalents on Windows also swallow Ctrl-C.
+    return pty.spawn(agentCommand(agent), req.resume ? ['--continue'] : [], {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: req.cwd,
+      env: agentEnv()
+    })
+  }
+
+  private attach(live: Live): void {
+    const { meta } = live
+    const id = meta.id
+    const proc = live.proc
+
+    proc.onData((data) => {
+      // A late event from the previous process of a restarted session would append
+      // dead output into the fresh buffer.
+      if (live.proc !== proc) return
+      live.buffer = (live.buffer + data).slice(-BUFFER_LIMIT)
+      const wasIdle = meta.status !== 'working'
+      meta.lastOutput = Date.now()
+      meta.status = 'working'
+      this.emit('data', id, data)
+      if (wasIdle) this.emitSessions()
+    })
+
+    proc.onExit(({ exitCode }) => {
+      if (live.proc !== proc) return
+      meta.status = 'exited'
+      meta.exitCode = exitCode
+      this.emitSessions()
+    })
+  }
+
+  private queuePrompt(id: string, prompt?: string): void {
+    if (!prompt) return
+    // The agent needs a moment to draw its input box before it accepts keys.
+    setTimeout(() => this.write(id, prompt + '\r'), 2500)
+  }
+
   private sweepIdle(): void {
     let changed = false
     for (const { meta } of this.sessions.values()) {
       if (meta.status === 'working' && Date.now() - meta.lastOutput > IDLE_AFTER_MS) {
         meta.status = 'idle'
+        meta.attention = true
+        this.emit('attention', meta)
         changed = true
       } else if (meta.status === 'starting' && Date.now() - meta.createdAt > IDLE_AFTER_MS * 3) {
         meta.status = 'idle'

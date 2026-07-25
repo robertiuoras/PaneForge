@@ -8,6 +8,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { projectsRoot } from './config'
 import type { Project } from '../shared/types'
 
 const SKIP = new Set([
@@ -19,7 +20,7 @@ export function defaultRoot(): string {
   return join(homedir(), 'Desktop', 'Projects')
 }
 
-export function listProjects(root = defaultRoot()): Project[] {
+export function listProjects(root = projectsRoot()): Project[] {
   if (!existsSync(root)) return []
   const used = lastUsedByPathSlug()
 

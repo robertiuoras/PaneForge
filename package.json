@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "PaneForge - desktop app to run and manage multiple Claude Code sessions",
+  "author": "Robert",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -11,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke": "node scripts/smoke-pty.mjs",
     "postinstall": "electron-builder install-app-deps",
-    "package": "electron-vite build && electron-builder --win --dir"
+    "package": "electron-vite build && electron-builder --win --dir",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12"

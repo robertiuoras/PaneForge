@@ -3,15 +3,29 @@ import type { Agent, Project, StartSessionRequest } from '@shared/types'
 
 interface Props {
   projects: Project[]
-  onStart: (req: StartSessionRequest) => void
+  defaultAgent: Agent
+  onStart: (reqs: StartSessionRequest[]) => void
+  /** save the current tick-list as a named workspace without launching it */
+  onSaveWorkspace: (name: string, reqs: StartSessionRequest[]) => void
   onCancel: () => void
 }
 
-export default function NewSessionDialog({ projects, onStart, onCancel }: Props): JSX.Element {
+/**
+ * Project picker. Tick several projects to launch them in one go - that is the part
+ * that replaces the fixed five-pane .bat, except the list is chosen per launch.
+ */
+export default function NewSessionDialog({
+  projects,
+  defaultAgent,
+  onStart,
+  onSaveWorkspace,
+  onCancel
+}: Props): JSX.Element {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
+  const [ticked, setTicked] = useState<string[]>([])
   const [resume, setResume] = useState(false)
-  const [agent, setAgent] = useState<Agent>('claude')
+  const [agent, setAgent] = useState<Agent>(defaultAgent)
   const [prompt, setPrompt] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
@@ -19,39 +33,70 @@ export default function NewSessionDialog({ projects, onStart, onCancel }: Props)
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    const list = needle
-      ? projects.filter((p) => p.name.toLowerCase().includes(needle))
-      : projects
-    return list.slice(0, 40)
+    const list = needle ? projects.filter((p) => p.name.toLowerCase().includes(needle)) : projects
+    return list.slice(0, 60)
   }, [projects, q])
 
   useEffect(() => setSel(0), [q])
 
-  const go = (p?: Project): void => {
-    const target = p ?? shown[sel]
-    if (!target) return
-    onStart({
-      cwd: target.path,
-      title: target.name,
-      agent,
-      resume,
-      prompt: prompt.trim() || undefined
+  const toggle = (path: string): void =>
+    setTicked((t) => (t.includes(path) ? t.filter((p) => p !== path) : [...t, path]))
+
+  /** Ticked projects if any, otherwise whatever row is highlighted. */
+  const chosen = (p?: Project): StartSessionRequest[] => {
+    const paths = ticked.length ? ticked : p ? [p.path] : shown[sel] ? [shown[sel].path] : []
+    return paths.map((path) => {
+      const proj = projects.find((x) => x.path === path)
+      return {
+        cwd: path,
+        title: proj?.name,
+        agent,
+        resume,
+        prompt: prompt.trim() || undefined
+      }
     })
+  }
+
+  const go = (p?: Project): void => {
+    const reqs = chosen(p)
+    if (reqs.length) onStart(reqs)
+  }
+
+  const save = (): void => {
+    const reqs = chosen()
+    if (!reqs.length) return
+    const name = window.prompt('Workspace name', reqs.map((r) => r.title).join(' + ').slice(0, 40))
+    if (name?.trim()) onSaveWorkspace(name.trim(), reqs)
   }
 
   return (
     <div className="overlay" onMouseDown={onCancel}>
       <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <strong>New session</strong>
+          <span className="hint">Space ticks a project, Enter starts everything ticked</span>
+        </div>
+
         <input
           ref={input}
           className="search"
-          placeholder="Filter projects, Enter to start"
+          placeholder="Filter projects"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') setSel((s) => Math.min(s + 1, shown.length - 1))
-            else if (e.key === 'ArrowUp') setSel((s) => Math.max(s - 1, 0))
-            else if (e.key === 'Enter') go()
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setSel((s) => Math.min(s + 1, shown.length - 1))
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setSel((s) => Math.max(s - 1, 0))
+            } else if (e.key === ' ' && q === '') {
+              // Space only ticks when it cannot be part of a search term.
+              e.preventDefault()
+              if (shown[sel]) toggle(shown[sel].path)
+            } else if (e.key === 'Enter') {
+              go()
+            }
           }}
         />
 
@@ -59,11 +104,26 @@ export default function NewSessionDialog({ projects, onStart, onCancel }: Props)
           {shown.map((p, i) => (
             <div
               key={p.path}
-              className={'proj' + (i === sel ? ' sel' : '')}
+              className={'proj' + (i === sel ? ' sel' : '') + (ticked.includes(p.path) ? ' on' : '')}
               onMouseEnter={() => setSel(i)}
-              onClick={() => go(p)}
+              onClick={(e) => {
+                // Plain click launches that one project; the tickbox builds a set.
+                if ((e.target as HTMLElement).dataset.tick) return
+                go(p)
+              }}
             >
+              <span
+                className="tick"
+                data-tick="1"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggle(p.path)
+                }}
+              >
+                {ticked.includes(p.path) ? '[x]' : '[ ]'}
+              </span>
               <span className="proj-name">{p.name}</span>
+              {!p.isGit && <span className="tag">no git</span>}
               <span className="proj-age">{ago(p.lastUsed)}</span>
             </div>
           ))}
@@ -72,7 +132,7 @@ export default function NewSessionDialog({ projects, onStart, onCancel }: Props)
 
         <input
           className="search prompt"
-          placeholder="Optional first message to the agent"
+          placeholder="Optional first message, sent to every session started here"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && go()}
@@ -87,8 +147,11 @@ export default function NewSessionDialog({ projects, onStart, onCancel }: Props)
             <option value="claude">claude</option>
             <option value="codex">codex</option>
           </select>
+          <button className="ghost" onClick={save} disabled={!ticked.length}>
+            Save as workspace
+          </button>
           <button className="primary" onClick={() => go()}>
-            Start
+            Start {ticked.length > 1 ? `${ticked.length} sessions` : ''}
           </button>
         </div>
       </div>

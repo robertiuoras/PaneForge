@@ -27,6 +27,8 @@ export interface Session {
   lastOutput: number
   createdAt: number
   exitCode?: number
+  /** went quiet while you were looking elsewhere - cleared when you open the pane */
+  attention?: boolean
 }
 
 export interface StartSessionRequest {
@@ -39,16 +41,74 @@ export interface StartSessionRequest {
   prompt?: string
 }
 
+/** One saved project inside a workspace. */
+export interface PresetItem {
+  path: string
+  title: string
+  agent: Agent
+  resume?: boolean
+}
+
+/** A named set of projects launched together - the replacement for the old .bat list. */
+export interface Preset {
+  id: string
+  name: string
+  items: PresetItem[]
+}
+
+export interface WindowBounds {
+  x?: number
+  y?: number
+  width: number
+  height: number
+  maximized: boolean
+}
+
+export interface Config {
+  /** folder scanned for projects */
+  root: string
+  presets: Preset[]
+  defaultAgent: Agent
+  /** terminal font size, shared by every pane */
+  fontSize: number
+  /** OS notification + taskbar flash when a session goes quiet in the background */
+  notifyOnIdle: boolean
+  /** show every session at once instead of one at a time */
+  grid: boolean
+  /** ask before closing a session that is still running */
+  confirmClose: boolean
+  launchAtLogin: boolean
+  window: WindowBounds
+}
+
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
   listProjects(): Promise<Project[]>
   listSessions(): Promise<Session[]>
   startSession(req: StartSessionRequest): Promise<Session>
+  startSessions(reqs: StartSessionRequest[]): Promise<Session[]>
+  /** respawn the agent in place, keeping the pane and its id */
+  restartSession(id: string): Promise<Session | null>
+  renameSession(id: string, title: string): Promise<void>
   killSession(id: string): Promise<void>
   write(id: string, data: string): void
+  /** send the same line to every live session */
+  broadcast(text: string): void
   resize(id: string, cols: number, rows: number): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
+  clearAttention(id: string): void
+
+  getConfig(): Promise<Config>
+  setConfig(patch: Partial<Config>): Promise<Config>
+  pickRoot(): Promise<string | null>
+
+  reveal(path: string): void
+  openInEditor(path: string): Promise<string | null>
+  isAdmin(): Promise<boolean>
+  relaunchAsAdmin(): void
+
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
+  onConfig(cb: (config: Config) => void): () => void
 }
