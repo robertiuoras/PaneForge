@@ -22,11 +22,21 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { closeTestApps } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
 const minimized = args.includes('--minimized') || args.includes('-m')
+const close = args.includes('--close')
+
+// `npm run try -- --close` shuts the test copy without touching the live app. Lane
+// release calls the same thing, so this is only for closing one by hand mid-session.
+if (close) {
+  closeTestApps(root)
+  console.log('Test copy closed. Your live app is untouched.')
+  process.exit(0)
+}
 
 // Each checkout gets its own profile, so two agents working in two worktrees never
 // land on the same one. They would not crash - the second launch would just raise the
@@ -42,7 +52,7 @@ const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
 // itself out can be checked against the real window instead of a screenshot of it.
 const passThrough = args.filter(
-  (a) => !['--keep', '--minimized', '-m'].includes(a) && !a.startsWith('--profile=')
+  (a) => !['--keep', '--minimized', '-m', '--close'].includes(a) && !a.startsWith('--profile=')
 )
 
 const electron = join(
@@ -68,6 +78,10 @@ if (!keep) {
 }
 
 console.log(`== Launching the ${profile} copy`)
+// A copy left over from an earlier run holds this profile's single-instance lock, so the
+// new launch would raise the OLD window - running OLD code - and exit. That reads as "my
+// change did not apply". Close it first; only this checkout's Electron is matched.
+closeTestApps(root)
 // Detached: the test app must outlive this command, and the agent pane that ran it
 // must not sit there attached to its output waiting for it to exit.
 //

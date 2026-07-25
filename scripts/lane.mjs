@@ -40,6 +40,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { closeTestApps } from './test-app.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -108,7 +109,12 @@ function write(state) {
 
 function reap(state) {
   for (const [id, c] of Object.entries(state.lanes)) {
-    if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) delete state.lanes[id]
+    if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
+      // A chat that died without a SessionEnd hook never released its lane, and never
+      // closed the `npm run try` window it left running either. Both go here.
+      delete state.lanes[id]
+      closeTestApps(laneDir(id))
+    }
   }
   if (state.release && now() - state.release.at > LOCK_MS) state.release = null
   // A conflict or a ready mark for work master already has is noise that never clears
@@ -494,6 +500,9 @@ function releaseClaim(session) {
         }
       }
       delete state.lanes[id]
+      // The test copy this chat opened belongs to the chat, not to the next one that
+      // claims the lane - and `--minimized` means nobody sees it to close it by hand.
+      closeTestApps(laneDir(id))
       freed = id
     }
   }
