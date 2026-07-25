@@ -6,13 +6,51 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { Config } from '../shared/types'
+import type { Config, SwarmRole } from '../shared/types'
 
 let cache: Config | null = null
 
 function file(): string {
   return join(app.getPath('userData'), 'config.json')
 }
+
+/**
+ * Roles a swarm launch offers out of the box. Deliberately few and deliberately
+ * about ownership rather than skill: the failure mode of several agents in one
+ * repo is two of them editing the same file, not one of them being bad at tests.
+ */
+export const DEFAULT_ROLES: SwarmRole[] = [
+  {
+    id: 'planner',
+    name: 'Planner',
+    agent: 'claude',
+    brief:
+      'You own the plan and nothing else. Read the code, write the step-by-step plan into .paneforge/MEMORY.md, then stop and let the others build.',
+    enabled: true
+  },
+  {
+    id: 'builder',
+    name: 'Builder',
+    agent: 'claude',
+    brief: 'You own the implementation. Follow the plan in .paneforge/MEMORY.md and write the code.',
+    enabled: true
+  },
+  {
+    id: 'reviewer',
+    name: 'Reviewer',
+    agent: 'codex',
+    brief:
+      'You own review. Do not write features. Read the diff, find real bugs, and append findings to .paneforge/MEMORY.md.',
+    enabled: true
+  },
+  {
+    id: 'tester',
+    name: 'Tester',
+    agent: 'claude',
+    brief: 'You own tests and verification. Run the build and the test suite, then report what actually failed.',
+    enabled: false
+  }
+]
 
 function defaults(): Config {
   return {
@@ -26,6 +64,12 @@ function defaults(): Config {
     grid: false,
     confirmClose: true,
     launchAtLogin: false,
+    adminMode: false,
+    autoUpdate: true,
+    saveHistory: true,
+    historyDays: 30,
+    voice: { enabled: true, model: 'base', language: 'auto' },
+    swarmRoles: DEFAULT_ROLES,
     window: { width: 1500, height: 940, maximized: false }
   }
 }
@@ -37,7 +81,14 @@ export function getConfig(): Config {
     const raw = JSON.parse(readFileSync(file(), 'utf8')) as Partial<Config>
     // Shallow merge only: a config written by an older version is missing whole
     // keys, and a nested merge would resurrect stale window bounds anyway.
-    cache = { ...base, ...raw, window: { ...base.window, ...(raw.window ?? {}) } }
+    cache = {
+      ...base,
+      ...raw,
+      window: { ...base.window, ...(raw.window ?? {}) },
+      voice: { ...base.voice, ...(raw.voice ?? {}) },
+      // An empty roles array in an old config would leave the swarm dialog blank.
+      swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles
+    }
   } catch {
     cache = base
   }

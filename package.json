@@ -1,8 +1,8 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "PaneForge - desktop app to run and manage multiple Claude Code sessions",
+  "description": "PaneForge - run every coding agent you own in one window",
   "author": "Robert",
   "main": "./out/main/index.js",
   "scripts": {
@@ -13,10 +13,15 @@
     "smoke": "node scripts/smoke-pty.mjs",
     "postinstall": "electron-builder install-app-deps",
     "package": "electron-vite build && electron-builder --win --dir",
-    "setup": "node scripts/setup.mjs"
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
+    "release": "electron-vite build && electron-builder --publish always",
+    "setup": "node scripts/setup.mjs",
+    "ship": "node scripts/ship.mjs"
   },
   "dependencies": {
-    "@lydell/node-pty": "1.2.0-beta.12"
+    "@lydell/node-pty": "1.2.0-beta.12",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -36,7 +41,62 @@
   "build": {
     "appId": "com.robert.paneforge",
     "productName": "PaneForge",
-    "files": ["out/**/*", "package.json"],
-    "win": { "target": "dir" }
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "robertiuoras",
+        "repo": "claude-orchestrator"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PaneForge"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "PaneForge"
+    }
   }
 }

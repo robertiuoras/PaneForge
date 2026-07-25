@@ -1,65 +1,90 @@
 # PaneForge
 
-Desktop app for running coding-agent sessions - Claude Code, Codex, Gemini CLI,
-Copilot, Cursor Agent, opencode, Amp, Aider, a plain shell, or any CLI you add
-yourself. Pick the projects you actually need, each gets a real terminal in one
-window. Replaces the old `start-claude-panes.bat` grid, which always opened the
-same five.
+One window for every coding agent you own. Claude Code, Codex, Gemini CLI, Qwen,
+Ollama, Copilot, Cursor Agent, opencode, Crush, Goose, Amp, Aider, a plain shell,
+or any other CLI you point it at. Each project gets a real terminal pane, and you
+choose which AI and which model runs in it.
 
-## Install
+Windows and Apple Silicon macOS. Free, no accounts, no server.
+
+## Install (just want to use it)
+
+Grab the latest build from [Releases](https://github.com/robertiuoras/claude-orchestrator/releases):
+
+- **Windows** - `PaneForge-Setup-x.y.z.exe`. Runs, installs, done.
+- **macOS (Apple Silicon)** - `PaneForge-x.y.z-arm64.dmg`. Drag to Applications.
+  The build is not code signed (that needs a paid Apple account), so the first
+  launch must be **right-click the app > Open > Open**. Once only. If macOS still
+  refuses, run `xattr -dr com.apple.quarantine /Applications/PaneForge.app`.
+
+The app checks for new versions in the background and offers the update itself.
+
+## Build it yourself
 
 ```
+npm install
 npm run setup
 ```
 
-Installs dependencies, builds the app, and puts a **PaneForge** shortcut on the
-Desktop and in the Start Menu. Re-run after any source change - it closes the running
-app, rebuilds in place, and keeps the same shortcut.
+Builds the app and puts a **PaneForge** shortcut on the Desktop, in the Start Menu
+and on the taskbar (macOS: builds the .app for you to drag into Applications).
+Re-run after any source change. Needs Node 20+.
 
-Requires Node 20+ and at least one agent CLI on `PATH`. Settings lists every agent
-it knows about, whether it is installed, and the command to install the missing ones.
+## What it does
 
-## Using it
+- **Ctrl T** - project picker, ranked by when you last worked in each folder. Tick
+  several and press Enter to start them all at once.
+- **Workspaces** - a saved set of projects launched with one click.
+- **Agent + model per pane** - pick the CLI and pin the exact model (Opus 5, Opus
+  4.8, Sonnet 5, Gemini 2.5 Pro, a local Ollama model...). **Ctrl Shift A** flips
+  the focused pane to the next installed agent, same folder, same pane, for "Claude
+  is stuck, let Codex look at it".
+- **Free agents** - Gemini CLI, Qwen Code, opencode, Crush, Goose, Aider and Ollama
+  are grouped as *Free* in the picker: usable with no subscription, and Ollama runs
+  entirely offline.
+- **One-click install** - Settings > Agents shows what is missing and installs it
+  for you, streaming the installer's output. Nothing needs a terminal. *Locate*
+  points PaneForge at a binary you already have somewhere odd.
+- **Swarm (Ctrl Shift S)** - one mission, one pane per role (Planner, Builder,
+  Reviewer, Tester), each told what it owns so they stop editing the same file.
+  Roles are editable and remembered.
+- **Board (Ctrl Shift K)** - tasks and shared memory for a project, stored in that
+  project's `.paneforge/` folder so the agents running there can read it. Every
+  agent started in a folder with memory is told to read it first.
+- **History (Ctrl H)** - every pane's transcript, saved and searchable, long after
+  the pane is closed. Reopen any past session in its old folder.
+- **Voice (Ctrl Shift Space)** - hold to talk, and the text lands in the focused
+  pane. Transcribed by a Whisper model on your own machine: free, offline, nothing
+  uploaded. Settings > Voice installs the engine in one click.
+- **Grid view**, **status dots**, **broadcast box** (one line to every session),
+  **restart in place**, rename, open in editor/Explorer.
 
-- **Ctrl T** - project picker, ranked by when you last worked in each folder. Click a
-  project to start it, or tick several (checkbox / Space) and press Enter to start
-  them all at once.
-- **Workspaces** - a saved set of projects, launched with one click. Tick a few in the
-  picker and hit *Save as workspace*, or save whatever is already running from the
-  sidebar. This replaces editing the `PROJECTS=` line in the old .bat.
-- **Agent + model per pane** - the picker in the New session dialog and in every pane
-  header chooses which AI runs there (Claude, Codex, Gemini, ...) and which model it
-  gets. **Ctrl Shift A** flips the focused pane to the next installed agent, same
-  folder, same pane - handy for "Claude is stuck, let Codex look at it". Uninstalled
-  CLIs stay listed but disabled. The model choice is remembered per agent.
-- **Grid view** - every session on screen at once, auto-arranged near-square.
-- **Status dots** - yellow starting, green working, blue quiet (probably waiting for
-  you), grey exited. A session that goes quiet while the window is in the background
-  raises a Windows notification and flashes the taskbar.
-- **Broadcast box** - one line sent to every live session, e.g. `/clear`.
-- **Restart (⟳)** - respawns the agent in the same pane and folder; also revives an
-  exited session.
-- Pane buttons open the folder in Explorer or in Cursor / VS Code. Double-click a
-  title to rename a session.
+Press **F1** for every shortcut.
 
-Press **F1** in the app for every shortcut.
+## Run as administrator with no UAC prompt (Windows)
 
-## Settings
+Settings > System > *Always start as administrator*. It registers a Windows
+scheduled task once - that is the single UAC approval, ever - and repoints your
+shortcuts at it. Every launch after that is elevated and silent, so agents can stop
+admin-owned processes (a service holding port 8000, for example).
 
-Gear icon, or Ctrl `,`:
+Worth knowing before you turn it on:
 
-- projects folder (any folder of folders, not just `Desktop\Projects`)
-- default agent, terminal font size
-- **Agents on this machine** - what is installed and where; *Add agent* wires up any
-  other CLI (command, launch args, resume args, model flag) without touching the code
-- notifications, close confirmation, start with Windows
-- **Restart as admin** - Electron cannot elevate a single agent, so the whole app
-  restarts elevated and every agent it spawns inherits admin. Needed only when an
-  agent must stop admin-owned processes (e.g. a service holding port 8000), which is
-  the same trade-off the old self-elevating .bat made.
+- everything PaneForge launches is elevated too, including every agent pane
+- Windows blocks drag and drop from Explorer into an elevated window
+- the task is pinned to the app's exact exe path, and `npm run setup` re-points it
+  after a rebuild
 
-State lives in `%APPDATA%\PaneForge\config.json`: workspaces, settings, window
-geometry.
+## Shipping updates (for whoever owns the repo)
+
+```
+npm run ship          # 0.2.0 -> 0.2.1, commit, tag, push
+npm run ship minor    # 0.2.0 -> 0.3.0
+```
+
+GitHub Actions then builds Windows and macOS and publishes both to a Release, which
+is the same feed running copies poll. Everyone is offered the update within half an
+hour. Sharing with someone else is just sending them the Releases link.
 
 ## Dev
 
@@ -67,21 +92,26 @@ geometry.
 npm run dev        # electron-vite dev with HMR
 npm run typecheck
 npm run smoke      # headless proof the pty layer can drive `claude`
-npm run smoke -- --cmd codex --args "resume --last"   # ... or any other agent
-npm run package    # unpacked Windows build only, no shortcuts
+npm run smoke -- --cmd codex --args "resume --last"
+npm run package    # unpacked Windows build, no shortcuts
 ```
 
 Agents live in one place: `src/shared/agents.ts`. A new CLI is one entry - binary,
-launch args, resume args, model flag, colour - and it appears in every picker. The
-same shape is what *Add agent* in Settings writes, so nothing needs a rebuild.
+launch args, resume args, model flag, install command, colour - and it appears in
+every picker. The same shape is what *Add agent* in Settings writes, so nothing
+needs a rebuild.
 
 `PaneForge.exe --open <path>` (or `PANEFORGE_OPEN=<path>`) starts a session in that
 folder on launch; a second launch focuses the window already open.
 
-Not built yet: git worktree isolation, diff/merge review, task board, reattaching to
-sessions after an app restart (see `PLAN.md` M2-M4).
+State lives in `%APPDATA%\PaneForge\config.json` (macOS: `~/Library/Application
+Support/PaneForge`): workspaces, settings, window geometry. Transcripts sit next to
+it in `history/`.
 
-## Windows notes
+Not built yet: git worktree isolation, diff/merge review, reattaching to sessions
+after an app restart (see `PLAN.md`).
+
+## Platform notes
 
 - ConPTY does not search `PATH`. The agent binary is resolved to an absolute path
   first (`src/main/which.ts`); spawning the bare name fails with `File not found`.
@@ -91,11 +121,11 @@ sessions after an app restart (see `PLAN.md` M2-M4).
 - `@homebridge/node-pty-prebuilt-multiarch` cannot install on Node 20+ on Windows
   (its install script hits `spawn EINVAL`). `@lydell/node-pty` ships per-platform
   prebuilt binaries and no install script.
-- Claude Code's own env markers (`CLAUDECODE`, `CLAUDE_CODE_*`) are stripped before
-  spawning, otherwise a session launched from inside Claude Code runs as a child
-  session with transcript saving disabled.
-- `electron-builder` cannot wipe `dist/win-unpacked` while the app is open, so
-  `npm run setup` closes PaneForge before building.
+- Claude Code's own env markers (`CLAUDECODE`, `CLAUDE_CODE_*`) and Codex's
+  `CODEX_SANDBOX*` are stripped before spawning, or a nested agent runs crippled.
+- macOS cannot replace an unsigned app in place, so on a Mac the update prompt
+  hands you the download instead of restarting itself. Windows updates silently and
+  restarts.
 
 ## Architecture
 

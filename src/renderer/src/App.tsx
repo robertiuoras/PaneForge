@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { Config, Preset, Project, Session, StartSessionRequest } from '@shared/types'
+import type { Config, HistoryEntry, Preset, Project, Session, StartSessionRequest, SwarmRole } from '@shared/types'
 import AgentPicker from './components/AgentPicker'
 import AgentLogo, { AppLogo } from './components/AgentLogo'
+import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import { Segmented } from './components/Controls'
 import GitBadge from './components/GitBadge'
+import HistoryDialog from './components/HistoryDialog'
 import TerminalPane from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import StatusDot from './components/StatusDot'
+import SwarmDialog from './components/SwarmDialog'
+import UpdateToast from './components/UpdateToast'
+import { useVoice } from './useVoice'
 
 const api = window.api
 
@@ -26,7 +31,12 @@ export default function App(): JSX.Element {
   const [palette, setPalette] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [swarm, setSwarm] = useState(false)
+  const [board, setBoard] = useState<string | null>(null)
+  const [history, setHistory] = useState(false)
   const broadcastBox = useRef<HTMLInputElement>(null)
+  const activeRef = useRef<string | null>(null)
+  activeRef.current = activeId
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -82,6 +92,26 @@ export default function App(): JSX.Element {
     setNote(msg)
     window.setTimeout(() => setNote(null), 4000)
   }, [])
+
+  /**
+   * Dictation types straight into the focused pane, exactly as if you had typed
+   * it, and stops short of pressing Enter: a misheard word should be fixable
+   * before the agent acts on it.
+   */
+  const voice = useVoice(
+    useCallback(
+      (text: string) => {
+        const id = activeRef.current
+        if (!id) return flash('Nothing focused - open a pane first.')
+        api.write(id, text)
+      },
+      [flash]
+    )
+  )
+
+  useEffect(() => {
+    if (voice.error) flash(voice.error)
+  }, [voice.error, flash])
 
   const start = useCallback(
     async (reqs: StartSessionRequest[]) => {
@@ -187,6 +217,9 @@ export default function App(): JSX.Element {
         setPicking(false)
         setSettings(false)
         setHelp(false)
+        setSwarm(false)
+        setBoard(null)
+        setHistory(false)
         setRenaming(null)
         return
       }
@@ -201,9 +234,20 @@ export default function App(): JSX.Element {
       if (k === 't') {
         e.preventDefault()
         setPicking(true)
-      } else if (k === 'k' || (k === 'p' && e.shiftKey)) {
+      } else if ((k === 'k' && !e.shiftKey) || (k === 'p' && e.shiftKey)) {
         e.preventDefault()
         setPalette((p) => !p)
+      } else if (k === 's' && e.shiftKey) {
+        e.preventDefault()
+        setSwarm(true)
+      } else if (k === 'k' && e.shiftKey) {
+        e.preventDefault()
+        const s = sessions.find((x) => x.id === activeId)
+        if (s) setBoard(s.cwd)
+        else flash('Open a pane first - the board belongs to its folder.')
+      } else if (k === 'h' && !typing) {
+        e.preventDefault()
+        setHistory(true)
       } else if (k === 'w' && activeId && !typing) {
         e.preventDefault()
         close(activeId)
@@ -247,7 +291,7 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette])
+  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette, flash])
 
   /**
    * Everything the app can do, as one searchable list. The sidebar only scales to a
@@ -321,6 +365,22 @@ export default function App(): JSX.Element {
         keys: 'Ctrl B',
         run: () => broadcastBox.current?.focus()
       },
+      {
+        id: 'swarm',
+        group: 'Actions',
+        title: 'Launch a swarm on one mission',
+        hint: 'several agents, one folder, one role each',
+        keys: 'Ctrl Shift S',
+        run: () => setSwarm(true)
+      },
+      {
+        id: 'history',
+        group: 'Actions',
+        title: 'Search past sessions',
+        hint: 'everything every agent has printed',
+        keys: 'Ctrl H',
+        run: () => setHistory(true)
+      },
       { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
       { id: 'keys', group: 'Actions', title: 'Keyboard shortcuts', keys: 'F1', run: () => setHelp(true) }
     )
@@ -342,6 +402,13 @@ export default function App(): JSX.Element {
           run: () => api.openInEditor(active.cwd).then((err) => err && flash(err))
         },
         { id: 'reveal', group: 'This pane', title: 'Open folder in Explorer', run: () => api.reveal(active.cwd) },
+        {
+          id: 'board',
+          group: 'This pane',
+          title: 'Tasks and shared memory for this folder',
+          keys: 'Ctrl Shift K',
+          run: () => setBoard(active.cwd)
+        },
         { id: 'close', group: 'This pane', title: `Close ${active.title}`, keys: 'Ctrl W', run: () => close(active.id) }
       )
 
@@ -415,6 +482,26 @@ export default function App(): JSX.Element {
           </svg>
           Search sessions and actions <span className="kbd">Ctrl K</span>
         </button>
+
+        <div className="quick">
+          <button className="ghost small" title="Several agents on one mission (Ctrl Shift S)" onClick={() => setSwarm(true)}>
+            Swarm
+          </button>
+          <button
+            className="ghost small"
+            title="Tasks and shared memory for the focused pane's folder (Ctrl Shift K)"
+            disabled={!activeId}
+            onClick={() => {
+              const s = sessions.find((x) => x.id === activeId)
+              if (s) setBoard(s.cwd)
+            }}
+          >
+            Board
+          </button>
+          <button className="ghost small" title="Search past sessions (Ctrl H)" onClick={() => setHistory(true)}>
+            History
+          </button>
+        </div>
 
         {config && config.presets.length > 0 && (
           <>
@@ -510,12 +597,27 @@ export default function App(): JSX.Element {
           {sessions.length === 0 && <div className="empty">No sessions. Ctrl T to start one.</div>}
         </div>
 
-        <input
-          ref={broadcastBox}
-          className="search broadcast"
-          placeholder="Send a line to every session (Ctrl B)"
-          onKeyDown={sendBroadcast}
-        />
+        <div className="broadcast-row">
+          <input
+            ref={broadcastBox}
+            className="search broadcast"
+            placeholder="Send a line to every session (Ctrl B)"
+            onKeyDown={sendBroadcast}
+          />
+          {config?.voice.enabled && (
+            <button
+              className={'icon mic' + (voice.phase === 'recording' ? ' rec' : '') + (voice.phase === 'thinking' ? ' busy' : '')}
+              title={
+                voice.phase === 'recording'
+                  ? 'Listening - click to transcribe (Ctrl Shift Space)'
+                  : 'Dictate into the focused pane (Ctrl Shift Space)'
+              }
+              onClick={voice.toggle}
+            >
+              {voice.phase === 'thinking' ? '…' : '🎤'}
+            </button>
+          )}
+        </div>
 
         <div className="foot">
           <Segmented
@@ -555,6 +657,7 @@ export default function App(): JSX.Element {
               <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>
                 {s.title}
               </span>
+              {s.role && <span className="chip role">{s.role}</span>}
               <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
@@ -644,8 +747,44 @@ export default function App(): JSX.Element {
           onClose={() => setSettings(false)}
         />
       )}
+      {swarm && config && (
+        <SwarmDialog
+          projects={projects}
+          agents={agents}
+          roles={config.swarmRoles}
+          defaultModels={config.defaultModels}
+          onSaveRoles={(swarmRoles: SwarmRole[]) => patchConfig({ swarmRoles })}
+          onClose={() => setSwarm(false)}
+          onLaunched={(n) => {
+            setSwarm(false)
+            patchConfig({ grid: true })
+            flash(`${n} agents started on the mission.`)
+          }}
+        />
+      )}
+      {board && (
+        <BoardDialog
+          cwd={board}
+          onSend={(text) => {
+            if (activeId) api.write(activeId, text)
+            setBoard(null)
+          }}
+          onClose={() => setBoard(null)}
+        />
+      )}
+      {history && (
+        <HistoryDialog
+          agents={agents}
+          onResume={(e: HistoryEntry) => {
+            setHistory(false)
+            start([{ cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true }])
+          }}
+          onClose={() => setHistory(false)}
+        />
+      )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      <UpdateToast />
     </div>
   )
 }

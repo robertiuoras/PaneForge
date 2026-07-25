@@ -453,3 +453,73 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---- v2: swarm, board, history, voice, updates ---- */
+
+/* Dialogs grew from one column of settings into tabbed panels, so they need a
+   wider variant and an internal scroll area rather than a taller page. */
+.dialog.wide { width: min(860px, 94vw); }
+.dialog.tall { height: min(760px, 90vh); display: flex; flex-direction: column; }
+.tab-body { max-height: min(58vh, 560px); overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px; }
+
+.quick { display: flex; gap: 6px; }
+.quick .ghost { flex: 1; justify-content: center; }
+
+.broadcast-row { display: flex; gap: 6px; align-items: center; }
+.broadcast-row .broadcast { flex: 1; }
+.icon.mic { font-size: 13px; line-height: 1; padding: 6px 8px; border-radius: var(--r-sm); }
+.icon.mic.rec { background: #ff5f5f2e; color: #ff8f8f; animation: pulse 1.1s ease-in-out infinite; }
+.icon.mic.busy { color: var(--accent); }
+@keyframes pulse { 50% { opacity: 0.45; } }
+
+.agent-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.tag.free { background: #35d07f26; color: var(--ok); }
+.hint.warn { color: var(--warn); }
+
+.install-console { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; overflow: hidden; }
+.ic-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.ic-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.ic-dot.spin { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.install-console pre { margin: 0; padding: 9px 11px; max-height: 220px; overflow: auto; font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: #c9c9d6; white-space: pre-wrap; user-select: text; }
+
+.model-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+.model-row { display: flex; align-items: center; gap: 8px; }
+.mr-name { flex: 1; color: var(--muted); }
+
+.mission, .brief, .memory {
+  width: 100%; resize: vertical; padding: 9px 11px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text);
+  font: inherit; user-select: text;
+}
+.roles { display: flex; flex-direction: column; gap: 7px; margin-top: 7px; }
+.role { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
+.role.off { opacity: 0.45; }
+.role-name { width: 120px; padding: 4px 7px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text); }
+.role .brief { flex-basis: 100%; }
+.chip.role { background: var(--accent-dim); color: var(--accent); }
+
+.board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 10px 0; }
+.board-col { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px; min-height: 130px; }
+.board-head { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+.task { background: var(--surface-3); border-radius: var(--r-sm); padding: 7px 8px; margin-bottom: 6px; }
+.task-title { user-select: text; }
+.task-actions { display: flex; gap: 4px; margin-top: 5px; }
+
+.hist-list { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.hist-item { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); padding: 8px 10px; }
+.hist-head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.hist-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-line { color: var(--muted); font: 11.5px/1.6 ui-monospace, Consolas, monospace; padding-left: 20px; user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-actions { display: flex; gap: 5px; margin-top: 6px; }
+.transcript { flex: 1; overflow: auto; margin: 10px 0; padding: 10px 12px; background: #06060a; border: 1px solid var(--line); border-radius: var(--r-sm); font: 11.5px/1.55 ui-monospace, Consolas, monospace; color: #c9c9d6; white-space: pre-wrap; user-select: text; }
+
+/* The update card sits above everything, bottom-right, and is the only thing in
+   the app allowed to interrupt: it appears once per version, already downloaded. */
+.update-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 330px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 13px 14px; display: flex; flex-direction: column; gap: 9px;
+}
+.ut-text { display: flex; flex-direction: column; gap: 3px; }
+.ut-notes { margin: 4px 0 0; max-height: 96px; overflow: auto; font: 11px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
+.ut-actions { display: flex; justify-content: flex-end; gap: 6px; }

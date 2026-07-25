@@ -42,7 +42,20 @@ if (!existsSync(join(root, 'node_modules'))) {
 
 step(`Building the app into ${outDir}`)
 run('npm', ['run', 'build'])
-run('npx', ['electron-builder', '--win', '--dir', `-c.directories.output=${outDir}`])
+run('npx', [
+  'electron-builder',
+  process.platform === 'darwin' ? '--mac' : '--win',
+  '--dir',
+  `-c.directories.output=${outDir}`
+])
+
+if (process.platform === 'darwin') {
+  step('Done')
+  console.log(`Built: ${join(root, outDir, 'mac-arm64', 'PaneForge.app')}
+Drag it into /Applications. On first launch macOS will say it cannot check the app:
+right-click it and choose Open once, and that never comes back.`)
+  process.exit(0)
+}
 
 if (!existsSync(exe)) {
   console.error(`\nBuild finished but ${exe} is missing. Nothing to link.`)
@@ -108,6 +121,49 @@ for (const lnk of all) {
     { stdio: 'inherit' }
   )
   if (r.status !== 0) console.error(`Could not tag ${lnk} - it may open as a second taskbar item.`)
+}
+
+// Admin mode pins a scheduled task to one exe path, and every build lands in a new
+// dist folder, so the task would keep launching the build that is about to be
+// deleted. Re-point it here rather than making the user re-toggle the switch.
+const taskExists =
+  spawnSync('schtasks', ['/Query', '/TN', 'PaneForge'], { stdio: 'ignore' }).status === 0
+if (taskExists) {
+  step('Re-pointing the admin launch task at the new build')
+  const register = `
+$action = New-ScheduledTaskAction -Execute '${exe.replace(/'/g, "''")}' -WorkingDirectory '${dirname(exe).replace(/'/g, "''")}'
+$principal = New-ScheduledTaskPrincipal -UserId '${(process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + process.env.USERNAME}' -LogonType Interactive -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName 'PaneForge' -Action $action -Principal $principal -Settings $settings -Force | Out-Null`
+  const encoded = Buffer.from(register, 'utf16le').toString('base64')
+  const r = spawnSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-Command',
+      `$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile','-EncodedCommand','${encoded}'); exit $p.ExitCode`
+    ],
+    { stdio: 'inherit' }
+  )
+  if (r.status !== 0) {
+    console.error('Could not update the task. Toggle admin mode off and on in Settings to fix it.')
+  }
+  // Shortcuts must keep pointing at the hidden launcher, not the exe, or the next
+  // launch would be a normal-rights one.
+  const vbs = join(process.env.LOCALAPPDATA ?? '', 'PaneForge', 'launch-admin.vbs')
+  if (existsSync(vbs)) {
+    const relink = all
+      .map(
+        (lnk) => `
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}')
+$s.TargetPath = 'wscript.exe'
+$s.Arguments = '"${vbs}"'
+$s.IconLocation = '${exe},0'
+$s.Save()`
+      )
+      .join('\n')
+    spawnSync('powershell', ['-NoProfile', '-Command', relink], { stdio: 'inherit' })
+  }
 }
 
 step('Pruning old builds')

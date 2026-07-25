@@ -1,13 +1,36 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  Notification,
+  shell
+} from 'electron'
 import { SessionManager } from './sessions'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
-import { invalidateAgents, listAgents } from './agents'
+import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { which } from './which'
-import type { Config, Session, StartSessionRequest } from '../shared/types'
+import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
+import { refreshPath, runCommand } from './install'
+import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
+import * as history from './history'
+import { readBoard, writeMemory, writeTasks } from './board'
+import * as voice from './voice'
+import { installCommand } from '../shared/agents'
+import type {
+  Config,
+  Session,
+  StartSessionRequest,
+  SwarmRequest,
+  TaskItem,
+  UpdateState
+} from '../shared/types'
 
 const manager = new SessionManager()
 let win: BrowserWindow | null = null
@@ -134,12 +157,17 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
   manager.resize(id, cols, rows)
 )
 
+ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
+
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   const next = setConfig(patch)
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
+  if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
+  if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
+  if (patch.voice !== undefined) applyVoiceHotkey(next)
   win?.webContents.send('config:changed', next)
   return next
 })
@@ -173,42 +201,183 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 })
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
-
-ipcMain.handle('app:isAdmin', () => isAdmin())
-ipcMain.on('app:relaunchAsAdmin', () => {
-  // Electron cannot elevate a single child process on Windows, so the whole app
-  // restarts elevated and every agent it spawns inherits admin - the same trade-off
-  // the old self-elevating .bat made.
-  const args = process.argv.slice(1).filter((a) => !a.startsWith('--remote-debugging'))
-  const list = args.length ? ` -ArgumentList ${args.map((a) => `'${a.replace(/'/g, "''")}'`).join(',')}` : ''
-  try {
-    spawn(
-      'powershell',
-      ['-NoProfile', '-Command', `Start-Process -Verb RunAs -FilePath '${process.execPath.replace(/'/g, "''")}'${list}`],
-      { detached: true, stdio: 'ignore', windowsHide: true }
-    ).unref()
-    manager.killAll()
-    app.quit()
-  } catch {
-    /* user declined UAC - stay as we are */
-  }
+ipcMain.on('shell:external', (_e, url: string) => {
+  // Only ever open real web links: a file:// or custom scheme from the renderer
+  // would be a way to launch arbitrary local programs.
+  if (/^https?:\/\//i.test(url)) shell.openExternal(url)
 })
 
-let adminCache: boolean | null = null
-function isAdmin(): boolean {
-  if (adminCache !== null) return adminCache
-  if (process.platform !== 'win32') {
-    adminCache = typeof process.getuid === 'function' && process.getuid() === 0
-    return adminCache
+// --- elevation -------------------------------------------------------------
+
+ipcMain.handle('admin:status', () => adminStatus())
+ipcMain.handle('admin:enable', () => {
+  const r = enableAdminMode()
+  if (r.ok) setConfig({ adminMode: true })
+  return r
+})
+ipcMain.handle('admin:disable', () => {
+  const r = disableAdminMode()
+  setConfig({ adminMode: false })
+  return r
+})
+ipcMain.on('app:relaunchAsAdmin', () => {
+  // With admin mode set up, the scheduled task starts an elevated instance with no
+  // prompt. Without it, fall back to the one-off UAC dialog.
+  if (!relaunchViaTask()) {
+    const args = process.argv.slice(1).filter((a) => !a.startsWith('--remote-debugging'))
+    const list = args.length
+      ? ` -ArgumentList ${args.map((a) => `'${a.replace(/'/g, "''")}'`).join(',')}`
+      : ''
+    try {
+      spawn(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `Start-Process -Verb RunAs -FilePath '${process.execPath.replace(/'/g, "''")}'${list}`
+        ],
+        { detached: true, stdio: 'ignore', windowsHide: true }
+      ).unref()
+    } catch {
+      return // user declined UAC - stay as we are
+    }
   }
-  // `fltmc` is a stock Windows tool that refuses to run without elevation, which
-  // makes its exit code the cheapest admin probe that needs no extra dependency.
+  manager.killAll()
+  app.quit()
+})
+
+// --- one-click agent installs ---------------------------------------------
+
+/** One install at a time per agent, so a double-click cannot run npm twice. */
+const installing = new Set<string>()
+
+ipcMain.handle('agents:install', async (_e, id: string) => {
+  if (installing.has(id)) return
+  const spec = specFor(id)
+  const command = installCommand(spec)
+  if (!command) {
+    win?.webContents.send('agents:install-event', {
+      agentId: id,
+      chunk: `${spec.label} has no scripted installer. Open its docs and install it, then hit Rescan.\r\n`,
+      done: true,
+      ok: false
+    })
+    return
+  }
+  installing.add(id)
+  win?.webContents.send('agents:install-event', { agentId: id, chunk: `> ${command}\r\n\r\n` })
+  await new Promise<void>((resolve) => {
+    runCommand(
+      command,
+      (chunk) => win?.webContents.send('agents:install-event', { agentId: id, chunk }),
+      (code) => {
+        installing.delete(id)
+        // A brand new install folder is only on the PATH of new processes, so pull
+        // the current PATH out of the registry before deciding it failed.
+        refreshPath()
+        invalidateAgents()
+        const found = which(spec.bin) !== spec.bin
+        win?.webContents.send('agents:install-event', {
+          agentId: id,
+          chunk: found
+            ? `\r\n${spec.label} is ready.\r\n`
+            : `\r\nInstaller exited with code ${code} and ${spec.bin} is still not on PATH.\r\n`,
+          done: true,
+          ok: found
+        })
+        resolve()
+      }
+    )
+  })
+})
+
+ipcMain.handle('agents:locate', async (_e, id: string) => {
+  const spec = specFor(id)
+  const r = await dialog.showOpenDialog({
+    title: `Where is ${spec.label}?`,
+    properties: ['openFile'],
+    filters:
+      process.platform === 'win32'
+        ? [{ name: 'Programs', extensions: ['exe', 'cmd', 'bat', 'ps1'] }]
+        : [{ name: 'All files', extensions: ['*'] }]
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  const bin = r.filePaths[0]
+  // Stored as a custom override of the same id, so the agent keeps its colour,
+  // model list and resume flags and only the binary changes.
+  const cfg = getConfig()
+  const next = [...cfg.customAgents.filter((c) => c.id !== id), { ...spec, bin, custom: true }]
+  setConfig({ customAgents: next })
+  invalidateAgents()
+  win?.webContents.send('config:changed', getConfig())
+  return bin
+})
+
+// --- updates ---------------------------------------------------------------
+
+ipcMain.handle('update:state', () => getUpdateState())
+ipcMain.handle('update:check', () => checkForUpdates())
+ipcMain.on('update:install', () => {
+  history.flush()
+  manager.killAll()
+  installUpdate()
+})
+
+// --- task board + shared memory -------------------------------------------
+
+ipcMain.handle('board:get', (_e, path: string) => readBoard(path))
+ipcMain.handle('board:tasks', (_e, path: string, tasks: TaskItem[]) => writeTasks(path, tasks))
+ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory(path, memory))
+
+// --- history ---------------------------------------------------------------
+
+ipcMain.handle('history:list', () => history.list())
+ipcMain.handle('history:search', (_e, q: string) => history.search(q))
+ipcMain.handle('history:read', (_e, id: string) => history.read(id))
+ipcMain.handle('history:delete', (_e, id: string) => history.remove(id))
+
+// --- voice -----------------------------------------------------------------
+
+ipcMain.handle('voice:status', () => voice.voiceStatus())
+ipcMain.handle('voice:transcribe', (_e, wav: ArrayBuffer) => {
+  const cfg = getConfig().voice
+  return voice.transcribe(Buffer.from(wav), { model: cfg.model, language: cfg.language })
+})
+ipcMain.handle('voice:install', async () => {
+  const command = voice.installCommand()
+  win?.webContents.send('agents:install-event', { agentId: '__voice__', chunk: `> ${command}\r\n\r\n` })
+  await new Promise<void>((resolve) => {
+    runCommand(
+      command,
+      (chunk) => win?.webContents.send('agents:install-event', { agentId: '__voice__', chunk }),
+      () => {
+        refreshPath()
+        const ok = voice.voiceStatus().available
+        win?.webContents.send('agents:install-event', {
+          agentId: '__voice__',
+          chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
+          done: true,
+          ok
+        })
+        resolve()
+      }
+    )
+  })
+})
+
+/** Push-to-talk works even when another window has focus, so it needs a global key. */
+function applyVoiceHotkey(cfg: Config): void {
+  const accel = 'CommandOrControl+Shift+Space'
+  globalShortcut.unregister(accel)
+  if (!cfg.voice.enabled) return
   try {
-    adminCache = spawnSync('fltmc', [], { windowsHide: true }).status === 0
+    globalShortcut.register(accel, () => {
+      focusWindow()
+      win?.webContents.send('voice:hotkey')
+    })
   } catch {
-    adminCache = false
+    /* another app owns the combo - the in-app mic button still works */
   }
-  return adminCache
 }
 
 /** `PaneForge --open <path>` starts a session in that folder on launch. */
@@ -225,7 +394,12 @@ function openFromArgs(argv: string[]): void {
 }
 
 app.whenReady().then(() => {
+  const cfg = getConfig()
+  history.setHistoryEnabled(cfg.saveHistory)
+  history.prune(cfg.historyDays)
   createWindow()
+  applyVoiceHotkey(cfg)
+  initUpdater((s: UpdateState) => win?.webContents.send('update:changed', s), cfg.autoUpdate)
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
   app.on('activate', () => {
@@ -239,4 +413,9 @@ app.on('window-all-closed', () => {
   manager.killAll()
   app.quit()
 })
-app.on('before-quit', () => manager.killAll())
+app.on('before-quit', () => {
+  manager.killAll()
+  // Buffered transcript output would otherwise be lost on the last 1.5 seconds.
+  history.flush()
+})
+app.on('will-quit', () => globalShortcut.unregisterAll())

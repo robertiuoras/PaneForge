@@ -9,8 +9,16 @@ import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
 import { specFor } from './agents'
+import { memoryPrelude } from './board'
+import { recordData, recordEnd, recordStart } from './history'
 import { buildArgs } from '../shared/agents'
-import type { Agent, Session, SessionStatus, StartSessionRequest } from '../shared/types'
+import type {
+  Agent,
+  Session,
+  SessionStatus,
+  StartSessionRequest,
+  SwarmRequest
+} from '../shared/types'
 
 /** How long output must stay quiet before a session counts as waiting for you. */
 const IDLE_AFTER_MS = 4000
@@ -60,15 +68,54 @@ export class SessionManager extends EventEmitter {
       model: req.model || undefined,
       status: 'starting',
       lastOutput: Date.now(),
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      role: req.role
     }
     const live: Live = { meta, proc: this.spawn(req, agent, 120, 30), buffer: '', req, cols: 120, rows: 30 }
     this.sessions.set(id, live)
     this.attach(live)
-    this.queuePrompt(id, req.prompt)
+    recordStart(meta)
+    this.queuePrompt(id, req.prompt, req.promptDelay)
 
     this.emitSessions()
     return meta
+  }
+
+  /**
+   * Launch one pane per role in the same folder, each told what it owns. The
+   * mission text is shared; the role brief is what stops three agents editing the
+   * same file at once. Panes are staggered because N agents hitting one repo in
+   * the same millisecond makes for a confusing first 10 seconds.
+   */
+  startSwarm(req: SwarmRequest): Session[] {
+    const roles = req.roles.filter((r) => r.enabled && r.name.trim())
+    if (!roles.length) throw new Error('No roles enabled.')
+    const prelude = memoryPrelude(req.cwd)
+    const others = roles.map((r) => r.name).join(', ')
+
+    return roles.map((role, i) => {
+      const prompt = [
+        `You are the ${role.name} in a team of ${roles.length} agents working in this repo (${others}).`,
+        role.brief.trim(),
+        prelude,
+        `Mission: ${req.mission.trim()}`,
+        'Stay inside your role. Do not edit files another role owns; leave a note instead.'
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      return this.start({
+        cwd: req.cwd,
+        title: role.name,
+        agent: role.agent,
+        model: role.model,
+        role: role.name,
+        prompt,
+        // Stagger: N agents typing into N CLIs in the same millisecond makes for a
+        // confusing first few seconds, and some CLIs drop input while still drawing.
+        promptDelay: i * 900
+      })
+    })
   }
 
   /**
@@ -83,6 +130,7 @@ export class SessionManager extends EventEmitter {
     } catch {
       /* already dead */
     }
+    recordEnd(id)
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
     live.buffer = RESET
     live.meta.status = 'starting'
@@ -92,7 +140,8 @@ export class SessionManager extends EventEmitter {
     live.meta.lastOutput = Date.now()
     this.emit('data', id, RESET)
     this.attach(live)
-    this.queuePrompt(id, live.req.prompt)
+    recordStart(live.meta)
+    this.queuePrompt(id, live.req.prompt, live.req.promptDelay)
     this.emitSessions()
     return live.meta
   }
@@ -161,6 +210,7 @@ export class SessionManager extends EventEmitter {
     } catch {
       /* already dead */
     }
+    recordEnd(id)
     this.sessions.delete(id)
     this.emitSessions()
   }
@@ -196,6 +246,7 @@ export class SessionManager extends EventEmitter {
       // dead output into the fresh buffer.
       if (live.proc !== proc) return
       live.buffer = (live.buffer + data).slice(-BUFFER_LIMIT)
+      recordData(id, data)
       const wasIdle = meta.status !== 'working'
       meta.lastOutput = Date.now()
       meta.status = 'working'
@@ -207,14 +258,15 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       meta.status = 'exited'
       meta.exitCode = exitCode
+      recordEnd(id)
       this.emitSessions()
     })
   }
 
-  private queuePrompt(id: string, prompt?: string): void {
+  private queuePrompt(id: string, prompt?: string, extraDelay = 0): void {
     if (!prompt) return
     // The agent needs a moment to draw its input box before it accepts keys.
-    setTimeout(() => this.write(id, prompt + '\r'), 2500)
+    setTimeout(() => this.write(id, prompt + '\r'), 2500 + Math.max(0, extraDelay))
   }
 
   private sweepIdle(): void {
