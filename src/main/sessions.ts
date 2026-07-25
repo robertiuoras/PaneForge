@@ -8,6 +8,8 @@ import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
+import { specFor } from './agents'
+import { buildArgs } from '../shared/agents'
 import type { Agent, Session, SessionStatus, StartSessionRequest } from '../shared/types'
 
 /** How long output must stay quiet before a session counts as waiting for you. */
@@ -55,6 +57,7 @@ export class SessionManager extends EventEmitter {
       title: req.title ?? basename(req.cwd),
       cwd: req.cwd,
       agent,
+      model: req.model || undefined,
       status: 'starting',
       lastOutput: Date.now(),
       createdAt: Date.now()
@@ -92,6 +95,20 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, live.req.prompt)
     this.emitSessions()
     return live.meta
+  }
+
+  /**
+   * Point an existing pane at a different CLI (or a different model of the same
+   * CLI) and respawn it. The folder, title, position and id all survive, so
+   * "try this in Codex instead" is one click rather than a new session.
+   */
+  switchAgent(id: string, agent: Agent, model?: string): Session | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    live.req = { ...live.req, agent, model, prompt: undefined }
+    live.meta.agent = agent
+    live.meta.model = model || undefined
+    return this.restart(id)
   }
 
   rename(id: string, title: string): void {
@@ -156,7 +173,11 @@ export class SessionManager extends EventEmitter {
     // Spawn the agent binary directly (not through cmd.exe): one less process in the
     // tree, so killing the session actually kills the agent instead of orphaning it.
     // shell:true equivalents on Windows also swallow Ctrl-C.
-    return pty.spawn(agentCommand(agent), req.resume ? ['--continue'] : [], {
+    const spec = specFor(agent)
+    // resume is per-CLI: `claude --continue` but `codex resume --last`, and some
+    // agents have nothing at all - buildArgs drops the flag rather than guessing.
+    const args = buildArgs(spec, { resume: req.resume, model: req.model })
+    return pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -225,16 +246,15 @@ function agentEnv(): Record<string, string> {
     // spawned agent run as a "child session" with transcript saving disabled, so the
     // session never shows up in history or /resume.
     if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) continue
+    // Same idea for Codex: these mark a process as running inside Codex's own
+    // sandbox and make a nested run refuse to touch the filesystem.
+    if (k.startsWith('CODEX_SANDBOX')) continue
     // Electron injects its own runtime hints that confuse Node-based CLIs.
     if (k === 'ELECTRON_RUN_AS_NODE' || k.startsWith('ELECTRON_')) continue
     env[k] = v
   }
   env.TERM = 'xterm-256color'
   return env
-}
-
-function agentCommand(agent: Agent): string {
-  return which(agent === 'codex' ? 'codex' : 'claude')
 }
 
 function basename(p: string): string {

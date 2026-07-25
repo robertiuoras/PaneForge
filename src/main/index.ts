@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from '
 import { SessionManager } from './sessions'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
+import { invalidateAgents, listAgents } from './agents'
 import { which } from './which'
 import type { Config, Session, StartSessionRequest } from '../shared/types'
 
@@ -104,6 +105,7 @@ manager.on('attention', (s: Session) => {
 })
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => manager.list())
 ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => manager.start(req))
 ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
@@ -118,6 +120,9 @@ ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
   return out
 })
 ipcMain.handle('sessions:restart', (_e, id: string) => manager.restart(id))
+ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) =>
+  manager.switchAgent(id, agent, model)
+)
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) => manager.rename(id, title))
 ipcMain.handle('sessions:kill', (_e, id: string) => manager.kill(id))
 ipcMain.handle('sessions:buffer', (_e, id: string) => manager.buffer(id))
@@ -131,6 +136,9 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   const next = setConfig(patch)
+  // An edited custom agent changes what is launchable, so the availability cache
+  // must not outlive the edit.
+  if (patch.customAgents) invalidateAgents()
   win?.webContents.send('config:changed', next)
   return next
 })

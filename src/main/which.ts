@@ -13,9 +13,14 @@ export function which(cmd: string): string {
       ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
       : ['']
 
+  // Extensions first on Windows: npm installs both `codex` (a bash script ConPTY
+  // cannot execute) and `codex.cmd` next to each other, and picking the bare name
+  // makes the session die instantly with a cryptic error.
+  const order = process.platform === 'win32' ? [...exts, ''] : ['', ...exts]
+
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue
-    for (const ext of ['', ...exts]) {
+    for (const ext of order) {
       const candidate = join(dir, cmd + ext)
       try {
         if (existsSync(candidate) && statSync(candidate).isFile()) return candidate

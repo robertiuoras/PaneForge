@@ -19,6 +19,8 @@ function defaults(): Config {
     root: join(homedir(), 'Desktop', 'Projects'),
     presets: [],
     defaultAgent: 'claude',
+    defaultModels: {},
+    customAgents: [],
     fontSize: 13,
     notifyOnIdle: true,
     grid: false,

@@ -1,9 +1,14 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
+import type { AgentInfo } from '@shared/agents'
 import type { Agent, Project, StartSessionRequest } from '@shared/types'
+import AgentPicker from './AgentPicker'
 
 interface Props {
   projects: Project[]
   defaultAgent: Agent
+  /** last model used per agent, so the pick sticks between launches */
+  defaultModels: Record<string, string>
+  agents: AgentInfo[]
   onStart: (reqs: StartSessionRequest[]) => void
   /** save the current tick-list as a named workspace without launching it */
   onSaveWorkspace: (name: string, reqs: StartSessionRequest[]) => void
@@ -17,6 +22,8 @@ interface Props {
 export default function NewSessionDialog({
   projects,
   defaultAgent,
+  defaultModels,
+  agents,
   onStart,
   onSaveWorkspace,
   onCancel
@@ -26,6 +33,7 @@ export default function NewSessionDialog({
   const [ticked, setTicked] = useState<string[]>([])
   const [resume, setResume] = useState(false)
   const [agent, setAgent] = useState<Agent>(defaultAgent)
+  const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
   const [prompt, setPrompt] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
@@ -39,6 +47,8 @@ export default function NewSessionDialog({
 
   useEffect(() => setSel(0), [q])
 
+  const canResume = !!agents.find((a) => a.id === agent)?.resumeArgs
+
   const toggle = (path: string): void =>
     setTicked((t) => (t.includes(path) ? t.filter((p) => p !== path) : [...t, path]))
 
@@ -51,7 +61,8 @@ export default function NewSessionDialog({
         cwd: path,
         title: proj?.name,
         agent,
-        resume,
+        model: model || undefined,
+        resume: resume && canResume,
         prompt: prompt.trim() || undefined
       }
     })
@@ -139,14 +150,25 @@ export default function NewSessionDialog({
         />
 
         <div className="dialog-row">
-          <label>
-            <input type="checkbox" checked={resume} onChange={(e) => setResume(e.target.checked)} />
+          <label title={canResume ? '' : `${agents.find((a) => a.id === agent)?.label ?? agent} has no resume flag`}>
+            <input
+              type="checkbox"
+              checked={resume && canResume}
+              disabled={!canResume}
+              onChange={(e) => setResume(e.target.checked)}
+            />
             Resume last session
           </label>
-          <select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
-            <option value="claude">claude</option>
-            <option value="codex">codex</option>
-          </select>
+          <AgentPicker
+            agents={agents}
+            agent={agent}
+            model={model}
+            onChange={(a, m) => {
+              setAgent(a)
+              // Switching CLI carries its own remembered model, not the previous one's.
+              setModel(a === agent ? m : defaultModels[a] ?? '')
+            }}
+          />
           <button className="ghost" onClick={save} disabled={!ticked.length}>
             Save as workspace
           </button>

@@ -1,13 +1,20 @@
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
+import type { AgentInfo, AgentSpec } from './agents'
+
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
   | 'working'    // output arrived in the last few seconds
   | 'idle'       // quiet, assume it is waiting for you
   | 'exited'     // process ended
 
-export type Agent = 'claude' | 'codex'
+/**
+ * Which CLI a session runs. Free-form on purpose: the catalogue lives in
+ * `agents.ts` and the user can add their own, so a union type here would have to
+ * be edited for every new agent.
+ */
+export type Agent = string
 
 export interface Project {
   name: string
@@ -22,6 +29,8 @@ export interface Session {
   title: string
   cwd: string
   agent: Agent
+  /** model passed to the agent, empty/undefined = the CLI's own default */
+  model?: string
   status: SessionStatus
   /** epoch ms of the most recent pty output */
   lastOutput: number
@@ -35,6 +44,7 @@ export interface StartSessionRequest {
   cwd: string
   title?: string
   agent?: Agent
+  model?: string
   /** resume the most recent session in that directory (`claude --continue`) */
   resume?: boolean
   /** text typed into the agent once it is ready */
@@ -46,6 +56,7 @@ export interface PresetItem {
   path: string
   title: string
   agent: Agent
+  model?: string
   resume?: boolean
 }
 
@@ -69,6 +80,10 @@ export interface Config {
   root: string
   presets: Preset[]
   defaultAgent: Agent
+  /** model per agent id, remembered from the last launch ('' = the CLI's default) */
+  defaultModels: Record<string, string>
+  /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
+  customAgents: AgentSpec[]
   /** terminal font size, shared by every pane */
   fontSize: number
   /** OS notification + taskbar flash when a session goes quiet in the background */
@@ -84,11 +99,15 @@ export interface Config {
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
   listProjects(): Promise<Project[]>
+  /** every known agent with whether its binary is actually on this machine */
+  listAgents(): Promise<AgentInfo[]>
   listSessions(): Promise<Session[]>
   startSession(req: StartSessionRequest): Promise<Session>
   startSessions(reqs: StartSessionRequest[]): Promise<Session[]>
   /** respawn the agent in place, keeping the pane and its id */
   restartSession(id: string): Promise<Session | null>
+  /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
+  switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
   renameSession(id: string, title: string): Promise<void>
   killSession(id: string): Promise<void>
   write(id: string, data: string): void

@@ -6,10 +6,12 @@ import type { Api, Config, Session, StartSessionRequest } from '../shared/types'
 
 const api: Api = {
   listProjects: () => ipcRenderer.invoke('projects:list'),
+  listAgents: () => ipcRenderer.invoke('agents:list', true),
   listSessions: () => ipcRenderer.invoke('sessions:list'),
   startSession: (req: StartSessionRequest) => ipcRenderer.invoke('sessions:start', req),
   startSessions: (reqs: StartSessionRequest[]) => ipcRenderer.invoke('sessions:startMany', reqs),
   restartSession: (id) => ipcRenderer.invoke('sessions:restart', id),
+  switchAgent: (id, agent, model) => ipcRenderer.invoke('sessions:switchAgent', id, agent, model),
   renameSession: (id, title) => ipcRenderer.invoke('sessions:rename', id, title),
   killSession: (id) => ipcRenderer.invoke('sessions:kill', id),
   getBuffer: (id) => ipcRenderer.invoke('sessions:buffer', id),

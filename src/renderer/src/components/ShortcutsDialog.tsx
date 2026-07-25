@@ -6,6 +6,7 @@ const KEYS: [string, string][] = [
   ['Ctrl T', 'New session (tick several projects to start them together)'],
   ['Ctrl W', 'Close the focused session'],
   ['Ctrl Shift R', 'Restart the focused agent in place'],
+  ['Ctrl Shift A', 'Switch the focused pane to the next installed AI (Claude, Codex, ...)'],
   ['Ctrl G', 'Toggle grid view (every session at once)'],
   ['Ctrl 1 - 9', 'Jump to that session'],
   ['Ctrl Tab', 'Next session'],

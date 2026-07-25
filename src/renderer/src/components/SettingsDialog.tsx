@@ -1,15 +1,51 @@
 import { useEffect, useState } from 'react'
+import type { AgentInfo, AgentSpec } from '@shared/agents'
 import type { Agent, Config } from '@shared/types'
 
 const api = window.api
 
 interface Props {
   config: Config
+  agents: AgentInfo[]
   onChange: (patch: Partial<Config>) => void
   onClose: () => void
 }
 
-export default function SettingsDialog({ config, onChange, onClose }: Props): JSX.Element {
+/**
+ * Adding an agent is four prompts rather than a form: it happens once per CLI, and
+ * a full editor would be more UI than the feature is worth. The stored shape is the
+ * same AgentSpec the built-ins use, so a custom entry is a first-class agent.
+ */
+function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): void {
+  const label = window.prompt('Name (shown in the picker)')?.trim()
+  if (!label) return
+  const bin = window.prompt('Command to run (on PATH, or a full path)', label.toLowerCase())?.trim()
+  if (!bin) return
+  const args = window.prompt('Arguments for a fresh session (space separated, can be empty)', '') ?? ''
+  const resume = window.prompt('Arguments that resume the last session (empty = not supported)', '') ?? ''
+  const modelFlag = window.prompt('Flag that selects a model (e.g. --model, empty = none)', '')?.trim()
+  const models = modelFlag
+    ? (window.prompt('Model suggestions, comma separated (optional)', '') ?? '')
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean)
+    : []
+
+  const spec: AgentSpec = {
+    id: label.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    label,
+    bin,
+    args: args.split(/\s+/).filter(Boolean),
+    resumeArgs: resume.trim() ? resume.split(/\s+/).filter(Boolean) : undefined,
+    modelFlag: modelFlag || undefined,
+    models: models.length ? models : undefined,
+    color: '#7dd3fc',
+    custom: true
+  }
+  onChange({ customAgents: [...config.customAgents.filter((c) => c.id !== spec.id), spec] })
+}
+
+export default function SettingsDialog({ config, agents, onChange, onClose }: Props): JSX.Element {
   const [admin, setAdmin] = useState(false)
 
   useEffect(() => {
@@ -45,9 +81,46 @@ export default function SettingsDialog({ config, onChange, onClose }: Props): JS
             value={config.defaultAgent}
             onChange={(e) => onChange({ defaultAgent: e.target.value as Agent })}
           >
-            <option value="claude">claude</option>
-            <option value="codex">codex</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id} disabled={!a.available}>
+                {a.label}
+                {a.available ? '' : ' (not installed)'}
+              </option>
+            ))}
           </select>
+        </div>
+
+        <div className="setting">
+          <label>Agents on this machine</label>
+          <div className="agent-grid">
+            {agents.map((a) => (
+              <div key={a.id} className={'agent-card' + (a.available ? '' : ' off')}>
+                <span className="agent-dot" style={{ background: a.color }} />
+                <span className="agent-name">{a.label}</span>
+                {a.custom && <span className="tag">custom</span>}
+                <span className="hint">
+                  {a.available ? a.path : a.install ? `install: ${a.install}` : `${a.bin} not on PATH`}
+                </span>
+                {a.custom && (
+                  <button
+                    className="x"
+                    title="Remove this custom agent"
+                    onClick={() =>
+                      onChange({ customAgents: config.customAgents.filter((c) => c.id !== a.id) })
+                    }
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="setting-row">
+            <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
+            <button className="ghost" onClick={() => addCustom(config, onChange)}>
+              Add agent
+            </button>
+          </div>
         </div>
 
         <div className="setting">

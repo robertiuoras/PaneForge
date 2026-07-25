@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AgentInfo } from '@shared/agents'
 import type { Config, Preset, Project, Session, StartSessionRequest } from '@shared/types'
+import AgentPicker from './components/AgentPicker'
 import TerminalPane from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import SettingsDialog from './components/SettingsDialog'
@@ -11,6 +13,7 @@ const api = window.api
 export default function App(): JSX.Element {
   const [sessions, setSessions] = useState<Session[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -37,6 +40,12 @@ export default function App(): JSX.Element {
     api.listProjects().then(setProjects)
   }, [config?.root])
 
+  // Re-probed whenever the custom list changes, and on every open of the picker, so
+  // a CLI installed while the app was running shows up without a restart.
+  useEffect(() => {
+    api.listAgents().then(setAgents)
+  }, [config?.customAgents, picking, settings])
+
   // Keep a sane selection as sessions come and go.
   useEffect(() => {
     if (sessions.length === 0) setActiveId(null)
@@ -54,21 +63,43 @@ export default function App(): JSX.Element {
     api.setConfig(patch)
   }, [])
 
+  /** Last model chosen for an agent becomes that agent's default next time. */
+  const rememberModel = useCallback(
+    (agent?: string, model?: string) => {
+      if (!agent || !config) return
+      if ((config.defaultModels[agent] ?? '') === (model ?? '')) return
+      patchConfig({ defaultModels: { ...config.defaultModels, [agent]: model ?? '' } })
+    },
+    [config, patchConfig]
+  )
+
   const flash = useCallback((msg: string) => {
     setNote(msg)
     window.setTimeout(() => setNote(null), 4000)
   }, [])
 
-  const start = useCallback(async (reqs: StartSessionRequest[]) => {
-    setPicking(false)
-    const started = await api.startSessions(reqs)
-    if (started.length) setActiveId(started[started.length - 1].id)
-    if (started.length < reqs.length) flash('Some folders could not be opened.')
-  }, [flash])
+  const start = useCallback(
+    async (reqs: StartSessionRequest[]) => {
+      setPicking(false)
+      const started = await api.startSessions(reqs)
+      if (started.length) setActiveId(started[started.length - 1].id)
+      if (started.length < reqs.length) flash('Some folders could not be opened.')
+      rememberModel(reqs[0]?.agent, reqs[0]?.model)
+    },
+    [flash, rememberModel]
+  )
 
   const launchPreset = useCallback(
     (p: Preset) => {
-      start(p.items.map((i) => ({ cwd: i.path, title: i.title, agent: i.agent, resume: i.resume })))
+      start(
+        p.items.map((i) => ({
+          cwd: i.path,
+          title: i.title,
+          agent: i.agent,
+          model: i.model,
+          resume: i.resume
+        }))
+      )
     },
     [start]
   )
@@ -83,6 +114,7 @@ export default function App(): JSX.Element {
           path: r.cwd,
           title: r.title ?? r.cwd,
           agent: r.agent ?? config.defaultAgent,
+          model: r.model,
           resume: r.resume
         }))
       }
@@ -98,9 +130,29 @@ export default function App(): JSX.Element {
     if (!name?.trim()) return
     saveWorkspace(
       name.trim(),
-      sessions.map((s) => ({ cwd: s.cwd, title: s.title, agent: s.agent }))
+      sessions.map((s) => ({ cwd: s.cwd, title: s.title, agent: s.agent, model: s.model }))
     )
   }, [config, sessions, saveWorkspace])
+
+  /**
+   * Swapping a live pane to another CLI kills the running agent, so it asks first
+   * unless the pane already exited. The new model is remembered for that agent.
+   */
+  const switchAgent = useCallback(
+    (s: Session, agent: string, model: string) => {
+      if (s.agent === agent && (s.model ?? '') === model) return
+      const label = agents.find((a) => a.id === agent)?.label ?? agent
+      if (
+        s.status !== 'exited' &&
+        !window.confirm(`Restart "${s.title}" with ${label}${model ? ` (${model})` : ''}? The current run ends.`)
+      )
+        return
+      api.switchAgent(s.id, agent, model || undefined)
+      rememberModel(agent, model)
+      flash(`${s.title} → ${label}${model ? ` · ${model}` : ''}`)
+    },
+    [agents, flash, rememberModel]
+  )
 
   const close = useCallback(
     (id: string) => {
@@ -143,6 +195,14 @@ export default function App(): JSX.Element {
       } else if (k === 'r' && e.shiftKey && activeId) {
         e.preventDefault()
         api.restartSession(activeId)
+      } else if (k === 'a' && e.shiftKey && activeId) {
+        // Cycle the focused pane through the CLIs that are actually installed.
+        e.preventDefault()
+        const s = sessions.find((x) => x.id === activeId)
+        const usable = agents.filter((a) => a.available)
+        if (!s || usable.length < 2) return
+        const next = usable[(usable.findIndex((a) => a.id === s.agent) + 1) % usable.length]
+        switchAgent(s, next.id, config?.defaultModels[next.id] ?? '')
       } else if (k === 'g') {
         e.preventDefault()
         patchConfig({ grid: !grid })
@@ -172,7 +232,7 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, sessions, grid, config, close, patchConfig])
+  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent])
 
   const visibleIds = useMemo(
     () => new Set(grid ? sessions.map((s) => s.id) : sessions.filter((s) => s.id === activeId).map((s) => s.id)),
@@ -271,7 +331,12 @@ export default function App(): JSX.Element {
                   </div>
                 )}
                 <div className="row-sub">
-                  {s.agent}
+                  <span
+                    className="agent-dot"
+                    style={{ background: agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99' }}
+                  />
+                  {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
+                  {s.model ? ` · ${s.model}` : ''}
                   {s.status === 'exited' ? ` - exited ${s.exitCode ?? ''}` : ''}
                 </div>
               </div>
@@ -341,6 +406,13 @@ export default function App(): JSX.Element {
               </span>
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
+                <AgentPicker
+                  small
+                  agents={agents}
+                  agent={s.agent}
+                  model={s.model ?? ''}
+                  onChange={(a, m) => switchAgent(s, a, m)}
+                />
                 <button className="icon" title="Restart agent (Ctrl Shift R)" onClick={() => api.restartSession(s.id)}>
                   ⟳
                 </button>
@@ -380,7 +452,9 @@ export default function App(): JSX.Element {
       {picking && config && (
         <NewSessionDialog
           projects={projects}
+          agents={agents}
           defaultAgent={config.defaultAgent}
+          defaultModels={config.defaultModels}
           onCancel={() => setPicking(false)}
           onStart={start}
           onSaveWorkspace={(name, reqs) => {
@@ -390,7 +464,12 @@ export default function App(): JSX.Element {
         />
       )}
       {settings && config && (
-        <SettingsDialog config={config} onChange={patchConfig} onClose={() => setSettings(false)} />
+        <SettingsDialog
+          config={config}
+          agents={agents}
+          onChange={patchConfig}
+          onClose={() => setSettings(false)}
+        />
       )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
     </div>
