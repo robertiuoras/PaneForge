@@ -262,8 +262,8 @@ export interface Config {
   copyOnSelect: boolean
   /**
    * Drag-select text even while the agent has mouse reporting on. Claude Code and
-   * Codex both grab the mouse, which is what makes a plain drag select nothing and
-   * the wheel stick halfway up the scrollback.
+   * Codex both grab the mouse, which is what makes a plain drag select nothing.
+   * Selection only: the wheel scrolls the pane's own scrollback regardless.
    */
   mouseSelect: boolean
   /** repaint a pane by itself when its size settles, so a resize cannot leave it garbled */
