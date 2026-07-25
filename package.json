@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "private": true,
   "description": "PaneForge - run every coding agent you own in one window",
   "author": "Robert",
