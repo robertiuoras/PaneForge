@@ -20,14 +20,23 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
 const minimized = args.includes('--minimized') || args.includes('-m')
-const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 'dev').trim()
+
+// Each checkout gets its own profile, so two agents working in two worktrees never
+// land on the same one. They would not crash - the second launch would just raise the
+// first window and exit on the single-instance lock - but it looks exactly like "my
+// change did not apply", which is a bad hour. `claude-orchestrator-twin` -> `dev-twin`.
+function defaultProfile() {
+  const suffix = basename(root).replace(/^claude-orchestrator-?/, '')
+  return suffix ? `dev-${suffix}` : 'dev'
+}
+const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? defaultProfile()).trim()
 
 const electron = join(
   root,
