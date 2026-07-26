@@ -412,6 +412,15 @@ export default function App(): JSX.Element {
         setHelp((h) => !h)
         return
       }
+      // Ctrl+/ (and Ctrl+? on the same physical key) is where everything else puts help,
+      // and it is the one people try before F1. A bare "?" cannot have it: that character
+      // is typed into agents all day.
+      if (e.ctrlKey && !e.altKey && (e.key === '/' || e.key === '?')) {
+        e.preventDefault()
+        e.stopPropagation()
+        setHelp((h) => !h)
+        return
+      }
       if (!e.ctrlKey || e.altKey) return
       const k = e.key.toLowerCase()
 
@@ -598,7 +607,14 @@ export default function App(): JSX.Element {
         run: () => setHistory(true)
       },
       { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
-      { id: 'keys', group: 'Actions', title: 'Keyboard shortcuts', keys: 'F1', run: () => setHelp(true) }
+      {
+        id: 'keys',
+        group: 'Actions',
+        title: 'Keyboard shortcuts',
+        hint: 'every key the app answers to',
+        keys: 'F1',
+        run: () => setHelp(true)
+      }
     )
 
     if (active)
@@ -722,7 +738,11 @@ export default function App(): JSX.Element {
             <button className="icon" title="Settings (Ctrl ,)" onClick={() => setSettings(true)}>
               ⚙
             </button>
-            <button className="icon" title="Keyboard (F1)" onClick={() => setHelp(true)}>
+            <button
+              className="icon help"
+              title="Every shortcut and what it does (F1 or Ctrl /)"
+              onClick={() => setHelp(true)}
+            >
               ?
             </button>
           </span>
@@ -1021,7 +1041,7 @@ export default function App(): JSX.Element {
                   </button>
                 ))}
             </div>
-            <p className="hint">Ctrl K to search everything. F1 for every shortcut.</p>
+            <p className="hint">Ctrl K to search everything. F1 or Ctrl / for every shortcut.</p>
           </div>
         )}
       </main>

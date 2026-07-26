@@ -339,11 +339,17 @@ button.small { padding: 5px 9px; font-size: 11px; }
   opacity: 0.93;
 }
 .shelf:hover, .shelf.pinned { opacity: 1; }
+/* Dragging must not leave a trail of selected text behind it, and the shelf should not
+   animate its own arrival on every pointer move. */
+.shelf.dragging { opacity: 1; user-select: none; animation: none; cursor: grabbing; }
 .shelf-head {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px 7px 11px; border-bottom: 1px solid var(--line);
-  font-size: 11.5px;
+  padding: 7px 8px 7px 9px; border-bottom: 1px solid var(--line);
+  font-size: 11.5px; cursor: grab; touch-action: none;
 }
+.shelf.dragging .shelf-head { cursor: grabbing; }
+.shelf-grip { color: var(--muted); font-size: 12px; line-height: 1; letter-spacing: -1px; }
+.shelf-empty { padding: 12px 11px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .shelf-head .hint { margin-left: auto; font-size: 10px; }
 .shelf-items { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
 .shelf-item {
@@ -515,6 +521,25 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   background: #ffffff0a; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
   padding: 3px 7px; font-size: 11px; font-family: 'Cascadia Mono', Consolas, monospace;
 }
+/* The key that opens this sheet sits above the scrolling list and is the only accented
+   row: it is the one shortcut somebody reading here does not know yet. */
+.key-row.lead {
+  margin: 2px 0 8px; padding: 8px 9px; color: var(--text);
+  background: var(--accent-dim); border: 1px solid #8b9dff3d; border-radius: var(--r);
+}
+.key-row.lead .kbd-box { background: #8b9dff1f; border-color: #8b9dff55; color: var(--accent); }
+.key-filter {
+  width: 100%; margin-bottom: 9px; padding: 6px 9px; font-size: 12px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+}
+.key-filter:focus { outline: none; border-color: var(--accent); }
+/* The way in for anyone who never presses F1: the only accented button in the brand row. */
+.icon.help {
+  color: var(--accent); background: var(--accent-dim);
+  border: 1px solid #8b9dff3d; font-weight: 700; min-width: 24px;
+}
+.icon.help:hover { background: #8b9dff2e; color: var(--text); }
 
 /* ---- agent picker ---- */
 .agent-pick { display: inline-flex; align-items: center; gap: 6px; }
