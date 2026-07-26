@@ -117,6 +117,7 @@ function defaults(): Config {
     stashMaxImages: 24,
     stashFileHours: 24,
     stashMaxFileMb: 512,
+    stashPos: null,
     grid: false,
     confirmClose: true,
     launchAtLogin: false,

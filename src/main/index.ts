@@ -52,6 +52,7 @@ import {
   copyRecent,
   getRecent,
   listRecents,
+  pinRecent,
   recentPath,
   recentsDir,
   refreshRecents,
@@ -60,12 +61,17 @@ import {
   stopRecents
 } from './recents'
 import {
+  beginShelfDrag,
   closeShelfWindow,
+  endShelfDrag,
+  moveShelfDrag,
   openShelfWindow,
   placeShelf,
   setShelfExpanded,
+  setShelfTall,
   shelfWindowOpen,
   toggleShelf,
+  updateShelfConfig,
   updateShelfItems
 } from './shelfWindow'
 import { refreshPath, runCommand } from './install'
@@ -74,6 +80,7 @@ import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand } from '../shared/agents'
+import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   RestoreAnswer,
@@ -81,6 +88,7 @@ import type {
   RestorePane,
   Session,
   StartSessionRequest,
+  StashConfig,
   SwarmRequest,
   TaskItem,
   UpdateState
@@ -425,6 +433,8 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
     applyStashCaps(next)
   }
   send('config:changed', next)
+  // The overlay draws the same settings behind its gear, so it hears about them too.
+  updateShelfConfig(stashConfig(next))
   return next
 })
 ipcMain.handle('config:pickRoot', async () => {
@@ -470,6 +480,7 @@ ipcMain.handle('recents:list', () => listRecents())
 ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
 ipcMain.on('recents:clear', () => clearRecents())
 ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
+ipcMain.on('recents:pin', (_e, id: string, on: boolean) => pinRecent(id, !!on))
 // The overlay floats over other apps and has no idea which pane is focused, so "send it
 // to the pane" is asked of the window that does know.
 ipcMain.on('recents:toPane', (_e, id: string) => {
@@ -479,6 +490,52 @@ ipcMain.on('recents:toPane', (_e, id: string) => {
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
 ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
+ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
+// Dragged by its own header. The overlay cannot move its window itself, and a pointer
+// that leaves the window mid-drag stops sending it events, so it sends the screen point
+// and main does the arithmetic against where the drag started.
+ipcMain.on('shelf:dragStart', () => beginShelfDrag())
+ipcMain.on('shelf:dragMove', (_e, x: number, y: number) => moveShelfDrag(x, y))
+ipcMain.on('shelf:dragEnd', () => endShelfDrag())
+
+/** Just the Stash's own knobs, which is all of the config the overlay ever sees. */
+function stashConfig(cfg: Config): StashConfig {
+  return {
+    stashPeekMs: cfg.stashPeekMs,
+    stashMaxItems: cfg.stashMaxItems,
+    stashMaxImages: cfg.stashMaxImages,
+    stashFileHours: cfg.stashFileHours,
+    stashMaxFileMb: cfg.stashMaxFileMb,
+    clipboardOverlay: cfg.clipboardOverlay
+  }
+}
+
+ipcMain.handle('shelf:config', () => stashConfig(getConfig()))
+/**
+ * The overlay's own settings panel. This window floats over every other app, so its
+ * bridge writes through an allowlist rather than the whole config: a key that is not one
+ * of the Stash's own is dropped here, not merged.
+ */
+ipcMain.handle('shelf:setConfig', (_e, patch: Partial<StashConfig>) => {
+  const clean: Record<string, unknown> = {}
+  const raw = (patch ?? {}) as Record<string, unknown>
+  for (const k of STASH_CONFIG_KEYS) {
+    const v = raw[k]
+    if (k === 'clipboardOverlay') {
+      if (typeof v === 'boolean') clean[k] = v
+    } else if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+      clean[k] = v
+    }
+  }
+  const next = setConfig(clean as Partial<Config>)
+  applyStashCaps(next)
+  if (clean.clipboardOverlay !== undefined) applyShelfOverlay(next)
+  // Settings is a different window looking at the same numbers; it must not go stale.
+  send('config:changed', next)
+  const out = stashConfig(next)
+  updateShelfConfig(out)
+  return out
+})
 // Files dropped on the Stash, or chosen in its picker. The renderer only ever sees paths
 // (webUtils in the preloads); the copying is main's, because it owns the folder.
 ipcMain.handle('stash:add', (_e, paths: string[]) =>
@@ -495,6 +552,9 @@ ipcMain.handle('stash:pick', async () => {
   return r.canceled ? 0 : addRecentFiles(r.filePaths)
 })
 ipcMain.on('stash:reveal', () => shell.openPath(recentsDir()))
+// Ctrl+Shift+V from inside the app. There is one Stash, so this opens the floating one
+// rather than a second list in the window.
+ipcMain.on('shelf:toggle', () => toggleShelf())
 // Dragging a shelf item into another app entirely. The renderer cannot start an OS drag
 // with a real file in it - only the main process can, and only with a path it owns.
 ipcMain.on('recents:drag', async (e, id: string) => {
@@ -580,9 +640,20 @@ function applyShelfOverlay(cfg: Config): void {
 function applyShelfHotkey(cfg: Config): void {
   const accel = 'CommandOrControl+Alt+V'
   globalShortcut.unregister(accel)
-  if (!(cfg.clipboardShelf && cfg.clipboardOverlay)) return
+  // Registered whenever the clipboard is being watched at all, not only while the overlay
+  // is showing: the overlay has a "hide" button on it, and a hidden window with no taskbar
+  // entry and no tray icon would otherwise have no way back.
+  if (!cfg.clipboardShelf) return
   try {
-    globalShortcut.register(accel, () => toggleShelf())
+    globalShortcut.register(accel, () => {
+      if (shelfWindowOpen()) return toggleShelf()
+      // Hidden: bring it back, on the list rather than as a pill, since asking for it is
+      // asking to look at it.
+      const next = setConfig({ clipboardOverlay: true })
+      applyShelfOverlay(next)
+      send('config:changed', next)
+      setShelfExpanded(true)
+    })
   } catch {
     /* another app owns the combo - the pill in the corner still opens on hover */
   }
