@@ -474,14 +474,6 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 ipcMain.on('pty:write', (_e, id: string, data: string) =>
   remote.owns(id) ? remote.send(id, { t: 'write', data }) : manager.write(id, data)
 )
-ipcMain.on('pty:broadcast', (_e, text: string) => {
-  manager.broadcast(text)
-  // "Send this to everything" means everything on the desk, and half the desk can be
-  // on the other machine. A pane that has already exited is skipped there as here.
-  for (const s of remote.sessions()) {
-    if (s.status !== 'exited') remote.send(s.id, { t: 'write', data: text + '\r' })
-  }
-})
 /**
  * A mirrored pane is never resized from here.
  *

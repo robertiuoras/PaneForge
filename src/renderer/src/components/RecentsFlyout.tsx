@@ -10,7 +10,7 @@
 // job is "the thing I just copied, into the agent, now".
 //
 // Bottom-left is where it starts, not where it has to stay: the head is a drag handle and
-// wherever it is dropped is remembered. That corner is the one the broadcast box and a
+// wherever it is dropped is remembered. That corner is the one the sidebar footer and a
 // long pane title also want, so a shelf nailed to it would sooner or later sit on the one
 // thing being read.
 

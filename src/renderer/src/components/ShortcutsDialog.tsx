@@ -37,7 +37,6 @@ const KEYS: [string, string][] = [
   ['Drag the Stash title', 'Move the Stash anywhere; double-click it to put it back'],
   ['Right-click', 'Copy the selection, or paste when nothing is selected'],
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
-  ['Ctrl B', 'Focus the broadcast box (one line to every session)'],
   ['Ctrl Shift S', 'Swarm: one mission, one pane per role'],
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],

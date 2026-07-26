@@ -356,22 +356,6 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
-  /** Same line to every live session - "/clear" or a shared instruction in one go. */
-  broadcast(text: string): void {
-    for (const s of this.sessions.values()) {
-      if (s.meta.status === 'exited') continue
-      try {
-        s.proc.write(text + '\r')
-        s.meta.engaged = true
-        s.meta.attention = false
-        this.beginRun(s)
-      } catch {
-        /* dying pty */
-      }
-    }
-    this.emitSessions()
-  }
-
   resize(id: string, cols: number, rows: number): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return

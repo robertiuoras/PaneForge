@@ -29,7 +29,6 @@ const api: Api = {
   getBuffer: (id) => ipcRenderer.invoke('sessions:buffer', id),
   clearAttention: (id) => ipcRenderer.send('sessions:attention-clear', id),
   write: (id, data) => ipcRenderer.send('pty:write', id, data),
-  broadcast: (text) => ipcRenderer.send('pty:broadcast', text),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
   redraw: (id) => ipcRenderer.send('pty:redraw', id),
   setBusy: (id, busy, tail) => ipcRenderer.send('sessions:busy', id, busy, tail),

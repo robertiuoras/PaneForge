@@ -37,6 +37,16 @@ const isMac = navigator.userAgent.includes('Mac')
  */
 export const paneRepair = new Map<string, () => void>()
 
+/**
+ * Put text into a pane the way a paste does, from anywhere in the app.
+ *
+ * Not the same as writing the bytes to the pty. Claude Code, Codex and every other TUI
+ * here turn bracketed paste on, and xterm's paste is what wraps text in the markers they
+ * are watching for; raw bytes arrive as if they had been typed a character at a time,
+ * which those TUIs are free to read as keystrokes rather than as one insertion.
+ */
+export const paneInsert = new Map<string, (text: string) => void>()
+
 /** Every CLI's "still running" footer. While this is on screen the turn is not over. */
 const BUSY_FOOTER =
   /esc to interrupt|esc to cancel|ctrl\+c to (stop|interrupt|cancel)|press esc to stop|working…|thinking…|esc interrupt/i
@@ -750,6 +760,15 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneInsert.set(sessionId, (text) => {
+      // Dictation lands in a pane that may have been scrolled up while it was being
+      // transcribed; the point of inserting is to see it, so this follows the tail again.
+      pinned.current = true
+      setScrolledUp(false)
+      t.paste(text)
+      t.scrollToBottom()
+      t.focus()
+    })
 
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
     // the agent's output permanently, so resizes only run while the pane is shown.
@@ -812,6 +831,7 @@ export default function TerminalPane({
       window.clearTimeout(settle2)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneInsert.delete(sessionId)
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)

@@ -639,7 +639,6 @@ export interface Api {
   killSession(id: string): Promise<void>
   write(id: string, data: string): void
   /** send the same line to every live session */
-  broadcast(text: string): void
   resize(id: string, cols: number, rows: number): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
