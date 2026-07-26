@@ -383,7 +383,8 @@ export interface Api {
    * The pane telling main whether the agent still looks busy on screen. Only the
    * renderer can see the rendered frame, and "still working" must not chime.
    */
-  setBusy(id: string, busy: boolean): void
+  /** `tail` is the frame that decided a `false`, kept for the attention audit log. */
+  setBusy(id: string, busy: boolean, tail?: string): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   clearAttention(id: string): void

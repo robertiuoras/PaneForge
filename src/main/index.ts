@@ -136,7 +136,13 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // Chromium slows a hidden window's timers to about once a minute. Here that is the
+      // timer that keeps saying "this agent is still running", and minimised is exactly
+      // when the app is deciding whether to interrupt you - so the one state where the
+      // status has to be right is the one Chromium was degrading. A terminal keeps
+      // rendering pty output while minimised regardless, so there is little to save.
+      backgroundThrottling: false
     }
   })
 
@@ -176,6 +182,26 @@ function createWindow(): void {
     win?.flashFrame(false)
     refreshRecents()
   })
+  // A test copy nobody ever looked at closes itself.
+  //
+  // An agent starts one minimized, measures something, and does not always get to run
+  // `--close` - a session ends, a command fails, the turn moves on. What is left is a
+  // second PaneForge sitting in alt-tab for the rest of the day, showing whatever state
+  // the test left it in (including, once, a deliberate crash-drill message that read
+  // exactly like the real app had broken). Only ever applies to a named profile that
+  // was launched out of sight, and any sign of a human - showing it, focusing it,
+  // restoring it - cancels it for good.
+  if (profile && mode === 'minimized') {
+    const idleQuit = setTimeout(() => {
+      console.log('Test copy was never opened - closing itself so it does not linger.')
+      app.quit()
+    }, 30 * 60_000)
+    // Not the `show` event: the launch itself calls showInactive() before minimizing,
+    // so that fires for every test copy and would cancel this immediately.
+    const keepAlive = (): void => clearTimeout(idleQuit)
+    win.once('focus', keepAlive)
+    win.once('restore', keepAlive)
+  }
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
@@ -326,7 +352,9 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
   manager.resize(id, cols, rows)
 )
 ipcMain.on('pty:redraw', (_e, id: string) => manager.redraw(id))
-ipcMain.on('sessions:busy', (_e, id: string, busy: boolean) => manager.setBusyOnScreen(id, busy))
+ipcMain.on('sessions:busy', (_e, id: string, busy: boolean, tail?: string) =>
+  manager.setBusyOnScreen(id, busy, tail)
+)
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 

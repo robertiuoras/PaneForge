@@ -527,8 +527,9 @@ export default function TerminalPane({
       const at = Date.now()
       lastBusyCheck = at
       let now = false
+      let text = ''
       try {
-        const text = screenText(t, BUSY_ROWS)
+        text = screenText(t, BUSY_ROWS)
         // A question on screen is not work in progress, whatever the footer says.
         now = !ASK_PROMPT.test(text) && BUSY_FOOTER.test(text)
       } catch {
@@ -553,7 +554,9 @@ export default function TerminalPane({
       if (now === busy && !(now && at - lastReport > BUSY_RESTATE)) return
       busy = now
       lastReport = at
-      api.setBusy(sessionId, now)
+      // The frame goes with a `false` only: that is the reading that can ring the bell,
+      // and it is the one worth being able to read back afterwards.
+      api.setBusy(sessionId, now, now ? undefined : text)
     }
 
     const off = api.onData((id, data) => {

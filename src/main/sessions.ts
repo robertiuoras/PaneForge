@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
+import { audit, plainTail } from './audit'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
@@ -100,6 +101,16 @@ interface Live {
    * is what selects the slower backstop wait instead.
    */
   footerEndedAt: number
+  /**
+   * Has this pane's footer EVER been readable for this session? Once it has, silence
+   * from the pane means the pane stopped talking - not that the turn ended - so the
+   * bell must wait for the pane to actually say "the footer is gone". Without this the
+   * busy deadline expiring by itself was enough to announce a session as waiting for
+   * you while the agent was still running, which is the random chime.
+   */
+  sawFooter: boolean
+  /** The frame the pane was looking at when it last said the turn was over. Diagnostics. */
+  lastTail: string
 }
 
 export class SessionManager extends EventEmitter {
@@ -183,7 +194,9 @@ export class SessionManager extends EventEmitter {
       ackedAt: 0,
       repaintUntil: 0,
       turnPending: false,
-      footerEndedAt: 0
+      footerEndedAt: 0,
+      sawFooter: false,
+      lastTail: ''
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -254,6 +267,7 @@ export class SessionManager extends EventEmitter {
     live.ackedAt = 0
     live.turnPending = false
     live.footerEndedAt = 0
+    live.sawFooter = false
     live.meta.runSince = undefined
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
@@ -397,10 +411,14 @@ export class SessionManager extends EventEmitter {
    * repeat it every second or so, so the deadline it sets expires by itself if the pane
    * goes away.
    */
-  setBusyOnScreen(id: string, busy: boolean): void {
+  setBusyOnScreen(id: string, busy: boolean, tail = ''): void {
     const s = this.sessions.get(id)
     if (!s) return
     const now = Date.now()
+    // Once a pane has read this agent's "running" footer even once, this session's
+    // turn boundaries are knowable, and the bell stops trusting the quiet clock alone.
+    if (busy) s.sawFooter = true
+    else if (tail) s.lastTail = tail
     // Deadline rather than a flag, and a short one: the pane re-states a true reading
     // every two minutes while the agent is running, so three minutes of silence from
     // the pane means the pane is gone, not that the turn is still going. The old ten
@@ -634,7 +652,17 @@ export class SessionManager extends EventEmitter {
       // The run clock must also have stopped, so "waiting" can never contradict the
       // ticking timer next to it in the same row.
       const needQuiet = live.footerEndedAt ? ATTENTION_AFTER_FOOTER_MS : ATTENTION_AFTER_MS
+      // The pane has to SAY the turn ended - a busy deadline that simply ran out is not
+      // an ending. This is the random chime: a pane whose agent went quiet for three
+      // minutes mid-turn (a long tool call, a stalled API round trip, a renderer whose
+      // timers Windows throttled while minimised) stopped restating "busy", the deadline
+      // lapsed, and the sweep read the resulting silence as a finished turn. Every one of
+      // those cases is "no news from the pane", never "the footer is gone", so the two
+      // are told apart explicitly now. The blind backstop still exists, but only for a
+      // session whose footer has never been readable at all - there, quiet is all we have.
+      const endedOnScreen = !live.sawFooter || live.footerEndedAt > 0
       if (
+        endedOnScreen &&
         meta.status === 'idle' &&
         live.turnPending &&
         !meta.runSince &&
@@ -648,6 +676,20 @@ export class SessionManager extends EventEmitter {
         // One raise per turn. Anything the agent prints afterwards is the same
         // finished turn, not a new one, so it cannot ring twice.
         live.turnPending = false
+        // Written every time, not only when it goes wrong: "was that chime honest"
+        // is unanswerable after the fact otherwise, and it has cost three rounds of
+        // guessing already. `tail` is the frame the pane judged - if the agent's
+        // "esc to interrupt" footer is sitting in it, the raise was wrong and the
+        // reason is right there on the line.
+        audit('attention', {
+          title: meta.title,
+          agent: meta.agent,
+          quietMs: quiet,
+          needQuiet,
+          sawFooter: live.sawFooter,
+          footerEndedMsAgo: live.footerEndedAt ? now - live.footerEndedAt : null,
+          tail: plainTail(live.lastTail)
+        })
         meta.attention = true
         this.emit('attention', meta)
         changed = true
