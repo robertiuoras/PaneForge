@@ -476,6 +476,19 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .dialog-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dialog-row .primary { margin-left: auto; }
 
+/* ---- restore the last desk ---- */
+.dialog.restore { width: 560px; }
+/* The folder under the pane's name: enough to tell two panes called "src" apart,
+   truncated from the left because the end of a path is the part that identifies it. */
+.restore-path {
+  color: var(--muted); font-size: 11px; direction: rtl; text-align: left;
+  max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* A pane whose folder or agent has gone: shown, so its absence is explained rather
+   than silent, but not something that can be ticked. */
+.proj.gone { opacity: 0.45; cursor: default; }
+.proj.gone:hover { background: none; }
+
 /* ---- confirm / prompt ---- */
 .confirm-overlay { place-items: center; padding: 0 0 6vh; }
 .dialog.confirm { width: 440px; gap: 14px; }

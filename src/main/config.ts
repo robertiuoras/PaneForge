@@ -117,6 +117,7 @@ function defaults(): Config {
     adminMode: false,
     autoUpdate: true,
     restoreAfterUpdate: true,
+    restoreAfterRestart: 'ask',
     saveHistory: true,
     historyDays: 30,
     autoLane: true,

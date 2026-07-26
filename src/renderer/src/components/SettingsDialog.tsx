@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
-import type { Agent, AdminStatus, Config, UpdateState, VoiceStatus } from '@shared/types'
+import type { Agent, AdminStatus, Config, RestoreMode, UpdateState, VoiceStatus } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
 import Select from './Select'
@@ -490,6 +490,20 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
                   />
                 </div>
+              </div>
+
+              <div className="setting">
+                <label>After a restart or a crash</label>
+                <Select
+                  value={config.restoreAfterRestart}
+                  onChange={(v) => onChange({ restoreAfterRestart: v as RestoreMode })}
+                  menuWidth={260}
+                  options={[
+                    { value: 'ask', label: 'Ask me', hint: 'offers the panes you had open' },
+                    { value: 'always', label: 'Reopen my panes', hint: 'no question, straight back' },
+                    { value: 'never', label: 'Start with an empty desk' }
+                  ]}
+                />
               </div>
 
               <div className="setting">

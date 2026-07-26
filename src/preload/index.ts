@@ -7,6 +7,7 @@ import type {
   Config,
   InstallEvent,
   RecentItem,
+  RestoreAnswer,
   Session,
   StartSessionRequest,
   SwarmRequest,
@@ -65,6 +66,9 @@ const api: Api = {
   updateState: () => ipcRenderer.invoke('update:state'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
+
+  pendingRestore: () => ipcRenderer.invoke('restore:pending'),
+  answerRestore: (answer: RestoreAnswer) => ipcRenderer.send('restore:answer', answer),
 
   board: (path) => ipcRenderer.invoke('board:get', path),
   saveTasks: (path, tasks: TaskItem[]) => ipcRenderer.invoke('board:tasks', path, tasks),
