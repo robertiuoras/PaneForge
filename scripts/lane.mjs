@@ -31,6 +31,7 @@
 //   node scripts/lane.mjs ready --session <id>     mark this lane's branch shippable
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
 //   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
+//   node scripts/lane.mjs retry                    re-try stuck lanes (the app, on a timer)
 //   node scripts/lane.mjs release --session <id>   give the lane back (SessionEnd)
 //
 // Nothing above is typed by hand. `ready` and `release` both end in `autoship`, so the
@@ -262,6 +263,7 @@ function noteConflict(bag, id, detail, previous) {
     dir: laneDir(id),
     detail,
     resolver: was?.resolver ?? null,
+    resolverAt: was?.resolverAt ?? null,
     master: gitSafe(MAIN, 'rev-parse', 'master').out,
     retryAt: now() + RETRY_MS
   }
@@ -337,6 +339,11 @@ function retryConflicts(state) {
 function adoptable(state, id) {
   const c = state.conflicts[id]
   if (!c) return false
+  // A chat that already adopted this conflict is IN that worktree with a half-finished
+  // merge open. Calling that unowned is how the retry below came to abort a resolution
+  // in progress - so the adopter owns it on the same terms the lane's own chat does, and
+  // loses it after the same silence.
+  if (c.resolverAt && now() - c.resolverAt < ADOPT_MS) return false
   const holder = state.lanes[id]
   if (!holder) return true
   return now() - (holder.seen ?? holder.claimed ?? 0) > ADOPT_MS
@@ -647,7 +654,11 @@ function resolveConflict(session, wanted) {
     return { lane: id, dir, resolved: true, marked, release: autoship('patch', session) }
   }
 
-  state.conflicts[id] = { ...noteConflict({}, id, files.join(', '), state.conflicts), resolver: session }
+  state.conflicts[id] = {
+    ...noteConflict({}, id, files.join(', '), state.conflicts),
+    resolver: session,
+    resolverAt: now()
+  }
   write(state)
   return { lane: id, dir, resolved: false, files, adopted: !mine }
 }
@@ -932,6 +943,23 @@ try {
       console.log('GitHub is building Windows and macOS. Running copies update within 30 minutes.')
     } else {
       console.log(`Not shipped: ${r.reason}`)
+    }
+  } else if (cmd === 'retry') {
+    // Every other retry rides on a chat happening to run a lane command, so on a quiet
+    // machine a conflict was never re-tried at all: it stayed on the strip long after the
+    // change it disagreed with had shipped. The app calls this on a timer instead. When
+    // master has not moved and RETRY_MS has not passed this is one `rev-parse` per lane.
+    const state = reap(read())
+    const before = Object.keys(state.conflicts)
+    if (retryConflicts(state)) write(state)
+    const cleared = before.filter((id) => !state.conflicts[id])
+    if (!cleared.length) {
+      console.log(before.length ? `Still conflicted: ${before.join(', ')}.` : 'No conflicts.')
+    } else {
+      // They merge now, so the work that was being left out of every release goes out
+      // without anybody being asked - which was the whole point of retrying.
+      console.log(`Lane${cleared.length === 1 ? '' : 's'} ${cleared.join(', ')} merge cleanly now.`)
+      sayRelease(autoship('patch', session ?? 'auto'))
     }
   } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {

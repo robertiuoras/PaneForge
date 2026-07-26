@@ -163,5 +163,36 @@ ok(
   readFileSync(join(solo.dir, 'shared.txt'), 'utf8').trim() === 'lane version'
 )
 
+// ------------------------------------------ a resolution in progress is not clobbered
+//
+// `retry` now runs on a timer inside the app rather than only as a side effect of some
+// chat's lane command, so it meets adopted lanes in the middle of being fixed. It used
+// to abort the open merge in any lane it considered unowned - and an adopted lane has no
+// holder, so the timer would have thrown away the resolution a chat was still typing.
+
+const mid = JSON.parse(lane('claim', '--session', 'sess-mid').out)
+commit(mid.dir, 'notes.txt', 'lane text\n', 'lane writes notes')
+commit(repo, 'notes.txt', 'master text\n', 'master writes notes')
+lane('ready', '--session', 'sess-mid')
+ok('the fourth lane is stuck as well', laneOf(mid.lane).conflicted === true)
+
+patchState((s) => {
+  s.lanes[mid.lane].seen = Date.now() - 46 * 60 * 1000
+})
+const adopted = lane('resolve', '--session', 'sess-fixer', '--lane', mid.lane)
+ok('a quiet lane can still be adopted', adopted.code === 0 && merging(mid.dir), adopted.out || adopted.err)
+ok('and the adopter owns it, so nobody else takes it', laneOf(mid.lane).conflict?.adoptable === false)
+
+// Half-resolved, which is what the worktree looks like between two of that chat's edits.
+writeFileSync(join(mid.dir, 'notes.txt'), 'master text, and the lane\n')
+
+const retried = lane('retry')
+ok('a timer retry leaves the adopted merge open', merging(mid.dir), retried.out)
+ok(
+  'and does not throw away the half-written resolution',
+  readFileSync(join(mid.dir, 'notes.txt'), 'utf8').trim() === 'master text, and the lane',
+  readFileSync(join(mid.dir, 'notes.txt'), 'utf8')
+)
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
