@@ -46,8 +46,10 @@ if (close) {
 // land on the same one. They would not crash - the second launch would just raise the
 // first window and exit on the single-instance lock - but it looks exactly like "my
 // change did not apply", which is a bad hour. `claude-orchestrator-twin` -> `dev-twin`.
-// Both names of the checkout are stripped: the repo is PaneForge and the folder is only
-// still `claude-orchestrator` because renaming it moves worktrees other chats are holding.
+// Both names of the checkout are stripped: the repo is PaneForge, and the folder is
+// renamed to match by scripts/rename-repo.mjs - which waits for a moment when no chat is
+// sitting in any of the four directories, because Windows will not rename a folder that
+// a running process has as its working directory.
 function defaultProfile() {
   const suffix = basename(root).replace(/^(claude-orchestrator|paneforge)-?/i, '')
   return suffix ? `dev-${suffix}` : 'dev'

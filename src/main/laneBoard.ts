@@ -64,11 +64,15 @@ let retrying = false
  * the escape hatch for a checkout somewhere else entirely.
  */
 function findRepo(): string | null {
-  if (repo !== undefined) return repo
+  // Re-resolved rather than remembered forever if the folder it found is gone: the
+  // checkout family is being renamed to PaneForge* (scripts/rename-repo.mjs, which waits
+  // for a moment when no chat is in it), and this app runs for days at a time. Both names
+  // are looked for so a machine mid-rename, either way round, still finds its lanes.
+  if (repo !== undefined && (repo === null || existsSync(repo))) return repo
+  const roots = [join(homedir(), 'Desktop', 'Projects'), join(homedir(), 'Projects')]
   const candidates = [
     process.env.PANEFORGE_REPO,
-    join(homedir(), 'Desktop', 'Projects', 'claude-orchestrator'),
-    join(homedir(), 'Projects', 'claude-orchestrator')
+    ...roots.flatMap((r) => [join(r, 'PaneForge'), join(r, 'claude-orchestrator')])
   ].filter(Boolean) as string[]
   repo = candidates.find((p) => existsSync(join(p, '.git', 'paneforge-lanes.json'))) ?? null
   return repo

@@ -246,6 +246,15 @@ export default function App(): JSX.Element {
     const startY = e.clientY
     let dragging = false
     let latest = idsRef.current
+    // Captured on the list, which never moves, rather than on the row, which does: a
+    // release outside the window has to end the drag too, or the list is left following
+    // a mouse button nobody is holding.
+    const capture = listRef.current
+    try {
+      capture?.setPointerCapture(e.pointerId)
+    } catch {
+      /* a pointer that has already been released - the listeners below still clean up */
+    }
     const move = (ev: PointerEvent): void => {
       if (!dragging) {
         if (Math.abs(ev.clientY - startY) < 5) return
@@ -287,6 +296,11 @@ export default function App(): JSX.Element {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
+      try {
+        if (capture?.hasPointerCapture(e.pointerId)) capture.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already gone */
+      }
       if (!dragging) return
       document.body.classList.remove('dragging')
       setDragId(null)

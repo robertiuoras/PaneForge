@@ -186,8 +186,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    seconds - the same tell a progress spinner gives without anything spinning. It is a
    pseudo-element rather than a background layer so the pill's own gradient underneath is
    left alone, and it is clipped by the key's `overflow: hidden`, so the light never
-   spills onto the title beside it. */
-.num.live::after, .num.attn::after {
+   spills onto the title beside it. Only while the agent is actually running: a waiting
+   key that glimmered too would blur the one distinction the key exists to make. */
+.num.live::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(102deg, #fff0 36%, #ffffff5c 50%, #fff0 64%);
   transform: translateX(-160%);
@@ -200,7 +201,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* A machine set to still images gets the lit colour without the breath. */
 @media (prefers-reduced-motion: reduce) {
   .num.live, .num.attn { animation: none; }
-  .num.live::after, .num.attn::after { content: none; }
+  .num.live::after { content: none; }
 }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
