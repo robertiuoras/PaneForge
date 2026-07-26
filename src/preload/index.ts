@@ -100,6 +100,9 @@ const api: Api = {
   forgetRemote: (id) => ipcRenderer.invoke('remote:forget', id),
   connectRemote: (id, on) => ipcRenderer.invoke('remote:connect', id, on),
   scanRemote: () => ipcRenderer.invoke('remote:scan'),
+  remoteProjects: (device) => ipcRenderer.invoke('remote:projects', device),
+  remoteAgents: (device) => ipcRenderer.invoke('remote:agents', device),
+  startRemote: (device, req: StartSessionRequest) => ipcRenderer.invoke('remote:start', device, req),
 
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),

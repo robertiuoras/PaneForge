@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { RemoteFound, RemoteState } from '@shared/types'
+import type { AgentInfo } from '@shared/agents'
+import type { Project, RemoteFound, RemoteState } from '@shared/types'
+import AgentLogo from './AgentLogo'
 import { Switch } from './Controls'
+import Select from './Select'
 
 const api = window.api
 
@@ -32,6 +35,47 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
   const [error, setError] = useState('')
   const [name, setName] = useState(state?.self.name ?? '')
   const [showCode, setShowCode] = useState(false)
+  /**
+   * The device whose launcher is open, and what it answered when asked what it has.
+   * Both come from over there: this machine's projects root and this machine's
+   * installed CLIs say nothing about what is checked out or usable on the other one.
+   */
+  const [opening, setOpening] = useState<string | null>(null)
+  const [far, setFar] = useState<{ projects: Project[]; agents: AgentInfo[] } | null>(null)
+  const [farCwd, setFarCwd] = useState('')
+  const [farAgent, setFarAgent] = useState('')
+
+  const openLauncher = async (device: string): Promise<void> => {
+    if (opening === device) {
+      setOpening(null)
+      return
+    }
+    setOpening(device)
+    setFar(null)
+    setError('')
+    try {
+      const [projects, agents] = await Promise.all([api.remoteProjects(device), api.remoteAgents(device)])
+      const usable = agents.filter((a) => a.available)
+      setFar({ projects, agents: usable })
+      setFarCwd(projects[0]?.path ?? '')
+      setFarAgent(usable[0]?.id ?? 'claude')
+    } catch (e) {
+      setError((e as Error).message)
+      setOpening(null)
+    }
+  }
+
+  const launchFar = async (device: string, deviceName: string): Promise<void> => {
+    if (!farCwd || !farAgent) return
+    try {
+      await api.startRemote(device, { cwd: farCwd, agent: farAgent })
+      setOpening(null)
+      onClose()
+      flash(`Started on ${deviceName}. The pane is in your list.`)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   // Ask the network who is there while this is open. A device that was asleep when
   // the dialog opened should appear in it, not on the next launch.
@@ -189,7 +233,8 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           )}
           <div className="dev-list">
             {state.peers.map((p) => (
-              <div key={p.id} className={'dev-row ' + p.status}>
+              <div key={p.id} className="dev-entry">
+              <div className={'dev-row ' + p.status}>
                 <span className={'dot ' + p.status} />
                 <div className="dev-text">
                   <div className="dev-title">
@@ -206,6 +251,15 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     {p.error ? ' · ' + p.error : ''}
                   </div>
                 </div>
+                {p.status === 'online' && (
+                  <button
+                    className="ghost small"
+                    title={`Open a pane on ${p.name}, in one of its folders`}
+                    onClick={() => void openLauncher(p.id)}
+                  >
+                    New pane
+                  </button>
+                )}
                 <button
                   className="ghost small"
                   onClick={() => void api.connectRemote(p.id, p.status === 'off' || p.status === 'error').then(onState)}
@@ -219,6 +273,40 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                 >
                   x
                 </button>
+              </div>
+              {opening === p.id && (
+                <div className="dev-launch">
+                  {!far && <span className="hint">Asking {p.name} what it has...</span>}
+                  {far && far.projects.length === 0 && (
+                    <span className="hint">{p.name} has no projects under its root folder.</span>
+                  )}
+                  {far && far.projects.length > 0 && (
+                    <>
+                      <Select
+                        value={farCwd}
+                        onChange={setFarCwd}
+                        menuWidth={380}
+                        placeholder="Folder on that device"
+                        options={far.projects.map((pr) => ({ value: pr.path, label: pr.name, hint: pr.path }))}
+                      />
+                      <Select
+                        size="sm"
+                        menuWidth={220}
+                        value={farAgent}
+                        onChange={setFarAgent}
+                        options={far.agents.map((a) => ({
+                          value: a.id,
+                          label: a.label,
+                          icon: <AgentLogo id={a.id} spec={a} size={13} />
+                        }))}
+                      />
+                      <button className="primary" disabled={!farCwd} onClick={() => void launchFar(p.id, p.name)}>
+                        Start there
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               </div>
             ))}
           </div>

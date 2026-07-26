@@ -1000,3 +1000,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .dot.error { background: var(--danger); box-shadow: 0 0 0 3px #ff8f8f1f; }
 .dot.off { background: #55555f; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
+.dev-entry { display: flex; flex-direction: column; gap: 5px; }
+/* The "open a pane over there" row, folded under the device it belongs to. */
+.dev-launch { display: flex; align-items: center; gap: 6px; padding: 0 10px 2px 26px; }
+.dev-launch > *:first-child { flex: 1; min-width: 0; }

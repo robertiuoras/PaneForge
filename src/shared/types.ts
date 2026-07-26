@@ -757,6 +757,12 @@ export interface Api {
   connectRemote(id: string, on: boolean): Promise<RemoteState>
   /** ask the LAN who is there, now, rather than waiting for the next announcement */
   scanRemote(): Promise<RemoteState>
+  /** that device's own project folders, so a pane can be opened over there */
+  remoteProjects(device: string): Promise<Project[]>
+  /** the CLIs installed on that device - its list, not this one's */
+  remoteAgents(device: string): Promise<AgentInfo[]>
+  /** open a pane on that device; it appears here mirrored, like the rest of its panes */
+  startRemote(device: string, req: StartSessionRequest): Promise<Session>
 
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */

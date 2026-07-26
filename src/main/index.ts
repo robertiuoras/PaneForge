@@ -605,6 +605,13 @@ ipcMain.handle('remote:scan', () => {
   remote.scan()
   return remote.state()
 })
+// Opening a pane on the other machine. The folder list has to come from there too -
+// this machine's projects root says nothing about what is checked out over there.
+ipcMain.handle('remote:projects', (_e, device: string) => remote.projectsOn(String(device)))
+ipcMain.handle('remote:agents', (_e, device: string) => remote.agentsOn(String(device)))
+ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
+  remote.startOn(String(device), req)
+)
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 ipcMain.on('clipboard:write', (_e, text: string) => {
