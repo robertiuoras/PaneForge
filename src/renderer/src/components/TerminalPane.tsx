@@ -32,6 +32,16 @@ const BUSY_FOOTER =
   /esc to interrupt|esc to cancel|ctrl\+c to (stop|interrupt|cancel)|press esc to stop|working…|thinking…|esc interrupt/i
 
 /**
+ * The agent is asking *you* something: a permission prompt, a tool approval, a choice.
+ * This outranks the busy footer, because the two are on screen together - the CLI is
+ * technically mid-turn, but nothing moves until you answer, and the pane claiming to be
+ * working is what makes you leave it sitting there. Numbered-choice lines are matched
+ * with their selection arrow only, so a numbered list in an answer cannot trigger it.
+ */
+const ASK_PROMPT =
+  /do you want to (proceed|continue|make|create|allow|run)|allow (this )?(command|tool|edit)\?|❯\s*\d+\.\s|\(y\/n\)\s*$|press enter to (confirm|continue)|waiting for your (input|reply)/im
+
+/**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
@@ -509,6 +519,8 @@ export default function TerminalPane({
     let lastBusyCheck = 0
     // When the main process last heard anything about this pane's busy state.
     let lastReport = 0
+    // First tick that read "not running" while we were reporting busy. See below.
+    let offSince = 0
     let settle2: number | undefined
     const checkBusy = (): void => {
       if (!sawOutput) return
@@ -516,10 +528,21 @@ export default function TerminalPane({
       lastBusyCheck = at
       let now = false
       try {
-        now = BUSY_FOOTER.test(screenText(t, BUSY_ROWS))
+        const text = screenText(t, BUSY_ROWS)
+        // A question on screen is not work in progress, whatever the footer says.
+        now = !ASK_PROMPT.test(text) && BUSY_FOOTER.test(text)
       } catch {
         return
       }
+      // The main process treats a `false` as the turn boundary and greys the dot at once,
+      // so one confirming tick first: a heavy repaint can push the footer out of the
+      // frame for a single read, and that must not blink the pane to "waiting for you"
+      // in the middle of a turn. A `true` is still reported immediately.
+      if (!now && busy) {
+        if (!offSince) offSince = at
+        if (at - offSince < 1200) return
+      }
+      offSince = 0
       // Still busy and quiet about it for a while. Reporting only on change was enough
       // until a turn outlived the deadline the main process sets from a `true`, at which
       // point the pane went grey and got announced as waiting for you while the agent was

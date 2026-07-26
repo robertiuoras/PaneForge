@@ -16,6 +16,7 @@
 // can never collide with the installed app by accident.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 
@@ -33,16 +34,52 @@ function requested(): string {
 }
 
 /**
+ * Where this app keeps its data, without the crash.
+ *
+ * `app.getPath('userData')` is not a lookup: Electron builds the folder as part of
+ * answering, and when that fails it throws `Failed to get 'userData' path`. That happens
+ * at module scope, before any window exists, so Electron's own handler puts up the "A
+ * JavaScript error occurred in the main process" box - a modal that takes the keyboard
+ * off whatever you were typing - and the app never starts at all. Seen on this machine
+ * while a session was running inside the live app.
+ *
+ * Recomputing the same path by hand and handing it back through setPath fixes it for
+ * every later caller too (config, history, the updater log all ask Electron for it).
+ */
+function userDataDir(): string {
+  try {
+    return app.getPath('userData')
+  } catch {
+    const roaming =
+      process.env.APPDATA ||
+      (process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support')
+        : join(homedir(), 'AppData', 'Roaming'))
+    const dir = join(roaming, app.getName() || 'claude-orchestrator')
+    try {
+      mkdirSync(dir, { recursive: true })
+      app.setPath('userData', dir)
+      app.setPath('sessionData', dir)
+    } catch {
+      /* nothing left to try - the caller still gets a usable path string */
+    }
+    return dir
+  }
+}
+
+/**
  * Must run before `app.whenReady()` and before anything touches userData.
  * Returns the profile name, '' for the normal installed app.
  */
 export function initProfile(): string {
   current = requested()
+  // Unconditional, even for the installed app: it is what repairs a userData path
+  // Electron itself could not resolve, and every later getPath call depends on it.
+  const base = userDataDir()
   if (!current) {
     app.setAppUserModelId(BASE_APP_ID)
     return ''
   }
-  const base = app.getPath('userData')
   const dir = join(dirname(base), `${basename(base)}-${current}`)
   mkdirSync(dir, { recursive: true })
   app.setPath('userData', dir)
@@ -70,7 +107,7 @@ const QUIET_MARKER = 'quiet-relaunch'
 const QUIET_MAX_AGE_MS = 5 * 60 * 1000
 
 function quietPath(): string {
-  return join(app.getPath('userData'), QUIET_MARKER)
+  return join(userDataDir(), QUIET_MARKER)
 }
 
 /** Called by the process that is about to exit and come back on its own. */

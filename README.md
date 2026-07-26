@@ -97,6 +97,12 @@ Re-run after any source change. Needs Node 20+.
   agent started in a folder with memory is told to read it first.
 - **History (Ctrl H)** - every pane's transcript, saved and searchable, long after
   the pane is closed. Reopen any past session in its old folder.
+- **Clipboard shelf (Ctrl Shift V)** - anything you copy, anywhere on the machine,
+  appears bottom-left for five seconds and stays on a twelve item shelf. Click text to
+  paste it into the focused pane. Click a screenshot and PaneForge saves it as a PNG and
+  types *its path* at the prompt, which is the only form of an image a CLI agent can
+  read - no more "save it, find the folder, type the path". Images drag out to any other
+  app too. One switch in Settings turns the whole thing off.
 - **Voice (Ctrl Shift Space)** - hold to talk, and the text lands in the focused
   pane. Transcribed by a Whisper model on your own machine: free, offline, nothing
   uploaded. Settings > Voice installs the engine in one click.
@@ -167,10 +173,11 @@ real one. The window is titled `PaneForge - dev` and the version badge carries a
 `npm run dev` and `npm run try` set the profile themselves; an unpackaged run is a
 build under test by definition and can never collide with the installed app.
 
-A profile window opens **without taking focus** - it is usually launched by an agent
-running in the live app, and a test window stealing the keyboard mid-sentence is worse
-than no test window. `npm run try -- --minimized` goes further and leaves it in the
-taskbar until you click it.
+A profile window opens **minimized and without focus** - it is usually launched by an
+agent running in the live app, and a test window that steals the keyboard mid-sentence, or
+paints itself over what you are reading, is worse than no test window. It waits on the
+taskbar until you click it; `npm run try -- --show` puts it on screen instead, still
+without taking focus.
 
 `npm run try` deliberately launches `node_modules/electron`, not a packaged exe:
 Windows Smart App Control blocks freshly built unsigned binaries, that Electron is

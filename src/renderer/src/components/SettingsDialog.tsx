@@ -183,6 +183,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
+                  checked={config.clipboardShelf}
+                  onChange={(v) => onChange({ clipboardShelf: v })}
+                  label="Keep what I copy on a shelf in the corner"
+                  hint="Anything you copy anywhere - text, or a screenshot - appears bottom-left for five seconds and stays on a twelve item shelf. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched."
+                />
+                <Switch
                   checked={config.autoLane}
                   onChange={(v) => onChange({ autoLane: v })}
                   label="Give a second session in the same project its own worktree"

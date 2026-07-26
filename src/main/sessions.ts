@@ -421,7 +421,18 @@ export class SessionManager extends EventEmitter {
     // Remember when the footer went quiet, so the nudge can come sooner than the
     // blind backstop for the agents whose UI we can actually read.
     if (!s.footerEndedAt) s.footerEndedAt = now
-    if (this.endRun(s)) this.emitSessions()
+    let changed = this.endRun(s)
+    // The footer going away is the turn ending, so the dot says so now instead of a
+    // minute later. The quiet clock used to own this transition, which left a pane that
+    // was plainly waiting for a reply showing green "working" for the whole IDLE_AFTER_MS
+    // - and a pane sitting on a permission prompt shows no footer at all, so it read as
+    // working for as long as it sat there. Only ever downgrades a *working* pane:
+    // 'starting' has its own timer and 'exited' is final.
+    if (s.meta.status === 'working') {
+      s.meta.status = 'idle'
+      changed = true
+    }
+    if (changed) this.emitSessions()
   }
 
   clearAttention(id: string): void {

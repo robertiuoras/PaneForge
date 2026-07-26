@@ -6,6 +6,7 @@ import type {
   Api,
   Config,
   InstallEvent,
+  RecentItem,
   Session,
   StartSessionRequest,
   SwarmRequest,
@@ -74,6 +75,11 @@ const api: Api = {
   readHistory: (id) => ipcRenderer.invoke('history:read', id),
   deleteHistory: (id) => ipcRenderer.invoke('history:delete', id),
 
+  listRecents: () => ipcRenderer.invoke('recents:list'),
+  copyRecent: (id) => ipcRenderer.send('recents:copy', id),
+  dragRecent: (id) => ipcRenderer.send('recents:drag', id),
+  clearRecents: () => ipcRenderer.send('recents:clear'),
+
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
   installVoice: () => ipcRenderer.invoke('voice:install'),
@@ -112,6 +118,16 @@ const api: Api = {
     const h = (): void => cb()
     ipcRenderer.on('voice:hotkey', h)
     return () => ipcRenderer.off('voice:hotkey', h)
+  },
+  onRecents: (cb) => {
+    const h = (_e: unknown, items: RecentItem[]) => cb(items)
+    ipcRenderer.on('recents:changed', h)
+    return () => ipcRenderer.off('recents:changed', h)
+  },
+  onAppError: (cb) => {
+    const h = (_e: unknown, message: string) => cb(message)
+    ipcRenderer.on('app:error', h)
+    return () => ipcRenderer.off('app:error', h)
   }
 }
 

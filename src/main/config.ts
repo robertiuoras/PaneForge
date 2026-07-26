@@ -110,6 +110,7 @@ function defaults(): Config {
     autoFixUi: true,
     notifyOnIdle: true,
     soundOnIdle: true,
+    clipboardShelf: true,
     grid: false,
     confirmClose: true,
     launchAtLogin: false,

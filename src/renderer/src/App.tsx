@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { Config, HistoryEntry, Preset, Project, Session, StartSessionRequest, SwarmRole } from '@shared/types'
+import type {
+  Config,
+  HistoryEntry,
+  Preset,
+  Project,
+  RecentItem,
+  Session,
+  StartSessionRequest,
+  SwarmRole
+} from '@shared/types'
 import AgentPicker from './components/AgentPicker'
 import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
@@ -12,6 +21,7 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import TerminalPane, { paneRepair } from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
+import RecentsFlyout from './components/RecentsFlyout'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import StatusDot from './components/StatusDot'
@@ -52,6 +62,12 @@ export default function App(): JSX.Element {
   // draw Chromium's system box, which looks nothing like the app and blocks the
   // renderer while it is open.
   const [ask, setAsk] = useState<AskState | null>(null)
+  // The clipboard shelf: what you last copied, and whether its corner panel is open
+  // because you asked (pinned) or because something just landed (peek).
+  const [recents, setRecents] = useState<RecentItem[]>([])
+  const [shelfPinned, setShelfPinned] = useState(false)
+  const [shelfPeek, setShelfPeek] = useState(false)
+  const peekTimer = useRef<number>()
   const broadcastBox = useRef<HTMLInputElement>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
@@ -148,6 +164,53 @@ export default function App(): JSX.Element {
     setNote(msg)
     window.setTimeout(() => setNote(null), 4000)
   }, [])
+
+  // A main-process error used to be a modal box that took the keyboard off whatever you
+  // were typing. It says so in the corner now; the stack is in paneforge-errors.log.
+  useEffect(() => api.onAppError((message) => flash(`Something went wrong: ${message}`)), [flash])
+
+  /**
+   * The clipboard shelf. Anything copied - in this app or any other - shows itself for
+   * five seconds in the bottom-left corner and stays on the shelf for later.
+   */
+  useEffect(() => {
+    if (config?.clipboardShelf === false) {
+      setRecents([])
+      setShelfPinned(false)
+      return
+    }
+    api.listRecents().then(setRecents)
+    return api.onRecents((items) => {
+      setRecents(items)
+      if (!items.length) return
+      setShelfPeek(true)
+      window.clearTimeout(peekTimer.current)
+      peekTimer.current = window.setTimeout(() => setShelfPeek(false), 5000)
+    })
+  }, [config?.clipboardShelf])
+
+  /**
+   * Put a shelf item into the focused pane. Text goes in as text; an image goes in as the
+   * path of the PNG the app saved, because a path is the only form of an image a CLI agent
+   * can read. Nothing is sent - it lands at the prompt so it can be described first.
+   */
+  const sendRecent = useCallback(
+    (it: RecentItem) => {
+      const id = activeRef.current
+      if (!id) return flash('Nothing focused - open a pane first.')
+      if (it.kind === 'image') {
+        const path = it.path ?? ''
+        if (!path) return
+        api.write(id, (/[\s"']/.test(path) ? `"${path}"` : path) + ' ')
+        flash('Image path typed into the pane.')
+      } else {
+        if (!it.text) return
+        api.write(id, it.text)
+      }
+      setShelfPeek(false)
+    },
+    [flash]
+  )
 
   /**
    * Dictation types straight into the focused pane, exactly as if you had typed
@@ -329,6 +392,12 @@ export default function App(): JSX.Element {
           setPalette(false)
           return
         }
+        // The shelf is the lightest layer on screen, so Escape closes it before it
+        // starts closing dialogs underneath.
+        if (shelfPinned) {
+          setShelfPinned(false)
+          return
+        }
         setPicking(false)
         setSettings(false)
         setHelp(false)
@@ -360,6 +429,13 @@ export default function App(): JSX.Element {
         const s = sessions.find((x) => x.id === activeId)
         if (s) setBoard(s.cwd)
         else flash('Open a pane first - the board belongs to its folder.')
+      } else if (k === 'v' && e.shiftKey) {
+        // Claimed here, and stopped from going any further: the pane's own handler
+        // treats every Ctrl+V as a paste, so without stopPropagation this would open
+        // the shelf and paste the clipboard into the agent at the same time.
+        e.preventDefault()
+        e.stopPropagation()
+        setShelfPinned((p) => !p)
       } else if (k === 'h' && !typing) {
         e.preventDefault()
         setHistory(true)
@@ -409,7 +485,21 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, sessions, grid, config, close, patchConfig, agents, switchAgent, palette, flash, ask, fixUi])
+  }, [
+    activeId,
+    sessions,
+    grid,
+    config,
+    close,
+    patchConfig,
+    agents,
+    switchAgent,
+    palette,
+    flash,
+    ask,
+    fixUi,
+    shelfPinned
+  ])
 
   /**
    * Everything the app can do, as one searchable list. The sidebar only scales to a
@@ -482,6 +572,14 @@ export default function App(): JSX.Element {
         title: 'Send a line to every session',
         keys: 'Ctrl B',
         run: () => broadcastBox.current?.focus()
+      },
+      {
+        id: 'shelf',
+        group: 'Actions',
+        title: 'Recently copied text and images',
+        hint: 'click one into the focused pane',
+        keys: 'Ctrl Shift V',
+        run: () => setShelfPinned((p) => !p)
       },
       {
         id: 'swarm',
@@ -998,6 +1096,13 @@ export default function App(): JSX.Element {
           onCancel={() => setAsk(null)}
         />
       )}
+      <RecentsFlyout
+        items={recents}
+        pinned={shelfPinned}
+        peek={shelfPeek}
+        onClose={() => setShelfPinned(false)}
+        onSend={sendRecent}
+      />
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       <UpdateToast />

@@ -8,7 +8,9 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   Notification,
+  screen,
   shell
 } from 'electron'
 import { SessionManager } from './sessions'
@@ -27,6 +29,16 @@ import {
   startMode,
   titleSuffix
 } from './profile'
+import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import {
+  clearRecents,
+  copyRecent,
+  listRecents,
+  recentPath,
+  refreshRecents,
+  startRecents,
+  stopRecents
+} from './recents'
 import { refreshPath, runCommand } from './install'
 import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
 import * as history from './history'
@@ -44,6 +56,14 @@ import type {
 
 const manager = new SessionManager()
 let win: BrowserWindow | null = null
+// True while the window is standing in for a maximized one: sized to the work area
+// because a real maximize() would have taken focus. See createWindow.
+let pseudoMax = false
+
+// First thing in the process: an uncaught error in the main process otherwise opens a
+// modal message box that steals focus from whatever you are typing in. Logged instead.
+installCrashGuard()
+onCrashReport((message) => send('app:error', message))
 
 // Runs before anything reads userData: a named profile (`--profile=dev`) moves the
 // whole profile aside so a second PaneForge can run beside the live one. It also sets
@@ -66,6 +86,16 @@ if (!app.requestSingleInstanceLock()) {
   })
 }
 
+/** The usable area of whichever display the window was last on. */
+function workAreaFor(cfg: Config): Electron.Rectangle {
+  const { x, y, width, height } = cfg.window
+  const display =
+    x === undefined || y === undefined
+      ? screen.getPrimaryDisplay()
+      : screen.getDisplayMatching({ x, y, width, height })
+  return display.workArea
+}
+
 function createWindow(): void {
   // Windows and Linux get no application menu: its default accelerators (Ctrl+R reload,
   // Ctrl+W close) fire before the app's own shortcuts and would reload the UI out from
@@ -78,11 +108,23 @@ function createWindow(): void {
       : null
   )
   const cfg = getConfig()
+  const mode = startMode()
+  // maximize() shows the window as a side effect, and on Windows that show *activates* it:
+  // it ends up as a ShowWindow(SW_MAXIMIZE), the exact focus steal showInactive exists to
+  // avoid. So a launch that must not take the keyboard (the test copy an agent starts, an
+  // update coming back) stands in for a maximized window by filling the display's work
+  // area, and becomes a real maximized one the first time it is clicked.
+  //
+  // The size goes in the constructor, not a setBounds() after: sizing a window that has
+  // never been shown makes Windows show and activate it, which measured as a focus steal
+  // even with no maximize() left in the path.
+  pseudoMax = cfg.window.maximized && mode !== 'normal'
+  const area = pseudoMax ? workAreaFor(cfg) : null
   win = new BrowserWindow({
-    width: cfg.window.width,
-    height: cfg.window.height,
-    x: cfg.window.x,
-    y: cfg.window.y,
+    width: area?.width ?? cfg.window.width,
+    height: area?.height ?? cfg.window.height,
+    x: area?.x ?? cfg.window.x,
+    y: area?.y ?? cfg.window.y,
     minWidth: 900,
     minHeight: 600,
     show: false,
@@ -107,9 +149,14 @@ function createWindow(): void {
     })
   }
 
-  if (cfg.window.maximized) win.maximize()
+  if (cfg.window.maximized && !pseudoMax) win.maximize()
+  // Clicking it is permission to behave like a normal maximized window.
+  if (pseudoMax)
+    win.once('focus', () => {
+      pseudoMax = false
+      if (!win?.isMaximized()) win?.maximize()
+    })
   win.on('ready-to-show', () => {
-    const mode = startMode()
     if (mode === 'normal') return win?.show()
     // showInactive draws the window without pulling focus off the app you are typing
     // in. minimize() after it, rather than instead of it, because minimizing a window
@@ -122,7 +169,13 @@ function createWindow(): void {
     // the app came back instead of silently dying.
     else if (isQuietRelaunch()) win?.flashFrame(true)
   })
-  win.on('focus', () => win?.flashFrame(false))
+  // Coming back to the window is when the image you copied in another app matters, and
+  // reading the clipboard on focus is what keeps the shelf's polling cheap the rest of
+  // the time. See recents.ts.
+  win.on('focus', () => {
+    win?.flashFrame(false)
+    refreshRecents()
+  })
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
@@ -159,7 +212,9 @@ function send(channel: string, ...args: unknown[]): void {
 function rememberBounds(): void {
   if (!alive()) return
   const w = win!
-  const maximized = w.isMaximized()
+  // A window still standing in for a maximized one (shown without focus, never clicked)
+  // must save itself as maximized, or the next launch opens at work-area size instead.
+  const maximized = w.isMaximized() || pseudoMax
   // getBounds() on a maximized window returns the screen size, which would make the
   // restored window unrestorable, so keep the normal bounds instead.
   const b = maximized ? w.getNormalBounds() : w.getBounds()
@@ -272,6 +327,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
+  if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
   send('config:changed', next)
   return next
 })
@@ -311,6 +367,28 @@ ipcMain.on('clipboard:write', (_e, text: string) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)
 })
 ipcMain.handle('clipboard:read', () => clipboard.readText())
+
+// The clipboard shelf: the last things copied, one click from the focused pane.
+ipcMain.handle('recents:list', () => listRecents())
+ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
+ipcMain.on('recents:clear', () => clearRecents())
+// Dragging a shelf image into another app entirely. The renderer cannot start an OS drag
+// with a real file in it - only the main process can, and only with a path it owns.
+ipcMain.on('recents:drag', (e, id: string) => {
+  const file = recentPath(id)
+  if (!file) return
+  try {
+    e.sender.startDrag({ file, icon: nativeImage.createFromPath(file).resize({ width: 96 }) })
+  } catch {
+    /* the png was cleared between the click and the drag */
+  }
+})
+
+/** Watch the clipboard, or stop watching, to match the setting. */
+function applyClipboardShelf(cfg: Config): void {
+  if (cfg.clipboardShelf) startRecents((items) => send('recents:changed', items))
+  else stopRecents()
+}
 
 ipcMain.on('shell:external', (_e, url: string) => {
   // Only ever open real web links: a file:// or custom scheme from the renderer
@@ -580,6 +658,8 @@ app.whenReady().then(() => {
   history.prune(cfg.historyDays)
   createWindow()
   applyVoiceHotkey(cfg)
+  applyClipboardShelf(cfg)
+  crashTestHook()
   initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
   restoreSessions()
   openFromArgs(process.argv)

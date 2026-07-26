@@ -1,11 +1,14 @@
 // Open the working copy as a SECOND PaneForge, beside the one you are sitting in:
-//   npm run try                 build, then launch it as the `dev` profile
-//   npm run try -- --keep       skip the build and just launch what is already in out/
-//   npm run try -- --minimized  open it minimized - nothing appears until you click it
+//   npm run try            build, then launch it as the `dev` profile, minimized
+//   npm run try -- --keep  skip the build and just launch what is already in out/
+//   npm run try -- --show  put the window on screen (still without taking focus)
 //
-// The window never takes focus either way. This is normally run by an agent working in
-// the live app, and a test window stealing the keyboard mid-sentence is worse than no
-// test window at all.
+// Minimized is the DEFAULT, not an option. This is normally run by an agent working in
+// the live app: a test window that paints itself over what you are reading interrupts you
+// even when it politely leaves the keyboard alone, and most launches are only there for a
+// build check or a probe. It is on the taskbar the whole time - click it when you want it.
+//
+// The window never takes focus either way.
 //
 // Why this exists: PaneForge is developed from a Claude session running inside
 // PaneForge. Testing a change used to mean closing the app that hosts the agent doing
@@ -27,7 +30,8 @@ import { closeTestApps } from './test-app.mjs'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
-const minimized = args.includes('--minimized') || args.includes('-m')
+// --minimized/-m still accepted, and now redundant: --show is the way to see the window.
+const minimized = !args.includes('--show')
 const close = args.includes('--close')
 
 // `npm run try -- --close` shuts the test copy without touching the live app. Lane
@@ -52,7 +56,7 @@ const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
 // itself out can be checked against the real window instead of a screenshot of it.
 const passThrough = args.filter(
-  (a) => !['--keep', '--minimized', '-m', '--close'].includes(a) && !a.startsWith('--profile=')
+  (a) => !['--keep', '--minimized', '-m', '--show', '--close'].includes(a) && !a.startsWith('--profile=')
 )
 
 const electron = join(
@@ -100,7 +104,7 @@ spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.
 ${
   minimized
-    ? 'It stays minimized - click it in the taskbar when you want it.'
+    ? 'It stays minimized and silent - click it in the taskbar when you want it (--show opens it).'
     : 'It will not take focus: keep typing where you are, it just appears behind.'
 }
 Your live app is untouched: separate settings, separate workspaces, separate panes.

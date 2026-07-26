@@ -17,6 +17,7 @@ const KEYS: [string, string][] = [
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
   ['Ctrl Shift C', 'Always copy, never interrupt'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
+  ['Ctrl Shift V', 'Recently copied: click text or a screenshot into the focused pane'],
   ['Right-click', 'Copy the selection, or paste when nothing is selected'],
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
   ['Ctrl B', 'Focus the broadcast box (one line to every session)'],

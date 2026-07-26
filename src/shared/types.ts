@@ -291,6 +291,12 @@ export interface Config {
   notifyOnIdle: boolean
   /** soft chime when a session finishes its turn or asks you something */
   soundOnIdle: boolean
+  /**
+   * Keep the last things you copied on a shelf in the corner, so a screenshot or a
+   * block of text is one click from the focused pane. Off stops the clipboard being
+   * watched at all.
+   */
+  clipboardShelf: boolean
   /** show every session at once instead of one at a time */
   grid: boolean
   /** ask before closing a session that is still running */
@@ -322,6 +328,30 @@ export interface Config {
   /** panes to reopen on next launch, written just before an update restart */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+}
+
+/**
+ * One thing you copied: text, or an image saved to a PNG we own.
+ * `key` is what makes copying the same thing twice one entry instead of two.
+ */
+export interface RecentItem {
+  id: string
+  key: string
+  kind: 'text' | 'image'
+  /** epoch ms it landed on the shelf */
+  at: number
+  /** full text, text items only */
+  text?: string
+  /** the saved PNG, image items only - this is what gets typed into a pane */
+  path?: string
+  /** small data URL for the tile, image items only */
+  thumb?: string
+  /** one-line label for the row */
+  preview: string
+  lines?: number
+  chars?: number
+  width?: number
+  height?: number
 }
 
 /** Shape exposed on window.api by the preload script. */
@@ -401,6 +431,14 @@ export interface Api {
   readHistory(id: string): Promise<string>
   deleteHistory(id: string): Promise<void>
 
+  /** the clipboard shelf, newest first */
+  listRecents(): Promise<RecentItem[]>
+  /** put a shelf item back on the OS clipboard */
+  copyRecent(id: string): void
+  /** hand an image item to the OS drag layer, so it can be dropped in any app */
+  dragRecent(id: string): void
+  clearRecents(): void
+
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
   transcribe(wav: ArrayBuffer): Promise<{ text: string; error?: string }>
@@ -415,4 +453,11 @@ export interface Api {
   onAttention(cb: (s: Session) => void): () => void
   /** global push-to-talk hotkey fired from the main process */
   onVoiceHotkey(cb: () => void): () => void
+  /** something new landed on the clipboard shelf */
+  onRecents(cb: (items: RecentItem[]) => void): () => void
+  /**
+   * A main-process error, which used to be a modal message box that stole the keyboard.
+   * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
+   */
+  onAppError(cb: (message: string) => void): () => void
 }

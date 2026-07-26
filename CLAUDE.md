@@ -9,7 +9,8 @@ in, which shapes every rule below.
 killing it ends this session mid-turn. To see a change, open a **second** copy:
 
 ```
-npm run try -- --minimized      # builds, opens as its own profile, never takes focus
+npm run try                     # builds, opens as its own profile, minimized, no focus
+npm run try -- --show           # same, but put the window on screen (still no focus)
 ```
 
 Profiles (`src/main/profile.ts`) give that copy its own userData, single-instance lock,
@@ -104,7 +105,7 @@ Screenshots cannot answer "is the last row reachable", and a session that takes 
 them costs more than the fix. Ask the real window instead:
 
 ```
-npm run try -- --keep --minimized --remote-debugging-port=9333
+npm run try -- --keep --remote-debugging-port=9333
 npm run probe -- --height 560 "(() => { const d=document.querySelector('.dialog'); const r=d.getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
 npm run try -- --close
 ```
