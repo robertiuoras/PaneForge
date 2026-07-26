@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
-import type { Agent, AdminStatus, Config, UpdateState, VoiceStatus } from '@shared/types'
+import type { Agent, AdminStatus, Config, RestoreMode, UpdateState, VoiceStatus } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
 import Select from './Select'
@@ -192,7 +192,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.autoLane}
                   onChange={(v) => onChange({ autoLane: v })}
                   label="Give a second session in the same project its own worktree"
-                  hint="Two agents in one folder overwrite each other's edits, race git and fight over the dev server port. The second session in a repo opens in <project>-w2 on branch pf/w2 instead, with your .env files copied over, its own PORT (one past whatever the project's dev script uses, also in PF_LANE_PORT), and the original folder's Claude history, memory and permissions instead of a blank slate. Merge the branch back yourself when the work is done."
+                  hint="Two agents in one folder overwrite each other's edits, race git and fight over the dev server port. The second session in a repo opens in <project>-w2 on branch pf/w2 instead, carrying your .env files, your local settings, and the installed node_modules (hardlinked a few seconds after the pane opens, so it costs no disk and deleting the lane never touches the original). It also gets its own PORT (one past whatever the project's dev script uses, also in PF_LANE_PORT) and the original folder's Claude history, memory and permissions instead of a blank slate. Merge the branch back yourself when the work is done."
                 />
                 <Switch
                   checked={config.confirmClose}
@@ -490,6 +490,20 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
                   />
                 </div>
+              </div>
+
+              <div className="setting">
+                <label>After a restart or a crash</label>
+                <Select
+                  value={config.restoreAfterRestart}
+                  onChange={(v) => onChange({ restoreAfterRestart: v as RestoreMode })}
+                  menuWidth={260}
+                  options={[
+                    { value: 'ask', label: 'Ask me', hint: 'offers the panes you had open' },
+                    { value: 'always', label: 'Reopen my panes', hint: 'no question, straight back' },
+                    { value: 'never', label: 'Start with an empty desk' }
+                  ]}
+                />
               </div>
 
               <div className="setting">

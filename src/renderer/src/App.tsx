@@ -6,6 +6,7 @@ import type {
   Preset,
   Project,
   RecentItem,
+  RestoreOffer,
   Session,
   StartSessionRequest,
   SwarmRole
@@ -22,8 +23,10 @@ import HistoryDialog from './components/HistoryDialog'
 import TerminalPane, { paneRepair } from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
+import RestoreDialog from './components/RestoreDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
+import LaneStrip from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
@@ -58,6 +61,8 @@ export default function App(): JSX.Element {
   const [swarm, setSwarm] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  // The panes the last run left behind, when the launch decided to ask about them.
+  const [restore, setRestore] = useState<RestoreOffer | null>(null)
   // One in-app dialog stands in for window.confirm and window.prompt. Both of those
   // draw Chromium's system box, which looks nothing like the app and blocks the
   // renderer while it is open.
@@ -75,6 +80,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     api.listSessions().then(setSessions)
     api.getConfig().then(setConfigState)
+    // Pulled, not pushed: main decides what to do with the last run's panes while
+    // this window is still loading, so it holds the question until we ask for it.
+    api.pendingRestore().then(setRestore)
     const offS = api.onSessions(setSessions)
     const offC = api.onConfig(setConfigState)
     return () => {
@@ -412,6 +420,15 @@ export default function App(): JSX.Element {
         setHelp((h) => !h)
         return
       }
+      // Ctrl+/ (and Ctrl+? on the same physical key) is where everything else puts help,
+      // and it is the one people try before F1. A bare "?" cannot have it: that character
+      // is typed into agents all day.
+      if (e.ctrlKey && !e.altKey && (e.key === '/' || e.key === '?')) {
+        e.preventDefault()
+        e.stopPropagation()
+        setHelp((h) => !h)
+        return
+      }
       if (!e.ctrlKey || e.altKey) return
       const k = e.key.toLowerCase()
 
@@ -598,7 +615,14 @@ export default function App(): JSX.Element {
         run: () => setHistory(true)
       },
       { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
-      { id: 'keys', group: 'Actions', title: 'Keyboard shortcuts', keys: 'F1', run: () => setHelp(true) }
+      {
+        id: 'keys',
+        group: 'Actions',
+        title: 'Keyboard shortcuts',
+        hint: 'every key the app answers to',
+        keys: 'F1',
+        run: () => setHelp(true)
+      }
     )
 
     if (active)
@@ -722,7 +746,11 @@ export default function App(): JSX.Element {
             <button className="icon" title="Settings (Ctrl ,)" onClick={() => setSettings(true)}>
               ⚙
             </button>
-            <button className="icon" title="Keyboard (F1)" onClick={() => setHelp(true)}>
+            <button
+              className="icon help"
+              title="Every shortcut and what it does (F1 or Ctrl /)"
+              onClick={() => setHelp(true)}
+            >
               ?
             </button>
           </span>
@@ -785,6 +813,10 @@ export default function App(): JSX.Element {
           </>
         )}
 
+        {/* PaneForge's own lanes, on a machine that develops PaneForge. A lane whose
+            work will not merge used to be invisible until someone read a hook message. */}
+        <LaneStrip sessions={sessions} onFocus={setActiveId} />
+
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           Sessions ({sessions.length})
@@ -826,7 +858,17 @@ export default function App(): JSX.Element {
                   />
                 ) : (
                   <div className="row-title">
-                    {i < 9 && <span className="num">{i + 1}</span>}
+                    {/* The switch key, and the fastest place to read the pane's state:
+                        lit green while its agent is running, amber when a turn finished
+                        while you were looking somewhere else. */}
+                    {i < 9 && (
+                      <span
+                        className={'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')}
+                        title={`Ctrl ${i + 1}`}
+                      >
+                        {i + 1}
+                      </span>
+                    )}
                     {s.title}
                   </div>
                 )}
@@ -1021,7 +1063,7 @@ export default function App(): JSX.Element {
                   </button>
                 ))}
             </div>
-            <p className="hint">Ctrl K to search everything. F1 for every shortcut.</p>
+            <p className="hint">Ctrl K to search everything. F1 or Ctrl / for every shortcut.</p>
           </div>
         )}
       </main>
@@ -1103,6 +1145,24 @@ export default function App(): JSX.Element {
         onClose={() => setShelfPinned(false)}
         onSend={sendRecent}
       />
+      {restore && (
+        <RestoreDialog
+          offer={restore}
+          onRestore={(ids, always) => {
+            setRestore(null)
+            api.answerRestore({ accept: true, ids, always })
+            if (always) setConfigState((c) => (c ? { ...c, restoreAfterRestart: 'always' } : c))
+          }}
+          onFresh={() => {
+            setRestore(null)
+            api.answerRestore({ accept: false, ids: [] })
+          }}
+          // Dismissed rather than answered: main is told nothing, keeps the desk and
+          // offers it again next launch. Closing a dialog by accident must not be
+          // the way a set of panes is lost.
+          onDismiss={() => setRestore(null)}
+        />
+      )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       <UpdateToast />

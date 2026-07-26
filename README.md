@@ -87,11 +87,14 @@ Re-run after any source change. Needs Node 20+.
   Reviewer, Tester), each told what it owns so they stop editing the same file.
   Roles are editable and remembered.
 - **Worktree lanes** - open a second session in a project you already have open and
-  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`) with your `.env`
-  files copied across. Two agents can build different features in one repo at the
-  same time without overwriting each other or racing the git index. The pane says
-  which lane it is in; merge the branch back when you are done. Off by one switch in
-  Settings, and a folder that is not a repo is left shared with a warning.
+  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`), carrying the
+  things a fresh checkout cannot have: your `.env` files, your local editor and
+  agent settings, and the installed `node_modules`. Dependencies arrive as hardlinks
+  a few seconds after the pane opens, so they cost no disk and deleting a lane never
+  touches the original folder's copy. Two agents can build different features in one
+  repo at the same time without overwriting each other or racing the git index. The
+  pane says which lane it is in; merge the branch back when you are done. Off by one
+  switch in Settings, and a folder that is not a repo is left shared with a warning.
   A lane also gets the two things a bare worktree does not:
   - **its own dev server port** - `PORT` (and `PF_LANE_PORT`) is set to one past
     whatever the project's own dev script asks for, so `npm run dev` in two lanes
@@ -217,8 +220,8 @@ and so on) and taking the first that exists and has folders in it. If none do, t
 picker says which folder it looked in and offers to change it, rather than showing an
 empty list.
 
-Not built yet: git worktree isolation, diff/merge review, reattaching to sessions
-after an app restart (see `PLAN.md`).
+Not built yet: diff/merge review, reattaching to sessions after an app restart
+(see `PLAN.md`).
 
 ## Platform notes
 
@@ -235,6 +238,9 @@ after an app restart (see `PLAN.md`).
 - macOS cannot replace an unsigned app in place, so on a Mac the update prompt
   hands you the download instead of restarting itself. Windows updates silently and
   restarts.
+- Ignoring the update prompt on Windows is not the same as refusing it: the
+  downloaded update installs when you close the app, so the fix is there next time
+  you start it. Nothing is swapped under a live pane - the panes are gone by then.
 
 ## License
 

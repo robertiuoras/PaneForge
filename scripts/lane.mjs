@@ -27,6 +27,7 @@
 //   node scripts/lane.mjs claim --session <id>     -> JSON lane for this session
 //   node scripts/lane.mjs guard --session <id> --path <file>
 //   node scripts/lane.mjs status
+//   node scripts/lane.mjs resolve --session <id> [--lane b]   take over a stuck lane
 //   node scripts/lane.mjs ready --session <id>     mark this lane's branch shippable
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
 //   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
@@ -78,12 +79,24 @@ const STALE_MS = 12 * 60 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
-// cut its own version - 15 releases in one day on 2026-07-26 - and each one is an update
-// prompt on a machine somebody is trying to use. Work is never lost by waiting: it sits
-// on master and goes out with the next release, which every later `ready` and every
-// SessionEnd triggers - so it ships the next time anyone finishes anything here, and
-// `npm run ship` still releases immediately when something must go out now.
-const COOLDOWN_MS = 2 * 60 * 60 * 1000
+// cut its own version - 15 releases in one day on 2026-07-26. That was expensive only
+// because each release interrupted somebody with an update prompt; updates now install
+// on exit instead (see src/main/updater.ts), so a release costs nothing to ignore and
+// the window is short. Work is never lost by waiting: it sits on master and goes out
+// with the next release, which every later `ready` and every SessionEnd triggers - so
+// it ships the next time anyone finishes anything here, and `npm run ship` still
+// releases immediately when something must go out now.
+const COOLDOWN_MS = 30 * 60 * 1000
+// A conflicted lane whose own chat has been quiet this long is nobody's problem, which
+// is how lane b sat conflicted for a day: the one chat that could fix it had moved on,
+// and every other chat was only told about it as a fact. After this, any live chat may
+// take the conflict over (`resolve`), and the prompt hook tells them how.
+const ADOPT_MS = 45 * 60 * 1000
+// How often a conflict is re-tried by itself. Master moves under a conflicted lane all
+// day; most conflicts stop existing the moment the other side of them ships, and rerere
+// already knows the answer to a good few of the rest. Retrying costs one merge attempt
+// that is aborted on failure, so the cheap half of "resolve it permanently" is free.
+const RETRY_MS = 10 * 60 * 1000
 
 // ---------------------------------------------------------------- state file
 // Lives in .git/, which is shared by every worktree and never committed.
@@ -133,6 +146,19 @@ function reap(state) {
   }
   for (const id of Object.keys(state.ready)) {
     if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.ready[id]
+  }
+  // A chat that marked itself ready and then kept editing is working again, and its
+  // ready mark is a lie. Left standing it stalled every release silently: `busyLanes`
+  // trusts the mark and skips the lane, so `autoship` believed nobody was mid-work and
+  // called `ship`, which aborted on the dirty checkout - and `autoship` swallows that
+  // error, so nothing released and nothing said why until some other chat happened to
+  // finish something. Dropping the mark puts the lane back in `busyLanes`, where the
+  // wait is reported by name and the next `ready` releases for real.
+  for (const [id, mark] of Object.entries(state.ready)) {
+    if (!existsSync(laneDir(id))) continue
+    const dir = laneDir(id)
+    const moved = mark.commit && gitSafe(dir, 'rev-parse', 'HEAD').out !== mark.commit
+    if (moved || Boolean(gitSafe(dir, 'status', '--porcelain').out)) delete state.ready[id]
   }
   return state
 }
@@ -218,6 +244,104 @@ function healLane(id) {
   return did.length ? did.join(', ') : null
 }
 
+// ---------------------------------------------------------------- conflicts
+
+/**
+ * Record a conflict without losing when it started.
+ *
+ * `since` is the whole point: a conflict that is minutes old belongs to the chat that
+ * made it, and one that is hours old belongs to whoever is still here. Overwriting the
+ * record on every release (which is what used to happen) reset the clock and made every
+ * conflict look new forever, so nothing ever escalated.
+ */
+function noteConflict(bag, id, detail, previous) {
+  const was = (previous ?? bag)[id]
+  bag[id] = {
+    at: now(),
+    since: was?.since ?? now(),
+    dir: laneDir(id),
+    detail,
+    resolver: was?.resolver ?? null,
+    master: gitSafe(MAIN, 'rev-parse', 'master').out,
+    retryAt: now() + RETRY_MS
+  }
+  return bag[id]
+}
+
+/**
+ * The files out of a failed merge's output. `git merge` says a great deal (auto-merging
+ * this, recording a preimage for that) and the record kept all of it, so what the app
+ * and the hooks showed a human was four lines of rerere bookkeeping instead of "these
+ * files disagree".
+ */
+function mergeFiles(out) {
+  const files = new Set()
+  for (const line of out.split('\n')) {
+    const conflict = /Merge conflict in (.+)$/.exec(line)
+    const preimage = /Recorded preimage for '(.+)'/.exec(line)
+    if (conflict) files.add(conflict[1].trim())
+    else if (preimage) files.add(preimage[1])
+  }
+  return files.size ? [...files].join(', ') : out.split('\n').slice(0, 4).join('; ')
+}
+
+/**
+ * Try every recorded conflict again, quietly.
+ *
+ * Half of these stop existing on their own: the change they conflicted with ships, or
+ * rerere has since been taught the resolution in some other lane. Re-trying is one merge
+ * that aborts itself on failure, throttled to RETRY_MS and skipped entirely while master
+ * has not moved - so the common case costs a `rev-parse`.
+ *
+ * Returns true when the state changed and the caller should write it.
+ */
+function retryConflicts(state) {
+  let changed = false
+  const head = gitSafe(MAIN, 'rev-parse', 'master').out
+  for (const [id, c] of Object.entries(state.conflicts)) {
+    if (id === 'main' || !existsSync(laneDir(id))) continue
+    if (c.retryAt && now() < c.retryAt && c.master === head) continue
+    // A `ready` that hit a conflict leaves the merge open for its own chat to resolve.
+    // When that chat never comes back, the open merge is what blocks the retry (a lane
+    // mid-merge reads as dirty), so the conflict could never clear itself - the exact
+    // shape of lane b sitting stuck for a day. Once the lane is adoptable the half-merge
+    // has no owner: drop it and try again, with whatever rerere has learned since.
+    if (adoptable(state, id) && gitSafe(laneDir(id), 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) {
+      gitSafe(laneDir(id), 'merge', '--abort')
+    }
+    const caught = catchUp(id)
+    // Someone is editing in there right now - not the moment to merge under them.
+    if (caught.dirty) continue
+    changed = true
+    if (!caught.conflicts.length) {
+      delete state.conflicts[id]
+      // It merges now, so the work that was left out of a release goes into the next one
+      // without anybody being asked. This is the case that used to need a human.
+      if (!state.ready[id] && aheadOf(laneBranch(id)) > 0) {
+        try {
+          markReady(state, id)
+        } catch {
+          /* nothing mergeable after all */
+        }
+      }
+      continue
+    }
+    c.master = head
+    c.retryAt = now() + RETRY_MS
+    c.detail = caught.conflicts.join(', ')
+  }
+  return changed
+}
+
+/** A conflict nobody is fixing: its lane's chat has been quiet long enough to hand over. */
+function adoptable(state, id) {
+  const c = state.conflicts[id]
+  if (!c) return false
+  const holder = state.lanes[id]
+  if (!holder) return true
+  return now() - (holder.seen ?? holder.claimed ?? 0) > ADOPT_MS
+}
+
 // ---------------------------------------------------------------- worktree setup
 
 function ensureWorktree(id) {
@@ -252,6 +376,8 @@ function ensureWorktree(id) {
 function claim(session, cwd, prefer) {
   if (!session) throw new Error('claim needs --session')
   const state = reap(read())
+  // Cheap, throttled, and the reason most conflicts never reach a human.
+  retryConflicts(state)
 
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
@@ -278,10 +404,8 @@ function claim(session, cwd, prefer) {
   // last chat left behind is settled here, before this one writes a line.
   const healed = healLane(free)
   if (healed) {
-    delete state.conflicts[free]
-    if (/conflicts with master/.test(healed)) {
-      state.conflicts[free] = { at: now(), dir, detail: healed }
-    }
+    if (/conflicts with master/.test(healed)) noteConflict(state.conflicts, free, healed)
+    else delete state.conflicts[free]
   }
   state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now() }
   write(state)
@@ -315,6 +439,10 @@ function guard(session, path) {
     write(state)
     return null
   }
+  // A chat that took over a stuck conflict has to be able to write in that lane, even
+  // though another session still nominally holds it. Without this the takeover is
+  // advice rather than a mechanism.
+  if (state.conflicts[lane.id]?.resolver === session) return null
   if (!holder) {
     // Unclaimed checkout: claim THIS one for the session rather than refusing. An
     // agent that opened the repo directly, or was already working here before lanes
@@ -424,6 +552,9 @@ function typecheckFailure() {
  */
 function autoship(kind = 'patch', session = 'auto') {
   const state = reap(read())
+  // A conflict that has quietly stopped being a conflict should not keep work out of
+  // this release: try them all again before deciding what is shippable.
+  if (retryConflicts(state)) write(state)
   if (state.release) return { shipped: false, reason: 'another chat is mid-release' }
   const busy = busyLanes(state)
   if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.join(', ')}` }
@@ -461,11 +592,79 @@ function markReady(state, id) {
   return { lane: id, commits: ahead, note: 'goes out with the next release, not a separate one' }
 }
 
-function ready(session) {
+/**
+ * Take a stuck conflict over.
+ *
+ * A conflict belongs to the chat that wrote the code - right up until that chat stops
+ * answering, and then it belongs to nobody and the work sits. This is the way out: any
+ * live chat can adopt a conflict whose own chat has been quiet for ADOPT_MS, get the
+ * half-merge opened in that lane's worktree, resolve it, commit, and finish it with
+ * `ready --lane <id>`. The guard lets the resolver write there for as long as it holds
+ * the conflict, and the lane's own chat can always resolve its own without waiting.
+ */
+function resolveConflict(session, wanted) {
+  if (!session) throw new Error('resolve needs --session')
+  const state = reap(read())
+  if (retryConflicts(state)) write(state)
+  const id = wanted ?? Object.keys(state.conflicts).find((l) => adoptable(state, l) || state.lanes[l]?.session === session)
+  if (!id) throw new Error(Object.keys(state.conflicts).length ? 'the conflicted lanes still have active chats in them' : 'no lane is conflicted')
+  if (!state.conflicts[id]) throw new Error(`lane ${id} is not conflicted`)
+
+  const holder = state.lanes[id]
+  const mine = holder?.session === session
+  if (!mine && !adoptable(state, id) && state.conflicts[id].resolver !== session) {
+    const idle = Math.round((now() - (holder.seen ?? holder.claimed ?? 0)) / 60000)
+    throw new Error(
+      `lane ${id} is held by another chat that was active ${idle}m ago - it fixes its own conflict. ` +
+        `Adoptable after ${Math.round(ADOPT_MS / 60000)}m of silence.`
+    )
+  }
+
+  const dir = laneDir(id)
+  // A merge left open by an earlier attempt is the state we want; do not abort it.
+  const open = gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok
+  let files = []
+  if (open) {
+    files = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+  } else {
+    const caught = catchUp(id, { keepConflict: true })
+    // Uncommitted work in there is not something to merge on top of, and it means the
+    // lane's chat is alive after all.
+    if (caught.dirty) throw new Error(`lane ${id} has uncommitted changes in ${dir} - commit or discard them first`)
+    files = caught.conflicts
+  }
+
+  if (!open && !files.length) {
+    // It merged on the way in. Nothing to resolve, and the work is shippable again.
+    delete state.conflicts[id]
+    let marked = null
+    try {
+      marked = markReady(state, id)
+    } catch {
+      /* the lane had nothing master lacks */
+    }
+    write(state)
+    return { lane: id, dir, resolved: true, marked, release: autoship('patch', session) }
+  }
+
+  state.conflicts[id] = { ...noteConflict({}, id, files.join(', '), state.conflicts), resolver: session }
+  write(state)
+  return { lane: id, dir, resolved: false, files, adopted: !mine }
+}
+
+function ready(session, wanted) {
   const state = reap(read())
   const mine = Object.entries(state.lanes).find(([, c]) => c.session === session)
-  if (!mine) throw new Error('this session holds no lane')
-  const [id] = mine
+  let id = mine?.[0]
+  // `--lane b` is how the chat that took a stuck conflict over finishes it: the lane is
+  // still held by the chat that made it, and that chat may never come back.
+  if (wanted && wanted !== id) {
+    if (state.conflicts[wanted]?.resolver !== session) {
+      throw new Error(`this session does not hold lane ${wanted} - run resolve --lane ${wanted} first`)
+    }
+    id = wanted
+  }
+  if (!id) throw new Error('this session holds no lane')
   const dirty = git(laneDir(id), 'status', '--porcelain')
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
 
@@ -474,7 +673,7 @@ function ready(session) {
   // teaches rerere the answer, so the release's own merge replays it untouched.
   const caught = catchUp(id, { keepConflict: true })
   if (caught.conflicts.length) {
-    state.conflicts[id] = { at: now(), dir: laneDir(id), detail: caught.conflicts.join(', ') }
+    noteConflict(state.conflicts, id, caught.conflicts.join(', '))
     write(state)
     throw new Error(
       `lane ${id} and master both changed:\n  ${caught.conflicts.join('\n  ')}\n` +
@@ -486,6 +685,12 @@ function ready(session) {
   const marked = markReady(state, id)
   delete state.conflicts[id]
   write(state)
+  // `ready` is the end of this lane's work, so the test copy it opened has nothing left
+  // to test. Waiting for the chat to END to close it (releaseClaim) left a minimized
+  // "PaneForge - dev-b" sitting in Alt+Tab for as long as the chat stayed open - which,
+  // when the release is blocked on another lane, is hours. Close it at the moment the
+  // work is declared done instead.
+  closeTestApps(laneDir(id))
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
   return { ...marked, release: autoship('patch', session) }
@@ -505,7 +710,7 @@ function releaseClaim(session) {
         // cleanly it is recorded by name instead of being marked ready and failing later.
         const caught = catchUp(id)
         if (caught.conflicts.length) {
-          state.conflicts[id] = { at: now(), dir: laneDir(id), detail: caught.conflicts.join(', ') }
+          noteConflict(state.conflicts, id, caught.conflicts.join(', '))
         } else {
           try {
             marked = markReady(state, id)
@@ -559,7 +764,7 @@ function ship(kind, session) {
         // more: the conflict is that lane's problem, it stays marked ready, and it is
         // reported by name so the next chat in it fixes it. Everything else goes out.
         gitSafe(MAIN, 'merge', '--abort')
-        conflicts[id] = { at: now(), dir: laneDir(id), detail: m.out.split('\n').slice(0, 6).join('\n') }
+        noteConflict(conflicts, id, mergeFiles(m.out), state.conflicts)
         continue
       }
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
@@ -602,9 +807,7 @@ function ship(kind, session) {
       if (id === 'main') continue
       const c = catchUp(id)
       if (c.moved) rebased.push(id)
-      if (c.conflicts.length) {
-        conflicts[id] = { at: now(), dir: laneDir(id), detail: `master merge: ${c.conflicts.join(', ')}` }
-      }
+      if (c.conflicts.length) noteConflict(conflicts, id, `master merge: ${c.conflicts.join(', ')}`, state.conflicts)
     }
 
     const fresh = read()
@@ -643,6 +846,16 @@ function status(session) {
         from: state.lanes[id]?.cwd ?? null,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
+        // Enough for a hook (or PaneForge) to say "this one is stuck, and here is who
+        // may unstick it" rather than only "conflicted".
+        conflict: state.conflicts[id]
+          ? {
+              since: state.conflicts[id].since ?? state.conflicts[id].at,
+              detail: state.conflicts[id].detail ?? '',
+              resolver: state.conflicts[id].resolver ?? null,
+              adoptable: adoptable(state, id)
+            }
+          : null,
         dirty: w.dirty,
         ahead: w.ahead
       }
@@ -675,7 +888,9 @@ try {
     for (const [id, c] of Object.entries(r.conflicts ?? {})) {
       console.log(
         `Lane ${id} is finished but conflicts with master, so it was left out of the release. ` +
-          `Resolve it in ${c.dir} (git merge master), commit, and it goes out with the next one.`
+          `It is retried by itself every ${Math.round(RETRY_MS / 60000)}m and goes out on its own if master stops ` +
+          `disagreeing with it. To finish it now: node scripts/lane.mjs resolve --session <id> --lane ${id} ` +
+          `(opens the merge in ${c.dir}).`
       )
     }
   }
@@ -688,9 +903,21 @@ try {
       process.exit(2)
     }
   } else if (cmd === 'ready') {
-    const r = ready(session)
+    const r = ready(session, arg('lane'))
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
     sayRelease(r.release)
+  } else if (cmd === 'resolve') {
+    const r = resolveConflict(session, arg('lane'))
+    if (r.resolved) {
+      console.log(`Lane ${r.lane} merges cleanly now - nothing to resolve, it goes out with the next release.`)
+      sayRelease(r.release)
+    } else {
+      console.log(
+        `Lane ${r.lane}: merge open in ${r.dir}${r.adopted ? ' (adopted - its own chat went quiet)' : ''}.\n` +
+          `Conflicted files:\n  ${r.files.join('\n  ')}\n` +
+          `Resolve them there, git add, git commit, then: node scripts/lane.mjs ready --session ${session} --lane ${r.lane}`
+      )
+    }
   } else if (cmd === 'release') {
     const r = releaseClaim(session)
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   app,
   BrowserWindow,
@@ -19,6 +19,7 @@ import { getConfig, setConfig } from './config'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
+import { laneBoard } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
@@ -30,6 +31,17 @@ import {
   titleSuffix
 } from './profile'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import {
+  clearDesk,
+  MAX_DESK_AGE_MS,
+  MAX_RESTORE,
+  paneMissing,
+  readDesk,
+  saveDesk,
+  saveDeskOnExit,
+  setDeskHold,
+  startDeskAutosave
+} from './restore'
 import {
   clearRecents,
   copyRecent,
@@ -47,6 +59,9 @@ import * as voice from './voice'
 import { installCommand } from '../shared/agents'
 import type {
   Config,
+  RestoreAnswer,
+  RestoreOffer,
+  RestorePane,
   Session,
   StartSessionRequest,
   SwarmRequest,
@@ -55,6 +70,8 @@ import type {
 } from '../shared/types'
 
 const manager = new SessionManager()
+/** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
+const noteDesk = startDeskAutosave(() => manager.snapshot())
 let win: BrowserWindow | null = null
 // True while the window is standing in for a maximized one: sized to the work area
 // because a real maximize() would have taken focus. See createWindow.
@@ -261,6 +278,10 @@ manager.on('data', (id: string, data: string) => {
 })
 manager.on('sessions', (sessions: Session[]) => {
   send('sessions:changed', sessions)
+  // Every pane start, exit, rename and agent switch arrives here, which is the
+  // whole of "the desk changed". Debounced inside: a swarm launch is six of these
+  // in a second and they are worth one write.
+  noteDesk()
 })
 manager.on('attention', (s: Session) => {
   // The chime is the renderer's job (Web Audio gives a far nicer sound than the
@@ -401,6 +422,7 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 })
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
+ipcMain.handle('lanes:board', () => laneBoard())
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 ipcMain.on('clipboard:write', (_e, text: string) => {
@@ -573,11 +595,12 @@ ipcMain.on('update:install', () => {
       /* window already going away */
     }
   }
-  // Remembered before the panes die, replayed by restoreSessions() on the next
-  // launch: an update should feel like the app blinked, not like it wiped the desk.
-  // Unless the user turned that off - the app updates itself several times a day, so
-  // an always-on restore makes a set of panes impossible to be rid of by restarting.
-  setConfig({ restoreSessions: getConfig().restoreAfterUpdate ? manager.snapshot() : [] })
+  // Remembered before the panes die, replayed on the next launch: an update should
+  // feel like the app blinked, not like it wiped the desk. Unless the user turned
+  // that off - the app updates itself several times a day, so an always-on restore
+  // makes a set of panes impossible to be rid of by restarting. `update` is the one
+  // reason that reopens without asking; every other restart asks.
+  saveDeskOnExit(getConfig().restoreAfterUpdate ? manager.snapshot() : [], 'update')
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
   manager.shutdown()
@@ -674,23 +697,123 @@ function openFromArgs(argv: string[]): void {
 }
 
 /**
- * Bring back the panes an update closed. Each one resumes the agent's own last
- * conversation (`claude --continue`), so the restart costs a redraw rather than the
- * thread you were in. Cleared first: a crash while restoring must not leave the app
- * re-opening the same panes on every launch.
+ * Bring panes back. Each one resumes the agent's own last conversation
+ * (`claude --continue`), so a restart costs a redraw rather than the thread you were
+ * in. Nothing is typed into them: a pane that comes back mid-turn must sit there
+ * with the cursor in its prompt box, not re-send work the agent already did.
+ *
+ * The desk is dropped before the first pane starts, never after. A crash while
+ * restoring would otherwise leave the app reopening the same panes on every launch,
+ * for ever, with no way in the UI to say no.
  */
-function restoreSessions(): void {
-  const pending = getConfig().restoreSessions ?? []
-  if (!pending.length) return
-  setConfig({ restoreSessions: [] })
-  for (const req of pending) {
+let restoredThisRun = false
+
+function restorePanes(specs: StartSessionRequest[]): void {
+  // One restore per launch. A second answer from a dialog that somehow sent twice
+  // would otherwise open every pane again beside the first set.
+  if (restoredThisRun) return
+  clearDesk()
+  restoredThisRun = true
+  for (const req of specs.slice(0, MAX_RESTORE)) {
     try {
-      manager.start({ ...req, resume: true })
+      manager.start({ ...req, resume: true, prompt: undefined })
     } catch {
       // Folder moved or the agent is no longer installed - skip that pane only.
     }
   }
 }
+
+/**
+ * The panes waiting to be offered back, pulled by the renderer once it is up. Held
+ * in memory rather than pushed at launch, because the decision below happens while
+ * the window is still loading its own JavaScript.
+ */
+let offer: RestoreOffer | null = null
+
+/** A saved pane described for the dialog, with the reasons it cannot come back. */
+function describe(spec: StartSessionRequest, i: number): RestorePane {
+  const agent = spec.agent ?? 'claude'
+  const installed = listAgents().find((a) => a.id === agent)?.available ?? false
+  return {
+    id: String(i),
+    cwd: spec.cwd,
+    title: spec.title || basename(spec.cwd),
+    agent,
+    model: spec.model,
+    gone: paneMissing(spec) ? 'folder' : installed ? undefined : 'agent'
+  }
+}
+
+/**
+ * What a launch does with the last run's panes.
+ *
+ * An update restart reopens silently: the app decided on that restart, so being
+ * handed the same desk back is the whole point. Every other restart asks, because a
+ * cold boot is often a deliberate fresh start and a desk that reappears whatever you
+ * do is a set of panes you cannot get rid of.
+ */
+function offerRestore(): void {
+  const cfg = getConfig()
+  // One launch only: the first run after updating from a version that wrote the
+  // snapshot into config.json, which is exactly the launch that would lose it.
+  const legacy = cfg.restoreSessions ?? []
+  if (legacy.length) setConfig({ restoreSessions: [] })
+  const desk = readDesk() ?? (legacy.length ? { specs: legacy, at: Date.now(), clean: true, reason: 'update' as const } : null)
+  if (!desk?.specs.length) return
+  // Panes from last week are not the desk anyone remembers leaving.
+  if (desk.at && Date.now() - desk.at > MAX_DESK_AGE_MS) {
+    clearDesk()
+    return
+  }
+  if (desk.reason === 'update') {
+    if (cfg.restoreAfterUpdate) restorePanes(desk.specs)
+    else clearDesk()
+    return
+  }
+  if (cfg.restoreAfterRestart === 'never') {
+    clearDesk()
+    return
+  }
+  if (cfg.restoreAfterRestart === 'always') {
+    restorePanes(desk.specs)
+    return
+  }
+  const all = desk.specs.map(describe)
+  offer = {
+    panes: all.slice(0, MAX_RESTORE),
+    extra: all.slice(MAX_RESTORE),
+    at: desk.at,
+    clean: desk.clean
+  }
+  // Until the question is answered the desk stands, even though the app currently
+  // has no panes: an unanswered offer must survive a second restart, and a mis-click
+  // that closes the dialog must not delete the panes it was offering.
+  setDeskHold(true)
+}
+
+ipcMain.handle('restore:pending', () => offer)
+
+ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
+  const pending = offer
+  offer = null
+  setDeskHold(false)
+  if (answer?.always) setConfig({ restoreAfterRestart: 'always' })
+  if (!pending) return
+  if (!answer?.accept) {
+    // Turned down on purpose - the desk goes. Dismissing the dialog instead sends
+    // nothing at all, so those panes are offered again next launch.
+    clearDesk()
+    saveDesk(manager.snapshot(), 'live')
+    return
+  }
+  const wanted = new Set(answer.ids ?? [])
+  const specs = pending.panes
+    .filter((p) => wanted.has(p.id) && !p.gone)
+    .map((p) => ({ cwd: p.cwd, title: p.title, agent: p.agent, model: p.model }))
+  // `--open` and a restore are both allowed to have happened: whatever is already on
+  // screen stays, the restored panes join it.
+  restorePanes(specs)
+})
 
 app.whenReady().then(() => {
   const cfg = getConfig()
@@ -701,7 +824,7 @@ app.whenReady().then(() => {
   applyClipboardShelf(cfg)
   crashTestHook()
   initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
-  restoreSessions()
+  offerRestore()
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
   app.on('activate', () => {
@@ -712,6 +835,8 @@ app.whenReady().then(() => {
 // Agents are child processes of this app: leaving them running after the window
 // closes would strand invisible `claude` processes holding file locks.
 app.on('window-all-closed', () => {
+  // Before shutdown(), which is what kills the panes this is a record of.
+  saveDeskOnExit(manager.snapshot())
   manager.shutdown()
   hardExit()
 })
@@ -740,6 +865,10 @@ function hardExit(): void {
 }
 
 app.on('before-quit', () => {
+  // Quitting by any other route than the last window closing - the tray, Cmd-Q, the
+  // OS asking everyone to leave before a restart. Same record, same order: the desk
+  // is written while the panes are still alive to be read.
+  saveDeskOnExit(manager.snapshot())
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

@@ -45,10 +45,18 @@ const ASK_PROMPT =
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
+ *
+ * Returns whether the terminal actually changed shape. "Nothing moved" is the answer that
+ * matters: a pane coming back from `display: none` measures to the same cols/rows it had,
+ * and telling the pty a size it already has - then asking the agent to redraw for it - is
+ * what made every click between sessions flash a whole repainted frame a moment later.
  */
-function refit(t: Terminal, f: FitAddon, pinned: boolean): void {
+function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
+  const cols = t.cols
+  const rows = t.rows
   f.fit()
   if (pinned) t.scrollToBottom()
+  return t.cols !== cols || t.rows !== rows
 }
 
 /**
@@ -115,6 +123,7 @@ export default function TerminalPane({
   autoFixUi
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
+  const wrap = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
   // Read inside listeners that are attached once per session, so flipping the
@@ -141,13 +150,31 @@ export default function TerminalPane({
   // How many buffer lines this pane spans (scrollback + screen). It is the denominator that
   // turns a marker's absolute line into a height on the rail, so it has to follow the buffer.
   const [total, setTotal] = useState(1)
+  // How many of those lines are on screen. Only the rail wants it: a tag lines up with the
+  // scrollbar thumb that would bring its line into view, and the thumb is `rows/total` tall.
+  const [rows, setRows] = useState(24)
+  // Where xterm's scrollbar actually is, in the pane's own coordinates. It cannot be
+  // written as CSS: the host is inset 7px, but the terminal is a whole number of rows and
+  // overhangs that box by whatever the rounding left over, so the track's real top and
+  // height are only knowable by measuring. Guessing put every tag a few pixels out.
+  const [track, setTrack] = useState({ top: 7, height: 0 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
   const flashTimer = useRef<number | undefined>(undefined)
 
   const syncTotal = (): void => {
     const t = term.current
-    if (t) setTotal(t.buffer.active.baseY + t.rows)
+    if (!t) return
+    setTotal(t.buffer.active.baseY + t.rows)
+    setRows(t.rows)
+    const w = wrap.current
+    const vp = host.current?.querySelector('.xterm-viewport')
+    if (!w || !vp) return
+    const next = {
+      top: vp.getBoundingClientRect().top - w.getBoundingClientRect().top,
+      height: vp.clientHeight
+    }
+    setTrack((p) => (Math.abs(p.top - next.top) < 0.5 && p.height === next.height ? p : next))
   }
 
   /**
@@ -607,12 +634,21 @@ export default function TerminalPane({
     let settle: number | undefined
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
+      let changed = false
       try {
-        refit(t, f, pinned.current)
-        api.resize(sessionId, t.cols, t.rows)
+        changed = refit(t, f, pinned.current)
+        if (changed) api.resize(sessionId, t.cols, t.rows)
+        // The rail is measured against the scrollbar, so it has to be re-measured with it.
+        // Unconditional: a pane coming back on screen has the same rows but not necessarily
+        // the same track geometry, and measuring costs nothing.
+        syncTotal()
       } catch {
         /* element detached mid-measure */
       }
+      // Showing a pane again fires this observer (0x0 while hidden, real size once shown)
+      // at a size the terminal already has. That is not a resize and must not queue a
+      // repaint - the repaint is the flash the user sees on every session switch.
+      if (!changed) return
       // A resize is where panes get garbled: the agent redraws against a size it half
       // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
       // whole frame again. Held off for the first seconds so a CLI still painting its
@@ -685,8 +721,11 @@ export default function TerminalPane({
     const id = requestAnimationFrame(() => {
       try {
         if (term.current && fit.current) {
-          refit(term.current, fit.current, pinned.current)
-          api.resize(sessionId, term.current.cols, term.current.rows)
+          // Same rule as the observer: only a pane that really changed shape while it was
+          // away gets to disturb the pty. Coming back unchanged must be silent.
+          if (refit(term.current, fit.current, pinned.current)) {
+            api.resize(sessionId, term.current.cols, term.current.rows)
+          }
           // The buffer kept growing while this pane was hidden, so the rail is stale.
           syncTotal()
         }
@@ -717,6 +756,7 @@ export default function TerminalPane({
 
   return (
     <div
+      ref={wrap}
       className={'xterm-wrap' + (dropping ? ' dropping' : '')}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
@@ -734,12 +774,23 @@ export default function TerminalPane({
       {/* Rendered before the pill and the drop hint on purpose: all three are positioned,
           so DOM order is what keeps a tag near the tail from painting over the pill. */}
       {marks.length > 0 && (
-        <div className="mark-rail">
+        <div
+          className="mark-rail"
+          style={{ top: track.top, height: track.height || undefined }}
+        >
           {marks.map((m, i) => {
             const line = m.marker.line
             // -1 means xterm disposed it a frame before the state caught up.
             if (line < 0) return null
-            const pct = Math.min(100, Math.max(0, (line / Math.max(1, total - 1)) * 100))
+            // A tag points at the scrollbar thumb that reaches its line, so it is placed
+            // the way Chromium places that thumb: the fraction is of the scrolling range
+            // (everything above the last screenful), and the travel is the track less one
+            // thumb - which has a 48px floor of its own (the scrollbar block in
+            // styles.css). Placed as a plain fraction of the track instead, a tag near the
+            // tail sat most of a thumb's height below the thumb it stood for.
+            const thumb = Math.max(48, (rows / Math.max(rows, total)) * track.height)
+            const frac = Math.min(1, Math.max(0, line / Math.max(1, total - rows)))
+            const top = frac * Math.max(0, track.height - thumb)
             const label = markLabel(m)
             return (
               <button
@@ -750,7 +801,7 @@ export default function TerminalPane({
                   (i === marks.length - 1 ? ' newest' : '') +
                   (flash === m.id ? ' flash' : '')
                 }
-                style={{ top: pct + '%' }}
+                style={{ top }}
                 title={label}
                 aria-label={label}
                 // Same reason as the pill: a mousedown inside the pane would take focus off

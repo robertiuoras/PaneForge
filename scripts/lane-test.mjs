@@ -1,163 +1,134 @@
-// Prove lane creation actually does what the setting promises, without launching
-// an agent:
+// Regression test for worktree lanes: the seeding a fresh checkout needs, and the
+// one way this feature can damage the folder it was meant to protect.
 //
-//   npm run test:lanes
+// The first version of the dependency seeding was a directory junction to the repo's
+// node_modules. It worked, and then `git worktree remove` (git 2.53, Windows) walked
+// into the junction and deleted the real tree out of the original folder - tidying up
+// the second session broke the first. Hardlinks replaced it: same bytes, no disk, and
+// deleting either copy leaves the other whole. The last three checks here are that
+// exact failure, so it cannot come back quietly.
 //
-// Lanes are the one feature that touches things outside the app - a git worktree,
-// the user's .env files, Claude Code's own config folder - so "it typechecked" is
-// worth very little here. This builds a throwaway git repo, points HOME at a
-// throwaway folder, runs the real resolveLane(), and checks the lane came out
-// with its own port, a junction to the original folder's Claude memory, and the
-// original folder's project settings.
+// Everything runs against real git repos in the temp folder; nothing is stubbed.
 //
-// lanes.ts imports nothing but node builtins, so it is compiled on its own into a
-// temp folder and imported directly - no Electron, no app, ~2s.
+//   node scripts/lane-test.mjs
 
-import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { build } from 'esbuild'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(import.meta.dirname, '..')
-const work = mkdtempSync(join(tmpdir(), 'pf-lane-'))
-let failures = 0
+const here = dirname(fileURLToPath(import.meta.url))
+const root = join(tmpdir(), 'paneforge-lane-test')
+rmSync(root, { recursive: true, force: true })
+mkdirSync(root, { recursive: true })
 
-function check(name, ok, detail = '') {
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok || !detail ? '' : ` - ${detail}`}`)
-  if (!ok) failures++
+// A lane also links Claude Code's own config folder to the original's. That part
+// is covered by lane-memory-test.mjs against a throwaway HOME; here it is simply
+// pointed away from the real one, so a run of this file cannot touch it.
+process.env.CLAUDE_CONFIG_DIR = join(root, 'claude')
+process.env.USERPROFILE = root
+process.env.HOME = root
+
+// lanes.ts is TypeScript and imports nothing but node builtins, so a one-file
+// bundle is enough to exercise it outside Electron.
+const bundle = join(root, 'lanes.mjs')
+await build({
+  entryPoints: [join(here, '..', 'src', 'main', 'lanes.ts')],
+  outfile: bundle,
+  format: 'esm',
+  platform: 'node',
+  logLevel: 'silent'
+})
+const { resolveLane } = await import(`file:///${bundle.replace(/\\/g, '/')}`)
+
+let failed = 0
+const ok = (name, cond) => {
+  console.log(`${cond ? 'ok  ' : 'FAIL'}  ${name}`)
+  if (!cond) failed++
+}
+const waitFor = async (path, ms = 60000) => {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (existsSync(path)) return true
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return false
 }
 
-function git(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true })
-  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr || r.stdout}`)
-  return (r.stdout ?? '').trim()
-}
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' })
 
-/** Compile lanes.ts on its own and import it as a module. */
-async function loadLanes() {
-  const out = join(work, 'build')
-  // The tsc entry script, not the npx shim: node 24 refuses to spawn a .cmd.
-  execFileSync(
-    process.execPath,
-    [
-      join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-      join('src', 'main', 'lanes.ts'),
-      '--outDir',
-      out,
-      '--module',
-      'es2022',
-      '--target',
-      'es2022',
-      '--moduleResolution',
-      'bundler',
-      '--skipLibCheck'
-    ],
-    { cwd: repoRoot, stdio: 'pipe' }
-  )
-  writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-  return import(pathToFileURL(join(out, 'lanes.js')).href)
-}
+const repo = join(root, 'demo')
+mkdirSync(join(repo, 'backend'), { recursive: true })
+writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
+writeFileSync(join(repo, '.gitignore'), 'node_modules/\n.env\n.env.local\nbackend/.env\n.claude/\n')
+writeFileSync(join(repo, 'backend', 'keep.txt'), 'x\n')
+git(repo, 'init', '-q', '-b', 'main')
+git(repo, 'config', 'user.email', 'test@example.com')
+git(repo, 'config', 'user.name', 'test')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'init')
 
-const lanes = await loadLanes()
+// The things a fresh checkout cannot have, because git does not track them.
+writeFileSync(join(repo, '.env'), 'SECRET=1\n')
+writeFileSync(join(repo, '.env.local'), 'L=1\n')
+writeFileSync(join(repo, 'backend', '.env'), 'B=1\n')
+mkdirSync(join(repo, '.claude'), { recursive: true })
+writeFileSync(join(repo, '.claude', 'settings.local.json'), '{"perm":1}\n')
+mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true })
+writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.exports=1\n')
+mkdirSync(join(repo, 'backend', 'node_modules', 'dep'), { recursive: true })
+writeFileSync(join(repo, 'backend', 'node_modules', 'dep', 'index.js'), '2\n')
 
-// ---- a repo that states its dev port, so the lane's port can be checked ----
-const repo = join(work, 'demo')
-mkdirSync(repo, { recursive: true })
-writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { dev: 'vite --port 5100' } }))
-writeFileSync(join(repo, '.env'), 'SECRET=from-original\n')
-writeFileSync(join(repo, 'README.md'), '# demo\n')
-git(repo, ['init', '-b', 'main'])
-git(repo, ['config', 'user.email', 'test@example.com'])
-git(repo, ['config', 'user.name', 'test'])
-git(repo, ['add', '-A'])
-git(repo, ['commit', '-m', 'init'])
+ok('a folder nobody else holds is left alone', resolveLane(repo, []).cwd === repo)
 
-// ---- a throwaway HOME with a Claude Code layout already in it ----
-const home = join(work, 'home')
-const projects = join(home, '.claude', 'projects')
-const key = (p) => resolve(p).replace(/[\\/:]/g, '-')
-mkdirSync(join(projects, key(repo)), { recursive: true })
-writeFileSync(join(projects, key(repo), 'transcript.jsonl'), '{"marker":"original"}\n')
-writeFileSync(
-  join(home, '.claude.json'),
-  JSON.stringify({
-    projects: {
-      [resolve(repo)]: {
-        allowedTools: ['Bash(git status)'],
-        hasTrustDialogAccepted: true,
-        history: [{ display: 'earlier prompt' }],
-        lastCost: 1.23
-      }
-    }
-  })
+const w2 = join(root, 'demo-w2')
+const lane = resolveLane(repo, [repo])
+ok('a second session in the same folder gets lane w2', lane.cwd === w2 && lane.lane === 'w2')
+ok('the lane is a checkout of the repo', existsSync(join(w2, 'app.js')))
+ok('.env is seeded', readFileSync(join(w2, '.env'), 'utf8') === 'SECRET=1\n')
+ok('.env.local is seeded', existsSync(join(w2, '.env.local')))
+ok('a subfolder .env is seeded', existsSync(join(w2, 'backend', '.env')))
+ok('local agent settings are seeded', existsSync(join(w2, '.claude', 'settings.local.json')))
+
+await waitFor(join(w2, 'node_modules'))
+await waitFor(join(w2, 'backend', 'node_modules'))
+ok('dependencies arrive in the lane', existsSync(join(w2, 'node_modules', 'left-pad', 'index.js')))
+ok(
+  'dependencies are hardlinked, not a link to the original folder',
+  realpathSync(join(w2, 'node_modules')) !== realpathSync(join(repo, 'node_modules'))
 )
-process.env.USERPROFILE = home
-process.env.HOME = home
-delete process.env.CLAUDE_CONFIG_DIR
-
-// ---- the thing under test: a second session in a folder already in use ----
-const lane = lanes.resolveLane(repo, [repo])
-
-check('lane moved to its own folder', lane.cwd === `${repo}-w2`, lane.cwd)
-check('lane is on its own branch', lane.branch === 'pf/w2', String(lane.branch))
-check('gitignored .env came along', existsSync(join(lane.cwd, '.env')))
-check('port is one past the project’s own', lane.port === 5101, String(lane.port))
-check('PORT is in the launch env', lane.env?.PORT === '5101', JSON.stringify(lane.env))
-check('lane label is in the launch env', lane.env?.PF_LANE === 'w2')
-check('memory sharing reported', lane.sharedMemory === true, String(lane.sharedMemory))
-
-const laneDir = join(projects, key(lane.cwd))
-check('lane project folder is a link', existsSync(laneDir) && lstatSync(laneDir).isSymbolicLink())
-check(
-  'lane sees the original transcripts',
-  existsSync(join(laneDir, 'transcript.jsonl')) &&
-    readFileSync(join(laneDir, 'transcript.jsonl'), 'utf8').includes('original')
+ok(
+  'a hardlinked file is the same bytes as the original',
+  statSync(join(w2, 'node_modules', 'left-pad', 'index.js')).ino ===
+    statSync(join(repo, 'node_modules', 'left-pad', 'index.js')).ino
 )
+ok('subfolder dependencies arrive too', existsSync(join(w2, 'backend', 'node_modules', 'dep', 'index.js')))
+ok('no half-built temp folder is left behind', !existsSync(join(w2, 'node_modules.pf-tmp')))
 
-// A file written on the lane side must land in the original folder, not a copy:
-// that is what makes /resume and project memory one shared thing.
-writeFileSync(join(laneDir, 'from-lane.jsonl'), '{}\n')
-check(
-  'writes through the link reach the original',
-  existsSync(join(projects, key(repo), 'from-lane.jsonl'))
-)
+const w3 = join(root, 'demo-w3')
+const third = resolveLane(repo, [repo, w2])
+ok('a third session gets its own lane', third.lane === 'w3' && third.cwd === w3)
+await waitFor(join(w3, 'node_modules'))
 
-const seeded = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8')).projects
-const entry = seeded[resolve(lane.cwd)]
-check('lane path was seeded into .claude.json', Boolean(entry))
-check('trust carried over', entry?.hasTrustDialogAccepted === true)
-check('allowed tools carried over', entry?.allowedTools?.[0] === 'Bash(git status)')
-check('prompt history carried over', entry?.history?.length === 1)
-check('per-run metrics were not copied', entry && !('lastCost' in entry))
-check('forward-slash form seeded too', Boolean(seeded[resolve(lane.cwd).replace(/\\/g, '/')]))
-check('original entry untouched', seeded[resolve(repo)]?.lastCost === 1.23)
+ok('a lane nobody is in is reused rather than piling up folders', resolveLane(repo, [repo]).cwd === w2)
+ok('a lane asked for another lane still branches off the main repo', resolveLane(w2, [w2]).cwd.startsWith(join(root, 'demo-w')))
 
-// A third session gets a third folder and a third port, not the same one twice.
-const third = lanes.resolveLane(repo, [repo, lane.cwd])
-check('third session gets its own lane', third.cwd === `${repo}-w3`, third.cwd)
-check('third session gets its own port', third.port === 5102, String(third.port))
+const plain = join(root, 'plain')
+mkdirSync(plain, { recursive: true })
+const shared = resolveLane(plain, [plain])
+ok('a folder that is not a repo is shared with a warning', shared.cwd === plain && Boolean(shared.note))
 
-// Restored panes: the lane is already the cwd, and it must still get its port.
-const again = lanes.laneExtras(lane.cwd, 'w2')
-check('restored lane keeps the same port', again.port === 5101, String(again.port))
+// The junction failure, in the two shapes that hit it.
+const realDep = join(repo, 'node_modules', 'left-pad', 'index.js')
+const subDep = join(repo, 'backend', 'node_modules', 'dep', 'index.js')
+git(repo, 'worktree', 'remove', '--force', w2)
+ok('git worktree remove leaves the original dependencies alone', existsSync(realDep))
+rmSync(w3, { recursive: true, force: true })
+ok('deleting a lane folder leaves the original dependencies alone', existsSync(realDep))
+ok('deleting a lane folder leaves subfolder dependencies alone', existsSync(subDep))
 
-// A folder nobody else is in is left exactly as it was.
-const untouched = lanes.resolveLane(repo, [])
-check('unclashed launch is not moved', untouched.cwd === repo && !untouched.lane)
-check('unclashed launch gets no port', untouched.port === undefined)
-
-// ---- cleanup: worktrees hold locks, so remove them through git ----
-try {
-  for (const dir of [lane.cwd, third.cwd]) spawnSync('git', ['worktree', 'remove', '--force', dir], { cwd: repo })
-} catch {
-  /* best effort */
-}
-try {
-  rmSync(work, { recursive: true, force: true, maxRetries: 3 })
-} catch {
-  console.log(`note: temp folder left behind at ${work}`)
-}
-
-console.log(failures ? `\n${failures} check(s) failed` : '\nall lane checks passed')
-process.exit(failures ? 1 : 0)
+rmSync(root, { recursive: true, force: true })
+console.log(failed ? `\n${failed} failed` : '\nall passed')
+process.exit(failed ? 1 : 0)

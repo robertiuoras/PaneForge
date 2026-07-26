@@ -114,6 +114,42 @@ export interface GitInfo {
   detached: boolean
 }
 
+/**
+ * One PaneForge development lane (scripts/lane.mjs), as shown in the sidebar strip.
+ * Only present on a machine that has a PaneForge checkout - see main/laneBoard.ts.
+ */
+export interface LaneBoardEntry {
+  /** "main", "a", "b", ... */
+  lane: string
+  dir: string
+  branch: string
+  /** folder the chat holding this lane started in, when it said */
+  from: string | null
+  /** a live chat holds it right now */
+  held: boolean
+  /** epoch ms the holding chat was last seen doing something */
+  seen: number
+  /** marked shippable, waiting for the batched release */
+  ready: boolean
+  /** finished work that will not merge into master: left out of every release until fixed */
+  conflicted: boolean
+  conflictSince?: number
+  /** the files that disagree, as lane.mjs recorded them */
+  conflictDetail?: string
+  /** the conflict's own chat has gone quiet, so any chat may take it over */
+  adoptable: boolean
+  /** chat that took the conflict over, when one has */
+  resolver: string | null
+}
+
+export interface LaneBoard {
+  repo: string
+  lanes: LaneBoardEntry[]
+  /** epoch ms a release started, when one is running */
+  releasing: number | null
+  lastShip: { version: string; at: number; lanes: string[] } | null
+}
+
 export interface WindowBounds {
   x?: number
   y?: number
@@ -317,6 +353,13 @@ export interface Config {
    * time the app updates itself.
    */
   restoreAfterUpdate: boolean
+  /**
+   * What a cold launch does with the panes the last run left behind (a normal quit,
+   * a PC restart, a crash). `ask` offers them, `always` reopens them silently,
+   * `never` starts clean. An update restart is not this setting - see
+   * `restoreAfterUpdate` - because that restart was the app's own idea.
+   */
+  restoreAfterRestart: RestoreMode
   /** keep a searchable transcript of every pane */
   saveHistory: boolean
   /** delete stored transcripts older than this; 0 keeps everything */
@@ -330,9 +373,49 @@ export interface Config {
   autoLane: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
-  /** panes to reopen on next launch, written just before an update restart */
+  /**
+   * Panes to reopen on next launch, written just before an update restart.
+   *
+   * Superseded by userData/desk.json and only still read on the first launch after
+   * updating from a version that wrote it here - which is exactly the launch that
+   * would otherwise lose the panes the old code had just saved.
+   */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+}
+
+/** @see Config.restoreAfterRestart */
+export type RestoreMode = 'ask' | 'always' | 'never'
+
+/** One pane from the last run, as offered back on the next launch. */
+export interface RestorePane {
+  /** position in the saved desk; what an answer refers to */
+  id: string
+  cwd: string
+  title: string
+  agent: Agent
+  model?: string
+  /** why this one cannot be reopened: shown greyed and never started */
+  gone?: 'folder' | 'agent'
+}
+
+/** The "restore your last session?" question, as the renderer receives it. */
+export interface RestoreOffer {
+  panes: RestorePane[]
+  /** panes past the launch cap: listed as not restored rather than silently dropped */
+  extra: RestorePane[]
+  /** when the desk was written */
+  at: number
+  /** false means the last run ended in a crash or a power cut */
+  clean: boolean
+}
+
+export interface RestoreAnswer {
+  accept: boolean
+  /** ids of the panes to reopen, in offer order */
+  ids: string[]
+  /** the user ticked "always restore after a restart" */
+  always?: boolean
 }
 
 /**
@@ -401,6 +484,8 @@ export interface Api {
   readClipboard(): Promise<string>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
+  /** PaneForge's own dev lanes, or null on a machine without a PaneForge checkout */
+  laneBoard(): Promise<LaneBoard | null>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
@@ -424,6 +509,14 @@ export interface Api {
   updateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   installUpdate(): void
+
+  /**
+   * The panes the last run left behind, when the launch decided to ask about them.
+   * Pulled by the renderer on mount rather than pushed on launch: the window is
+   * still loading when main makes that decision.
+   */
+  pendingRestore(): Promise<RestoreOffer | null>
+  answerRestore(answer: RestoreAnswer): void
 
   /** tasks + shared memory for one project folder */
   board(path: string): Promise<ProjectBoard>
