@@ -297,6 +297,33 @@ export class SessionManager extends EventEmitter {
     return this.restart(id)
   }
 
+  /**
+   * Put the panes in the order the sidebar was just dragged into.
+   *
+   * The Map's insertion order IS the pane order - `list()` walks it, and so do the
+   * grid, the Ctrl-N keys and the snapshot taken across an update restart. Rebuilding
+   * it is therefore the whole of "move this card up two". Ids this does not mention
+   * (a pane that started while the drag was in flight, a mirrored `@device/id` the
+   * other machine owns) keep their places at the end rather than disappearing.
+   */
+  reorder(ids: string[]): void {
+    const next = new Map<string, Live>()
+    for (const id of ids) {
+      const live = this.sessions.get(id)
+      if (live) next.set(id, live)
+    }
+    for (const [id, live] of this.sessions) if (!next.has(id)) next.set(id, live)
+    // Same panes, different order, or nothing happened at all.
+    if (next.size !== this.sessions.size) return
+    let same = true
+    const before = [...this.sessions.keys()]
+    const after = [...next.keys()]
+    for (let i = 0; i < after.length; i++) if (before[i] !== after[i]) same = false
+    if (same) return
+    this.sessions = next
+    this.emitSessions()
+  }
+
   rename(id: string, title: string): void {
     const s = this.sessions.get(id)
     if (!s || !title.trim()) return

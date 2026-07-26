@@ -636,6 +636,11 @@ export interface Api {
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
   renameSession(id: string, title: string): Promise<void>
+  /**
+   * The sidebar's order after a card was dragged, newest-first-to-last as displayed.
+   * Mirrored ids are carried along and ignored by the machine that receives them.
+   */
+  reorderSessions(ids: string[]): void
   killSession(id: string): Promise<void>
   write(id: string, data: string): void
   /** send the same line to every live session */

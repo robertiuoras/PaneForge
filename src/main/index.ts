@@ -468,6 +468,14 @@ ipcMain.handle('sessions:kill', (_e, id: string) =>
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
+/**
+ * The sidebar was dragged into a new order. Only local panes can be moved here - a
+ * mirrored pane belongs to the machine running it, and its place in that machine's
+ * list is not this window's to change - so the ids are handed over as they come and
+ * the manager keeps the ones it owns. The window that did the dragging holds the full
+ * order (mirrors included) itself, so the drop looks the same either way.
+ */
+ipcMain.on('sessions:reorder', (_e, ids: string[]) => manager.reorder(ids))
 ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )

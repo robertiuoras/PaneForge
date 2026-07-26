@@ -104,6 +104,29 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 }
 .row:hover { background: #ffffff09; }
 .row.active { background: #ffffff0f; border-color: var(--line-strong); }
+/* A card is a handle as well as a button. The grab cursor appears on press rather than
+   on hover: hovering a card is what you do before clicking it, and a hand there says
+   "this is not clickable". */
+.row:active { cursor: grabbing; }
+.row.dragging {
+  cursor: grabbing; background: #ffffff14; border-color: var(--accent);
+  box-shadow: 0 10px 24px #00000073; z-index: 2;
+}
+/* Once a drag is on, the pointer must not change into a text bar or a hand over
+   whatever it happens to cross. */
+body.dragging, body.dragging * { cursor: grabbing !important; }
+/* Its turn just ended and the bell just rang: this is the card that made the sound.
+   It fades out on its own - the standing amber mark is what remains afterwards. */
+.row.just-done { animation: doneGlow 1.75s ease-out 3; }
+@keyframes doneGlow {
+  0% { background: #f0b42921; box-shadow: 0 0 0 1px #f0b42959, 0 0 18px #f0b4293d; }
+  70% { background: #f0b4290f; box-shadow: 0 0 0 1px #f0b42924, 0 0 8px #f0b42921; }
+  100% { background: transparent; box-shadow: 0 0 0 1px #f0b42900, 0 0 0 #f0b42900; }
+}
+/* Still says which card it was, without anything moving. */
+@media (prefers-reduced-motion: reduce) {
+  .row.just-done { animation: none; background: #f0b4291a; box-shadow: 0 0 0 1px #f0b42933; }
+}
 .row.attn::before {
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
   border-radius: 2px; background: var(--warn); animation: pulse 1.8s ease-in-out infinite;
@@ -125,7 +148,7 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
    than a text label. Fixed width and tabular figures keep the title from shifting as
    the state changes. */
 .num {
-  display: inline-block; min-width: 16px; text-align: center;
+  display: inline-block; position: relative; overflow: hidden; min-width: 16px; text-align: center;
   color: var(--muted); font-size: 10px; margin-right: 6px;
   border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px;
   font-variant-numeric: tabular-nums;
@@ -159,9 +182,25 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   0%, 100% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 4px color-mix(in srgb, var(--glow) 25%, transparent); }
   50% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 9px color-mix(in srgb, var(--glow) 55%, transparent); }
 }
+/* The glimmer. A lit key is a piece of glass, and a band of light crosses it every few
+   seconds - the same tell a progress spinner gives without anything spinning. It is a
+   pseudo-element rather than a background layer so the pill's own gradient underneath is
+   left alone, and it is clipped by the key's `overflow: hidden`, so the light never
+   spills onto the title beside it. */
+.num.live::after, .num.attn::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(102deg, #fff0 36%, #ffffff5c 50%, #fff0 64%);
+  transform: translateX(-160%);
+  animation: keySheen 2.9s cubic-bezier(0.35, 0, 0.2, 1) infinite;
+}
+@keyframes keySheen {
+  0% { transform: translateX(-160%); }
+  60%, 100% { transform: translateX(160%); }
+}
 /* A machine set to still images gets the lit colour without the breath. */
 @media (prefers-reduced-motion: reduce) {
   .num.live, .num.attn { animation: none; }
+  .num.live::after, .num.attn::after { content: none; }
 }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
@@ -210,14 +249,37 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   animation: sheen 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 @keyframes sheen { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
+/* And the digits themselves glimmer. A second copy of the text (`data-t` on the span)
+   painted in a moving gradient and clipped to the glyphs, laid exactly over the real
+   one - so the light travels THROUGH the numbers rather than over the pill they sit on.
+   The offsets repeat the host's padding and its 1px border, which is what puts the copy
+   on the original to the pixel; the border is transparent so nothing is drawn twice. */
+.elapsed::before {
+  content: attr(data-t);
+  position: absolute; left: 0; top: 0; pointer-events: none;
+  padding: 1px 7px; border: 1px solid transparent;
+  background-image: linear-gradient(100deg, #fff0 40%, #ffffffe0 50%, #fff0 60%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: digitShimmer 2.9s linear infinite;
+}
+@keyframes digitShimmer {
+  0% { background-position: 100% 0; }
+  60%, 100% { background-position: -60% 0; }
+}
 /* The same slot once the turn is over: frozen, flat, and dim enough that a still number
    never reads as a running one. No glass, no sheen - that is the whole tell. */
 .elapsed.done {
   padding: 0; border-color: transparent; background: none; box-shadow: none;
   color: var(--muted); opacity: 0.42;
 }
-.elapsed.done::after { content: none; }
-@media (prefers-reduced-motion: reduce) { .elapsed::after { animation: none; opacity: 0.5; } }
+.elapsed.done::after, .elapsed.done::before { content: none; }
+@media (prefers-reduced-motion: reduce) {
+  .elapsed::after { animation: none; opacity: 0.5; }
+  .elapsed::before { content: none; }
+}
 /* Auto-created worktree lane, so two agents in one project are visibly apart. */
 .chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
 
