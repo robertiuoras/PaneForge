@@ -78,12 +78,14 @@ const STALE_MS = 12 * 60 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
-// cut its own version - 15 releases in one day on 2026-07-26 - and each one is an update
-// prompt on a machine somebody is trying to use. Work is never lost by waiting: it sits
-// on master and goes out with the next release, which every later `ready` and every
-// SessionEnd triggers - so it ships the next time anyone finishes anything here, and
-// `npm run ship` still releases immediately when something must go out now.
-const COOLDOWN_MS = 2 * 60 * 60 * 1000
+// cut its own version - 15 releases in one day on 2026-07-26. That was expensive only
+// because each release interrupted somebody with an update prompt; updates now install
+// on exit instead (see src/main/updater.ts), so a release costs nothing to ignore and
+// the window is short. Work is never lost by waiting: it sits on master and goes out
+// with the next release, which every later `ready` and every SessionEnd triggers - so
+// it ships the next time anyone finishes anything here, and `npm run ship` still
+// releases immediately when something must go out now.
+const COOLDOWN_MS = 30 * 60 * 1000
 
 // ---------------------------------------------------------------- state file
 // Lives in .git/, which is shared by every worktree and never committed.
@@ -133,6 +135,19 @@ function reap(state) {
   }
   for (const id of Object.keys(state.ready)) {
     if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.ready[id]
+  }
+  // A chat that marked itself ready and then kept editing is working again, and its
+  // ready mark is a lie. Left standing it stalled every release silently: `busyLanes`
+  // trusts the mark and skips the lane, so `autoship` believed nobody was mid-work and
+  // called `ship`, which aborted on the dirty checkout - and `autoship` swallows that
+  // error, so nothing released and nothing said why until some other chat happened to
+  // finish something. Dropping the mark puts the lane back in `busyLanes`, where the
+  // wait is reported by name and the next `ready` releases for real.
+  for (const [id, mark] of Object.entries(state.ready)) {
+    if (!existsSync(laneDir(id))) continue
+    const dir = laneDir(id)
+    const moved = mark.commit && gitSafe(dir, 'rev-parse', 'HEAD').out !== mark.commit
+    if (moved || Boolean(gitSafe(dir, 'status', '--porcelain').out)) delete state.ready[id]
   }
   return state
 }

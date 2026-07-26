@@ -227,6 +227,9 @@ Not built yet: diff/merge review, reattaching to sessions after an app restart
 - macOS cannot replace an unsigned app in place, so on a Mac the update prompt
   hands you the download instead of restarting itself. Windows updates silently and
   restarts.
+- Ignoring the update prompt on Windows is not the same as refusing it: the
+  downloaded update installs when you close the app, so the fix is there next time
+  you start it. Nothing is swapped under a live pane - the panes are gone by then.
 
 ## License
 
