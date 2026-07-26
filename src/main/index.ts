@@ -400,7 +400,6 @@ ipcMain.handle('sessions:kill', (_e, id: string) => manager.kill(id))
 ipcMain.handle('sessions:buffer', (_e, id: string) => manager.buffer(id))
 ipcMain.on('sessions:attention-clear', (_e, id: string) => manager.clearAttention(id))
 ipcMain.on('pty:write', (_e, id: string, data: string) => manager.write(id, data))
-ipcMain.on('pty:broadcast', (_e, text: string) => manager.broadcast(text))
 ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
   manager.resize(id, cols, rows)
 )
