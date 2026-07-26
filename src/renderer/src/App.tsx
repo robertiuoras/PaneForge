@@ -27,7 +27,7 @@ import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip from './components/LaneStrip'
+import LaneStrip, { LaneChip, laneOfSession, useLaneBoard, useLanesByCwd } from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
@@ -746,6 +746,10 @@ export default function App(): JSX.Element {
   // in the last four seconds", so it stays honest through a long silent tool call and
   // does not claim a pane sitting at an empty prompt is busy.
   const working = sessions.filter((s) => s.status === 'working').length
+  // PaneForge's own dev lanes, on a machine that develops PaneForge. Null everywhere else,
+  // and then nothing below draws anything.
+  const laneBoard = useLaneBoard()
+  const lanesByCwd = useLanesByCwd(laneBoard)
 
   return (
     <div className="app">
@@ -826,9 +830,9 @@ export default function App(): JSX.Element {
           </>
         )}
 
-        {/* PaneForge's own lanes, on a machine that develops PaneForge. A lane whose
-            work will not merge used to be invisible until someone read a hook message. */}
-        <LaneStrip sessions={sessions} onFocus={setActiveId} />
+        {/* Only the PaneForge lanes no open pane accounts for; the rest are chips on the
+            session cards below. Renders nothing at all off a PaneForge machine. */}
+        <LaneStrip board={laneBoard} sessions={sessions} onFocus={setActiveId} />
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
@@ -893,6 +897,11 @@ export default function App(): JSX.Element {
                     <span className="chip lane" title={`Worktree lane - ${s.cwd}`}>
                       {s.lane}
                     </span>
+                  ) : null}
+                  {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
+                      sidebar used to repeat in a second list of the same sessions. */}
+                  {laneOfSession(lanesByCwd, s.cwd) ? (
+                    <LaneChip lane={laneOfSession(lanesByCwd, s.cwd)!} />
                   ) : null}
                   {s.status === 'exited' ? (
                     <span className="chip dead">exited {s.exitCode ?? ''}</span>

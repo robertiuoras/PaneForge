@@ -1,29 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 
 const api = window.api
 
 interface Props {
+  board: LaneBoard | null
   sessions: Session[]
-  /** focus the pane that holds a lane, when one of the open panes does */
+  /** focus the pane a job was handed to */
   onFocus: (id: string) => void
 }
 
 /**
- * PaneForge's own development lanes, in the sidebar.
+ * PaneForge's own development lanes.
  *
  * Several chats edit PaneForge at once, each in its own checkout, and the whole release
  * is automatic - which is fine until one lane's work will not merge into master. That
  * lane is then left out of every release, silently, until a human learns about it from a
  * sentence buried in another chat's hook output. Lane b sat like that for a day.
  *
- * So the state is on screen: who holds what, what is waiting to go out, and a conflicted
- * lane glowing red with the one action that clears it. Nothing here is shown on a machine
- * without a PaneForge checkout - the board is null and the strip does not render.
+ * The lane a pane holds is drawn ON that pane's card (LaneChip below), because that is
+ * where you are already looking and a second list of the same sessions was two places to
+ * read one fact. What is left over is what no card can say: a lane whose chat is gone,
+ * finished work waiting on a release, a conflict nobody owns. Only those appear here, so
+ * on an ordinary day this section is not on screen at all.
  */
-export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | null {
+export function useLaneBoard(): LaneBoard | null {
   const [board, setBoard] = useState<LaneBoard | null>(null)
-  const [help, setHelp] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -41,13 +43,143 @@ export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | n
     }
   }, [])
 
-  if (!board || board.lanes.length === 0) return null
-  const stuck = board.lanes.filter((l) => l.conflicted).length
+  return board
+}
+
+/**
+ * One folder, one spelling. The two sides of this comparison come from different places -
+ * a lane's folder is whatever the chat's hook passed to lane.mjs, a pane's is whatever it
+ * was started with - so one of them arrives with backslashes, or a trailing one, or a
+ * drive letter in the other case, and a plain === quietly finds nothing.
+ */
+const samePath = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+
+/**
+ * The pane a lane belongs to. The chat holding a lane started somewhere else (a lane is a
+ * checkout, not a cwd), so the pane is found by the folder it was started in, which is
+ * what lane.mjs records.
+ */
+export function laneOwner(lane: LaneBoardEntry, sessions: Session[]): Session | undefined {
+  if (!lane.from) return undefined
+  const from = samePath(lane.from)
+  return sessions.find((s) => s.status !== 'exited' && samePath(s.cwd) === from)
+}
+
+/** Lanes keyed by the cwd of the pane holding them, for the chip on a session card. */
+export function useLanesByCwd(board: LaneBoard | null): Map<string, LaneBoardEntry> {
+  return useMemo(() => {
+    const m = new Map<string, LaneBoardEntry>()
+    for (const l of board?.lanes ?? []) if (l.from) m.set(samePath(l.from), l)
+    return m
+  }, [board])
+}
+
+/** The lane a pane holds, if any. Callers hold the map from useLanesByCwd. */
+export function laneOfSession(
+  lanes: Map<string, LaneBoardEntry>,
+  cwd: string
+): LaneBoardEntry | undefined {
+  return lanes.get(samePath(cwd))
+}
+
+function ago(ms: number): string {
+  const m = Math.round((Date.now() - ms) / 60000)
+  if (m < 60) return `${Math.max(1, m)}m`
+  const h = Math.round(m / 60)
+  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
+}
+
+/** What the lane is doing, in the words a human would use. */
+function laneState(lane: LaneBoardEntry): string {
+  if (lane.conflicted) return `conflicts with master, ${ago(lane.conflictSince ?? Date.now())}`
+  if (lane.ready) return 'done, waiting for the release'
+  if (!lane.held) return 'free'
+  // "working" was a lie the strip told about every lane: a chat claims one the moment it
+  // starts, so four chats that had typed nothing all read as busy. What the lane file
+  // actually knows is who holds it and when that chat was last heard from.
+  return Date.now() - lane.seen < 5 * 60 * 1000
+    ? 'a chat has it, busy now'
+    : `a chat has it, quiet ${ago(lane.seen)}`
+}
+
+function laneTip(lane: LaneBoardEntry): string {
+  if (!lane.conflicted) return `${lane.dir} (${lane.branch})`
+  return (
+    `${lane.dir}\nWill not merge: ${lane.conflictDetail ?? 'see the lane'}\n` +
+    (lane.resolver
+      ? 'A chat has taken this over.'
+      : lane.adoptable
+        ? 'Its own chat has gone quiet, so any chat can finish it.'
+        : 'Its own chat is still around and should fix it.')
+  )
+}
+
+/** The job handed to a chat to unstick a lane, in the form lane.mjs expects back. */
+function fixPrompt(lane: LaneBoardEntry): string {
+  return (
+    `PaneForge lane ${lane.lane} is conflicted, so its finished work is left out of every release. ` +
+    `Take it over: node scripts/lane.mjs resolve --session <this chat's session id> --lane ${lane.lane}, ` +
+    `resolve the files it lists in ${lane.dir}, commit, then node scripts/lane.mjs ready --session <same id> --lane ${lane.lane}.`
+  )
+}
+
+/**
+ * The lane a pane holds, on the pane's own card beside its agent and model.
+ *
+ * Colour carries the only state worth interrupting for: red means this pane's finished
+ * work is being left out of every release.
+ */
+export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
+  const label = lane.conflicted
+    ? `lane ${lane.lane} stuck`
+    : lane.ready
+      ? `lane ${lane.lane} done`
+      : `lane ${lane.lane}`
+  return (
+    <span
+      className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
+      title={`PaneForge ${lane.branch} - ${laneState(lane)}\n${laneTip(lane)}`}
+    >
+      {label}
+    </span>
+  )
+}
+
+export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Element | null {
+  const [help, setHelp] = useState(false)
+  // A job is handed over once. Keyed by when the conflict started, so a lane that gets
+  // stuck again later is a new job and not one this ref has already forgotten about.
+  const handed = useRef(new Set<string>())
+
+  // Unsticking a lane never needed a human to decide anything - the button only ever
+  // typed the same paragraph into whichever pane was free. So the app does that itself:
+  // the lane's own chat gets its own conflict back, and once the conflict is adoptable
+  // (its chat has gone quiet) any idle pane takes it. Never a pane that is mid-turn -
+  // that job waits for a free one rather than landing in the middle of someone's answer.
+  useEffect(() => {
+    for (const lane of board?.lanes ?? []) {
+      if (!lane.conflicted || lane.resolver) continue
+      const key = `${lane.lane}:${lane.conflictSince ?? 0}`
+      if (handed.current.has(key)) continue
+      const own = laneOwner(lane, sessions)
+      const target =
+        own ??
+        (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
+      if (!target || target.status === 'working') continue
+      handed.current.add(key)
+      api.write(target.id, fixPrompt(lane) + '\r')
+    }
+  }, [board, sessions])
+
+  // Whatever a session card already says is not repeated here.
+  const orphans = (board?.lanes ?? []).filter((l) => !laneOwner(l, sessions))
+  if (!board || !orphans.length) return null
+  const stuck = orphans.filter((l) => l.conflicted).length
 
   return (
     <>
       <div className="section">
-        Lanes ({board.lanes.length})
+        Lanes elsewhere ({orphans.length})
         <button
           className={'help-dot' + (help ? ' on' : '')}
           onClick={() => setHelp((h) => !h)}
@@ -77,19 +209,19 @@ export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | n
           </p>
           <p>
             You never make or delete one: a chat claims a lane the moment it starts work, and
-            gives it back when it ends. The first chat gets the repository itself; the rest get
-            their own checkouts beside it.
+            gives it back when it ends. A lane held by a pane you have open is shown on that
+            pane&apos;s card; the ones listed here belong to no open pane.
           </p>
           <p>
             When a chat finishes, its lane is merged and released with every other finished
             lane — one version, not one per chat. <b>Stuck</b> means a lane&apos;s work will not
-            merge, so it is being left out of releases until someone fixes it; that is what the
-            fix button hands to a pane.
+            merge, so it is being left out of releases. The app retries a stuck lane by itself
+            every couple of minutes, and hands the ones that need real editing to a free pane.
           </p>
         </div>
       )}
       <div className="lanes">
-        {board.lanes.map((l) => (
+        {orphans.map((l) => (
           <LaneRow key={l.lane} lane={l} sessions={sessions} onFocus={onFocus} />
         ))}
       </div>
@@ -97,70 +229,42 @@ export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | n
   )
 }
 
-function ago(ms: number): string {
-  const m = Math.round((Date.now() - ms) / 60000)
-  if (m < 60) return `${Math.max(1, m)}m`
-  const h = Math.round(m / 60)
-  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
-}
-
-function LaneRow({ lane, sessions, onFocus }: Props & { lane: LaneBoardEntry }): JSX.Element {
-  // The chat holding a lane started somewhere else (a lane is a checkout, not a cwd), so
-  // the pane is found by the folder it was started in, which is what lane.mjs records.
-  const pane = lane.from ? sessions.find((s) => s.cwd === lane.from) : undefined
-  const where = lane.from ? lane.from.split(/[\\/]/).pop() : null
-
-  // "working" was a lie the strip told about every lane: a chat claims one the moment it
-  // starts, so four chats that had typed nothing all read as busy. What the lane file
-  // actually knows is who holds it and when that chat was last heard from, so that is
-  // what it says now - held, and how long since it did anything.
-  const quiet = Date.now() - lane.seen
-  const state = lane.conflicted
-    ? `conflicts with master, ${ago(lane.conflictSince ?? Date.now())}`
-    : lane.ready
-      ? 'done, waiting for the release'
-      : lane.held
-        ? quiet < 5 * 60 * 1000
-          ? 'a chat has it, busy now'
-          : `a chat has it, quiet ${ago(lane.seen)}`
-        : 'free'
-
-  const tip = lane.conflicted
-    ? `${lane.dir}\nWill not merge: ${lane.conflictDetail ?? 'see the lane'}\n` +
-      (lane.resolver
-        ? 'A chat has taken this over.'
-        : lane.adoptable
-          ? 'Its own chat has gone quiet, so any chat can finish it. Click "fix" to hand the job to a pane.'
-          : 'Its own chat is still around and should fix it.')
-    : `${lane.dir} (${lane.branch})${where ? `\nstarted in ${where}` : ''}`
-
-  // Typed in, not sent: handing an agent a job is fine, pressing return for it is not.
+function LaneRow({
+  lane,
+  sessions,
+  onFocus
+}: {
+  lane: LaneBoardEntry
+  sessions: Session[]
+  onFocus: (id: string) => void
+}): JSX.Element {
+  // The automatic hand-over waits for a pane that is not mid-turn, and leaves a conflict
+  // whose own chat is still alive to that chat. This is the same job for someone who does
+  // not want to wait for either, which is why it may land in a busy pane.
   const handOver = (e: React.MouseEvent): void => {
     e.stopPropagation()
-    const target = pane && Date.now() - lane.seen < 45 * 60 * 1000 ? pane : sessions.find((s) => s.status !== 'exited')
+    const target = laneOwner(lane, sessions) ?? sessions.find((s) => s.status !== 'exited')
     if (!target) return
     onFocus(target.id)
-    api.write(
-      target.id,
-      `PaneForge lane ${lane.lane} is conflicted, so its finished work is left out of every release. ` +
-        `Take it over: node scripts/lane.mjs resolve --session <this chat's session id> --lane ${lane.lane}, ` +
-        `resolve the files it lists in ${lane.dir}, commit, then node scripts/lane.mjs ready --session <same id> --lane ${lane.lane}.`
-    )
+    // Typed in, not sent: this one is a click, so the chat it lands in may be mid-thought.
+    api.write(target.id, fixPrompt(lane))
   }
 
   return (
     <div
       className={'row lane-row' + (lane.conflicted ? ' stuck' : '') + (lane.ready ? ' done' : '')}
-      title={tip}
-      onClick={() => pane && onFocus(pane.id)}
+      title={laneTip(lane)}
     >
       <span className={'lane-tag' + (lane.conflicted ? ' stuck' : '')}>{lane.lane}</span>
       <div className="row-text">
-        <div className="row-title">{where ?? lane.branch}</div>
-        <div className="row-sub">{state}</div>
+        <div className="row-title">{lane.branch}</div>
+        <div className="row-sub">
+          {laneState(lane)}
+          {lane.conflicted && lane.resolver ? ' - a chat has it' : ''}
+        </div>
       </div>
       {lane.conflicted && !lane.resolver && (
-        <button className="ghost small lane-fix" onClick={handOver} title="Put the job into a chat pane">
+        <button className="ghost small lane-fix" onClick={handOver} title="Hand the job to a pane now">
           fix
         </button>
       )}

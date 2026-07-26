@@ -221,6 +221,17 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 /* Auto-created worktree lane, so two agents in one project are visibly apart. */
 .chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
 
+/* The PaneForge dev lane a pane holds, on that pane's own card. Quiet while the lane is
+   merely held - it is one more fact on a crowded line - and red once the lane's finished
+   work is being left out of releases, which is the only state worth a glance. */
+.chip.pf-lane { color: var(--muted); border-color: var(--line-strong); background: transparent; }
+.chip.pf-lane.done { color: var(--ok); border-color: #7ee08733; background: #7ee08714; }
+.chip.pf-lane.stuck {
+  color: var(--danger); border-color: #ff8f8f3d; background: #ff8f8f14;
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .chip.pf-lane.stuck { animation: none; } }
+
 /* ---- PaneForge's own dev lanes (LaneStrip) ---- */
 /* A lane that cannot merge blocks its own work from every release, and used to say so
    nowhere. Red, and it keeps glowing until it is not true any more. */
