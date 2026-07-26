@@ -61,6 +61,24 @@ export interface Session {
    * a lane that was created, or a clash that could not be split (not a repo).
    */
   laneNote?: string
+  /**
+   * The pty's size on the machine that owns it. Only used by a mirror, which draws
+   * itself at exactly these dimensions instead of fitting its own window - two
+   * devices cannot both decide how wide one terminal is.
+   */
+  cols?: number
+  rows?: number
+  /**
+   * This pane's agent runs on another machine and is mirrored here. The id is
+   * namespaced with the device, so nothing else in the app has to care: keystrokes,
+   * resizes and closes are routed back over the link by the main process.
+   */
+  remote?: {
+    /** device id, matching a RemotePeer */
+    device: string
+    /** what that device calls itself, for the pane badge */
+    name: string
+  }
 }
 
 export interface StartSessionRequest {
@@ -307,6 +325,95 @@ export interface VoiceStatus {
   install: string
 }
 
+// ---------------------------------------------------------------------------
+// Remote devices
+//
+// Two machines, one desk. A device can host (answer for its own panes) and connect
+// out (mirror another device's panes into this window) at the same time, which is
+// what makes "leave the desktop, keep going on the laptop, come back" work without
+// either side being the server.
+
+/** Another device this one has been paired with, remembered across restarts. */
+export interface RemotePeer {
+  /** the other device's own id - what its session ids are namespaced with */
+  id: string
+  name: string
+  /** hostname or IP on the local network */
+  address: string
+  port: number
+  /** its pairing code; the secret that authenticates and encrypts the link */
+  code: string
+  /** reconnect to it automatically, on launch and after it goes away */
+  auto: boolean
+}
+
+/** Live state of one paired device. */
+export interface RemotePeerState extends RemotePeer {
+  status: 'off' | 'connecting' | 'online' | 'error'
+  /** why it is not connected, in words meant for the person reading them */
+  error?: string
+  /** panes mirrored from it right now */
+  sessions: number
+  /** epoch ms the current connection came up */
+  since?: number
+  /** it is announcing itself on this network right now */
+  seen?: boolean
+}
+
+/** A PaneForge seen broadcasting on the LAN that this device has not paired with. */
+export interface RemoteFound {
+  id: string
+  name: string
+  address: string
+  port: number
+  platform: string
+  version: string
+  seen: number
+}
+
+/** A device currently connected *to* this one. */
+export interface RemoteGuest {
+  id: string
+  name: string
+  address: string
+  since: number
+  watching: number
+}
+
+/** Everything the Remote dialog draws, pushed whenever any of it changes. */
+export interface RemoteState {
+  self: {
+    id: string
+    name: string
+    code: string
+    port: number
+    /** the listener is actually up */
+    hosting: boolean
+    /** why it is not, when it should be (a taken port) */
+    error?: string
+    /** this machine's LAN addresses, for typing into the other device */
+    addresses: string[]
+  }
+  peers: RemotePeerState[]
+  found: RemoteFound[]
+  guests: RemoteGuest[]
+}
+
+export interface RemoteConfig {
+  /** answer connections from your other devices */
+  host: boolean
+  port: number
+  /** the code another device has to type once; regenerating it revokes every pairing */
+  code: string
+  /** how this device introduces itself */
+  name: string
+  /** stable identity, generated on first run */
+  id: string
+  /** announce on the LAN so the other device finds this one without an IP */
+  discoverable: boolean
+  peers: RemotePeer[]
+}
+
 export interface Config {
   /** folder scanned for projects */
   root: string
@@ -404,6 +511,8 @@ export interface Config {
   autoLane: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
+  /** pairing, hosting and the devices whose panes show up in this window */
+  remote: RemoteConfig
   /**
    * Panes to reopen on next launch, written just before an update restart.
    *
@@ -529,7 +638,7 @@ export interface Api {
   renameSession(id: string, title: string): Promise<void>
   killSession(id: string): Promise<void>
   write(id: string, data: string): void
-  /** send the same line to every live session */
+  /** send the same line to every live session */
   resize(id: string, cols: number, rows: number): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
@@ -622,6 +731,38 @@ export interface Api {
   removeRecent(id: string): void
   clearRecents(): void
 
+  /** hosting, pairings, discovered devices and who is connected right now */
+  remoteState(): Promise<RemoteState>
+  /** start or stop answering other devices */
+  setRemoteHost(on: boolean): Promise<RemoteState>
+  /** move the listener; returns the state with the error if the port is taken */
+  setRemotePort(port: number): Promise<RemoteState>
+  /** new pairing code: every device paired with the old one is cut off */
+  rotateRemoteCode(): Promise<RemoteState>
+  /** how this device introduces itself to the others */
+  renameDevice(name: string): Promise<RemoteState>
+  /**
+   * Pair with a device: connect once to prove the code, then remember it. Resolves
+   * with the failure in words rather than throwing, because a mistyped code is the
+   * normal case and the dialog shows it inline.
+   */
+  pairRemote(peer: { address: string; port: number; code: string; name?: string }): Promise<{
+    ok: boolean
+    error?: string
+    state: RemoteState
+  }>
+  forgetRemote(id: string): Promise<RemoteState>
+  /** connect to or disconnect from a device already paired */
+  connectRemote(id: string, on: boolean): Promise<RemoteState>
+  /** ask the LAN who is there, now, rather than waiting for the next announcement */
+  scanRemote(): Promise<RemoteState>
+  /** that device's own project folders, so a pane can be opened over there */
+  remoteProjects(device: string): Promise<Project[]>
+  /** the CLIs installed on that device - its list, not this one's */
+  remoteAgents(device: string): Promise<AgentInfo[]>
+  /** open a pane on that device; it appears here mirrored, like the rest of its panes */
+  startRemote(device: string, req: StartSessionRequest): Promise<Session>
+
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
   transcribe(wav: ArrayBuffer): Promise<{ text: string; error?: string }>
@@ -634,6 +775,14 @@ export interface Api {
   onUpdate(cb: (s: UpdateState) => void): () => void
   /** a session just went quiet after doing something - drives the chime */
   onAttention(cb: (s: Session) => void): () => void
+  /** hosting, pairing or discovery changed */
+  onRemote(cb: (s: RemoteState) => void): () => void
+  /**
+   * A remote pane's scrollback was replaced wholesale - the link came back and the
+   * other device re-sent everything. The pane clears and redraws instead of appending
+   * a second copy of what it already had.
+   */
+  onPaneReset(cb: (id: string) => void): () => void
   /** global push-to-talk hotkey fired from the main process */
   onVoiceHotkey(cb: () => void): () => void
   /** something new landed on the clipboard shelf */

@@ -95,9 +95,46 @@ foreground.
 - `second-instance` must not raise the window while `installStarted` is set: mid-update
   the installer's launch of the new exe arrives on that event.
 
+## Two machines, one desk
+
+`src/main/remote/` lets a second device drive this one's panes. Both ends are peers -
+each can host and each can connect out - so there is no setting deciding which machine
+you have to be sitting at.
+
+The pty never moves. A mirrored pane's agent, checkout, transcript and worktree all stay
+on the device it was opened on; the other window watches and types. Moving a run would
+mean moving the folder it is editing, which is the one thing that cannot be done over a
+socket. "Continue where I left off" is therefore *remote control*, not migration.
+
+Session ids are the seam. A mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in
+`main/index.ts` routes every pane message to the link instead of the pty manager - so
+the sidebar, the palette, the grid and every shortcut treat it as an ordinary pane.
+
+Three decisions worth not re-litigating:
+
+- **The host owns the terminal's size.** A mirror is drawn at the far end's cols/rows
+  (carried on `Session.cols/rows`) and shrinks its own font to hold them. Two windows
+  both fitting one pty trade SIGWINCHes forever, with a full-screen CLI repainting its
+  whole frame every round.
+- **A mirror never reports the busy footer.** The device the agent runs on is reading
+  the same frame in its own window, a few frames ahead; a second opinion arriving late
+  can only contradict it, and a false "finished" is the chime firing mid-turn.
+- **Frames are decoded where they are consumed, not where they arrive.** The last
+  handshake frame and the first encrypted one routinely land in one TCP segment.
+  Decoding eagerly read ciphertext as JSON and killed the link a moment after it came
+  up - and whether it happened depended on how the kernel split the packets, so it
+  looked like a flaky network. `scripts/remote-test.mjs` pins it.
+
+The pairing code is the whole secret: never sent, only proved, and the traffic keys are
+derived from it (scrypt, then AES-256-GCM per direction). That is why rotating it cuts
+every paired device off rather than just changing what to type next time. Hosting is off
+until switched on, and discovery is a UDP broadcast that carries no secret.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
+`npm run test:remote` runs the device link end to end over a real loopback socket -
+pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 
 ## Gotchas that look like mistakes
 

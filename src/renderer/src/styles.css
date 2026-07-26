@@ -965,3 +965,61 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .ut-text { display: flex; flex-direction: column; gap: 3px; }
 .ut-notes { margin: 4px 0 0; max-height: 96px; overflow: auto; font: 11px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
 .ut-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* --------------------------------------------------------------------------
+   Quick actions, as icons.
+
+   The row used to be three word buttons that wrapped on a narrow sidebar. Fixed
+   square targets keep it on one line however many actions it grows to, and the
+   sentence that was the label lives on the tooltip instead. */
+.quick-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  position: relative; padding: 7px 0; color: var(--muted);
+}
+.quick-btn:hover:not(:disabled) { color: var(--text); }
+.quick-btn.live { color: var(--ok); border-color: #35d07f33; }
+/* A link is up somewhere. Deliberately small: it is a state, not an alert. */
+.quick-dot {
+  position: absolute; top: 5px; right: 7px; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--ok); box-shadow: 0 0 0 2px var(--surface-2);
+}
+
+/* --------------------------------------------------------------------------
+   Devices */
+.chip.remote {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--ok); border-color: #35d07f33; background: #35d07f14;
+}
+.dev-name { width: 190px; }
+.dev-port { width: 74px; text-align: center; }
+.dev-self { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+.dev-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dev-key { color: var(--muted); font-size: 11px; min-width: 78px; }
+.dev-code { font: 13px/1 ui-monospace, Consolas, monospace; letter-spacing: 1.5px; color: var(--text); }
+.dev-error { color: var(--danger); font-size: 11.5px; margin-top: 6px; }
+.dev-guests { display: flex; flex-direction: column; gap: 5px; margin-top: 9px; }
+.dev-guest { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.dev-list { display: flex; flex-direction: column; gap: 5px; }
+.dev-row {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2);
+}
+.dev-row.error { border-color: #ff8f8f2b; }
+.dev-text { flex: 1; min-width: 0; }
+.dev-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.dev-sub { color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-found { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.dev-chip { display: inline-flex; align-items: center; gap: 6px; }
+.dev-add { display: flex; gap: 6px; align-items: center; }
+.dev-add input { flex: 1; min-width: 0; }
+.dev-code-in { font: 12px/1 ui-monospace, Consolas, monospace; letter-spacing: 1.2px; max-width: 150px; }
+/* Peer status reuses the pane dots so "connected" looks the same everywhere. */
+.dot.online { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
+.dot.connecting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; animation: pulse 1.4s ease-in-out infinite; }
+.dot.error { background: var(--danger); box-shadow: 0 0 0 3px #ff8f8f1f; }
+.dot.off { background: #55555f; }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
+.dev-entry { display: flex; flex-direction: column; gap: 5px; }
+/* The "open a pane over there" row, folded under the device it belongs to. */
+.dev-launch { display: flex; align-items: center; gap: 6px; padding: 0 10px 2px 26px; }
+.dev-launch > *:first-child { flex: 1; min-width: 0; }
