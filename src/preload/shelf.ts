@@ -2,7 +2,7 @@
 // over every other app, so it gets the clipboard history and nothing else - no sessions,
 // no config writes, no shell.
 
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { RecentItem, ShelfApi } from '../shared/types'
 
 const api: ShelfApi = {
@@ -11,6 +11,16 @@ const api: ShelfApi = {
   remove: (id) => ipcRenderer.send('recents:remove', id),
   clear: () => ipcRenderer.send('recents:clear'),
   drag: (id) => ipcRenderer.send('recents:drag', id),
+  add: (paths) => ipcRenderer.invoke('stash:add', paths),
+  pick: () => ipcRenderer.invoke('stash:pick'),
+  // Electron took File.path away; the real path is only reachable from a preload.
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
   toPane: (id) => ipcRenderer.send('recents:toPane', id),
   focusApp: () => ipcRenderer.send('shelf:focusApp'),
   setExpanded: (open) => ipcRenderer.send('shelf:setExpanded', open),

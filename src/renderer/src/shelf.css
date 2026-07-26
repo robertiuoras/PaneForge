@@ -182,15 +182,41 @@ button.mini:hover {
   font-size: 10px;
 }
 
-.item img {
+.item img,
+.item .vid,
+.item .filetile {
   width: 54px;
   height: 34px;
+  flex: none;
   object-fit: cover;
   border-radius: 5px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  /* An image row is draggable into any other app, so it keeps a grab cursor. */
+  /* An image, a clip or a stashed file is draggable into any other app, so all three
+     keep a grab cursor. */
   cursor: grab;
   user-select: none;
+}
+
+/* Not an image and not a video: a glyph on a plate, so the row still has a handle big
+   enough to start a drag from. */
+.item .filetile {
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: #b9b9c8;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* A file drag is over the overlay. Both states say it out loud, because a 172px pill
+   accepting a drop is not something you would guess. */
+.pill.over,
+.card.over {
+  border-color: rgba(120, 190, 255, 0.75);
+  box-shadow: 0 0 0 1px rgba(120, 190, 255, 0.35), 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.pill.over .label {
+  color: #a8d4ff;
 }
 
 .acts {

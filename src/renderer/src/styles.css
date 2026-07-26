@@ -136,24 +136,32 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 /* Its agent is running right now. The glow breathes rather than blinks: a row of these
    flashing in a sidebar is a fire alarm, and most of the time nothing is wrong. */
 .num.live {
+  --glow: #35d07f;
   color: #b8f5d6; border-color: #35d07f4d;
   background: linear-gradient(180deg, #35d07f3d, #35d07f14);
-  box-shadow: inset 0 1px 0 #ffffff26, 0 0 10px #35d07f4d;
+  box-shadow: inset 0 1px 0 #ffffff26, 0 0 6px #35d07f3d;
   animation: numGlow 2.4s ease-in-out infinite;
 }
 /* Finished a turn while you were looking at another pane. Amber is "this wants you"
    everywhere else in the app, so it is amber here too. */
 .num.attn {
+  --glow: #f0b429;
   color: #ffd89a; border-color: #f0b4294d;
   background: linear-gradient(180deg, #f0b4293d, #f0b42914);
-  box-shadow: inset 0 1px 0 #ffffff26, 0 0 10px #f0b42952;
+  box-shadow: inset 0 1px 0 #ffffff26, 0 0 6px #f0b4293d;
   animation: numGlow 2s ease-in-out infinite;
 }
-/* The trough keeps the pill's own colour rather than fading to white, so the breath
-   reads as one light dimming instead of two colours crossfading. */
+/* The breath is the state's own colour, never `currentColor`: the text on a lit key is a
+   near-white tint of it (#b8f5d6), so a halo drawn from `currentColor` came out white and
+   twice the size of the key - a smear in the sidebar rather than a green key glowing.
+   Both stops stay under the border's own colour so the pill reads as one light dimming. */
 @keyframes numGlow {
-  0%, 100% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 5px color-mix(in srgb, currentColor 28%, transparent); }
-  50% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 13px currentColor; }
+  0%, 100% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 4px color-mix(in srgb, var(--glow) 25%, transparent); }
+  50% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 9px color-mix(in srgb, var(--glow) 55%, transparent); }
+}
+/* A machine set to still images gets the lit colour without the breath. */
+@media (prefers-reduced-motion: reduce) {
+  .num.live, .num.attn { animation: none; }
 }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
@@ -429,6 +437,22 @@ button.small { padding: 5px 9px; font-size: 11px; }
   /* The tile is the drag handle, and a drag that starts on an image must not be the
      browser's own image drag. */
   -webkit-user-drag: none;
+}
+/* A stashed file: a glyph plate the drag starts from, then the name. No thumbnail here -
+   the in-window shelf is the one you use with the app in front of you, where the name is
+   what you are looking for. The floating overlay draws a video's own frame instead. */
+.shelf-item.file { align-items: center; }
+.shelf-file { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.shelf-file-glyph {
+  display: grid; place-items: center; width: 34px; height: 30px; flex: none;
+  border-radius: 4px; border: 1px solid var(--line); background: #ffffff0a;
+  color: var(--muted); font-size: 13px;
+}
+/* A file drag is hovering: the shelf takes drops, which is not otherwise guessable. */
+.shelf.over {
+  opacity: 1;
+  border-color: var(--accent, #6ab7ff);
+  box-shadow: 0 0 0 1px var(--accent-dim, #6ab7ff40), 0 14px 40px #00000059;
 }
 .shelf-text {
   flex: 1; min-width: 0; color: var(--text);

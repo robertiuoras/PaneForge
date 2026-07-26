@@ -27,6 +27,7 @@ const port = flag('--port', process.env.PF_PORT ?? '9333')
 const height = Number(flag('--height', 0))
 const width = Number(flag('--width', 0))
 const file = flag('--file', '')
+const urlMatch = flag('--url', '')
 const expression = file ? readFileSync(file, 'utf8') : args.join(' ')
 
 if (!expression.trim()) {
@@ -39,7 +40,12 @@ async function findPage() {
   for (let i = 0; i < 40; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-      const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl)
+      // The app has more than one window (the Stash overlay is its own page), so a probe
+      // aimed at one of them needs to say which: `--url shelf` picks the first whose URL
+      // contains that. With no flag it is the first page, which is the main window.
+      const page = list.find(
+        (t) => t.type === 'page' && t.webSocketDebuggerUrl && (!urlMatch || (t.url ?? '').includes(urlMatch))
+      )
       if (page) return page
     } catch {
       /* devtools endpoint not listening yet */
