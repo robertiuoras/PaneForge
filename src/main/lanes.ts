@@ -7,7 +7,9 @@
 // moved into `<repo>-w2` without being asked, the third into `-w3`, and so on.
 // Nothing is ever moved out of the original folder - the first session keeps it.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
+import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -100,6 +102,158 @@ function seedEnvFiles(repo: string, lane: string): void {
   }
 }
 
+/** Past this a tree is big enough that cloning it costs more than installing. */
+const MAX_DEP_FILES = 150_000
+/** Lanes whose dependency clone is still running, so a reuse cannot start a second. */
+const cloning = new Set<string>()
+
+/**
+ * A directory junction to the repo's `node_modules` was the obvious way to do
+ * this and it is a trap: `git worktree remove` on Windows walks into the junction
+ * and deletes the real dependency tree out of the original folder, leaving the
+ * first session broken by a tidy-up in the second. Verified on git 2.53.
+ *
+ * Hardlinks do not have that failure. Each file in the lane is a second name for
+ * the same bytes, so the clone costs no disk, and deleting either name leaves the
+ * other file whole. An install inside the lane replaces files rather than editing
+ * them in place, so the two trees simply drift apart from then on.
+ */
+async function hardlinkTree(from: string, to: string, budget: { left: number }): Promise<void> {
+  const dirs: Array<[string, string]> = [[from, to]]
+  const files: Array<[string, string]> = []
+  const links: Array<[string, string]> = []
+
+  // Walk first, link second. Recursing and linking together sounds tidier and is
+  // several times slower: every file waits behind the directory listing above it,
+  // when the whole point is to keep a pool of link calls busy.
+  for (let i = 0; i < dirs.length; i++) {
+    const [src, dst] = dirs[i]
+    let entries: Dirent[]
+    try {
+      entries = await readdir(src, { withFileTypes: true })
+    } catch {
+      continue /* vanished mid-walk - an install running in the original folder */
+    }
+    for (const e of entries) {
+      if (budget.left-- <= 0) throw new Error('dependency tree too large to clone')
+      const pair: [string, string] = [join(src, e.name), join(dst, e.name)]
+      if (e.isDirectory()) dirs.push(pair)
+      // Workspace packages and POSIX `.bin` shims are links; copying what they
+      // point at would silently fork a local package away from its source.
+      else if (e.isSymbolicLink()) links.push(pair)
+      else if (e.isFile()) files.push(pair)
+    }
+  }
+
+  for (const [, dst] of dirs) await mkdir(dst, { recursive: true })
+  for (const [src, dst] of links) {
+    try {
+      await symlink(await readlink(src), dst)
+    } catch {
+      /* a broken or unreadable link is not worth failing the whole clone over */
+    }
+  }
+
+  // Each hardlink is one syscall on a libuv thread; a wide pool keeps them all
+  // busy while the app stays responsive, because none of this is on the main
+  // thread. Narrow pools are what made this take a minute instead of seconds.
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < files.length) {
+      const [src, dst] = files[next++]
+      try {
+        await link(src, dst)
+      } catch {
+        /* one unreadable file should not sink the tree */
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: 64 }, worker))
+}
+
+/**
+ * Give a lane the dependencies the repo already has, without blocking anything.
+ *
+ * A worktree is a clean checkout, so it has no `node_modules`: the first build,
+ * test or dev server an agent runs in a fresh lane fails with a missing module,
+ * which reads as "this lane is broken" rather than "nothing is installed here
+ * yet". The clone takes seconds, so it runs after the session has already
+ * started, and lands in a temporary folder that is renamed into place only once
+ * it is complete - a half-populated `node_modules` fails in far stranger ways
+ * than an absent one.
+ */
+function cloneDeps(repo: string, lane: string): void {
+  const rels = ['node_modules']
+  try {
+    // Monorepo layouts install per package (`backend/node_modules`); one level
+    // down is the same depth the .env seeding covers.
+    for (const e of readdirSync(repo, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name === '.git' || e.name === 'node_modules') continue
+      rels.push(join(e.name, 'node_modules'))
+    }
+  } catch {
+    /* unreadable repo root - the root tree below is the one that matters */
+  }
+
+  for (const rel of rels) {
+    const from = join(repo, rel)
+    const to = join(lane, rel)
+    const tmp = `${to}.pf-tmp`
+    // Only where the repo actually installed, only where the lane checked the
+    // folder out, and never over something the lane already has.
+    if (!existsSync(from) || existsSync(to) || !existsSync(dirname(to))) continue
+    if (cloning.has(to)) continue
+    cloning.add(to)
+
+    void (async () => {
+      try {
+        rmSync(tmp, { recursive: true, force: true })
+        await hardlinkTree(from, tmp, { left: MAX_DEP_FILES })
+        // An install the agent kicked off in the meantime wins; drop ours.
+        if (existsSync(to)) rmSync(tmp, { recursive: true, force: true })
+        else renameSync(tmp, to)
+      } catch {
+        // Different volume, no permission, or an oversized tree: leave the lane
+        // without dependencies rather than with a partial set. An install there
+        // then behaves exactly like a fresh clone of the repo.
+        try {
+          rmSync(tmp, { recursive: true, force: true })
+        } catch {
+          /* nothing more to do */
+        }
+      } finally {
+        cloning.delete(to)
+      }
+    })()
+  }
+}
+
+/**
+ * Per-machine agent config lives outside git on purpose, and a lane without it
+ * re-asks for every permission the original folder already answered. Only the
+ * local settings files are copied; anything else is the checkout's business.
+ */
+function seedLocalConfig(repo: string, lane: string): void {
+  for (const rel of [join('.claude', 'settings.local.json'), join('.vscode', 'settings.json')]) {
+    const from = join(repo, rel)
+    const to = join(lane, rel)
+    if (!existsSync(from) || existsSync(to)) continue
+    try {
+      mkdirSync(dirname(to), { recursive: true })
+      copyFileSync(from, to)
+    } catch {
+      /* not fatal - the lane just starts with defaults */
+    }
+  }
+}
+
+/** Everything a fresh checkout needs before an agent is dropped into it. */
+function seedLane(repo: string, lane: string): void {
+  seedEnvFiles(repo, lane)
+  seedLocalConfig(repo, lane)
+  cloneDeps(repo, lane)
+}
+
 /**
  * Where a new session in `cwd` should really run, given the folders live sessions
  * already hold.
@@ -130,7 +284,7 @@ export function resolveLane(cwd: string, taken: string[]): Lane {
       // Left behind by an earlier session and nobody is in it: reuse rather than
       // pile up folders. Anything at that path that is not this repo is skipped.
       if (!isWorktreeOf(path, repo)) continue
-      seedEnvFiles(repo, path)
+      seedLane(repo, path)
       const head = git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
       return { cwd: path, lane: label, branch: head.ok ? head.out : branch }
     }
@@ -142,7 +296,7 @@ export function resolveLane(cwd: string, taken: string[]): Lane {
     if (!made.ok) {
       return { cwd, note: `Could not create a worktree lane: ${made.out.split('\n')[0]}` }
     }
-    seedEnvFiles(repo, path)
+    seedLane(repo, path)
     return { cwd: path, lane: label, branch }
   }
 
