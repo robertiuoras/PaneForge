@@ -85,6 +85,9 @@ const api: Api = {
   dragRecent: (id) => ipcRenderer.send('recents:drag', id),
   removeRecent: (id) => ipcRenderer.send('recents:remove', id),
   clearRecents: () => ipcRenderer.send('recents:clear'),
+  addStashFiles: (paths) => ipcRenderer.invoke('stash:add', paths),
+  pickStashFiles: () => ipcRenderer.invoke('stash:pick'),
+  revealStash: () => ipcRenderer.send('stash:reveal'),
 
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),

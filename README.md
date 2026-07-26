@@ -111,12 +111,16 @@ Re-run after any source change. Needs Node 20+.
   agent started in a folder with memory is told to read it first.
 - **History (Ctrl H)** - every pane's transcript, saved and searchable, long after
   the pane is closed. Reopen any past session in its old folder.
-- **Clipboard shelf (Ctrl Shift V)** - anything you copy, anywhere on the machine,
-  appears bottom-left for five seconds and stays on a twelve item shelf. Click text to
-  paste it into the focused pane. Click a screenshot and PaneForge saves it as a PNG and
-  types *its path* at the prompt, which is the only form of an image a CLI agent can
-  read - no more "save it, find the folder, type the path". Images drag out to any other
-  app too. One switch in Settings turns the whole thing off.
+- **Stash (Ctrl Shift V, or Ctrl Alt V from any app)** - anything you copy, anywhere on
+  the machine, appears bottom-left and stays. Click text to paste it into the focused
+  pane. Click a screenshot and PaneForge saves it as a PNG and types *its path* at the
+  prompt, which is the only form of an image a CLI agent can read - no more "save it,
+  find the folder, type the path".
+  Drop a file on it - a clip, a recording, an export - and it keeps a copy you can drag
+  straight back out into a chat, a browser upload box, an editor, for as long as you say
+  (a day by default, then it deletes itself). Videos show their own first frame.
+  Settings > Stash has all of it: how long it shows itself for, how much it keeps, how
+  long dropped files live, and the biggest file it will take.
 - **Voice (Ctrl Shift Space)** - hold to talk, and the text lands in the focused
   pane. Transcribed by a Whisper model on your own machine: free, offline, nothing
   uploaded. Settings > Voice installs the engine in one click.

@@ -182,9 +182,11 @@ export default function App(): JSX.Element {
   useEffect(() => api.onAppError((message) => flash(`Something went wrong: ${message}`)), [flash])
 
   /**
-   * The clipboard shelf. Anything copied - in this app or any other - shows itself for
-   * five seconds in the bottom-left corner and stays on the shelf for later.
+   * The Stash. Anything copied - in this app or any other - shows itself in the bottom-left
+   * corner for as long as Settings says, and stays on the Stash for later. A peek of 0 is
+   * "never open by itself": the list is still filling, it just stops interrupting.
    */
+  const peekMs = config?.stashPeekMs ?? 5000
   useEffect(() => {
     if (config?.clipboardShelf === false) {
       setRecents([])
@@ -194,12 +196,12 @@ export default function App(): JSX.Element {
     api.listRecents().then(setRecents)
     return api.onRecents((items) => {
       setRecents(items)
-      if (!items.length) return
+      if (!items.length || peekMs <= 0) return
       setShelfPeek(true)
       window.clearTimeout(peekTimer.current)
-      peekTimer.current = window.setTimeout(() => setShelfPeek(false), 5000)
+      peekTimer.current = window.setTimeout(() => setShelfPeek(false), peekMs)
     })
-  }, [config?.clipboardShelf])
+  }, [config?.clipboardShelf, peekMs])
 
   /**
    * Put a shelf item into the focused pane. Text goes in as text; an image goes in as the
@@ -210,11 +212,11 @@ export default function App(): JSX.Element {
     (it: RecentItem) => {
       const id = activeRef.current
       if (!id) return flash('Nothing focused - open a pane first.')
-      if (it.kind === 'image') {
+      if (it.kind === 'image' || it.kind === 'file') {
         const path = it.path ?? ''
         if (!path) return
         api.write(id, (/[\s"']/.test(path) ? `"${path}"` : path) + ' ')
-        flash('Image path typed into the pane.')
+        flash(it.kind === 'file' ? 'File path typed into the pane.' : 'Image path typed into the pane.')
       } else {
         if (!it.text) return
         api.write(id, it.text)
@@ -606,7 +608,7 @@ export default function App(): JSX.Element {
       {
         id: 'shelf',
         group: 'Actions',
-        title: 'Recently copied text and images',
+        title: 'Stash: copied text, screenshots and dropped files',
         hint: 'click one into the focused pane',
         keys: 'Ctrl Shift V',
         run: () => setShelfPinned((p) => !p)

@@ -16,7 +16,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'agents' | 'voice' | 'system'
+type Tab = 'general' | 'agents' | 'stash' | 'voice' | 'system'
 
 /**
  * Adding an agent is four prompts rather than a form: it happens once per CLI, and
@@ -105,6 +105,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
           options={[
             { value: 'general', label: 'General' },
             { value: 'agents', label: 'Agents' },
+            { value: 'stash', label: 'Stash' },
             { value: 'voice', label: 'Voice' },
             { value: 'system', label: 'System' }
           ]}
@@ -183,19 +184,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
-                  checked={config.clipboardShelf}
-                  onChange={(v) => onChange({ clipboardShelf: v })}
-                  label="Keep what I copy on a shelf in the corner"
-                  hint="Anything you copy anywhere - text, or a screenshot - appears bottom-left for five seconds and stays on a history that survives restarts. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched."
-                />
-                <Switch
-                  checked={config.clipboardOverlay}
-                  onChange={(v) => onChange({ clipboardOverlay: v })}
-                  label="Float that clipboard over every other app"
-                  disabled={!config.clipboardShelf}
-                  hint="A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the full history: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in."
-                />
-                <Switch
                   checked={config.autoLane}
                   onChange={(v) => onChange({ autoLane: v })}
                   label="Give a second session in the same project its own worktree"
@@ -218,6 +206,157 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   label="Keep a searchable transcript of every pane"
                   hint={`Stored on this machine only. Deleted after ${config.historyDays || '∞'} days.`}
                 />
+              </div>
+            </>
+          )}
+
+          {tab === 'stash' && (
+            <>
+              <div className="setting">
+                <div className="setting-row">
+                  <label>Stash</label>
+                  <span className="hint">
+                    everything you copied, screenshotted or dropped - one click from a pane, one
+                    drag from any other app
+                  </span>
+                </div>
+                <div className="switches">
+                  <Switch
+                    checked={config.clipboardShelf}
+                    onChange={(v) => onChange({ clipboardShelf: v })}
+                    label="Keep what I copy on the Stash"
+                    hint="Anything you copy anywhere - text, or a screenshot - lands bottom-left and stays on a history that survives restarts. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched at all."
+                  />
+                  <Switch
+                    checked={config.clipboardOverlay}
+                    onChange={(v) => onChange({ clipboardOverlay: v })}
+                    label="Float the Stash over every other app"
+                    disabled={!config.clipboardShelf}
+                    hint="A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the whole Stash: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in. Files can be dropped straight onto the pill."
+                  />
+                </div>
+              </div>
+
+              <div className="setting">
+                <label>Show itself for</label>
+                <Select
+                  value={String(config.stashPeekMs)}
+                  onChange={(v) => onChange({ stashPeekMs: Number(v) })}
+                  menuWidth={260}
+                  options={[
+                    { value: '2000', label: '2 seconds' },
+                    { value: '5000', label: '5 seconds' },
+                    { value: '10000', label: '10 seconds' },
+                    { value: '30000', label: '30 seconds' },
+                    { value: '0', label: 'Never open by itself', hint: 'Ctrl+Shift+V only' }
+                  ]}
+                />
+                <span className="hint">
+                  How long the in-window Stash stays up when something new lands on it. It keeps
+                  collecting either way - this is only whether it interrupts.
+                </span>
+              </div>
+
+              <div className="setting">
+                <label>Keep</label>
+                <Select
+                  value={String(config.stashMaxItems)}
+                  onChange={(v) => onChange({ stashMaxItems: Number(v) })}
+                  menuWidth={220}
+                  options={[
+                    { value: '25', label: '25 entries' },
+                    { value: '50', label: '50 entries' },
+                    { value: '200', label: '200 entries' },
+                    { value: '1000', label: '1000 entries' }
+                  ]}
+                />
+                <span className="hint">
+                  Turning this down forgets the oldest entries straight away, not eventually.
+                </span>
+              </div>
+
+              <div className="setting">
+                <label>Screenshots kept</label>
+                <Select
+                  value={String(config.stashMaxImages)}
+                  onChange={(v) => onChange({ stashMaxImages: Number(v) })}
+                  menuWidth={220}
+                  options={[
+                    { value: '6', label: '6 images' },
+                    { value: '24', label: '24 images' },
+                    { value: '60', label: '60 images' },
+                    { value: '0', label: 'None', hint: 'text only' }
+                  ]}
+                />
+                <span className="hint">
+                  Each one is a PNG on disk, so images get a shorter list of their own.
+                </span>
+              </div>
+
+              <div className="setting">
+                <div className="setting-row">
+                  <label>Files you drop on it</label>
+                  <span className="hint">
+                    drop a clip, a recording, anything - it is copied here and draggable into any
+                    app, then sweeps itself up
+                  </span>
+                </div>
+                <Select
+                  value={String(config.stashFileHours)}
+                  onChange={(v) => onChange({ stashFileHours: Number(v) })}
+                  menuWidth={260}
+                  options={[
+                    { value: '1', label: 'Keep for 1 hour' },
+                    { value: '6', label: 'Keep for 6 hours' },
+                    { value: '24', label: 'Keep for a day' },
+                    { value: '168', label: 'Keep for a week' },
+                    { value: '0', label: 'Until I clear it', hint: 'no clock' }
+                  ]}
+                />
+                <span className="hint">
+                  The copy is deleted when the time is up - the original is never touched. Change
+                  it and the clocks already running move with it.
+                </span>
+              </div>
+
+              <div className="setting">
+                <label>Biggest file accepted</label>
+                <Select
+                  value={String(config.stashMaxFileMb)}
+                  onChange={(v) => onChange({ stashMaxFileMb: Number(v) })}
+                  menuWidth={220}
+                  options={[
+                    { value: '128', label: '128 MB' },
+                    { value: '512', label: '512 MB' },
+                    { value: '2048', label: '2 GB' },
+                    { value: '0', label: 'No limit' }
+                  ]}
+                />
+                <span className="hint">
+                  Anything bigger is refused rather than copied - a Stash is not a backup.
+                </span>
+              </div>
+
+              <div className="setting">
+                <div className="setting-row">
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      void api.pickStashFiles()
+                    }}
+                  >
+                    Add files…
+                  </button>
+                  <button className="ghost" onClick={() => api.revealStash()}>
+                    Open the folder
+                  </button>
+                  <button className="ghost" onClick={() => api.clearRecents()}>
+                    Clear the Stash
+                  </button>
+                </div>
+                <span className="hint">
+                  Clearing forgets every entry and deletes the copies on disk. It cannot be undone.
+                </span>
               </div>
             </>
           )}

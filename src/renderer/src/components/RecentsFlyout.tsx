@@ -68,12 +68,35 @@ function ago(at: number): string {
   return `${Math.round(s / 3600)}h`
 }
 
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+/**
+ * What a stashed file's meta line says: how big it is, and how long it has left. The clock
+ * is the point - a file on the Stash is a thing you are about to drag somewhere, not
+ * storage, and it says so rather than disappearing unannounced.
+ */
+function left(it: RecentItem): string {
+  const s = size(it.bytes ?? 0)
+  if (!it.expires) return s
+  const mins = Math.max(0, Math.round((it.expires - Date.now()) / 60_000))
+  if (mins < 60) return `${s} · ${mins}m left`
+  const hrs = Math.round(mins / 60)
+  return hrs < 48 ? `${s} · ${hrs}h left` : `${s} · ${Math.round(hrs / 24)}d left`
+}
+
 export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: Props): JSX.Element | null {
   const [hover, setHover] = useState(false)
   // Re-render for the age labels while it is open, and never while it is not.
   const [, bump] = useState(0)
   const [pos, setPos] = useState<Pos | null>(loadPos)
   const [dragging, setDragging] = useState(false)
+  // A file drag is hovering over the shelf, so it can say it will take it.
+  const [over, setOver] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const grab = useRef<{ dx: number; dy: number } | null>(null)
 
@@ -138,6 +161,23 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
     }
   }
 
+  /**
+   * Files dropped on the shelf. Electron removed `File.path`, so the only way to a real
+   * path is the preload's webUtils - a browser preview has no paths at all and drops
+   * nothing, which is the honest outcome there.
+   */
+  const drop = (e: React.DragEvent<HTMLDivElement>): void => {
+    setOver(false)
+    const files = [...(e.dataTransfer?.files ?? [])]
+    if (!files.length) return
+    // The shelf floats over the panes, and a pane's own file drop types paths at the
+    // prompt. A drop meant for the Stash must not also do that.
+    e.preventDefault()
+    e.stopPropagation()
+    const paths = files.map((f) => api.pathForFile(f)).filter(Boolean)
+    if (paths.length) void api.addStashFiles(paths)
+  }
+
   /** Back to the bottom-left corner it starts in - the way out of a bad drop. */
   const resetPos = (): void => {
     setPos(null)
@@ -156,10 +196,23 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
   return (
     <div
       ref={box}
-      className={'shelf' + (pinned ? ' pinned' : '') + (dragging ? ' dragging' : '')}
+      className={
+        'shelf' + (pinned ? ' pinned' : '') + (dragging ? ' dragging' : '') + (over ? ' over' : '')
+      }
       style={pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onDragOver={(e) => {
+        // Only a file drag: dragging a shelf item back onto the shelf is not an add.
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+        setOver(true)
+      }}
+      onDragLeave={(e) => {
+        if (!box.current?.contains(e.relatedTarget as Node)) setOver(false)
+      }}
+      onDrop={drop}
     >
       <div
         className="shelf-head"
@@ -173,11 +226,20 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
         <span className="shelf-grip" aria-hidden="true">
           ⠿
         </span>
-        <strong>Recently copied</strong>
+        <strong>Stash</strong>
         <span className="hint">click to put in the pane</span>
         <button
           className="icon small"
-          title="Forget everything on the shelf"
+          title="Add a file to the Stash - a clip, a recording, anything you want to drag out again"
+          onClick={() => {
+            void api.pickStashFiles()
+          }}
+        >
+          +
+        </button>
+        <button
+          className="icon small"
+          title="Forget everything on the Stash"
           onClick={() => api.clearRecents()}
         >
           ✕
@@ -185,7 +247,8 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
       </div>
       {!items.length && (
         <div className="shelf-empty">
-          Nothing copied yet. Copy text or a screenshot anywhere on the machine and it lands here.
+          Nothing on the Stash yet. Copy text or a screenshot anywhere on the machine, or drop a
+          file here, and it lands on the Stash.
         </div>
       )}
       <div className="shelf-items">
@@ -194,27 +257,41 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
             key={it.id}
             className={'shelf-item ' + it.kind}
             title={
-              it.kind === 'image'
-                ? `${it.preview} - click to type its path, drag it anywhere`
-                : it.preview
+              it.kind === 'text'
+                ? it.preview
+                : `${it.preview} - click to type its path, drag it anywhere`
             }
             onClick={() => onSend(it)}
-            // Images are real files on disk, so the OS drag layer can carry them into
-            // any other app. Started in main: only it can put a file in a drag.
-            draggable={it.kind === 'image'}
+            // Images and stashed files are real files on disk, so the OS drag layer can
+            // carry them into any other app. Started in main: only it can put a file in
+            // a drag.
+            draggable={it.kind !== 'text'}
             onDragStart={(e) => {
-              if (it.kind !== 'image') return
+              if (it.kind === 'text') return
               e.preventDefault()
               api.dragRecent(it.id)
             }}
           >
             {it.kind === 'image' && it.thumb ? (
               <img src={it.thumb} alt="" />
+            ) : it.kind === 'file' ? (
+              <span className="shelf-file">
+                <span className="shelf-file-glyph" aria-hidden="true">
+                  {it.mime?.startsWith('video/') ? '▶' : it.mime?.startsWith('audio/') ? '♪' : '▤'}
+                </span>
+                <span className="shelf-text">{it.name ?? it.preview}</span>
+              </span>
             ) : (
               <span className="shelf-text">{it.preview}</span>
             )}
             <span className="shelf-meta">
-              <span>{it.kind === 'image' ? `${it.width}x${it.height}` : `${it.chars} chars`}</span>
+              <span>
+                {it.kind === 'image'
+                  ? `${it.width}x${it.height}`
+                  : it.kind === 'file'
+                    ? left(it)
+                    : `${it.chars} chars`}
+              </span>
               <span>{ago(it.at)}</span>
             </span>
             <span

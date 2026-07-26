@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -9,7 +10,9 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  net,
   Notification,
+  protocol,
   screen,
   shell
 } from 'electron'
@@ -43,11 +46,14 @@ import {
   startDeskAutosave
 } from './restore'
 import {
+  addRecentFiles,
   clearRecents,
+  configureRecents,
   copyRecent,
   getRecent,
   listRecents,
   recentPath,
+  recentsDir,
   refreshRecents,
   removeRecent,
   startRecents,
@@ -408,6 +414,16 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.voice !== undefined) applyVoiceHotkey(next)
   if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
   else if (patch.clipboardOverlay !== undefined) applyShelfOverlay(next)
+  // The Stash caps apply to what is already on it, not only to the next thing added, so
+  // they go through even when the watcher itself was not touched.
+  if (
+    patch.stashMaxItems !== undefined ||
+    patch.stashMaxImages !== undefined ||
+    patch.stashFileHours !== undefined ||
+    patch.stashMaxFileMb !== undefined
+  ) {
+    applyStashCaps(next)
+  }
   send('config:changed', next)
   return next
 })
@@ -463,20 +479,71 @@ ipcMain.on('recents:toPane', (_e, id: string) => {
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
 ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
-// Dragging a shelf image into another app entirely. The renderer cannot start an OS drag
+// Files dropped on the Stash, or chosen in its picker. The renderer only ever sees paths
+// (webUtils in the preloads); the copying is main's, because it owns the folder.
+ipcMain.handle('stash:add', (_e, paths: string[]) =>
+  Array.isArray(paths) ? addRecentFiles(paths) : 0
+)
+ipcMain.handle('stash:pick', async () => {
+  // A picker is a foreground dialog, which the app is not allowed to raise on its own -
+  // this one only ever runs from a click, so it is the user asking for it.
+  const r = await dialog.showOpenDialog({
+    title: 'Add to the Stash',
+    properties: ['openFile', 'multiSelections'],
+    buttonLabel: 'Add'
+  })
+  return r.canceled ? 0 : addRecentFiles(r.filePaths)
+})
+ipcMain.on('stash:reveal', () => shell.openPath(recentsDir()))
+// Dragging a shelf item into another app entirely. The renderer cannot start an OS drag
 // with a real file in it - only the main process can, and only with a path it owns.
-ipcMain.on('recents:drag', (e, id: string) => {
+ipcMain.on('recents:drag', async (e, id: string) => {
   const file = recentPath(id)
   if (!file) return
+  // A video or a zip has no bitmap to shrink, and startDrag with an empty icon throws,
+  // which would leave the row looking broken rather than undraggable. Ask the OS for the
+  // file's own shell icon and fall back to the app's.
+  let icon = nativeImage.createFromPath(file)
+  if (icon.isEmpty()) {
+    try {
+      icon = await app.getFileIcon(file, { size: 'normal' })
+    } catch {
+      /* handled by the emptiness check below */
+    }
+  }
   try {
-    e.sender.startDrag({ file, icon: nativeImage.createFromPath(file).resize({ width: 96 }) })
+    e.sender.startDrag({ file, icon: icon.isEmpty() ? appIcon() : icon.resize({ width: 96 }) })
   } catch {
-    /* the png was cleared between the click and the drag */
+    /* the file was cleared between the click and the drag */
   }
 })
 
+/**
+ * A last-resort drag icon. Windows refuses a drag with no image at all, so a 1x1 is still
+ * better than the drag never starting.
+ */
+function appIcon(): Electron.NativeImage {
+  return nativeImage.createFromBuffer(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    )
+  )
+}
+
+/** How much the Stash keeps, and for how long. Settings owns these. */
+function applyStashCaps(cfg: Config): void {
+  configureRecents({
+    maxItems: Math.max(1, cfg.stashMaxItems),
+    maxImages: Math.max(0, cfg.stashMaxImages),
+    fileHours: Math.max(0, cfg.stashFileHours),
+    maxFileMb: Math.max(0, cfg.stashMaxFileMb)
+  })
+}
+
 /** Watch the clipboard, or stop watching, to match the setting. */
 function applyClipboardShelf(cfg: Config): void {
+  applyStashCaps(cfg)
   if (cfg.clipboardShelf) {
     startRecents((items) => {
       send('recents:changed', items)
@@ -884,7 +951,29 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   restorePanes(specs)
 })
 
+/**
+ * `stash://<id>` serves one Stash file to the two windows that draw it, and nothing else
+ * on the machine. It exists so a dropped video can show its own first frame in the tile
+ * instead of a generic film icon: a `<video>` needs a URL, and both windows load over
+ * `file://` in a packaged build, where a second `file://` is blocked.
+ *
+ * The only thing it will hand over is a path already on the Stash list, looked up by id -
+ * never a path from the URL. A renderer that asked for `stash://../../id_rsa` gets a 404,
+ * because the id does not resolve.
+ */
+protocol.registerSchemesAsPrivileged([
+  // `stream` is what lets the video element seek; without it Chromium has to download the
+  // whole clip before it will draw a frame.
+  { scheme: 'stash', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
+])
+
 app.whenReady().then(() => {
+  protocol.handle('stash', (req) => {
+    const id = decodeURIComponent(new URL(req.url).hostname || new URL(req.url).pathname.slice(1))
+    const file = id ? recentPath(id) : ''
+    if (!file) return new Response('', { status: 404 })
+    return net.fetch(pathToFileURL(file).toString(), { headers: req.headers, method: req.method })
+  })
   const cfg = getConfig()
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)

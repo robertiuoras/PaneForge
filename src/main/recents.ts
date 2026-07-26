@@ -18,8 +18,17 @@
 // the last look was a while ago. Sitting on a copied screenshot costs one read per
 // IMAGE_RECHECK_MS, not one per tick.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { basename, extname, join } from 'node:path'
 import { app, clipboard, nativeImage } from 'electron'
 import type { RecentItem } from '../shared/types'
 
@@ -28,22 +37,29 @@ const TICK_MS = 1200
 /** A screenshot that stays on the clipboard is re-read this rarely. */
 const IMAGE_RECHECK_MS = 10_000
 /**
- * History kept, across restarts. The in-window shelf still shows only the newest few -
- * this is the depth the floating overlay searches back through when the thing you want
- * was copied an hour ago.
+ * Defaults for the three caps the user can move in Settings. They stay here as well as in
+ * config.ts because the watcher can start before a config has been read (a first run), and
+ * an unbounded history is the one failure mode that eats the disk quietly.
  */
 const MAX_ITEMS = 200
-/** Images are the only expensive part on disk (a PNG each), so they are capped harder. */
 const MAX_IMAGES = 24
+/** Files are capped in count as well as by age: a stash of 4K clips is gigabytes. */
+const MAX_FILES = 24
 /** Text longer than this is stored whole but shown clipped. */
 const PREVIEW = 140
 /** Anything shorter is noise - a single character copied by accident. */
 const MIN_TEXT = 2
 /** History is rewritten this long after the last change, never on every copy. */
 const SAVE_DEBOUNCE_MS = 800
+/** How often expired files are looked for. They expire in hours; a minute is precise enough. */
+const SWEEP_MS = 60_000
+
+/** What Settings currently says. Replaced wholesale by configureRecents(). */
+let caps = { maxItems: MAX_ITEMS, maxImages: MAX_IMAGES, fileHours: 24, maxFileMb: 512 }
 
 let items: RecentItem[] = []
 let timer: NodeJS.Timeout | null = null
+let sweepTimer: NodeJS.Timeout | null = null
 let saveTimer: NodeJS.Timeout | null = null
 let lastText = ''
 let lastFormats = ''
@@ -52,6 +68,27 @@ let lastImageKey = ''
 let seq = 0
 let loaded = false
 let onChange: ((items: RecentItem[]) => void) | null = null
+
+/**
+ * Settings changed. Applied to what is already on the Stash straight away rather than
+ * only to the next thing added: turning the history down from 200 to 20 has to actually
+ * forget 180 things, or the setting reads as broken.
+ */
+export function configureRecents(next: Partial<typeof caps>): void {
+  const before = JSON.stringify(caps)
+  caps = { ...caps, ...next }
+  if (JSON.stringify(caps) === before) return
+  load()
+  // A shorter file life has to move the clocks already ticking, not just new arrivals.
+  items = items.map((i) =>
+    i.kind === 'file' ? { ...i, expires: caps.fileHours ? i.at + caps.fileHours * 3_600_000 : undefined } : i
+  )
+  if (trim()) {
+    sweepFiles()
+    save()
+    onChange?.(items)
+  }
+}
 
 function dir(): string {
   const d = join(app.getPath('userData'), 'recents')
@@ -63,10 +100,16 @@ function historyFile(): string {
   return join(dir(), 'history.json')
 }
 
+/** The letter an id starts with, per kind. Only used to keep ids readable in a log. */
+function tag(kind: RecentItem['kind']): string {
+  return kind === 'image' ? 'i' : kind === 'file' ? 'f' : 't'
+}
+
 /**
  * Bring the history back after a restart. Image thumbnails live in the file with the
- * items (they are ~10KB data URLs), but an item whose PNG has been deleted from under
- * us is dropped - clicking it would type a path to nothing.
+ * items (they are ~10KB data URLs), but an item whose copy on disk has been deleted from
+ * under us is dropped - clicking it would type a path to nothing. A file whose clock ran
+ * out while the app was closed is dropped on the same pass.
  */
 function load(): void {
   if (loaded) return
@@ -74,14 +117,21 @@ function load(): void {
   try {
     const raw = JSON.parse(readFileSync(historyFile(), 'utf8')) as RecentItem[]
     if (!Array.isArray(raw)) return
+    const now = Date.now()
     items = raw
-      .filter((i) => i && typeof i.id === 'string' && (i.kind === 'text' || i.kind === 'image'))
-      .filter((i) => i.kind !== 'image' || (i.path && existsSync(i.path)))
-      .slice(0, MAX_ITEMS)
+      .filter(
+        (i) =>
+          i &&
+          typeof i.id === 'string' &&
+          (i.kind === 'text' || i.kind === 'image' || i.kind === 'file')
+      )
+      .filter((i) => i.kind === 'text' || (i.path && existsSync(i.path)))
+      .filter((i) => i.kind !== 'file' || !i.expires || i.expires > now)
+      .slice(0, caps.maxItems)
     // Ids are handed out per run; carry on past whatever the last run reached so a
     // restored item and a fresh one can never collide.
     seq = items.length
-    items = items.map((i, n) => ({ ...i, id: `${i.kind === 'image' ? 'i' : 't'}r${n}` }))
+    items = items.map((i, n) => ({ ...i, id: `${tag(i.kind)}r${n}` }))
   } catch {
     /* no history yet, or a half-written file - starting empty is the right fallback */
   }
@@ -156,6 +206,10 @@ export function copyRecent(id: string): boolean {
   const it = items.find((i) => i.id === id)
   if (!it) return false
   if (it.kind === 'text') clipboard.writeText(it.text ?? '')
+  // A file is not something Electron can put on the Windows clipboard as a file, and a
+  // video written as an image would be an empty bitmap. Its path is the useful thing to
+  // hold anyway: it is what an agent, an upload box and a shell all take.
+  else if (it.kind === 'file') clipboard.writeText(it.path ?? '')
   else if (it.path) clipboard.writeImage(nativeImage.createFromPath(it.path))
   return true
 }
@@ -171,17 +225,135 @@ export function getRecent(id: string): RecentItem | undefined {
   return items.find((i) => i.id === id)
 }
 
+/**
+ * Enforce the three caps and the file clock. Returns whether anything was dropped, so a
+ * caller can skip writing the history and waking the UI when nothing changed.
+ *
+ * Text is cheap to keep 200 of; screenshots and dropped files are not, so each falls off
+ * its own, shorter list rather than waiting to reach the end of the long one.
+ */
+function trim(): boolean {
+  const before = items.length
+  const now = Date.now()
+  items = items.filter((i) => i.kind !== 'file' || !i.expires || i.expires > now)
+  items = items.slice(0, caps.maxItems)
+  for (const [kind, cap] of [
+    ['image', caps.maxImages],
+    ['file', MAX_FILES]
+  ] as const) {
+    const of = items.filter((i) => i.kind === kind)
+    if (of.length > cap) {
+      const drop = new Set(of.slice(cap).map((i) => i.id))
+      items = items.filter((i) => !drop.has(i.id))
+    }
+  }
+  return items.length !== before
+}
+
 function push(item: RecentItem): void {
   load()
-  items = [item, ...items.filter((i) => i.key !== item.key)].slice(0, MAX_ITEMS)
-  // Text is cheap to keep 200 of; screenshots are not, so the oldest ones fall off
-  // their own, shorter list rather than waiting to reach the end of the long one.
-  const images = items.filter((i) => i.kind === 'image')
-  if (images.length > MAX_IMAGES) {
-    const drop = new Set(images.slice(MAX_IMAGES).map((i) => i.id))
-    items = items.filter((i) => !drop.has(i.id))
+  items = [item, ...items.filter((i) => i.key !== item.key)]
+  trim()
+  // Drop the files of items that fell off the end, or the folder grows forever.
+  sweepFiles()
+  save()
+  onChange?.(items)
+}
+
+/** Extensions worth naming. Everything else is a file with a size, which is enough. */
+const MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.gif': 'image/gif',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.pdf': 'application/pdf',
+  '.zip': 'application/zip'
+}
+
+/** "4.2 MB" - the only thing a file row can say about itself without opening it. */
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+/**
+ * Take copies of files dropped on the Stash (or chosen in its picker) and put them on the
+ * list. Copied rather than referenced on purpose: the whole point is that the recording
+ * you just made is still draggable after you have moved, renamed or deleted the original,
+ * and a row pointing at a path that has gone is worse than no row.
+ *
+ * Returns how many were taken. The refusals are size (over the cap - a 4GB file copied
+ * silently is a disk filled silently) and anything unreadable.
+ */
+export function addRecentFiles(paths: string[]): number {
+  load()
+  let added = 0
+  const limit = caps.maxFileMb * 1024 * 1024
+  for (const src of paths) {
+    if (!src || typeof src !== 'string') continue
+    let bytes = 0
+    try {
+      const st = statSync(src)
+      if (!st.isFile()) continue
+      bytes = st.size
+    } catch {
+      continue
+    }
+    if (limit > 0 && bytes > limit) continue
+    const name = basename(src)
+    const ext = extname(name).toLowerCase()
+    // Our copy keeps the extension: Windows decides what a drop is by the extension, and
+    // a video dropped into a chat app as `.tmp` is a file the other end cannot play.
+    const dest = join(dir(), `stash-${Date.now()}-${++seq}${ext}`)
+    try {
+      copyFileSync(src, dest)
+    } catch {
+      continue
+    }
+    const at = Date.now()
+    push({
+      id: `f${seq}`,
+      // The name and size together: dropping the same clip twice is one row, dropping a
+      // different cut of it with the same name is two.
+      key: `f:${name}:${bytes}`,
+      kind: 'file',
+      at,
+      path: dest,
+      name,
+      bytes,
+      mime: MIME[ext] ?? '',
+      preview: `${name} · ${size(bytes)}`,
+      expires: caps.fileHours ? at + caps.fileHours * 3_600_000 : undefined
+    })
+    added++
   }
-  // Drop the PNGs of images that fell off the end, or the folder grows forever.
+  return added
+}
+
+/** Where the copies live, for the "open the folder" button. */
+export function recentsDir(): string {
+  return dir()
+}
+
+/**
+ * Drop the files whose clock ran out. Runs on a slow timer while the watcher is on, so a
+ * machine left alone overnight comes back to a Stash that has already tidied itself.
+ */
+function sweepExpired(): void {
+  if (!items.some((i) => i.kind === 'file' && i.expires && i.expires <= Date.now())) return
+  if (!trim()) return
   sweepFiles()
   save()
   onChange?.(items)
@@ -292,6 +464,10 @@ export function startRecents(notify: (items: RecentItem[]) => void): void {
     // that says it does not need it; unref keeps this out of the quit path entirely.
     timer.unref?.()
   }
+  if (!sweepTimer) {
+    sweepTimer = setInterval(sweepExpired, SWEEP_MS)
+    sweepTimer.unref?.()
+  }
 }
 
 /** Called when the window takes focus: catch the image copied while we were elsewhere. */
@@ -301,6 +477,8 @@ export function refreshRecents(): void {
 
 export function stopRecents(): void {
   if (timer) clearInterval(timer)
+  if (sweepTimer) clearInterval(sweepTimer)
   timer = null
+  sweepTimer = null
   onChange = null
 }

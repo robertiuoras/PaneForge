@@ -345,6 +345,24 @@ export interface Config {
    * the same history, in a window that outlives the app being minimised.
    */
   clipboardOverlay: boolean
+  /**
+   * How long the Stash shows itself for when something new lands on it, in ms. 0 means it
+   * never opens by itself and only the key (Ctrl+Shift+V) or the pill opens it - which is
+   * what you want once you copy all day and stopped needing to be told.
+   */
+  stashPeekMs: number
+  /** entries the Stash keeps, across restarts. Text is cheap; this is mostly text. */
+  stashMaxItems: number
+  /** images are a PNG each on disk, so they fall off a shorter list of their own */
+  stashMaxImages: number
+  /**
+   * Hours a file you dropped on the Stash is kept before it is swept, with its copy on
+   * disk. 0 keeps them until you clear the Stash by hand. Files are the only thing here
+   * that can be gigabytes, so they are the only thing with a clock on them.
+   */
+  stashFileHours: number
+  /** biggest single file the Stash accepts, MB. Bigger ones are refused, not truncated. */
+  stashMaxFileMb: number
   /** show every session at once instead of one at a time */
   grid: boolean
   /** ask before closing a session that is still running */
@@ -426,18 +444,20 @@ export interface RestoreAnswer {
 }
 
 /**
- * One thing you copied: text, or an image saved to a PNG we own.
+ * One thing on the Stash: text you copied, an image saved to a PNG we own, or a file you
+ * dropped on it (a video, a zip, anything) copied into the Stash folder so the original
+ * can move or be deleted without the row going dead.
  * `key` is what makes copying the same thing twice one entry instead of two.
  */
 export interface RecentItem {
   id: string
   key: string
-  kind: 'text' | 'image'
+  kind: 'text' | 'image' | 'file'
   /** epoch ms it landed on the shelf */
   at: number
   /** full text, text items only */
   text?: string
-  /** the saved PNG, image items only - this is what gets typed into a pane */
+  /** our copy on disk - the path typed into a pane, and the file an OS drag carries */
   path?: string
   /** small data URL for the tile, image items only */
   thumb?: string
@@ -447,6 +467,14 @@ export interface RecentItem {
   chars?: number
   width?: number
   height?: number
+  /** file items: the name it arrived with, which is what the row shows */
+  name?: string
+  /** file items: size of our copy, bytes */
+  bytes?: number
+  /** file items: guessed from the extension ('video/mp4'), decides the preview tile */
+  mime?: string
+  /** file items: epoch ms it gets swept at. Absent = kept until the Stash is cleared. */
+  expires?: number
 }
 
 /** Shape exposed on window.api by the preload script. */
@@ -537,6 +565,15 @@ export interface Api {
   readHistory(id: string): Promise<string>
   deleteHistory(id: string): Promise<void>
 
+  /**
+   * Copy files into the Stash - a drag-drop onto the shelf, or the picker below. Returns
+   * how many were taken; the rest were over the size cap or unreadable.
+   */
+  addStashFiles(paths: string[]): Promise<number>
+  /** OS file picker, then the same. Only ever from a click - it is a foreground dialog. */
+  pickStashFiles(): Promise<number>
+  /** open the Stash folder in the file manager, for the times a drag is not enough */
+  revealStash(): void
   /** the clipboard shelf, newest first */
   listRecents(): Promise<RecentItem[]>
   /** put a shelf item back on the OS clipboard */
@@ -583,8 +620,14 @@ export interface ShelfApi {
   copy(id: string): void
   remove(id: string): void
   clear(): void
-  /** start an OS drag carrying the saved PNG of an image item */
+  /** start an OS drag carrying our copy on disk - an image's PNG, or a dropped file */
   drag(id: string): void
+  /** files dropped onto the overlay itself, by absolute path */
+  add(paths: string[]): Promise<number>
+  /** the overlay's + button: an OS file picker, then the same */
+  pick(): Promise<number>
+  /** absolute path of a dropped File, which Electron only exposes in a preload */
+  pathForFile(file: File): string
   /** type it into PaneForge's focused pane instead of the clipboard */
   toPane(id: string): void
   focusApp(): void

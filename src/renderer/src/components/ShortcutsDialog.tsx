@@ -28,12 +28,13 @@ const KEYS: [string, string][] = [
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
   ['Ctrl Shift C', 'Always copy, never interrupt'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
-  ['Ctrl Shift V', 'Recently copied: click text or a screenshot into the focused pane'],
+  ['Ctrl Shift V', 'The Stash: click text, a screenshot or a stashed file into the focused pane'],
   [
     'Ctrl Alt V',
-    'The floating clipboard, from any app: click a line to copy it back, → sends it to the pane, ✕ forgets it'
+    'The floating Stash, from any app: click a line to copy it back, → sends it to the pane, ✕ forgets it'
   ],
-  ['Drag the shelf title', 'Move the recently-copied shelf anywhere; double-click it to put it back'],
+  ['Drop a file on the Stash', 'Parks a copy you can drag straight back out into any other app'],
+  ['Drag the Stash title', 'Move the Stash anywhere; double-click it to put it back'],
   ['Right-click', 'Copy the selection, or paste when nothing is selected'],
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
   ['Ctrl B', 'Focus the broadcast box (one line to every session)'],
