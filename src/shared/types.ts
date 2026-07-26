@@ -312,6 +312,13 @@ export interface Config {
    * time the app updates itself.
    */
   restoreAfterUpdate: boolean
+  /**
+   * What a cold launch does with the panes the last run left behind (a normal quit,
+   * a PC restart, a crash). `ask` offers them, `always` reopens them silently,
+   * `never` starts clean. An update restart is not this setting - see
+   * `restoreAfterUpdate` - because that restart was the app's own idea.
+   */
+  restoreAfterRestart: RestoreMode
   /** keep a searchable transcript of every pane */
   saveHistory: boolean
   /** delete stored transcripts older than this; 0 keeps everything */
@@ -325,9 +332,49 @@ export interface Config {
   autoLane: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
-  /** panes to reopen on next launch, written just before an update restart */
+  /**
+   * Panes to reopen on next launch, written just before an update restart.
+   *
+   * Superseded by userData/desk.json and only still read on the first launch after
+   * updating from a version that wrote it here - which is exactly the launch that
+   * would otherwise lose the panes the old code had just saved.
+   */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+}
+
+/** @see Config.restoreAfterRestart */
+export type RestoreMode = 'ask' | 'always' | 'never'
+
+/** One pane from the last run, as offered back on the next launch. */
+export interface RestorePane {
+  /** position in the saved desk; what an answer refers to */
+  id: string
+  cwd: string
+  title: string
+  agent: Agent
+  model?: string
+  /** why this one cannot be reopened: shown greyed and never started */
+  gone?: 'folder' | 'agent'
+}
+
+/** The "restore your last session?" question, as the renderer receives it. */
+export interface RestoreOffer {
+  panes: RestorePane[]
+  /** panes past the launch cap: listed as not restored rather than silently dropped */
+  extra: RestorePane[]
+  /** when the desk was written */
+  at: number
+  /** false means the last run ended in a crash or a power cut */
+  clean: boolean
+}
+
+export interface RestoreAnswer {
+  accept: boolean
+  /** ids of the panes to reopen, in offer order */
+  ids: string[]
+  /** the user ticked "always restore after a restart" */
+  always?: boolean
 }
 
 /**
@@ -419,6 +466,14 @@ export interface Api {
   updateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   installUpdate(): void
+
+  /**
+   * The panes the last run left behind, when the launch decided to ask about them.
+   * Pulled by the renderer on mount rather than pushed on launch: the window is
+   * still loading when main makes that decision.
+   */
+  pendingRestore(): Promise<RestoreOffer | null>
+  answerRestore(answer: RestoreAnswer): void
 
   /** tasks + shared memory for one project folder */
   board(path: string): Promise<ProjectBoard>

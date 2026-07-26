@@ -6,6 +6,7 @@ import type {
   Preset,
   Project,
   RecentItem,
+  RestoreOffer,
   Session,
   StartSessionRequest,
   SwarmRole
@@ -22,6 +23,7 @@ import HistoryDialog from './components/HistoryDialog'
 import TerminalPane, { paneRepair } from './components/TerminalPane'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
+import RestoreDialog from './components/RestoreDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import StatusDot from './components/StatusDot'
@@ -58,6 +60,8 @@ export default function App(): JSX.Element {
   const [swarm, setSwarm] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  // The panes the last run left behind, when the launch decided to ask about them.
+  const [restore, setRestore] = useState<RestoreOffer | null>(null)
   // One in-app dialog stands in for window.confirm and window.prompt. Both of those
   // draw Chromium's system box, which looks nothing like the app and blocks the
   // renderer while it is open.
@@ -75,6 +79,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     api.listSessions().then(setSessions)
     api.getConfig().then(setConfigState)
+    // Pulled, not pushed: main decides what to do with the last run's panes while
+    // this window is still loading, so it holds the question until we ask for it.
+    api.pendingRestore().then(setRestore)
     const offS = api.onSessions(setSessions)
     const offC = api.onConfig(setConfigState)
     return () => {
@@ -1123,6 +1130,24 @@ export default function App(): JSX.Element {
         onClose={() => setShelfPinned(false)}
         onSend={sendRecent}
       />
+      {restore && (
+        <RestoreDialog
+          offer={restore}
+          onRestore={(ids, always) => {
+            setRestore(null)
+            api.answerRestore({ accept: true, ids, always })
+            if (always) setConfigState((c) => (c ? { ...c, restoreAfterRestart: 'always' } : c))
+          }}
+          onFresh={() => {
+            setRestore(null)
+            api.answerRestore({ accept: false, ids: [] })
+          }}
+          // Dismissed rather than answered: main is told nothing, keeps the desk and
+          // offers it again next launch. Closing a dialog by accident must not be
+          // the way a set of panes is lost.
+          onDismiss={() => setRestore(null)}
+        />
+      )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       <UpdateToast />
