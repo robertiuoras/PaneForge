@@ -18,7 +18,7 @@ import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
-import { resolveLane } from './lanes'
+import { laneExtras, resolveLane } from './lanes'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
@@ -278,8 +278,20 @@ function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSess
     ...extraTaken
   ]
   const lane = resolveLane(req.cwd, taken)
-  if (lane.cwd === req.cwd) return lane.note ? { ...req, laneNote: lane.note } : req
-  return { ...req, cwd: lane.cwd, lane: lane.lane, laneNote: `Opened lane ${lane.lane} on ${lane.branch}` }
+  if (lane.cwd === req.cwd) {
+    // Reopening a pane that is already in its lane (workspace restore, or after an
+    // update): nothing to move, but it still needs its port and its shared memory.
+    if (req.lane) return { ...req, laneEnv: req.laneEnv ?? laneExtras(req.cwd, req.lane).env }
+    return lane.note ? { ...req, laneNote: lane.note } : req
+  }
+  const memory = lane.sharedMemory ? ', sharing this project’s Claude memory' : ''
+  return {
+    ...req,
+    cwd: lane.cwd,
+    lane: lane.lane,
+    laneEnv: lane.env,
+    laneNote: `Opened lane ${lane.lane} on ${lane.branch} - PORT=${lane.port}${memory}`
+  }
 }
 
 ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => manager.start(laneFor(req)))

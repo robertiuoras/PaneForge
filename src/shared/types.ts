@@ -80,6 +80,11 @@ export interface StartSessionRequest {
   lane?: string
   /** one-line explanation of the lane decision, shown as a toast after launch */
   laneNote?: string
+  /**
+   * Environment added on top of the inherited one, so a lane's dev server does not
+   * fight the original folder's for a port. Set by the main process only.
+   */
+  laneEnv?: Record<string, string>
 }
 
 /** One saved project inside a workspace. */

@@ -192,7 +192,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.autoLane}
                   onChange={(v) => onChange({ autoLane: v })}
                   label="Give a second session in the same project its own worktree"
-                  hint="Two agents in one folder overwrite each other's edits and race git. The second session in a repo opens in <project>-w2 on branch pf/w2 instead, with your .env files copied over. Merge it back yourself when the work is done."
+                  hint="Two agents in one folder overwrite each other's edits, race git and fight over the dev server port. The second session in a repo opens in <project>-w2 on branch pf/w2 instead, with your .env files copied over, its own PORT (one past whatever the project's dev script uses, also in PF_LANE_PORT), and the original folder's Claude history, memory and permissions instead of a blank slate. Merge the branch back yourself when the work is done."
                 />
                 <Switch
                   checked={config.confirmClose}
