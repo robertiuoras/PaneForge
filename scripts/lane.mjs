@@ -77,6 +77,13 @@ const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
 // end with a SessionEnd hook that frees the lane properly; this is for the ones that
 // die with the terminal.
 const STALE_MS = 12 * 60 * 60 * 1000
+// A lane that has nothing in it - clean tree, no commits master lacks, no ready mark, no
+// conflict - and whose chat has not been seen for this long is given up when someone else
+// needs a checkout and there is none. Four chats opened hours apart, three of them idle
+// with nothing to show for it, is how a chat that had work to do got told "all lanes busy"
+// and had to wait for a human to close a window. Nothing can be lost: a lane with so much
+// as one uncommitted character is never taken, however long it has been quiet.
+const IDLE_EMPTY_MS = 60 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -397,7 +404,24 @@ function claim(session, cwd, prefer) {
   // `prefer` is how a chat that was already mid-edit in a checkout when lanes were
   // switched on keeps that checkout, uncommitted work and all, instead of being sent
   // to an empty lane and losing sight of it.
-  const free = (prefer && !state.lanes[prefer] ? prefer : null) ?? POOL.find((id) => !state.lanes[id])
+  let free = (prefer && !state.lanes[prefer] ? prefer : null) ?? POOL.find((id) => !state.lanes[id])
+  // Nothing free: before refusing, look for a lane that is being held and not used. The
+  // oldest one goes, so a chat that has at least been seen recently keeps its checkout.
+  if (!free) {
+    const idle = Object.entries(state.lanes)
+      .filter(([id, c]) => {
+        if (now() - (c.seen ?? c.claimed ?? 0) < IDLE_EMPTY_MS) return false
+        if (state.ready[id] || state.conflicts[id]) return false
+        const w = laneWork(id)
+        return !w.dirty && w.ahead === 0
+      })
+      .sort((a, b) => (a[1].seen ?? 0) - (b[1].seen ?? 0))[0]
+    if (idle) {
+      delete state.lanes[idle[0]]
+      closeTestApps(laneDir(idle[0]))
+      free = idle[0]
+    }
+  }
   if (!free) {
     // Every lane is held by a live session. Better to say so than to hand out a
     // checkout two chats are already sharing.
