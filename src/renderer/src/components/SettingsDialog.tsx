@@ -186,7 +186,14 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.clipboardShelf}
                   onChange={(v) => onChange({ clipboardShelf: v })}
                   label="Keep what I copy on a shelf in the corner"
-                  hint="Anything you copy anywhere - text, or a screenshot - appears bottom-left for five seconds and stays on a twelve item shelf. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched."
+                  hint="Anything you copy anywhere - text, or a screenshot - appears bottom-left for five seconds and stays on a history that survives restarts. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched."
+                />
+                <Switch
+                  checked={config.clipboardOverlay}
+                  onChange={(v) => onChange({ clipboardOverlay: v })}
+                  label="Float that clipboard over every other app"
+                  disabled={!config.clipboardShelf}
+                  hint="A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the full history: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in."
                 />
                 <Switch
                   checked={config.autoLane}

@@ -80,13 +80,20 @@ function LaneRow({ lane, sessions, onFocus }: Props & { lane: LaneBoardEntry }):
   const pane = lane.from ? sessions.find((s) => s.cwd === lane.from) : undefined
   const where = lane.from ? lane.from.split(/[\\/]/).pop() : null
 
+  // "working" was a lie the strip told about every lane: a chat claims one the moment it
+  // starts, so four chats that had typed nothing all read as busy. What the lane file
+  // actually knows is who holds it and when that chat was last heard from, so that is
+  // what it says now - held, and how long since it did anything.
+  const quiet = Date.now() - lane.seen
   const state = lane.conflicted
     ? `conflicts with master, ${ago(lane.conflictSince ?? Date.now())}`
     : lane.ready
       ? 'done, waiting for the release'
       : lane.held
-        ? 'working'
-        : 'idle'
+        ? quiet < 5 * 60 * 1000
+          ? 'a chat has it, busy now'
+          : `a chat has it, quiet ${ago(lane.seen)}`
+        : 'free'
 
   const tip = lane.conflicted
     ? `${lane.dir}\nWill not merge: ${lane.conflictDetail ?? 'see the lane'}\n` +

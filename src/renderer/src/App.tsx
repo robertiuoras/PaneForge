@@ -70,6 +70,10 @@ export default function App(): JSX.Element {
   // The clipboard shelf: what you last copied, and whether its corner panel is open
   // because you asked (pinned) or because something just landed (peek).
   const [recents, setRecents] = useState<RecentItem[]>([])
+  // The overlay hands back an id, and the handler that resolves it must not be rebuilt
+  // (and re-subscribed) every time something new is copied.
+  const recentsRef = useRef<RecentItem[]>([])
+  recentsRef.current = recents
   const [shelfPinned, setShelfPinned] = useState(false)
   const [shelfPeek, setShelfPeek] = useState(false)
   const peekTimer = useRef<number>()
@@ -219,6 +223,15 @@ export default function App(): JSX.Element {
     },
     [flash]
   )
+
+  // The floating overlay can only ask by id: it is a separate window with no idea which
+  // pane is focused, and the focused pane is a fact only this one has.
+  useEffect(() => {
+    return api.onRecentToPane((id) => {
+      const it = recentsRef.current.find((r) => r.id === id)
+      if (it) sendRecent(it)
+    })
+  }, [sendRecent])
 
   /**
    * Dictation types straight into the focused pane, exactly as if you had typed
@@ -1139,7 +1152,9 @@ export default function App(): JSX.Element {
         />
       )}
       <RecentsFlyout
-        items={recents}
+        // The history behind it is hundreds deep now and lives in the floating overlay;
+        // the in-window shelf stays what it was - the last handful, one click from a pane.
+        items={recents.slice(0, 12)}
         pinned={shelfPinned}
         peek={shelfPeek}
         onClose={() => setShelfPinned(false)}

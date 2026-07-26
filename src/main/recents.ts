@@ -18,7 +18,7 @@
 // the last look was a while ago. Sitting on a copied screenshot costs one read per
 // IMAGE_RECHECK_MS, not one per tick.
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, clipboard, nativeImage } from 'electron'
 import type { RecentItem } from '../shared/types'
@@ -27,20 +27,30 @@ import type { RecentItem } from '../shared/types'
 const TICK_MS = 1200
 /** A screenshot that stays on the clipboard is re-read this rarely. */
 const IMAGE_RECHECK_MS = 10_000
-/** Items kept. Small on purpose: this is a shelf, not a clipboard manager. */
-const MAX_ITEMS = 12
+/**
+ * History kept, across restarts. The in-window shelf still shows only the newest few -
+ * this is the depth the floating overlay searches back through when the thing you want
+ * was copied an hour ago.
+ */
+const MAX_ITEMS = 200
+/** Images are the only expensive part on disk (a PNG each), so they are capped harder. */
+const MAX_IMAGES = 24
 /** Text longer than this is stored whole but shown clipped. */
 const PREVIEW = 140
 /** Anything shorter is noise - a single character copied by accident. */
 const MIN_TEXT = 2
+/** History is rewritten this long after the last change, never on every copy. */
+const SAVE_DEBOUNCE_MS = 800
 
 let items: RecentItem[] = []
 let timer: NodeJS.Timeout | null = null
+let saveTimer: NodeJS.Timeout | null = null
 let lastText = ''
 let lastFormats = ''
 let lastImageLook = 0
 let lastImageKey = ''
 let seq = 0
+let loaded = false
 let onChange: ((items: RecentItem[]) => void) | null = null
 
 function dir(): string {
@@ -49,24 +59,100 @@ function dir(): string {
   return d
 }
 
+function historyFile(): string {
+  return join(dir(), 'history.json')
+}
+
+/**
+ * Bring the history back after a restart. Image thumbnails live in the file with the
+ * items (they are ~10KB data URLs), but an item whose PNG has been deleted from under
+ * us is dropped - clicking it would type a path to nothing.
+ */
+function load(): void {
+  if (loaded) return
+  loaded = true
+  try {
+    const raw = JSON.parse(readFileSync(historyFile(), 'utf8')) as RecentItem[]
+    if (!Array.isArray(raw)) return
+    items = raw
+      .filter((i) => i && typeof i.id === 'string' && (i.kind === 'text' || i.kind === 'image'))
+      .filter((i) => i.kind !== 'image' || (i.path && existsSync(i.path)))
+      .slice(0, MAX_ITEMS)
+    // Ids are handed out per run; carry on past whatever the last run reached so a
+    // restored item and a fresh one can never collide.
+    seq = items.length
+    items = items.map((i, n) => ({ ...i, id: `${i.kind === 'image' ? 'i' : 't'}r${n}` }))
+  } catch {
+    /* no history yet, or a half-written file - starting empty is the right fallback */
+  }
+}
+
+function save(): void {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    try {
+      writeFileSync(historyFile(), JSON.stringify(items))
+    } catch {
+      /* a full disk must not take the app down over a clipboard list */
+    }
+  }, SAVE_DEBOUNCE_MS)
+  saveTimer.unref?.()
+}
+
+/** Delete the PNGs of items that are no longer on the list. */
+function sweepFiles(): void {
+  const keep = new Set(items.map((i) => i.path).filter(Boolean))
+  try {
+    for (const f of readdirSync(dir())) {
+      const p = join(dir(), f)
+      if (p === historyFile()) continue
+      if (!keep.has(p)) rmSync(p, { force: true })
+    }
+  } catch {
+    /* leaving a stale png behind is harmless */
+  }
+}
+
 /** Newest first, which is the order the flyout shows them in. */
 export function listRecents(): RecentItem[] {
+  load()
   return items
 }
 
 export function clearRecents(): void {
   items = []
-  // The PNGs are ours and nothing else points at them once the shelf is empty.
+  sweepFiles()
   try {
-    for (const f of readdirSync(dir())) rmSync(join(dir(), f), { force: true })
+    rmSync(historyFile(), { force: true })
   } catch {
     /* a file held open by a viewer is not worth failing over */
   }
   onChange?.(items)
 }
 
+/**
+ * Forget one item. The clipboard is a place passwords and one-off tokens land by
+ * accident, so removing a single line has to be as easy as copying it was.
+ */
+export function removeRecent(id: string): boolean {
+  const before = items.length
+  const gone = items.find((i) => i.id === id)
+  items = items.filter((i) => i.id !== id)
+  if (items.length === before) return false
+  // Deleting the newest text item has to also clear the "already seen this" marker, or
+  // the watcher will not put it back if it is copied again while still on the clipboard.
+  if (gone?.kind === 'text' && gone.text === lastText) lastText = ''
+  if (gone?.kind === 'image') lastImageKey = ''
+  sweepFiles()
+  save()
+  onChange?.(items)
+  return true
+}
+
 /** Put an item back on the clipboard, so Ctrl+V in any app pastes it again. */
 export function copyRecent(id: string): boolean {
+  load()
   const it = items.find((i) => i.id === id)
   if (!it) return false
   if (it.kind === 'text') clipboard.writeText(it.text ?? '')
@@ -75,21 +161,29 @@ export function copyRecent(id: string): boolean {
 }
 
 export function recentPath(id: string): string {
+  load()
   return items.find((i) => i.id === id)?.path ?? ''
 }
 
+/** The full item, for the overlay's "put this in the focused pane". */
+export function getRecent(id: string): RecentItem | undefined {
+  load()
+  return items.find((i) => i.id === id)
+}
+
 function push(item: RecentItem): void {
+  load()
   items = [item, ...items.filter((i) => i.key !== item.key)].slice(0, MAX_ITEMS)
-  // Drop the PNGs of images that fell off the end, or the folder grows forever.
-  const keep = new Set(items.map((i) => i.path).filter(Boolean))
-  try {
-    for (const f of readdirSync(dir())) {
-      const p = join(dir(), f)
-      if (!keep.has(p)) rmSync(p, { force: true })
-    }
-  } catch {
-    /* leaving a stale png behind is harmless */
+  // Text is cheap to keep 200 of; screenshots are not, so the oldest ones fall off
+  // their own, shorter list rather than waiting to reach the end of the long one.
+  const images = items.filter((i) => i.kind === 'image')
+  if (images.length > MAX_IMAGES) {
+    const drop = new Set(images.slice(MAX_IMAGES).map((i) => i.id))
+    items = items.filter((i) => !drop.has(i.id))
   }
+  // Drop the PNGs of images that fell off the end, or the folder grows forever.
+  sweepFiles()
+  save()
   onChange?.(items)
 }
 
@@ -183,6 +277,7 @@ function tick(force = false): void {
  */
 export function startRecents(notify: (items: RecentItem[]) => void): void {
   onChange = notify
+  load()
   // The clipboard's current contents are not "recent" - they were there before the app
   // started, and showing them at launch would open the shelf over an empty desk.
   if (!timer) {

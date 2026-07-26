@@ -45,12 +45,23 @@ import {
 import {
   clearRecents,
   copyRecent,
+  getRecent,
   listRecents,
   recentPath,
   refreshRecents,
+  removeRecent,
   startRecents,
   stopRecents
 } from './recents'
+import {
+  closeShelfWindow,
+  openShelfWindow,
+  placeShelf,
+  setShelfExpanded,
+  shelfWindowOpen,
+  toggleShelf,
+  updateShelfItems
+} from './shelfWindow'
 import { refreshPath, runCommand } from './install'
 import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
 import * as history from './history'
@@ -199,6 +210,10 @@ function createWindow(): void {
     win?.flashFrame(false)
     refreshRecents()
   })
+  // The clipboard overlay lives in the corner of the display this window is on, so it
+  // moves with it - to the second monitor, or back.
+  win.on('move', placeShelf)
+  win.on('restore', placeShelf)
   // A test copy nobody ever looked at closes itself.
   //
   // An agent starts one minimized, measures something, and does not always get to run
@@ -224,6 +239,9 @@ function createWindow(): void {
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
   win.on('closed', () => {
     win = null
+    // The overlay is a window too, so leaving it open would make `window-all-closed`
+    // never fire and the app would stay alive with nothing on screen but a pill.
+    closeShelfWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -389,6 +407,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
   if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
+  else if (patch.clipboardOverlay !== undefined) applyShelfOverlay(next)
   send('config:changed', next)
   return next
 })
@@ -434,6 +453,16 @@ ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.handle('recents:list', () => listRecents())
 ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
 ipcMain.on('recents:clear', () => clearRecents())
+ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
+// The overlay floats over other apps and has no idea which pane is focused, so "send it
+// to the pane" is asked of the window that does know.
+ipcMain.on('recents:toPane', (_e, id: string) => {
+  if (!getRecent(id)) return
+  focusWindow()
+  send('recents:toPane', id)
+})
+ipcMain.on('shelf:focusApp', () => focusWindow())
+ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
 // Dragging a shelf image into another app entirely. The renderer cannot start an OS drag
 // with a real file in it - only the main process can, and only with a path it owns.
 ipcMain.on('recents:drag', (e, id: string) => {
@@ -448,8 +477,48 @@ ipcMain.on('recents:drag', (e, id: string) => {
 
 /** Watch the clipboard, or stop watching, to match the setting. */
 function applyClipboardShelf(cfg: Config): void {
-  if (cfg.clipboardShelf) startRecents((items) => send('recents:changed', items))
-  else stopRecents()
+  if (cfg.clipboardShelf) {
+    startRecents((items) => {
+      send('recents:changed', items)
+      updateShelfItems(items)
+    })
+  } else {
+    stopRecents()
+  }
+  applyShelfOverlay(cfg)
+}
+
+/**
+ * The floating overlay follows the shelf setting: watching the clipboard is what fills
+ * it, so an overlay with the watcher off would be a permanently empty window on top of
+ * everything.
+ */
+function applyShelfOverlay(cfg: Config): void {
+  const wanted = cfg.clipboardShelf && cfg.clipboardOverlay
+  if (wanted && !shelfWindowOpen()) {
+    openShelfWindow(() => win)
+    updateShelfItems(listRecents())
+  } else if (!wanted && shelfWindowOpen()) {
+    closeShelfWindow()
+  }
+  applyShelfHotkey(cfg)
+}
+
+/**
+ * Ctrl+Alt+V opens the overlay from inside any application. Not Ctrl+Shift+V, which is
+ * paste in every terminal on the machine (including PaneForge's own panes) and would be
+ * taken away from all of them by a global registration - that combo stays as the
+ * in-window shelf's key, where it only applies while the app has focus.
+ */
+function applyShelfHotkey(cfg: Config): void {
+  const accel = 'CommandOrControl+Alt+V'
+  globalShortcut.unregister(accel)
+  if (!(cfg.clipboardShelf && cfg.clipboardOverlay)) return
+  try {
+    globalShortcut.register(accel, () => toggleShelf())
+  } catch {
+    /* another app owns the combo - the pill in the corner still opens on hover */
+  }
 }
 
 ipcMain.on('shell:external', (_e, url: string) => {
