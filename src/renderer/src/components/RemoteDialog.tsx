@@ -1,0 +1,282 @@
+import { useEffect, useState } from 'react'
+import type { RemoteFound, RemoteState } from '@shared/types'
+import { Switch } from './Controls'
+
+const api = window.api
+
+interface Props {
+  state: RemoteState | null
+  onState: (s: RemoteState) => void
+  onClose: () => void
+  flash: (message: string) => void
+}
+
+/**
+ * Two machines, one desk.
+ *
+ * The shape of this is deliberately not "server and client". Both devices do both:
+ * each one can answer for its own panes and mirror the other's, so there is no
+ * setting that decides which machine you have to be sitting at. Leave the desktop
+ * mid-run, open the laptop, and the desktop's panes are already in the window -
+ * still running on the desktop, because that is where the checkout and the pty are.
+ *
+ * Pairing is one code typed once. It is not a password to a service: it is the key
+ * the link is encrypted with, which is why regenerating it cuts every paired device
+ * off rather than just changing what to type next time.
+ */
+export default function RemoteDialog({ state, onState, onClose, flash }: Props): JSX.Element {
+  const [address, setAddress] = useState('')
+  const [port, setPort] = useState('7311')
+  const [code, setCode] = useState('')
+  const [pairing, setPairing] = useState(false)
+  const [error, setError] = useState('')
+  const [name, setName] = useState(state?.self.name ?? '')
+  const [showCode, setShowCode] = useState(false)
+
+  // Ask the network who is there while this is open. A device that was asleep when
+  // the dialog opened should appear in it, not on the next launch.
+  useEffect(() => {
+    void api.scanRemote().then(onState)
+    const t = window.setInterval(() => void api.scanRemote().then(onState), 4000)
+    return () => window.clearInterval(t)
+  }, [onState])
+
+  useEffect(() => {
+    if (state && !pairing) setName((n) => (n === '' ? state.self.name : n))
+  }, [state, pairing])
+
+  if (!state) {
+    return (
+      <div className="overlay" onMouseDown={onClose}>
+        <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="dialog-head">
+            <strong>Devices</strong>
+          </div>
+          <p className="hint">Starting up...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const self = state.self
+
+  const pair = async (input: { address: string; port: number; code: string; name?: string }): Promise<void> => {
+    if (pairing) return
+    setPairing(true)
+    setError('')
+    try {
+      const res = await api.pairRemote(input)
+      onState(res.state)
+      if (!res.ok) {
+        setError(res.error ?? 'Could not pair with that device.')
+        return
+      }
+      setAddress('')
+      setCode('')
+      flash(`Paired with ${input.name || input.address}. Its panes are in your list.`)
+    } finally {
+      setPairing(false)
+    }
+  }
+
+  /** Pair with something the LAN broadcast already told us the address of. */
+  const pairFound = (f: RemoteFound): void => {
+    if (!code.trim()) {
+      setError(`Type ${f.name}'s pairing code below first - it is on that device, under Devices.`)
+      return
+    }
+    void pair({ address: f.address, port: f.port, code, name: f.name })
+  }
+
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <strong>Devices</strong>
+          <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
+        </div>
+
+        {/* ------------------------------------------------------------- this device */}
+        <div className="setting">
+          <div className="setting-row">
+            <label>This device</label>
+            <input
+              className="dev-name"
+              value={name}
+              maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => name.trim() && name !== self.name && void api.renameDevice(name).then(onState)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            />
+          </div>
+
+          <Switch
+            checked={self.hosting}
+            onChange={(on) => void api.setRemoteHost(on).then(onState)}
+            label="Let my other devices connect"
+            hint="They can watch and type into every pane open here. The agents keep running on this machine."
+          />
+
+          {self.error && <div className="dev-error">{self.error}</div>}
+
+          {self.hosting && (
+            <div className="dev-self">
+              <div className="dev-line">
+                <span className="dev-key">Pairing code</span>
+                <code className="dev-code">{showCode ? self.code : '••••-••••'}</code>
+                <button className="ghost small" onClick={() => setShowCode((v) => !v)}>
+                  {showCode ? 'Hide' : 'Show'}
+                </button>
+                <button
+                  className="ghost small"
+                  onClick={() => {
+                    api.copyText(self.code)
+                    flash('Pairing code copied.')
+                  }}
+                >
+                  Copy
+                </button>
+                <button
+                  className="ghost small"
+                  title="New code. Every device paired with the old one is disconnected and has to pair again."
+                  onClick={() => {
+                    void api.rotateRemoteCode().then(onState)
+                    flash('New pairing code. Paired devices have to be re-paired.')
+                  }}
+                >
+                  New code
+                </button>
+              </div>
+              <div className="dev-line">
+                <span className="dev-key">Address</span>
+                <code>{self.addresses.length ? self.addresses.join(', ') : 'no network'}</code>
+                <span className="dev-key">Port</span>
+                <input
+                  className="dev-port"
+                  value={String(self.port)}
+                  onChange={(e) => void api.setRemotePort(Number(e.target.value) || 0).then(onState)}
+                />
+              </div>
+              <p className="hint">
+                The other device only needs one of those addresses and the code, and usually not even
+                that - it finds this one on its own while both are on the same network.
+              </p>
+            </div>
+          )}
+
+          {state.guests.length > 0 && (
+            <div className="dev-guests">
+              {state.guests.map((g) => (
+                <div key={g.id + g.address} className="dev-guest">
+                  <span className="dot on" />
+                  <strong>{g.name}</strong>
+                  <span className="hint">
+                    {g.address} · watching {g.watching} {g.watching === 1 ? 'pane' : 'panes'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ----------------------------------------------------------- other devices */}
+        <div className="setting">
+          <label>Paired devices</label>
+          {state.peers.length === 0 && (
+            <p className="hint">
+              None yet. Turn the switch above on over there, then pair with it below.
+            </p>
+          )}
+          <div className="dev-list">
+            {state.peers.map((p) => (
+              <div key={p.id} className={'dev-row ' + p.status}>
+                <span className={'dot ' + p.status} />
+                <div className="dev-text">
+                  <div className="dev-title">
+                    {p.name}
+                    {p.status === 'online' && (
+                      <span className="chip">
+                        {p.sessions} {p.sessions === 1 ? 'pane' : 'panes'}
+                      </span>
+                    )}
+                    {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
+                  </div>
+                  <div className="dev-sub">
+                    {p.address}:{p.port}
+                    {p.error ? ' · ' + p.error : ''}
+                  </div>
+                </div>
+                <button
+                  className="ghost small"
+                  onClick={() => void api.connectRemote(p.id, p.status === 'off' || p.status === 'error').then(onState)}
+                >
+                  {p.status === 'off' || p.status === 'error' ? 'Connect' : 'Disconnect'}
+                </button>
+                <button
+                  className="x"
+                  title="Forget this device"
+                  onClick={() => void api.forgetRemote(p.id).then(onState)}
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* --------------------------------------------------------------- pair a new */}
+        <div className="setting">
+          <div className="setting-row">
+            <label>Pair another device</label>
+            <span className="hint">its code is on that machine, under Devices</span>
+          </div>
+
+          {state.found.length > 0 && (
+            <div className="dev-found">
+              {state.found.map((f) => (
+                <button key={f.id} className="ghost small dev-chip" disabled={pairing} onClick={() => pairFound(f)}>
+                  <span className="dot idle" />
+                  {f.name}
+                  <span className="hint">{f.address}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="dev-add">
+            <input
+              placeholder="Pairing code"
+              className="dev-code-in"
+              value={code}
+              autoFocus
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+            />
+            <input
+              placeholder="Address (only if it is not listed above)"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+            <input className="dev-port" value={port} onChange={(e) => setPort(e.target.value)} />
+            <button
+              className="primary"
+              disabled={pairing || !code.trim() || !address.trim()}
+              onClick={() => void pair({ address, port: Number(port) || 7311, code })}
+            >
+              {pairing ? 'Pairing...' : 'Pair'}
+            </button>
+          </div>
+          {error && <div className="dev-error">{error}</div>}
+        </div>
+
+        <div className="dialog-row">
+          <span className="hint">
+            Panes stay on the machine they were opened on. This window drives them; it does not move them.
+          </span>
+          <button className="ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

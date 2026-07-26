@@ -41,6 +41,7 @@ const KEYS: [string, string][] = [
   ['Ctrl Shift S', 'Swarm: one mission, one pane per role'],
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],
+  ['Ctrl Shift D', 'Devices: another machine’s panes, in this window'],
   ['Ctrl Shift Space', 'Push to talk: dictate into the focused pane'],
   ['Ctrl ,', 'Settings'],
   ['F12', 'Developer tools'],

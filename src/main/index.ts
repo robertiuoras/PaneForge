@@ -19,6 +19,7 @@ import {
 import { SessionManager } from './sessions'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
+import { Remote } from './remote'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
@@ -83,6 +84,7 @@ import { installCommand } from '../shared/agents'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
+  RemoteState,
   RestoreAnswer,
   RestoreOffer,
   RestorePane,
@@ -308,14 +310,16 @@ function focusWindow(): void {
 manager.on('data', (id: string, data: string) => {
   send('pty:data', id, data)
 })
-manager.on('sessions', (sessions: Session[]) => {
-  send('sessions:changed', sessions)
+manager.on('sessions', () => {
+  send('sessions:changed', allSessions())
   // Every pane start, exit, rename and agent switch arrives here, which is the
   // whole of "the desk changed". Debounced inside: a swarm launch is six of these
   // in a second and they are worth one write.
   noteDesk()
 })
-manager.on('attention', (s: Session) => {
+manager.on('attention', (s: Session) => raiseAttention(s))
+
+function raiseAttention(s: Session): void {
   // The chime is the renderer's job (Web Audio gives a far nicer sound than the
   // Windows toast ding) and it plays whether or not the app has focus: the point
   // is to tell you a turn ended while you were reading something else on screen.
@@ -326,7 +330,10 @@ manager.on('attention', (s: Session) => {
   win!.flashFrame(true)
   if (Notification.isSupported()) {
     new Notification({
-      title: `${s.title} is waiting`,
+      // A pane finishing on the other machine is the whole point of the feature, so
+      // it gets told the same way - with the device named, because "which machine"
+      // is the one thing you cannot tell from the pane title.
+      title: s.remote ? `${s.title} is waiting on ${s.remote.name}` : `${s.title} is waiting`,
       body: `${s.agent} finished or needs input.`,
       // Our own chime already played; the system ding on top of it is noise.
       silent: true
@@ -334,11 +341,64 @@ manager.on('attention', (s: Session) => {
       .on('click', focusWindow)
       .show()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Other devices
+//
+// A paired device's panes are mirrored into this window and behave like local ones.
+// The seam is the session id: anything namespaced `@device/id` is forwarded over the
+// link instead of being handed to the pty manager, so every path above this line -
+// the sidebar, the palette, the shortcuts, the grid - stays unaware there are two
+// machines involved.
+
+const remote = new Remote({
+  list: () => manager.list(),
+  buffer: (id) => manager.buffer(id),
+  write: (id, data) => manager.write(id, data),
+  resize: (id, cols, rows) => manager.resize(id, cols, rows),
+  redraw: (id) => manager.redraw(id),
+  setBusy: (id, busy, tail) => manager.setBusyOnScreen(id, busy, tail),
+  clearAttention: (id) => manager.clearAttention(id),
+  kill: (id) => manager.kill(id),
+  restart: (id) => manager.restart(id),
+  rename: (id, title) => manager.rename(id, title),
+  switchAgent: (id, agent, model) => manager.switchAgent(id, agent, model),
+  // A guest's launch goes through the same lane split a local one does: two agents
+  // in one repo must not share a checkout just because one of them is remote.
+  startSession: (req) => manager.start(laneFor(req)),
+  projects: () => Promise.resolve(listProjects()),
+  agents: () => Promise.resolve(listAgents()),
+  onData: (cb) => {
+    manager.on('data', cb)
+    return () => manager.off('data', cb)
+  },
+  onSessions: (cb) => {
+    manager.on('sessions', cb)
+    return () => manager.off('sessions', cb)
+  },
+  onAttention: (cb) => {
+    manager.on('attention', cb)
+    return () => manager.off('attention', cb)
+  }
 })
+
+/** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
+function allSessions(): Session[] {
+  return [...manager.list(), ...remote.sessions()]
+}
+
+remote.on('data', (id: string, data: string) => send('pty:data', id, data))
+// The link came back and the whole scrollback arrived again: the pane has to start
+// from scratch rather than append a second copy of what it was already showing.
+remote.on('reset', (id: string) => send('pane:reset', id))
+remote.on('sessions', () => send('sessions:changed', allSessions()))
+remote.on('attention', (s: Session) => raiseAttention(s))
+remote.on('changed', (state: RemoteState) => send('remote:changed', state))
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
-ipcMain.handle('sessions:list', () => manager.list())
+ipcMain.handle('sessions:list', () => allSessions())
 /**
  * Move a second session in the same folder into its own git worktree, so two
  * agents in one project cannot overwrite each other's edits or race the index.
@@ -391,23 +451,61 @@ ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
   }
   return out
 })
-ipcMain.handle('sessions:restart', (_e, id: string) => manager.restart(id))
-ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) =>
-  manager.switchAgent(id, agent, model)
+ipcMain.handle('sessions:restart', (_e, id: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'restart' }), null
+  return manager.restart(id)
+})
+ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'switch', agent, model }), null
+  return manager.switchAgent(id, agent, model)
+})
+ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
+  remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
-ipcMain.handle('sessions:rename', (_e, id: string, title: string) => manager.rename(id, title))
-ipcMain.handle('sessions:kill', (_e, id: string) => manager.kill(id))
-ipcMain.handle('sessions:buffer', (_e, id: string) => manager.buffer(id))
-ipcMain.on('sessions:attention-clear', (_e, id: string) => manager.clearAttention(id))
-ipcMain.on('pty:write', (_e, id: string, data: string) => manager.write(id, data))
-ipcMain.on('pty:broadcast', (_e, text: string) => manager.broadcast(text))
-ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
-  manager.resize(id, cols, rows)
+ipcMain.handle('sessions:kill', (_e, id: string) =>
+  remote.owns(id) ? remote.send(id, { t: 'kill' }) : manager.kill(id)
 )
-ipcMain.on('pty:redraw', (_e, id: string) => manager.redraw(id))
-ipcMain.on('sessions:busy', (_e, id: string, busy: boolean, tail?: string) =>
-  manager.setBusyOnScreen(id, busy, tail)
+ipcMain.handle('sessions:buffer', (_e, id: string) =>
+  remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
+ipcMain.on('sessions:attention-clear', (_e, id: string) =>
+  remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
+)
+ipcMain.on('pty:write', (_e, id: string, data: string) =>
+  remote.owns(id) ? remote.send(id, { t: 'write', data }) : manager.write(id, data)
+)
+ipcMain.on('pty:broadcast', (_e, text: string) => {
+  manager.broadcast(text)
+  // "Send this to everything" means everything on the desk, and half the desk can be
+  // on the other machine. A pane that has already exited is skipped there as here.
+  for (const s of remote.sessions()) {
+    if (s.status !== 'exited') remote.send(s.id, { t: 'write', data: text + '\r' })
+  }
+})
+/**
+ * A mirrored pane is never resized from here.
+ *
+ * Two windows on two machines cannot both own one pty's size: whichever resized last
+ * would win, the other would refit, and the two would trade SIGWINCHes at each other
+ * for as long as both were open - with a full-screen CLI redrawing its entire frame
+ * every round. The device the agent runs on owns the size; the mirror is drawn at the
+ * host's own cols/rows and scaled to fit whatever window is watching it.
+ */
+ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => {
+  if (!remote.owns(id)) manager.resize(id, cols, rows)
+})
+ipcMain.on('pty:redraw', (_e, id: string) =>
+  remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)
+)
+/**
+ * Same reasoning: "is the agent still running" is read off the rendered frame, and the
+ * device the agent runs on is already reading it in its own window. A second opinion
+ * arriving from a mirror that is a few frames behind could only ever contradict the
+ * first one, and a false "finished" is the chime going off mid-turn.
+ */
+ipcMain.on('sessions:busy', (_e, id: string, busy: boolean, tail?: string) => {
+  if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail)
+})
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 
@@ -468,6 +566,45 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
 ipcMain.handle('lanes:board', () => laneBoard())
+
+// Other devices. Every one of these answers with the whole state, so the dialog never
+// has to guess what a change did - it just redraws what it is handed.
+ipcMain.handle('remote:state', () => remote.state())
+ipcMain.handle('remote:host', (_e, on: boolean) => {
+  remote.setHosting(!!on)
+  return remote.state()
+})
+ipcMain.handle('remote:port', (_e, port: number) => {
+  remote.setPort(Number(port))
+  return remote.state()
+})
+ipcMain.handle('remote:rotate', () => {
+  remote.rotateCode()
+  return remote.state()
+})
+ipcMain.handle('remote:rename', (_e, name: string) => {
+  remote.rename(String(name ?? ''))
+  return remote.state()
+})
+ipcMain.handle(
+  'remote:pair',
+  async (_e, input: { address: string; port: number; code: string; name?: string }) => {
+    const error = await remote.pair(input)
+    return { ok: !error, error: error || undefined, state: remote.state() }
+  }
+)
+ipcMain.handle('remote:forget', (_e, id: string) => {
+  remote.forget(String(id))
+  return remote.state()
+})
+ipcMain.handle('remote:connect', (_e, id: string, on: boolean) => {
+  remote.setConnected(String(id), !!on)
+  return remote.state()
+})
+ipcMain.handle('remote:scan', () => {
+  remote.scan()
+  return remote.state()
+})
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 ipcMain.on('clipboard:write', (_e, text: string) => {
@@ -1052,6 +1189,9 @@ app.whenReady().then(() => {
   applyVoiceHotkey(cfg)
   applyClipboardShelf(cfg)
   crashTestHook()
+  // After the window exists: a device that reconnects immediately would otherwise
+  // push its session list at a renderer that is not listening yet.
+  remote.start()
   initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
   offerRestore()
   openFromArgs(process.argv)
@@ -1066,6 +1206,9 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   // Before shutdown(), which is what kills the panes this is a record of.
   saveDeskOnExit(manager.snapshot())
+  // Guests get their sockets closed rather than left to time out, so the other
+  // device says "went away" straight away instead of a minute later.
+  remote.stop()
   manager.shutdown()
   hardExit()
 })
@@ -1098,6 +1241,7 @@ app.on('before-quit', () => {
   // OS asking everyone to leave before a restart. Same record, same order: the desk
   // is written while the panes are still alive to be read.
   saveDeskOnExit(manager.snapshot())
+  remote.stop()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

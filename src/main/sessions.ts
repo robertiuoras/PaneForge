@@ -181,7 +181,9 @@ export class SessionManager extends EventEmitter {
       engaged: Boolean(req.prompt),
       role: req.role,
       lane: req.lane,
-      laneNote: req.laneNote
+      laneNote: req.laneNote,
+      cols: 120,
+      rows: 30
     }
     const live: Live = {
       meta,
@@ -375,6 +377,14 @@ export class SessionManager extends EventEmitter {
     if (!s || s.meta.status === 'exited') return
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
+    // Carried on the session itself so a device mirroring this pane can draw it at the
+    // size it actually is. Only pushed when the numbers moved: a window drag is dozens
+    // of these a second and they mostly land on the same cell count.
+    if (s.meta.cols !== s.cols || s.meta.rows !== s.rows) {
+      s.meta.cols = s.cols
+      s.meta.rows = s.rows
+      this.emitSessions()
+    }
     // Showing a pane refits it and lands here; the CLI repaints in response.
     s.repaintUntil = Date.now() + REPAINT_GRACE_MS
     try {
