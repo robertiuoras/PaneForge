@@ -27,6 +27,7 @@ const api: Api = {
   renameSession: (id, title) => ipcRenderer.invoke('sessions:rename', id, title),
   killSession: (id) => ipcRenderer.invoke('sessions:kill', id),
   getBuffer: (id) => ipcRenderer.invoke('sessions:buffer', id),
+  reorderSessions: (ids) => ipcRenderer.send('sessions:reorder', ids),
   clearAttention: (id) => ipcRenderer.send('sessions:attention-clear', id),
   write: (id, data) => ipcRenderer.send('pty:write', id, data),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),

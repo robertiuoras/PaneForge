@@ -40,6 +40,10 @@ import { useVoice } from './useVoice'
 
 const api = window.api
 
+/** How long a card stays lit after its turn ends - long enough to look, short enough
+ *  that a room of finished panes is not a wall of glowing cards. */
+const DONE_GLOW_MS = 5200
+
 /** A pending question for the in-app confirm/prompt dialog. */
 interface AskState {
   title: string
@@ -51,7 +55,22 @@ interface AskState {
 }
 
 export default function App(): JSX.Element {
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [rawSessions, setSessions] = useState<Session[]>([])
+  // The order the sidebar was dragged into, by id. Main is told about it too (so the
+  // grid, the Ctrl-N keys and a restore after an update all agree), but the list is
+  // sorted here as well: a drop has to land the instant the mouse comes up, not one
+  // IPC round trip later, and a mirrored pane can be moved in this window even though
+  // the machine that owns it keeps its own order.
+  const [order, setOrder] = useState<string[]>([])
+  const sessions = useMemo(() => {
+    if (!order.length) return rawSessions
+    const rank = new Map(order.map((id, i) => [id, i]))
+    // Stable sort: a pane that started after the last drag has no rank and stays put
+    // at the end, in the order main gave it.
+    return [...rawSessions].sort(
+      (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+    )
+  }, [rawSessions, order])
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
@@ -155,18 +174,148 @@ export default function App(): JSX.Element {
   // are already watching.
   const activeIdRef = useRef<string | null>(null)
   activeIdRef.current = activeId
+  // Which cards are lit because their turn JUST ended. The chime says a turn is over
+  // but not whose, and with eight panes open the sidebar answers that far faster than
+  // reading them - so the card that made the sound glows for a few seconds. It is a
+  // fading flash, not the standing amber `attn` mark: that one stays until the pane is
+  // read, this one answers "which one was that" and gets out of the way.
+  const [justDone, setJustDone] = useState<string[]>([])
+  const doneTimers = useRef(new Map<string, number>())
   useEffect(
     () =>
       api.onAttention((s) => {
-        if (!soundOn.current) return
         // Silent only for the pane you are demonstrably watching right now. With the
         // window in the background there is no such pane, so the selected one is as
         // worth announcing as any other.
         const watching = s.id === activeIdRef.current && !document.hidden && document.hasFocus()
-        if (!watching) playChime()
+        if (soundOn.current && !watching) playChime()
+        if (watching) return
+        setJustDone((cur) => (cur.includes(s.id) ? cur : [...cur, s.id]))
+        window.clearTimeout(doneTimers.current.get(s.id))
+        doneTimers.current.set(
+          s.id,
+          window.setTimeout(() => {
+            doneTimers.current.delete(s.id)
+            setJustDone((cur) => cur.filter((x) => x !== s.id))
+          }, DONE_GLOW_MS)
+        )
       }),
     []
   )
+  // Looking at the pane answers the question the glow was asking, however you got
+  // there - the card, Ctrl-N or the palette.
+  useEffect(() => {
+    if (!activeId) return
+    setJustDone((cur) => (cur.includes(activeId) ? cur.filter((x) => x !== activeId) : cur))
+  }, [activeId])
+  useEffect(() => {
+    const timers = doneTimers.current
+    return () => {
+      for (const t of timers.values()) window.clearTimeout(t)
+      timers.clear()
+    }
+  }, [])
+
+  /**
+   * Drag a session card to move it up or down the list.
+   *
+   * Pointer events rather than HTML5 drag and drop: the row is also a click target, a
+   * double-click target and holds two buttons, and `draggable` steals all three. A press
+   * that never moves 5px is still a plain click, so nothing is taken away from a card
+   * that is only being selected.
+   *
+   * The list itself is reordered while the pointer moves - the card follows the cursor
+   * because it IS in the new place - and every row is keyed by session id, so React
+   * moves the existing DOM node instead of building a new one. That is what keeps the
+   * turn clock ticking through a drag: `Elapsed` counts from an absolute timestamp on a
+   * timer shared by the whole window, and neither of them is touched by a card changing
+   * position. The Ctrl-N badge is the row's index, so it renumbers itself on the way.
+   */
+  const listRef = useRef<HTMLDivElement>(null)
+  const idsRef = useRef<string[]>([])
+  idsRef.current = sessions.map((s) => s.id)
+  const [dragId, setDragId] = useState<string | null>(null)
+  // A drag ends on the same element a click would, so the mouseup that finishes it must
+  // not also select whatever card is now under the cursor.
+  const draggedRef = useRef(false)
+
+  const beginDrag = useCallback((e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return
+    // The close/restart buttons and the rename box own their own presses.
+    if ((e.target as HTMLElement).closest('button, input')) return
+    const startY = e.clientY
+    let dragging = false
+    let latest = idsRef.current
+    // Captured on the list, which never moves, rather than on the row, which does: a
+    // release outside the window has to end the drag too, or the list is left following
+    // a mouse button nobody is holding.
+    const capture = listRef.current
+    try {
+      capture?.setPointerCapture(e.pointerId)
+    } catch {
+      /* a pointer that has already been released - the listeners below still clean up */
+    }
+    const move = (ev: PointerEvent): void => {
+      if (!dragging) {
+        if (Math.abs(ev.clientY - startY) < 5) return
+        dragging = true
+        draggedRef.current = true
+        setDragId(id)
+        document.body.classList.add('dragging')
+      }
+      const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>('.row[data-id]') ?? [])
+      if (!rows.length) return
+      // The card the pointer is over, clamped to the ends so dragging past the top or
+      // the bottom of the list parks the card there instead of doing nothing.
+      const first = rows[0].getBoundingClientRect()
+      const last = rows[rows.length - 1].getBoundingClientRect()
+      let over: HTMLElement | undefined
+      if (ev.clientY <= first.top) over = rows[0]
+      else if (ev.clientY >= last.bottom) over = rows[rows.length - 1]
+      else
+        over = rows.find((r) => {
+          const box = r.getBoundingClientRect()
+          return ev.clientY >= box.top && ev.clientY <= box.bottom
+        })
+      // Positions come from the order being built, never from the row's place in the
+      // DOM: two moves can arrive in one frame (a fast drag, or coalesced pointer
+      // events) and the second would then be measured against a list React has not
+      // redrawn yet - which moved whichever card happened to be sitting in that slot
+      // instead of the one being dragged.
+      const targetId = over?.dataset.id
+      if (!targetId) return
+      const from = latest.indexOf(id)
+      const to = latest.indexOf(targetId)
+      if (from < 0 || to < 0 || to === from) return
+      const next = latest.slice()
+      next.splice(to, 0, next.splice(from, 1)[0])
+      latest = next
+      setOrder(next)
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      try {
+        if (capture?.hasPointerCapture(e.pointerId)) capture.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already gone */
+      }
+      if (!dragging) return
+      document.body.classList.remove('dragging')
+      setDragId(null)
+      // Main keeps the same order, so the grid, an update restart and the other
+      // machine's view of these panes all agree with what the sidebar shows.
+      api.reorderSessions(latest)
+      // The click that follows this pointerup is the end of the drag, not a selection.
+      window.setTimeout(() => {
+        draggedRef.current = false
+      }, 0)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }, [])
 
   const patchConfig = useCallback((patch: Partial<Config>) => {
     // Apply locally first so sliders and checkboxes feel instant; main echoes back.
@@ -899,12 +1048,23 @@ export default function App(): JSX.Element {
             </span>
           )}
         </div>
-        <div className="list">
+        <div className="list" ref={listRef}>
           {sessions.map((s, i) => (
             <div
               key={s.id}
-              className={'row' + (s.id === activeId ? ' active' : '') + (s.attention ? ' attn' : '')}
-              onClick={() => setActiveId(s.id)}
+              data-id={s.id}
+              className={
+                'row' +
+                (s.id === activeId ? ' active' : '') +
+                (s.attention ? ' attn' : '') +
+                (justDone.includes(s.id) ? ' just-done' : '') +
+                (dragId === s.id ? ' dragging' : '')
+              }
+              onPointerDown={(e) => beginDrag(e, s.id)}
+              onClick={() => {
+                if (draggedRef.current) return
+                setActiveId(s.id)
+              }}
               onDoubleClick={() => setRenaming(s.id)}
             >
               <StatusDot status={s.status} engaged={s.engaged} />

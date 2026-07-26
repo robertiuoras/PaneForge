@@ -77,6 +77,32 @@ again and the mark is dropped and the release waits for you, by name. Nothing to
 it except mark ready again - but it means a release never stalls silently on a chat that
 said done and kept typing (`scripts/release-gate-test.mjs` is that failure, pinned).
 
+## The folder is being renamed to PaneForge
+
+The product, the installer, the GitHub remote and every string a user reads say
+PaneForge; only the checkouts on disk are still `claude-orchestrator`, `-a`, `-b`, `-c`.
+Renaming them is not four `mv`s: each worktree's `.git` file and the repo's own worktree
+list carry absolute paths, and Windows refuses to rename a directory any process is
+sitting in - which, on a normal working day, is all four of them.
+
+`scripts/rename-repo.mjs` does the whole thing when it can: `git worktree move` for each
+lane, then the main checkout, then `worktree repair`, then the lane state's stored paths.
+It refuses while a lane is held by a chat seen in the last 45 minutes, while a lane is
+mid-merge, or while any of the folders is in use - which it tests by attempting the
+rename and putting it straight back, the only honest answer Windows gives.
+`scripts/rename-repo-test.mjs` (`npm run test:rename`) proves it on a throwaway repo,
+including that the worktrees still answer git from their new paths.
+
+A scheduled task (`PaneForgeRename`, every 30 minutes, PC) runs it and deletes itself
+once there is nothing left to do, so the rename lands the first time the machine is
+quiet. Both names are accepted everywhere until then: `laneBoard.ts`, the lane hook in
+claude-memory, and `try.mjs`'s profile naming.
+
+`package.json`'s `name` stays `claude-orchestrator` on purpose - Electron builds
+`%APPDATA%\<name>` from it, so changing it moves the installed app's config, workspaces
+and single-instance lock. That is a migration, not a rename, and it buys nothing anyone
+can see.
+
 ## Never take the screen
 
 The app hosts the chat and runs all day beside real work, so nothing it does on its own

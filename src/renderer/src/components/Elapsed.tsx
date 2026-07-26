@@ -67,9 +67,14 @@ interface Props {
 
 export default function Elapsed({ since, until, className = 'elapsed', title }: Props): JSX.Element {
   const now = useNow()
+  const text = formatElapsed((until ?? now) - since)
   return (
-    <span className={className} title={title ?? 'Time since this session started'}>
-      {formatElapsed((until ?? now) - since)}
+    // `data-t` is the same digits again, for the shimmer: the highlight that travels
+    // through a running clock is a second copy of the text drawn in a moving gradient
+    // and clipped to the glyphs (styles.css, `.elapsed::before`). A pseudo-element can
+    // only take its content from an attribute, hence the duplicate.
+    <span className={className} data-t={text} title={title ?? 'Time since this session started'}>
+      {text}
     </span>
   )
 }
