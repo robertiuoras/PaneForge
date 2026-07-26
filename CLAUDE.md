@@ -59,12 +59,18 @@ sitting in a conflicted merge: it is the one state no other chat is allowed to t
 `npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
 still exists for a release you want right now, but nothing should need it.
 
-Automatic releases batch: one every two hours at most (`COOLDOWN_MS` in `scripts/lane.mjs`).
-Inside that window `ready` says so and leaves the work on master, where the next `ready`
-or session end takes it out. Do not "fix" that by running `npm run ship` - a version per
-finished chunk is what produced fifteen releases in one day, and each one is an update
-prompt on a machine somebody is using. Reach for `ship` only when a specific build has to
-be in Robert's hands now, and say why.
+Automatic releases batch: one every thirty minutes at most (`COOLDOWN_MS` in
+`scripts/lane.mjs`). Inside that window `ready` says so and leaves the work on master,
+where the next `ready` or session end takes it out. Do not "fix" that by running
+`npm run ship` - a version per finished chunk is what produced fifteen releases in one
+day. It used to cost two hours of batching because each release interrupted with a prompt;
+updates now install on exit, so releases are cheap to ignore and the wait is short. Reach
+for `ship` only when a specific build has to be in Robert's hands now, and say why.
+
+A lane is only ready while it still looks the way it did when it said so: edit or commit
+again and the mark is dropped and the release waits for you, by name. Nothing to do about
+it except mark ready again - but it means a release never stalls silently on a chat that
+said done and kept typing (`scripts/release-gate-test.mjs` is that failure, pinned).
 
 ## Never take the screen
 

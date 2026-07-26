@@ -1,6 +1,17 @@
+// Every key the app answers to, and the way back to this list is the first thing on it:
+// a shortcut sheet you can only find by already knowing its shortcut is furniture.
+
+import { useMemo, useState } from 'react'
+
 interface Props {
   onClose: () => void
 }
+
+/** The one that opens this list. Kept out of KEYS so it can lead, highlighted. */
+const HELP_KEY: [string, string] = [
+  'F1  or  Ctrl /',
+  'This list, from anywhere - also the ? button next to the gear'
+]
 
 const KEYS: [string, string][] = [
   ['Ctrl K', 'Command palette: jump to a session, start a project, run any action'],
@@ -18,6 +29,7 @@ const KEYS: [string, string][] = [
   ['Ctrl Shift C', 'Always copy, never interrupt'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
   ['Ctrl Shift V', 'Recently copied: click text or a screenshot into the focused pane'],
+  ['Drag the shelf title', 'Move the recently-copied shelf anywhere; double-click it to put it back'],
   ['Right-click', 'Copy the selection, or paste when nothing is selected'],
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
   ['Ctrl B', 'Focus the broadcast box (one line to every session)'],
@@ -26,12 +38,19 @@ const KEYS: [string, string][] = [
   ['Ctrl H', 'Search every past session'],
   ['Ctrl Shift Space', 'Push to talk: dictate into the focused pane'],
   ['Ctrl ,', 'Settings'],
-  ['F1', 'This list'],
   ['F12', 'Developer tools'],
   ['Double-click a title', 'Rename that session']
 ]
 
 export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
+  const [q, setQ] = useState('')
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    if (!needle) return KEYS
+    return KEYS.filter(([k, what]) => (k + ' ' + what).toLowerCase().includes(needle))
+  }, [q])
+
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
@@ -39,13 +58,25 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
           <strong>Keyboard</strong>
           <span className="hint">Esc closes</span>
         </div>
+        <div className="key-row lead">
+          <span className="kbd-box">{HELP_KEY[0]}</span>
+          <span>{HELP_KEY[1]}</span>
+        </div>
+        <input
+          className="key-filter"
+          autoFocus
+          placeholder="Filter - type what you want to do"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
         <div className="keys">
-          {KEYS.map(([k, what]) => (
+          {rows.map(([k, what]) => (
             <div className="key-row" key={k}>
               <span className="kbd-box">{k}</span>
               <span>{what}</span>
             </div>
           ))}
+          {!rows.length && <div className="hint">Nothing matches "{q}".</div>}
         </div>
         <div className="dialog-row">
           <button className="primary" onClick={onClose}>

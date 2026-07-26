@@ -44,6 +44,7 @@ const api: Api = {
   copyText: (text) => ipcRenderer.send('clipboard:write', text),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   gitInfo: (path) => ipcRenderer.invoke('git:info', path),
+  laneBoard: () => ipcRenderer.invoke('lanes:board'),
   // File.path was removed from Electron's File objects; webUtils is the only way
   // a dropped file's real path reaches the renderer.
   pathForFile: (file: File) => {

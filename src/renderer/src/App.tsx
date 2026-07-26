@@ -26,6 +26,7 @@ import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
+import LaneStrip from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
@@ -419,6 +420,15 @@ export default function App(): JSX.Element {
         setHelp((h) => !h)
         return
       }
+      // Ctrl+/ (and Ctrl+? on the same physical key) is where everything else puts help,
+      // and it is the one people try before F1. A bare "?" cannot have it: that character
+      // is typed into agents all day.
+      if (e.ctrlKey && !e.altKey && (e.key === '/' || e.key === '?')) {
+        e.preventDefault()
+        e.stopPropagation()
+        setHelp((h) => !h)
+        return
+      }
       if (!e.ctrlKey || e.altKey) return
       const k = e.key.toLowerCase()
 
@@ -605,7 +615,14 @@ export default function App(): JSX.Element {
         run: () => setHistory(true)
       },
       { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
-      { id: 'keys', group: 'Actions', title: 'Keyboard shortcuts', keys: 'F1', run: () => setHelp(true) }
+      {
+        id: 'keys',
+        group: 'Actions',
+        title: 'Keyboard shortcuts',
+        hint: 'every key the app answers to',
+        keys: 'F1',
+        run: () => setHelp(true)
+      }
     )
 
     if (active)
@@ -729,7 +746,11 @@ export default function App(): JSX.Element {
             <button className="icon" title="Settings (Ctrl ,)" onClick={() => setSettings(true)}>
               ⚙
             </button>
-            <button className="icon" title="Keyboard (F1)" onClick={() => setHelp(true)}>
+            <button
+              className="icon help"
+              title="Every shortcut and what it does (F1 or Ctrl /)"
+              onClick={() => setHelp(true)}
+            >
               ?
             </button>
           </span>
@@ -792,6 +813,10 @@ export default function App(): JSX.Element {
           </>
         )}
 
+        {/* PaneForge's own lanes, on a machine that develops PaneForge. A lane whose
+            work will not merge used to be invisible until someone read a hook message. */}
+        <LaneStrip sessions={sessions} onFocus={setActiveId} />
+
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           Sessions ({sessions.length})
@@ -833,7 +858,17 @@ export default function App(): JSX.Element {
                   />
                 ) : (
                   <div className="row-title">
-                    {i < 9 && <span className="num">{i + 1}</span>}
+                    {/* The switch key, and the fastest place to read the pane's state:
+                        lit green while its agent is running, amber when a turn finished
+                        while you were looking somewhere else. */}
+                    {i < 9 && (
+                      <span
+                        className={'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')}
+                        title={`Ctrl ${i + 1}`}
+                      >
+                        {i + 1}
+                      </span>
+                    )}
                     {s.title}
                   </div>
                 )}
@@ -1028,7 +1063,7 @@ export default function App(): JSX.Element {
                   </button>
                 ))}
             </div>
-            <p className="hint">Ctrl K to search everything. F1 for every shortcut.</p>
+            <p className="hint">Ctrl K to search everything. F1 or Ctrl / for every shortcut.</p>
           </div>
         )}
       </main>

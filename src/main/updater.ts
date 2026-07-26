@@ -132,8 +132,12 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     // signature, and this app ships unsigned. So on a Mac the app finds the new
     // version and hands you the release page instead of pretending it can self-update.
     u.autoDownload = process.platform !== 'darwin'
-    // Installing on quit would swap the app out from under running agent panes.
-    u.autoInstallOnAppQuit = false
+    // A downloaded update installs itself when the app exits. The panes are already
+    // gone by then, so nothing is swapped out from under a running agent - and a fix
+    // reaches you at your next start without a prompt interrupting a session. The
+    // prompt still exists for updating right now; this is only the fallback for
+    // ignoring it. On a Mac the install is refused anyway (see autoDownload above).
+    u.autoInstallOnAppQuit = true
     u.logger = {
       info: (m: unknown) => log('info', m),
       warn: (m: unknown) => log('warn', m),

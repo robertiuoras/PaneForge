@@ -34,7 +34,7 @@ export default function UpdateToast(): JSX.Element | null {
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
           {ready
-            ? `You are on ${state.current}. It installs silently and reopens your panes where they were.`
+            ? `You are on ${state.current}. It installs silently and reopens your panes where they were - or on Later, the next time you quit.`
             : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
         {state.notes && <pre className="ut-notes">{state.notes}</pre>}

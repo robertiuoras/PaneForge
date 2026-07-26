@@ -45,10 +45,18 @@ const ASK_PROMPT =
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
+ *
+ * Returns whether the terminal actually changed shape. "Nothing moved" is the answer that
+ * matters: a pane coming back from `display: none` measures to the same cols/rows it had,
+ * and telling the pty a size it already has - then asking the agent to redraw for it - is
+ * what made every click between sessions flash a whole repainted frame a moment later.
  */
-function refit(t: Terminal, f: FitAddon, pinned: boolean): void {
+function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
+  const cols = t.cols
+  const rows = t.rows
   f.fit()
   if (pinned) t.scrollToBottom()
+  return t.cols !== cols || t.rows !== rows
 }
 
 /**
@@ -626,14 +634,21 @@ export default function TerminalPane({
     let settle: number | undefined
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
+      let changed = false
       try {
-        refit(t, f, pinned.current)
-        api.resize(sessionId, t.cols, t.rows)
+        changed = refit(t, f, pinned.current)
+        if (changed) api.resize(sessionId, t.cols, t.rows)
         // The rail is measured against the scrollbar, so it has to be re-measured with it.
+        // Unconditional: a pane coming back on screen has the same rows but not necessarily
+        // the same track geometry, and measuring costs nothing.
         syncTotal()
       } catch {
         /* element detached mid-measure */
       }
+      // Showing a pane again fires this observer (0x0 while hidden, real size once shown)
+      // at a size the terminal already has. That is not a resize and must not queue a
+      // repaint - the repaint is the flash the user sees on every session switch.
+      if (!changed) return
       // A resize is where panes get garbled: the agent redraws against a size it half
       // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
       // whole frame again. Held off for the first seconds so a CLI still painting its
@@ -706,8 +721,11 @@ export default function TerminalPane({
     const id = requestAnimationFrame(() => {
       try {
         if (term.current && fit.current) {
-          refit(term.current, fit.current, pinned.current)
-          api.resize(sessionId, term.current.cols, term.current.rows)
+          // Same rule as the observer: only a pane that really changed shape while it was
+          // away gets to disturb the pty. Coming back unchanged must be silent.
+          if (refit(term.current, fit.current, pinned.current)) {
+            api.resize(sessionId, term.current.cols, term.current.rows)
+          }
           // The buffer kept growing while this pane was hidden, so the rail is stale.
           syncTotal()
         }

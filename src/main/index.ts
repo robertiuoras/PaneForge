@@ -19,6 +19,7 @@ import { getConfig, setConfig } from './config'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { resolveLane } from './lanes'
+import { laneBoard } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
@@ -409,6 +410,7 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 })
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
+ipcMain.handle('lanes:board', () => laneBoard())
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 ipcMain.on('clipboard:write', (_e, text: string) => {

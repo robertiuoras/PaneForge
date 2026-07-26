@@ -109,6 +109,42 @@ export interface GitInfo {
   detached: boolean
 }
 
+/**
+ * One PaneForge development lane (scripts/lane.mjs), as shown in the sidebar strip.
+ * Only present on a machine that has a PaneForge checkout - see main/laneBoard.ts.
+ */
+export interface LaneBoardEntry {
+  /** "main", "a", "b", ... */
+  lane: string
+  dir: string
+  branch: string
+  /** folder the chat holding this lane started in, when it said */
+  from: string | null
+  /** a live chat holds it right now */
+  held: boolean
+  /** epoch ms the holding chat was last seen doing something */
+  seen: number
+  /** marked shippable, waiting for the batched release */
+  ready: boolean
+  /** finished work that will not merge into master: left out of every release until fixed */
+  conflicted: boolean
+  conflictSince?: number
+  /** the files that disagree, as lane.mjs recorded them */
+  conflictDetail?: string
+  /** the conflict's own chat has gone quiet, so any chat may take it over */
+  adoptable: boolean
+  /** chat that took the conflict over, when one has */
+  resolver: string | null
+}
+
+export interface LaneBoard {
+  repo: string
+  lanes: LaneBoardEntry[]
+  /** epoch ms a release started, when one is running */
+  releasing: number | null
+  lastShip: { version: string; at: number; lanes: string[] } | null
+}
+
 export interface WindowBounds {
   x?: number
   y?: number
@@ -443,6 +479,8 @@ export interface Api {
   readClipboard(): Promise<string>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
+  /** PaneForge's own dev lanes, or null on a machine without a PaneForge checkout */
+  laneBoard(): Promise<LaneBoard | null>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
