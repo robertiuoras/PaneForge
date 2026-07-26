@@ -20,6 +20,7 @@
     "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs",
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
+    "test:remote": "node scripts/remote-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "postinstall": "electron-builder install-app-deps",
     "package": "electron-vite build && electron-builder --win --dir",

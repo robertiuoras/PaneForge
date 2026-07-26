@@ -3,10 +3,14 @@
 // folder - no database, and it stays hand-editable if something goes wrong.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
+import { homedir, hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { Config, SwarmRole } from '../shared/types'
+import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
+// wire.ts is pure crypto with no config import of its own, so the code generator can
+// live where the protocol does without the two files importing each other.
+import { newCode } from './remote/wire'
 
 let cache: Config | null = null
 
@@ -97,6 +101,34 @@ export function defaultRoot(): string {
   return join(home, process.platform === 'darwin' ? 'Projects' : join('Desktop', 'Projects'))
 }
 
+/** The port this device listens on for its other devices, when hosting is on. */
+export const DEFAULT_REMOTE_PORT = 7311
+
+/**
+ * Remote defaults for a config written before the feature existed.
+ *
+ * The id and the code are generated once and then persisted for the life of the
+ * install: an id that changed per launch would make every pairing on the other
+ * device point at a machine that no longer exists, and a new code would lock it out.
+ * Hosting itself starts off - an open port is something you turn on deliberately.
+ */
+export function defaultRemote(): RemoteConfig {
+  return {
+    host: false,
+    port: DEFAULT_REMOTE_PORT,
+    code: newCode(),
+    name: deviceName(),
+    id: randomBytes(8).toString('hex'),
+    discoverable: true,
+    peers: []
+  }
+}
+
+function deviceName(): string {
+  const raw = hostname().replace(/\.local$/i, '').trim()
+  return (raw || (process.platform === 'darwin' ? 'Mac' : 'PC')).slice(0, 40)
+}
+
 function defaults(): Config {
   return {
     root: defaultRoot(),
@@ -130,6 +162,7 @@ function defaults(): Config {
     autoLane: true,
     voice: { enabled: true, model: 'base', language: 'auto' },
     swarmRoles: DEFAULT_ROLES,
+    remote: defaultRemote(),
     window: { width: 1500, height: 940, maximized: false }
   }
 }
@@ -146,6 +179,9 @@ export function getConfig(): Config {
       ...raw,
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
+      // Merged rather than replaced so an upgrade keeps this device's identity and
+      // its pairings while gaining any key added since the file was written.
+      remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },
       // An empty roles array in an old config would leave the swarm dialog blank.
       swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles,
       defaultModels: migrateModels(raw.defaultModels)

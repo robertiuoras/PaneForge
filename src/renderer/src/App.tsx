@@ -6,6 +6,7 @@ import type {
   Preset,
   Project,
   RecentItem,
+  RemoteState,
   RestoreOffer,
   Session,
   StartSessionRequest,
@@ -20,6 +21,8 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
+import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon } from './components/Icons'
+import RemoteDialog from './components/RemoteDialog'
 import TerminalPane, { paneInsert, paneRepair } from './components/TerminalPane'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
@@ -62,6 +65,10 @@ export default function App(): JSX.Element {
   const [swarm, setSwarm] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  const [devices, setDevices] = useState(false)
+  // Null until the main process has answered once. The dialog draws a placeholder
+  // rather than an empty machine, which reads as "you have no devices".
+  const [remote, setRemote] = useState<RemoteState | null>(null)
   // The panes the last run left behind, when the launch decided to ask about them.
   const [restore, setRestore] = useState<RestoreOffer | null>(null)
   // One in-app dialog stands in for window.confirm and window.prompt. Both of those
@@ -87,11 +94,16 @@ export default function App(): JSX.Element {
     // Pulled, not pushed: main decides what to do with the last run's panes while
     // this window is still loading, so it holds the question until we ask for it.
     api.pendingRestore().then(setRestore)
+    api.remoteState().then(setRemote)
     const offS = api.onSessions(setSessions)
     const offC = api.onConfig(setConfigState)
+    // Pushed rather than polled: a device coming or going, a guest attaching, a
+    // reconnect finishing - all of them change what the sidebar says.
+    const offR = api.onRemote(setRemote)
     return () => {
       offS()
       offC()
+      offR()
     }
   }, [])
 
@@ -440,6 +452,7 @@ export default function App(): JSX.Element {
         setSwarm(false)
         setBoard(null)
         setHistory(false)
+        setDevices(false)
         setRenaming(null)
         return
       }
@@ -484,6 +497,9 @@ export default function App(): JSX.Element {
         // list drawn inside the window.
         if (shelfInWindow) setShelfPinned((p) => !p)
         else api.toggleStash()
+      } else if (k === 'd' && e.shiftKey) {
+        e.preventDefault()
+        setDevices(true)
       } else if (k === 'h' && !typing) {
         e.preventDefault()
         setHistory(true)
@@ -636,6 +652,14 @@ export default function App(): JSX.Element {
         keys: 'Ctrl H',
         run: () => setHistory(true)
       },
+      {
+        id: 'devices',
+        group: 'Actions',
+        title: 'Devices: pick up work on another machine',
+        hint: 'its panes appear here, still running over there',
+        keys: 'Ctrl Shift D',
+        run: () => setDevices(true)
+      },
       { id: 'settings', group: 'Actions', title: 'Settings', keys: 'Ctrl ,', run: () => setSettings(true) },
       {
         id: 'keys',
@@ -742,6 +766,10 @@ export default function App(): JSX.Element {
   // Near-square layout, same rule the old .bat grid used, but for whatever N is open.
   const cols = grid ? Math.max(1, Math.ceil(Math.sqrt(sessions.length))) : 1
   const waiting = sessions.filter((s) => s.attention).length
+  // Devices in either direction: ones whose panes are in this list, and ones watching
+  // this machine's. Both are "a link is up", which is all the sidebar dot claims.
+  const remoteLive =
+    (remote?.peers.filter((p) => p.status === 'online').length ?? 0) + (remote?.guests.length ?? 0)
   // "Working" is now the agent's own on-screen state rather than "something was printed
   // in the last four seconds", so it stays honest through a long silent tool call and
   // does not claim a pane sitting at an empty prompt is busy.
@@ -780,23 +808,46 @@ export default function App(): JSX.Element {
           Search sessions and actions <span className="kbd">Ctrl K</span>
         </button>
 
+        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
+            fourth would not have fitted at all; a fixed-width row has room to grow and
+            reads faster once you know it. Every one keeps its full sentence on hover. */}
         <div className="quick">
-          <button className="ghost small" title="Several agents on one mission (Ctrl Shift S)" onClick={() => setSwarm(true)}>
-            Swarm
+          <button
+            className="ghost quick-btn"
+            title="Swarm: several agents on one mission (Ctrl Shift S)"
+            onClick={() => setSwarm(true)}
+          >
+            <SwarmIcon />
           </button>
           <button
-            className="ghost small"
-            title="Tasks and shared memory for the focused pane's folder (Ctrl Shift K)"
+            className="ghost quick-btn"
+            title="Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)"
             disabled={!activeId}
             onClick={() => {
               const s = sessions.find((x) => x.id === activeId)
               if (s) setBoard(s.cwd)
             }}
           >
-            Board
+            <BoardIcon />
           </button>
-          <button className="ghost small" title="Search past sessions (Ctrl H)" onClick={() => setHistory(true)}>
-            History
+          <button
+            className="ghost quick-btn"
+            title="History: search past sessions (Ctrl H)"
+            onClick={() => setHistory(true)}
+          >
+            <HistoryIcon />
+          </button>
+          <button
+            className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
+            title={
+              remoteLive
+                ? `Devices: ${remoteLive} connected (Ctrl Shift D)`
+                : 'Devices: work on another machine’s panes from here (Ctrl Shift D)'
+            }
+            onClick={() => setDevices(true)}
+          >
+            <RemoteIcon />
+            {remoteLive > 0 && <span className="quick-dot" />}
           </button>
         </div>
 
@@ -974,13 +1025,25 @@ export default function App(): JSX.Element {
               <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>
                 {s.title}
               </span>
+              {s.remote && (
+                <span
+                  className="chip remote"
+                  title={`Running on ${s.remote.name}. Keystrokes go there; the agent, the folder and the transcript stay there too.`}
+                >
+                  <LinkIcon size={11} />
+                  {s.remote.name}
+                </span>
+              )}
               {s.role && <span className="chip role">{s.role}</span>}
               {s.lane && (
                 <span className="chip lane" title="Own git worktree, so this pane cannot clash with the other session in this project">
                   lane {s.lane}
                 </span>
               )}
-              <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />
+              {/* A mirrored folder is on the other machine, so there is no repo here
+                  to read a branch off - the badge would either be blank or, worse,
+                  show this machine's checkout of a path that happens to match. */}
+              {!s.remote && <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />}
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
                 <AgentPicker
@@ -1025,20 +1088,27 @@ export default function App(): JSX.Element {
                 >
                   Fix
                 </button>
-                <button
-                  className="icon"
-                  title={`Open ${s.cwd} in Explorer - drop files there, or drag them onto this pane`}
-                  onClick={() => api.reveal(s.cwd)}
-                >
-                  📁
-                </button>
-                <button
-                  className="icon"
-                  title="Open in editor"
-                  onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
-                >
-                  ✎
-                </button>
+                {/* Both of these open something on THIS machine. For a mirrored pane
+                    the folder is on the other one, so they would open the wrong thing
+                    or nothing at all - better absent than quietly wrong. */}
+                {!s.remote && (
+                  <button
+                    className="icon"
+                    title={`Open ${s.cwd} in Explorer - drop files there, or drag them onto this pane`}
+                    onClick={() => api.reveal(s.cwd)}
+                  >
+                    📁
+                  </button>
+                )}
+                {!s.remote && (
+                  <button
+                    className="icon"
+                    title="Open in editor"
+                    onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
+                  >
+                    ✎
+                  </button>
+                )}
                 <button className="icon" title="Close (Ctrl W)" onClick={() => close(s.id)}>
                   x
                 </button>
@@ -1051,6 +1121,9 @@ export default function App(): JSX.Element {
               copyOnSelect={config?.copyOnSelect ?? true}
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
+              // A mirrored pane is drawn at the far machine's grid, not fitted to this
+              // window: two devices cannot both own one terminal's size.
+              mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
             />
           </div>
         ))}
@@ -1131,6 +1204,14 @@ export default function App(): JSX.Element {
             setBoard(null)
           }}
           onClose={() => setBoard(null)}
+        />
+      )}
+      {devices && (
+        <RemoteDialog
+          state={remote}
+          onState={setRemote}
+          flash={flash}
+          onClose={() => setDevices(false)}
         />
       )}
       {history && (

@@ -16,6 +16,16 @@ interface Props {
   mouseSelect: boolean
   /** repaint by itself once a resize settles */
   autoFixUi: boolean
+  /**
+   * This pane mirrors a pty on another machine, at that machine's grid size.
+   *
+   * A mirror never fits itself: the device the agent runs on owns the terminal's
+   * shape, and two windows both fitting one pty would trade SIGWINCHes at each other
+   * for as long as both were open. It matches the host's cols/rows exactly and shrinks
+   * its own font until that grid fits whatever window is watching, so the pane is a
+   * true copy of what is on screen over there rather than a reflow of it.
+   */
+  mirror?: { cols: number; rows: number } | null
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
@@ -65,6 +75,37 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
   const cols = t.cols
   const rows = t.rows
   f.fit()
+  if (pinned) t.scrollToBottom()
+  return t.cols !== cols || t.rows !== rows
+}
+
+/**
+ * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
+ * the largest font at or below the user's own at which that grid still fits here.
+ *
+ * Self-correcting rather than exact. `proposeDimensions()` answers for the font that is
+ * set right now, so the ratio it implies is one step towards the right size, not the
+ * answer; the observer that called this runs again on the layout that results and the
+ * two converge in a frame or two. Solving it in one go would mean reading xterm's
+ * internal cell metrics, which are stale for a frame after any font change anyway.
+ */
+function mirrorFit(
+  t: Terminal,
+  f: FitAddon,
+  pinned: boolean,
+  mirror: { cols: number; rows: number },
+  maxFont: number
+): boolean {
+  const cols = t.cols
+  const rows = t.rows
+  const d = f.proposeDimensions()
+  if (d && d.cols > 0 && d.rows > 0) {
+    const k = Math.min(d.cols / Math.max(1, mirror.cols), d.rows / Math.max(1, mirror.rows))
+    const current = t.options.fontSize ?? maxFont
+    const next = Math.max(6, Math.min(maxFont, Math.round(current * k)))
+    if (next !== current) t.options.fontSize = next
+  }
+  t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
   if (pinned) t.scrollToBottom()
   return t.cols !== cols || t.rows !== rows
 }
@@ -130,7 +171,8 @@ export default function TerminalPane({
   fontSize,
   copyOnSelect,
   mouseSelect,
-  autoFixUi
+  autoFixUi,
+  mirror = null
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
@@ -144,6 +186,12 @@ export default function TerminalPane({
   mouseSelectRef.current = mouseSelect
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  // Read inside the terminal effect, which is built once per session: a device
+  // reconnecting changes these numbers without the pane being rebuilt.
+  const mirrorRef = useRef(mirror)
+  mirrorRef.current = mirror
+  const fontRef = useRef(fontSize)
+  fontRef.current = fontSize
   // Full-screen TUIs (Claude Code, vim) repaint constantly and xterm drops the
   // selection on the next buffer change, so the highlight vanishes before the user
   // can hit Ctrl+C. Remember the last real selection and copy that instead.
@@ -153,6 +201,21 @@ export default function TerminalPane({
   const pinned = useRef(true)
   // Only for the "back to newest" pill: the scroll position itself lives in xterm.
   const [scrolledUp, setScrolledUp] = useState(false)
+
+  /**
+   * Give this pane its shape. A local pane fits its own window and tells the pty about
+   * it; a mirror takes the far end's grid and shrinks its own font until that grid
+   * fits. Returns whether the terminal actually changed shape, which is what decides
+   * whether the agent gets asked to repaint - and a mirror never asks, because the
+   * frame it is showing was drawn on the other machine to begin with.
+   */
+  const reshape = (t: Terminal, f: FitAddon): boolean => {
+    const m = mirrorRef.current
+    if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
+    const changed = refit(t, f, pinned.current)
+    if (changed) api.resize(sessionId, t.cols, t.rows)
+    return changed
+  }
   const [dropping, setDropping] = useState(false)
   // Every prompt submitted to this pane, oldest first. State rather than a ref because the
   // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
@@ -599,6 +662,11 @@ export default function TerminalPane({
     let settle2: number | undefined
     const checkBusy = (): void => {
       if (!sawOutput) return
+      // A mirror never judges this. The machine the agent runs on is reading the same
+      // frame in its own window, a few frames ahead of this one, and a second opinion
+      // arriving late could only ever contradict it - which is the chime firing
+      // mid-turn, the one bug this whole mechanism exists to avoid.
+      if (mirrorRef.current) return
       const at = Date.now()
       lastBusyCheck = at
       let now = false
@@ -634,6 +702,22 @@ export default function TerminalPane({
       api.setBusy(sessionId, now, now ? undefined : text)
     }
 
+    /**
+     * The link to the other device came back and it re-sent the whole scrollback.
+     * Everything already on screen is a prefix of what just arrived, so the pane is
+     * wiped and redrawn from it - appending would show the run twice.
+     */
+    const offReset = api.onPaneReset((id) => {
+      if (id !== sessionId) return
+      t.reset()
+      void api.getBuffer(sessionId).then((b) => {
+        if (dead) return
+        sawOutput = Boolean(b)
+        pinned.current = true
+        t.write(b, () => t.scrollToBottom())
+      })
+    })
+
     const off = api.onData((id, data) => {
       if (id !== sessionId) return
       sawOutput = true
@@ -664,8 +748,9 @@ export default function TerminalPane({
     const repair = (): void => {
       try {
         pinned.current = true
-        refit(t, f, true)
-        api.resize(sessionId, t.cols, t.rows)
+        reshape(t, f)
+        // Worth doing on a mirror too: the redraw is asked of the far agent, and a
+        // torn frame there is exactly what you cannot fix from the other machine.
         api.redraw(sessionId)
         t.refresh(0, t.rows - 1)
         t.scrollToBottom()
@@ -693,8 +778,7 @@ export default function TerminalPane({
       if (!host.current?.offsetParent) return
       let changed = false
       try {
-        changed = refit(t, f, pinned.current)
-        if (changed) api.resize(sessionId, t.cols, t.rows)
+        changed = reshape(t, f)
         // The rail is measured against the scrollbar, so it has to be re-measured with it.
         // Unconditional: a pane coming back on screen has the same rows but not necessarily
         // the same track geometry, and measuring costs nothing.
@@ -714,6 +798,10 @@ export default function TerminalPane({
       settle = window.setTimeout(() => {
         if (!autoFixRef.current || Date.now() - mountedAt < 3000) return
         if (!host.current?.offsetParent) return
+        // A mirror changing shape means the far end resized, and the far end has
+        // already asked its own agent to repaint. Asking again from here would poke
+        // a CLI mid-paint over the network for no reason.
+        if (mirrorRef.current) return
         api.redraw(sessionId)
         try {
           t.refresh(0, t.rows - 1)
@@ -737,6 +825,7 @@ export default function TerminalPane({
 
     return () => {
       off()
+      offReset()
       ro.disconnect()
       window.clearTimeout(settle)
       window.clearTimeout(settle2)
@@ -761,17 +850,21 @@ export default function TerminalPane({
   // Font size is a live setting: change it and every pane re-lays out immediately.
   useEffect(() => {
     const t = term.current
-    if (!t || t.options.fontSize === fontSize) return
-    t.options.fontSize = fontSize
+    if (!t) return
+    // A mirror owns its own font size - it is derived from the host's grid, not set -
+    // so the setting is only the ceiling it may not exceed. reshape() applies that.
+    if (!mirror && t.options.fontSize === fontSize) return
+    if (!mirror) t.options.fontSize = fontSize
     try {
-      if (fit.current) refit(t, fit.current, pinned.current)
-      api.resize(sessionId, t.cols, t.rows)
+      if (fit.current) reshape(t, fit.current)
       // Fewer or more rows means a different scale for the rail.
       syncTotal()
     } catch {
       /* hidden pane - the visibility effect will refit it */
     }
-  }, [fontSize, sessionId])
+    // mirror is in the list so a device reconnecting at a different size reshapes
+    // the pane instead of leaving it drawn at the grid it had before the drop.
+  }, [fontSize, sessionId, mirror?.cols, mirror?.rows])
 
   // Re-fit when this pane becomes visible again: the terminal was not measurable
   // while hidden, so its cols/rows can be stale.
@@ -782,9 +875,7 @@ export default function TerminalPane({
         if (term.current && fit.current) {
           // Same rule as the observer: only a pane that really changed shape while it was
           // away gets to disturb the pty. Coming back unchanged must be silent.
-          if (refit(term.current, fit.current, pinned.current)) {
-            api.resize(sessionId, term.current.cols, term.current.rows)
-          }
+          reshape(term.current, fit.current)
           // The buffer kept growing while this pane was hidden, so the rail is stale.
           syncTotal()
         }

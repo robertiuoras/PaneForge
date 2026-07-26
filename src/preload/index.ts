@@ -7,6 +7,7 @@ import type {
   Config,
   InstallEvent,
   RecentItem,
+  RemoteState,
   RestoreAnswer,
   Session,
   StartSessionRequest,
@@ -27,7 +28,7 @@ const api: Api = {
   killSession: (id) => ipcRenderer.invoke('sessions:kill', id),
   getBuffer: (id) => ipcRenderer.invoke('sessions:buffer', id),
   clearAttention: (id) => ipcRenderer.send('sessions:attention-clear', id),
-  write: (id, data) => ipcRenderer.send('pty:write', id, data),
+  write: (id, data) => ipcRenderer.send('pty:write', id, data),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
   redraw: (id) => ipcRenderer.send('pty:redraw', id),
   setBusy: (id, busy, tail) => ipcRenderer.send('sessions:busy', id, busy, tail),
@@ -89,6 +90,19 @@ const api: Api = {
   revealStash: () => ipcRenderer.send('stash:reveal'),
   toggleStash: () => ipcRenderer.send('shelf:toggle'),
 
+  remoteState: () => ipcRenderer.invoke('remote:state'),
+  setRemoteHost: (on) => ipcRenderer.invoke('remote:host', on),
+  setRemotePort: (port) => ipcRenderer.invoke('remote:port', port),
+  rotateRemoteCode: () => ipcRenderer.invoke('remote:rotate'),
+  renameDevice: (name) => ipcRenderer.invoke('remote:rename', name),
+  pairRemote: (peer) => ipcRenderer.invoke('remote:pair', peer),
+  forgetRemote: (id) => ipcRenderer.invoke('remote:forget', id),
+  connectRemote: (id, on) => ipcRenderer.invoke('remote:connect', id, on),
+  scanRemote: () => ipcRenderer.invoke('remote:scan'),
+  remoteProjects: (device) => ipcRenderer.invoke('remote:projects', device),
+  remoteAgents: (device) => ipcRenderer.invoke('remote:agents', device),
+  startRemote: (device, req: StartSessionRequest) => ipcRenderer.invoke('remote:start', device, req),
+
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
   installVoice: () => ipcRenderer.invoke('voice:install'),
@@ -122,6 +136,16 @@ const api: Api = {
     const h = (_e: unknown, s: Session) => cb(s)
     ipcRenderer.on('sessions:attention', h)
     return () => ipcRenderer.off('sessions:attention', h)
+  },
+  onRemote: (cb) => {
+    const h = (_e: unknown, state: RemoteState) => cb(state)
+    ipcRenderer.on('remote:changed', h)
+    return () => ipcRenderer.off('remote:changed', h)
+  },
+  onPaneReset: (cb) => {
+    const h = (_e: unknown, id: string) => cb(id)
+    ipcRenderer.on('pane:reset', h)
+    return () => ipcRenderer.off('pane:reset', h)
   },
   onVoiceHotkey: (cb) => {
     const h = (): void => cb()
