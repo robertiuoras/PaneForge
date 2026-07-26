@@ -95,6 +95,17 @@ Re-run after any source change. Needs Node 20+.
   repo at the same time without overwriting each other or racing the git index. The
   pane says which lane it is in; merge the branch back when you are done. Off by one
   switch in Settings, and a folder that is not a repo is left shared with a warning.
+  A lane also gets the two things a bare worktree does not:
+  - **its own dev server port** - `PORT` (and `PF_LANE_PORT`) is set to one past
+    whatever the project's own dev script asks for, so `npm run dev` in two lanes
+    does not collide. Servers that read `PORT` need nothing; a Vite/Astro project
+    that pins its port in config wants `--port $PORT`, and the launch toast states
+    the number.
+  - **the original folder's Claude memory** - Claude Code keys history and project
+    memory by folder path, so a lane would otherwise start with no transcripts, no
+    `/resume`, no memory and no granted permissions for a repo you are already deep
+    in. The lane's project folder is linked to the original's, and the original's
+    trust, allowed tools and recent prompts are copied onto the lane path.
 - **Board (Ctrl Shift K)** - tasks and shared memory for a project, stored in that
   project's `.paneforge/` folder so the agents running there can read it. Every
   agent started in a folder with memory is told to read it first.

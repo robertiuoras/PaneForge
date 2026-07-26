@@ -24,6 +24,13 @@ const root = join(tmpdir(), 'paneforge-lane-test')
 rmSync(root, { recursive: true, force: true })
 mkdirSync(root, { recursive: true })
 
+// A lane also links Claude Code's own config folder to the original's. That part
+// is covered by lane-memory-test.mjs against a throwaway HOME; here it is simply
+// pointed away from the real one, so a run of this file cannot touch it.
+process.env.CLAUDE_CONFIG_DIR = join(root, 'claude')
+process.env.USERPROFILE = root
+process.env.HOME = root
+
 // lanes.ts is TypeScript and imports nothing but node builtins, so a one-file
 // bundle is enough to exercise it outside Electron.
 const bundle = join(root, 'lanes.mjs')

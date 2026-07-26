@@ -155,7 +155,10 @@ export class SessionManager extends EventEmitter {
         role: s.meta.role,
         // Already the lane's own folder: reopening must land back in it, not be
         // treated as a fresh clash and pushed one lane further along.
-        lane: s.meta.lane
+        lane: s.meta.lane,
+        // The port the pane's dev server was told to use, kept across the restart
+        // so a server started before an update comes back on the same one.
+        laneEnv: s.req.laneEnv
       }))
   }
 
@@ -555,7 +558,9 @@ export class SessionManager extends EventEmitter {
       cols,
       rows,
       cwd: req.cwd,
-      env: agentEnv()
+      // A lane's own PORT belongs to the pane, not to the app: it must not leak
+      // into a session started in the original folder afterwards.
+      env: { ...agentEnv(), ...(req.laneEnv ?? {}) }
     })
   }
 
