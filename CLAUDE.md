@@ -58,6 +58,31 @@ sitting in a conflicted merge: it is the one state no other chat is allowed to t
 `npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
 still exists for a release you want right now, but nothing should need it.
 
+Automatic releases batch: one every two hours at most (`COOLDOWN_MS` in `scripts/lane.mjs`).
+Inside that window `ready` says so and leaves the work on master, where the next `ready`
+or session end takes it out. Do not "fix" that by running `npm run ship` - a version per
+finished chunk is what produced fifteen releases in one day, and each one is an update
+prompt on a machine somebody is using. Reach for `ship` only when a specific build has to
+be in Robert's hands now, and say why.
+
+## Never take the screen
+
+The app hosts the chat and runs all day beside real work, so nothing it does on its own
+may take focus, raise a window, or pop a dialog. Only a click or a hotkey earns the
+foreground.
+
+- Show a window the user did not ask for with `showInactive()`, never `show()`.
+  `focusWindow()` is for user-initiated paths only.
+- A restart the app decided on (update, admin relaunch) calls `markQuietRelaunch()` in
+  `src/main/profile.ts` before exiting. The new process consumes that marker, starts
+  `inactive` and flashes the taskbar button once instead of stealing the keyboard.
+- No `dialog.showMessageBox` for anything the app decided by itself - in-renderer cards
+  (`UpdateToast.tsx`) instead. No `setAlwaysOnTop`, no `moveTop`, no `app.focus`.
+- Every `spawn`/`Start-Process` keeps `windowsHide: true`; a console flashing is a focus
+  steal too.
+- `second-instance` must not raise the window while `installStarted` is set: mid-update
+  the installer's launch of the new exe arrives on that event.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.

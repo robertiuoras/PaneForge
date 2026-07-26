@@ -15,7 +15,7 @@
 // Unpackaged runs (`npm run dev`, `npm run try`) default to the `dev` profile so they
 // can never collide with the installed app by accident.
 
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 
@@ -60,18 +60,65 @@ export function profileName(): string {
   return current
 }
 
+// A launch the app asked for itself - the updater restarting into a new version, or
+// the admin relaunch. Nobody double-clicked anything, so the returning window must not
+// take the keyboard off whatever the user moved on to. The old process drops a marker
+// in userData just before it exits and the new one consumes it on the way up.
+const QUIET_MARKER = 'quiet-relaunch'
+// A stale marker (install died, machine rebooted) must not silence a genuine launch
+// days later, so it only counts while it is fresh.
+const QUIET_MAX_AGE_MS = 5 * 60 * 1000
+
+function quietPath(): string {
+  return join(app.getPath('userData'), QUIET_MARKER)
+}
+
+/** Called by the process that is about to exit and come back on its own. */
+export function markQuietRelaunch(on = true): void {
+  try {
+    if (on) writeFileSync(quietPath(), String(Date.now()))
+    else rmSync(quietPath(), { force: true })
+  } catch {
+    /* worst case the relaunch activates, which is what it did before */
+  }
+}
+
+let quiet: boolean | null = null
+
+/**
+ * True when this process is the far side of a self-restart. Reads the marker once and
+ * deletes it, so the very next launch after that is a normal one again.
+ */
+export function isQuietRelaunch(): boolean {
+  if (quiet !== null) return quiet
+  quiet = false
+  try {
+    const p = quietPath()
+    if (existsSync(p)) {
+      const age = Date.now() - Number(readFileSync(p, 'utf8'))
+      rmSync(p, { force: true })
+      quiet = age >= 0 && age < QUIET_MAX_AGE_MS
+    }
+  } catch {
+    /* no marker, normal launch */
+  }
+  return quiet
+}
+
 /**
  * How the first window should appear.
  *
  * A test copy is started by an agent working in the live app, so it must never take
  * the keyboard away from whatever is being typed there: a named profile shows its
  * window without activating it, and `--minimized` keeps it off the screen entirely
- * until it is clicked. The installed app still opens normally - you launched it.
+ * until it is clicked. The installed app still opens normally - you launched it,
+ * unless it restarted itself to finish an update.
  */
 export function startMode(): 'normal' | 'inactive' | 'minimized' {
   const flag = process.argv.includes('--minimized') || process.env.PANEFORGE_START === 'minimized'
   if (flag) return 'minimized'
   if (process.env.PANEFORGE_START === 'normal') return 'normal'
+  if (isQuietRelaunch()) return 'inactive'
   return current ? 'inactive' : 'normal'
 }
 

@@ -77,6 +77,13 @@ const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
 const STALE_MS = 12 * 60 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
+// Automatic releases batch inside this window. Without it every finished chunk of work
+// cut its own version - 15 releases in one day on 2026-07-26 - and each one is an update
+// prompt on a machine somebody is trying to use. Work is never lost by waiting: it sits
+// on master and goes out with the next release, which every later `ready` and every
+// SessionEnd triggers - so it ships the next time anyone finishes anything here, and
+// `npm run ship` still releases immediately when something must go out now.
+const COOLDOWN_MS = 2 * 60 * 60 * 1000
 
 // ---------------------------------------------------------------- state file
 // Lives in .git/, which is shared by every worktree and never committed.
@@ -421,6 +428,14 @@ function autoship(kind = 'patch', session = 'auto') {
   const busy = busyLanes(state)
   if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.join(', ')}` }
   if (!shippable(state)) return { shipped: false, reason: 'nothing to release' }
+  const since = state.lastShip ? now() - state.lastShip.at : Infinity
+  if (since < COOLDOWN_MS) {
+    const wait = Math.ceil((COOLDOWN_MS - since) / 60000)
+    return {
+      shipped: false,
+      reason: `v${state.lastShip.version} went out ${Math.round(since / 60000)}m ago. This work is on master and goes out with the next release (about ${wait}m). Do not ship it separately.`
+    }
+  }
   // Nobody is watching an automatic release, so it checks itself first. A tag that fails
   // to compile costs a broken GitHub build and a version number that never produced an
   // installer - and the next chat inherits both.

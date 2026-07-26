@@ -19,7 +19,14 @@ import { gitInfo } from './git'
 import { resolveLane } from './lanes'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
-import { initProfile, profileName, startMode, titleSuffix } from './profile'
+import {
+  initProfile,
+  isQuietRelaunch,
+  markQuietRelaunch,
+  profileName,
+  startMode,
+  titleSuffix
+} from './profile'
 import { refreshPath, runCommand } from './install'
 import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
 import * as history from './history'
@@ -50,7 +57,11 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
-    focusWindow()
+    // Mid-update the installer launches the new exe while this one is still holding the
+    // lock, so that launch arrives here as a second instance. Raising the window then
+    // would undo the whole point of the silent update: it pops a dying app to the front
+    // over whatever the user is doing. Take the args, leave the focus alone.
+    if (!installStarted) focusWindow()
     openFromArgs(argv)
   })
 }
@@ -106,6 +117,10 @@ function createWindow(): void {
     // the taskbar.
     win?.showInactive()
     if (mode === 'minimized') win?.minimize()
+    // Back from an update: the window is there, on the taskbar, with the panes restored,
+    // but it did not take the keyboard. Flash the taskbar button once so it is obvious
+    // the app came back instead of silently dying.
+    else if (isQuietRelaunch()) win?.flashFrame(true)
   })
   win.on('focus', () => win?.flashFrame(false))
   win.on('close', rememberBounds)
@@ -448,13 +463,19 @@ ipcMain.on('update:install', () => {
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
   manager.shutdown()
+  // Set before the installer starts, because once quitAndInstall() runs this process can
+  // be gone before the next line. The new exe reads it and comes back without activating.
+  markQuietRelaunch()
   if (!installUpdate()) {
     // Nothing was installable after all (state moved on, feed unsupported). Put the
-    // window back rather than leaving an invisible app with no panes.
+    // window back rather than leaving an invisible app with no panes - inactive, since
+    // by now the user has looked away and a failed update is no reason to interrupt.
     installStarted = false
+    markQuietRelaunch(false)
     if (alive()) {
       win!.setSkipTaskbar(false)
-      win!.show()
+      win!.showInactive()
+      win!.flashFrame(true)
     }
     return
   }
