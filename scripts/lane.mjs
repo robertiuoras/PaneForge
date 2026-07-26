@@ -983,14 +983,14 @@ try {
     const before = Object.keys(state.conflicts)
     if (retryConflicts(state)) write(state)
     const cleared = before.filter((id) => !state.conflicts[id])
-    if (!cleared.length) {
-      console.log(before.length ? `Still conflicted: ${before.join(', ')}.` : 'No conflicts.')
-    } else {
-      // They merge now, so the work that was being left out of every release goes out
-      // without anybody being asked - which was the whole point of retrying.
-      console.log(`Lane${cleared.length === 1 ? '' : 's'} ${cleared.join(', ')} merge cleanly now.`)
-      sayRelease(autoship('patch', session ?? 'auto'))
-    }
+    if (cleared.length) console.log(`Lane${cleared.length === 1 ? '' : 's'} ${cleared.join(', ')} merge cleanly now.`)
+    else if (before.length) console.log(`Still conflicted: ${before.join(', ')}.`)
+    // And then try the release, every time. Every other trigger is a chat doing something
+    // - a `ready`, a session ending - so finished work that arrived during the cooldown
+    // window sat on master until somebody typed, which on a quiet evening is the morning.
+    // The clock is what was missing. autoship is a no-op unless there is something to put
+    // out, nobody is mid-edit and the cooldown has passed.
+    sayRelease(autoship('patch', session ?? 'auto'))
   } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)

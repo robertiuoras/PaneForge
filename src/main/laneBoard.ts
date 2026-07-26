@@ -89,21 +89,24 @@ export function laneBoard(): LaneBoard | null {
 }
 
 /**
- * Ask lane.mjs to try the stuck lanes again, and ship the ones that come unstuck.
+ * Ask lane.mjs to try the stuck lanes again, and to put out anything that is waiting.
  *
- * Half of these conflicts stop existing on their own - the change they disagreed with
- * ships, or rerere learns the resolution in another lane - but the retry only ever ran
- * as a side effect of a chat running some other lane command. On an evening where nobody
- * types, nothing retried, so a lane that would merge fine sat "stuck" until morning. The
- * app has a clock, so it does it: no window, no output, nothing on screen.
+ * Both halves only ever happened as a side effect of a chat running some other lane
+ * command. Half of these conflicts stop existing on their own - the change they disagreed
+ * with ships, or rerere learns the resolution in another lane - and finished work that
+ * arrives inside the release cooldown goes out on the next trigger. On an evening where
+ * nobody types there is no next trigger, so a lane that would merge fine reads "stuck"
+ * until morning and finished work sits on master beside it. The app has a clock, so it
+ * does both: no window, no output, nothing on screen.
  *
- * Cheap by construction. It only runs while something is actually conflicted, at most
- * every RETRY_EVERY, and lane.mjs itself skips a lane whose master has not moved.
+ * Cheap by construction. It only runs while a lane is actually conflicted or waiting to
+ * go out, at most every RETRY_EVERY, and on the other side lane.mjs skips a lane whose
+ * master has not moved and returns from the release without work in one `rev-list`.
  */
 export function laneRetry(): void {
   const board = laneBoard()
   if (!board || retrying) return
-  if (!board.lanes.some((l) => l.conflicted)) return
+  if (!board.lanes.some((l) => l.conflicted || l.ready)) return
   const now = Date.now()
   if (now - retryAt < RETRY_EVERY) return
   retryAt = now
