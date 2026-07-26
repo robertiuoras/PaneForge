@@ -541,6 +541,12 @@ function busyLanes(state) {
   return Object.keys(state.lanes).filter((id) => {
     if (state.ready[id]) return false
     const w = laneWork(id)
+    // `main` is master, which is the release branch: a commit there is not work in
+    // progress, it is work that is already in the next release, and counting it as
+    // half-finished held every other lane's work behind whichever chat happened to hold
+    // main until that chat closed its window. It waits while master is DIRTY - an edit
+    // nobody has committed - and not a moment longer.
+    if (id === 'main') return w.dirty
     return w.dirty || w.ahead > 0
   })
 }

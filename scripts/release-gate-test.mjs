@@ -139,6 +139,31 @@ ok(
   lane('autoship')
 )
 
+// ------------------------------------- committed work on master is not "still working"
+//
+// What Robert kept meeting: "waiting on chats still working: main", where main was a chat
+// that had committed everything, was perfectly clean, and simply had not said `ready` -
+// so every other lane's finished work sat behind a window nobody was going to close.
+// master IS the release branch: a commit on it is already in the next release, and
+// holding the release for it holds it for itself.
+
+git(work.dir, 'commit', '-qm', 'lane keeps working', '--allow-empty')
+lane('ready', '--session', 'sess-work')
+git(repo, 'commit', '-qm', 'master commits and says nothing', '--allow-empty')
+ok('committing on master drops its ready mark', laneOf('main').ready === false)
+ok(
+  'but committed, clean work on master does not hold anyone up',
+  !lane('autoship').includes('waiting on chats still working'),
+  lane('autoship')
+)
+writeFileSync(join(repo, 'still-typing.js'), 'export const q =\n')
+ok(
+  'an uncommitted edit on master still does',
+  lane('autoship').includes('waiting on chats still working: main'),
+  lane('autoship')
+)
+rmSync(join(repo, 'still-typing.js'))
+
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')
 
