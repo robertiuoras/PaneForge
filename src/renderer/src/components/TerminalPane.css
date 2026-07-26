@@ -8,10 +8,13 @@
    scrollbar block in styles.css) so it never covers the thing you drag. */
 .mark-rail {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  /* Top and height are measured from the scrollbar itself in TerminalPane.tsx - the host
+     is inset 7px but the terminal overhangs that box by its row rounding, so neither end
+     is a constant. These are the fallback for the frame before the first measurement. */
+  top: 7px;
+  bottom: 7px;
   right: 17px;
-  width: 14px;
+  width: 20px;
   /* Only the tags are targets. The rest of the strip is terminal, and swallowing clicks
      over it would put a dead column down the side of every pane. */
   pointer-events: none;
@@ -21,16 +24,16 @@
 .mark {
   position: absolute;
   right: 3px;
-  width: 8px;
-  height: 3px;
+  width: 13px;
+  height: 5px;
   /* Centred on the line it marks rather than hanging below it. */
-  margin-top: -1px;
+  margin-top: -2px;
   padding: 0;
   border: 0;
-  border-radius: 2px;
+  border-radius: 3px;
   /* The agent's own colour, so a grid of panes still reads as separate agents. */
   background: var(--agent, #8b8b99);
-  opacity: 0.55;
+  opacity: 0.6;
   pointer-events: auto;
   cursor: pointer;
   transition:
@@ -44,7 +47,7 @@
   opacity: 1;
 }
 .mark:hover {
-  width: 12px;
+  width: 17px;
 }
 /* Brief confirmation that a click landed, since the jump itself can be subtle in a pane
    that was already near that part of the buffer. */
