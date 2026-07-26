@@ -23,6 +23,7 @@ interface Props {
  */
 export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | null {
   const [board, setBoard] = useState<LaneBoard | null>(null)
+  const [help, setHelp] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -47,6 +48,15 @@ export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | n
     <>
       <div className="section">
         Lanes ({board.lanes.length})
+        <button
+          className={'help-dot' + (help ? ' on' : '')}
+          onClick={() => setHelp((h) => !h)}
+          title="What is a lane?"
+          aria-label="What is a lane?"
+          aria-expanded={help}
+        >
+          ?
+        </button>
         {stuck > 0 && (
           <span className="badge stuck" title="Finished work that will not merge into master, so no release includes it">
             {stuck} stuck
@@ -58,6 +68,26 @@ export default function LaneStrip({ sessions, onFocus }: Props): JSX.Element | n
           </span>
         )}
       </div>
+      {help && (
+        <div className="lane-help">
+          <p>
+            Several chats edit PaneForge at once. A <b>lane</b> is one private copy of the
+            repository for one chat, so two of them cannot overwrite each other&apos;s files or
+            race the same build.
+          </p>
+          <p>
+            You never make or delete one: a chat claims a lane the moment it starts work, and
+            gives it back when it ends. The first chat gets the repository itself; the rest get
+            their own checkouts beside it.
+          </p>
+          <p>
+            When a chat finishes, its lane is merged and released with every other finished
+            lane — one version, not one per chat. <b>Stuck</b> means a lane&apos;s work will not
+            merge, so it is being left out of releases until someone fixes it; that is what the
+            fix button hands to a pane.
+          </p>
+        </div>
+      )}
       <div className="lanes">
         {board.lanes.map((l) => (
           <LaneRow key={l.lane} lane={l} sessions={sessions} onFocus={onFocus} />

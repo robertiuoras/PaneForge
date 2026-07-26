@@ -22,19 +22,26 @@
 
 import { join } from 'node:path'
 import { BrowserWindow, screen } from 'electron'
-import type { RecentItem } from '../shared/types'
+import { getConfig, setConfig } from './config'
+import type { RecentItem, StashConfig } from '../shared/types'
 
 /** The resting size: a pill with the count on it. */
 const COLLAPSED = { width: 172, height: 38 }
 /** Opened: tall enough for a real history, narrow enough to not cover a window. */
-const EXPANDED = { width: 348, height: 460 }
+const EXPANDED = { width: 352, height: 470 }
+/** The settings panel behind the gear needs more room than the list does. */
+const TALL = { width: 352, height: 566 }
 /** Gap from the corner of the work area, so it clears the taskbar. */
 const MARGIN = 12
 
 let shelf: BrowserWindow | null = null
 let expanded = false
+let tall = false
 let getMain: (() => BrowserWindow | null) | null = null
 let cached: RecentItem[] = []
+let cachedConfig: StashConfig | null = null
+/** Where a drag started: the pointer, and the window's bottom-left at that moment. */
+let drag: { px: number; py: number; x: number; bottom: number; moved: boolean } | null = null
 
 function alive(): boolean {
   return !!shelf && !shelf.isDestroyed() && !shelf.webContents.isDestroyed()
@@ -56,16 +63,107 @@ function corner(width: number, height: number): { x: number; y: number } {
   return { x: area.x + MARGIN, y: area.y + area.height - height - MARGIN }
 }
 
-/** Re-anchor to the bottom-left. Called on every size change and every window move. */
+function currentSize(): { width: number; height: number } {
+  return expanded ? (tall ? TALL : EXPANDED) : COLLAPSED
+}
+
+/**
+ * The point the overlay grows from: its bottom-left corner. Everything about this window
+ * is anchored there rather than at the top-left, because opening it has to push the list
+ * upwards out of the pill - a top-left anchor would make the pill jump up the screen the
+ * moment you hovered it.
+ *
+ * A dragged position is kept only while it is still on a display. Unplug the monitor it
+ * was parked on and it goes back to the corner instead of being stranded off-screen with
+ * no way to reach it - it is a window with no taskbar entry and no way to be alt-tabbed
+ * to, so "lost off the edge" would mean lost for good.
+ */
+function anchor(width: number, height: number): { x: number; y: number } {
+  let saved: { x: number; y: number } | null = null
+  try {
+    saved = getConfig().stashPos ?? null
+  } catch {
+    saved = null
+  }
+  if (!saved) return corner(width, height)
+  const top = saved.y - height
+  try {
+    const area = screen.getDisplayNearestPoint({ x: saved.x, y: saved.y }).workArea
+    // Fully on that display, and never so far down that its own header is off the edge.
+    const x = Math.min(Math.max(saved.x, area.x), area.x + area.width - width)
+    const y = Math.min(Math.max(top, area.y), area.y + area.height - height)
+    return { x, y }
+  } catch {
+    return corner(width, height)
+  }
+}
+
+/** Re-anchor. Called on every size change, every display change and every window move. */
 function place(): void {
   if (!alive()) return
-  const size = expanded ? EXPANDED : COLLAPSED
-  const { x, y } = corner(size.width, size.height)
+  const size = currentSize()
+  const { x, y } = anchor(size.width, size.height)
   try {
     shelf!.setBounds({ x, y, width: size.width, height: size.height })
   } catch {
     /* a display unplugged mid-call - the next move event puts it right */
   }
+}
+
+/** The list needs a taller window when the settings panel is showing behind the gear. */
+export function setShelfTall(next: boolean): void {
+  if (!alive() || tall === next) return
+  tall = next
+  place()
+}
+
+// --- dragging ---------------------------------------------------------------
+//
+// The overlay is `focusable: false`, which rules out the usual `-webkit-app-region: drag`
+// (Windows moves a window by activating it first). So its header does the drag by hand:
+// the page reports the pointer in screen coordinates, and the window is moved to match.
+
+export function beginShelfDrag(): void {
+  if (!alive()) return
+  const b = shelf!.getBounds()
+  drag = { px: NaN, py: NaN, x: b.x, bottom: b.y + b.height, moved: false }
+}
+
+export function moveShelfDrag(px: number, py: number): void {
+  if (!alive() || !drag) return
+  // The first move is what fixes the grab point; before it there is no delta to apply.
+  if (Number.isNaN(drag.px)) {
+    drag.px = px
+    drag.py = py
+    return
+  }
+  const size = currentSize()
+  const x = drag.x + (px - drag.px)
+  const bottom = drag.bottom + (py - drag.py)
+  drag.moved = true
+  try {
+    shelf!.setBounds({ x: Math.round(x), y: Math.round(bottom - size.height), ...size })
+  } catch {
+    /* dragged across a display that vanished - endShelfDrag puts it back in bounds */
+  }
+}
+
+/** Remember where it was let go, so it is still there after a restart. */
+export function endShelfDrag(): void {
+  if (!drag) return
+  const moved = drag.moved
+  drag = null
+  // A press that never turned into a drag is a click on the header, not a move: writing
+  // the config on every one of those would rewrite the file all afternoon.
+  if (!moved || !alive()) return
+  const b = shelf!.getBounds()
+  try {
+    setConfig({ stashPos: { x: b.x, y: b.y + b.height } })
+  } catch {
+    /* a position that could not be written is only a position */
+  }
+  // Put it back inside the work area if it was let go half off the edge.
+  place()
 }
 
 export function shelfWindowOpen(): boolean {
@@ -90,10 +188,19 @@ export function shelfItems(): RecentItem[] {
   return cached
 }
 
+/** The Stash's own settings, pushed to the panel behind the overlay's gear. */
+export function updateShelfConfig(config: StashConfig): void {
+  cachedConfig = config
+  if (alive()) shelf!.webContents.send('shelf:config', config)
+}
+
 /** Open (or close) the list. Used by the hotkey and by the overlay's own header. */
 export function setShelfExpanded(next: boolean): void {
   if (!alive()) return
   expanded = next
+  // Closing puts the settings panel away with it: reopening on the settings page rather
+  // than on your clipboard would be the wrong half of the window every time.
+  if (!next) tall = false
   place()
   shelf!.webContents.send('shelf:expanded', expanded)
 }
@@ -110,8 +217,9 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   getMain = mainWindow
   if (alive()) return
   expanded = false
+  tall = false
   const { width, height } = COLLAPSED
-  const { x, y } = corner(width, height)
+  const { x, y } = anchor(width, height)
   shelf = new BrowserWindow({
     x,
     y,
@@ -143,10 +251,19 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   shelf.once('ready-to-show', () => {
     shelf?.showInactive()
     updateShelfItems(cached)
+    if (cachedConfig) updateShelfConfig(cachedConfig)
+    // Something may have asked for it open before the page existed (the hotkey bringing a
+    // hidden overlay back), and that message went nowhere. Say it again now.
+    if (expanded) {
+      place()
+      shelf?.webContents.send('shelf:expanded', true)
+    }
   })
   shelf.on('closed', () => {
     shelf = null
     expanded = false
+    tall = false
+    drag = null
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {

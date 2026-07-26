@@ -1,9 +1,35 @@
-/* The floating clipboard overlay. Its own stylesheet, not the app's: this page is a
-   172x38 pill most of the time, and pulling in the whole app theme to draw it would cost
-   a second copy of every rule for a window that shows a list and nothing else. */
+/* The floating Stash. Its own stylesheet, not the app's: this page is a 172x38 pill most
+   of the time, and pulling in the whole app theme to draw it would cost a second copy of
+   every rule for a window that shows a list and nothing else. */
 
 * {
   box-sizing: border-box;
+}
+
+:root {
+  /* One glass recipe, used by the pill and the card so they read as the same object at
+     two sizes. */
+  --glass: linear-gradient(
+    168deg,
+    rgba(38, 38, 48, 0.9),
+    rgba(22, 22, 29, 0.94) 46%,
+    rgba(15, 15, 20, 0.96)
+  );
+  /* The card is read, not glanced at: the desktop behind it was legible through the pill's
+     recipe, and a wallpaper showing through a list of your clipboard is just noise. */
+  --glass-card: linear-gradient(
+    168deg,
+    rgba(36, 36, 46, 0.985),
+    rgba(21, 21, 28, 0.99) 46%,
+    rgba(14, 14, 19, 0.995)
+  );
+  --edge: rgba(255, 255, 255, 0.12);
+  --edge-lit: rgba(255, 255, 255, 0.22);
+  --ink: #ecedf2;
+  --ink-dim: #9b9bab;
+  --ink-faint: #74748a;
+  --accent: 128, 192, 255;
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 12px 34px rgba(0, 0, 0, 0.5);
 }
 
 html,
@@ -18,8 +44,18 @@ body,
 }
 
 body {
-  font: 12px/1.4 -apple-system, 'Segoe UI', system-ui, sans-serif;
-  color: #e6e6ea;
+  /* Segoe UI Variable is Windows 11's own text face and the reason this reads as part of
+     the desktop rather than a web page; Inter and the system stack catch everything else.
+     Text sizes are set once here and inherited - the old file set a size on nearly every
+     rule and the panel drifted a pixel per element. */
+  font-family:
+    'Segoe UI Variable Text', 'Segoe UI', Inter, -apple-system, system-ui, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-feature-settings: 'ss01', 'cv01';
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.005em;
+  color: var(--ink);
   /* Nothing here is a document to select through - dragging text out of the pill would
      just look like a broken drag. Images opt back in below. */
   user-select: none;
@@ -31,7 +67,11 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
 }
 
 /* --- collapsed pill --------------------------------------------------------- */
@@ -39,31 +79,41 @@ body {
 .pill {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   height: 30px;
-  padding: 0 11px;
+  padding: 0 12px;
   margin: 4px;
   border-radius: 15px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: linear-gradient(180deg, rgba(32, 32, 40, 0.94), rgba(20, 20, 26, 0.94));
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  box-shadow: var(--lift);
+  backdrop-filter: blur(16px) saturate(140%);
   white-space: nowrap;
   overflow: hidden;
+  /* It is a window handle as much as a button. */
+  cursor: grab;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.pill:active {
+  cursor: grabbing;
 }
 
 .pill .glyph {
-  font-size: 13px;
-  opacity: 0.9;
+  font-size: 12px;
+  color: var(--ink-dim);
 }
 
 .pill .count {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 640;
+  letter-spacing: -0.01em;
 }
 
 .pill .label {
-  color: #9a9aa8;
+  color: var(--ink-faint);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -75,52 +125,129 @@ body {
   flex-direction: column;
   height: calc(100% - 8px);
   margin: 4px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  background: linear-gradient(180deg, rgba(28, 28, 35, 0.97), rgba(17, 17, 22, 0.97));
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(14px);
+  border-radius: 14px;
+  border: 1px solid var(--edge);
+  background: var(--glass-card);
+  box-shadow: var(--lift);
+  backdrop-filter: blur(20px) saturate(140%);
   overflow: hidden;
 }
 
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 6px;
+  padding: 7px 8px 7px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  cursor: grab;
+}
+
+.head:active {
+  cursor: grabbing;
+}
+
+/* The two dots that say "this bar moves the window". Small on purpose: it is a hint, not
+   a control, and the whole bar is the target. */
+.grip {
+  width: 12px;
+  height: 14px;
+  flex: none;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.34) 1px, transparent 1.2px);
+  background-size: 4px 5px;
+  background-position: 2px 2px;
+  opacity: 0.7;
 }
 
 .head strong {
-  font-size: 12px;
-  font-weight: 600;
+  font-weight: 620;
+  letter-spacing: 0.01em;
 }
 
 .head .count {
-  color: #8a8a98;
+  color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
 }
 
-.head .spacer {
+.head .spacer,
+.panel-foot .spacer {
   flex: 1;
 }
 
 button.mini {
   height: 22px;
+  min-width: 22px;
   padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
-  color: #c9c9d4;
-  font: inherit;
+  color: var(--ink-dim);
   font-size: 11px;
-  cursor: pointer;
+  line-height: 1;
+  transition:
+    background 100ms ease,
+    color 100ms ease;
 }
 
 button.mini:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.13);
   color: #fff;
 }
+
+button.mini.on {
+  background: rgba(var(--accent), 0.2);
+  border-color: rgba(var(--accent), 0.45);
+  color: #dcecff;
+}
+
+button.mini.danger:hover {
+  background: rgba(220, 80, 80, 0.26);
+  border-color: rgba(220, 80, 80, 0.4);
+  color: #ffdede;
+}
+
+/* --- kind filter ------------------------------------------------------------ */
+
+.tabs {
+  display: flex;
+  gap: 3px;
+  padding: 6px 7px 2px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tab.on {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.tab:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tab-n {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+/* --- the list --------------------------------------------------------------- */
 
 .list {
   flex: 1;
@@ -134,33 +261,40 @@ button.mini:hover {
 }
 
 .list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.13);
   border-radius: 4px;
 }
 
 .item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   padding: 6px 7px;
-  border-radius: 8px;
+  border-radius: 9px;
   border: 1px solid transparent;
   background: transparent;
   color: inherit;
-  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .item:hover {
   background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.09);
 }
 
 .item.copied {
   border-color: rgba(90, 200, 130, 0.55);
   background: rgba(90, 200, 130, 0.14);
+}
+
+.item.pinned {
+  background: rgba(var(--accent), 0.07);
+}
+
+.item.pinned:hover {
+  background: rgba(var(--accent), 0.13);
 }
 
 .item .body {
@@ -176,21 +310,30 @@ button.mini:hover {
 }
 
 .item .meta {
-  display: block;
-  margin-top: 2px;
-  color: #7e7e8c;
-  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pin-dot {
+  font-size: 9px;
+  filter: saturate(0.8);
 }
 
 .item img,
 .item .vid,
-.item .filetile {
-  width: 54px;
+.item .filetile,
+.item .texttile {
+  width: 52px;
   height: 34px;
   flex: none;
   object-fit: cover;
-  border-radius: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   /* An image, a clip or a stashed file is draggable into any other app, so all three
      keep a grab cursor. */
   cursor: grab;
@@ -199,20 +342,30 @@ button.mini:hover {
 
 /* Not an image and not a video: a glyph on a plate, so the row still has a handle big
    enough to start a drag from. */
-.item .filetile {
+.item .filetile,
+.item .texttile {
   display: grid;
   place-items: center;
-  font-size: 15px;
-  color: #b9b9c8;
-  background: rgba(255, 255, 255, 0.07);
+  font-size: 14px;
+  color: var(--ink-faint);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Text has nothing to drag out, so its tile is a marker rather than a handle. */
+.item .texttile {
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.02em;
 }
 
 /* A file drag is over the overlay. Both states say it out loud, because a 172px pill
    accepting a drop is not something you would guess. */
 .pill.over,
 .card.over {
-  border-color: rgba(120, 190, 255, 0.75);
-  box-shadow: 0 0 0 1px rgba(120, 190, 255, 0.35), 0 6px 18px rgba(0, 0, 0, 0.45);
+  border-color: rgba(var(--accent), 0.75);
+  box-shadow:
+    0 0 0 1px rgba(var(--accent), 0.3),
+    var(--lift);
 }
 
 .pill.over .label {
@@ -221,21 +374,22 @@ button.mini:hover {
 
 .acts {
   display: flex;
-  gap: 3px;
+  gap: 2px;
   opacity: 0;
 }
 
-.item:hover .acts {
+.item:hover .acts,
+.item.pinned .acts {
   opacity: 1;
 }
 
 .acts span {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  color: #9a9aa8;
+  width: 21px;
+  height: 21px;
+  border-radius: 6px;
+  color: var(--ink-dim);
   font-size: 11px;
 }
 
@@ -244,57 +398,223 @@ button.mini:hover {
   color: #fff;
 }
 
+/* A pin that is not set is nearly invisible until the row is hovered; a set one stays. */
+.acts .pin {
+  filter: grayscale(1);
+  opacity: 0.5;
+  font-size: 10px;
+}
+
+.acts .pin:hover,
+.acts .pin.on {
+  filter: none;
+  opacity: 1;
+  background: transparent;
+}
+
 .acts .del:hover {
   background: rgba(220, 80, 80, 0.28);
   color: #ffd9d9;
 }
 
 .empty {
-  padding: 14px 12px;
-  color: #82828f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 22px;
+  color: var(--ink-faint);
   text-align: center;
+  text-wrap: balance;
+}
+
+.empty-glyph {
+  font-size: 22px;
+  opacity: 0.35;
 }
 
 .foot {
-  padding: 5px 10px 7px;
-  color: #6f6f7c;
-  font-size: 10px;
+  padding: 6px 10px 8px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* --- settings panel --------------------------------------------------------- */
+
+.panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+}
+
+.panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+}
+
+.panel-empty {
+  padding: 20px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.opt + .opt {
+  margin-top: 11px;
+}
+
+.opt-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.opt-hint {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+}
+
+/* One control, five choices, no keyboard: a segmented row is the only shape that works
+   in a window that can never be typed into. */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.seg-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background 100ms ease,
+    color 100ms ease;
+}
+
+.seg-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.seg-btn.on {
+  background: rgba(var(--accent), 0.24);
+  color: #eaf3ff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 14px;
+  padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+.panel-note {
+  margin-top: 8px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  text-wrap: balance;
+}
+
+/* --- light desktops --------------------------------------------------------- */
+
 @media (prefers-color-scheme: light) {
-  body {
-    color: #17171c;
+  :root {
+    --glass: linear-gradient(
+      168deg,
+      rgba(255, 255, 255, 0.95),
+      rgba(246, 246, 250, 0.95) 55%,
+      rgba(238, 238, 244, 0.96)
+    );
+    --glass-card: linear-gradient(
+      168deg,
+      rgba(255, 255, 255, 0.99),
+      rgba(247, 247, 251, 0.99) 55%,
+      rgba(240, 240, 246, 0.995)
+    );
+    --edge: rgba(0, 0, 0, 0.12);
+    --edge-lit: rgba(0, 0, 0, 0.2);
+    --ink: #16161c;
+    --ink-dim: #4a4a58;
+    --ink-faint: #71717f;
+    --accent: 40, 118, 214;
+    --lift: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 12px 30px rgba(0, 0, 0, 0.22);
   }
 
-  .pill,
-  .card {
-    border-color: rgba(0, 0, 0, 0.12);
-    background: linear-gradient(180deg, rgba(252, 252, 255, 0.96), rgba(240, 240, 245, 0.96));
+  .head,
+  .foot,
+  .panel-foot {
+    border-color: rgba(0, 0, 0, 0.08);
   }
 
-  .pill .label,
-  .head .count,
-  .item .meta,
-  .empty,
-  .foot {
-    color: #6a6a76;
+  .grip {
+    background-image: radial-gradient(circle, rgba(0, 0, 0, 0.34) 1px, transparent 1.2px);
   }
 
   button.mini {
     border-color: rgba(0, 0, 0, 0.12);
     background: rgba(0, 0, 0, 0.04);
-    color: #3a3a45;
   }
 
   button.mini:hover,
-  .acts span:hover {
-    background: rgba(0, 0, 0, 0.1);
+  .acts span:hover,
+  .tab:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.09);
     color: #000;
+  }
+
+  .seg {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .seg-btn:hover {
+    background: rgba(0, 0, 0, 0.07);
+  }
+
+  .seg-btn.on {
+    background: rgba(var(--accent), 0.16);
+    color: #0d3f78;
   }
 
   .item:hover {
     background: rgba(0, 0, 0, 0.06);
-    border-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(0, 0, 0, 0.07);
+  }
+
+  .item .filetile,
+  .item .texttile {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .tab.on {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.09);
+  }
+
+  .list::-webkit-scrollbar-thumb,
+  .panel::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
   }
 }

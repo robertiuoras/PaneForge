@@ -363,6 +363,12 @@ export interface Config {
   stashFileHours: number
   /** biggest single file the Stash accepts, MB. Bigger ones are refused, not truncated. */
   stashMaxFileMb: number
+  /**
+   * Where the floating Stash was last dragged to, as its bottom-left corner in screen
+   * coordinates. Null means the default corner, and it goes back to null if that point is
+   * no longer on any display (a monitor unplugged, a resolution changed).
+   */
+  stashPos: { x: number; y: number } | null
   /** show every session at once instead of one at a time */
   grid: boolean
   /** ask before closing a session that is still running */
@@ -475,7 +481,38 @@ export interface RecentItem {
   mime?: string
   /** file items: epoch ms it gets swept at. Absent = kept until the Stash is cleared. */
   expires?: number
+  /**
+   * Kept no matter what: a pinned entry is skipped by every cap and by the file clock, and
+   * sits above the rest of the list. The Stash forgets things on purpose, so the one thing
+   * you are pasting all afternoon needs a way to opt out of that.
+   */
+  pinned?: boolean
 }
+
+/**
+ * The slice of Config the floating overlay is allowed to read and write from its own
+ * settings panel. It is a window that sits over every other app, so it gets the Stash's
+ * own knobs and nothing else - no roots, no agents, no shell.
+ */
+export type StashConfig = Pick<
+  Config,
+  | 'stashPeekMs'
+  | 'stashMaxItems'
+  | 'stashMaxImages'
+  | 'stashFileHours'
+  | 'stashMaxFileMb'
+  | 'clipboardOverlay'
+>
+
+/** Exactly the keys the overlay may patch. Anything else on the wire is dropped. */
+export const STASH_CONFIG_KEYS = [
+  'stashPeekMs',
+  'stashMaxItems',
+  'stashMaxImages',
+  'stashFileHours',
+  'stashMaxFileMb',
+  'clipboardOverlay'
+] as const
 
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
@@ -574,6 +611,8 @@ export interface Api {
   pickStashFiles(): Promise<number>
   /** open the Stash folder in the file manager, for the times a drag is not enough */
   revealStash(): void
+  /** open or shut the floating Stash - what Ctrl+Shift+V does while the app has focus */
+  toggleStash(): void
   /** the clipboard shelf, newest first */
   listRecents(): Promise<RecentItem[]>
   /** put a shelf item back on the OS clipboard */
@@ -620,6 +659,8 @@ export interface ShelfApi {
   copy(id: string): void
   remove(id: string): void
   clear(): void
+  /** keep this one through every cap and clock, or stop keeping it */
+  pin(id: string, on: boolean): void
   /** start an OS drag carrying our copy on disk - an image's PNG, or a dropped file */
   drag(id: string): void
   /** files dropped onto the overlay itself, by absolute path */
@@ -631,8 +672,26 @@ export interface ShelfApi {
   /** type it into PaneForge's focused pane instead of the clipboard */
   toPane(id: string): void
   focusApp(): void
+  /** open the folder the Stash's copies live in */
+  reveal(): void
   /** the overlay grew or shrank: the main process resizes the window to match */
   setExpanded(open: boolean): void
+  /** the overlay's own settings panel needs room the list does not */
+  setTall(tall: boolean): void
+  /**
+   * Move the window itself by dragging its header. `focusable: false` rules out the usual
+   * draggable-region, so the page reports the pointer in screen coordinates instead.
+   */
+  dragWindow: {
+    start(): void
+    move(x: number, y: number): void
+    end(): void
+  }
   onItems(cb: (items: RecentItem[]) => void): () => void
   onExpanded(cb: (open: boolean) => void): () => void
+  /** the Stash's own settings, for the panel behind the gear */
+  getConfig(): Promise<StashConfig>
+  setConfig(patch: Partial<StashConfig>): Promise<StashConfig>
+  /** the same settings changed somewhere else - the main window's Settings dialog */
+  onConfig(cb: (config: StashConfig) => void): () => void
 }

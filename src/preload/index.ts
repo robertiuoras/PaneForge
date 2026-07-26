@@ -88,6 +88,7 @@ const api: Api = {
   addStashFiles: (paths) => ipcRenderer.invoke('stash:add', paths),
   pickStashFiles: () => ipcRenderer.invoke('stash:pick'),
   revealStash: () => ipcRenderer.send('stash:reveal'),
+  toggleStash: () => ipcRenderer.send('shelf:toggle'),
 
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),

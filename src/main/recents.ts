@@ -81,7 +81,9 @@ export function configureRecents(next: Partial<typeof caps>): void {
   load()
   // A shorter file life has to move the clocks already ticking, not just new arrivals.
   items = items.map((i) =>
-    i.kind === 'file' ? { ...i, expires: caps.fileHours ? i.at + caps.fileHours * 3_600_000 : undefined } : i
+    i.kind === 'file' && !i.pinned
+      ? { ...i, expires: caps.fileHours ? i.at + caps.fileHours * 3_600_000 : undefined }
+      : i
   )
   if (trim()) {
     sweepFiles()
@@ -126,7 +128,8 @@ function load(): void {
           (i.kind === 'text' || i.kind === 'image' || i.kind === 'file')
       )
       .filter((i) => i.kind === 'text' || (i.path && existsSync(i.path)))
-      .filter((i) => i.kind !== 'file' || !i.expires || i.expires > now)
+      .filter((i) => i.pinned || i.kind !== 'file' || !i.expires || i.expires > now)
+      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.at - a.at)
       .slice(0, caps.maxItems)
     // Ids are handed out per run; carry on past whatever the last run reached so a
     // restored item and a fresh one can never collide.
@@ -170,14 +173,27 @@ export function listRecents(): RecentItem[] {
   return items
 }
 
+/**
+ * Empty the Stash - except for what was pinned. A pin is the one thing here that says
+ * "keep this", and a Clear that threw those away would make pinning pointless: you would
+ * never dare press it, and the button that tidies up is the one you press most.
+ */
 export function clearRecents(): void {
-  items = []
+  load()
+  items = items.filter((i) => i.pinned)
   sweepFiles()
-  try {
-    rmSync(historyFile(), { force: true })
-  } catch {
-    /* a file held open by a viewer is not worth failing over */
+  if (!items.length) {
+    try {
+      rmSync(historyFile(), { force: true })
+    } catch {
+      /* a file held open by a viewer is not worth failing over */
+    }
+  } else {
+    save()
   }
+  // The "already seen this" markers are deliberately left alone: whatever is on the
+  // clipboard right now was just cleared on purpose, and resetting them would put it
+  // straight back on the list a second later.
   onChange?.(items)
 }
 
@@ -198,6 +214,31 @@ export function removeRecent(id: string): boolean {
   save()
   onChange?.(items)
   return true
+}
+
+/**
+ * Keep one entry through everything: the caps, the file clock, and the sweep. The Stash
+ * forgets on purpose, which is right for the hundred things you copied by accident and
+ * wrong for the one API key you are pasting all afternoon - so that one gets to opt out.
+ * Pinned entries also sort above the rest, because a list that forgets is browsed from the
+ * top and a pin you have to scroll to is not a pin.
+ */
+export function pinRecent(id: string, on: boolean): boolean {
+  load()
+  const it = items.find((i) => i.id === id)
+  if (!it || !!it.pinned === on) return false
+  items = items.map((i) => (i.id === id ? { ...i, pinned: on || undefined } : i))
+  order()
+  // Unpinning can put the list back over a cap it was being held above.
+  if (!on) trim()
+  save()
+  onChange?.(items)
+  return true
+}
+
+/** Pinned first, then newest first inside each group. */
+function order(): void {
+  items = [...items].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.at - a.at)
 }
 
 /** Put an item back on the clipboard, so Ctrl+V in any app pastes it again. */
@@ -235,18 +276,24 @@ export function getRecent(id: string): RecentItem | undefined {
 function trim(): boolean {
   const before = items.length
   const now = Date.now()
-  items = items.filter((i) => i.kind !== 'file' || !i.expires || i.expires > now)
-  items = items.slice(0, caps.maxItems)
+  // A pin is an explicit "keep this", so it is held out of every rule below and put back
+  // at the end. It still takes a slot on screen; it just never loses one.
+  const pinned = items.filter((i) => i.pinned)
+  let rest = items.filter((i) => !i.pinned)
+  rest = rest.filter((i) => i.kind !== 'file' || !i.expires || i.expires > now)
+  rest = rest.slice(0, Math.max(0, caps.maxItems - pinned.length))
   for (const [kind, cap] of [
     ['image', caps.maxImages],
     ['file', MAX_FILES]
   ] as const) {
-    const of = items.filter((i) => i.kind === kind)
+    const of = rest.filter((i) => i.kind === kind)
     if (of.length > cap) {
       const drop = new Set(of.slice(cap).map((i) => i.id))
-      items = items.filter((i) => !drop.has(i.id))
+      rest = rest.filter((i) => !drop.has(i.id))
     }
   }
+  items = [...pinned, ...rest]
+  order()
   return items.length !== before
 }
 
@@ -352,7 +399,8 @@ export function recentsDir(): string {
  * machine left alone overnight comes back to a Stash that has already tidied itself.
  */
 function sweepExpired(): void {
-  if (!items.some((i) => i.kind === 'file' && i.expires && i.expires <= Date.now())) return
+  if (!items.some((i) => i.kind === 'file' && !i.pinned && i.expires && i.expires <= Date.now()))
+    return
   if (!trim()) return
   sweepFiles()
   save()

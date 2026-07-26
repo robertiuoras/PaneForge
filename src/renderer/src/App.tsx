@@ -187,6 +187,12 @@ export default function App(): JSX.Element {
    * "never open by itself": the list is still filling, it just stops interrupting.
    */
   const peekMs = config?.stashPeekMs ?? 5000
+  /**
+   * There is one Stash, not two. While the floating window is on it owns all of this -
+   * the same copy showing up both there and in an in-window panel was the app talking
+   * over itself. The in-window shelf is what you get when the floating one is turned off.
+   */
+  const shelfInWindow = !!config?.clipboardShelf && !config?.clipboardOverlay
   useEffect(() => {
     if (config?.clipboardShelf === false) {
       setRecents([])
@@ -196,12 +202,12 @@ export default function App(): JSX.Element {
     api.listRecents().then(setRecents)
     return api.onRecents((items) => {
       setRecents(items)
-      if (!items.length || peekMs <= 0) return
+      if (!items.length || peekMs <= 0 || !shelfInWindow) return
       setShelfPeek(true)
       window.clearTimeout(peekTimer.current)
       peekTimer.current = window.setTimeout(() => setShelfPeek(false), peekMs)
     })
-  }, [config?.clipboardShelf, peekMs])
+  }, [config?.clipboardShelf, peekMs, shelfInWindow])
 
   /**
    * Put a shelf item into the focused pane. Text goes in as text; an image goes in as the
@@ -467,7 +473,10 @@ export default function App(): JSX.Element {
         // the shelf and paste the clipboard into the agent at the same time.
         e.preventDefault()
         e.stopPropagation()
-        setShelfPinned((p) => !p)
+        // One Stash: while the floating one is on, this key opens that, not a second
+        // list drawn inside the window.
+        if (shelfInWindow) setShelfPinned((p) => !p)
+        else api.toggleStash()
       } else if (k === 'h' && !typing) {
         e.preventDefault()
         setHistory(true)
@@ -530,7 +539,8 @@ export default function App(): JSX.Element {
     flash,
     ask,
     fixUi,
-    shelfPinned
+    shelfPinned,
+    shelfInWindow
   ])
 
   /**
@@ -611,7 +621,7 @@ export default function App(): JSX.Element {
         title: 'Stash: copied text, screenshots and dropped files',
         hint: 'click one into the focused pane',
         keys: 'Ctrl Shift V',
-        run: () => setShelfPinned((p) => !p)
+        run: () => (shelfInWindow ? setShelfPinned((p) => !p) : api.toggleStash())
       },
       {
         id: 'swarm',
@@ -1153,15 +1163,17 @@ export default function App(): JSX.Element {
           onCancel={() => setAsk(null)}
         />
       )}
-      <RecentsFlyout
-        // The history behind it is hundreds deep now and lives in the floating overlay;
-        // the in-window shelf stays what it was - the last handful, one click from a pane.
-        items={recents.slice(0, 12)}
-        pinned={shelfPinned}
-        peek={shelfPeek}
-        onClose={() => setShelfPinned(false)}
-        onSend={sendRecent}
-      />
+      {shelfInWindow && (
+        <RecentsFlyout
+          // Only drawn when the floating Stash is off, so a copy never appears in two
+          // places at once. The last handful, one click from a pane.
+          items={recents.slice(0, 12)}
+          pinned={shelfPinned}
+          peek={shelfPeek}
+          onClose={() => setShelfPinned(false)}
+          onSend={sendRecent}
+        />
+      )}
       {restore && (
         <RestoreDialog
           offer={restore}

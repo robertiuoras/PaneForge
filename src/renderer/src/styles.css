@@ -190,13 +190,34 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 
 /* Length of the turn a session is running, ticking once a second. Tabular
    figures so the row does not jitter as the digits change. */
+/* The turn clock. A running number is the one thing in a row that is actually moving, so
+   it is given a small piece of glass to sit on: a tinted capsule with a lit top edge and
+   a slow sheen crossing it. The sheen is what reads as "live" without a spinner. */
 .elapsed {
-  margin-left: auto; flex: none; color: var(--muted); font-size: 10.5px;
-  font-variant-numeric: tabular-nums; opacity: 0.8;
+  margin-left: auto; flex: none; position: relative; overflow: hidden;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid #ffffff1a;
+  background: linear-gradient(180deg, #ffffff14, #ffffff05 60%, #ffffff00);
+  box-shadow: 0 1px 0 #ffffff12 inset, 0 1px 3px #00000040;
+  color: var(--text); font-size: 10.5px;
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum';
+  letter-spacing: 0.01em; opacity: 0.92;
 }
-/* The same slot once the turn is over: frozen, and dim enough that a still
-   number never reads as a running one. */
-.elapsed.done { opacity: 0.42; }
+.elapsed::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(105deg, #fff0 38%, #ffffff2e 50%, #fff0 62%);
+  transform: translateX(-120%);
+  animation: sheen 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes sheen { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
+/* The same slot once the turn is over: frozen, flat, and dim enough that a still number
+   never reads as a running one. No glass, no sheen - that is the whole tell. */
+.elapsed.done {
+  padding: 0; border-color: transparent; background: none; box-shadow: none;
+  color: var(--muted); opacity: 0.42;
+}
+.elapsed.done::after { content: none; }
+@media (prefers-reduced-motion: reduce) { .elapsed::after { animation: none; opacity: 0.5; } }
 /* Auto-created worktree lane, so two agents in one project are visibly apart. */
 .chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
 
@@ -204,6 +225,27 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 /* A lane that cannot merge blocks its own work from every release, and used to say so
    nowhere. Red, and it keeps glowing until it is not true any more. */
 .badge.stuck { background: #ff8f8f1a; color: var(--danger); border-color: #ff8f8f3d; animation: pulse 2.4s ease-in-out infinite; }
+/* "Lanes" is PaneForge's own word for something invisible, so the header carries the
+   question the label raises rather than leaving it to a tooltip nobody hovers. */
+.help-dot {
+  width: 14px; height: 14px; margin-left: 5px; padding: 0; flex: none;
+  display: inline-grid; place-items: center; vertical-align: middle;
+  border: 1px solid var(--line-strong); border-radius: 50%;
+  background: transparent; color: var(--muted);
+  font-size: 9px; line-height: 1; cursor: pointer;
+  transition: color var(--fast), border-color var(--fast), background var(--fast);
+}
+.help-dot:hover { color: var(--text); border-color: var(--accent); }
+.help-dot.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.lane-help {
+  margin: 2px 0 6px; padding: 8px 9px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2); color: var(--muted);
+  font-size: 11px; line-height: 1.5; text-wrap: pretty;
+}
+.lane-help p { margin: 0; }
+.lane-help p + p { margin-top: 7px; }
+.lane-help b { color: var(--text); font-weight: 600; }
 .lanes { display: flex; flex-direction: column; gap: 3px; max-height: 26vh; overflow-y: auto; }
 .lane-row { padding: 5px 8px; }
 .lane-row .row-title { font-size: 12px; }
