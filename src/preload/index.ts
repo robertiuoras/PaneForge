@@ -83,6 +83,7 @@ const api: Api = {
   listRecents: () => ipcRenderer.invoke('recents:list'),
   copyRecent: (id) => ipcRenderer.send('recents:copy', id),
   dragRecent: (id) => ipcRenderer.send('recents:drag', id),
+  removeRecent: (id) => ipcRenderer.send('recents:remove', id),
   clearRecents: () => ipcRenderer.send('recents:clear'),
 
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
@@ -128,6 +129,11 @@ const api: Api = {
     const h = (_e: unknown, items: RecentItem[]) => cb(items)
     ipcRenderer.on('recents:changed', h)
     return () => ipcRenderer.off('recents:changed', h)
+  },
+  onRecentToPane: (cb) => {
+    const h = (_e: unknown, id: string): void => cb(id)
+    ipcRenderer.on('recents:toPane', h)
+    return () => ipcRenderer.off('recents:toPane', h)
   },
   onAppError: (cb) => {
     const h = (_e: unknown, message: string) => cb(message)

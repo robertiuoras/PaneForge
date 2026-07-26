@@ -111,6 +111,7 @@ function defaults(): Config {
     notifyOnIdle: true,
     soundOnIdle: true,
     clipboardShelf: true,
+    clipboardOverlay: true,
     grid: false,
     confirmClose: true,
     launchAtLogin: false,

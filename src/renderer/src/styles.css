@@ -449,6 +449,16 @@ button.small { padding: 5px 9px; font-size: 11px; }
 }
 .shelf-item:hover .shelf-copy { opacity: 1; }
 .shelf-copy:hover { color: var(--text); }
+/* Forget one line. Sits above the copy button, in the same hidden-until-hover strip:
+   a password pasted by accident has to be removable without clearing the lot. */
+.shelf-forget {
+  position: absolute; right: 7px; top: 5px; opacity: 0;
+  padding: 0 4px; border-radius: 4px; background: var(--surface-3);
+  border: 1px solid var(--line-strong); color: var(--muted); font-size: 9.5px;
+  transition: opacity var(--fast);
+}
+.shelf-item:hover .shelf-forget { opacity: 1; }
+.shelf-forget:hover { color: var(--danger, #ff6b6b); }
 .shelf-foot {
   display: flex; align-items: center; gap: 8px; justify-content: space-between;
   padding: 6px 8px 7px 11px; border-top: 1px solid var(--line);

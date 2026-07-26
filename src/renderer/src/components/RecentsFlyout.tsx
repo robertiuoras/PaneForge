@@ -227,6 +227,16 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
             >
               copy
             </span>
+            <span
+              className="shelf-forget"
+              title="Forget this one"
+              onClick={(e) => {
+                e.stopPropagation()
+                api.removeRecent(it.id)
+              }}
+            >
+              ✕
+            </span>
           </button>
         ))}
       </div>

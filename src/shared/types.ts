@@ -333,6 +333,13 @@ export interface Config {
    * watched at all.
    */
   clipboardShelf: boolean
+  /**
+   * Also float that history in a small always-on-top window, bottom-left of whichever
+   * display the app is on, so it is reachable while you are in a browser or an editor
+   * rather than only while PaneForge has the screen. Needs `clipboardShelf` on - it is
+   * the same history, in a window that outlives the app being minimised.
+   */
+  clipboardOverlay: boolean
   /** show every session at once instead of one at a time */
   grid: boolean
   /** ask before closing a session that is still running */
@@ -531,6 +538,8 @@ export interface Api {
   copyRecent(id: string): void
   /** hand an image item to the OS drag layer, so it can be dropped in any app */
   dragRecent(id: string): void
+  /** forget one item - the clipboard is where a password lands by accident */
+  removeRecent(id: string): void
   clearRecents(): void
 
   voiceStatus(): Promise<VoiceStatus>
@@ -549,9 +558,33 @@ export interface Api {
   onVoiceHotkey(cb: () => void): () => void
   /** something new landed on the clipboard shelf */
   onRecents(cb: (items: RecentItem[]) => void): () => void
+  /** the floating overlay asked for one of its items to go into the focused pane */
+  onRecentToPane(cb: (id: string) => void): () => void
   /**
    * A main-process error, which used to be a modal message box that stole the keyboard.
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
   onAppError(cb: (message: string) => void): () => void
+}
+
+/**
+ * What the floating clipboard overlay gets on `window.shelf`. Much smaller than `Api`
+ * on purpose: that window sits over every other application, so it can read the
+ * clipboard history and change nothing else about the app.
+ */
+export interface ShelfApi {
+  list(): Promise<RecentItem[]>
+  /** put it back on the OS clipboard, ready for Ctrl+V wherever you already were */
+  copy(id: string): void
+  remove(id: string): void
+  clear(): void
+  /** start an OS drag carrying the saved PNG of an image item */
+  drag(id: string): void
+  /** type it into PaneForge's focused pane instead of the clipboard */
+  toPane(id: string): void
+  focusApp(): void
+  /** the overlay grew or shrank: the main process resizes the window to match */
+  setExpanded(open: boolean): void
+  onItems(cb: (items: RecentItem[]) => void): () => void
+  onExpanded(cb: (open: boolean) => void): () => void
 }

@@ -1,0 +1,274 @@
+/* The floating clipboard overlay. Its own stylesheet, not the app's: this page is a
+   172x38 pill most of the time, and pulling in the whole app theme to draw it would cost
+   a second copy of every rule for a window that shows a list and nothing else. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* The window is transparent; only the card paints. Anything opaque here would draw a
+     grey rectangle over the desktop in the corner. */
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font: 12px/1.4 -apple-system, 'Segoe UI', system-ui, sans-serif;
+  color: #e6e6ea;
+  /* Nothing here is a document to select through - dragging text out of the pill would
+     just look like a broken drag. Images opt back in below. */
+  user-select: none;
+  cursor: default;
+}
+
+.wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+/* --- collapsed pill --------------------------------------------------------- */
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  margin: 4px;
+  border-radius: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(32, 32, 40, 0.94), rgba(20, 20, 26, 0.94));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pill .glyph {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.pill .count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.pill .label {
+  color: #9a9aa8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- expanded card ---------------------------------------------------------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 8px);
+  margin: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: linear-gradient(180deg, rgba(28, 28, 35, 0.97), rgba(17, 17, 22, 0.97));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.head strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.head .count {
+  color: #8a8a98;
+  font-variant-numeric: tabular-nums;
+}
+
+.head .spacer {
+  flex: 1;
+}
+
+button.mini {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #c9c9d4;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+button.mini:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+}
+
+.list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.item.copied {
+  border-color: rgba(90, 200, 130, 0.55);
+  background: rgba(90, 200, 130, 0.14);
+}
+
+.item .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.item .text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item .meta {
+  display: block;
+  margin-top: 2px;
+  color: #7e7e8c;
+  font-size: 10px;
+}
+
+.item img {
+  width: 54px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  /* An image row is draggable into any other app, so it keeps a grab cursor. */
+  cursor: grab;
+  user-select: none;
+}
+
+.acts {
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+}
+
+.item:hover .acts {
+  opacity: 1;
+}
+
+.acts span {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: #9a9aa8;
+  font-size: 11px;
+}
+
+.acts span:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.acts .del:hover {
+  background: rgba(220, 80, 80, 0.28);
+  color: #ffd9d9;
+}
+
+.empty {
+  padding: 14px 12px;
+  color: #82828f;
+  text-align: center;
+}
+
+.foot {
+  padding: 5px 10px 7px;
+  color: #6f6f7c;
+  font-size: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+@media (prefers-color-scheme: light) {
+  body {
+    color: #17171c;
+  }
+
+  .pill,
+  .card {
+    border-color: rgba(0, 0, 0, 0.12);
+    background: linear-gradient(180deg, rgba(252, 252, 255, 0.96), rgba(240, 240, 245, 0.96));
+  }
+
+  .pill .label,
+  .head .count,
+  .item .meta,
+  .empty,
+  .foot {
+    color: #6a6a76;
+  }
+
+  button.mini {
+    border-color: rgba(0, 0, 0, 0.12);
+    background: rgba(0, 0, 0, 0.04);
+    color: #3a3a45;
+  }
+
+  button.mini:hover,
+  .acts span:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: #000;
+  }
+
+  .item:hover {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+}
