@@ -328,7 +328,6 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .version.ok .v-state { color: var(--ok); border-color: #35d07f2e; background: #35d07f14; }
 .version.warn .v-state { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
 .version.accent .v-state { color: var(--accent); border-color: #8b9dff33; background: var(--accent-dim); }
-.broadcast { font-size: 12px; }
 
 /* ---- panes ---- */
 .panes { position: relative; min-width: 0; height: 100vh; padding: 9px; }
@@ -876,9 +875,10 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .quick { display: flex; gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
-.broadcast-row { display: flex; gap: 6px; align-items: center; }
-.broadcast-row .broadcast { flex: 1; }
-.icon.mic { font-size: 13px; line-height: 1; padding: 6px 8px; border-radius: var(--r-sm); }
+/* The mic sits in the pane header now, one per pane, so it is sized like the icons
+   beside it rather than like a sidebar control. */
+.icon.mic { display: inline-flex; align-items: center; line-height: 1; padding: 3px 5px; border-radius: var(--r-sm); }
+.icon.mic:disabled { opacity: 0.3; cursor: default; }
 .icon.mic.rec { background: #ff5f5f2e; color: #ff8f8f; animation: pulse 1.1s ease-in-out infinite; }
 .icon.mic.busy { color: var(--accent); }
 @keyframes pulse { 50% { opacity: 0.45; } }

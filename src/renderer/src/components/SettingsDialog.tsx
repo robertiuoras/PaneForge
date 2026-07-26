@@ -473,8 +473,10 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               <div className="setting">
                 <label>Dictation</label>
                 <span className="hint">
-                  Hold the mic button (or press Ctrl+Shift+Space anywhere) and talk. Audio is transcribed by a
-                  Whisper model running on this machine - nothing is uploaded, and it costs nothing.
+                  Click the mic in any pane's header and talk - it goes into that pane, whichever agent is
+                  running there. Ctrl+Shift+Space does the same for the focused pane, from anywhere. Audio is
+                  transcribed by a Whisper model running on this machine - nothing is uploaded, and it costs
+                  nothing.
                 </span>
               </div>
 
@@ -541,7 +543,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.voice.enabled}
                   onChange={(v) => onChange({ voice: { ...config.voice, enabled: v } })}
-                  label="Enable the mic button and the global push-to-talk key"
+                  label="Show a mic on every pane, and enable the global push-to-talk key"
                 />
               </div>
             </>

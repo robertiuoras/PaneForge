@@ -20,7 +20,8 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import TerminalPane, { paneRepair } from './components/TerminalPane'
+import TerminalPane, { paneInsert, paneRepair } from './components/TerminalPane'
+import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
@@ -77,7 +78,6 @@ export default function App(): JSX.Element {
   const [shelfPinned, setShelfPinned] = useState(false)
   const [shelfPeek, setShelfPeek] = useState(false)
   const peekTimer = useRef<number>()
-  const broadcastBox = useRef<HTMLInputElement>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
 
@@ -242,16 +242,23 @@ export default function App(): JSX.Element {
   }, [sendRecent])
 
   /**
-   * Dictation types straight into the focused pane, exactly as if you had typed
-   * it, and stops short of pressing Enter: a misheard word should be fixable
-   * before the agent acts on it.
+   * Dictation goes into the pane whose mic was clicked - the hotkey means the focused one -
+   * and stops short of pressing Enter: a misheard word should be fixable before the agent
+   * acts on it.
+   *
+   * It is inserted as a paste rather than written to the pty. Every agent here runs a TUI
+   * with bracketed paste on, and that is the difference between one insertion the TUI puts
+   * in its prompt box and a burst of characters it is free to read as keystrokes - which is
+   * why this worked in a shell and not in the agents it was built for.
    */
   const voice = useVoice(
     useCallback(
-      (text: string) => {
-        const id = activeRef.current
+      (text: string, target: string) => {
+        const id = target || activeRef.current
         if (!id) return flash('Nothing focused - open a pane first.')
-        api.write(id, text)
+        const insert = paneInsert.get(id)
+        if (insert) insert(text)
+        else api.write(id, text)
       },
       [flash]
     )
@@ -500,9 +507,6 @@ export default function App(): JSX.Element {
       } else if (k === 'g') {
         e.preventDefault()
         patchConfig({ grid: !grid })
-      } else if (k === 'b') {
-        e.preventDefault()
-        broadcastBox.current?.focus()
       } else if (k === ',') {
         e.preventDefault()
         setSettings(true)
@@ -607,13 +611,6 @@ export default function App(): JSX.Element {
         title: grid ? 'Show one pane at a time' : 'Show every pane in a grid',
         keys: 'Ctrl G',
         run: () => patchConfig({ grid: !grid })
-      },
-      {
-        id: 'broadcast',
-        group: 'Actions',
-        title: 'Send a line to every session',
-        keys: 'Ctrl B',
-        run: () => broadcastBox.current?.focus()
       },
       {
         id: 'shelf',
@@ -749,15 +746,6 @@ export default function App(): JSX.Element {
   // in the last four seconds", so it stays honest through a long silent tool call and
   // does not claim a pane sitting at an empty prompt is busy.
   const working = sessions.filter((s) => s.status === 'working').length
-
-  const sendBroadcast = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key !== 'Enter') return
-    const text = e.currentTarget.value.trim()
-    if (!text) return
-    api.broadcast(text)
-    e.currentTarget.value = ''
-    flash(`Sent to ${sessions.filter((s) => s.status !== 'exited').length} sessions.`)
-  }
 
   return (
     <div className="app">
@@ -947,28 +935,6 @@ export default function App(): JSX.Element {
           {sessions.length === 0 && <div className="empty">No sessions. Ctrl T to start one.</div>}
         </div>
 
-        <div className="broadcast-row">
-          <input
-            ref={broadcastBox}
-            className="search broadcast"
-            placeholder="Send a line to every session (Ctrl B)"
-            onKeyDown={sendBroadcast}
-          />
-          {config?.voice.enabled && (
-            <button
-              className={'icon mic' + (voice.phase === 'recording' ? ' rec' : '') + (voice.phase === 'thinking' ? ' busy' : '')}
-              title={
-                voice.phase === 'recording'
-                  ? 'Listening - click to transcribe (Ctrl Shift Space)'
-                  : 'Dictate into the focused pane (Ctrl Shift Space)'
-              }
-              onClick={voice.toggle}
-            >
-              {voice.phase === 'thinking' ? '…' : '🎤'}
-            </button>
-          )}
-        </div>
-
         <div className="foot">
           <Segmented
             value={grid ? 'grid' : 'single'}
@@ -1024,6 +990,31 @@ export default function App(): JSX.Element {
                   model={s.model ?? ''}
                   onChange={(a, m) => switchAgent(s, a, m)}
                 />
+                {config?.voice.enabled && (
+                  <button
+                    className={
+                      'icon mic' +
+                      (voice.phase === 'recording' && voice.target === s.id ? ' rec' : '') +
+                      (voice.phase === 'thinking' && voice.target === s.id ? ' busy' : '')
+                    }
+                    // Every pane owns a mic, so dictating into the third pane does not mean
+                    // clicking into it first and hoping the focus stuck.
+                    title={
+                      voice.phase === 'recording' && voice.target === s.id
+                        ? `Listening - click to transcribe into ${s.title}`
+                        : voice.phase !== 'idle'
+                          ? 'Already listening for another pane'
+                          : `Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`
+                    }
+                    disabled={voice.phase !== 'idle' && voice.target !== s.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      voice.toggle(s.id)
+                    }}
+                  >
+                    {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={13} />}
+                  </button>
+                )}
                 <button className="icon" title="Restart agent (Ctrl Shift R)" onClick={() => api.restartSession(s.id)}>
                   ⟳
                 </button>

@@ -14,25 +14,36 @@ export type VoicePhase = 'idle' | 'recording' | 'thinking'
 export interface Voice {
   phase: VoicePhase
   error: string
-  start: () => Promise<void>
+  /** The pane this clip is being dictated into, '' when the target is whatever is focused. */
+  target: string
+  start: (target?: string) => Promise<void>
   stop: () => void
-  toggle: () => void
+  toggle: (target?: string) => void
 }
 
 const SAMPLE_RATE = 16_000
 
-export function useVoice(onText: (text: string) => void): Voice {
+/**
+ * One recorder, but it remembers which pane asked for it. There is a mic on every pane
+ * header, and a clip started from one pane has to land in that pane even if the pointer
+ * has moved on by the time Whisper answers - which takes seconds.
+ */
+export function useVoice(onText: (text: string, target: string) => void): Voice {
   const [phase, setPhase] = useState<VoicePhase>('idle')
   const [error, setError] = useState('')
+  const [target, setTarget] = useState('')
   const recorder = useRef<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
   const phaseRef = useRef<VoicePhase>('idle')
+  const targetRef = useRef('')
 
   phaseRef.current = phase
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (to = '') => {
     if (phaseRef.current !== 'idle') return
     setError('')
+    targetRef.current = to
+    setTarget(to)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
@@ -48,11 +59,13 @@ export function useVoice(onText: (text: string) => void): Voice {
           const wav = await toWav(new Blob(chunks.current, { type: rec.mimeType }))
           const r = await api.transcribe(wav)
           if (r.error) setError(r.error)
-          else if (r.text.trim()) onText(r.text.trim())
+          else if (r.text.trim()) onText(r.text.trim(), targetRef.current)
         } catch (e) {
           setError(String(e))
         } finally {
           setPhase('idle')
+          targetRef.current = ''
+          setTarget('')
         }
       }
       rec.start()
@@ -61,6 +74,8 @@ export function useVoice(onText: (text: string) => void): Voice {
     } catch (e) {
       setError(`Microphone unavailable: ${String(e)}`)
       setPhase('idle')
+      targetRef.current = ''
+      setTarget('')
     }
   }, [onText])
 
@@ -73,16 +88,20 @@ export function useVoice(onText: (text: string) => void): Voice {
     }
   }, [])
 
-  const toggle = useCallback(() => {
-    if (phaseRef.current === 'recording') stop()
-    else if (phaseRef.current === 'idle') void start()
-  }, [start, stop])
+  const toggle = useCallback(
+    (to = '') => {
+      if (phaseRef.current === 'recording') stop()
+      else if (phaseRef.current === 'idle') void start(to)
+    },
+    [start, stop]
+  )
 
   // The global hotkey is a toggle rather than hold-to-talk: a held global key would
-  // keep firing repeats, and Electron gives no key-up for global shortcuts.
-  useEffect(() => api.onVoiceHotkey(toggle), [toggle])
+  // keep firing repeats, and Electron gives no key-up for global shortcuts. It carries no
+  // target - the focused pane is the one it means, and only App knows which that is.
+  useEffect(() => api.onVoiceHotkey(() => toggle()), [toggle])
 
-  return { phase, error, start, stop, toggle }
+  return { phase, error, target, start, stop, toggle }
 }
 
 /** webm/opus blob -> 16 kHz mono 16-bit WAV. */
