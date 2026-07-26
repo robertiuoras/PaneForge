@@ -23,7 +23,7 @@ import { Remote } from './remote'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
-import { laneBoard } from './laneBoard'
+import { laneBoard, laneRetry } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
@@ -558,6 +558,11 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
 ipcMain.handle('lanes:board', () => laneBoard())
+// A stuck lane is retried on a clock rather than only when some chat happens to run a
+// lane command, so the ones that come unstuck by themselves do it overnight too. Both
+// the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
+// returns immediately unless a lane is conflicted or waiting to go out.
+setInterval(() => laneRetry(), 60_000).unref()
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.

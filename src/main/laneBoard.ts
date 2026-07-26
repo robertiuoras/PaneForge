@@ -13,6 +13,7 @@
 // machine that has no PaneForge checkout there is no file, this returns null, and the
 // renderer draws nothing.
 
+import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -45,8 +46,15 @@ interface RawState {
   lastShip?: { version: string; at: number; lanes: string[] } | null
 }
 
+/** How often the app is willing to ask lane.mjs to re-try; its own throttle is longer. */
+const RETRY_EVERY = 2 * 60 * 1000
+/** A retry that clears a conflict ends in a release, and a release is not quick. */
+const RETRY_TIMEOUT = 10 * 60 * 1000
+
 let repo: string | null | undefined
 let cache: { at: number; board: LaneBoard | null } = { at: 0, board: null }
+let retryAt = 0
+let retrying = false
 
 /**
  * The main checkout, which is where the shared .git (and so the lane state) lives.
@@ -78,6 +86,49 @@ export function laneBoard(): LaneBoard | null {
   if (now - cache.at < TTL) return cache.board
   cache = { at: now, board: read() }
   return cache.board
+}
+
+/**
+ * Ask lane.mjs to try the stuck lanes again, and to put out anything that is waiting.
+ *
+ * Both halves only ever happened as a side effect of a chat running some other lane
+ * command. Half of these conflicts stop existing on their own - the change they disagreed
+ * with ships, or rerere learns the resolution in another lane - and finished work that
+ * arrives inside the release cooldown goes out on the next trigger. On an evening where
+ * nobody types there is no next trigger, so a lane that would merge fine reads "stuck"
+ * until morning and finished work sits on master beside it. The app has a clock, so it
+ * does both: no window, no output, nothing on screen.
+ *
+ * Cheap by construction. It only runs while a lane is actually conflicted or waiting to
+ * go out, at most every RETRY_EVERY, and on the other side lane.mjs skips a lane whose
+ * master has not moved and returns from the release without work in one `rev-list`.
+ */
+export function laneRetry(): void {
+  const board = laneBoard()
+  if (!board || retrying) return
+  if (!board.lanes.some((l) => l.conflicted || l.ready)) return
+  const now = Date.now()
+  if (now - retryAt < RETRY_EVERY) return
+  retryAt = now
+  retrying = true
+  execFile(
+    process.execPath,
+    [join(board.repo, 'scripts', 'lane.mjs'), 'retry'],
+    {
+      cwd: board.repo,
+      windowsHide: true,
+      timeout: RETRY_TIMEOUT,
+      // process.execPath is Electron here; this makes that binary behave as plain node,
+      // so the retry does not depend on node being on the app's PATH.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    },
+    () => {
+      retrying = false
+      // Whatever it did (cleared a lane, marked one ready, shipped) is in the state file
+      // now; drop the TTL cache so the strip shows it on its next poll, not in 4s.
+      cache = { at: 0, board: null }
+    }
+  )
 }
 
 function read(): LaneBoard | null {

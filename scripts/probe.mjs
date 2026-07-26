@@ -42,9 +42,14 @@ async function findPage() {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
       // The app has more than one window (the Stash overlay is its own page), so a probe
       // aimed at one of them needs to say which: `--url shelf` picks the first whose URL
-      // contains that. With no flag it is the first page, which is the main window.
+      // contains that. With no flag it is the main window - which is NOT simply the first
+      // page in the list: with the Stash open, DevTools lists the Stash first, and a probe
+      // that asked the main window a question got an empty document and no window.api.
       const page = list.find(
-        (t) => t.type === 'page' && t.webSocketDebuggerUrl && (!urlMatch || (t.url ?? '').includes(urlMatch))
+        (t) =>
+          t.type === 'page' &&
+          t.webSocketDebuggerUrl &&
+          (urlMatch ? (t.url ?? '').includes(urlMatch) : !(t.url ?? '').includes('shelf'))
       )
       if (page) return page
     } catch {
