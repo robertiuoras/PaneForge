@@ -26,6 +26,7 @@ import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
+import LaneStrip from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
@@ -812,6 +813,10 @@ export default function App(): JSX.Element {
           </>
         )}
 
+        {/* PaneForge's own lanes, on a machine that develops PaneForge. A lane whose
+            work will not merge used to be invisible until someone read a hook message. */}
+        <LaneStrip sessions={sessions} onFocus={setActiveId} />
+
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           Sessions ({sessions.length})
@@ -853,7 +858,17 @@ export default function App(): JSX.Element {
                   />
                 ) : (
                   <div className="row-title">
-                    {i < 9 && <span className="num">{i + 1}</span>}
+                    {/* The switch key, and the fastest place to read the pane's state:
+                        lit green while its agent is running, amber when a turn finished
+                        while you were looking somewhere else. */}
+                    {i < 9 && (
+                      <span
+                        className={'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')}
+                        title={`Ctrl ${i + 1}`}
+                      >
+                        {i + 1}
+                      </span>
+                    )}
                     {s.title}
                   </div>
                 )}

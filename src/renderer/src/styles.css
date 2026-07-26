@@ -120,9 +120,40 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   padding: 0 5px; font-size: 10px; color: var(--muted);
 }
 .chip.dead { color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
+/* The Ctrl-N key for the pane, and the one number on screen worth glancing at. Glass
+   pill: a top-lit gradient with an inset highlight, so it reads as a raised key rather
+   than a text label. Fixed width and tabular figures keep the title from shifting as
+   the state changes. */
 .num {
+  display: inline-block; min-width: 16px; text-align: center;
   color: var(--muted); font-size: 10px; margin-right: 6px;
-  border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 4px;
+  border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #ffffff14, #ffffff05);
+  box-shadow: inset 0 1px 0 #ffffff14, 0 1px 2px #00000038;
+  transition: color var(--fast), background var(--fast), box-shadow var(--fast);
+}
+/* Its agent is running right now. The glow breathes rather than blinks: a row of these
+   flashing in a sidebar is a fire alarm, and most of the time nothing is wrong. */
+.num.live {
+  color: #b8f5d6; border-color: #35d07f4d;
+  background: linear-gradient(180deg, #35d07f3d, #35d07f14);
+  box-shadow: inset 0 1px 0 #ffffff26, 0 0 10px #35d07f4d;
+  animation: numGlow 2.4s ease-in-out infinite;
+}
+/* Finished a turn while you were looking at another pane. Amber is "this wants you"
+   everywhere else in the app, so it is amber here too. */
+.num.attn {
+  color: #ffd89a; border-color: #f0b4294d;
+  background: linear-gradient(180deg, #f0b4293d, #f0b42914);
+  box-shadow: inset 0 1px 0 #ffffff26, 0 0 10px #f0b42952;
+  animation: numGlow 2s ease-in-out infinite;
+}
+/* The trough keeps the pill's own colour rather than fading to white, so the breath
+   reads as one light dimming instead of two colours crossfading. */
+@keyframes numGlow {
+  0%, 100% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 5px color-mix(in srgb, currentColor 28%, transparent); }
+  50% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 13px currentColor; }
 }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
@@ -160,6 +191,37 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .elapsed.done { opacity: 0.42; }
 /* Auto-created worktree lane, so two agents in one project are visibly apart. */
 .chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
+
+/* ---- PaneForge's own dev lanes (LaneStrip) ---- */
+/* A lane that cannot merge blocks its own work from every release, and used to say so
+   nowhere. Red, and it keeps glowing until it is not true any more. */
+.badge.stuck { background: #ff8f8f1a; color: var(--danger); border-color: #ff8f8f3d; animation: pulse 2.4s ease-in-out infinite; }
+.lanes { display: flex; flex-direction: column; gap: 3px; max-height: 26vh; overflow-y: auto; }
+.lane-row { padding: 5px 8px; }
+.lane-row .row-title { font-size: 12px; }
+.lane-row .row-sub { font-size: 10.5px; }
+.lane-row.done .row-sub { color: var(--ok); opacity: 0.85; }
+.lane-row.stuck {
+  border-color: #ff8f8f38; background: #ff8f8f0d;
+  box-shadow: 0 0 0 1px #ff8f8f14, 0 0 12px #ff8f8f1f;
+  animation: stuckGlow 3s ease-in-out infinite;
+}
+.lane-row.stuck .row-sub { color: var(--danger); }
+@keyframes stuckGlow {
+  0%, 100% { box-shadow: 0 0 0 1px #ff8f8f14, 0 0 7px #ff8f8f1a; }
+  50% { box-shadow: 0 0 0 1px #ff8f8f2e, 0 0 16px #ff8f8f3d; }
+}
+/* The lane letter, same glass treatment as the session numbers so the sidebar has one
+   vocabulary for "this is a key/label" rather than two. */
+.lane-tag {
+  flex: none; min-width: 18px; text-align: center;
+  font-size: 10px; font-weight: 650; color: var(--accent);
+  border: 1px solid var(--accent-dim); border-radius: 5px; padding: 1px 4px;
+  background: linear-gradient(180deg, #ffffff14, #ffffff05);
+  box-shadow: inset 0 1px 0 #ffffff14;
+}
+.lane-tag.stuck { color: var(--danger); border-color: #ff8f8f3d; }
+.lane-fix { flex: none; padding: 2px 8px; font-size: 10.5px; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
