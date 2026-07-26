@@ -30,7 +30,7 @@ const api: Api = {
   broadcast: (text) => ipcRenderer.send('pty:broadcast', text),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
   redraw: (id) => ipcRenderer.send('pty:redraw', id),
-  setBusy: (id, busy) => ipcRenderer.send('sessions:busy', id, busy),
+  setBusy: (id, busy, tail) => ipcRenderer.send('sessions:busy', id, busy, tail),
   startSwarm: (req: SwarmRequest) => ipcRenderer.invoke('sessions:swarm', req),
 
   getConfig: () => ipcRenderer.invoke('config:get'),

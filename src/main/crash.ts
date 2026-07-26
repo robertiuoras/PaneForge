@@ -70,7 +70,9 @@ export function installCrashGuard(): void {
 export function crashTestHook(): void {
   if (app.isPackaged || !process.env.PANEFORGE_CRASH_TEST) return
   setTimeout(() => {
-    throw new Error('crash guard smoke test')
+    // Named so nobody who walks past the test window - or reads the log a day later -
+    // has to work out whether the app really broke. It says it is a drill.
+    throw new Error('SMOKE TEST (not a real fault): crash guard drill, safe to ignore')
   }, 4000)
 }
 
