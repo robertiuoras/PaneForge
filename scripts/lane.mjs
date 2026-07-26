@@ -486,6 +486,12 @@ function ready(session) {
   const marked = markReady(state, id)
   delete state.conflicts[id]
   write(state)
+  // `ready` is the end of this lane's work, so the test copy it opened has nothing left
+  // to test. Waiting for the chat to END to close it (releaseClaim) left a minimized
+  // "PaneForge - dev-b" sitting in Alt+Tab for as long as the chat stayed open - which,
+  // when the release is blocked on another lane, is hours. Close it at the moment the
+  // work is declared done instead.
+  closeTestApps(laneDir(id))
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
   return { ...marked, release: autoship('patch', session) }
