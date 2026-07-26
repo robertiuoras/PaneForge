@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke": "node scripts/smoke-pty.mjs",
     "test:updater": "node scripts/updater-test.mjs",
-    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs",
+    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs",
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
