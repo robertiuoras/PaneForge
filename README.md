@@ -87,11 +87,14 @@ Re-run after any source change. Needs Node 20+.
   Reviewer, Tester), each told what it owns so they stop editing the same file.
   Roles are editable and remembered.
 - **Worktree lanes** - open a second session in a project you already have open and
-  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`) with your `.env`
-  files copied across. Two agents can build different features in one repo at the
-  same time without overwriting each other or racing the git index. The pane says
-  which lane it is in; merge the branch back when you are done. Off by one switch in
-  Settings, and a folder that is not a repo is left shared with a warning.
+  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`), carrying the
+  things a fresh checkout cannot have: your `.env` files, your local editor and
+  agent settings, and the installed `node_modules`. Dependencies arrive as hardlinks
+  a few seconds after the pane opens, so they cost no disk and deleting a lane never
+  touches the original folder's copy. Two agents can build different features in one
+  repo at the same time without overwriting each other or racing the git index. The
+  pane says which lane it is in; merge the branch back when you are done. Off by one
+  switch in Settings, and a folder that is not a repo is left shared with a warning.
 - **Board (Ctrl Shift K)** - tasks and shared memory for a project, stored in that
   project's `.paneforge/` folder so the agents running there can read it. Every
   agent started in a folder with memory is told to read it first.
@@ -206,8 +209,8 @@ and so on) and taking the first that exists and has folders in it. If none do, t
 picker says which folder it looked in and offers to change it, rather than showing an
 empty list.
 
-Not built yet: git worktree isolation, diff/merge review, reattaching to sessions
-after an app restart (see `PLAN.md`).
+Not built yet: diff/merge review, reattaching to sessions after an app restart
+(see `PLAN.md`).
 
 ## Platform notes
 
