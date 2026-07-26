@@ -51,7 +51,12 @@ You will normally meet that conflict long before the release does. `ready` merge
 into your lane first and refuses to mark anything shippable until that merge is clean, so
 the files are listed to you while you still have the context: resolve them, `git add`,
 `git commit`, run `ready` again. `rerere` is on, so the resolution you do once is replayed
-when the release merges your lane back the other way. Claiming a lane also heals it (an
+when the release merges your lane back the other way. A conflict left recorded is retried
+by the running app every minute (`lane.mjs retry`), so the ones that stop being conflicts
+clear and ship without anyone acting; the ones that need real editing are typed into a
+pane that is not mid-turn. A paragraph about lane X appearing in your pane came from
+there - it is yours to do. Once you `resolve` a lane it is yours for 45 minutes and
+nothing will touch the merge you have open in it. Claiming a lane also heals it (an
 unfinished merge left by a dead chat is aborted, a branch whose work master already has is
 reset to master) and every lane merges master again after each release. Never leave a lane
 sitting in a conflicted merge: it is the one state no other chat is allowed to touch.
