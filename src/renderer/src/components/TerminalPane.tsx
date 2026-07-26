@@ -301,6 +301,24 @@ export default function TerminalPane({
     const atBottom = (): boolean => distanceFromTail() <= 0
     const nearBottom = (): boolean => distanceFromTail() <= TAIL_SLACK
 
+    // xterm's own scrolling element. Its scrollTop is the only reading that is correct
+    // *during* the event that moved it - the buffer's viewportY catches up a frame later.
+    const viewport = (): HTMLElement | null =>
+      (t.element?.querySelector('.xterm-viewport') as HTMLElement | null) ?? null
+    /** Rendered height of one row, in px, straight off the thing being scrolled. */
+    const rowHeight = (): number => {
+      const vp = viewport()
+      const rows = t.buffer.active.length
+      const h = vp && rows ? vp.scrollHeight / rows : 0
+      return h > 1 ? h : 17
+    }
+    /** Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll. */
+    const nearBottomInDom = (): boolean => {
+      const vp = viewport()
+      if (!vp) return nearBottom()
+      return vp.scrollHeight - vp.scrollTop - vp.clientHeight <= rowHeight() * TAIL_SLACK + 1
+    }
+
     // Single place that decides "is this pane following, and does the pill show". Used
     // wherever a gesture has *ended*, so it may snap the remaining line or two.
     const settleFollow = (): void => {
@@ -545,7 +563,13 @@ export default function TerminalPane({
       if (mouseGrabbed() && t.buffer.active.type !== 'alternate') {
         e.preventDefault()
         e.stopPropagation()
-        const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / 40
+        // A notch has to cover the same ground here as it does in a pane the browser is
+        // scrolling itself, and a fixed 40px per line was not close. Measured at this
+        // pane's 15.2px rows: 2 lines a notch against the ~7 a native notch of the same
+        // deltaY moves. Every agent pane grabs the mouse, so that was every AI session -
+        // and while one is printing, 2 lines down against a line of new output per notch
+        // means the tail is not reachable by wheel at all, only by the pill.
+        const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / rowHeight()
         t.scrollLines(Math.trunc(lines) || (e.deltaY < 0 ? -1 : 1))
       }
       // Only the immediate read - the wheel fires before the viewport moves, and onScroll
@@ -573,6 +597,20 @@ export default function TerminalPane({
       e.preventDefault()
       if (!copySelection()) pasteClipboard()
     }
+    // xterm only emits onScroll when *it* moved the view, so in a pane that is not printing
+    // a wheel notch or a thumb drag changed nothing anyone was listening to: measured 118
+    // lines up from the tail with the pill still hidden and the pane still marked as
+    // following, until the next write happened to re-ask the question. The element's own
+    // scroll event is the missing half, and it reads the DOM because the buffer's viewportY
+    // is still a frame behind at this point.
+    const vpEl = viewport()
+    const onViewportScroll = (): void => {
+      const follow = nearBottomInDom()
+      pinned.current = follow
+      setScrolledUp(!follow)
+    }
+    vpEl?.addEventListener('scroll', onViewportScroll, { passive: true })
+
     el.addEventListener('keydown', onKeyClearsSelection, true)
     el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mousedown', onMouseDown, true)
@@ -779,6 +817,7 @@ export default function TerminalPane({
       el.removeEventListener('mousedown', onMouseDown, true)
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('wheel', onWheel, true)
+      vpEl?.removeEventListener('scroll', onViewportScroll)
       el.removeEventListener('contextmenu', onContextMenu)
       // Emptied first so the onDispose handlers find nothing to remove and skip publishing
       // into a component that is on its way out.

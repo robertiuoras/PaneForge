@@ -406,7 +406,15 @@ button.small { padding: 5px 9px; font-size: 11px; }
   background: #ffffff45; border: 2px solid transparent; background-clip: content-box;
   border-radius: 7px; min-height: 48px;
 }
-.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #ffffff80; background-clip: content-box; }
+/* Two hover steps, not one. The thumb-only hover meant the bar stayed at its resting
+   grey until the pointer was already on it - you had to find a dim 17px column before it
+   admitted it was there. Hovering anywhere in the pane lifts it enough to aim at, and
+   landing on the thumb lifts it again so the grab point is unmistakable. */
+.xterm-wrap:hover .xterm-viewport { scrollbar-color: #ffffff66 #ffffff10; }
+.xterm-wrap:hover .xterm-viewport::-webkit-scrollbar-track { background: #ffffff10; }
+.xterm-wrap:hover .xterm-viewport::-webkit-scrollbar-thumb { background: #ffffff66; background-clip: content-box; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover,
+.xterm-wrap:hover .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #ffffffb0; background-clip: content-box; }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: content-box; }
 
 .git-badge {
