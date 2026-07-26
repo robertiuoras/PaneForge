@@ -2,7 +2,7 @@
 // terminal size, window geometry. One small JSON file in the Electron userData
 // folder - no database, and it stays hand-editable if something goes wrong.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
@@ -52,9 +52,54 @@ export const DEFAULT_ROLES: SwarmRole[] = [
   }
 ]
 
+/**
+ * Where someone else's code probably lives.
+ *
+ * This used to be a single hardcoded `~/Desktop/Projects`, which is exactly right for
+ * one machine and wrong for most. On a fresh install anywhere else the project picker
+ * came up empty with nothing to explain why, and an empty picker on first run reads as
+ * a broken app rather than a setting nobody had chosen yet.
+ *
+ * So: take the first of the usual homes that exists and actually has folders in it.
+ * `~/source/repos` is Visual Studio's default, `~/Developer` is Xcode's, and the
+ * OneDrive pair matters because a redirected Desktop is normal on Windows now. If none
+ * of them exist the conventional path is still returned, and the picker offers a
+ * "choose your projects folder" button instead of an unexplained empty list.
+ */
+export function defaultRoot(): string {
+  const home = homedir()
+  const candidates = [
+    ['Desktop', 'Projects'],
+    ['Projects'],
+    ['projects'],
+    ['source', 'repos'],
+    ['Developer'],
+    ['dev'],
+    ['code'],
+    ['src'],
+    ['repos'],
+    ['git'],
+    ['Documents', 'Projects'],
+    ['OneDrive', 'Desktop', 'Projects'],
+    ['OneDrive', 'Documents', 'Projects']
+  ].map((parts) => join(home, ...parts))
+
+  for (const dir of candidates) {
+    try {
+      if (!existsSync(dir)) continue
+      // An existing but empty folder is not evidence: `~/code` left behind by some
+      // installer must not win over a `~/Projects` full of real work further down.
+      if (readdirSync(dir).some((name) => !name.startsWith('.'))) return dir
+    } catch {
+      /* unreadable - try the next one */
+    }
+  }
+  return join(home, process.platform === 'darwin' ? 'Projects' : join('Desktop', 'Projects'))
+}
+
 function defaults(): Config {
   return {
-    root: join(homedir(), 'Desktop', 'Projects'),
+    root: defaultRoot(),
     presets: [],
     defaultAgent: 'claude',
     defaultModels: {},

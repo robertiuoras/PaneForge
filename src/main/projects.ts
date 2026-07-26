@@ -16,10 +16,6 @@ const SKIP = new Set([
   'assets', 'backups', 'temp', 'dist', 'out'
 ])
 
-export function defaultRoot(): string {
-  return join(homedir(), 'Desktop', 'Projects')
-}
-
 export function listProjects(root = projectsRoot()): Project[] {
   if (!existsSync(root)) return []
   const used = lastUsedByPathSlug()

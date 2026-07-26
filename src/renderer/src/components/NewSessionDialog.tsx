@@ -47,8 +47,19 @@ export default function NewSessionDialog({
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
   const [prompt, setPrompt] = useState('')
   const input = useRef<HTMLInputElement>(null)
+  // Only ever shown when the list is empty, to say WHICH folder came up empty.
+  const [root, setRoot] = useState('')
 
   useEffect(() => input.current?.focus(), [])
+  useEffect(() => void api.getConfig().then((c) => setRoot(c.root)), [])
+
+  /** Repointing the root re-lists projects through the config event, so no reload here. */
+  const chooseRoot = async (): Promise<void> => {
+    const picked = await api.pickRoot()
+    if (!picked) return
+    await api.setConfig({ root: picked })
+    setRoot(picked)
+  }
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -142,7 +153,26 @@ export default function NewSessionDialog({
               <span className="proj-age">{ago(p.lastUsed)}</span>
             </div>
           ))}
-          {shown.length === 0 && <div className="empty">No match</div>}
+          {shown.length === 0 &&
+            (q.trim() ? (
+              <div className="empty">No match</div>
+            ) : (
+              /*
+               * First run on a machine whose code is not where the default guessed. This
+               * used to say "No match", which is true and useless: there is no filter to
+               * clear, and nothing on screen said the app was looking in a folder you had
+               * never chosen. Say which folder, and offer to change it right here.
+               */
+              <div className="empty first-run">
+                <div>
+                  Nothing to open in <code>{root || '...'}</code>.
+                </div>
+                <div>Point PaneForge at the folder your projects live in.</div>
+                <button className="primary small" onClick={chooseRoot}>
+                  Choose projects folder
+                </button>
+              </div>
+            ))}
         </div>
 
         <input

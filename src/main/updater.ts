@@ -13,7 +13,7 @@ import type { UpdateState } from '../shared/types'
 
 type Emit = (s: UpdateState) => void
 
-export const RELEASES_URL = 'https://github.com/robertiuoras/claude-orchestrator/releases'
+export const RELEASES_URL = 'https://github.com/robertiuoras/PaneForge/releases'
 
 let state: UpdateState = { phase: 'idle', current: app.getVersion() }
 let emit: Emit = () => undefined
@@ -234,15 +234,19 @@ export async function checkForUpdates(): Promise<UpdateState> {
   return state
 }
 
-export function installUpdate(): void {
+/** True once the installer has actually been launched, so the caller may exit. */
+export function installUpdate(): boolean {
   const u = load()
-  if (!u || state.phase !== 'ready') return
+  if (!u || state.phase !== 'ready') return false
   // Silent: the NSIS installer runs with no window at all, so an update looks like the
   // app blinking rather than a setup wizard taking over the screen. forceRunAfter
   // brings PaneForge straight back up. Both flags matter - a non-silent install shows
   // the progress dialog, and without forceRunAfter a silent one just leaves you with
   // no app. (The build is oneClick NSIS, which needs no answers from the user.)
+  // The installer child is spawned synchronously inside this call (detached and unref'd),
+  // so it survives - and wants - this process going away the moment we return.
   u.quitAndInstall(true, true)
+  return true
 }
 
 function notes(raw: unknown): string | undefined {

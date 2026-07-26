@@ -9,15 +9,53 @@ Windows and Apple Silicon macOS. Free, no accounts, no server.
 
 ## Install (just want to use it)
 
-Grab the latest build from [Releases](https://github.com/robertiuoras/claude-orchestrator/releases):
+Grab the latest build from [Releases](https://github.com/robertiuoras/PaneForge/releases/latest).
+Nothing to configure, no account, no server: the app is a window around the CLIs you
+already have.
 
-- **Windows** - `PaneForge-Setup-x.y.z.exe`. Runs, installs, done.
-- **macOS (Apple Silicon)** - `PaneForge-x.y.z-arm64.dmg`. Drag to Applications.
-  The build is not code signed (that needs a paid Apple account), so the first
-  launch must be **right-click the app > Open > Open**. Once only. If macOS still
-  refuses, run `xattr -dr com.apple.quarantine /Applications/PaneForge.app`.
+**Windows** - download `PaneForge-Setup-x.y.z.exe` and run it. It installs for the
+current user only (no admin prompt), takes a few seconds, puts PaneForge on the Desktop
+and in the Start Menu, and opens itself.
 
-The app checks for new versions in the background and offers the update itself.
+The one thing that will surprise you: the build is **not code signed**, because a
+Windows certificate costs a few hundred dollars a year. So Windows shows a warning the
+first time, and you have to tell it to go ahead:
+
+- *"Windows protected your PC"* (SmartScreen) - click **More info**, then
+  **Run anyway**.
+- *"Your administrator has blocked this app"* / the installer closes with no message -
+  that is **Smart App Control**, which cannot be talked round per-app. Either turn it
+  off (Windows Security > App & browser control > Smart App Control) or use the
+  `PaneForge-x.y.z-win.zip` from the same release, which needs no installer: unzip it
+  anywhere and run `PaneForge.exe` from the folder.
+- Edge or Chrome may also say the download is *"not commonly downloaded"* - keep it from
+  the download list.
+
+**macOS (Apple Silicon)** - download `PaneForge-x.y.z-arm64.dmg` and drag the app to
+Applications. Unsigned there too (that needs a paid Apple developer account), so the
+first launch must be **right-click the app > Open > Open**. Once only. If macOS still
+refuses, run `xattr -dr com.apple.quarantine /Applications/PaneForge.app`.
+
+None of this recurs: updates after the first install are silent (see below).
+
+### First run, in order
+
+1. **Nothing is installed? That is fine.** Open **Settings > Agents** (or press
+   **Ctrl ,**). Every CLI PaneForge knows is listed with whether it is on your machine,
+   and the missing ones have an **Install** button that runs the real installer and
+   streams its output into the app. Claude Code and Codex need their own subscriptions;
+   Gemini CLI, Qwen, opencode, Crush, Goose, Aider and Ollama are grouped as **Free** and
+   need no account. If you already have a CLI somewhere unusual, **Locate** points the app
+   at the binary instead.
+2. **Point it at your code.** Press **Ctrl T**. First time, it asks for the folder your
+   projects live in (`~/Projects`, `D:\work`, whatever) and lists what is in it, most
+   recently worked in first.
+3. **Start a pane.** Tick a project, pick the agent and model, press Enter. That is a
+   real terminal running that CLI in that folder - same colours, same keys, same Ctrl-C.
+4. **Press F1** for every shortcut.
+
+The app checks for new versions in the background and offers the update itself, so this
+is the only time you download anything by hand.
 
 ## Build it yourself
 
@@ -148,9 +186,18 @@ folder on launch; a second launch focuses the window already open.
 
 State lives in `%APPDATA%\claude-orchestrator\config.json` (macOS: `~/Library/
 Application Support/claude-orchestrator`): workspaces, settings, window geometry.
-Transcripts sit next to it in `history/`. The folder is named after the package, not
-the product - renaming it now would strand everyone's saved workspaces. A named
-profile appends its name: `claude-orchestrator-dev`.
+Transcripts sit next to it in `history/`. The folder is named after the npm package,
+which is still `claude-orchestrator` on purpose: it is what Electron derives both the
+settings folder and the install directory from, so renaming it would strand every
+existing install's saved workspaces and quietly install the next update beside the old
+app instead of over it. The product, the repo and everything a user ever sees are
+PaneForge. A named profile appends its name: `claude-orchestrator-dev`.
+
+The first launch on a machine picks a projects root by looking for the usual homes in
+turn (`~/Desktop/Projects`, `~/Projects`, `~/source/repos`, `~/Developer`, `~/code`,
+and so on) and taking the first that exists and has folders in it. If none do, the
+picker says which folder it looked in and offers to change it, rather than showing an
+empty list.
 
 Not built yet: git worktree isolation, diff/merge review, reattaching to sessions
 after an app restart (see `PLAN.md`).
@@ -170,6 +217,10 @@ after an app restart (see `PLAN.md`).
 - macOS cannot replace an unsigned app in place, so on a Mac the update prompt
   hands you the download instead of restarting itself. Windows updates silently and
   restarts.
+
+## License
+
+MIT. Do what you like with it.
 
 ## Architecture
 

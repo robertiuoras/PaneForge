@@ -4,13 +4,14 @@
 // Everything here runs in the Electron MAIN process. The renderer never touches a
 // pty directly - it sends keystrokes over IPC and receives output events back.
 
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { recordData, recordEnd, recordStart } from './history'
+import { endAll, recordData, recordEnd, recordStart } from './history'
 import { buildArgs } from '../shared/agents'
 import type {
   Agent,
@@ -104,6 +105,8 @@ interface Live {
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
   private seq = 0
+  /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
+  private down = false
 
   constructor() {
     super()
@@ -457,6 +460,59 @@ export class SessionManager extends EventEmitter {
     for (const id of [...this.sessions.keys()]) this.kill(id)
   }
 
+  /**
+   * Teardown for quitting, as opposed to killAll() which is the interactive one.
+   *
+   * Closing a pane by hand is one pty, so the per-session work in kill() is invisible.
+   * Quitting with several panes open did all of it serially: a full history flush, a
+   * metadata read-modify-write and a complete session list pushed to a renderer nobody
+   * is looking at any more, per pane, before the first agent had been asked to die.
+   *
+   * So: no IPC, one history pass, and on Windows one taskkill for every process tree at
+   * once. That taskkill is the part that matters for correctness rather than speed -
+   * ConPTY's own kill returns before anything has actually died, and hardExit() does not
+   * wait around, so without it an update could come back to a machine with orphaned
+   * `claude` processes holding locks on the files it had just replaced. /T takes the
+   * grandchildren too: an agent CLI is node, which spawns ripgrep, git and its own
+   * subagents.
+   */
+  shutdown(): void {
+    if (this.down) return
+    this.down = true
+    const live = [...this.sessions.values()]
+    const ids = [...this.sessions.keys()]
+    this.sessions.clear()
+    if (!live.length) return
+    endAll(ids)
+
+    if (process.platform === 'win32') {
+      const args = live
+        .map((s) => s.proc.pid)
+        .filter((pid) => typeof pid === 'number' && pid > 0)
+        .flatMap((pid) => ['/PID', String(pid)])
+      if (args.length) {
+        try {
+          spawn('taskkill', ['/F', '/T', ...args], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true
+          }).unref()
+        } catch {
+          /* no taskkill on PATH - the pty kill below is still the real one */
+        }
+      }
+    }
+    // Still ask node-pty: it is what releases the ConPTY handles, and it is the only
+    // path that works off Windows.
+    for (const s of live) {
+      try {
+        s.proc.kill()
+      } catch {
+        /* already dead */
+      }
+    }
+  }
+
   private spawn(req: StartSessionRequest, agent: Agent, cols: number, rows: number): pty.IPty {
     // Spawn the agent binary directly (not through cmd.exe): one less process in the
     // tree, so killing the session actually kills the agent instead of orphaning it.
@@ -585,6 +641,7 @@ export class SessionManager extends EventEmitter {
   }
 
   private emitSessions(): void {
+    if (this.down) return
     this.emit('sessions', this.list())
   }
 }

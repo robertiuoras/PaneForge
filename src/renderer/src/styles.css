@@ -136,6 +136,9 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .row:hover .x, .row.active .x { opacity: 1; }
 .x:hover { background: #ff8f8f1f; color: var(--danger); }
 .empty { color: var(--muted); padding: 10px 2px; }
+/* The one empty state that is a first-run instruction rather than "nothing matched". */
+.empty.first-run { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 2px; }
+.empty.first-run code { color: var(--text); word-break: break-all; }
 .hint { color: var(--muted); font-size: 11px; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

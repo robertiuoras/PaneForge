@@ -53,9 +53,10 @@ export default function UpdateToast(): JSX.Element | null {
             disabled={restarting}
             onClick={() => {
               setRestarting(true)
-              // One frame of paint before main starts tearing panes down, so the button
-              // is visibly in its "working" state rather than frozen mid-press.
-              requestAnimationFrame(() => api.installUpdate())
+              // Two frames, not one: a rAF callback runs before the paint of the frame
+              // it is in, so a single one fired while the button still read "Restart
+              // now" - which is the frozen-looking frame this is here to remove.
+              requestAnimationFrame(() => requestAnimationFrame(() => api.installUpdate()))
             }}
           >
             {restarting ? 'Restarting…' : 'Restart now'}

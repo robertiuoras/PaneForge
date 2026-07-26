@@ -4,6 +4,11 @@
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertiuoras/PaneForge.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -53,7 +58,7 @@
       {
         "provider": "github",
         "owner": "robertiuoras",
-        "repo": "claude-orchestrator",
+        "repo": "PaneForge",
         "releaseType": "release"
       }
     ],

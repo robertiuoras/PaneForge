@@ -75,6 +75,22 @@ export function recordData(id: string, chunk: string): void {
 
 export function recordEnd(id: string): void {
   flush()
+  writeEnd(id)
+}
+
+/**
+ * Close out every session in one pass.
+ *
+ * recordEnd() flushes the pending buffers before each write, so tearing eight panes
+ * down on the way out meant eight full flushes of the same map. On the quit path that
+ * is the difference between the app being gone and the app being gone in a moment.
+ */
+export function endAll(ids: string[]): void {
+  flush()
+  for (const id of ids) writeEnd(id)
+}
+
+function writeEnd(id: string): void {
   try {
     const raw = readFileSync(metaFile(id), 'utf8')
     const entry = JSON.parse(raw) as HistoryEntry
