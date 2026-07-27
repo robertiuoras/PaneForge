@@ -456,10 +456,17 @@ function Overlay(): JSX.Element {
                     'item' + (copied === it.id ? ' copied' : '') + (it.pinned ? ' pinned' : '')
                   }
                   title={
-                    it.kind === 'text' ? it.preview : `${it.preview} — click to copy, drag it out`
+                    it.kind === 'text'
+                      ? it.preview
+                      : `${it.preview} — click to put it in the pane, drag it out`
                   }
                   onClick={() => {
+                    // Clicking is the whole gesture: the thing you came here for is
+                    // almost always "put that back where I am typing", and that used to
+                    // be a second aim at a 12px arrow. It still reaches the clipboard on
+                    // the way, so a click is never less than it used to be.
                     shelf.copy(it.id)
+                    shelf.toPane(it.id)
                     flashCopied(it.id)
                   }}
                 >
@@ -539,15 +546,6 @@ function Overlay(): JSX.Element {
                       📌
                     </span>
                     <span
-                      title="Put it in the focused PaneForge pane"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        shelf.toPane(it.id)
-                      }}
-                    >
-                      →
-                    </span>
-                    <span
                       className="del"
                       title="Forget this one"
                       onClick={(e) => {
@@ -561,7 +559,7 @@ function Overlay(): JSX.Element {
                 </div>
               ))}
             </div>
-            <div className="foot">Click copies · drag a tile out · → to the pane · Ctrl+Alt+V</div>
+            <div className="foot">Click puts it in the pane · also copies · drag a tile out · Ctrl+Alt+V</div>
           </>
         )}
       </div>

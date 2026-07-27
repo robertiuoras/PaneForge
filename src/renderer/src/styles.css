@@ -134,6 +134,12 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .row.preset { background: #ffffff07; }
 .row-text { flex: 1; min-width: 0; }
 .row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The pane's title line, when it carries a Ctrl-N key. Flex rather than inline text: the
+   key is a 16px pill of 10px type and the name is 13px type, and on a shared baseline the
+   pill's centre rode 2.45px above the name's (measured). Centring the two boxes puts them
+   on one line to the eye; the name keeps its own ellipsis as a flex item that may shrink. */
+.row-title.has-key { display: flex; align-items: center; min-width: 0; }
+.row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-sub {
   color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px;
   white-space: nowrap; overflow: hidden;
@@ -149,6 +155,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    the state changes. */
 .num {
   display: inline-block; position: relative; overflow: hidden; min-width: 16px; text-align: center;
+  flex: none; line-height: 14px;
   color: var(--muted); font-size: 10px; margin-right: 6px;
   border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px;
   font-variant-numeric: tabular-nums;
