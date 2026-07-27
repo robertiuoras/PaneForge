@@ -44,6 +44,11 @@ const api = window.api
  *  that a room of finished panes is not a wall of glowing cards. */
 const DONE_GLOW_MS = 5200
 
+/** How far a press has to travel before it is a drag rather than a click. Measured on
+ *  the real window: a press that drifted 6px selected nothing, because 5px was inside
+ *  the noise of an ordinary mouse click. */
+const DRAG_SLOP = 9
+
 /** A pending question for the in-app confirm/prompt dialog. */
 interface AskState {
   title: string
@@ -245,7 +250,8 @@ export default function App(): JSX.Element {
     if ((e.target as HTMLElement).closest('button, input')) return
     const startY = e.clientY
     let dragging = false
-    let latest = idsRef.current
+    const startIds = idsRef.current
+    let latest = startIds
     // Captured on the list, which never moves, rather than on the row, which does: a
     // release outside the window has to end the drag too, or the list is left following
     // a mouse button nobody is holding.
@@ -257,9 +263,8 @@ export default function App(): JSX.Element {
     }
     const move = (ev: PointerEvent): void => {
       if (!dragging) {
-        if (Math.abs(ev.clientY - startY) < 5) return
+        if (Math.abs(ev.clientY - startY) < DRAG_SLOP) return
         dragging = true
-        draggedRef.current = true
         setDragId(id)
         document.body.classList.add('dragging')
       }
@@ -304,10 +309,17 @@ export default function App(): JSX.Element {
       if (!dragging) return
       document.body.classList.remove('dragging')
       setDragId(null)
+      // A gesture that ended with every card where it started is a click, however far
+      // the hand wandered on the way. Only a real move eats the click that follows: a
+      // press that drifted and came back used to select nothing at all, which is what
+      // "I cannot click my sessions any more" was - a click is rarely perfectly still.
+      const moved = latest.length !== startIds.length || latest.some((x, i) => x !== startIds[i])
+      if (!moved) return
       // Main keeps the same order, so the grid, an update restart and the other
       // machine's view of these panes all agree with what the sidebar shows.
       api.reorderSessions(latest)
       // The click that follows this pointerup is the end of the drag, not a selection.
+      draggedRef.current = true
       window.setTimeout(() => {
         draggedRef.current = false
       }, 0)
