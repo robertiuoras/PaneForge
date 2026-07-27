@@ -255,16 +255,25 @@ export default function App(): JSX.Element {
     // Captured on the list, which never moves, rather than on the row, which does: a
     // release outside the window has to end the drag too, or the list is left following
     // a mouse button nobody is holding.
+    //
+    // Taken only once a drag has actually started, NEVER on the press. Pointer capture
+    // retargets the click that follows to the capturing element, so capturing here on
+    // every pointerdown sent the click to `.list` instead of the card - measured: the
+    // card's own onClick never ran and `document`'s click listener reported target
+    // "list" - and selecting a pane by clicking it silently did nothing.
     const capture = listRef.current
-    try {
-      capture?.setPointerCapture(e.pointerId)
-    } catch {
-      /* a pointer that has already been released - the listeners below still clean up */
+    const grabPointer = (): void => {
+      try {
+        capture?.setPointerCapture(e.pointerId)
+      } catch {
+        /* a pointer that has already been released - the listeners below still clean up */
+      }
     }
     const move = (ev: PointerEvent): void => {
       if (!dragging) {
         if (Math.abs(ev.clientY - startY) < DRAG_SLOP) return
         dragging = true
+        grabPointer()
         setDragId(id)
         document.body.classList.add('dragging')
       }
