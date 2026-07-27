@@ -69,6 +69,20 @@ export const paneInsert = new Map<string, (text: string) => void>()
 export const paneFocus = new Map<string, () => void>()
 
 /**
+ * The live terminals, for scripts/probe.mjs to ask questions of.
+ *
+ * Every scroll bug this app has had lives in the gap between what the buffer thinks
+ * (`baseY`, `viewportY`) and what the scrolling element thinks (`scrollTop`), and the DOM
+ * side alone cannot tell the two apart - with the GPU renderer there is not even any text
+ * in the DOM to read. Both of the last two were found by guessing at that gap and both
+ * guesses were wrong. This is the handle that makes the question answerable from a probe
+ * instead: `window.__paneTerms.get(id).buffer.active.viewportY`. It is a map of objects the
+ * renderer is holding anyway, so it costs one property on `window`.
+ */
+export const paneTerms = new Map<string, Terminal>()
+;(window as unknown as { __paneTerms: Map<string, Terminal> }).__paneTerms = paneTerms
+
+/**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
@@ -389,24 +403,6 @@ export default function TerminalPane({
       const h = vp && t.rows ? vp.clientHeight / t.rows : 0
       return h > 1 ? h : 17
     }
-    /**
-     * Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll.
-     *
-     * The buffer answers first when it says yes: a write that arrives while this pane is
-     * following leaves scrollTop a frame behind the line it has just landed on, and going
-     * by the DOM alone there would read as "the user scrolled up" and drop the follow.
-     */
-    const nearBottomInDom = (): boolean => {
-      const vp = viewport()
-      if (!vp) return nearBottom()
-      if (nearBottom()) return true
-      // scrollTop is where the view actually is; scrollHeight is what lags. So the distance
-      // is measured as the buffer's own tail less the line scrollTop is showing, which mixes
-      // only fresh numbers - the old form (scrollHeight - scrollTop - clientHeight) reads a
-      // gap of zero all through a burst and calls a scrolled-up pane "at the bottom".
-      return t.buffer.active.baseY - Math.round(vp.scrollTop / rowHeight()) <= TAIL_SLACK
-    }
-
     // Single place that decides "is this pane following, and does the pill show". Used
     // wherever a gesture has *ended*, so it may snap the remaining line or two.
     const settleFollow = (): void => {
@@ -754,17 +750,44 @@ export default function TerminalPane({
       e.preventDefault()
       if (!copySelection()) pasteClipboard()
     }
-    // xterm only emits onScroll when *it* moved the view, so in a pane that is not printing
-    // a wheel notch or a thumb drag changed nothing anyone was listening to: measured 118
-    // lines up from the tail with the pill still hidden and the pane still marked as
-    // following, until the next write happened to re-ask the question. The element's own
-    // scroll event is the missing half, and it reads the DOM because the buffer's viewportY
-    // is still a frame behind at this point.
+    /**
+     * xterm only emits onScroll when *it* moved the view, so in a pane that is not printing
+     * a wheel notch or a thumb drag changed nothing anyone was listening to: measured 118
+     * lines up from the tail with the pill still hidden and the pane still marked as
+     * following, until the next write happened to re-ask the question. The element's own
+     * scroll event is the missing half.
+     *
+     * What it must NOT do is answer from `scrollTop`. That reading is not where the pane
+     * is - it is where xterm last got round to putting the scrollbar, and xterm syncs the
+     * element to the buffer lazily and out of order. Measured on a live pane with the
+     * terminal handed the scroll directly, no wheel handler involved: `scrollLines(-100)`
+     * moved the buffer 100 rows off the tail and left scrollTop reading the bottom, still
+     * reading the bottom 300ms later; two `scrollLines(+20)` moved the buffer again with
+     * scrollTop frozen; the next scroll in the other direction finally moved it 1216px at
+     * once. Through a wheel gesture, the buffer tracked every notch exactly (19 rows a
+     * notch, 2818 -> 2837 -> ... -> 2932) while scrollTop sat unchanged for seven notches.
+     *
+     * So the answers this handler was giving were arbitrary. The bad half is the one that
+     * reads "at the bottom" while the buffer is a hundred rows up: this pane is then marked
+     * as following, the pill is hidden, and the next line the agent prints yanks the view to
+     * the tail out from under somebody who is reading. The other half strands a pane that is
+     * at the tail with the pill showing and the follow dropped, which is the "I scrolled up
+     * and now I cannot get back down to the prompt" it was reported as.
+     *
+     * The buffer is always right, and one frame later it is right about a thumb drag too -
+     * the browser moves scrollTop, xterm turns that into a buffer scroll in its own handler,
+     * and a frame is after both of them. So: same question as everywhere else, asked of the
+     * buffer, one frame late.
+     */
     const vpEl = viewport()
+    let scrollFrame = 0
     const onViewportScroll = (): void => {
-      const follow = nearBottomInDom()
-      pinned.current = follow
-      setScrolledUp(!follow)
+      cancelAnimationFrame(scrollFrame)
+      scrollFrame = requestAnimationFrame(() => {
+        const follow = nearBottom()
+        pinned.current = follow
+        setScrolledUp(!follow)
+      })
     }
     vpEl?.addEventListener('scroll', onViewportScroll, { passive: true })
 
@@ -926,6 +949,7 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneTerms.set(sessionId, t)
     paneFocus.set(sessionId, () => {
       try {
         t.focus()
@@ -1004,6 +1028,7 @@ export default function TerminalPane({
       window.clearTimeout(settle2)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneTerms.delete(sessionId)
       paneInsert.delete(sessionId)
       paneFocus.delete(sessionId)
       el.removeEventListener('keydown', onKeyClearsSelection, true)
@@ -1012,6 +1037,7 @@ export default function TerminalPane({
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('wheel', onWheel, true)
       vpEl?.removeEventListener('scroll', onViewportScroll)
+      cancelAnimationFrame(scrollFrame)
       el.removeEventListener('contextmenu', onContextMenu)
       // Emptied first so the onDispose handlers find nothing to remove and skip publishing
       // into a component that is on its way out.
