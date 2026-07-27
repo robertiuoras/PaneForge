@@ -24,7 +24,7 @@
 .mark {
   position: absolute;
   right: 3px;
-  width: 13px;
+  width: 14px;
   height: 5px;
   /* Centred on the line it marks rather than hanging below it. */
   margin-top: -2px;
@@ -47,7 +47,21 @@
   opacity: 1;
 }
 .mark:hover {
-  width: 17px;
+  width: 19px;
+}
+
+/* The bar has to stay thin - eighty of them at 15px would be a wall down the pane, not a
+   rail - but 14x5px is a target you aim at rather than click, and it sits a few pixels
+   from a scrollbar that grabs instead. This grows only the hit box: 17px tall and 30px
+   wide, which is a comfortable pointer target, while the drawn bar, the hover width and
+   the tip all stay exactly where they were.
+   It leans left because right is the scrollbar - overlapping that would trade one
+   mis-click for another. Marks are rendered oldest first, so where two hit boxes do
+   overlap the newer one is on top, which is the one being aimed at. */
+.mark::before {
+  content: '';
+  position: absolute;
+  inset: -6px -3px -6px -13px;
 }
 /* Brief confirmation that a click landed, since the jump itself can be subtle in a pane
    that was already near that part of the buffer. */

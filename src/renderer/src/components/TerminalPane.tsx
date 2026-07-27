@@ -372,18 +372,41 @@ export default function TerminalPane({
     // *during* the event that moved it - the buffer's viewportY catches up a frame later.
     const viewport = (): HTMLElement | null =>
       (t.element?.querySelector('.xterm-viewport') as HTMLElement | null) ?? null
-    /** Rendered height of one row, in px, straight off the thing being scrolled. */
+    /**
+     * Rendered height of one row, in px, straight off the thing being scrolled.
+     *
+     * Measured against the *visible* box, not the scroll area. `scrollHeight / bufferLength`
+     * is the same number once a frame has been painted and a wildly different one in the
+     * window that matters: xterm grows its scroll area on the next animation frame, so in
+     * the write callback at the end of a turn the buffer had already jumped to 1901 lines
+     * while scrollHeight still read 6095px - 3.2px a row instead of 15.19px. A wheel notch
+     * asking "how many rows is 100px" got 31 rows instead of 6, which is the whole of
+     * "scroll up once after a turn and it flies halfway up the run". `clientHeight / rows`
+     * is the same 15.19px before, during and after that burst, because neither term of it
+     * moves when the buffer grows. Measured both ways across a 1500-line write: the old one
+     * read 3.2 / 3.2 / 15.2 / 15.2 across the burst, this one 15.19 at every point.
+     */
     const rowHeight = (): number => {
       const vp = viewport()
-      const rows = t.buffer.active.length
-      const h = vp && rows ? vp.scrollHeight / rows : 0
+      const h = vp && t.rows ? vp.clientHeight / t.rows : 0
       return h > 1 ? h : 17
     }
-    /** Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll. */
+    /**
+     * Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll.
+     *
+     * The buffer answers first when it says yes: a write that arrives while this pane is
+     * following leaves scrollTop a frame behind the line it has just landed on, and going
+     * by the DOM alone there would read as "the user scrolled up" and drop the follow.
+     */
     const nearBottomInDom = (): boolean => {
       const vp = viewport()
       if (!vp) return nearBottom()
-      return vp.scrollHeight - vp.scrollTop - vp.clientHeight <= rowHeight() * TAIL_SLACK + 1
+      if (nearBottom()) return true
+      // scrollTop is where the view actually is; scrollHeight is what lags. So the distance
+      // is measured as the buffer's own tail less the line scrollTop is showing, which mixes
+      // only fresh numbers - the old form (scrollHeight - scrollTop - clientHeight) reads a
+      // gap of zero all through a burst and calls a scrolled-up pane "at the bottom".
+      return t.buffer.active.baseY - Math.round(vp.scrollTop / rowHeight()) <= TAIL_SLACK
     }
 
     // Single place that decides "is this pane following, and does the pill show". Used
@@ -412,11 +435,48 @@ export default function TerminalPane({
       if (!dead) setMarks(list.slice())
     }
 
+    /**
+     * How many rows above the cursor this pane's prompt box starts, or 0 if there is no
+     * box to find.
+     *
+     * The cursor at submit time is not where the prompt is. In a boxed TUI it is on the
+     * last row of what was typed, so a one-line prompt puts it one row under the box's top
+     * rule and a long one puts it several - measured in a live Claude pane at 80 columns, a
+     * 32-character prompt left the cursor 1 row below the rule, a 532-character one 5 rows
+     * and an 1134-character one 6. Anchoring the mark at the cursor therefore landed the
+     * jump *below* the prompt by an amount that grew with the prompt, which is exactly the
+     * "it does not quite get there, and the longer the prompt the further out it is" the
+     * rail was reported for.
+     *
+     * Found rather than estimated: the box's own top rule is still on screen at submit time
+     * - the CLI has not redrawn yet - so counting rows up to it is exact and costs nothing,
+     * where working the height out from the text length would have to guess the box's
+     * padding, its borders and how the CLI wrapped it. A pane with no box at all, like a
+     * shell, finds nothing and keeps the old anchor, which is already right there.
+     */
+    const PROMPT_BOX_SCAN = 40
+    // A run of box-drawing characters, which is what these CLIs frame a prompt with -
+    // `────` in Claude Code's current build, `╭───╮` in the rounded ones. Anchored at the
+    // start so a line of text that merely contains one cannot match.
+    const BOX_RULE = /^[─-╿]{4}[─-╿\s]*$/
+    const promptBoxTop = (): number => {
+      const b = t.buffer.active
+      for (let up = 1; up <= PROMPT_BOX_SCAN; up++) {
+        const y = b.cursorY - up
+        if (y < 0) return 0
+        const line = b.getLine(b.baseY + y)
+        if (!line) return 0
+        const s = line.translateToString(true).trim()
+        if (s.length >= 8 && BOX_RULE.test(s)) return up
+      }
+      return 0
+    }
+
     const addMark = (text: string): void => {
-      // Anchored to the row the cursor is on at submit time. xterm keeps a marker's line
-      // right as the buffer scrolls and tells us when that line falls out of scrollback,
-      // neither of which a plain line number could do.
-      const marker = t.registerMarker(0)
+      // Anchored to the top of the prompt box as it stands at submit time. xterm keeps a
+      // marker's line right as the buffer scrolls and tells us when that line falls out of
+      // scrollback, neither of which a plain line number could do.
+      const marker = t.registerMarker(-promptBoxTop())
       if (!marker) return
       const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
       marker.onDispose(() => {
@@ -620,14 +680,20 @@ export default function TerminalPane({
     // last line resumes it. Nothing a write does can flip either way.
     const onWheel = (e: WheelEvent): void => {
       // vim, less and anything else on the alternate screen has no scrollback here, so the
-      // wheel belongs to the app. Otherwise scroll this terminal ourselves: xterm skips its
-      // own viewport entirely while the agent is asking for mouse events.
+      // wheel belongs to the app. Everywhere else this scrolls the terminal itself.
+      //
+      // Every pane, not only the ones grabbing the mouse. The browser scrolls the viewport
+      // by pixels against a scroll area that is one frame stale, so while a turn is printing
+      // the bottom the browser will let you reach is a frame's worth of new lines short of
+      // the real last line - wheel down as much as you like and the tail stays out of reach,
+      // which is why the pill was the only way back. `scrollLines` is clamped against the
+      // buffer instead, which is current, so the tail is always reachable.
       //
       // This does NOT depend on the mouse-select setting. That setting is about drag
       // selection; tying the wheel to it meant that with it off, a wheel anywhere over the
       // text went to the agent and only the strip of pixels over the scrollbar scrolled the
       // pane - the whole middle and left of a pane read as "scrolling is stuck".
-      if (mouseGrabbed() && t.buffer.active.type !== 'alternate') {
+      if (t.buffer.active.type !== 'alternate') {
         e.preventDefault()
         e.stopPropagation()
         // A notch has to cover the same ground here as it does in a pane the browser is
@@ -636,8 +702,22 @@ export default function TerminalPane({
         // deltaY moves. Every agent pane grabs the mouse, so that was every AI session -
         // and while one is printing, 2 lines down against a line of new output per notch
         // means the tail is not reachable by wheel at all, only by the pill.
-        const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / rowHeight()
+        //
+        // deltaMode says what the number is counted in, and all three have to be handled:
+        // a page-scroll mouse reports 2, and dividing a page count by a row height gave
+        // 0.06 rows a notch - the `||` fallback then moved a single line per notch.
+        const lines =
+          e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * t.rows : e.deltaY / rowHeight()
         t.scrollLines(Math.trunc(lines) || (e.deltaY < 0 ? -1 : 1))
+        // Downward, a notch that lands within a line or two of the tail meant the tail. It
+        // is the same slack a scrollbar drag gets, and it is what makes "keep wheeling down"
+        // end on the newest line rather than just beside it.
+        if (e.deltaY > 0 && nearBottom()) {
+          if (!atBottom()) t.scrollToBottom()
+          pinned.current = true
+          setScrolledUp(false)
+          return
+        }
       }
       // Only the immediate read - the wheel fires before the viewport moves, and onScroll
       // settles the final answer once it has. Wheeling down is left to onScroll, which

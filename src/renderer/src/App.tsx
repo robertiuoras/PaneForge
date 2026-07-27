@@ -1467,11 +1467,13 @@ export default function App(): JSX.Element {
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
             />
-            {/* The mic floats over the bottom-right of the pane, next to the prompt box
+            {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
-                is drawn there by any of these CLIs - the prompt box's right edge is
+                is drawn there by any of these CLIs - the prompt box's outer edge is
                 empty - and the button is the only thing in the pane that takes a click,
-                so the terminal underneath keeps every one of its own. */}
+                so the terminal underneath keeps every one of its own. Left rather than
+                right because "↓ Newest" owns the bottom-right whenever a pane is scrolled
+                up, and the two were landing on the same pixels. */}
             {config?.voice.enabled && (
               <button
                 className={
