@@ -7,6 +7,21 @@ import Select from './Select'
 
 const api = window.api
 
+/**
+ * A machine, drawn once and reused at two sizes. It is a screen rather than a
+ * laptop or a tower on purpose: the same mark has to read as "the desktop" and
+ * "the laptop" without implying which one you are looking at.
+ */
+function DeviceGlyph(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width="100%" height="100%" fill="none" aria-hidden="true">
+      <rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.5 13.6h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M8 11.25v2.35" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 interface Props {
   state: RemoteState | null
   onState: (s: RemoteState) => void
@@ -134,24 +149,37 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="dialog wide devices" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>Devices</strong>
           <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
         </div>
 
-        {/* ------------------------------------------------------------- this device */}
-        <div className="setting">
-          <div className="setting-row">
-            <label>This device</label>
-            <input
-              className="dev-name"
-              value={name}
-              maxLength={40}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={() => name.trim() && name !== self.name && void api.renameDevice(name).then(onState)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-            />
+        {/* ------------------------------------------------------------- this device
+            The hero card. It is the only thing on this screen that is about the
+            machine you are sitting at, so it gets the raised surface and everything
+            else sits flat under headings. */}
+        <div className="dev-hero">
+          <div className="dev-hero-top">
+            <span className={'dev-glyph ' + (self.hosting ? 'on' : 'off')} aria-hidden="true">
+              <DeviceGlyph />
+            </span>
+            <div className="dev-hero-id">
+              <input
+                className="dev-name"
+                value={name}
+                maxLength={40}
+                aria-label="This device's name"
+                onChange={(e) => setName(e.target.value)}
+                onBlur={() => name.trim() && name !== self.name && void api.renameDevice(name).then(onState)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
+              <span className="dev-hero-sub">this device</span>
+            </div>
+            <span className={'dev-state ' + (self.hosting ? 'on' : 'off')}>
+              <span className={'dot ' + (self.hosting ? 'on' : 'off')} />
+              {self.hosting ? 'Reachable' : 'Private'}
+            </span>
           </div>
 
           <Switch
@@ -165,41 +193,58 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
           {self.hosting && (
             <div className="dev-self">
-              <div className="dev-line">
+              <div className="dev-field">
                 <span className="dev-key">Pairing code</span>
-                <code className="dev-code">{showCode ? self.code : '••••-••••'}</code>
-                <button className="ghost small" onClick={() => setShowCode((v) => !v)}>
-                  {showCode ? 'Hide' : 'Show'}
-                </button>
-                <button
-                  className="ghost small"
-                  onClick={() => {
-                    api.copyText(self.code)
-                    flash('Pairing code copied.')
-                  }}
-                >
-                  Copy
-                </button>
-                <button
-                  className="ghost small"
-                  title="New code. Every device paired with the old one is disconnected and has to pair again."
-                  onClick={() => {
-                    void api.rotateRemoteCode().then(onState)
-                    flash('New pairing code. Paired devices have to be re-paired.')
-                  }}
-                >
-                  New code
-                </button>
+                <code className={'dev-code' + (showCode ? '' : ' masked')}>
+                  {showCode ? self.code : '••••-••••'}
+                </code>
+                <div className="dev-acts">
+                  <button className="ghost small" onClick={() => setShowCode((v) => !v)}>
+                    {showCode ? 'Hide' : 'Show'}
+                  </button>
+                  <button
+                    className="ghost small"
+                    onClick={() => {
+                      api.copyText(self.code)
+                      flash('Pairing code copied.')
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="ghost small"
+                    title="New code. Every device paired with the old one is disconnected and has to pair again."
+                    onClick={() => {
+                      void api.rotateRemoteCode().then(onState)
+                      flash('New pairing code. Paired devices have to be re-paired.')
+                    }}
+                  >
+                    New code
+                  </button>
+                </div>
               </div>
-              <div className="dev-line">
+              <div className="dev-field">
                 <span className="dev-key">Address</span>
-                <code>{self.addresses.length ? self.addresses.join(', ') : 'no network'}</code>
-                <span className="dev-key">Port</span>
-                <input
-                  className="dev-port"
-                  value={String(self.port)}
-                  onChange={(e) => void api.setRemotePort(Number(e.target.value) || 0).then(onState)}
-                />
+                <div className="dev-addrs">
+                  {self.addresses.length ? (
+                    self.addresses.map((a) => (
+                      <code key={a} className="dev-addr">
+                        {a}
+                      </code>
+                    ))
+                  ) : (
+                    <code className="dev-addr muted">no network</code>
+                  )}
+                </div>
+                <div className="dev-acts">
+                  <span className="dev-key">Port</span>
+                  <input
+                    className="dev-port"
+                    aria-label="Port"
+                    value={String(self.port)}
+                    onChange={(e) => void api.setRemotePort(Number(e.target.value) || 0).then(onState)}
+                  />
+                </div>
               </div>
               <p className="hint">
                 The other device only needs one of those addresses and the code, and usually not even
@@ -225,88 +270,104 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
         {/* ----------------------------------------------------------- other devices */}
         <div className="setting">
-          <label>Paired devices</label>
+          <div className="setting-row">
+            <label>Paired devices</label>
+            {state.peers.length > 0 && (
+              <span className="hint">
+                {state.peers.filter((p) => p.status === 'online').length} of {state.peers.length} online
+              </span>
+            )}
+          </div>
           {state.peers.length === 0 && (
-            <p className="hint">
+            <p className="dev-empty">
               None yet. Turn the switch above on over there, then pair with it below.
             </p>
           )}
           <div className="dev-list">
             {state.peers.map((p) => (
-              <div key={p.id} className="dev-entry">
-              <div className={'dev-row ' + p.status}>
-                <span className={'dot ' + p.status} />
-                <div className="dev-text">
-                  <div className="dev-title">
-                    {p.name}
+              <div key={p.id} className={'dev-entry ' + p.status + (opening === p.id ? ' open' : '')}>
+                <div className={'dev-row ' + p.status}>
+                  <span className={'dev-glyph small ' + p.status} aria-hidden="true">
+                    <DeviceGlyph />
+                  </span>
+                  <div className="dev-text">
+                    <div className="dev-title">
+                      <span className="dev-nm">{p.name}</span>
+                      {p.status === 'online' && (
+                        <span className="chip remote">
+                          {p.sessions} {p.sessions === 1 ? 'pane' : 'panes'}
+                        </span>
+                      )}
+                      {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
+                      {p.status === 'connecting' && <span className="chip">connecting</span>}
+                    </div>
+                    <div className="dev-sub">
+                      <span className={'dot ' + p.status} />
+                      {p.address}:{p.port}
+                      {p.error ? ' · ' + p.error : ''}
+                    </div>
+                  </div>
+                  <div className="dev-acts">
                     {p.status === 'online' && (
-                      <span className="chip">
-                        {p.sessions} {p.sessions === 1 ? 'pane' : 'panes'}
-                      </span>
-                    )}
-                    {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
-                  </div>
-                  <div className="dev-sub">
-                    {p.address}:{p.port}
-                    {p.error ? ' · ' + p.error : ''}
-                  </div>
-                </div>
-                {p.status === 'online' && (
-                  <button
-                    className="ghost small"
-                    title={`Open a pane on ${p.name}, in one of its folders`}
-                    onClick={() => void openLauncher(p.id)}
-                  >
-                    New pane
-                  </button>
-                )}
-                <button
-                  className="ghost small"
-                  onClick={() => void api.connectRemote(p.id, p.status === 'off' || p.status === 'error').then(onState)}
-                >
-                  {p.status === 'off' || p.status === 'error' ? 'Connect' : 'Disconnect'}
-                </button>
-                <button
-                  className="x"
-                  title="Forget this device"
-                  onClick={() => void api.forgetRemote(p.id).then(onState)}
-                >
-                  x
-                </button>
-              </div>
-              {opening === p.id && (
-                <div className="dev-launch">
-                  {!far && <span className="hint">Asking {p.name} what it has...</span>}
-                  {far && far.projects.length === 0 && (
-                    <span className="hint">{p.name} has no projects under its root folder.</span>
-                  )}
-                  {far && far.projects.length > 0 && (
-                    <>
-                      <Select
-                        value={farCwd}
-                        onChange={setFarCwd}
-                        menuWidth={380}
-                        placeholder="Folder on that device"
-                        options={far.projects.map((pr) => ({ value: pr.path, label: pr.name, hint: pr.path }))}
-                      />
-                      <Select
-                        size="sm"
-                        menuWidth={220}
-                        value={farAgent}
-                        onChange={setFarAgent}
-                        options={far.agents.map((a) => ({
-                          value: a.id,
-                          label: a.label,
-                          icon: <AgentLogo id={a.id} spec={a} size={13} />
-                        }))}
-                      />
-                      <button className="primary" disabled={!farCwd} onClick={() => void launchFar(p.id, p.name)}>
-                        Start there
+                      <button
+                        className={'ghost small' + (opening === p.id ? ' active' : '')}
+                        title={`Open a pane on ${p.name}, in one of its folders`}
+                        onClick={() => void openLauncher(p.id)}
+                      >
+                        New pane
                       </button>
-                    </>
-                  )}
+                    )}
+                    <button
+                      className="ghost small"
+                      onClick={() =>
+                        void api.connectRemote(p.id, p.status === 'off' || p.status === 'error').then(onState)
+                      }
+                    >
+                      {p.status === 'off' || p.status === 'error' ? 'Connect' : 'Disconnect'}
+                    </button>
+                    <button
+                      className="x"
+                      title="Forget this device"
+                      aria-label={`Forget ${p.name}`}
+                      onClick={() => void api.forgetRemote(p.id).then(onState)}
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
-              )}
+                {opening === p.id && (
+                  <div className="dev-launch">
+                    {!far && <span className="hint">Asking {p.name} what it has...</span>}
+                    {far && far.projects.length === 0 && (
+                      <span className="hint">{p.name} has no projects under its root folder.</span>
+                    )}
+                    {far && far.projects.length > 0 && (
+                      <>
+                        <Select
+                          value={farCwd}
+                          onChange={setFarCwd}
+                          menuWidth={380}
+                          placeholder="Folder on that device"
+                          options={far.projects.map((pr) => ({ value: pr.path, label: pr.name, hint: pr.path }))}
+                        />
+                        <Select
+                          size="sm"
+                          menuWidth={220}
+                          value={farAgent}
+                          onChange={setFarAgent}
+                          options={far.agents.map((a) => ({
+                            value: a.id,
+                            label: a.label,
+                            icon: <AgentLogo id={a.id} spec={a} size={13} />
+                          }))}
+                        />
+                        <button className="primary" disabled={!farCwd} onClick={() => void launchFar(p.id, p.name)}>
+                          Start there
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -321,10 +382,17 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
           {state.found.length > 0 && (
             <div className="dev-found">
+              <span className="dev-key">On this network</span>
               {state.found.map((f) => (
-                <button key={f.id} className="ghost small dev-chip" disabled={pairing} onClick={() => pairFound(f)}>
-                  <span className="dot idle" />
-                  {f.name}
+                <button
+                  key={f.id}
+                  className="dev-chip"
+                  disabled={pairing}
+                  title={`Pair with ${f.name} at ${f.address}`}
+                  onClick={() => pairFound(f)}
+                >
+                  <span className="dot connecting" />
+                  <span className="dev-chip-nm">{f.name}</span>
                   <span className="hint">{f.address}</span>
                 </button>
               ))}
@@ -334,6 +402,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           <div className="dev-add">
             <input
               placeholder="Pairing code"
+              aria-label="Pairing code"
               className="dev-code-in"
               value={code}
               autoFocus
@@ -341,10 +410,16 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             />
             <input
               placeholder="Address (only if it is not listed above)"
+              aria-label="Address"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
             />
-            <input className="dev-port" value={port} onChange={(e) => setPort(e.target.value)} />
+            <input
+              className="dev-port"
+              aria-label="Port"
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+            />
             <button
               className="primary"
               disabled={pairing || !code.trim() || !address.trim()}

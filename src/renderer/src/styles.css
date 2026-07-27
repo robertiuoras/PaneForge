@@ -35,6 +35,35 @@ body {
 }
 
 button, input { font: inherit; }
+
+/* Text fields had no base style at all, so every one that did not carry a class of
+   its own (`.search`, `.rename`, the palette's) rendered as a native Windows field:
+   white background, black text, a 2px grey 3D border, on a #0a0a0d dialog. Verified
+   by computed style, not by eye - every input in the Devices dialog came back
+   `rgb(255,255,255)`. Wrapped in `:where()` so this costs zero specificity and any
+   component that dresses its own field still wins. Checkboxes and radios are hidden
+   by their own rules and the range slider is styled below, so all three stay out. */
+input:where(:not([type='checkbox'], [type='radio'], [type='range'])) {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  min-width: 0;
+  outline: none;
+  transition: border-color var(--fast), background var(--fast);
+}
+input:where(:not([type='checkbox'], [type='radio'], [type='range'])):hover:not(:disabled) {
+  border-color: #ffffff33;
+}
+input:where(:not([type='checkbox'], [type='radio'], [type='range'])):focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+input:where(:not([type='checkbox'], [type='radio'], [type='range'])):disabled {
+  opacity: 0.5;
+}
+input::placeholder { color: #6f6f7d; }
 button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -1180,31 +1209,130 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 }
 
 /* --------------------------------------------------------------------------
-   Devices */
+   Devices
+
+   One rule holds this screen together: the machine you are sitting at is the
+   only raised card, everything else is a flat row under a heading. Before, this
+   device and the paired ones were the same `.setting` block with the same
+   border, so nothing said which half of the dialog was "here" and which was
+   "over there". Status now reads three ways at once - a coloured glyph, a dot,
+   and a word - because a single 6px dot was the only difference between a
+   machine that was reachable and one that was not. */
 .chip.remote {
   display: inline-flex; align-items: center; gap: 3px;
   color: var(--ok); border-color: #35d07f33; background: #35d07f14;
 }
-.dev-name { width: 190px; }
-.dev-port { width: 74px; text-align: center; }
-.dev-self { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
-.dev-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dev-key { color: var(--muted); font-size: 11px; min-width: 78px; }
-.dev-code { font: 13px/1 ui-monospace, Consolas, monospace; letter-spacing: 1.5px; color: var(--text); }
-.dev-error { color: var(--danger); font-size: 11.5px; margin-top: 6px; }
-.dev-guests { display: flex; flex-direction: column; gap: 5px; margin-top: 9px; }
-.dev-guest { display: flex; align-items: center; gap: 7px; font-size: 12px; }
-.dev-list { display: flex; flex-direction: column; gap: 5px; }
-.dev-row {
-  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2);
+.dialog.devices { gap: 14px; }
+/* The launcher button stays lit while its folder picker is folded open, so it
+   is obvious which device the picker underneath belongs to. */
+button.ghost.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+
+/* ---- this device ---- */
+.dev-hero {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border-radius: var(--r);
+  border: 1px solid var(--line-strong);
+  /* The dialog itself is --surface-2, so the hero has to step UP to read as the
+     raised card; --surface-2 on --surface-2 was the whole reason the old layout
+     looked like one undifferentiated column of boxes. */
+  background:
+    radial-gradient(120% 140% at 0% 0%, #8b9dff17, transparent 62%),
+    var(--surface-3);
 }
-.dev-row.error { border-color: #ff8f8f2b; }
+.dev-hero-top { display: flex; align-items: center; gap: 10px; }
+.dev-hero-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.dev-hero-sub { color: var(--muted); font-size: 10.5px; letter-spacing: 0.3px; text-transform: uppercase; }
+.dev-glyph {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 6px; flex: none;
+  border-radius: var(--r-sm); border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--muted);
+  transition: color var(--fast), border-color var(--fast);
+}
+.dev-glyph.small { width: 24px; height: 24px; padding: 4px; }
+.dev-glyph.on, .dev-glyph.online { color: var(--ok); border-color: #35d07f33; background: #35d07f10; }
+.dev-glyph.connecting { color: var(--warn); border-color: #f0b42933; }
+.dev-glyph.error { color: var(--danger); border-color: #ff8f8f2b; }
+/* A pill that says in a word what the dot says in a colour. */
+.dev-state {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 3px 9px 3px 7px; border-radius: 999px; font-size: 11px;
+  border: 1px solid var(--line); background: var(--surface-3); color: var(--muted);
+}
+.dev-state.on { color: var(--ok); border-color: #35d07f33; background: #35d07f12; }
+.dev-name { width: 190px; max-width: 100%; }
+.dev-port { width: 74px; text-align: center; }
+.dev-self { display: flex; flex-direction: column; gap: 6px; }
+/* label | value | actions, so the code and the address line up under each other
+   instead of wrapping wherever the button widths happen to land. */
+.dev-field {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 9px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: #00000030;
+}
+.dev-key { color: var(--muted); font-size: 11px; min-width: 78px; flex: none; }
+.dev-code {
+  flex: 1; min-width: 0;
+  font: 13px/1 ui-monospace, Consolas, monospace; letter-spacing: 2px; color: var(--text);
+}
+.dev-code.masked { color: var(--muted); }
+.dev-addrs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.dev-addr {
+  font: 11.5px/1 ui-monospace, Consolas, monospace; color: var(--text);
+  padding: 3px 6px; border-radius: 5px; background: #ffffff0d; user-select: text;
+}
+.dev-addr.muted { color: var(--muted); }
+.dev-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+.dev-error { color: var(--danger); font-size: 11.5px; margin-top: 6px; }
+.dev-guests { display: flex; flex-direction: column; gap: 5px; padding-top: 2px; }
+.dev-guest { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+
+/* ---- paired devices ---- */
+.dev-list { display: flex; flex-direction: column; gap: 6px; }
+.dev-empty {
+  margin: 0; padding: 14px 12px; text-align: center;
+  color: var(--muted); font-size: 12px;
+  border: 1px dashed var(--line-strong); border-radius: var(--r-sm);
+}
+.dev-entry {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); overflow: hidden;
+  /* The status accent is a border, not a background wash: it survives on the
+     dark surface without tinting the text sitting on top of it. */
+  border-left: 2px solid #55555f;
+  transition: border-color var(--fast), background var(--fast);
+}
+.dev-entry:hover { background: var(--surface-3); }
+/* `.x` is opacity:0 until its parent is hovered, and its only reveal rule was
+   `.row:hover`. A device row is not a `.row`, so the forget button on every
+   paired device was invisible - permanently, not just until hover. */
+.dev-entry:hover .x, .dev-entry:focus-within .x { opacity: 1; }
+.dev-entry.online { border-left-color: var(--ok); }
+.dev-entry.connecting { border-left-color: var(--warn); }
+.dev-entry.error { border-left-color: var(--danger); }
+.dev-entry.open { border-color: var(--line-strong); }
+.dev-row { display: flex; align-items: center; gap: 9px; padding: 8px 9px; }
 .dev-text { flex: 1; min-width: 0; }
-.dev-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.dev-sub { color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dev-found { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.dev-chip { display: inline-flex; align-items: center; gap: 6px; }
+.dev-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; min-width: 0; }
+.dev-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.dev-sub {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 11px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- pair a new one ---- */
+.dev-found { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dev-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px; font-size: 11.5px;
+  border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text);
+  transition: border-color var(--fast), background var(--fast);
+}
+.dev-chip:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
+.dev-chip:disabled { opacity: 0.45; }
+.dev-chip-nm { font-weight: 500; }
 .dev-add { display: flex; gap: 6px; align-items: center; }
 .dev-add input { flex: 1; min-width: 0; }
 .dev-code-in { font: 12px/1 ui-monospace, Consolas, monospace; letter-spacing: 1.2px; max-width: 150px; }
@@ -1214,7 +1342,9 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .dot.error { background: var(--danger); box-shadow: 0 0 0 3px #ff8f8f1f; }
 .dot.off { background: #55555f; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
-.dev-entry { display: flex; flex-direction: column; gap: 5px; }
 /* The "open a pane over there" row, folded under the device it belongs to. */
-.dev-launch { display: flex; align-items: center; gap: 6px; padding: 0 10px 2px 26px; }
+.dev-launch {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 9px 9px 42px; border-top: 1px solid var(--line); background: #00000026;
+}
 .dev-launch > *:first-child { flex: 1; min-width: 0; }
