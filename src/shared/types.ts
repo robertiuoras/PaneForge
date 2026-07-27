@@ -823,7 +823,9 @@ export interface ShelfApi {
   /** absolute path of a dropped File, which Electron only exposes in a preload */
   pathForFile(file: File): string
   /** type it into PaneForge's focused pane instead of the clipboard */
-  toPane(id: string): void
+  /** `focus` raises the main window too. Off by default: the overlay exists to leave
+   *  the keyboard where it was. */
+  toPane(id: string, focus?: boolean): void
   focusApp(): void
   /** open the folder the Stash's copies live in */
   reveal(): void

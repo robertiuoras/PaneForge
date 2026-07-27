@@ -632,9 +632,16 @@ ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
 ipcMain.on('recents:pin', (_e, id: string, on: boolean) => pinRecent(id, !!on))
 // The overlay floats over other apps and has no idea which pane is focused, so "send it
 // to the pane" is asked of the window that does know.
-ipcMain.on('recents:toPane', (_e, id: string) => {
+//
+// Raising the window is opt-in. The overlay is deliberately unfocusable so a click can
+// leave the keyboard exactly where it was - clicking a line and then pressing Ctrl+V in
+// whatever you were already typing in is the reason it exists. Now that a plain click
+// sends to the pane, doing that AND dragging PaneForge to the front would take the
+// overlay's own point away from it. The pty does not care whether its window is in
+// front: the text lands either way.
+ipcMain.on('recents:toPane', (_e, id: string, focus = false) => {
   if (!getRecent(id)) return
-  focusWindow()
+  if (focus) focusWindow()
   send('recents:toPane', id)
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
