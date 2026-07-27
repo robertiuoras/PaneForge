@@ -18,6 +18,7 @@
     "smoke": "node scripts/smoke-pty.mjs",
     "test:updater": "node scripts/updater-test.mjs",
     "test:gamemode": "node scripts/gamemode-test.mjs",
+    "test:focus": "node scripts/focus-test.mjs",
     "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs",
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
