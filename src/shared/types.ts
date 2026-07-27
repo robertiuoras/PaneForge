@@ -815,6 +815,14 @@ export interface Api {
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void
+  /**
+   * The window was minimised or restored. The only reliable source for it: this window
+   * runs with backgroundThrottling off, which also pins document.visibilityState to
+   * 'visible' forever, so nothing in the page can tell.
+   */
+  onAppVisible(cb: (visible: boolean) => void): () => void
+  /** the window state right now, for the page's first paint (the push can arrive first) */
+  appVisibleNow(): Promise<boolean>
   /** game started or ended, or something joined/left the queue waiting on it */
   onGameMode(cb: (s: GameModeStatus) => void): () => void
   /** a session just went quiet after doing something - drives the chime */

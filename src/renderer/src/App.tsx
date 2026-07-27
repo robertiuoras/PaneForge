@@ -23,7 +23,7 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
-import TerminalPane, { paneInsert, paneRepair } from './components/TerminalPane'
+import TerminalPane, { paneFocus, paneInsert, paneRepair } from './components/TerminalPane'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
@@ -117,6 +117,76 @@ export default function App(): JSX.Element {
   const peekTimer = useRef<number>()
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
+
+  /**
+   * The keyboard belongs to the pane you are working in, and finds its own way back there.
+   *
+   * Everything you do to a pane is done from somewhere that is not the pane: a button in
+   * its header, a row in the sidebar, a dialog, the palette. Every one of those takes the
+   * keyboard - a `<button>` holds it and does nothing with it, a dialog that closes leaves
+   * it on nothing at all - and the only way back was clicking into the terminal again.
+   * That is the whole of "PaneForge broke my focus", and it is one rule rather than thirty
+   * handlers: when nothing on screen genuinely wants the keys, the active pane has them.
+   *
+   * Two things are never interrupted, because in both the keys are exactly where they
+   * should be: a real text field (a rename box, a search, a dialog's input - the pane's
+   * own terminal is one of these too, so typing is never touched), and an open layer
+   * (`.overlay` is every dialog in this app, `.select-menu` every dropdown).
+   */
+  const restoreFocus = useCallback(() => {
+    const el = document.activeElement as HTMLElement | null
+    if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
+    if (document.querySelector('.overlay, .select-menu')) return
+    const id = activeRef.current
+    if (id) paneFocus.get(id)?.()
+  }, [])
+
+  // A click that ended on a button, an icon or a gap has nothing to type into. Deferred a
+  // tick so React has finished opening whatever the click opened: a dropdown that is about
+  // to take the keys legitimately is already in the DOM by the time this looks.
+  // Escape is the other way out of a layer, and the dropdown's own Escape hands the
+  // keyboard to the trigger button it came from - a place with nothing to type into.
+  // Same rule, same guards: after the tick, anything still holding the keys keeps them.
+  useEffect(() => {
+    const give = (): void => void window.setTimeout(restoreFocus, 0)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') give()
+    }
+    // Both on the way DOWN: a dropdown's own Escape handler stops the event dead so the
+    // global shortcuts cannot see it, and a bubble-phase listener here would never run.
+    // Nothing is decided at this point anyway - the tick is what looks at the result.
+    document.addEventListener('click', give, true)
+    document.addEventListener('keydown', onKey, true)
+    // Coming back to the app from somewhere else. Windows hands the keyboard to whatever
+    // held it when you left, which after a click on a button is that button - so the first
+    // thing typed after an alt-tab went nowhere.
+    window.addEventListener('focus', give)
+    return () => {
+      document.removeEventListener('click', give, true)
+      document.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('focus', give)
+    }
+  }, [restoreFocus])
+
+  // Escape out of the palette, Enter in a dialog, a rename committed: a layer closing is
+  // the other half of the same rule, and none of those arrive as a click.
+  const layerOpen =
+    picking ||
+    settings ||
+    help ||
+    palette ||
+    swarm ||
+    history ||
+    devices ||
+    board !== null ||
+    ask !== null ||
+    restore !== null ||
+    renaming !== null
+  useEffect(() => {
+    if (layerOpen) return
+    const t = window.setTimeout(restoreFocus, 0)
+    return () => window.clearTimeout(t)
+  }, [layerOpen, restoreFocus])
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -1388,6 +1458,7 @@ export default function App(): JSX.Element {
             <TerminalPane
               sessionId={s.id}
               visible={visibleIds.has(s.id)}
+              active={s.id === activeId}
               fontSize={config?.fontSize ?? 13}
               copyOnSelect={config?.copyOnSelect ?? true}
               mouseSelect={config?.mouseSelect ?? true}
@@ -1396,11 +1467,13 @@ export default function App(): JSX.Element {
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
             />
-            {/* The mic floats over the bottom-right of the pane, next to the prompt box
+            {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
-                is drawn there by any of these CLIs - the prompt box's right edge is
+                is drawn there by any of these CLIs - the prompt box's outer edge is
                 empty - and the button is the only thing in the pane that takes a click,
-                so the terminal underneath keeps every one of its own. */}
+                so the terminal underneath keeps every one of its own. Left rather than
+                right because "↓ Newest" owns the bottom-right whenever a pane is scrolled
+                up, and the two were landing on the same pixels. */}
             {config?.voice.enabled && (
               <button
                 className={

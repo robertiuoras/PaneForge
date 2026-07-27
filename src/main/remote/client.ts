@@ -14,6 +14,7 @@ import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import type { Project, RemotePeer, Session, StartSessionRequest } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
+import { OutBuffer } from '../outBuffer'
 
 /** Same cap the local session manager keeps, for the same reason. */
 const BUFFER_LIMIT = 400_000
@@ -45,7 +46,7 @@ export class RemoteClient extends EventEmitter {
 
   private conn: Conn | null = null
   private socket: Socket | null = null
-  private buffers = new Map<string, string>()
+  private buffers = new Map<string, OutBuffer>()
   private want = false
   private tries = 0
   private timer: NodeJS.Timeout | null = null
@@ -70,7 +71,7 @@ export class RemoteClient extends EventEmitter {
   }
 
   buffer(localId: string): string {
-    return this.buffers.get(localId) ?? ''
+    return this.buffers.get(localId)?.read() ?? ''
   }
 
   update(peer: RemotePeer): void {
@@ -205,13 +206,19 @@ export class RemoteClient extends EventEmitter {
       case 'data': {
         const id = String(m.id ?? '')
         const data = String(m.data ?? '')
-        this.buffers.set(id, (this.buffer(id) + data).slice(-BUFFER_LIMIT))
+        // Same O(chunk) append the local sessions use: a mirrored pane streams exactly
+        // as hard as a local one, and rebuilding the whole 400 KB tail per chunk here
+        // cost the same as it did there.
+        let buf = this.buffers.get(id)
+        if (!buf) this.buffers.set(id, (buf = new OutBuffer(BUFFER_LIMIT)))
+        buf.push(data)
         this.emit('data', joinId(this.peer.id, id), data)
         return
       }
       case 'buffer': {
         const id = String(m.id ?? '')
-        this.buffers.set(id, String(m.data ?? '').slice(-BUFFER_LIMIT))
+        this.buffers.set(id, new OutBuffer(BUFFER_LIMIT))
+        this.buffers.get(id)!.push(String(m.data ?? '').slice(-BUFFER_LIMIT))
         // A reconnect replaces the scrollback wholesale, so the pane has to redraw
         // from it rather than append to what it already had.
         this.emit('reset', joinId(this.peer.id, id))
@@ -252,7 +259,7 @@ export class RemoteClient extends EventEmitter {
 
   private attach(localId: string): void {
     if (this.buffers.has(localId)) return
-    this.buffers.set(localId, '')
+    this.buffers.set(localId, new OutBuffer(BUFFER_LIMIT))
     this.conn?.send({ t: 'attach', id: localId })
   }
 
