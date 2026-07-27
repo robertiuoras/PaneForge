@@ -194,5 +194,53 @@ ok(
   readFileSync(join(mid.dir, 'notes.txt'), 'utf8')
 )
 
+// ------------------------------------------ a claim does not outlive the chat that made it
+//
+// The adopter above is still holding this conflict. When that chat ends, its claim used to
+// stay behind forever: the lane read "a chat has it" with nobody there, the app's automatic
+// hand-over skips a claimed conflict on exactly that word, and every other chat was held
+// off for another 45 minutes on behalf of a session that no longer existed.
+
+ok('the adopter still owns the conflict while it is around', laneOf(mid.lane).conflict?.resolver === 'sess-fixer')
+lane('release', '--session', 'sess-fixer')
+ok('a chat that ends gives back the conflict it took over', laneOf(mid.lane).conflict?.resolver == null)
+ok('so the next chat may take it', laneOf(mid.lane).conflict?.adoptable === true)
+
+// ------------------------------------- a lane with uncommitted edits can still stop being stuck
+//
+// `catchUp` refuses to merge on top of an uncommitted edit, which is right while somebody
+// is typing and wrong forever once they stop. A chat that died mid-edit left files modified,
+// so every retry skipped the lane and the conflict could not clear even after master had
+// dropped the change it disagreed with. That is the shape lane c was found in. Whether the
+// lane still conflicts is answerable without touching a single file.
+
+lane('release', '--session', 'sess-b')
+lane('release', '--session', 'sess-mid')
+const dirty = JSON.parse(lane('claim', '--session', 'sess-dirty').out)
+commit(dirty.dir, 'both.txt', 'lane version\n', 'lane adds both.txt')
+commit(repo, 'both.txt', 'master version\n', 'master adds both.txt')
+lane('ready', '--session', 'sess-dirty')
+ok('the lane is stuck', laneOf(dirty.lane).conflicted === true)
+
+// The chat stops mid-edit and never comes back, leaving a file it was writing.
+writeFileSync(join(dirty.dir, 'scratch.txt'), 'half-typed\n')
+patchState((s) => {
+  s.lanes[dirty.lane].seen = Date.now() - 46 * 60 * 1000
+})
+// Master stops disagreeing.
+git(repo, 'rm', '-q', 'both.txt')
+git(repo, 'commit', '-qm', 'master drops both.txt')
+
+const dirtyRetry = lane('retry')
+ok(
+  'a conflict clears itself even with uncommitted edits left in the lane',
+  laneOf(dirty.lane).conflicted === false,
+  dirtyRetry.out
+)
+ok(
+  'and the half-typed file is left exactly where it was',
+  readFileSync(join(dirty.dir, 'scratch.txt'), 'utf8') === 'half-typed\n'
+)
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
