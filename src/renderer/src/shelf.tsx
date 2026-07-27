@@ -62,9 +62,25 @@ function left(it: RecentItem): string {
 function useWindowDrag(): {
   handlers: React.HTMLAttributes<HTMLElement>
   wasDrag: () => boolean
+  dragging: () => boolean
 } {
   const from = useRef<{ x: number; y: number } | null>(null)
   const moved = useRef(false)
+  // The newest pointer position that has not been sent yet, and the frame that will send
+  // it. Moving this window costs main several milliseconds (see shelfWindow.ts), and a
+  // pointer reports faster than that, so sending every event built a backlog the window
+  // was still working through after the mouse had stopped. One send per frame, always
+  // the latest position: nothing to queue, so nothing to fall behind by.
+  const next = useRef<{ x: number; y: number } | null>(null)
+  const frame = useRef(0)
+
+  const send = (): void => {
+    frame.current = 0
+    const p = next.current
+    next.current = null
+    if (p) shelf.dragWindow.move(p.x, p.y)
+  }
+
   return {
     handlers: {
       onPointerDown: (e: React.PointerEvent) => {
@@ -86,16 +102,21 @@ function useWindowDrag(): {
         )
           return
         moved.current = true
-        shelf.dragWindow.move(e.screenX, e.screenY)
+        next.current = { x: e.screenX, y: e.screenY }
+        if (!frame.current) frame.current = requestAnimationFrame(send)
       },
       onPointerUp: (e: React.PointerEvent) => {
         if (!from.current) return
         ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
         from.current = null
+        // Let go between frames: where the pointer finished is where it should end up.
+        if (frame.current) cancelAnimationFrame(frame.current)
+        send()
         shelf.dragWindow.end()
       }
     },
-    wasDrag: () => moved.current
+    wasDrag: () => moved.current,
+    dragging: () => !!from.current
   }
 }
 
@@ -289,12 +310,37 @@ function Overlay(): JSX.Element {
     shelf.setExpanded(next)
   }
 
+  /**
+   * Hovering the pill opens it, but not the instant the pointer touches it. The pill is
+   * also the window's handle: at zero delay, reaching for it to move it opened the list
+   * under your hand every time, and you ended up dragging the big card instead of the
+   * small pill you aimed at. A third of a second is longer than a pointer crossing the
+   * corner on its way somewhere else, and shorter than a deliberate reach.
+   */
+  const HOVER_OPEN_MS = 320
+  const openTimer = useRef<number>()
+  /** The pointer is on the grip: that is a reach for the handle, never a reach for the list. */
+  const onGrip = useRef(false)
+  /** Just let go of a drag - the pointer is still on the pill, and that is not a hover. */
+  const holdOff = useRef(0)
+
+  const cancelOpen = (): void => window.clearTimeout(openTimer.current)
+
+  const scheduleOpen = (): void => {
+    cancelOpen()
+    if (onGrip.current || drag.dragging() || Date.now() < holdOff.current) return
+    openTimer.current = window.setTimeout(() => {
+      if (!onGrip.current && !drag.dragging()) want(true)
+    }, HOVER_OPEN_MS)
+  }
+
   const enter = (): void => {
     window.clearTimeout(closeTimer.current)
-    if (!open) want(true)
+    if (!open) scheduleOpen()
   }
 
   const leave = (): void => {
+    cancelOpen()
     // The settings panel is a deliberate stop, not a glance: it must not close itself out
     // from under the pointer on the way to a choice near the edge.
     if (sticky.current || settings) return
@@ -348,16 +394,43 @@ function Overlay(): JSX.Element {
         <div
           className={'pill' + (over ? ' over' : '')}
           {...drag.handlers}
-          onClick={() => {
+          // Capture, so these run whatever the drag handlers do with the same event.
+          onPointerDownCapture={cancelOpen}
+          onPointerUpCapture={() => {
+            // A press that turned into a move leaves the pointer sitting on the pill. That
+            // is the end of a drag, not the start of a hover, so it must not open.
+            if (drag.wasDrag()) holdOff.current = Date.now() + 600
+          }}
+          onClick={(e) => {
+            // The grip is the handle. Clicking it does nothing on purpose: a miss while
+            // reaching to move the pill should not throw the list open.
+            if ((e.target as HTMLElement).closest?.('.pill-grip')) return
             if (!drag.wasDrag()) want(true)
           }}
-          title="Stash — Ctrl+Alt+V. Drop a file here to park it. Drag it anywhere you like."
+          title="Stash — Ctrl+Alt+V. Drop a file here to park it. Drag it by the grip on the right."
         >
           <span className="glyph" aria-hidden="true">
             ▤
           </span>
           <span className="count">{items.length}</span>
           <span className="label">{over ? 'drop it' : items.length ? 'stashed' : 'stash'}</span>
+          {/* The handle, at the far right where a window's grip belongs. It is invisible
+              until the pointer is on the pill: the resting state of this thing is a count
+              on a corner of the screen, and a permanent grab handle on it is furniture. */}
+          <span
+            className="pill-grip"
+            aria-hidden="true"
+            title="Drag to move the Stash — any corner, any screen. It stays there."
+            onMouseEnter={() => {
+              onGrip.current = true
+              cancelOpen()
+            }}
+            onMouseLeave={() => {
+              onGrip.current = false
+              // Off the grip but still on the pill: that is a hover again.
+              if (!open) scheduleOpen()
+            }}
+          />
         </div>
       </div>
     )

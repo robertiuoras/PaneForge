@@ -118,6 +118,48 @@ button {
   text-overflow: ellipsis;
 }
 
+/* The window handle. Three lines, hard right, and nothing at all until the pointer is on
+   the pill - at rest this is a count in the corner of a screen and should read as one.
+   It is wider than it looks: the hit area runs to the edge of the pill, because the point
+   of it is to be grabbable without aiming. */
+.pill-grip {
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 100%;
+  align-self: stretch;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0 9px,
+    currentColor 9px 10px,
+    transparent 10px 13px,
+    currentColor 13px 14px,
+    transparent 14px 17px,
+    currentColor 17px 18px,
+    transparent 18px
+  );
+  background-repeat: no-repeat;
+  background-size: 12px 100%;
+  background-position: right center;
+  color: var(--ink-faint);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 120ms ease;
+}
+
+.pill:hover .pill-grip {
+  opacity: 0.8;
+}
+
+.pill-grip:hover {
+  opacity: 1;
+  color: #fff;
+}
+
+.pill-grip:active {
+  cursor: grabbing;
+}
+
 /* --- expanded card ---------------------------------------------------------- */
 
 .card {

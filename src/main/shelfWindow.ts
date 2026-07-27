@@ -26,7 +26,7 @@ import { getConfig, setConfig } from './config'
 import type { RecentItem, StashConfig } from '../shared/types'
 
 /** The resting size: a pill with the count on it. */
-const COLLAPSED = { width: 172, height: 38 }
+const COLLAPSED = { width: 190, height: 38 }
 /** Opened: tall enough for a real history, narrow enough to not cover a window. */
 const EXPANDED = { width: 352, height: 470 }
 /** The settings panel behind the gear needs more room than the list does. */
@@ -127,6 +127,51 @@ export function beginShelfDrag(): void {
   if (!alive()) return
   const b = shelf!.getBounds()
   drag = { px: NaN, py: NaN, x: b.x, bottom: b.y + b.height, moved: false }
+  pendingMove = null
+  lastAt = { x: b.x, y: b.y }
+}
+
+/**
+ * Moving this window is expensive, and that is not a thing this code can fix: it is
+ * transparent, always-on-top at screen-saver level and blurring what is behind it, so
+ * every move is a DWM recomposite of whatever it is floating over. Measured on the
+ * machine this was written on: 10.3ms average per `setBounds`, 41ms at worst.
+ *
+ * A pointer produces moves far faster than that (a 1000Hz mouse, coalesced by Chromium
+ * to one per frame, is still 60-144 a second), so the naive "one message, one move"
+ * built a queue that main could never drain: the pill kept crawling towards the cursor
+ * for the better part of a second AFTER the mouse had stopped. That is the lag.
+ *
+ * Two things fix it, and both are about doing less rather than doing it faster:
+ *
+ *  * only ever the newest position matters - an intermediate one on the way to where the
+ *    pointer is now is a frame nobody will see - so a move that arrives while one is
+ *    still owed replaces it instead of joining a queue;
+ *  * `setPosition` instead of `setBounds`, because the size is not changing and asking
+ *    for a resize as well costs about 2ms of the 10 (8.2ms average, 21ms worst).
+ *
+ * The result cannot back up: at most one pending position exists at any moment, so the
+ * window is always at most one frame behind the pointer no matter how fast the mouse is.
+ */
+const DRAG_FRAME_MS = 16
+let pendingMove: { x: number; y: number } | null = null
+let moveTimer: NodeJS.Timeout | null = null
+let lastAt: { x: number; y: number } | null = null
+
+function flushMove(): void {
+  moveTimer = null
+  const next = pendingMove
+  pendingMove = null
+  if (!next || !alive()) return
+  // The pointer can travel several pixels inside one frame without the window's rounded
+  // position changing; that call is pure cost.
+  if (lastAt && lastAt.x === next.x && lastAt.y === next.y) return
+  lastAt = next
+  try {
+    shelf!.setPosition(next.x, next.y)
+  } catch {
+    /* dragged across a display that vanished - endShelfDrag puts it back in bounds */
+  }
 }
 
 export function moveShelfDrag(px: number, py: number): void {
@@ -138,14 +183,15 @@ export function moveShelfDrag(px: number, py: number): void {
     return
   }
   const size = currentSize()
-  const x = drag.x + (px - drag.px)
-  const bottom = drag.bottom + (py - drag.py)
   drag.moved = true
-  try {
-    shelf!.setBounds({ x: Math.round(x), y: Math.round(bottom - size.height), ...size })
-  } catch {
-    /* dragged across a display that vanished - endShelfDrag puts it back in bounds */
+  pendingMove = {
+    x: Math.round(drag.x + (px - drag.px)),
+    y: Math.round(drag.bottom + (py - drag.py) - size.height)
   }
+  // The first move of a gesture goes now, so the window does not start a frame late.
+  if (moveTimer) return
+  flushMove()
+  moveTimer = setTimeout(flushMove, DRAG_FRAME_MS)
 }
 
 /** Remember where it was let go, so it is still there after a restart. */
@@ -153,6 +199,11 @@ export function endShelfDrag(): void {
   if (!drag) return
   const moved = drag.moved
   drag = null
+  // Let go mid-frame: the last position the pointer reached is still owed, and it is the
+  // one that gets written to the config below.
+  if (moveTimer) clearTimeout(moveTimer)
+  moveTimer = null
+  flushMove()
   // A press that never turned into a drag is a click on the header, not a move: writing
   // the config on every one of those would rewrite the file all afternoon.
   if (!moved || !alive()) return
