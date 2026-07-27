@@ -130,18 +130,60 @@ function fixPrompt(lane: LaneBoardEntry): string {
  * work is being left out of every release.
  */
 export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
+  // "lane a" beside a "w2" worktree chip read as two halves of one fact, and they are not
+  // related at all: w2 is this pane's own checkout of whatever project it opened, and this
+  // is a lane in PaneForge's release pool that the chat in this pane happens to hold. The
+  // prefix is the whole difference, so it is in the label rather than only the tooltip.
   const label = lane.conflicted
-    ? `lane ${lane.lane} stuck`
+    ? `PF lane ${lane.lane} stuck`
     : lane.ready
-      ? `lane ${lane.lane} done`
-      : `lane ${lane.lane}`
+      ? `PF lane ${lane.lane} done`
+      : `PF lane ${lane.lane}`
   return (
     <span
       className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
-      title={`PaneForge ${lane.branch} - ${laneState(lane)}\n${laneTip(lane)}`}
+      title={
+        `This chat is building PaneForge itself in lane ${lane.lane} (${lane.branch}) - ${laneState(lane)}.\n` +
+        `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}`
+      }
     >
       {label}
     </span>
+  )
+}
+
+/**
+ * What a lane chip on a session card means, in the words of someone who has never heard
+ * the word. Shown from the "?" beside Sessions, and only while there is a lane on screen
+ * to ask about.
+ *
+ * Worktree lanes are not a PaneForge-developer thing - every user gets one the second
+ * time they open the same project - so this explains those first, and mentions the
+ * release lanes only on a machine that actually has them.
+ */
+export function LaneHelp({ devLanes }: { devLanes: boolean }): JSX.Element {
+  return (
+    <div className="lane-help">
+      <p>
+        Two panes open on the same folder fight each other: the same files, the same git
+        index, the same dev-server port. So the second one gets a <b>lane</b> — its own
+        checkout of that repo in a folder beside it (<code>myapp-w2</code>), on its own
+        branch, with its own port. The first pane keeps the original folder.
+      </p>
+      <p>
+        The chip on a pane&apos;s card (<b>w2</b>, <b>w3</b>) is the lane it was given. You
+        never make one and never clean one up; it is an ordinary git worktree, so you commit
+        and merge it like any other branch, and the folder is safe to delete once you have.
+      </p>
+      {devLanes && (
+        <p>
+          A <b>PF lane</b> chip is a different thing that happens to share the word: one of
+          PaneForge&apos;s own release lanes, held by the chat in that pane while it edits
+          PaneForge. It says nothing about the folder the pane is open in — a pane can
+          carry both chips at once. Only a machine with a PaneForge checkout ever sees one.
+        </p>
+      )}
+    </div>
   )
 }
 
