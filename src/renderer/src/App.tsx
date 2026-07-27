@@ -398,7 +398,13 @@ export default function App(): JSX.Element {
         flash(it.kind === 'file' ? 'File path typed into the pane.' : 'Image path typed into the pane.')
       } else {
         if (!it.text) return
-        api.write(id, it.text)
+        // As a paste, not as typing. Every agent here runs a TUI with bracketed paste on,
+        // and a stash entry is usually several lines: written to the pty they arrive as
+        // Enter after Enter and the first line is submitted on its own. The same route
+        // dictation takes, for the same reason.
+        const insert = paneInsert.get(id)
+        if (insert) insert(it.text)
+        else api.write(id, it.text)
       }
       setShelfPeek(false)
     },
