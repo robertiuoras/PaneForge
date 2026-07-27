@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   Api,
   Config,
+  GameModeStatus,
   InstallEvent,
   RecentItem,
   RemoteState,
@@ -68,6 +69,10 @@ const api: Api = {
   updateState: () => ipcRenderer.invoke('update:state'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
+  installUpdateAnyway: () => ipcRenderer.send('game:installAnyway'),
+
+  gameStatus: () => ipcRenderer.invoke('game:status'),
+  setGameManual: (on: boolean) => ipcRenderer.invoke('game:manual', on),
 
   pendingRestore: () => ipcRenderer.invoke('restore:pending'),
   answerRestore: (answer: RestoreAnswer) => ipcRenderer.send('restore:answer', answer),
@@ -132,6 +137,11 @@ const api: Api = {
     const h = (_e: unknown, state: UpdateState) => cb(state)
     ipcRenderer.on('update:changed', h)
     return () => ipcRenderer.off('update:changed', h)
+  },
+  onGameMode: (cb) => {
+    const h = (_e: unknown, status: GameModeStatus) => cb(status)
+    ipcRenderer.on('game:changed', h)
+    return () => ipcRenderer.off('game:changed', h)
   },
   onAttention: (cb) => {
     const h = (_e: unknown, s: Session) => cb(s)

@@ -161,6 +161,9 @@ function defaults(): Config {
     historyDays: 30,
     autoLane: true,
     voice: { enabled: true, model: 'base', language: 'auto' },
+    // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
+    // config does not freeze today's game list into every user's settings file.
+    gameMode: { enabled: true, processes: [], manual: false },
     swarmRoles: DEFAULT_ROLES,
     remote: defaultRemote(),
     window: { width: 1500, height: 940, maximized: false }

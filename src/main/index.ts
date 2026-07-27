@@ -27,6 +27,17 @@ import { laneBoard, laneRetry } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
+  cancelDeferred,
+  checkNow as checkGameNow,
+  deferredCount,
+  gameState,
+  isGameActive,
+  onGameState,
+  refreshGameWatch,
+  startGameWatch,
+  whenClear
+} from './gameMode'
+import {
   initProfile,
   isQuietRelaunch,
   markQuietRelaunch,
@@ -67,6 +78,7 @@ import {
   endShelfDrag,
   moveShelfDrag,
   openShelfWindow,
+  setShelfHidden,
   placeShelf,
   setShelfExpanded,
   setShelfTall,
@@ -84,6 +96,7 @@ import { installCommand } from '../shared/agents'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
+  GameModeStatus,
   RemoteState,
   RestoreAnswer,
   RestoreOffer,
@@ -125,7 +138,7 @@ if (!app.requestSingleInstanceLock()) {
     // lock, so that launch arrives here as a second instance. Raising the window then
     // would undo the whole point of the silent update: it pops a dying app to the front
     // over whatever the user is doing. Take the args, leave the focus alone.
-    if (!installStarted) focusWindow()
+    if (!installStarted) focusWindow(true)
     openFromArgs(argv)
   })
 }
@@ -207,17 +220,28 @@ function createWindow(): void {
       if (!win?.isMaximized()) win?.maximize()
     })
   win.on('ready-to-show', () => {
+    // A person double-clicked the app. That is not an interruption and is never held
+    // back, game or no game.
     if (mode === 'normal') return win?.show()
-    // showInactive draws the window without pulling focus off the app you are typing
-    // in. minimize() after it, rather than instead of it, because minimizing a window
-    // that has never been shown leaves it in a state Windows will not restore from
-    // the taskbar.
-    win?.showInactive()
-    if (mode === 'minimized') win?.minimize()
-    // Back from an update: the window is there, on the taskbar, with the panes restored,
-    // but it did not take the keyboard. Flash the taskbar button once so it is obvious
-    // the app came back instead of silently dying.
-    else if (isQuietRelaunch()) win?.flashFrame(true)
+    const reveal = (): void => {
+      if (!alive()) return
+      // showInactive draws the window without pulling focus off the app you are typing
+      // in. minimize() after it, rather than instead of it, because minimizing a window
+      // that has never been shown leaves it in a state Windows will not restore from
+      // the taskbar.
+      win!.showInactive()
+      if (mode === 'minimized') win!.minimize()
+      // Back from an update: the window is there, on the taskbar, with the panes restored,
+      // but it did not take the keyboard. Flash the taskbar button once so it is obvious
+      // the app came back instead of silently dying.
+      else if (isQuietRelaunch()) win!.flashFrame(true)
+    }
+    // With a game up, not even this runs: showInactive() measured as enough to drop CS2
+    // out of exclusive fullscreen 5.3s into a `npm run try` launch, against a 20s idle
+    // baseline that never moved. So the window stays built-but-never-shown until the
+    // game exits, and appears on the taskbar then. Checked fresh rather than trusting
+    // the poller, because a launch can easily beat the first poll to this line.
+    void checkGameNow().then(() => whenClear('window-reveal', reveal))
   })
   // Coming back to the window is when the image you copied in another app matters, and
   // reading the clipboard on focus is what keeps the shelf's polling cheap the rest of
@@ -298,7 +322,16 @@ function rememberBounds(): void {
   setConfig({ window: { x: b.x, y: b.y, width: b.width, height: b.height, maximized } })
 }
 
-function focusWindow(): void {
+/**
+ * Bring the window up. `asked` marks the paths where a person deliberately reached for
+ * the app (double-clicking the shortcut, clicking a toast); those still work mid-game.
+ * Everything else - a hotkey that only wanted the microphone, the app deciding it has
+ * something to say - is dropped while a game is on screen rather than queued, because
+ * a window that pops up half an hour later, for a reason that has passed, is its own
+ * kind of interruption.
+ */
+function focusWindow(asked = false): void {
+  if (!asked && isGameActive()) return
   if (!alive()) return createWindow()
   const w = win!
   if (w.isMinimized()) w.restore()
@@ -325,6 +358,11 @@ function raiseAttention(s: Session): void {
   // is to tell you a turn ended while you were reading something else on screen.
   send('sessions:attention', s)
   if (!getConfig().notifyOnIdle) return
+  // A game is on screen: the chime above still plays (sound costs you nothing mid-round)
+  // but the taskbar flash and the toast do not. Both are drawn by the shell on top of a
+  // fullscreen game and both can take it off the display - the exact thing this is
+  // meant to tell you about while you are busy with something else.
+  if (isGameActive()) return
   // The toast and the taskbar flash only make sense when you are elsewhere.
   if (!alive() || win!.isFocused()) return
   win!.flashFrame(true)
@@ -338,7 +376,7 @@ function raiseAttention(s: Session): void {
       // Our own chime already played; the system ding on top of it is noise.
       silent: true
     })
-      .on('click', focusWindow)
+      .on('click', () => focusWindow(true))
       .show()
   }
 }
@@ -518,6 +556,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
+  if (patch.gameMode !== undefined) refreshGameWatch(next)
   if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
   else if (patch.clipboardOverlay !== undefined) applyShelfOverlay(next)
   // The Stash caps apply to what is already on it, not only to the next thing added, so
@@ -938,7 +977,22 @@ ipcMain.handle('update:check', () => checkForUpdates())
 /** One restart is one restart: a second click must not run the teardown twice. */
 let installStarted = false
 
-ipcMain.on('update:install', () => {
+/**
+ * The restart is the loudest thing this app does: the installer takes the window away,
+ * the new exe starts, and Windows hands the display around twice on the way through.
+ * Mid-game that is a dropped round, and it happens several times a day because the app
+ * updates itself that often. The download is already on disk by this point, so waiting
+ * for the game to end costs nothing at all except the restart being later.
+ */
+ipcMain.on('update:install', async () => {
+  if (installStarted) return
+  // Asked fresh rather than read off the poller: a game started ten seconds ago is
+  // exactly the case where this must not go ahead.
+  await checkGameNow()
+  if (!whenClear('update-install', doInstall)) send('game:changed', gameStatus())
+})
+
+function doInstall(): void {
   if (installStarted) return
   installStarted = true
 
@@ -976,17 +1030,44 @@ ipcMain.on('update:install', () => {
     // by now the user has looked away and a failed update is no reason to interrupt.
     installStarted = false
     markQuietRelaunch(false)
-    if (alive()) {
-      win!.setSkipTaskbar(false)
-      win!.showInactive()
-      win!.flashFrame(true)
-    }
+    // Same rule as every other reveal: with a game up, the window that failed to update
+    // stays hidden until the screen is free rather than reappearing over it.
+    if (alive()) whenClear('update-failed-reveal', restoreAfterFailedInstall)
     return
   }
   // The installer is already running and its first job is to wait for this exe to let go
   // of its own files, so every millisecond spent on a graceful teardown is a millisecond
   // the user spends looking at no app at all. Nothing is left to save.
   hardExit()
+}
+
+/** The update did not happen: put the window back, inactive, once the screen is free. */
+function restoreAfterFailedInstall(): void {
+  if (!alive()) return
+  win!.setSkipTaskbar(false)
+  win!.showInactive()
+  win!.flashFrame(true)
+}
+
+// --- do not disturb while gaming -------------------------------------------
+
+function gameStatus(): GameModeStatus {
+  const s = gameState()
+  return { active: s.active, game: s.game, manual: s.manual, waiting: deferredCount() }
+}
+
+ipcMain.handle('game:status', () => gameStatus())
+/** The Settings switch, kept out of the config write path so it applies instantly. */
+ipcMain.handle('game:manual', (_e, on: boolean) => {
+  const next = setConfig({ gameMode: { ...getConfig().gameMode, manual: on } })
+  refreshGameWatch(next)
+  send('config:changed', next)
+  return gameStatus()
+})
+/** "Restart now anyway" - the one way past a held update without ending the game. */
+ipcMain.on('game:installAnyway', () => {
+  cancelDeferred('update-install')
+  doInstall()
 })
 
 // --- task board + shared memory -------------------------------------------
@@ -1204,6 +1285,14 @@ app.whenReady().then(() => {
   const cfg = getConfig()
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
+  // Before the window: everything that opens, floats or flashes below asks this first,
+  // and a launch that happens to land mid-game should be quiet on the way in rather
+  // than one poll later.
+  onGameState((s) => {
+    setShelfHidden(s.active)
+    send('game:changed', gameStatus())
+  })
+  startGameWatch(cfg)
   createWindow()
   applyVoiceHotkey(cfg)
   applyClipboardShelf(cfg)

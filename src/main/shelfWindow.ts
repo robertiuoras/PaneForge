@@ -170,6 +170,39 @@ export function shelfWindowOpen(): boolean {
   return alive()
 }
 
+/** True while a game has the overlay put away. See setShelfHidden. */
+let hiddenForGame = false
+
+/**
+ * Put the overlay away without closing it, for as long as a game is on screen.
+ *
+ * This window is the app's worst offender for a fullscreen game and not because of
+ * focus: it is `alwaysOnTop` at screen-saver level with `visibleOnFullScreen`, which is
+ * a window Windows must composite above an exclusive-fullscreen game - so the game
+ * stops being exclusive. Dropping the always-on-top flag as well as hiding, because a
+ * hidden window that is still registered above the screen saver has been enough on its
+ * own. Closing it instead would work too but would throw away the clipboard history it
+ * is holding, and it comes back the moment the game exits.
+ */
+export function setShelfHidden(hidden: boolean): void {
+  if (hidden === hiddenForGame) return
+  hiddenForGame = hidden
+  if (!alive()) return
+  if (hidden) {
+    shelf!.setAlwaysOnTop(false)
+    shelf!.hide()
+    return
+  }
+  shelf!.setAlwaysOnTop(true, 'screen-saver')
+  place()
+  shelf!.showInactive()
+}
+
+/** Whether a newly created overlay should stay out of sight (a game was already up). */
+export function shelfHiddenForGame(): boolean {
+  return hiddenForGame
+}
+
 /**
  * Put it back in the corner of whatever display the app is on now. The main window calls
  * this as it moves; it does nothing at all while the overlay is off.
@@ -210,7 +243,9 @@ export function toggleShelf(): void {
   setShelfExpanded(!expanded)
   // Opened by hotkey from another app: make sure it is on top of whatever just claimed
   // that spot, without taking focus.
-  if (expanded) shelf!.showInactive()
+  // Not while a game has it put away: the hotkey toggles the state, and it appears when
+  // the game does not need the screen any more.
+  if (expanded && !hiddenForGame) shelf!.showInactive()
 }
 
 export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
@@ -246,10 +281,14 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
       backgroundThrottling: false
     }
   })
-  shelf.setAlwaysOnTop(true, 'screen-saver')
-  shelf.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // Both of these are what a fullscreen game cannot survive, so a window built while a
+  // game is already running is built without them and gets them from setShelfHidden(false).
+  if (!hiddenForGame) {
+    shelf.setAlwaysOnTop(true, 'screen-saver')
+    shelf.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
   shelf.once('ready-to-show', () => {
-    shelf?.showInactive()
+    if (!hiddenForGame) shelf?.showInactive()
     updateShelfItems(cached)
     if (cachedConfig) updateShelfConfig(cachedConfig)
     // Something may have asked for it open before the page existed (the hotkey bringing a

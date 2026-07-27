@@ -315,6 +315,34 @@ export interface VoiceConfig {
   language: string
 }
 
+/**
+ * Hold every interruption back while a game is on screen. Windows takes an
+ * exclusive-fullscreen game off the display when any window appears above it, so
+ * "quiet" here means the app opens nothing, floats nothing and flashes nothing until
+ * the game exits - not merely that it declines the keyboard. See main/gameMode.ts.
+ */
+export interface GameModeConfig {
+  /** watch for the processes below and go quiet by itself while one is running */
+  enabled: boolean
+  /**
+   * Process names (with .exe) that count as "playing". Empty falls back to the
+   * built-in list of games that default to exclusive fullscreen.
+   */
+  processes: string[]
+  /** force do-not-disturb on regardless of what is running */
+  manual: boolean
+}
+
+/** What the UI shows about game mode: the live reading, not the settings. */
+export interface GameModeStatus {
+  active: boolean
+  /** the process that matched, null when only the manual switch is on */
+  game: string | null
+  manual: boolean
+  /** interruptions waiting for the screen (an update restart, a window) */
+  waiting: number
+}
+
 export interface VoiceStatus {
   /** a local transcriber was found on PATH */
   available: boolean
@@ -503,6 +531,8 @@ export interface Config {
   /** delete stored transcripts older than this; 0 keeps everything */
   historyDays: number
   voice: VoiceConfig
+  /** stay out of the way while a game is running - see GameModeConfig */
+  gameMode: GameModeConfig
   /**
    * Put a second session in the same git repo into its own worktree lane, so two
    * agents can work at once without overwriting each other. Off means both share
@@ -694,6 +724,13 @@ export interface Api {
   updateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   installUpdate(): void
+  /** restart for the update even though a game is on screen - the way past the hold */
+  installUpdateAnyway(): void
+
+  /** is the app holding interruptions back right now, and how many are waiting */
+  gameStatus(): Promise<GameModeStatus>
+  /** force do-not-disturb on or off by hand, applied without waiting for a poll */
+  setGameManual(on: boolean): Promise<GameModeStatus>
 
   /**
    * The panes the last run left behind, when the launch decided to ask about them.
@@ -778,6 +815,8 @@ export interface Api {
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void
+  /** game started or ended, or something joined/left the queue waiting on it */
+  onGameMode(cb: (s: GameModeStatus) => void): () => void
   /** a session just went quiet after doing something - drives the chime */
   onAttention(cb: (s: Session) => void): () => void
   /** hosting, pairing or discovery changed */

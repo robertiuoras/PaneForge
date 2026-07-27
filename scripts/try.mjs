@@ -112,4 +112,6 @@ ${
     : 'It will not take focus: keep typing where you are, it just appears behind.'
 }
 Your live app is untouched: separate settings, separate workspaces, separate panes.
+With a game running it opens no window at all - not even a taskbar button - and appears
+once the game closes, because showing one is enough to take a fullscreen game off screen.
 Close the test window when you are done - nothing to clean up.`)
