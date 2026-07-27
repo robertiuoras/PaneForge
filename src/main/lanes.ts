@@ -577,12 +577,13 @@ export function resolveLane(cwd: string, taken: string[]): Lane {
   return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }
 }
 
-/**
- * Folders held by lanes that no longer have a session. Used to offer a tidy-up;
- * nothing is ever removed automatically, because a lane holds real work until it
- * is merged.
- */
-export function laneFolders(repo: string): string[] {
+/** The repo a folder belongs to, for callers outside this file. */
+export function repoOf(cwd: string): string | null {
+  return mainRepo(cwd)
+}
+
+/** Folders this repo's own lanes are checked out in. */
+function laneFolders(repo: string): string[] {
   const list = git(repo, ['worktree', 'list', '--porcelain'])
   if (!list.ok) return []
   return list.out
@@ -590,4 +591,115 @@ export function laneFolders(repo: string): string[] {
     .filter((l) => l.startsWith('worktree '))
     .map((l) => l.slice('worktree '.length))
     .filter((p) => !samePath(p, repo) && /-w\d$/.test(p))
+}
+
+/**
+ * Is everything this branch did already in the project?
+ *
+ * Two ways in, because there are two ways work leaves a lane. A merge (or a rebase, or
+ * no commits at all) leaves the lane's tip in the project's own history, which
+ * `merge-base --is-ancestor` answers exactly. A squash merge does not: the commit is
+ * rewritten, so the branch is "unmerged" forever by that test, and squash-merged lanes
+ * would pile up for the people who use them - which is most of them.
+ *
+ * `git cherry` is the second answer: it compares by patch rather than by commit, and
+ * prints `+` for the ones that have no equivalent upstream. No `+` lines means every
+ * change in this lane exists in the project under some other commit id. A lane whose
+ * several commits were squashed into one is NOT patch-equivalent and stays - the point
+ * here is to be sure, not to be thorough.
+ */
+function isIn(repo: string, tip: string, head: string, branch: string): 'history' | 'patch' | null {
+  if (git(repo, ['merge-base', '--is-ancestor', tip, head]).ok) return 'history'
+  const cherry = git(repo, ['cherry', head, branch])
+  if (!cherry.ok) return null
+  const unique = cherry.out
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .some((l) => l.startsWith('+'))
+  return unique ? null : 'patch'
+}
+
+/** A lane folder that was removed, and where its pane belongs now. */
+export interface SweptLane {
+  path: string
+  repo: string
+  branch: string
+}
+
+/** Is `child` that folder, or inside it? */
+function under(child: string, parent: string): boolean {
+  const norm = (p: string): string => resolve(p).replace(/[\\/]+$/, '').toLowerCase()
+  const c = norm(child)
+  const p = norm(parent)
+  return c === p || c.startsWith(p + '\\') || c.startsWith(p + '/')
+}
+
+/**
+ * Delete the lanes that have nothing left in them.
+ *
+ * A lane was the one thing in PaneForge the user had to tidy up by hand, and the help
+ * text said so out loud. It never needed a human: a lane whose branch is already in the
+ * repo's own history, with nothing uncommitted in it and no pane open on it, is a
+ * folder holding a copy of commits that are already somewhere safer.
+ *
+ * Every condition here is a refusal, and the refusals are the feature - work is never
+ * thrown away to tidy up:
+ *
+ * - only `<repo>-wN` folders on a `pf/wN` branch, so a worktree the user made by hand
+ *   is never touched however tidy it looks;
+ * - nothing modified, staged or untracked in it (`status --porcelain` is the whole
+ *   test, and it counts untracked files - an unsaved experiment keeps its folder);
+ * - every commit on the branch already an ancestor of the repo's HEAD, which is what
+ *   "merged" actually means and is true of a lane that was merged, rebased or squashed
+ *   in - and false the moment one commit is not in;
+ * - no pane open on it, live or being restored.
+ *
+ * `git worktree remove` without `--force` refuses on anything dirty as well, so the
+ * check above is belt and braces; it deletes the ignored files (`node_modules`, the
+ * seeded `.env`) with the folder, which for the hardlinked dependency clone is a
+ * second name for the same bytes going away - the original tree is untouched. That is
+ * the whole reason lanes are hardlinked and not junctioned (see hardlinkTree).
+ */
+export function sweepLanes(repos: string[], busy: string[]): SweptLane[] {
+  const swept: SweptLane[] = []
+  const seen = new Set<string>()
+
+  for (const repo of repos) {
+    if (!repo || seen.has(repo.toLowerCase())) continue
+    seen.add(repo.toLowerCase())
+    if (!existsSync(repo)) continue
+
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    if (!head.ok) continue
+
+    for (const path of laneFolders(repo)) {
+      // Somebody is in it. A pane being restored counts: its folder is claimed before
+      // its pty exists.
+      if (busy.some((b) => under(b, path))) continue
+      if (!existsSync(path)) continue
+
+      const branch = git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      // Ours to manage, or somebody else's worktree that happens to sit here.
+      if (!branch.ok || !/^pf\/w\d$/.test(branch.out)) continue
+
+      const dirty = git(path, ['status', '--porcelain'])
+      if (!dirty.ok || dirty.out) continue
+
+      const tip = git(path, ['rev-parse', 'HEAD'])
+      if (!tip.ok) continue
+      const how = isIn(repo, tip.out, head.out, branch.out)
+      if (!how) continue
+
+      const gone = git(repo, ['worktree', 'remove', path])
+      if (!gone.ok) continue
+      // A branch left behind is a lane half-removed: the next lane of that number
+      // reuses it and starts on commits from the last one. `-d` is the safe delete and
+      // refuses anything unmerged, so it is what a merged lane gets. A squash-merged
+      // one is unmerged by that test and always will be - and its patches have just
+      // been shown to be in the project - so that one is deleted outright.
+      git(repo, ['branch', how === 'history' ? '-d' : '-D', branch.out])
+      swept.push({ path, repo, branch: branch.out })
+    }
+  }
+  return swept
 }

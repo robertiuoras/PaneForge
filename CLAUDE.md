@@ -161,6 +161,10 @@ until switched on, and discovery is a UDP broadcast that carries no secret.
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
+`npm run test:lanes` starts with `lane-sweep-test.mjs`, which is the one test that
+deletes folders: it builds real repositories with real worktrees and checks every case
+the sweep must REFUSE (uncommitted, untracked, unmerged, squashed from several commits,
+a pane open in it, a branch that is not ours). Add a case there before relaxing a rule.
 
 ## Gotchas that look like mistakes
 

@@ -285,6 +285,36 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * A pane's folder no longer exists, and this is where its project lives now.
+   *
+   * The only thing that removes a folder under a pane is the lane sweep, and it
+   * refuses while a pane is live in one - so this reaches ended panes, which stay in
+   * the list to be restarted. Restarting into a deleted worktree fails with a path
+   * error about a folder the user never typed; pointing the card back at the project
+   * makes it start where the work ended up. The lane label goes with it: the pane is
+   * not in a lane any more, and the chip would be describing a folder that is gone.
+   */
+  relocate(from: string, to: string): boolean {
+    // Same folder, different spelling: these two arrive from different places, so one
+    // of them has backslashes or a trailing one and === quietly matches nothing.
+    const key = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const same = (a: string, b: string): boolean => key(a) === key(b)
+    let moved = false
+    for (const live of this.sessions.values()) {
+      if (!same(live.meta.cwd, from)) continue
+      live.meta.cwd = to
+      live.meta.lane = undefined
+      live.meta.laneNote = undefined
+      // The request is what a restart spawns from, so it moves too - along with the
+      // lane's dev-server port, which belonged to the lane and not to the project.
+      live.req = { ...live.req, cwd: to, lane: undefined, laneEnv: undefined }
+      moved = true
+    }
+    if (moved) this.emitSessions()
+    return moved
+  }
+
+  /**
    * Point an existing pane at a different CLI (or a different model of the same
    * CLI) and respawn it. The folder, title, position and id all survive, so
    * "try this in Codex instead" is one click rather than a new session.

@@ -22,7 +22,7 @@ import { getConfig, setConfig } from './config'
 import { Remote } from './remote'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
-import { laneExtras, resolveLane } from './lanes'
+import { laneExtras, repoOf, resolveLane, sweepLanes } from './lanes'
 import { laneBoard, laneRetry } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
@@ -388,6 +388,18 @@ manager.on('sessions', () => {
   noteDesk()
 })
 manager.on('attention', (s: Session) => raiseAttention(s))
+// A pane ending is when a lane most often stops being needed. Deferred so the sweep's
+// git calls are never on the path of the pane list redrawing, and so a pane that ends
+// during a quit does not start work on the way out.
+manager.on('sessions', () => {
+  if (laneSweepQueued) return
+  laneSweepQueued = true
+  setTimeout(() => {
+    laneSweepQueued = false
+    sweepDeadLanes()
+  }, 3000).unref()
+})
+let laneSweepQueued = false
 
 function raiseAttention(s: Session): void {
   // The chime is the renderer's job (Web Audio gives a far nicer sound than the
@@ -647,6 +659,51 @@ ipcMain.handle('lanes:board', () => laneBoard())
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
 setInterval(() => laneRetry(), 60_000).unref()
+
+/**
+ * Every project this window knows about, as repository roots: the panes on screen, the
+ * workspaces, and the projects folder itself. A lane is created beside a repo and can
+ * outlive every pane that ever opened it, so the sweep below cannot only look at what
+ * is open right now or a project's last lane would never be cleared.
+ */
+function knownRepos(): string[] {
+  const folders = [
+    ...manager.list().map((s) => s.cwd),
+    ...getConfig().presets.flatMap((p) => p.items.map((i) => i.path)),
+    ...listProjects().map((p) => p.path)
+  ]
+  const repos = new Set<string>()
+  for (const f of folders) {
+    if (!f) continue
+    const repo = repoOf(f)
+    if (repo) repos.add(repo)
+  }
+  return [...repos]
+}
+
+/**
+ * Delete the lanes with nothing left in them, and put any pane still pointing at one
+ * back on the project.
+ *
+ * "You never make one and never clean one up" was half true: the app made them and the
+ * user was left with a row of `myapp-w2` folders holding branches that had been merged
+ * days ago. Nothing here can lose work - see sweepLanes for the refusals - so it runs
+ * on its own rather than asking. Folders held by a live pane are exempt, so this is
+ * never removing something out from under an agent; what it does reach is the ended
+ * pane whose card still names a folder that has served its purpose.
+ */
+function sweepDeadLanes(): void {
+  const busy = manager
+    .list()
+    .filter((s) => s.status !== 'exited')
+    .map((s) => s.cwd)
+  for (const lane of sweepLanes(knownRepos(), busy)) manager.relocate(lane.path, lane.repo)
+}
+
+// On the same clock as the lane retry, and once a pane ends: a lane is normally
+// finished with the moment its chat is, and the merge that makes it redundant happens
+// minutes later somewhere else entirely.
+setInterval(() => sweepDeadLanes(), 5 * 60_000).unref()
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.
