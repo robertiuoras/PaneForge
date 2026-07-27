@@ -17,6 +17,7 @@ import {
   shell
 } from 'electron'
 import { SessionManager } from './sessions'
+import { DataPump } from './dataPump'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { Remote } from './remote'
@@ -317,6 +318,10 @@ function createWindow(): void {
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
   win.on('closed', () => {
     win = null
+    // Output batched for a window that no longer exists has nowhere to go. send()
+    // already no-ops on a dead window; this stops the pump holding the string and
+    // waking a timer to deliver it to nobody.
+    pump.discard()
     // The overlay is a window too, so leaving it open would make `window-all-closed`
     // never fire and the app would stay alive with nothing on screen but a pill.
     closeShelfWindow()
@@ -378,10 +383,20 @@ function focusWindow(asked = false): void {
 
 // Fan pty output and session-list changes out to the renderer. A dead window drops
 // them: send() checks first, because webContents.send() on a destroyed window throws.
+//
+// Output does NOT go straight down the wire. A pty streaming a real log measured at
+// 7,359 chunks/second at a median of 41 bytes, and each one was its own IPC message;
+// the pump gathers them per pane and sends at most one message per pane every 8ms.
+// See dataPump.ts. Everything that would reorder or lose output flushes it first.
+const pump = new DataPump((id: string, data: string) => send('pty:data', id, data))
+
 manager.on('data', (id: string, data: string) => {
-  send('pty:data', id, data)
+  pump.push(id, data)
 })
 manager.on('sessions', () => {
+  // A pane's last output has to reach the renderer before the list says it exited,
+  // or the final lines land after the pane has already been drawn as dead.
+  pump.flush()
   send('sessions:changed', allSessions())
   // Every pane start, exit, rename and agent switch arrives here, which is the
   // whole of "the desk changed". Debounced inside: a swarm launch is six of these
@@ -464,11 +479,19 @@ function allSessions(): Session[] {
   return [...manager.list(), ...remote.sessions()]
 }
 
-remote.on('data', (id: string, data: string) => send('pty:data', id, data))
+remote.on('data', (id: string, data: string) => pump.push(id, data))
 // The link came back and the whole scrollback arrived again: the pane has to start
 // from scratch rather than append a second copy of what it was already showing.
-remote.on('reset', (id: string) => send('pane:reset', id))
-remote.on('sessions', () => send('sessions:changed', allSessions()))
+// Anything still pending for that pane belongs to the old stream, so it goes out
+// ahead of the reset rather than arriving after it and painting onto the fresh one.
+remote.on('reset', (id: string) => {
+  pump.flushOne(id)
+  send('pane:reset', id)
+})
+remote.on('sessions', () => {
+  pump.flush()
+  send('sessions:changed', allSessions())
+})
 remote.on('attention', (s: Session) => raiseAttention(s))
 remote.on('changed', (state: RemoteState) => send('remote:changed', state))
 
