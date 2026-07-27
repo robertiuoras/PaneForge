@@ -1442,7 +1442,13 @@ export default function App(): JSX.Element {
                 )}
                 <div className="row-sub">
                   <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
-                  {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
+                  {/* The one thing on this line that may be cut short. A bare text node is
+                      an anonymous flex item with no min-width of its own, so it held the
+                      line at its full width and pushed the clock out of the clipped box
+                      instead - measured: 51px pill, 15px of it on screen. */}
+                  <span className="row-agent">
+                    {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
+                  </span>
                   {s.model ? <span className="chip">{s.model}</span> : null}
                   {s.lane ? (
                     <span

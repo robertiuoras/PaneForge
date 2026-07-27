@@ -169,10 +169,19 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px;
   white-space: nowrap; overflow: hidden;
 }
+/* This line overflows the moment a card carries a model, a lane chip and a running
+   clock - and `overflow: hidden` clips the RIGHT end, which is where the clock is. So
+   something has to give way, and it is decided here rather than by whatever happens to
+   be last: the agent's name first (its logo is right beside it and says the same
+   thing), then the chips, and never the clock. The huge shrink factor is what orders
+   it - flex divides shrink by base width, so a factor of 999 empties the name before a
+   chip loses a pixel. */
+.row-agent { flex: 0 999 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip {
   background: #ffffff0f; border: 1px solid var(--line); border-radius: 5px;
   padding: 0 5px; font-size: 10px; color: var(--muted);
 }
+.row-sub .chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip.dead { color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
 /* The Ctrl-N key for the pane, and the one number on screen worth glancing at. Glass
    pill: a top-lit gradient with an inset highlight, so it reads as a raised key rather
