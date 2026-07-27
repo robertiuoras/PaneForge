@@ -23,6 +23,7 @@ import { Remote } from './remote'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
+import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { laneBoard, laneRetry } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
@@ -491,6 +492,22 @@ function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSess
       .map((s) => s.cwd),
     ...extraTaken
   ]
+
+  // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
+  // the project folder is free again: the lane was only ever there to keep two agents
+  // apart, and there is no second agent now. Without this, one busy afternoon leaves a
+  // project permanently worked on from `-w2` while its own folder sits empty.
+  const home = returnToBase(req.cwd, taken)
+  if (home) {
+    return {
+      ...req,
+      cwd: home,
+      lane: undefined,
+      laneEnv: undefined,
+      laneNote: `Lane was empty - back in ${basename(home)}`
+    }
+  }
+
   const lane = resolveLane(req.cwd, taken)
   if (lane.cwd === req.cwd) {
     // Reopening a pane that is already in its lane (workspace restore, or after an
@@ -554,9 +571,68 @@ ipcMain.on('sessions:reorder', (_e, ids: string[]) => manager.reorder(ids))
 ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
-ipcMain.on('pty:write', (_e, id: string, data: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'write', data }) : manager.write(id, data)
-)
+ipcMain.on('pty:write', (_e, id: string, data: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+  watchForClear(id, data)
+  manager.write(id, data)
+})
+
+/** What each pane has typed since its last Enter - only ever used to spot `/clear`. */
+const typedLine = new Map<string, string>()
+
+/**
+ * Notice when a pane's conversation is cleared, so a pointless lane can be handed back.
+ *
+ * A lane exists to keep two agents in one project from overwriting each other. After
+ * /clear there is no conversation left to protect, and if the lane is also empty - no
+ * commits, nothing uncommitted - then the pane is sitting in a second checkout, on a
+ * branch nobody will merge, with its own dev port, for no reason at all. So it goes home
+ * to the project folder, and the empty lane is deleted behind it.
+ *
+ * Read from the keystrokes rather than from the CLI's output because output is a moving
+ * target across agents and versions, while `/clear` + Enter is what the person typed. A
+ * pane with real work in its lane is never moved, whatever it types.
+ */
+function watchForClear(id: string, data: string): void {
+  if (!data || !getConfig().autoLane) return
+  const { line, submitted } = trackTyped(typedLine.get(id) ?? '', data)
+  typedLine.set(id, line)
+  if (submitted.some((l) => l === '/clear')) void laneWentQuiet(id)
+}
+
+/** Every folder a live pane is sitting in - what "this lane is in use" means. */
+function busyDirs(): string[] {
+  return allSessions()
+    .filter((s) => s.status !== 'exited')
+    .map((s) => s.cwd)
+}
+
+async function laneWentQuiet(id: string): Promise<void> {
+  const before = manager.list().find((s) => s.id === id)
+  if (!before?.lane) return
+  // The CLI needs a moment to actually clear, and the lane needs to still be empty
+  // after whatever that pane was doing has settled.
+  await new Promise((r) => setTimeout(r, 2000))
+  const s = manager.list().find((x) => x.id === id)
+  if (!s || s.status === 'exited' || !s.lane || s.cwd !== before.cwd) return
+  const home = returnToBase(
+    s.cwd,
+    busyDirs().filter((d) => d !== s.cwd)
+  )
+  if (!home) return
+
+  const lane = s.lane
+  const repo = home
+  manager.moveTo(id, home, {
+    lane: undefined,
+    laneEnv: undefined,
+    laneNote: `Cleared - back in ${basename(home)}`
+  })
+  send('lane:moved', id, `Cleared, and lane ${lane} was empty - this pane is back in ${basename(home)}`)
+  // The pane has left, so the folder is free to go. Anything that was in it would have
+  // stopped returnToBase() above.
+  void sweepLanes(repo, busyDirs())
+}
 /**
  * A mirrored pane is never resized from here.
  *
@@ -642,11 +718,55 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
 
 ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
 ipcMain.handle('lanes:board', () => laneBoard())
+
+// A worktree lane of the user's own project: what is in it, and putting it back.
+ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
+ipcMain.handle('lanes:merge', (_e, cwd: string) => {
+  const result = mergeLaneBack(cwd, { busy: busyDirs() })
+  // A lane that merged while its own pane was still in it is now empty, and will be
+  // swept the moment that pane closes or is cleared.
+  if (result.ok) send('sessions:changed', allSessions())
+  return result
+})
+
+/**
+ * Delete the lanes that hold nothing, everywhere the desk is currently working.
+ *
+ * Lanes are created without being asked, so they have to disappear the same way. A lane
+ * whose commits went back into main passes the "holds nothing" test by itself, which
+ * makes this the auto-delete for merged lanes as well as for the ones that were never
+ * used. Anything with a commit, an uncommitted file or a session in it is skipped, so
+ * the worst case is a folder that lives one sweep longer than it needed to.
+ */
+let sweptAt = 0
+async function sweepEmptyLanes(): Promise<void> {
+  const now = Date.now()
+  if (now - sweptAt < 5 * 60_000) return
+  sweptAt = now
+  const busy = busyDirs()
+  const repos = new Set<string>()
+  for (const dir of busy) {
+    const repo = repoOf(dir)
+    if (repo) repos.add(repo)
+  }
+  for (const repo of repos) {
+    try {
+      await sweepLanes(repo, busy)
+    } catch {
+      /* a repo that vanished under us is not worth a crash on a tidy-up */
+    }
+  }
+}
 // A stuck lane is retried on a clock rather than only when some chat happens to run a
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => laneRetry(), 60_000).unref()
+setInterval(() => {
+  laneRetry()
+  // Same clock, different lanes: the user's own worktree lanes, tidied when they are
+  // empty. Throttled to five minutes inside, and a no-op for a repo with no lanes.
+  void sweepEmptyLanes()
+}, 60_000).unref()
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.

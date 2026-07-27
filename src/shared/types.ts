@@ -160,6 +160,41 @@ export interface LaneBoardEntry {
   resolver: string | null
 }
 
+/**
+ * What is inside one worktree lane (`<repo>-w2`), read without touching either working
+ * tree - see main/laneWork.ts. This is a lane of the user's own project, not one of
+ * PaneForge's development lanes above.
+ */
+export interface LaneWork {
+  /** lane label, "w2" */
+  lane: string
+  dir: string
+  /** the main checkout it branched from */
+  repo: string
+  branch: string
+  /** branch the main checkout is on - what "merge back" means */
+  base: string
+  /** commits in the lane the base branch does not have */
+  ahead: number
+  /** uncommitted files in the lane */
+  dirty: number
+  /** files that would conflict if it were merged right now */
+  conflicts: string[]
+  /** the main checkout has uncommitted work, so a merge cannot run into it yet */
+  baseDirty: boolean
+  /** nothing worth keeping: no commits of its own, nothing uncommitted */
+  empty: boolean
+}
+
+export type LaneMergeResult =
+  | { ok: true; commits: number; base: string; branch: string; removed: boolean }
+  | {
+      ok: false
+      reason: 'not-a-lane' | 'nothing' | 'lane-dirty' | 'base-dirty' | 'conflict' | 'failed'
+      conflicts?: string[]
+      detail?: string
+    }
+
 export interface LaneBoard {
   repo: string
   lanes: LaneBoardEntry[]
@@ -709,6 +744,12 @@ export interface Api {
   gitInfo(path: string): Promise<GitInfo | null>
   /** PaneForge's own dev lanes, or null on a machine without a PaneForge checkout */
   laneBoard(): Promise<LaneBoard | null>
+  /** what is in a pane's worktree lane; null when the folder is not a lane */
+  laneWork(cwd: string): Promise<LaneWork | null>
+  /** merge a worktree lane back into the branch it came from */
+  mergeLane(cwd: string): Promise<LaneMergeResult>
+  /** a pane was sent back to its project folder because its lane held nothing */
+  onLaneMoved(cb: (id: string, message: string) => void): () => void
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.

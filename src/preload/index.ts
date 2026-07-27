@@ -47,6 +47,13 @@ const api: Api = {
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   gitInfo: (path) => ipcRenderer.invoke('git:info', path),
   laneBoard: () => ipcRenderer.invoke('lanes:board'),
+  laneWork: (cwd) => ipcRenderer.invoke('lanes:work', cwd),
+  mergeLane: (cwd) => ipcRenderer.invoke('lanes:merge', cwd),
+  onLaneMoved: (cb) => {
+    const h = (_e: unknown, id: string, message: string) => cb(id, message)
+    ipcRenderer.on('lane:moved', h)
+    return () => ipcRenderer.off('lane:moved', h)
+  },
   // File.path was removed from Electron's File objects; webUtils is the only way
   // a dropped file's real path reaches the renderer.
   pathForFile: (file: File) => {
