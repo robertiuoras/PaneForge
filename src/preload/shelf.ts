@@ -22,7 +22,7 @@ const api: ShelfApi = {
       return ''
     }
   },
-  toPane: (id) => ipcRenderer.send('recents:toPane', id),
+  toPane: (id, focus) => ipcRenderer.send('recents:toPane', id, focus ?? false),
   focusApp: () => ipcRenderer.send('shelf:focusApp'),
   reveal: () => ipcRenderer.send('stash:reveal'),
   setExpanded: (open) => ipcRenderer.send('shelf:setExpanded', open),
