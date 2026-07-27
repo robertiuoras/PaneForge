@@ -77,26 +77,27 @@ again and the mark is dropped and the release waits for you, by name. Nothing to
 it except mark ready again - but it means a release never stalls silently on a chat that
 said done and kept typing (`scripts/release-gate-test.mjs` is that failure, pinned).
 
-## The folder is being renamed to PaneForge
+## The folder rename to PaneForge (done 2026-07-27, PC)
 
-The product, the installer, the GitHub remote and every string a user reads say
-PaneForge; only the checkouts on disk are still `claude-orchestrator`, `-a`, `-b`, `-c`.
-Renaming them is not four `mv`s: each worktree's `.git` file and the repo's own worktree
-list carry absolute paths, and Windows refuses to rename a directory any process is
-sitting in - which, on a normal working day, is all four of them.
+The checkouts on disk are `PaneForge`, `-a`, `-b`, `-c`. They used to be
+`claude-orchestrator*`, and `scripts/rename-repo.mjs` moved them: `git worktree move` for
+each lane, then the main checkout, then `worktree repair`, then the lane state's stored
+paths. `scripts/rename-repo-test.mjs` (`npm run test:rename`) still proves it on a
+throwaway repo, including that the worktrees answer git from their new paths. Both names
+still resolve everywhere - `laneBoard.ts`, the lane hook in claude-memory, `try.mjs`'s
+profile naming - so a Mac that has not been renamed keeps working.
 
-`scripts/rename-repo.mjs` does the whole thing when it can: `git worktree move` for each
-lane, then the main checkout, then `worktree repair`, then the lane state's stored paths.
-It refuses while a lane is held by a chat seen in the last 45 minutes, while a lane is
-mid-merge, or while any of the folders is in use - which it tests by attempting the
-rename and putting it straight back, the only honest answer Windows gives.
-`scripts/rename-repo-test.mjs` (`npm run test:rename`) proves it on a throwaway repo,
-including that the worktrees still answer git from their new paths.
+What held it up for two days is worth keeping: the script's guard tests "in use" by
+renaming the folder and putting it straight back, and that kept failing with EBUSY while
+NO process had the folder as its working directory. The holder was an orphan headless
+`conhost.exe` from a pane whose chat had died, plus `git rev-parse --git-common-dir`
+processes hung there for 23 hours. `handle64 -u <dir>` is what names such a holder;
+nothing in Node or PowerShell will. The hung git is fixed at the source - every `git()`
+in `scripts/lane.mjs` now has a 20s deadline, so a stuck git can no longer outlive the
+chat that spawned it and squat on the checkout.
 
-A scheduled task (`PaneForgeRename`, every 30 minutes, PC) runs it and deletes itself
-once there is nothing left to do, so the rename lands the first time the machine is
-quiet. Both names are accepted everywhere until then: `laneBoard.ts`, the lane hook in
-claude-memory, and `try.mjs`'s profile naming.
+The scheduled task (`PaneForgeRename`) that was going to do this unattended has been
+deleted; `Projects/.autosync/paneforge-rename.mjs` is its harmless leftover copy.
 
 `package.json`'s `name` stays `claude-orchestrator` on purpose - Electron builds
 `%APPDATA%\<name>` from it, so changing it moves the installed app's config, workspaces

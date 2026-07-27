@@ -48,8 +48,22 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 // ---------------------------------------------------------------- repo geography
 
+// Every git call gets a deadline. A `git rev-parse --git-common-dir` left over from a
+// dead chat sat in this folder for 23 hours on 2026-07-27, and its bash and conhost
+// parents with it: the hook kills the lane.mjs it spawned after 25s, but nothing killed
+// the git underneath, and a live conhost holding the checkout is what blocked the
+// PaneForge rename for two days (EBUSY, no cwd in the folder - a stray handle).
+// Timing out throws, which gitSafe already reports and the callers already handle.
+const GIT_TIMEOUT_MS = 20_000
+
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
+  }).trim()
 }
 function gitSafe(cwd, ...args) {
   try {
