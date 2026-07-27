@@ -13,6 +13,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart } from './history'
+import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
 import type {
   Agent,
@@ -60,7 +61,7 @@ const RESET = '\x1bc'
 interface Live {
   meta: Session
   proc: pty.IPty
-  buffer: string
+  buffer: OutBuffer
   req: StartSessionRequest
   cols: number
   rows: number
@@ -131,7 +132,7 @@ export class SessionManager extends EventEmitter {
   }
 
   buffer(id: string): string {
-    return this.sessions.get(id)?.buffer ?? ''
+    return this.sessions.get(id)?.buffer.read() ?? ''
   }
 
   /**
@@ -188,7 +189,7 @@ export class SessionManager extends EventEmitter {
     const live: Live = {
       meta,
       proc: this.spawn(req, agent, 120, 30),
-      buffer: '',
+      buffer: new OutBuffer(BUFFER_LIMIT),
       req,
       cols: 120,
       rows: 30,
@@ -260,7 +261,7 @@ export class SessionManager extends EventEmitter {
     }
     recordEnd(id)
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
-    live.buffer = RESET
+    live.buffer.set(RESET)
     live.meta.status = 'starting'
     live.meta.exitCode = undefined
     live.meta.attention = false
@@ -594,7 +595,7 @@ export class SessionManager extends EventEmitter {
       // A late event from the previous process of a restarted session would append
       // dead output into the fresh buffer.
       if (live.proc !== proc) return
-      live.buffer = (live.buffer + data).slice(-BUFFER_LIMIT)
+      live.buffer.push(data)
       recordData(id, data)
       const now = Date.now()
       const wasIdle = meta.status !== 'working'
