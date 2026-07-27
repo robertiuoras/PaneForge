@@ -1341,7 +1341,7 @@ export default function App(): JSX.Element {
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
-          Sessions ({sessions.length})
+          <span className="section-title">Sessions ({sessions.length})</span>
           {/* A pane that was moved into a worktree says so with a chip nobody asked for
               and nothing explains. The "?" is only here while such a chip is on screen. */}
           {anyLane && (

@@ -237,7 +237,7 @@ export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Elem
   return (
     <>
       <div className="section">
-        Lanes elsewhere ({orphans.length})
+        <span className="section-title">Lanes elsewhere ({orphans.length})</span>
         <button
           className={'help-dot' + (help ? ' on' : '')}
           onClick={() => setHelp((h) => !h)}

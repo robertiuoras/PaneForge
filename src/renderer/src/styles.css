@@ -82,7 +82,12 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .section > .badge:first-of-type { margin-left: auto; }
 /* Badges plus the empty-everything button, grouped hard right as one block, so the
    row does not rearrange itself every time a pane starts or finishes. */
-.section-tail { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.section-tail { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+/* The header's own words are the only part of it allowed to run out of room. Without
+   this the count and the badges shared the shortfall: three working panes and one
+   waiting broke "3 working" across two lines and stood the header at 36.6px instead of
+   its usual 22 (measured). */
+.section-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-btn { padding: 2px 4px; display: inline-flex; align-items: center; line-height: 1; }
 /* Red at rest so it is readable as "this destroys something" before the hover text is,
    but dimmed: full red on every pane header would look like a row of alarms. */
@@ -92,6 +97,9 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   background: #f0b4291f; color: var(--warn); border: 1px solid #f0b42933;
   border-radius: 99px; padding: 1px 8px; font-size: 10px; letter-spacing: 0;
   text-transform: none; font-weight: 600;
+  /* A pill is one line by definition: "3 working" wrapped inside its own capsule the
+     moment a second badge appeared beside it. */
+  white-space: nowrap; flex: none;
 }
 /* Amber is the colour of "this wants you". Work in progress is not a summons, so it
    borrows the green a working pane's status dot already uses. */
