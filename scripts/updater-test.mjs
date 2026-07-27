@@ -36,10 +36,12 @@ module.exports={app:{isPackaged:true,getVersion:()=>'0.3.6',getPath:()=>dir},__d
 writeFileSync(
   join(work, 'updater-stub.cjs'),
   `const handlers={},calls=[]
+let feed=null
 module.exports={autoUpdater:{autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:false,logger:null,
-  checkForUpdates:async()=>{calls.push('check');return null},
+  checkForUpdates:async()=>{calls.push('check');return feed?{updateInfo:{version:feed}}:null},
+  downloadUpdate:async()=>{calls.push('download')},
   quitAndInstall:()=>calls.push('install'),
-  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls}
+  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls,__feed:(v)=>{feed=v}}
 `
 )
 
@@ -70,6 +72,13 @@ Module._resolveFilename=function(r,...a){
   if(r==='electron')return path.join(__dirname,'electron-stub.cjs')
   if(r==='electron-updater')return path.join(__dirname,'updater-stub.cjs')
   return orig.call(this,r,...a)}
+// The lane state file the updater reads to know a release exists before GitHub serves
+// it. Pointed at a throwaway dir so the test never reads this machine's real lanes.
+const repo=path.join(__dirname,'repo')
+fs.mkdirSync(path.join(repo,'.git'),{recursive:true})
+process.env.PANEFORGE_REPO=repo
+const ship=(v)=>fs.writeFileSync(path.join(repo,'.git','paneforge-lanes.json'),JSON.stringify({lanes:{},ready:{},conflicts:{},release:null,lastShip:v}))
+ship(null)
 const stub=require('./updater-stub.cjs'),el=require('./electron-stub.cjs'),u=require('./updater.bundle.cjs')
 const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
@@ -91,6 +100,27 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   b=at(); await u.checkForUpdates(); ok(at()===b+1,'retry allowed after error')
   h['update-downloaded']({version:'0.3.9'}); ok(u.getUpdateState().phase==='ready','ready after download')
   b=at(); await u.checkForUpdates(); ok(at()===b,'no check while a build waits to install')
+
+  // A build downloaded and waiting used to stop the poll for good, so a release that
+  // went out in the meantime was only found after restarting into the stale one: one
+  // version per restart. The background poll keeps looking, quietly.
+  stub.__feed('0.3.9'); b=at(); await u.pollOnce()
+  ok(at()===b+1,'the poll still looks while a build waits')
+  ok(u.getUpdateState().phase==='ready','the probe does not disturb the ready badge')
+  ok(!calls.includes('download'),'the same version is not downloaded twice')
+  stub.__feed('0.3.10'); await u.pollOnce()
+  ok(calls.includes('download'),'a newer release downloads over the pending one')
+  ok(u.getUpdateState().version==='0.3.10','pending version replaced')
+  h['update-downloaded']({version:'0.3.10'}); ok(u.getUpdateState().phase==='ready','ready on the newer build')
+
+  // Four minutes passed between v0.3.30's tag and its latest.yml finishing upload, and a
+  // check inside that window reports "up to date". The lane file says a release exists,
+  // so the poll closes up to a minute instead of waiting out the idle gap.
+  ship({version:'0.4.0',at:Date.now()}); ok(u.pollDelay()===60_000,'chases a release the feed has not got yet')
+  ship({version:'0.4.0',at:Date.now()-31*60_000}); ok(u.pollDelay()===600_000,'gives up on a release that never arrived')
+  ship({version:'0.3.10',at:Date.now()}); ok(u.pollDelay()===600_000,'no chase for a version already in hand')
+  ship(null); ok(u.pollDelay()===600_000,'no lane file, ordinary poll')
+
   const log=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8'):''
   ok(/sha512 checksum mismatch/.test(log),'error written to updater.log')
   ok(/state downloading/.test(log),'phase transitions logged')

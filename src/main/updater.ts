@@ -10,6 +10,7 @@ import { appendFileSync, existsSync, statSync, truncateSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { UpdateState } from '../shared/types'
+import { lastShip } from './laneBoard'
 
 type Emit = (s: UpdateState) => void
 
@@ -20,11 +21,27 @@ let emit: Emit = () => undefined
 let wired = false
 let timer: NodeJS.Timeout | null = null
 let retry: NodeJS.Timeout | null = null
+/** The background poll is on. Kept separately: the timer is re-armed after every tick. */
+let auto = false
+/** A silent look at the feed while a build waits. Its events must not touch the badge. */
+let probing = false
 
 // electron-updater's own log line, kept next to the app's data. Without it an update
 // failure is invisible after the fact: the message lives only in a renderer tooltip,
 // and the next check overwrites it. One capped file makes the failure readable later.
 const LOG = () => join(app.getPath('userData'), 'updater.log')
+
+/**
+ * The same file, for the rest of the update story.
+ *
+ * "It updated and never came back" could not be answered from here: the log ended at
+ * `quitAndInstall` and the next line was the new process checking for updates, with
+ * nothing in between saying whether a window was ever put on screen. The launch, the
+ * reveal (or what deferred it) and the exit go in the one file the update already uses.
+ */
+export function updateLog(...parts: unknown[]): void {
+  log(...parts)
+}
 
 function log(...parts: unknown[]): void {
   try {
@@ -45,6 +62,7 @@ type Updater = {
   allowPrerelease: boolean
   logger: unknown
   checkForUpdates: () => Promise<unknown>
+  downloadUpdate: () => Promise<unknown>
   quitAndInstall: (silent?: boolean, forceRunAfter?: boolean) => void
   on: (event: string, cb: (...args: any[]) => void) => void
 }
@@ -104,6 +122,68 @@ function schedule(ms: number): void {
   retry.unref?.()
 }
 
+// --- how often to look ------------------------------------------------------
+//
+// The app is released several times a day from the machine it runs on, so "check every
+// half hour" is the difference between running today's build and yesterday's. Two things
+// made that worse than the interval suggests, and both are handled below.
+
+/** Nothing is known to be coming: the ordinary background poll. */
+const IDLE_EVERY = 10 * 60_000
+/**
+ * A release has gone out but its installer is still uploading.
+ *
+ * Measured on v0.3.30: the tag was created at 12:49:39Z and `latest.yml` finished
+ * uploading at 12:53:38Z - four minutes in which the feed still answers with the OLD
+ * version. That is not a 404, so the publishing retry below never sees it; the check
+ * simply reports "up to date" and the next one is half an hour away. Restarting the app
+ * only re-rolls the same 8-second check, which is why catching a fresh release used to
+ * take several restarts.
+ */
+const CHASE_EVERY = 60_000
+/** A release that never reached the feed stops being chased; the idle poll takes over. */
+const CHASE_WINDOW = 30 * 60_000
+
+/** Compare two dotted versions. True when `a` is strictly newer than `b`. */
+function newer(a: string, b: string): boolean {
+  const pa = a.split(/[.-]/)
+  const pb = b.split(/[.-]/)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = Number(pa[i] ?? 0)
+    const y = Number(pb[i] ?? 0)
+    if (Number.isNaN(x) || Number.isNaN(y)) return a > b
+    if (x !== y) return x > y
+  }
+  return false
+}
+
+/** The newest build already on this machine: installed, or downloaded and waiting. */
+function have(): string {
+  const held = state.phase === 'ready' || state.phase === 'downloading' ? state.version : undefined
+  const current = app.getVersion()
+  return held && newer(held, current) ? held : current
+}
+
+/**
+ * A release this machine cut itself that has not arrived on the feed yet.
+ *
+ * `scripts/lane.mjs` records every release it cuts in the lane state file, so the app
+ * knows a new version exists minutes before GitHub can serve it. On any machine without
+ * a PaneForge checkout there is no such file and this is always false - the poll is
+ * simply the idle one.
+ */
+function chasing(): boolean {
+  const ship = lastShip()
+  if (!ship) return false
+  if (Date.now() - ship.at > CHASE_WINDOW) return false
+  return newer(ship.version, have())
+}
+
+/** How long until the next look. Exported so `npm run test:updater` can assert it. */
+export function pollDelay(): number {
+  return chasing() ? CHASE_EVERY : IDLE_EVERY
+}
+
 export function getUpdateState(): UpdateState {
   return state
 }
@@ -144,8 +224,12 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       error: (m: unknown) => log('error', m),
       debug: () => undefined
     }
-    u.on('checking-for-update', () => set({ phase: 'checking', error: undefined }))
+    u.on('checking-for-update', () => {
+      if (probing) return
+      set({ phase: 'checking', error: undefined })
+    })
     u.on('update-available', (info: { version: string; releaseNotes?: string }) => {
+      if (probing) return
       publishRetries = 0
       lastError = ''
       set({
@@ -157,6 +241,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       })
     })
     u.on('update-not-available', () => {
+      if (probing) return
       publishRetries = 0
       lastError = ''
       set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
@@ -169,6 +254,9 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     )
     u.on('error', (e: Error) => {
       const message = e?.message ?? String(e)
+      // A probe that fails changes nothing: the build already downloaded is still there
+      // and still installable, and saying "update failed" over it would be a lie.
+      if (probing) return log('probe error', message.slice(0, 160))
       // electron-updater fires this several times for one failed check (the feed, the
       // block map, the retry inside its own http executor). Eight identical events in
       // two seconds all reached the badge, and each one re-armed the retry, so a single
@@ -203,15 +291,68 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
 /** Turn the background poll on or off; a manual check still works either way. */
 export function setAutoCheck(enabled: boolean): void {
   if (timer) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
-  if (!enabled || !app.isPackaged) return
-  // A few seconds after launch, then every 30 minutes: the app is edited several
-  // times a day, so a once-a-day check would mean always running yesterday's build.
-  setTimeout(() => void checkForUpdates(), 8_000)
-  timer = setInterval(() => void checkForUpdates(), 30 * 60_000)
+  auto = enabled && app.isPackaged
+  if (!auto) return
+  // A few seconds after launch, then on its own clock: the app is released several times
+  // a day, so a slow poll means running yesterday's build all morning.
+  arm(8_000)
+}
+
+/** One self-rescheduling timer, so the gap can change with what is going on. */
+function arm(ms: number): void {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(() => void pollOnce(), ms)
   timer.unref?.()
+}
+
+/** One turn of the background poll. Exported so the test can drive it without timers. */
+export async function pollOnce(): Promise<void> {
+  try {
+    // A build already downloaded used to end the story: no further check ever ran, so a
+    // newer release that went out in the meantime was only found AFTER restarting into
+    // the stale one - one version per restart, which is what "I have to restart it
+    // several times" was. Keep looking, and swap the pending build for a newer one.
+    if (state.phase === 'ready') await supersede()
+    else await checkForUpdates()
+  } finally {
+    if (auto) arm(pollDelay())
+  }
+}
+
+/**
+ * While a build waits to install, is there an even newer one?
+ *
+ * Probed with autoDownload off so that asking cannot start a redundant 80 MB download of
+ * the build already sitting in the pending folder - the exact failure the guard in
+ * checkForUpdates() exists to prevent. Only a strictly newer version is fetched, and the
+ * events fired by the probe are ignored (`probing`) so the badge does not flicker
+ * through "checking" every minute while a build is ready to go.
+ */
+async function supersede(): Promise<void> {
+  const u = load()
+  const pending = state.version
+  if (!u || probing || state.phase !== 'ready' || !pending) return
+  const restore = u.autoDownload
+  probing = true
+  try {
+    u.autoDownload = false
+    const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
+    const found = result?.updateInfo?.version
+    if (!found || !newer(found, pending)) return
+    log('supersede', `${pending} -> ${found}`)
+    probing = false
+    u.autoDownload = restore
+    set({ phase: 'downloading', version: found, percent: 0 })
+    await u.downloadUpdate()
+  } catch (e) {
+    log('supersede failed', (e as Error)?.message ?? String(e))
+  } finally {
+    probing = false
+    u.autoDownload = restore
+  }
 }
 
 export async function checkForUpdates(): Promise<UpdateState> {
