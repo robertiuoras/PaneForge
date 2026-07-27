@@ -608,9 +608,17 @@ export class SessionManager extends EventEmitter {
       // own banner is not working for you. Submitting a prompt starts it, and the
       // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
-      meta.status = 'working'
+      // Output alone is not work either, and the status used to say it was: eight panes
+      // relaunched at startup all painted their own banner within a second and the whole
+      // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
+      // still only booting its CLI. A pane counts as working when it has been ASKED
+      // something (`engaged`: a prompt at launch, or a keystroke since) or when its own
+      // footer says the agent is running (`busyUntil`, set by setBusyOnScreen). Anything
+      // else keeps the status it had, so a fresh pane stays amber 'starting' and settles
+      // into 'idle' on its own timer.
+      if (meta.engaged || live.busyUntil > now) meta.status = 'working'
       this.emit('data', id, data)
-      if (wasIdle) this.emitSessions()
+      if (wasIdle && meta.status === 'working') this.emitSessions()
     })
 
     proc.onExit(({ exitCode }) => {
