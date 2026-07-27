@@ -315,18 +315,41 @@ export default function TerminalPane({
     // *during* the event that moved it - the buffer's viewportY catches up a frame later.
     const viewport = (): HTMLElement | null =>
       (t.element?.querySelector('.xterm-viewport') as HTMLElement | null) ?? null
-    /** Rendered height of one row, in px, straight off the thing being scrolled. */
+    /**
+     * Rendered height of one row, in px, straight off the thing being scrolled.
+     *
+     * Measured against the *visible* box, not the scroll area. `scrollHeight / bufferLength`
+     * is the same number once a frame has been painted and a wildly different one in the
+     * window that matters: xterm grows its scroll area on the next animation frame, so in
+     * the write callback at the end of a turn the buffer had already jumped to 1901 lines
+     * while scrollHeight still read 6095px - 3.2px a row instead of 15.19px. A wheel notch
+     * asking "how many rows is 100px" got 31 rows instead of 6, which is the whole of
+     * "scroll up once after a turn and it flies halfway up the run". `clientHeight / rows`
+     * is the same 15.19px before, during and after that burst, because neither term of it
+     * moves when the buffer grows. Measured both ways across a 1500-line write: the old one
+     * read 3.2 / 3.2 / 15.2 / 15.2 across the burst, this one 15.19 at every point.
+     */
     const rowHeight = (): number => {
       const vp = viewport()
-      const rows = t.buffer.active.length
-      const h = vp && rows ? vp.scrollHeight / rows : 0
+      const h = vp && t.rows ? vp.clientHeight / t.rows : 0
       return h > 1 ? h : 17
     }
-    /** Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll. */
+    /**
+     * Same question as nearBottom, asked of the DOM, so it is answerable mid-scroll.
+     *
+     * The buffer answers first when it says yes: a write that arrives while this pane is
+     * following leaves scrollTop a frame behind the line it has just landed on, and going
+     * by the DOM alone there would read as "the user scrolled up" and drop the follow.
+     */
     const nearBottomInDom = (): boolean => {
       const vp = viewport()
       if (!vp) return nearBottom()
-      return vp.scrollHeight - vp.scrollTop - vp.clientHeight <= rowHeight() * TAIL_SLACK + 1
+      if (nearBottom()) return true
+      // scrollTop is where the view actually is; scrollHeight is what lags. So the distance
+      // is measured as the buffer's own tail less the line scrollTop is showing, which mixes
+      // only fresh numbers - the old form (scrollHeight - scrollTop - clientHeight) reads a
+      // gap of zero all through a burst and calls a scrolled-up pane "at the bottom".
+      return t.buffer.active.baseY - Math.round(vp.scrollTop / rowHeight()) <= TAIL_SLACK
     }
 
     // Single place that decides "is this pane following, and does the pill show". Used
