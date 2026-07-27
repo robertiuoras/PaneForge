@@ -472,20 +472,24 @@ body.dragging .pane-title.draggable { cursor: grabbing; }
   position: absolute; z-index: 3;
   opacity: 0; transition: opacity var(--fast);
   background: var(--accent);
+  /* content-box, against this sheet's border-box default, and deliberately: the hit area
+     is 5px of transparent border either side of a 3px line, and under border-box those
+     borders eat the line - measured, the strip came out 10px wide with nothing drawn in
+     it, so the divider was invisible however long you hovered. The negative margin is
+     half the whole thing (1.5 + 5), which is what puts the visible line down the middle
+     of the 9px gap rather than 2.5px to one side of it. */
+  box-sizing: content-box;
+  background-clip: padding-box;
 }
 .grid-divider.col {
-  top: 9px; bottom: 9px; width: 3px; margin-left: -1.5px;
+  top: 9px; bottom: 9px; width: 3px; margin-left: -6.5px;
   cursor: col-resize;
-  /* The hit area, which is the strip plus 5px either side. Drawn by the border so the
-     visible line stays 3px however wide the target is. */
   border-left: 5px solid transparent; border-right: 5px solid transparent;
-  background-clip: padding-box;
 }
 .grid-divider.row {
-  left: 9px; right: 9px; height: 3px; margin-top: -1.5px;
+  left: 9px; right: 9px; height: 3px; margin-top: -6.5px;
   cursor: row-resize;
   border-top: 5px solid transparent; border-bottom: 5px solid transparent;
-  background-clip: padding-box;
 }
 .grid-divider:hover, body.sizing .grid-divider { opacity: 1; }
 /* A terminal's own text selection would start on any pointermove that crosses a pane
