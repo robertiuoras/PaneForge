@@ -1097,7 +1097,7 @@ export default function App(): JSX.Element {
                     onClick={(e) => e.stopPropagation()}
                   />
                 ) : (
-                  <div className="row-title">
+                  <div className="row-title has-key">
                     {/* The switch key, and the fastest place to read the pane's state:
                         lit green while its agent is running, amber when a turn finished
                         while you were looking somewhere else. */}
@@ -1109,7 +1109,7 @@ export default function App(): JSX.Element {
                         {i + 1}
                       </span>
                     )}
-                    {s.title}
+                    <span className="row-name">{s.title}</span>
                   </div>
                 )}
                 <div className="row-sub">
