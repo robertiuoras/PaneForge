@@ -597,15 +597,21 @@ export default function App(): JSX.Element {
    */
   const clearPane = useCallback(
     (s: Session) => {
-      const cmd = s.agent === 'shell' ? 'clear' : '/clear'
-      // Ctrl-U first: a half-typed line in the prompt box would otherwise have /clear
-      // stuck on the end of it and the whole mess submitted - measured, not guessed;
-      // Escape does not empty Claude Code's box and the Enter then sent it. Ctrl-U is
-      // kill-line in all three (Claude offers it back on Ctrl-Y, PSReadLine and bash
-      // both cut the line), so nothing typed is lost for good.
-      api.write(s.id, '\x15')
-      window.setTimeout(() => api.write(s.id, cmd), 40)
-      window.setTimeout(() => api.write(s.id, '\r'), 120)
+      const shell = s.agent === 'shell'
+      const cmd = shell ? 'clear' : '/clear'
+      // Empty the prompt box first, or a half-typed line ends up with /clear stuck on
+      // the end of it and the whole mess submitted. Which key does that is not the same
+      // in both, and sending both is worse than either: Escape empties PowerShell's line
+      // but leaves Claude Code's box alone, Ctrl-U empties Claude Code's box (offered
+      // back on Ctrl-Y) but arrives at a PowerShell prompt as a literal character that
+      // turns the command into one it cannot find. One key each, both measured.
+      const wipe = shell ? '\x1b' : '\x15'
+      api.write(s.id, wipe)
+      // The gaps are measured too: at 40ms/120ms the Enter reached Claude Code before
+      // its slash menu had drawn, and "/clear" sat in the box unsubmitted. It is a TUI
+      // being typed at, and this is the price of not needing a second click.
+      window.setTimeout(() => api.write(s.id, cmd), 320)
+      window.setTimeout(() => api.write(s.id, '\r'), 680)
       flash(`${s.title}: cleared.`)
     },
     [flash]
