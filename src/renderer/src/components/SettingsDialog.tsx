@@ -184,6 +184,18 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
+                  checked={config.gameMode.enabled}
+                  onChange={(v) => onChange({ gameMode: { ...config.gameMode, enabled: v } })}
+                  label="Stay out of the way while a game is running"
+                  hint="Windows takes a fullscreen game off the screen whenever a window appears above it, so while one of the games below is running PaneForge opens no windows, floats no Stash, flashes nothing and holds its update restart until you are done. The chime still plays."
+                />
+                <Switch
+                  checked={config.gameMode.manual}
+                  onChange={(v) => onChange({ gameMode: { ...config.gameMode, manual: v } })}
+                  label="Do not disturb, right now"
+                  hint="The same silence, on until you turn it off, whether or not a game is running."
+                />
+                <Switch
                   checked={config.autoLane}
                   onChange={(v) => onChange({ autoLane: v })}
                   label="Give a second session in the same project its own worktree"
@@ -207,6 +219,35 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint={`Stored on this machine only. Deleted after ${config.historyDays || '∞'} days.`}
                 />
               </div>
+
+              {config.gameMode.enabled && (
+                <div className="setting">
+                  <label>Games to watch for</label>
+                  <input
+                    type="text"
+                    defaultValue={config.gameMode.processes.join(', ')}
+                    placeholder="cs2.exe, dota2.exe, valorant.exe - blank uses the built-in list"
+                    // On blur, not per keystroke: every write restarts the watcher, and
+                    // half a process name typed so far matches nothing.
+                    onBlur={(e) =>
+                      onChange({
+                        gameMode: {
+                          ...config.gameMode,
+                          processes: e.target.value
+                            .split(/[,\n]/)
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                        }
+                      })
+                    }
+                  />
+                  <span className="hint">
+                    Process names as they appear in Task Manager. Leave it empty for the
+                    built-in list (CS2, Dota, Valorant, Fortnite, Apex, Rust, GTA V, Elden Ring
+                    and a few more).
+                  </span>
+                </div>
+              )}
             </>
           )}
 
