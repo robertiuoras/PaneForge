@@ -236,9 +236,34 @@ async function run(cdp) {
 
   const where = () => evalIn(cdp, 'window.__focus.where()')
   const active = () => evalIn(cdp, 'window.__focus.active()')
+  /**
+   * Wait until every terminal is back inside its own pane.
+   *
+   * Switching the grid on re-lays out the panes immediately and each terminal refits a
+   * few frames later, so in between there is a real moment where pane 0's xterm screen is
+   * still full-window width - measured at 1166px inside a 590px pane, its middle 1px past
+   * pane 0's right edge. `clickAt` aims at the middle of the terminal, so the click landed
+   * in pane 1 and the case failed as a focus bug. It is a stale rect, not focus.
+   *
+   * Waiting for "the boxes stopped moving" is not enough (the stale one is not moving
+   * either): wait for the thing the click actually depends on.
+   */
+  const settle = async () => {
+    for (let i = 0; i < 40; i++) {
+      const fitted = await evalIn(
+        cdp,
+        `[...document.querySelectorAll('.xterm-screen')].every((s) => {
+          const p = s.closest('.pane'); if (!p) return false
+          const a = s.getBoundingClientRect(), b = p.getBoundingClientRect()
+          return a.width > 0 && a.right <= b.right + 2 && a.left >= b.left - 2 })`
+      )
+      if (fitted) return
+      await sleep(80)
+    }
+  }
   const setGrid = async (on) => {
     await evalIn(cdp, `window.api.setConfig({ grid: ${on} })`)
-    await sleep(500)
+    await settle()
   }
   /** Put the caret honestly in a pane, the way a person does. */
   const clickTerminal = async (n) => {
