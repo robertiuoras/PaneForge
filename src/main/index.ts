@@ -88,7 +88,14 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { refreshPath, runCommand } from './install'
-import { checkForUpdates, getUpdateState, initUpdater, installUpdate, setAutoCheck } from './updater'
+import {
+  checkForUpdates,
+  getUpdateState,
+  initUpdater,
+  installUpdate,
+  setAutoCheck,
+  updateLog
+} from './updater'
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
@@ -222,9 +229,13 @@ function createWindow(): void {
   win.on('ready-to-show', () => {
     // A person double-clicked the app. That is not an interruption and is never held
     // back, game or no game.
-    if (mode === 'normal') return win?.show()
+    if (mode === 'normal') {
+      updateLog('window', 'shown (normal launch)')
+      return win?.show()
+    }
     const reveal = (): void => {
       if (!alive()) return
+      updateLog('window', `shown (${mode})`)
       // showInactive draws the window without pulling focus off the app you are typing
       // in. minimize() after it, rather than instead of it, because minimizing a window
       // that has never been shown leaves it in a state Windows will not restore from
@@ -241,7 +252,17 @@ function createWindow(): void {
     // baseline that never moved. So the window stays built-but-never-shown until the
     // game exits, and appears on the taskbar then. Checked fresh rather than trusting
     // the poller, because a launch can easily beat the first poll to this line.
-    void checkGameNow().then(() => whenClear('window-reveal', reveal))
+    // A reveal that never happens is an app with no window at all - running, on no
+    // taskbar, looking exactly like an update that failed to restart. The game check is
+    // allowed to hold it back; it is not allowed to lose it, so a failed check reveals
+    // anyway and a deferred one says so in the log.
+    void checkGameNow()
+      .catch(() => undefined)
+      .then(() => {
+        if (!whenClear('window-reveal', reveal)) {
+          updateLog('window', `held back until the game exits (${gameState().game ?? 'unknown'})`)
+        }
+      })
   })
   // Coming back to the window is when the image you copied in another app matters, and
   // reading the clipboard on focus is what keeps the shelf's polling cheap the rest of
@@ -1302,6 +1323,9 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(file).toString(), { headers: req.headers, method: req.method })
   })
   const cfg = getConfig()
+  // First line of this process's story: the one that was missing when an update came
+  // back and nobody could tell whether it had.
+  updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`)
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
   // Before the window: everything that opens, floats or flashes below asks this first,
@@ -1360,6 +1384,7 @@ app.on('window-all-closed', () => {
  * quits after this change: 250ms to 1.1s, no stalls, no orphaned agents.
  */
 function hardExit(): void {
+  updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
   process.exit(0)
 }
 

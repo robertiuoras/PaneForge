@@ -136,19 +136,38 @@ export function laneRetry(): void {
   )
 }
 
-function read(): LaneBoard | null {
+function readState(): RawState | null {
   const main = findRepo()
   if (!main) return null
   const file = join(main, '.git', 'paneforge-lanes.json')
-  let state: RawState
   try {
     // A half-written file is impossible (lane.mjs writes then renames), so a parse
     // failure means something else wrote there - drawing nothing is the right answer.
     if (!statSync(file).isFile()) return null
-    state = JSON.parse(readFileSync(file, 'utf8')) as RawState
+    return JSON.parse(readFileSync(file, 'utf8')) as RawState
   } catch {
     return null
   }
+}
+
+/**
+ * The last release cut on this machine, read fresh.
+ *
+ * The updater asks this to know a version exists before GitHub can serve it (see
+ * `chasing()` there). Deliberately not the cached board: it is asked once every few
+ * minutes, and a stale answer is the difference between chasing a release and waiting
+ * out the idle poll.
+ */
+export function lastShip(): { version: string; at: number } | null {
+  const ship = readState()?.lastShip
+  return ship?.version && ship.at ? { version: ship.version, at: ship.at } : null
+}
+
+function read(): LaneBoard | null {
+  const main = findRepo()
+  if (!main) return null
+  const state = readState()
+  if (!state) return null
 
   const lanes: LaneBoardEntry[] = []
   const now = Date.now()
