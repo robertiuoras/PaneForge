@@ -623,14 +623,20 @@ export default function TerminalPane({
     // last line resumes it. Nothing a write does can flip either way.
     const onWheel = (e: WheelEvent): void => {
       // vim, less and anything else on the alternate screen has no scrollback here, so the
-      // wheel belongs to the app. Otherwise scroll this terminal ourselves: xterm skips its
-      // own viewport entirely while the agent is asking for mouse events.
+      // wheel belongs to the app. Everywhere else this scrolls the terminal itself.
+      //
+      // Every pane, not only the ones grabbing the mouse. The browser scrolls the viewport
+      // by pixels against a scroll area that is one frame stale, so while a turn is printing
+      // the bottom the browser will let you reach is a frame's worth of new lines short of
+      // the real last line - wheel down as much as you like and the tail stays out of reach,
+      // which is why the pill was the only way back. `scrollLines` is clamped against the
+      // buffer instead, which is current, so the tail is always reachable.
       //
       // This does NOT depend on the mouse-select setting. That setting is about drag
       // selection; tying the wheel to it meant that with it off, a wheel anywhere over the
       // text went to the agent and only the strip of pixels over the scrollbar scrolled the
       // pane - the whole middle and left of a pane read as "scrolling is stuck".
-      if (mouseGrabbed() && t.buffer.active.type !== 'alternate') {
+      if (t.buffer.active.type !== 'alternate') {
         e.preventDefault()
         e.stopPropagation()
         // A notch has to cover the same ground here as it does in a pane the browser is
@@ -639,8 +645,22 @@ export default function TerminalPane({
         // deltaY moves. Every agent pane grabs the mouse, so that was every AI session -
         // and while one is printing, 2 lines down against a line of new output per notch
         // means the tail is not reachable by wheel at all, only by the pill.
-        const lines = e.deltaMode === 1 ? e.deltaY : e.deltaY / rowHeight()
+        //
+        // deltaMode says what the number is counted in, and all three have to be handled:
+        // a page-scroll mouse reports 2, and dividing a page count by a row height gave
+        // 0.06 rows a notch - the `||` fallback then moved a single line per notch.
+        const lines =
+          e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * t.rows : e.deltaY / rowHeight()
         t.scrollLines(Math.trunc(lines) || (e.deltaY < 0 ? -1 : 1))
+        // Downward, a notch that lands within a line or two of the tail meant the tail. It
+        // is the same slack a scrollbar drag gets, and it is what makes "keep wheeling down"
+        // end on the newest line rather than just beside it.
+        if (e.deltaY > 0 && nearBottom()) {
+          if (!atBottom()) t.scrollToBottom()
+          pinned.current = true
+          setScrolledUp(false)
+          return
+        }
       }
       // Only the immediate read - the wheel fires before the viewport moves, and onScroll
       // settles the final answer once it has. Wheeling down is left to onScroll, which
