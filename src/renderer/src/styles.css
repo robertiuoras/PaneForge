@@ -313,8 +313,19 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   .elapsed::after { animation: none; opacity: 0.5; }
   .elapsed::before { content: none; }
 }
-/* Auto-created worktree lane, so two agents in one project are visibly apart. */
-.chip.lane { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
+/* Auto-created worktree lane, so two agents in one project are visibly apart. It is a
+   button - a lane has an end now, and this is the way to it - so it also has to unlearn
+   everything a button brings with it. */
+.chip.lane {
+  color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim);
+  font: inherit; font-size: 10px; line-height: inherit; cursor: pointer;
+}
+.chip.lane:hover { filter: brightness(1.35); }
+
+/* The lane's own dialog: the state of the checkout, then why a merge will not run. */
+.lane-dialog-sub { margin-top: 6px; }
+.lane-dialog-warn { margin-top: 6px; color: var(--danger); }
+.lane-dialog-said { margin-top: 8px; color: var(--fg); }
 
 /* The PaneForge dev lane a pane holds, on that pane's own card. Quiet while the lane is
    merely held - it is one more fact on a crowded line - and red once the lane's finished
