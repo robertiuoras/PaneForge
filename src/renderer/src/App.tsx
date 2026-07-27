@@ -598,10 +598,12 @@ export default function App(): JSX.Element {
   const clearPane = useCallback(
     (s: Session) => {
       const cmd = s.agent === 'shell' ? 'clear' : '/clear'
-      // Escape first: a half-typed line in the prompt box would otherwise have /clear
-      // stuck on the end of it, and the agent would be sent the whole mess. Escape
-      // empties the box in every CLI here and in PSReadLine, and closes any open menu.
-      api.write(s.id, '\x1b')
+      // Ctrl-U first: a half-typed line in the prompt box would otherwise have /clear
+      // stuck on the end of it and the whole mess submitted - measured, not guessed;
+      // Escape does not empty Claude Code's box and the Enter then sent it. Ctrl-U is
+      // kill-line in all three (Claude offers it back on Ctrl-Y, PSReadLine and bash
+      // both cut the line), so nothing typed is lost for good.
+      api.write(s.id, '\x15')
       window.setTimeout(() => api.write(s.id, cmd), 40)
       window.setTimeout(() => api.write(s.id, '\r'), 120)
       flash(`${s.title}: cleared.`)
