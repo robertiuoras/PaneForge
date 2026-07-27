@@ -49,7 +49,7 @@ const KEYS: Key[] = [
   // is faster than the button it points at.
   [
     'Ctrl Shift Space',
-    'Talk to the agent: dictate into the focused pane. Press once to start, again to transcribe - same as the mic button floating over the prompt box at the bottom-right of the pane',
+    'Talk to the agent: dictate into the focused pane. Press once to start, again to transcribe - same as the mic button floating over the prompt box at the bottom-left of the pane',
     true
   ],
   ['Ctrl ,', 'Settings'],

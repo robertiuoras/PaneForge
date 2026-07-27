@@ -990,12 +990,17 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .quick { display: flex; gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
-/* The mic floats over the bottom-right of its own pane, beside the prompt box it
+/* The mic floats over the bottom-LEFT of its own pane, beside the prompt box it
    dictates into, rather than sitting in the header row where it was one of six
-   same-sized glyphs and a neighbour of the buttons that end a run. Right of 26px
-   clears the terminal's 17px scrollbar; the pane is the containing block. */
+   same-sized glyphs and a neighbour of the buttons that end a run.
+
+   Left, not right: "↓ Newest" appears at the bottom-right the moment a pane leaves the
+   tail (right: 22px, bottom: 12px in the .jump-newest block above), and the mic sat at
+   right: 26px - the two overlapped, so scrolling up put the pill on top of the mic and
+   whichever you meant, you hit the other. The left edge has nothing floating over it.
+   The pane is the containing block. */
 .mic-float {
-  position: absolute; right: 26px; bottom: 12px; z-index: 4;
+  position: absolute; left: 12px; bottom: 12px; z-index: 4;
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; line-height: 1;
   border-radius: 50%; cursor: pointer;
