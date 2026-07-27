@@ -16,6 +16,13 @@
 // OS window, so a short-window check needs no window manager and restores itself.
 
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// A renderer page is loaded straight off disk, so its URL names the checkout it came from.
+const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
+const inThisCheckout = (p) => (p.url ?? '').toLowerCase().startsWith(rootUrl)
 
 const args = process.argv.slice(2)
 function flag(name, fallback) {
@@ -51,8 +58,25 @@ async function findPage() {
           t.webSocketDebuggerUrl &&
           (urlMatch ? (t.url ?? '').includes(urlMatch) : !(t.url ?? '').includes('shelf'))
       )
+      // The window has to belong to THIS checkout. Every lane runs its own test copy and
+      // 9333 is the port all of them are told to use, so whichever started first owns it -
+      // and the probe answered happily from the wrong lane's app. Nothing about that reads
+      // as a mistake: the numbers come back, they are just measurements of somebody else's
+      // build, which is a fix "verified" against code that was never loaded. The renderer's
+      // URL is the file it was loaded from, so it says which checkout it is.
+      if (page && !inThisCheckout(page)) {
+        throw new Error(
+          `port ${port} belongs to another checkout's test copy:\n` +
+            `  ${page.url}\n` +
+            `expected a window loaded from ${root}\n` +
+            `Give this one its own port, e.g.\n` +
+            `  npm run try -- --keep --minimized --remote-debugging-port=${Number(port) + 1}\n` +
+            `  PF_PORT=${Number(port) + 1} node scripts/probe.mjs ...`
+        )
+      }
       if (page) return page
-    } catch {
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith(`port ${port} belongs`)) throw e
       /* devtools endpoint not listening yet */
     }
     await new Promise((r) => setTimeout(r, 500))
