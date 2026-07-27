@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
+import { appVisible, onAppVisible } from '../appVisible'
 
 const api = window.api
 
@@ -30,16 +31,19 @@ export function useLaneBoard(): LaneBoard | null {
   useEffect(() => {
     let live = true
     const poll = (): void => {
-      if (document.hidden) return
-      api.laneBoard().then((b) => live && setBoard(b))
+      // Not `document.hidden`: it never turns true in this window. See appVisible.ts.
+      void appVisible().then((v) => {
+        if (!v || !live) return
+        api.laneBoard().then((b) => live && setBoard(b))
+      })
     }
     poll()
     const t = window.setInterval(poll, 5000)
-    document.addEventListener('visibilitychange', poll)
+    const off = onAppVisible(poll)
     return () => {
       live = false
       window.clearInterval(t)
-      document.removeEventListener('visibilitychange', poll)
+      off()
     }
   }, [])
 

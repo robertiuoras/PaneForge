@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import './TerminalPane.css'
 
 const api = window.api
@@ -311,11 +312,47 @@ export default function TerminalPane({
     term.current = t
     fit.current = f
 
+    /**
+     * Draw the terminal on the GPU instead of as DOM.
+     *
+     * xterm's default renderer builds a <span> per run of styled text and hands the whole
+     * screen to the compositor as DOM on every frame. Measured on this machine with one
+     * pane taking ~900 lines a second: 12.7% of a core, 8.8% of it in the GPU process,
+     * and the live app - four panes, a maximised window - sat at 94% of a core in the GPU
+     * process and 76% in the renderer for as long as it was open. The WebGL renderer
+     * uploads a glyph atlas once and draws the screen as textured quads, so the cost stops
+     * scaling with how much text is on it.
+     *
+     * It is loaded after open() because it needs the canvas the terminal just created.
+     * If the GPU drops the context - a driver reset, or too many live contexts in one
+     * renderer once enough panes are open - the addon is disposed and xterm falls straight
+     * back to the DOM renderer for that pane. Slower, still correct, and never a blank
+     * pane, which is what a lost context looks like if nothing handles it.
+     */
+    let gl: WebglAddon | null = null
+    try {
+      gl = new WebglAddon()
+      gl.onContextLoss(() => {
+        gl?.dispose()
+        gl = null
+      })
+      t.loadAddon(gl)
+    } catch {
+      /* no WebGL on this box - the DOM renderer is already what is drawing */
+      gl = null
+    }
+
     // Debug handle. Given --remote-debugging-port, an agent can read cols/rows, call fit,
     // and check where the viewport sits, instead of guessing at pixel bugs from screenshots.
     // The window loads no remote content, so nothing untrusted can reach it.
     const dbg = window as unknown as { __pf?: Record<string, unknown> }
-    dbg.__pf = { ...(dbg.__pf ?? {}), [sessionId]: { term: t, fit: f, host: host.current } }
+    // `gl` is on the handle so the renderer can be turned off at runtime and the same
+    // pane measured both ways - which is the only way to compare them honestly, since a
+    // pane's cost scales with its grid and no two panes have the same one.
+    dbg.__pf = {
+      ...(dbg.__pf ?? {}),
+      [sessionId]: { term: t, fit: f, host: host.current, dropWebgl: () => gl?.dispose() }
+    }
 
     // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
     // or letting go of a scrollbar drag above the last line. Typing resumes it, which is

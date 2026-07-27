@@ -254,6 +254,22 @@ function createWindow(): void {
   // moves with it - to the second monitor, or back.
   win.on('move', placeShelf)
   win.on('restore', placeShelf)
+
+  /**
+   * Tell the page whether anyone can see it.
+   *
+   * The page cannot work this out for itself: `backgroundThrottling: false` (above) also
+   * stops Chromium ever moving the document to the hidden state, so `document.hidden` is
+   * false on a minimised window and `visibilitychange` never fires. Measured, not
+   * assumed - which also means the `if (document.hidden) return` guards the polling
+   * badges carry had never skipped a single poll. This is the signal they use instead.
+   */
+  const pushVisible = (): void => send('app:visible', !win?.isMinimized() && !!win?.isVisible())
+  win.on('minimize', pushVisible)
+  win.on('restore', pushVisible)
+  win.on('show', pushVisible)
+  win.on('hide', pushVisible)
+  win.webContents.on('did-finish-load', pushVisible)
   // A test copy nobody ever looked at closes itself.
   //
   // An agent starts one minimized, measures something, and does not always get to run
@@ -1057,6 +1073,9 @@ function gameStatus(): GameModeStatus {
 }
 
 ipcMain.handle('game:status', () => gameStatus())
+// Asked once on load: the page can come up either before or after the window is shown,
+// so the push alone is a race the page loses on a cold start.
+ipcMain.handle('app:visibleNow', () => !!win && !win.isMinimized() && win.isVisible())
 /** The Settings switch, kept out of the config write path so it applies instantly. */
 ipcMain.handle('game:manual', (_e, on: boolean) => {
   const next = setConfig({ gameMode: { ...getConfig().gameMode, manual: on } })
