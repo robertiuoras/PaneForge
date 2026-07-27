@@ -118,8 +118,11 @@ button {
   text-overflow: ellipsis;
 }
 
-/* The window handle. Three lines, hard right, and nothing at all until the pointer is on
-   the pill - at rest this is a count in the corner of a screen and should read as one.
+/* The window handle. Three lines, hard right. It used to be invisible until the pointer
+   was on the pill, on the theory that a resting count should not carry furniture - but a
+   handle you cannot see is a handle you do not know is there, so the pill read as a button
+   that inexplicably moved. It is always drawn now, faint enough to stay out of the way and
+   solid enough to say "grab here", and it brightens as the pointer approaches.
    It is wider than it looks: the hit area runs to the edge of the pill, because the point
    of it is to be grabbable without aiming. */
 .pill-grip {
@@ -142,13 +145,13 @@ button {
   background-size: 12px 100%;
   background-position: right center;
   color: var(--ink-faint);
-  opacity: 0;
+  opacity: 0.5;
   cursor: grab;
   transition: opacity 120ms ease;
 }
 
 .pill:hover .pill-grip {
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .pill-grip:hover {

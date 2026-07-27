@@ -101,6 +101,14 @@ function anchor(width: number, height: number): { x: number; y: number } {
 /** Re-anchor. Called on every size change, every display change and every window move. */
 function place(): void {
   if (!alive()) return
+  // Never while the pointer is holding it. `anchor()` reads the position from the config,
+  // and the config is only written when a drag ENDS - so any re-anchor during a drag (the
+  // main window moved, a hover timer opened the list, the display changed) teleported the
+  // overlay back to where it was picked up and resized it under the hand holding it. That
+  // is the "it extends sideways instead of moving" - the pill growing into the 352px card
+  // from its left edge, mid-gesture. During a drag the pointer is the only authority on
+  // where this window is; endShelfDrag calls place() the moment it is let go.
+  if (drag) return
   const size = currentSize()
   const { x, y } = anchor(size.width, size.height)
   try {
@@ -112,7 +120,7 @@ function place(): void {
 
 /** The list needs a taller window when the settings panel is showing behind the gear. */
 export function setShelfTall(next: boolean): void {
-  if (!alive() || tall === next) return
+  if (!alive() || tall === next || drag) return
   tall = next
   place()
 }
@@ -281,6 +289,11 @@ export function updateShelfConfig(config: StashConfig): void {
 /** Open (or close) the list. Used by the hotkey and by the overlay's own header. */
 export function setShelfExpanded(next: boolean): void {
   if (!alive()) return
+  // A window being dragged does not change size. The renderer holds this off too, but it
+  // is the renderer's own hover timer that asks, and a timer that fires one millisecond
+  // after the press is exactly the case that made a drag turn into an expand. Main owns
+  // the size, so main is where "not now" has to be true.
+  if (drag) return
   expanded = next
   // Closing puts the settings panel away with it: reopening on the settings page rather
   // than on your clipboard would be the wrong half of the window every time.

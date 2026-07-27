@@ -306,6 +306,10 @@ function Overlay(): JSX.Element {
   }, [open])
 
   const want = (next: boolean): void => {
+    // Nothing resizes this window while it is being moved. Every path that opens the list
+    // goes through here, so this is one place rather than four - and main refuses as well,
+    // because the timer that asks may fire between two frames of the drag.
+    if (next && drag.dragging()) return
     asked.current = true
     shelf.setExpanded(next)
   }
@@ -414,9 +418,10 @@ function Overlay(): JSX.Element {
           </span>
           <span className="count">{items.length}</span>
           <span className="label">{over ? 'drop it' : items.length ? 'stashed' : 'stash'}</span>
-          {/* The handle, at the far right where a window's grip belongs. It is invisible
-              until the pointer is on the pill: the resting state of this thing is a count
-              on a corner of the screen, and a permanent grab handle on it is furniture. */}
+          {/* The handle, at the far right where a window's grip belongs. Always drawn: it
+              used to fade in only on hover, which made the pill look like a button that
+              could not be moved, so nobody moved it. Faint at rest, solid under the
+              pointer. */}
           <span
             className="pill-grip"
             aria-hidden="true"
