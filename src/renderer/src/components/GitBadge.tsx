@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { GitInfo } from '@shared/types'
+import { appVisible, onAppVisible } from '../appVisible'
 
 const api = window.api
 
@@ -21,23 +22,26 @@ export default function GitBadge({ cwd, active }: Props): JSX.Element | null {
     if (!active) return
     let live = true
     const poll = (): void => {
-      // A hidden or minimised window has nobody reading this badge, and every poll is a
-      // `git status` process against a real working tree. Skipping them is most of the
-      // idle cost of a window sitting in the background with four panes open.
-      if (document.hidden) return
-      api.gitInfo(cwd).then((g) => live && setInfo(g))
+      // A minimised window has nobody reading this badge, and every poll is a `git status`
+      // process against a real working tree. The check used to be `document.hidden`, which
+      // is pinned false in this window (see appVisible.ts) - so this had never once
+      // skipped a poll, and a minimised app kept spawning git for a badge on nothing.
+      void appVisible().then((v) => {
+        if (!v || !live) return
+        api.gitInfo(cwd).then((g) => live && setInfo(g))
+      })
     }
     poll()
     // Matched to the main process cache, so a grid of panes costs one status per repo
     // per tick rather than one per pane.
     const t = window.setInterval(poll, 6000)
     // Coming back to the window should be current straight away rather than up to six
-    // seconds stale, and Chromium throttles the interval to a crawl while hidden anyway.
-    document.addEventListener('visibilitychange', poll)
+    // seconds stale.
+    const off = onAppVisible(poll)
     return () => {
       live = false
       window.clearInterval(t)
-      document.removeEventListener('visibilitychange', poll)
+      off()
     }
   }, [cwd, active])
 

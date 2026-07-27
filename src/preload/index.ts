@@ -72,6 +72,7 @@ const api: Api = {
   installUpdateAnyway: () => ipcRenderer.send('game:installAnyway'),
 
   gameStatus: () => ipcRenderer.invoke('game:status'),
+  appVisibleNow: () => ipcRenderer.invoke('app:visibleNow'),
   setGameManual: (on: boolean) => ipcRenderer.invoke('game:manual', on),
 
   pendingRestore: () => ipcRenderer.invoke('restore:pending'),
@@ -137,6 +138,11 @@ const api: Api = {
     const h = (_e: unknown, state: UpdateState) => cb(state)
     ipcRenderer.on('update:changed', h)
     return () => ipcRenderer.off('update:changed', h)
+  },
+  onAppVisible: (cb) => {
+    const h = (_e: unknown, visible: boolean) => cb(visible)
+    ipcRenderer.on('app:visible', h)
+    return () => ipcRenderer.off('app:visible', h)
   },
   onGameMode: (cb) => {
     const h = (_e: unknown, status: GameModeStatus) => cb(status)
