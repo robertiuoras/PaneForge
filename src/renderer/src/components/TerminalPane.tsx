@@ -459,9 +459,9 @@ export default function TerminalPane({
     // `────` in Claude Code's current build, `╭───╮` in the rounded ones. Anchored at the
     // start so a line of text that merely contains one cannot match.
     const BOX_RULE = /^[─-╿]{4}[─-╿\s]*$/
-    const promptBoxTop = (): number => {
+    const promptBoxTop = (maxUp: number): number => {
       const b = t.buffer.active
-      for (let up = 1; up <= PROMPT_BOX_SCAN; up++) {
+      for (let up = 1; up <= Math.min(PROMPT_BOX_SCAN, maxUp); up++) {
         const y = b.cursorY - up
         if (y < 0) return 0
         const line = b.getLine(b.baseY + y)
@@ -473,10 +473,22 @@ export default function TerminalPane({
     }
 
     const addMark = (text: string): void => {
+      // A prompt cannot have been sent above one that was sent before it, so the scan for
+      // the box top is not allowed to walk past the last prompt's line.
+      //
+      // Without that bound it does: the CLI paints over its own box between turns, the
+      // rule the previous prompt anchored to stops matching, and the scan carries on up to
+      // whatever older tool box is still on screen - up to forty rows above the prompt
+      // being sent. Measured on a probe run, that put the newer of two tags 21px HIGHER on
+      // an 851px rail than the tag for the prompt sent before it, which is the "the older
+      // one is below the newer one" the rail was reported for.
+      const b = t.buffer.active
+      const prev = list.length ? list[list.length - 1].marker.line : -1
+      const room = prev < 0 ? PROMPT_BOX_SCAN : Math.max(0, b.baseY + b.cursorY - prev - 1)
       // Anchored to the top of the prompt box as it stands at submit time. xterm keeps a
       // marker's line right as the buffer scrolls and tells us when that line falls out of
       // scrollback, neither of which a plain line number could do.
-      const marker = t.registerMarker(-promptBoxTop())
+      const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
       const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
       marker.onDispose(() => {
@@ -1071,6 +1083,31 @@ export default function TerminalPane({
     term.current?.focus()
   }
 
+  /**
+   * Where each tag sits on the rail, oldest first.
+   *
+   * A tag points at the scrollbar thumb that reaches its line, so it is placed the way
+   * Chromium places that thumb: the fraction is of the scrolling range (everything above
+   * the last screenful), and the travel is the track less one thumb - which has a 48px
+   * floor of its own (the scrollbar block in styles.css). Placed as a plain fraction of
+   * the track instead, a tag near the tail sat most of a thumb's height below the thumb it
+   * stood for.
+   *
+   * `floor` is the rail's one promise: top to bottom is oldest to newest. The anchoring in
+   * addMark keeps the lines in order as prompts arrive, and this keeps them in order after
+   * the fact, whatever the terminal does to the buffer underneath - a tag can be pinned
+   * level with the one before it, never drawn above it.
+   */
+  const thumb = Math.max(48, (rows / Math.max(rows, total)) * track.height)
+  let floor = 0
+  const placed = marks.map((m) => {
+    // -1 means xterm disposed it a frame before the state caught up.
+    if (m.marker.line < 0) return null
+    floor = Math.max(floor, m.marker.line)
+    const frac = Math.min(1, Math.max(0, floor / Math.max(1, total - rows)))
+    return { mark: m, top: frac * Math.max(0, track.height - thumb) }
+  })
+
   return (
     <div
       ref={wrap}
@@ -1095,19 +1132,9 @@ export default function TerminalPane({
           className="mark-rail"
           style={{ top: track.top, height: track.height || undefined }}
         >
-          {marks.map((m, i) => {
-            const line = m.marker.line
-            // -1 means xterm disposed it a frame before the state caught up.
-            if (line < 0) return null
-            // A tag points at the scrollbar thumb that reaches its line, so it is placed
-            // the way Chromium places that thumb: the fraction is of the scrolling range
-            // (everything above the last screenful), and the travel is the track less one
-            // thumb - which has a 48px floor of its own (the scrollbar block in
-            // styles.css). Placed as a plain fraction of the track instead, a tag near the
-            // tail sat most of a thumb's height below the thumb it stood for.
-            const thumb = Math.max(48, (rows / Math.max(rows, total)) * track.height)
-            const frac = Math.min(1, Math.max(0, line / Math.max(1, total - rows)))
-            const top = frac * Math.max(0, track.height - thumb)
+          {placed.map((p, i) => {
+            if (!p) return null
+            const { mark: m, top } = p
             const label = markLabel(m)
             return (
               <button

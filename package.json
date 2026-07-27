@@ -26,6 +26,7 @@
     "test:remote": "node scripts/remote-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
+    "test:rail": "node scripts/rail-test.mjs",
     "postinstall": "electron-builder install-app-deps",
     "package": "electron-vite build && electron-builder --win --dir",
     "dist:win": "electron-vite build && electron-builder --win --publish never",
