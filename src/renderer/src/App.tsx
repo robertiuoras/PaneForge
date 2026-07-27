@@ -1121,21 +1121,47 @@ export default function App(): JSX.Element {
       const from = sizes[axis]
       const other = axis === 'cols' ? sizes.rows : sizes.cols
       let latest = from
+      // The divider itself captures the pointer, for the same reason the session list
+      // does: without it, a button let go outside the window never delivers pointerup,
+      // `up` never runs, and everything it undoes stays undone - `body.sizing` keeps
+      // `user-select: none` over the whole app and the pointermove listener below lives
+      // on, re-rendering the grid on every mouse move for the rest of the session. That
+      // is a window that has stopped answering the mouse while nothing looks wrong.
+      // Capturing on the handle is safe here where capturing on a press is not: this
+      // element is the double-click target too, so retargeting the click to it is where
+      // the click was going anyway.
+      const handle = e.currentTarget as HTMLElement
+      let done = false
       const move = (ev: PointerEvent): void => {
         const delta = (axis === 'cols' ? ev.clientX : ev.clientY) - start
         latest = dragTrack(from, total, box.gap, i, delta)
         setLive({ key, ...(axis === 'cols' ? { cols: latest, rows: other } : { cols: other, rows: latest }) })
       }
       const up = (): void => {
+        // Releasing the capture below fires lostpointercapture, which is this handler.
+        if (done) return
+        done = true
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
         window.removeEventListener('pointercancel', up)
+        handle.removeEventListener('lostpointercapture', up)
+        try {
+          if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId)
+        } catch {
+          /* already gone */
+        }
         document.body.classList.remove('sizing')
         setLive(null)
         // Saved on release, so an interrupted drag leaves the layout exactly as it was.
         const next = axis === 'cols' ? { cols: latest, rows: other } : { cols: other, rows: latest }
         patchConfig({ gridSizes: { ...(config?.gridSizes ?? {}), [key]: next } })
       }
+      try {
+        handle.setPointerCapture(e.pointerId)
+      } catch {
+        /* a pointer already released - the listeners below still clean up */
+      }
+      handle.addEventListener('lostpointercapture', up)
       document.body.classList.add('sizing')
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
@@ -1169,10 +1195,28 @@ export default function App(): JSX.Element {
       const startY = e.clientY
       let dragging = false
       let over: string | null = null
+      let done = false
+      // Captured on the pane container, which never moves, and only once the drag has
+      // really started - the same rule the session list follows, and for the same two
+      // reasons. Capturing on the press would retarget the click that follows to the
+      // container and stop a pane being selected by clicking it; not capturing at all
+      // means a button let go outside the window delivers no pointerup, so `up` never
+      // runs. Everything it undoes then stays: `body.dragging` paints `cursor: grabbing`
+      // over every element, the moved pane keeps `.moving`, and the listener below runs
+      // a hit test across every pane and a React render on every mouse move, forever.
+      // That is an app that has stopped answering the mouse with nothing on screen to
+      // say why, and it only ends when the window is reloaded.
+      const capture = panesRef.current
       const move = (ev: PointerEvent): void => {
         if (!dragging) {
           if (Math.abs(ev.clientX - startX) < DRAG_SLOP && Math.abs(ev.clientY - startY) < DRAG_SLOP) return
           dragging = true
+          try {
+            capture?.setPointerCapture(ev.pointerId)
+          } catch {
+            /* a pointer already released - the listeners below still clean up */
+          }
+          capture?.addEventListener('lostpointercapture', up)
           setMovingId(id)
           document.body.classList.add('dragging')
         }
@@ -1187,9 +1231,18 @@ export default function App(): JSX.Element {
         setDropId(over)
       }
       const up = (): void => {
+        // Releasing the capture below fires lostpointercapture, which is this handler.
+        if (done) return
+        done = true
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
         window.removeEventListener('pointercancel', up)
+        capture?.removeEventListener('lostpointercapture', up)
+        try {
+          if (capture?.hasPointerCapture(e.pointerId)) capture.releasePointerCapture(e.pointerId)
+        } catch {
+          /* already gone */
+        }
         setMovingId(null)
         setDropId(null)
         if (!dragging) return
