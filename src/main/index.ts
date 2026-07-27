@@ -744,14 +744,12 @@ async function sweepEmptyLanes(): Promise<void> {
   if (now - sweptAt < 5 * 60_000) return
   sweptAt = now
   const busy = busyDirs()
-  const repos = new Set<string>()
-  for (const dir of busy) {
-    const repo = repoOf(dir)
-    if (repo) repos.add(repo)
-  }
-  for (const repo of repos) {
+  for (const repo of knownRepos()) {
     try {
-      await sweepLanes(repo, busy)
+      // A pane that ended in a lane keeps the folder on screen after the folder is
+      // gone, and restarting it would fail on a path the user never typed. So each
+      // removed lane hands its card back to the project it belongs to.
+      for (const dir of await sweepLanes(repo, busy)) manager.relocate(dir, repo)
     } catch {
       /* a repo that vanished under us is not worth a crash on a tidy-up */
     }
@@ -767,6 +765,41 @@ setInterval(() => {
   // empty. Throttled to five minutes inside, and a no-op for a repo with no lanes.
   void sweepEmptyLanes()
 }, 60_000).unref()
+
+/**
+ * Every project this window knows about, as repository roots: the panes on screen, the
+ * workspaces, and the projects folder itself. A lane is created beside a repo and can
+ * outlive every pane that ever opened it, so the sweep below cannot only look at what
+ * is open right now or a project's last lane would never be cleared.
+ */
+function knownRepos(): string[] {
+  const folders = [
+    ...manager.list().map((s) => s.cwd),
+    ...getConfig().presets.flatMap((p) => p.items.map((i) => i.path)),
+    ...listProjects().map((p) => p.path)
+  ]
+  const repos = new Set<string>()
+  for (const f of folders) {
+    if (!f) continue
+    const repo = repoOf(f)
+    if (repo) repos.add(repo)
+  }
+  return [...repos]
+}
+
+// A pane ending is when a lane most often stops being needed, and waiting up to five
+// minutes to notice leaves a folder on screen that has nothing in it. Deferred so the
+// sweep's git calls are never on the path of the pane list redrawing.
+manager.on('sessions', () => {
+  if (laneSweepQueued) return
+  laneSweepQueued = true
+  setTimeout(() => {
+    laneSweepQueued = false
+    sweptAt = 0
+    void sweepEmptyLanes()
+  }, 3000).unref()
+})
+let laneSweepQueued = false
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.

@@ -161,6 +161,12 @@ until switched on, and discovery is a UDP broadcast that carries no secret.
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
+`npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING
+things: it builds real repositories with real worktrees and checks every case the sweep
+must refuse (uncommitted, untracked, unmerged, squashed from several commits, a pane
+open in it or in a subfolder of it, a branch that is not `pf/wN`). Add a case there
+before relaxing a rule - it is how the "somebody else's worktree at `myapp-w2`" hole
+was found.
 
 ## Gotchas that look like mistakes
 
@@ -179,10 +185,15 @@ Screenshots cannot answer "is the last row reachable", and a session that takes 
 them costs more than the fix. Ask the real window instead:
 
 ```
+npm run build                    # --keep below SKIPS the build; without this you measure the last one
 npm run try -- --keep --remote-debugging-port=9333
 npm run probe -- --height 560 "(() => { const d=document.querySelector('.dialog'); const r=d.getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
 npm run try -- --close
 ```
+
+A probe answering exactly what it answered before your edit is the tell: nothing was
+rebuilt. The port is per checkout - another lane's test copy holds 9333 and says so -
+so a second lane probes with `PF_PORT=9334` and launches with the matching flag.
 
 `--height`/`--width` drive Chromium's device metrics override, so a short-window check
 needs no window manager and puts the size back afterwards. The expression is evaluated

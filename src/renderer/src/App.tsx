@@ -33,7 +33,6 @@ import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import LaneStrip, {
   LaneChip,
-  LaneHelp,
   laneOfSession,
   useLaneBoard,
   useLanesByCwd
@@ -1283,14 +1282,11 @@ export default function App(): JSX.Element {
   // and then nothing below draws anything.
   const laneBoard = useLaneBoard()
   const lanesByCwd = useLanesByCwd(laneBoard)
-  // The lane explainer under the Sessions header, and whether there is anything to explain.
-  const [laneHelp, setLaneHelp] = useState(false)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   // A pane that was cleared in an empty lane is moved back to the project folder by the
   // main process; that is a thing happening to your window, so it says so.
   useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
-  const anyLane = sessions.some((s) => s.lane || laneOfSession(lanesByCwd, s.cwd))
 
   return (
     <div className="app">
@@ -1400,20 +1396,7 @@ export default function App(): JSX.Element {
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
-          Sessions ({sessions.length})
-          {/* A pane that was moved into a worktree says so with a chip nobody asked for
-              and nothing explains. The "?" is only here while such a chip is on screen. */}
-          {anyLane && (
-            <button
-              className={'help-dot' + (laneHelp ? ' on' : '')}
-              onClick={() => setLaneHelp((h) => !h)}
-              title="What is a lane?"
-              aria-label="What is a lane?"
-              aria-expanded={laneHelp}
-            >
-              ?
-            </button>
-          )}
+          <span className="section-title">Sessions ({sessions.length})</span>
           {/* Badges and the empty-everything button travel together, hard right. One
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
@@ -1446,7 +1429,6 @@ export default function App(): JSX.Element {
             )}
           </span>
         </div>
-        {anyLane && laneHelp && <LaneHelp devLanes={lanesByCwd.size > 0} />}
         <div className="list" ref={listRef}>
           {sessions.map((s, i) => (
             <div
@@ -1501,14 +1483,20 @@ export default function App(): JSX.Element {
                 )}
                 <div className="row-sub">
                   <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
-                  {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
+                  {/* The one thing on this line that may be cut short. A bare text node is
+                      an anonymous flex item with no min-width of its own, so it held the
+                      line at its full width and pushed the clock out of the clipped box
+                      instead - measured: 51px pill, 15px of it on screen. */}
+                  <span className="row-agent">
+                    {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
+                  </span>
                   {s.model ? <span className="chip">{s.model}</span> : null}
                   {s.lane ? (
                     // Clickable because a lane now has an end: what is in it, and merging
                     // it back into the branch it came from.
                     <button
                       className="chip lane"
-                      title={`Worktree lane ${s.lane} - this pane has its own checkout of the project, so it cannot clash with the other pane open on it.\nClick to see what is in it, or to merge it back.\n${s.cwd}`}
+                      title={`Worktree lane ${s.lane} - this pane has its own checkout of the project, so it cannot clash with the other pane open on it.\nClick to see what is in it, or to merge it back.\n${s.cwd}\nThe "?" beside Settings (F1) explains lanes in full.`}
                       onClick={(e) => {
                         e.stopPropagation()
                         setLaneCwd(s.cwd)

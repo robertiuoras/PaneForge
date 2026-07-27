@@ -114,8 +114,17 @@ const TOPICS: Topic[] = [
         <p>
           The <b>w2</b> or <b>w3</b> chip on a pane&apos;s card is the lane it was given. You
           never make one and never clean one up. It is an ordinary git worktree, so you commit
-          in it and merge it like any other branch, and the folder is safe to delete once you
-          have.
+          in it and merge it like any other branch — and once you have, PaneForge deletes the
+          folder and the branch by itself and puts the pane&apos;s card back on the project.
+        </p>
+        <p>
+          Click the chip to see what is in the lane and to merge it back without leaving the
+          window. It only ever removes a lane it made (<code>-w2</code> on a{' '}
+          <code>pf/w2</code> branch)
+          that has nothing uncommitted in it, no untracked files, no pane open on it, and no
+          commit the project does not already have. Anything else keeps its folder — including
+          a lane whose several commits were squashed into one, which cannot be told apart from
+          unmerged work. So a folder that is still there is a folder with something in it.
         </p>
         <p>
           Two panes in the same project still need the same care two people would: they will

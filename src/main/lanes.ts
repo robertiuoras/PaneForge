@@ -576,18 +576,3 @@ export function resolveLane(cwd: string, taken: string[]): Lane {
 
   return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }
 }
-
-/**
- * Folders held by lanes that no longer have a session. Used to offer a tidy-up;
- * nothing is ever removed automatically, because a lane holds real work until it
- * is merged.
- */
-export function laneFolders(repo: string): string[] {
-  const list = git(repo, ['worktree', 'list', '--porcelain'])
-  if (!list.ok) return []
-  return list.out
-    .split(/\r?\n/)
-    .filter((l) => l.startsWith('worktree '))
-    .map((l) => l.slice('worktree '.length))
-    .filter((p) => !samePath(p, repo) && /-w\d$/.test(p))
-}

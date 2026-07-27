@@ -268,6 +268,38 @@ export function laneFolders(repo: string): string[] {
     .filter((p) => !samePath(p, repo) && Boolean(laneLabel(p, repo)))
 }
 
+/** Is `child` that folder, or somewhere inside it? */
+function inside(child: string, parent: string): boolean {
+  const norm = (p: string): string => resolve(p).replace(/[\\/]+$/, '').toLowerCase()
+  const c = norm(child)
+  const p = norm(parent)
+  return c === p || c.startsWith(p + '\\') || c.startsWith(p + '/')
+}
+
+/**
+ * Has this lane's work ended up in the project by some route other than a merge?
+ *
+ * `empty` answers the ordinary case: the commits went back, so the branch is level with
+ * base and there is nothing ahead. A squash merge never produces that - the commit is
+ * rewritten under a new id, so the lane reads as one commit ahead of base forever and
+ * its folder would outlive the work by weeks.
+ *
+ * `git cherry` is the question that survives the rewrite: it compares by patch rather
+ * than by commit id and prints `+` for anything with no equivalent upstream. None of
+ * those means every change in this lane is in the project already. A lane squashed from
+ * SEVERAL commits is not patch-equivalent to the one commit that replaced it and keeps
+ * its folder - the point here is to be sure, not to be thorough.
+ */
+function absorbed(repo: string, work: LaneWork): 'patch' | null {
+  const cherry = gitOut(repo, ['cherry', work.base, work.branch])
+  if (!cherry.ok) return null
+  const unique = cherry.out
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .some((l) => l.startsWith('+'))
+  return unique ? null : 'patch'
+}
+
 /**
  * Delete every lane of this repo that holds nothing and has no session in it.
  *
@@ -282,13 +314,25 @@ export function laneFolders(repo: string): string[] {
 export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
   const removed: string[] = []
   for (const dir of laneFolders(repo)) {
-    if (busy.some((b) => samePath(b, dir))) continue
+    // A pane that cd'd into a subfolder of the lane reports that subfolder, and it is
+    // just as much "somebody is in there" as the lane root is.
+    if (busy.some((b) => inside(b, dir))) continue
     const work = laneWork(dir)
-    if (!work || !work.empty) continue
+    if (!work || work.dirty > 0) continue
+    // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-w2`
+    // and be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel
+    // should describe one either way - but nothing is REMOVED unless lanes.ts made it,
+    // which is what the `pf/` branch says.
+    if (work.branch !== `pf/${work.lane}`) continue
+    const how = work.empty ? 'history' : absorbed(repo, work)
+    if (!how) continue
     await exec(repo, ['worktree', 'remove', dir], 120_000)
     // Not the exit code - see finished(). A lane can be gone and still make git unhappy.
     if (!finished(repo, dir)) continue
-    await exec(repo, ['branch', '-d', work.branch], 20_000)
+    // `-d` is the safe delete and refuses anything the base branch does not have. A
+    // squash-merged lane is exactly that case and always will be, and its patches have
+    // just been shown to be in the project, so that one is deleted outright.
+    await exec(repo, ['branch', how === 'history' ? '-d' : '-D', work.branch], 20_000)
     removed.push(dir)
   }
   if (removed.length) await exec(repo, ['worktree', 'prune'], 20_000)
