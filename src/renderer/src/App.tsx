@@ -43,6 +43,7 @@ import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
 import { playChime } from './useChime'
 import { useVoice } from './useVoice'
+import { drag as dragTrack, dividerPx, equal, shapeKey, template, usable } from './gridLayout'
 
 const api = window.api
 
@@ -1056,6 +1057,165 @@ export default function App(): JSX.Element {
   )
   // Near-square layout, same rule the old .bat grid used, but for whatever N is open.
   const cols = grid ? Math.max(1, Math.ceil(Math.sqrt(sessions.length))) : 1
+  const rows = grid ? Math.max(1, Math.ceil(sessions.length / cols)) : 1
+
+  /**
+   * Moving and sizing panes in the grid.
+   *
+   * Both gestures were missing entirely: the grid was `repeat(n, 1fr)` in session order,
+   * so the pane you were actually reading got the same quarter of the window as the three
+   * you were only keeping an eye on, and the only way to move one was to drag its card in
+   * the sidebar - which is a list, in a different place, and does not look like the thing
+   * being arranged.
+   *
+   * Pointer events and a 9px slop, the same as the sidebar, for the same reason: a pane
+   * title is also a click target, a double-click target and holds buttons, and `draggable`
+   * would take all three.
+   */
+  const panesRef = useRef<HTMLElement>(null)
+  // The grid's own box and the gap between panes, remeasured when the window changes.
+  // Needed because a divider drag is in pixels and the sizes it edits are fractions.
+  // The tracks live inside the padding, so this is the content box and where it starts -
+  // clientWidth would be 18px too wide and put every divider half a pane out of place.
+  const [box, setBox] = useState({ w: 0, h: 0, gap: 9, padX: 0, padY: 0 })
+  useEffect(() => {
+    const el = panesRef.current
+    if (!el || !grid) return
+    const measure = (): void => {
+      const cs = getComputedStyle(el)
+      const gap = parseFloat(cs.columnGap) || 0
+      const padX = parseFloat(cs.paddingLeft) || 0
+      const padY = parseFloat(cs.paddingTop) || 0
+      const w = el.clientWidth - padX - (parseFloat(cs.paddingRight) || 0)
+      const h = el.clientHeight - padY - (parseFloat(cs.paddingBottom) || 0)
+      setBox((b) =>
+        b.w === w && b.h === h && b.gap === gap && b.padX === padX && b.padY === padY
+          ? b
+          : { w, h, gap, padX, padY }
+      )
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [grid])
+
+  const key = shapeKey(cols, rows)
+  const saved = config?.gridSizes?.[key]
+  // While a divider is being dragged the fractions live here rather than in the config:
+  // a pointermove is not a settings change, and writing the file sixty times a second to
+  // find out where somebody is going to let go would be absurd.
+  const [live, setLive] = useState<{ key: string; cols: number[]; rows: number[] } | null>(null)
+  const sizes = useMemo(() => {
+    if (live && live.key === key) return { cols: live.cols, rows: live.rows }
+    return { cols: usable(saved?.cols, cols), rows: usable(saved?.rows, rows) }
+  }, [live, key, saved, cols, rows])
+
+  const dividerDrag = useCallback(
+    (e: React.PointerEvent, axis: 'cols' | 'rows', i: number) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      const total = axis === 'cols' ? box.w : box.h
+      const start = axis === 'cols' ? e.clientX : e.clientY
+      const from = sizes[axis]
+      const other = axis === 'cols' ? sizes.rows : sizes.cols
+      let latest = from
+      const move = (ev: PointerEvent): void => {
+        const delta = (axis === 'cols' ? ev.clientX : ev.clientY) - start
+        latest = dragTrack(from, total, box.gap, i, delta)
+        setLive({ key, ...(axis === 'cols' ? { cols: latest, rows: other } : { cols: other, rows: latest }) })
+      }
+      const up = (): void => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        document.body.classList.remove('sizing')
+        setLive(null)
+        // Saved on release, so an interrupted drag leaves the layout exactly as it was.
+        const next = axis === 'cols' ? { cols: latest, rows: other } : { cols: other, rows: latest }
+        patchConfig({ gridSizes: { ...(config?.gridSizes ?? {}), [key]: next } })
+      }
+      document.body.classList.add('sizing')
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    },
+    [box, sizes, key, config, patchConfig]
+  )
+
+  /** Double-click a divider: that axis goes back to equal shares. */
+  const dividerReset = useCallback(
+    (axis: 'cols' | 'rows') => {
+      const next =
+        axis === 'cols' ? { cols: equal(cols), rows: sizes.rows } : { cols: sizes.cols, rows: equal(rows) }
+      patchConfig({ gridSizes: { ...(config?.gridSizes ?? {}), [key]: next } })
+    },
+    [cols, rows, sizes, key, config, patchConfig]
+  )
+
+  // The pane being dragged, and the one it would change places with. An outline rather
+  // than a live reshuffle: every pane that moves refits its terminal and resizes a pty,
+  // and doing that to four agents on every pointermove is visible as a stutter. The
+  // outline says where it will land and nothing moves until it does.
+  const [movingId, setMovingId] = useState<string | null>(null)
+  const [dropId, setDropId] = useState<string | null>(null)
+
+  const beginPaneMove = useCallback(
+    (e: React.PointerEvent, id: string) => {
+      if (e.button !== 0 || !grid) return
+      if ((e.target as HTMLElement).closest('button, input')) return
+      const startX = e.clientX
+      const startY = e.clientY
+      let dragging = false
+      let over: string | null = null
+      const move = (ev: PointerEvent): void => {
+        if (!dragging) {
+          if (Math.abs(ev.clientX - startX) < DRAG_SLOP && Math.abs(ev.clientY - startY) < DRAG_SLOP) return
+          dragging = true
+          setMovingId(id)
+          document.body.classList.add('dragging')
+        }
+        // The pane under the pointer, found by box rather than by elementFromPoint: the
+        // terminal canvas swallows hit-testing and would report itself, not the pane.
+        const panes = Array.from(panesRef.current?.querySelectorAll<HTMLElement>('.pane[data-id]') ?? [])
+        const hit = panes.find((p) => {
+          const b = p.getBoundingClientRect()
+          return ev.clientX >= b.left && ev.clientX <= b.right && ev.clientY >= b.top && ev.clientY <= b.bottom
+        })
+        over = hit?.dataset.id && hit.dataset.id !== id ? hit.dataset.id : null
+        setDropId(over)
+      }
+      const up = (): void => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        setMovingId(null)
+        setDropId(null)
+        if (!dragging) return
+        document.body.classList.remove('dragging')
+        if (!over) return
+        // Swapped, not inserted. In a list, inserting is what a reader expects; in a grid
+        // it shuffles every pane after the drop point into a different cell, and the three
+        // panes nobody touched all move. Two panes changing places is what the outline
+        // showed and the only thing that happens.
+        const ids = idsRef.current.slice()
+        const a = ids.indexOf(id)
+        const b = ids.indexOf(over)
+        if (a < 0 || b < 0) return
+        ;[ids[a], ids[b]] = [ids[b], ids[a]]
+        setOrder(ids)
+        api.reorderSessions(ids)
+        draggedRef.current = true
+        window.setTimeout(() => {
+          draggedRef.current = false
+        }, 0)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    },
+    [grid]
+  )
   const waiting = sessions.filter((s) => s.attention).length
   // Devices in either direction: ones whose panes are in this list, and ones watching
   // this machine's. Both are "a link is up", which is all the sidebar dot claims.
@@ -1355,23 +1515,64 @@ export default function App(): JSX.Element {
       </aside>
 
       <main
+        ref={panesRef}
         className={'panes' + (grid ? ' grid' : '')}
-        style={grid ? { gridTemplateColumns: `repeat(${cols}, 1fr)` } : undefined}
+        style={
+          grid
+            ? { gridTemplateColumns: template(sizes.cols), gridTemplateRows: template(sizes.rows) }
+            : undefined
+        }
       >
+        {/* One grab strip per line between two tracks, laid over the gap. Absolutely
+            positioned rather than made of grid cells, because a CSS grid gap is not
+            addressable - and it means the strip can be wider than the 9px gap it sits in
+            without taking a single pixel away from any pane. */}
+        {grid &&
+          box.w > 0 &&
+          sizes.cols.slice(0, -1).map((_, i) => (
+            <div
+              key={`c${i}`}
+              className="grid-divider col"
+              style={{ left: box.padX + dividerPx(sizes.cols, box.w, box.gap, i) }}
+              onPointerDown={(e) => dividerDrag(e, 'cols', i)}
+              onDoubleClick={() => dividerReset('cols')}
+              title="Drag to resize these columns. Double-click for equal shares."
+            />
+          ))}
+        {grid &&
+          box.h > 0 &&
+          sizes.rows.slice(0, -1).map((_, i) => (
+            <div
+              key={`r${i}`}
+              className="grid-divider row"
+              style={{ top: box.padY + dividerPx(sizes.rows, box.h, box.gap, i) }}
+              onPointerDown={(e) => dividerDrag(e, 'rows', i)}
+              onDoubleClick={() => dividerReset('rows')}
+              title="Drag to resize these rows. Double-click for equal shares."
+            />
+          ))}
         {sessions.map((s) => (
           // Every pane stays mounted so its scrollback survives tab switches;
           // unmounting the xterm instance would blank the session.
           <div
             key={s.id}
+            data-id={s.id}
             className={
-              'pane' + (visibleIds.has(s.id) ? '' : ' hidden') + (grid && s.id === activeId ? ' focused' : '')
+              'pane' +
+              (visibleIds.has(s.id) ? '' : ' hidden') +
+              (grid && s.id === activeId ? ' focused' : '') +
+              (s.id === movingId ? ' moving' : '') +
+              (s.id === dropId ? ' drop-target' : '')
             }
             // The agent's brand colour drives this pane's accent, so a grid of four
             // panes is readable without checking the labels.
             style={{ '--agent': agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99' } as React.CSSProperties}
             onMouseDown={() => setActiveId(s.id)}
           >
-            <div className="pane-title">
+            <div
+              className={'pane-title' + (grid ? ' draggable' : '')}
+              onPointerDown={(e) => beginPaneMove(e, s.id)}
+            >
               <StatusDot status={s.status} engaged={s.engaged} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>

@@ -454,6 +454,43 @@ button.small { padding: 5px 9px; font-size: 11px; }
   transition: border-color var(--fast), box-shadow var(--fast);
 }
 .pane.hidden { display: none; }
+/* ---- moving and sizing panes in the grid ----
+   The pane being carried fades so the outline behind it is readable; the one it would
+   change places with is outlined in the accent. Nothing is transformed or reparented -
+   moving the DOM node would tear down the terminal inside it. */
+.pane.moving { opacity: 0.45; }
+.pane.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim), inset 0 0 0 9999px #8b9dff0f;
+}
+.pane-title.draggable { cursor: grab; }
+body.dragging .pane-title.draggable { cursor: grabbing; }
+/* The grab strip between two tracks. It sits over the 9px gap and is deliberately wider
+   than it, because a 9px target is a target you miss - the extra width overlaps the
+   rounded corners of the panes either side, where there is nothing to click anyway. */
+.grid-divider {
+  position: absolute; z-index: 3;
+  opacity: 0; transition: opacity var(--fast);
+  background: var(--accent);
+}
+.grid-divider.col {
+  top: 9px; bottom: 9px; width: 3px; margin-left: -1.5px;
+  cursor: col-resize;
+  /* The hit area, which is the strip plus 5px either side. Drawn by the border so the
+     visible line stays 3px however wide the target is. */
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  background-clip: padding-box;
+}
+.grid-divider.row {
+  left: 9px; right: 9px; height: 3px; margin-top: -1.5px;
+  cursor: row-resize;
+  border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  background-clip: padding-box;
+}
+.grid-divider:hover, body.sizing .grid-divider { opacity: 1; }
+/* A terminal's own text selection would start on any pointermove that crosses a pane
+   mid-drag, leaving the window full of highlighted output when the drag ends. */
+body.sizing * { user-select: none !important; }
 .pane.focused {
   border-color: color-mix(in srgb, var(--agent) 45%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--agent) 22%, transparent);

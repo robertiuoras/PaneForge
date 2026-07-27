@@ -506,6 +506,14 @@ export interface Config {
   stashPos: { x: number; y: number } | null
   /** show every session at once instead of one at a time */
   grid: boolean
+  /**
+   * Column and row sizes for the grid, as fractions, keyed by the shape they were set for
+   * ("3x2"). Per shape rather than per pane on purpose: what somebody means by dragging a
+   * divider is "in a three-across grid the left column should be wide", which should
+   * survive closing one pane and opening another. A shape that has never been dragged is
+   * absent and gets equal shares.
+   */
+  gridSizes: Record<string, { cols: number[]; rows: number[] }>
   /** ask before closing a session that is still running */
   confirmClose: boolean
   launchAtLogin: boolean

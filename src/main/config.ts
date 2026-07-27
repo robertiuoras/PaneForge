@@ -151,6 +151,7 @@ function defaults(): Config {
     stashMaxFileMb: 512,
     stashPos: null,
     grid: false,
+    gridSizes: {},
     confirmClose: true,
     launchAtLogin: false,
     adminMode: false,
