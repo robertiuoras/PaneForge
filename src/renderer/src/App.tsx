@@ -21,7 +21,7 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon } from './components/Icons'
+import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import TerminalPane, { paneInsert, paneRepair } from './components/TerminalPane'
 import MicIcon from './components/MicIcon'
@@ -570,6 +570,46 @@ export default function App(): JSX.Element {
   )
 
   /**
+   * The end of a day's work in one click, next to the count it empties. Same prompt the
+   * palette's "close all" puts up - one button and one command must not disagree about
+   * how dangerous the same thing is.
+   */
+  const closeAll = useCallback(() => {
+    if (!sessions.length) return
+    setAsk({
+      title: sessions.length === 1 ? 'Close the last pane?' : `Close all ${sessions.length} panes?`,
+      body: 'Every agent still running ends. The conversations stay in history.',
+      confirmLabel: 'Close them all',
+      danger: true,
+      onConfirm: () => {
+        setAsk(null)
+        for (const s of sessions) api.killSession(s.id)
+      }
+    })
+  }, [sessions])
+
+  /**
+   * Wipe the agent's context without ending the run - the /clear you would have typed,
+   * typed for you. Written to the pty rather than pasted: a paste lands in the prompt box
+   * as text and then waits for Enter, and not having to press it is the whole point.
+   * The Enter is a beat late on purpose, so the CLI's slash menu has settled on /clear
+   * before the key that accepts it arrives. A plain shell has no slash commands.
+   */
+  const clearPane = useCallback(
+    (s: Session) => {
+      const cmd = s.agent === 'shell' ? 'clear' : '/clear'
+      // Escape first: a half-typed line in the prompt box would otherwise have /clear
+      // stuck on the end of it, and the agent would be sent the whole mess. Escape
+      // empties the box in every CLI here and in PSReadLine, and closes any open menu.
+      api.write(s.id, '\x1b')
+      window.setTimeout(() => api.write(s.id, cmd), 40)
+      window.setTimeout(() => api.write(s.id, '\r'), 120)
+      flash(`${s.title}: cleared.`)
+    },
+    [flash]
+  )
+
+  /**
    * Put a pane's drawing back together without losing the run: refit, make the agent
    * repaint its whole frame, and land on the newest line. The pane does the work; this
    * only says which one.
@@ -894,17 +934,7 @@ export default function App(): JSX.Element {
           group: 'Actions',
           title: sessions.length === 1 ? 'Close the last pane' : `Close all ${sessions.length} panes`,
           hint: 'ends every run - the transcripts stay in history',
-          run: () =>
-            setAsk({
-              title: sessions.length === 1 ? 'Close the last pane?' : `Close all ${sessions.length} panes?`,
-              body: 'Every agent still running ends. The conversations stay in history.',
-              confirmLabel: 'Close them all',
-              danger: true,
-              onConfirm: () => {
-                setAsk(null)
-                for (const s of sessions) api.killSession(s.id)
-              }
-            })
+          run: closeAll
         }
       )
 
@@ -921,6 +951,7 @@ export default function App(): JSX.Element {
     start,
     switchAgent,
     close,
+    closeAll,
     flash,
     fixUi,
     saveRunningAsWorkspace
@@ -1055,16 +1086,37 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           Sessions ({sessions.length})
-          {working > 0 && (
-            <span className="badge run" title="Agents whose own footer says they are still running">
-              {working} working
-            </span>
-          )}
-          {waiting > 0 && (
-            <span className="badge" title="Turns that finished while you were looking elsewhere">
-              {waiting} waiting
-            </span>
-          )}
+          {/* Badges and the empty-everything button travel together, hard right. One
+              wrapper rather than three margin rules: whichever of them are showing, the
+              rest keep their place. */}
+          <span className="section-tail">
+            {working > 0 && (
+              <span className="badge run" title="Agents whose own footer says they are still running">
+                {working} working
+              </span>
+            )}
+            {waiting > 0 && (
+              <span className="badge" title="Turns that finished while you were looking elsewhere">
+                {waiting} waiting
+              </span>
+            )}
+            {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
+                ending. Only there when there is something to empty. */}
+            {sessions.length > 0 && (
+              <button
+                className="icon danger section-btn"
+                title={
+                  sessions.length === 1
+                    ? 'Close the last pane - the transcript stays in history'
+                    : `Close all ${sessions.length} panes - every run ends, the transcripts stay in history`
+                }
+                aria-label="Close every session"
+                onClick={closeAll}
+              >
+                <TrashIcon size={13} />
+              </button>
+            )}
+          </span>
         </div>
         <div className="list" ref={listRef}>
           {sessions.map((s, i) => (
@@ -1240,31 +1292,20 @@ export default function App(): JSX.Element {
                   model={s.model ?? ''}
                   onChange={(a, m) => switchAgent(s, a, m)}
                 />
-                {config?.voice.enabled && (
-                  <button
-                    className={
-                      'icon mic' +
-                      (voice.phase === 'recording' && voice.target === s.id ? ' rec' : '') +
-                      (voice.phase === 'thinking' && voice.target === s.id ? ' busy' : '')
-                    }
-                    // Every pane owns a mic, so dictating into the third pane does not mean
-                    // clicking into it first and hoping the focus stuck.
-                    title={
-                      voice.phase === 'recording' && voice.target === s.id
-                        ? `Listening - click to transcribe into ${s.title}`
-                        : voice.phase !== 'idle'
-                          ? 'Already listening for another pane'
-                          : `Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`
-                    }
-                    disabled={voice.phase !== 'idle' && voice.target !== s.id}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      voice.toggle(s.id)
-                    }}
-                  >
-                    {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={13} />}
-                  </button>
-                )}
+                {/* Clears the agent's context and keeps the run. Where the mic used to
+                    be, which is why the mic moved down to the prompt it dictates into:
+                    the two got clicked for each other up here. */}
+                <button
+                  className="icon danger"
+                  title={`Clear ${s.title}: runs /clear in this pane. The run keeps going; its memory of this conversation does not.`}
+                  aria-label="Clear this session"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    clearPane(s)
+                  }}
+                >
+                  <TrashIcon size={13} />
+                </button>
                 <button className="icon" title="Restart agent (Ctrl Shift R)" onClick={() => api.restartSession(s.id)}>
                   ⟳
                 </button>
@@ -1312,6 +1353,37 @@ export default function App(): JSX.Element {
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
             />
+            {/* The mic floats over the bottom-right of the pane, next to the prompt box
+                it types into, instead of hiding in a row of six header icons. Nothing
+                is drawn there by any of these CLIs - the prompt box's right edge is
+                empty - and the button is the only thing in the pane that takes a click,
+                so the terminal underneath keeps every one of its own. */}
+            {config?.voice.enabled && (
+              <button
+                className={
+                  'mic-float' +
+                  (voice.phase === 'recording' && voice.target === s.id ? ' rec' : '') +
+                  (voice.phase === 'thinking' && voice.target === s.id ? ' busy' : '')
+                }
+                // Every pane owns a mic, so dictating into the third pane does not mean
+                // clicking into it first and hoping the focus stuck.
+                title={
+                  voice.phase === 'recording' && voice.target === s.id
+                    ? `Listening - click to transcribe into ${s.title}`
+                    : voice.phase !== 'idle'
+                      ? 'Already listening for another pane'
+                      : `Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`
+                }
+                aria-label="Dictate into this pane"
+                disabled={voice.phase !== 'idle' && voice.target !== s.id}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  voice.toggle(s.id)
+                }}
+              >
+                {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={15} />}
+              </button>
+            )}
           </div>
         ))}
         {sessions.length === 0 && (

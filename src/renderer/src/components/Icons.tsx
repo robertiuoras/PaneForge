@@ -96,6 +96,18 @@ export function HelpIcon(p: IconProps): JSX.Element {
   )
 }
 
+/** Wipe something out: a bin. Used for "clear this pane" and "close every pane". */
+export function TrashIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M2.6 4.2h10.8" />
+      <path d="M6.2 4.2V2.9h3.6v1.3" />
+      <path d="M3.9 4.2 4.5 13a.9.9 0 0 0 .9.8h5.2a.9.9 0 0 0 .9-.8l.6-8.8" />
+      <path d="M6.7 6.8v4.4M9.3 6.8v4.4" opacity="0.55" />
+    </Svg>
+  )
+}
+
 /** Live link, drawn as a signal. Used on the pane badge of a mirrored session. */
 export function LinkIcon(p: IconProps): JSX.Element {
   return (

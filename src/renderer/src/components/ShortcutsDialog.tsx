@@ -2,6 +2,7 @@
 // a shortcut sheet you can only find by already knowing its shortcut is furniture.
 
 import { useMemo, useState } from 'react'
+import MicIcon from './MicIcon'
 
 interface Props {
   onClose: () => void
@@ -13,7 +14,10 @@ const HELP_KEY: [string, string] = [
   'This list, from anywhere - also the ? button next to the gear'
 ]
 
-const KEYS: [string, string][] = [
+/** key, what it does, and whether the row is called out rather than merely listed. */
+type Key = [string, string, boolean?]
+
+const KEYS: Key[] = [
   ['Ctrl K', 'Command palette: jump to a session, start a project, run any action'],
   ['Ctrl T', 'New session (tick several projects to start them together)'],
   ['Ctrl W', 'Close the focused session'],
@@ -41,7 +45,13 @@ const KEYS: [string, string][] = [
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],
   ['Ctrl Shift D', 'Devices: another machine’s panes, in this window'],
-  ['Ctrl Shift Space', 'Push to talk: dictate into the focused pane'],
+  // Called out: the mic is the one control here people ask where to find, and the key
+  // is faster than the button it points at.
+  [
+    'Ctrl Shift Space',
+    'Talk to the agent: dictate into the focused pane. Press once to start, again to transcribe - same as the mic button floating over the prompt box at the bottom-right of the pane',
+    true
+  ],
   ['Ctrl ,', 'Settings'],
   ['F12', 'Developer tools'],
   ['Double-click a title', 'Rename that session']
@@ -75,10 +85,13 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
           onChange={(e) => setQ(e.target.value)}
         />
         <div className="keys">
-          {rows.map(([k, what]) => (
-            <div className="key-row" key={k}>
+          {rows.map(([k, what, hot]) => (
+            <div className={'key-row' + (hot ? ' hot' : '')} key={k}>
               <span className="kbd-box">{k}</span>
-              <span>{what}</span>
+              <span>
+                {what}
+                {hot && <MicIcon size={12} />}
+              </span>
             </div>
           ))}
           {!rows.length && <div className="hint">Nothing matches "{q}".</div>}
