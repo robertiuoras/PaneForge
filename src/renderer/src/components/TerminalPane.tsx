@@ -8,6 +8,14 @@ const api = window.api
 interface Props {
   sessionId: string
   visible: boolean
+  /**
+   * This is the pane you are working in.
+   *
+   * Separate from `visible` because a grid makes every pane visible at once, and a pane
+   * being on screen is not permission to take the keyboard off the one you are typing in.
+   * Exactly one pane is active, and only that pane ever calls focus().
+   */
+  active: boolean
   fontSize: number
   /** put a mouse selection straight on the clipboard, the way most terminals do */
   copyOnSelect: boolean
@@ -46,6 +54,17 @@ export const paneRepair = new Map<string, () => void>()
  * which those TUIs are free to read as keystrokes rather than as one insertion.
  */
 export const paneInsert = new Map<string, (text: string) => void>()
+
+/**
+ * Put the caret back in a pane, from anywhere in the app.
+ *
+ * Clicking a button, closing a dialog and switching panes with the keyboard all end with
+ * the keyboard somewhere that cannot use it - a `<button>`, or nothing at all - and the
+ * only cure was clicking back into the terminal. App owns the "which pane" decision; this
+ * is how it carries it out. Registered per pane rather than reached through a ref so a
+ * pane that is still booting simply is not in the map yet.
+ */
+export const paneFocus = new Map<string, () => void>()
 
 /** Every CLI's "still running" footer. While this is on screen the turn is not over. */
 const BUSY_FOOTER =
@@ -168,6 +187,7 @@ function quote(p: string): string {
 export default function TerminalPane({
   sessionId,
   visible,
+  active,
   fontSize,
   copyOnSelect,
   mouseSelect,
@@ -760,6 +780,13 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneFocus.set(sessionId, () => {
+      try {
+        t.focus()
+      } catch {
+        /* detached mid-teardown - the next active-pane effect focuses it */
+      }
+    })
     paneInsert.set(sessionId, (text) => {
       // Dictation lands in a pane that may have been scrolled up while it was being
       // transcribed; the point of inserting is to see it, so this follows the tail again.
@@ -832,6 +859,7 @@ export default function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneInsert.delete(sessionId)
+      paneFocus.delete(sessionId)
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)
@@ -879,13 +907,35 @@ export default function TerminalPane({
           // The buffer kept growing while this pane was hidden, so the rail is stale.
           syncTotal()
         }
-        term.current?.focus()
       } catch {
         /* not laid out yet */
       }
     })
     return () => cancelAnimationFrame(id)
   }, [visible, sessionId])
+
+  /**
+   * The caret follows the pane you chose - and nothing else moves it.
+   *
+   * This used to hang off `visible`, which is true for every pane at once in a grid: each
+   * pane grabbed the keyboard as it mounted, so starting a session somewhere else took the
+   * keys out from under whatever you were typing, and switching panes with Ctrl+2 moved
+   * the highlight while the keys kept going to the old pane. Keyed on `active` instead,
+   * the two can no longer disagree - in a grid or out of one.
+   */
+  useEffect(() => {
+    if (!visible || !active) return
+    // Called straight out of the effect, not from requestAnimationFrame. Focus needs no
+    // layout, and rAF does not run in a window Windows considers hidden or occluded - so
+    // the pane you switched to with Ctrl+2 got the highlight and not the keyboard, exactly
+    // as often as the app happened not to be painting. Measured: Ctrl+2 failed while
+    // Ctrl+Tab passed in the same run, which is what a frame-dependent focus looks like.
+    try {
+      term.current?.focus()
+    } catch {
+      /* not laid out yet - the next visible/active change focuses it */
+    }
+  }, [visible, active, sessionId])
 
   /**
    * Dropping files types their paths at the prompt. Getting a screenshot or a PDF in front
