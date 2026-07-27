@@ -119,7 +119,24 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .row.dragging {
   cursor: grabbing; background: #ffffff14; border-color: var(--accent);
   box-shadow: 0 10px 24px #00000073; z-index: 2;
+  transform: scale(1.015);
 }
+/* The list reorders live, so the card being dragged is already standing in the slot it
+   will land in - but a card that only looks slightly brighter does not read as "this is
+   the place". A dashed frame drawn just outside it names the slot, and the cards it is
+   moving past step back so the frame is the only thing with full contrast. */
+.row.dragging::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: calc(var(--r) + 3px);
+  box-shadow: 0 0 0 4px #8b9dff14, 0 0 16px #8b9dff2e;
+  pointer-events: none;
+}
+/* No transition on the step back: a drop cue that fades in is a drop cue that is still
+   arriving while the card has already moved on to the next slot. */
+body.dragging .list .row:not(.dragging) { opacity: 0.5; transition: none; }
 /* Once a drag is on, the pointer must not change into a text bar or a hand over
    whatever it happens to cross. */
 body.dragging, body.dragging * { cursor: grabbing !important; }
