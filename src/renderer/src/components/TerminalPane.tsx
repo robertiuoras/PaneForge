@@ -355,11 +355,48 @@ export default function TerminalPane({
       if (!dead) setMarks(list.slice())
     }
 
+    /**
+     * How many rows above the cursor this pane's prompt box starts, or 0 if there is no
+     * box to find.
+     *
+     * The cursor at submit time is not where the prompt is. In a boxed TUI it is on the
+     * last row of what was typed, so a one-line prompt puts it one row under the box's top
+     * rule and a long one puts it several - measured in a live Claude pane at 80 columns, a
+     * 32-character prompt left the cursor 1 row below the rule, a 532-character one 5 rows
+     * and an 1134-character one 6. Anchoring the mark at the cursor therefore landed the
+     * jump *below* the prompt by an amount that grew with the prompt, which is exactly the
+     * "it does not quite get there, and the longer the prompt the further out it is" the
+     * rail was reported for.
+     *
+     * Found rather than estimated: the box's own top rule is still on screen at submit time
+     * - the CLI has not redrawn yet - so counting rows up to it is exact and costs nothing,
+     * where working the height out from the text length would have to guess the box's
+     * padding, its borders and how the CLI wrapped it. A pane with no box at all, like a
+     * shell, finds nothing and keeps the old anchor, which is already right there.
+     */
+    const PROMPT_BOX_SCAN = 40
+    // A run of box-drawing characters, which is what these CLIs frame a prompt with -
+    // `────` in Claude Code's current build, `╭───╮` in the rounded ones. Anchored at the
+    // start so a line of text that merely contains one cannot match.
+    const BOX_RULE = /^[─-╿]{4}[─-╿\s]*$/
+    const promptBoxTop = (): number => {
+      const b = t.buffer.active
+      for (let up = 1; up <= PROMPT_BOX_SCAN; up++) {
+        const y = b.cursorY - up
+        if (y < 0) return 0
+        const line = b.getLine(b.baseY + y)
+        if (!line) return 0
+        const s = line.translateToString(true).trim()
+        if (s.length >= 8 && BOX_RULE.test(s)) return up
+      }
+      return 0
+    }
+
     const addMark = (text: string): void => {
-      // Anchored to the row the cursor is on at submit time. xterm keeps a marker's line
-      // right as the buffer scrolls and tells us when that line falls out of scrollback,
-      // neither of which a plain line number could do.
-      const marker = t.registerMarker(0)
+      // Anchored to the top of the prompt box as it stands at submit time. xterm keeps a
+      // marker's line right as the buffer scrolls and tells us when that line falls out of
+      // scrollback, neither of which a plain line number could do.
+      const marker = t.registerMarker(-promptBoxTop())
       if (!marker) return
       const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
       marker.onDispose(() => {
