@@ -66,7 +66,19 @@ const samePath = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, ''
 export function laneOwner(lane: LaneBoardEntry, sessions: Session[]): Session | undefined {
   if (!lane.from) return undefined
   const from = samePath(lane.from)
-  return sessions.find((s) => s.status !== 'exited' && samePath(s.cwd) === from)
+  const live = sessions.filter((s) => s.status !== 'exited')
+  const exact = live.find((s) => samePath(s.cwd) === from)
+  if (exact) return exact
+  // A chat that `cd`s into a subfolder reports that subfolder, and its pane still reports
+  // the folder it was opened in - so lane c, held by the chat in this very pane but
+  // recorded as `...-c\scripts`, was listed under "Lanes elsewhere" as a lane belonging to
+  // no open pane. Either one may be the deeper path (a pane opened on a subfolder of the
+  // lane), so containment is checked both ways, and the longest match wins so a pane on
+  // `<repo>` never steals a lane that belongs to a pane on `<repo>\scripts`.
+  const under = (a: string, b: string): boolean => a === b || a.startsWith(b + '/')
+  return live
+    .filter((s) => under(from, samePath(s.cwd)) || under(samePath(s.cwd), from))
+    .sort((a, b) => samePath(b.cwd).length - samePath(a.cwd).length)[0]
 }
 
 /** Lanes keyed by the cwd of the pane holding them, for the chip on a session card. */

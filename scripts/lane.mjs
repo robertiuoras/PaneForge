@@ -84,6 +84,14 @@ const STALE_MS = 12 * 60 * 60 * 1000
 // and had to wait for a human to close a window. Nothing can be lost: a lane with so much
 // as one uncommitted character is never taken, however long it has been quiet.
 const IDLE_EMPTY_MS = 60 * 60 * 1000
+// A chat that only MENTIONED PaneForge gets a lane on approval, not on the word. Saying
+// "why does PaneForge show X" from a Jarvis chat used to claim a real lane: the pane then
+// wore a "PF lane main" chip for a chat that never opened the repo, and a chat that did
+// want to edit could be told every lane was busy by three of those. Such a claim is
+// tentative - it reserves a checkout so the agent knows where to work, it is invisible to
+// the app and to every other chat, it never delays a release, and it disappears on its own
+// after this long unless the chat actually writes in the lane (`guard` promotes it).
+const TENTATIVE_MS = 20 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -157,8 +165,35 @@ function dropClaims(state, session) {
   }
 }
 
+/**
+ * Set by `reap` when it actually dropped something, so a read-only command can persist the
+ * clean-up instead of doing it again on the next call.
+ *
+ * `status` reaps like every other command and then threw the result away, because it does
+ * not write. That was invisible while everything reaped was hours old - but a tentative
+ * reservation expires in 20 minutes, and `status` is what the app and the hooks call most,
+ * so the expiry could be computed a hundred times and never once take effect. Anything
+ * that reaps now has the option of writing it down.
+ */
+let reaped = false
+
 function reap(state) {
   for (const [id, c] of Object.entries(state.lanes)) {
+    // A lane reserved by a chat that only talked about PaneForge and never touched it.
+    // Nothing can be lost - a tentative lane is by definition one nothing was written in -
+    // but check anyway, because `guard` promotes on the first write and a crash between
+    // the write and the promote must not throw the write away.
+    if (c.tentative && now() - (c.claimed ?? 0) > TENTATIVE_MS) {
+      const w = laneWork(id)
+      if (!w.dirty && w.ahead === 0 && !state.ready[id] && !state.conflicts[id]) {
+        dropClaims(state, c.session)
+        delete state.lanes[id]
+        reaped = true
+        continue
+      }
+      delete c.tentative
+      reaped = true
+    }
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
       // closed the `npm run try` window it left running either. Both go here.
@@ -177,6 +212,16 @@ function reap(state) {
   }
   for (const id of Object.keys(state.ready)) {
     if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.ready[id]
+  }
+  // `ready.main` is a statement by one chat that ITS work on master is finished, and it
+  // outlived that chat: the next chat to claim main inherited it, so its pane read "PF
+  // lane main done" for work it had never seen, and the strip said a lane was waiting on a
+  // release for a chat that had gone home. Nothing is lost by dropping it - master's
+  // unreleased commits are what `shippable()` counts, with or without a mark - so the mark
+  // means only what it says, and stops meaning it when the chat that made it is gone.
+  if (state.ready.main?.session && state.lanes.main?.session !== state.ready.main.session) {
+    delete state.ready.main
+    reaped = true
   }
   // A chat that marked itself ready and then kept editing is working again, and its
   // ready mark is a lie. Left standing it stalled every release silently: `busyLanes`
@@ -437,7 +482,7 @@ function ensureWorktree(id) {
 
 // ---------------------------------------------------------------- commands
 
-function claim(session, cwd, prefer) {
+function claim(session, cwd, prefer, tentative = false) {
   if (!session) throw new Error('claim needs --session')
   const state = reap(read())
   // Cheap, throttled, and the reason most conflicts never reach a human.
@@ -446,21 +491,52 @@ function claim(session, cwd, prefer) {
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
       c.seen = now()
+      // Once a chat has written in its lane the lane is really held, and a later prompt
+      // that happens not to mention PaneForge must not hand it back.
+      if (!tentative) delete c.tentative
+      else {
+        // The other direction, for a lane claimed before any of this existed (or by a
+        // chat that has since done nothing with it): a chat prompting from outside the
+        // checkout family, with an untouched lane, is a chat talking about PaneForge.
+        // Downgrading costs it nothing - the lane stays its lane - and it stops an idle
+        // mention from wearing a chip and from being counted as another chat at work.
+        // Work in the lane is the answer whatever the prompt said: a chat with an edit or
+        // a commit in there is working on PaneForge even if this particular message was
+        // sent from somewhere else and never named it.
+        const w = laneWork(id)
+        if (!w.dirty && w.ahead === 0) c.tentative = true
+        else delete c.tentative
+      }
       write(state)
-      return { lane: id, dir: laneDir(id), branch: laneBranch(id), profile: laneProfile(id), fresh: false }
+      return {
+        lane: id,
+        dir: laneDir(id),
+        branch: laneBranch(id),
+        profile: laneProfile(id),
+        fresh: false,
+        tentative: Boolean(c.tentative)
+      }
     }
   }
 
   // `prefer` is how a chat that was already mid-edit in a checkout when lanes were
   // switched on keeps that checkout, uncommitted work and all, instead of being sent
   // to an empty lane and losing sight of it.
-  let free = (prefer && !state.lanes[prefer] ? prefer : null) ?? POOL.find((id) => !state.lanes[id])
+  // A lane with finished work waiting on a release is free to hand out, but it is the LAST
+  // one to hand out: a new chat that lands there starts on top of somebody else's shipped-
+  // but-unreleased commits, and its pane reads "done" before it has done anything.
+  const spare = POOL.filter((id) => !state.lanes[id])
+  let free =
+    (prefer && !state.lanes[prefer] ? prefer : null) ??
+    spare.find((id) => !state.ready[id] && !state.conflicts[id]) ??
+    spare[0]
   // Nothing free: before refusing, look for a lane that is being held and not used. The
   // oldest one goes, so a chat that has at least been seen recently keeps its checkout.
   if (!free) {
     const idle = Object.entries(state.lanes)
       .filter(([id, c]) => {
-        if (now() - (c.seen ?? c.claimed ?? 0) < IDLE_EMPTY_MS) return false
+        // A lane only reserved by a mention is idle the moment anyone actually needs one.
+        if (!c.tentative && now() - (c.seen ?? c.claimed ?? 0) < IDLE_EMPTY_MS) return false
         if (state.ready[id] || state.conflicts[id]) return false
         const w = laneWork(id)
         return !w.dirty && w.ahead === 0
@@ -488,9 +564,9 @@ function claim(session, cwd, prefer) {
     if (/conflicts with master/.test(healed)) noteConflict(state.conflicts, free, healed)
     else delete state.conflicts[free]
   }
-  state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now() }
+  state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now(), ...(tentative ? { tentative: true } : {}) }
   write(state)
-  return { lane: free, dir, branch: laneBranch(free), profile: laneProfile(free), fresh: true, healed }
+  return { lane: free, dir, branch: laneBranch(free), profile: laneProfile(free), fresh: true, healed, tentative }
 }
 
 /**
@@ -517,6 +593,9 @@ function guard(session, path) {
   const holder = state.lanes[lane.id]
   if (holder?.session === session) {
     holder.seen = now()
+    // Writing in the lane is the moment a reservation becomes a real claim: this chat is
+    // editing PaneForge, not talking about it, so the lane is now its lane.
+    delete holder.tentative
     write(state)
     return null
   }
@@ -669,13 +748,16 @@ function autoship(kind = 'patch', session = 'auto') {
 
 function markReady(state, id) {
   const dir = laneDir(id)
+  // Whose declaration this is. Only `main` uses it (see reap), but recording it everywhere
+  // costs nothing and makes the file answer "who said this was done".
+  const session = state.lanes[id]?.session ?? null
   if (id === 'main') {
-    state.ready.main = { at: now(), commit: git(dir, 'rev-parse', 'HEAD') }
+    state.ready.main = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), session }
     return { lane: id, note: 'master is the release branch - nothing to merge' }
   }
   const ahead = aheadOf(laneBranch(id))
   if (!ahead) throw new Error(`lane ${id} has no commits master does not already have`)
-  state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: ahead }
+  state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: ahead, session }
   return { lane: id, commits: ahead, note: 'goes out with the next release, not a separate one' }
 }
 
@@ -756,6 +838,8 @@ function ready(session, wanted) {
     id = wanted
   }
   if (!id) throw new Error('this session holds no lane')
+  // Declaring work finished is the other way a reservation becomes real.
+  if (state.lanes[id]) delete state.lanes[id].tentative
   const dirty = git(laneDir(id), 'status', '--porcelain')
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
 
@@ -927,6 +1011,9 @@ function ship(kind, session) {
 
 function status(session) {
   const state = reap(read())
+  // Asking is not writing, except when the asking found something to throw away: an
+  // expired reservation that is only ever computed and never stored is not expired at all.
+  if (reaped) write(state)
   return {
     main: MAIN,
     lanes: POOL.map((id) => {
@@ -938,6 +1025,9 @@ function status(session) {
         exists: existsSync(laneDir(id)),
         heldBy: state.lanes[id]?.session ?? null,
         mine: session ? state.lanes[id]?.session === session : undefined,
+        // Reserved by a chat that has not written here. Callers that describe lanes to a
+        // human (the hook, the app) leave these out - they are not work, they are a word.
+        tentative: Boolean(state.lanes[id]?.tentative),
         from: state.lanes[id]?.cwd ?? null,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
@@ -990,7 +1080,8 @@ try {
     }
   }
 
-  if (cmd === 'claim') console.log(JSON.stringify(claim(session, arg('cwd'), arg('prefer')), null, 2))
+  if (cmd === 'claim')
+    console.log(JSON.stringify(claim(session, arg('cwd'), arg('prefer'), argv.includes('--tentative')), null, 2))
   else if (cmd === 'guard') {
     const reason = guard(session, arg('path'))
     if (reason) {

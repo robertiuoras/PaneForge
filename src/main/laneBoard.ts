@@ -31,6 +31,8 @@ interface RawLane {
   cwd?: string | null
   claimed?: number
   seen?: number
+  /** Reserved by a chat that only mentioned PaneForge and has not written in the lane. */
+  tentative?: boolean
 }
 interface RawConflict {
   at?: number
@@ -172,9 +174,14 @@ function read(): LaneBoard | null {
   const lanes: LaneBoardEntry[] = []
   const now = Date.now()
   for (const id of POOL) {
-    const held = state.lanes?.[id]
+    const raw = state.lanes?.[id]
     const conflict = state.conflicts?.[id]
     const ready = Boolean(state.ready?.[id])
+    // A lane a chat reserved by saying "PaneForge" in a chat about something else is not a
+    // fact about this screen: it put a "PF lane main" chip on a Jarvis pane whose chat had
+    // never opened the repo. It becomes a real hold the moment that chat writes in it
+    // (lane.mjs `guard`), and until then only its own lane file knows about it.
+    const held = raw?.tentative ? undefined : raw
     if (!held && !conflict && !ready) continue
     const seen = held?.seen ?? held?.claimed ?? 0
     // A chat that took a conflict over and then died kept the claim forever, because
