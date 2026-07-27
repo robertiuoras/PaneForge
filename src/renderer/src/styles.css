@@ -348,27 +348,10 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* A lane that cannot merge blocks its own work from every release, and used to say so
    nowhere. Red, and it keeps glowing until it is not true any more. */
 .badge.stuck { background: #ff8f8f1a; color: var(--danger); border-color: #ff8f8f3d; animation: pulse 2.4s ease-in-out infinite; }
-/* "Lanes" is PaneForge's own word for something invisible, so the header carries the
-   question the label raises rather than leaving it to a tooltip nobody hovers. */
-.help-dot {
-  width: 14px; height: 14px; margin-left: 5px; padding: 0; flex: none;
-  display: inline-grid; place-items: center; vertical-align: middle;
-  border: 1px solid var(--line-strong); border-radius: 50%;
-  background: transparent; color: var(--muted);
-  font-size: 9px; line-height: 1; cursor: pointer;
-  transition: color var(--fast), border-color var(--fast), background var(--fast);
-}
-.help-dot:hover { color: var(--text); border-color: var(--accent); }
-.help-dot.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
-.lane-help {
-  margin: 2px 0 6px; padding: 8px 9px;
-  border: 1px solid var(--line); border-radius: var(--r);
-  background: var(--surface-2); color: var(--muted);
-  font-size: 11px; line-height: 1.5; text-wrap: pretty;
-}
-.lane-help p { margin: 0; }
-.lane-help p + p { margin-top: 7px; }
-.lane-help b { color: var(--text); font-weight: 600; }
+/* There was a "?" on this header and another on Sessions, each opening its own panel
+   of lane text, while the "?" beside Settings already had both explanations in full.
+   Three places answering one question is two too many: the header ones are gone and
+   the dialog is the only one. */
 .lanes { display: flex; flex-direction: column; gap: 3px; max-height: 26vh; overflow-y: auto; }
 .lane-row { padding: 5px 8px; }
 .lane-row .row-title { font-size: 12px; }

@@ -168,43 +168,7 @@ export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
   )
 }
 
-/**
- * What a lane chip on a session card means, in the words of someone who has never heard
- * the word. Shown from the "?" beside Sessions, and only while there is a lane on screen
- * to ask about.
- *
- * Worktree lanes are not a PaneForge-developer thing - every user gets one the second
- * time they open the same project - so this explains those first, and mentions the
- * release lanes only on a machine that actually has them.
- */
-export function LaneHelp({ devLanes }: { devLanes: boolean }): JSX.Element {
-  return (
-    <div className="lane-help">
-      <p>
-        Two panes open on the same folder fight each other: the same files, the same git
-        index, the same dev-server port. So the second one gets a <b>lane</b> — its own
-        checkout of that repo in a folder beside it (<code>myapp-w2</code>), on its own
-        branch, with its own port. The first pane keeps the original folder.
-      </p>
-      <p>
-        The chip on a pane&apos;s card (<b>w2</b>, <b>w3</b>) is the lane it was given. You
-        never make one and never clean one up; it is an ordinary git worktree, so you commit
-        and merge it like any other branch, and the folder is safe to delete once you have.
-      </p>
-      {devLanes && (
-        <p>
-          A <b>PF lane</b> chip is a different thing that happens to share the word: one of
-          PaneForge&apos;s own release lanes, held by the chat in that pane while it edits
-          PaneForge. It says nothing about the folder the pane is open in — a pane can
-          carry both chips at once. Only a machine with a PaneForge checkout ever sees one.
-        </p>
-      )}
-    </div>
-  )
-}
-
 export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Element | null {
-  const [help, setHelp] = useState(false)
   // A job is handed over once. Keyed by when the conflict started, so a lane that gets
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
@@ -238,15 +202,6 @@ export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Elem
     <>
       <div className="section">
         <span className="section-title">Lanes elsewhere ({orphans.length})</span>
-        <button
-          className={'help-dot' + (help ? ' on' : '')}
-          onClick={() => setHelp((h) => !h)}
-          title="What is a lane?"
-          aria-label="What is a lane?"
-          aria-expanded={help}
-        >
-          ?
-        </button>
         {stuck > 0 && (
           <span className="badge stuck" title="Finished work that will not merge into master, so no release includes it">
             {stuck} stuck
@@ -258,26 +213,6 @@ export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Elem
           </span>
         )}
       </div>
-      {help && (
-        <div className="lane-help">
-          <p>
-            Several chats edit PaneForge at once. A <b>lane</b> is one private copy of the
-            repository for one chat, so two of them cannot overwrite each other&apos;s files or
-            race the same build.
-          </p>
-          <p>
-            You never make or delete one: a chat claims a lane the moment it starts work, and
-            gives it back when it ends. A lane held by a pane you have open is shown on that
-            pane&apos;s card; the ones listed here belong to no open pane.
-          </p>
-          <p>
-            When a chat finishes, its lane is merged and released with every other finished
-            lane — one version, not one per chat. <b>Stuck</b> means a lane&apos;s work will not
-            merge, so it is being left out of releases. The app retries a stuck lane by itself
-            every couple of minutes, and hands the ones that need real editing to a free pane.
-          </p>
-        </div>
-      )}
       <div className="lanes">
         {orphans.map((l) => (
           <LaneRow key={l.lane} lane={l} sessions={sessions} onFocus={onFocus} />
