@@ -135,11 +135,34 @@ function write(state) {
   renameSync(tmp, STATE)
 }
 
+/**
+ * Give back every conflict a chat had taken over, because that chat is gone.
+ *
+ * Taking a conflict over is a claim on somebody else's lane, and until now nothing ever
+ * ended one: a chat adopted a conflict, finished its session, and the claim outlived it.
+ * The lane then read "a chat has it" with no chat behind it - the app's automatic
+ * hand-over skips a claimed conflict on exactly that word, the fix button is hidden on it,
+ * and `adoptable` holds every other chat off for another 45 minutes on behalf of a session
+ * that no longer exists. That is how lane c stayed stuck with nobody near it. A claim now
+ * ends when its chat's lane does; the ADOPT_MS clock stays as the backstop for a chat that
+ * goes quiet without ever ending.
+ */
+function dropClaims(state, session) {
+  if (!session) return
+  for (const c of Object.values(state.conflicts)) {
+    if (c.resolver === session) {
+      c.resolver = null
+      c.resolverAt = null
+    }
+  }
+}
+
 function reap(state) {
   for (const [id, c] of Object.entries(state.lanes)) {
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
       // closed the `npm run try` window it left running either. Both go here.
+      dropClaims(state, c.session)
       delete state.lanes[id]
       closeTestApps(laneDir(id))
     }
@@ -319,8 +342,20 @@ function retryConflicts(state) {
       gitSafe(laneDir(id), 'merge', '--abort')
     }
     const caught = catchUp(id)
-    // Someone is editing in there right now - not the moment to merge under them.
-    if (caught.dirty) continue
+    // Someone left an uncommitted edit in there, so the merge cannot be done in the
+    // worktree. That used to end the retry, which meant a lane whose chat stopped
+    // mid-edit stayed flagged for as long as the edit sat there - the conflict could not
+    // clear even after master moved past the thing it disagreed with. Lane c sat like
+    // that. The flag is still answerable without touching any file: merge-tree does the
+    // merge in the object database, so a lane that would merge cleanly stops being called
+    // stuck. Advancing it still waits for the worktree to be clean.
+    if (caught.dirty) {
+      if (offTreeConflicts(id) === false) {
+        delete state.conflicts[id]
+        changed = true
+      }
+      continue
+    }
     changed = true
     if (!caught.conflicts.length) {
       delete state.conflicts[id]
@@ -340,6 +375,21 @@ function retryConflicts(state) {
     c.detail = caught.conflicts.join(', ')
   }
   return changed
+}
+
+/**
+ * Would this lane still conflict with master, asked without touching the worktree?
+ *
+ * `git merge-tree --write-tree` merges two commits in the object database and writes
+ * nothing outside it, so this is safe to ask about a lane somebody has uncommitted edits
+ * in - which is the only reason it exists. Returns true/false, or null when git is too
+ * old to answer (the caller then leaves the conflict where it was).
+ */
+function offTreeConflicts(id) {
+  const r = gitSafe(MAIN, 'merge-tree', '--write-tree', '--name-only', 'master', laneBranch(id))
+  if (r.ok) return false
+  if (/unknown option|usage:|not a valid object/i.test(r.out)) return null
+  return true
 }
 
 /** A conflict nobody is fixing: its lane's chat has been quiet long enough to hand over. */
@@ -739,6 +789,10 @@ function ready(session, wanted) {
 
 function releaseClaim(session) {
   const state = reap(read())
+  // Outside the loop below on purpose: adopting somebody else's conflict does not give a
+  // chat a lane, so a chat can be holding a claim and no lane at all. Ending gives back
+  // both.
+  dropClaims(state, session)
   let freed = null
   let marked = null
   for (const [id, c] of Object.entries(state.lanes)) {
