@@ -807,6 +807,20 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   border: 1px solid var(--line-strong); border-radius: var(--r-sm);
 }
 .key-filter:focus { outline: none; border-color: var(--accent); }
+/* The Guide half of the same sheet. It shares the .keys scroller with the shortcut rows
+   so a filter can show both at once, which is why these are spaced rather than boxed:
+   two framed lists inside one frame read as a mistake. */
+.guide-topic { padding: 9px 0; border-top: 1px solid var(--line); }
+.guide-topic:first-child { border-top: none; padding-top: 2px; }
+.guide-topic h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.guide-topic p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
+.guide-topic p + p { margin-top: 7px; }
+.guide-topic b { color: var(--text); font-weight: 600; }
+.guide-topic code {
+  padding: 1px 4px; border-radius: 3px; font-size: 11px;
+  background: #ffffff0d; border: 1px solid var(--line-strong);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
 /* The way in for anyone who never presses F1: the only accented button in the brand row. */
 .icon.help {
   color: var(--accent); background: var(--accent-dim);
