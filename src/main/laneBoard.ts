@@ -37,6 +37,7 @@ interface RawConflict {
   since?: number
   detail?: string
   resolver?: string | null
+  resolverAt?: number
 }
 interface RawState {
   lanes?: Record<string, RawLane>
@@ -157,6 +158,13 @@ function read(): LaneBoard | null {
     const ready = Boolean(state.ready?.[id])
     if (!held && !conflict && !ready) continue
     const seen = held?.seen ?? held?.claimed ?? 0
+    // A chat that took a conflict over and then died kept the claim forever, because
+    // nothing here ever aged it out: the strip drew "a chat has it", the automatic
+    // hand-over skipped the lane on that word, and the fix button was hidden. lane.mjs
+    // has always expired the claim after the same silence it allows a lane's own chat -
+    // this is that rule, so both halves of the app agree on who owns a conflict.
+    const claimStale = Boolean(conflict?.resolver) && now - (conflict?.resolverAt ?? 0) > ADOPT_MS
+    const resolver = claimStale ? null : (conflict?.resolver ?? null)
     lanes.push({
       lane: id,
       dir: laneDir(main, id),
@@ -169,9 +177,10 @@ function read(): LaneBoard | null {
       conflictSince: conflict?.since ?? conflict?.at,
       conflictDetail: conflict?.detail,
       // The same rule lane.mjs applies: a conflict whose chat has gone quiet can be
-      // taken over by any other chat, which is the thing worth telling a human.
-      adoptable: Boolean(conflict) && (!held || now - seen > ADOPT_MS),
-      resolver: conflict?.resolver ?? null
+      // taken over by any other chat, which is the thing worth telling a human. A live
+      // resolver owns it on the same terms, so it is not adoptable while one is fresh.
+      adoptable: Boolean(conflict) && !resolver && (!held || now - seen > ADOPT_MS),
+      resolver
     })
   }
 
