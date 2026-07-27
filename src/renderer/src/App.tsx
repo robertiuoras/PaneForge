@@ -17,6 +17,7 @@ import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
+import LaneDialog from './components/LaneDialog'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
@@ -1281,6 +1282,11 @@ export default function App(): JSX.Element {
   // and then nothing below draws anything.
   const laneBoard = useLaneBoard()
   const lanesByCwd = useLanesByCwd(laneBoard)
+  // The worktree lane whose contents are open on screen, by folder.
+  const [laneCwd, setLaneCwd] = useState<string | null>(null)
+  // A pane that was cleared in an empty lane is moved back to the project folder by the
+  // main process; that is a thing happening to your window, so it says so.
+  useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
 
   return (
     <div className="app">
@@ -1486,12 +1492,18 @@ export default function App(): JSX.Element {
                   </span>
                   {s.model ? <span className="chip">{s.model}</span> : null}
                   {s.lane ? (
-                    <span
+                    // Clickable because a lane now has an end: what is in it, and merging
+                    // it back into the branch it came from.
+                    <button
                       className="chip lane"
-                      title={`Worktree lane ${s.lane} - this pane has its own checkout of the project, so it cannot clash with the other pane open on it.\n${s.cwd}\nThe "?" beside Settings (F1) explains lanes in full.`}
+                      title={`Worktree lane ${s.lane} - this pane has its own checkout of the project, so it cannot clash with the other pane open on it.\nClick to see what is in it, or to merge it back.\n${s.cwd}\nThe "?" beside Settings (F1) explains lanes in full.`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setLaneCwd(s.cwd)
+                      }}
                     >
                       {s.lane}
-                    </span>
+                    </button>
                   ) : null}
                   {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
                       sidebar used to repeat in a second list of the same sessions. */}
@@ -1841,6 +1853,7 @@ export default function App(): JSX.Element {
           onClose={() => setHistory(false)}
         />
       )}
+      {laneCwd && <LaneDialog cwd={laneCwd} onClose={() => setLaneCwd(null)} />}
       {ask && (
         <ConfirmDialog
           title={ask.title}

@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.3.32",
+  "version": "0.3.33",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -20,7 +20,8 @@
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
-    "test:lanes": "node scripts/lane-sweep-test.mjs && node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs",
+    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs",
+    "test:lanework": "node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs",
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
     "test:grid": "node scripts/grid-layout-test.mjs",

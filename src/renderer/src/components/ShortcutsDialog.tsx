@@ -118,7 +118,9 @@ const TOPICS: Topic[] = [
           folder and the branch by itself and puts the pane&apos;s card back on the project.
         </p>
         <p>
-          It only ever removes a lane it made (<code>-w2</code> on a <code>pf/w2</code> branch)
+          Click the chip to see what is in the lane and to merge it back without leaving the
+          window. It only ever removes a lane it made (<code>-w2</code> on a{' '}
+          <code>pf/w2</code> branch)
           that has nothing uncommitted in it, no untracked files, no pane open on it, and no
           commit the project does not already have. Anything else keeps its folder — including
           a lane whose several commits were squashed into one, which cannot be told apart from

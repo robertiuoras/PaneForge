@@ -1,10 +1,14 @@
 // The lane sweep deletes folders, so every rule it refuses on is pinned here.
 //
-// A lane holds real work until the moment it does not, and the difference is four git
-// questions. Get one wrong and the app quietly deletes a branch someone was in the
-// middle of - the one failure mode in PaneForge that cannot be undone with a click. So
-// this builds a real repository with real worktrees in a temp folder and checks each
+// A lane holds real work until the moment it does not, and the difference is a handful
+// of git questions. Get one wrong and the app quietly deletes a branch someone was in
+// the middle of - the one failure mode in PaneForge that cannot be undone with a click.
+// So this builds real repositories with real worktrees in a temp folder and checks each
 // refusal against git itself rather than against a mock of it.
+//
+// lane-work-test.mjs covers what a lane CONTAINS and merging it back; this one is only
+// about what may be deleted, including the squash-merge case, where the commit that
+// carried the lane's work into the project is not the lane's commit at all.
 //
 //   node scripts/lane-sweep-test.mjs
 
@@ -13,7 +17,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const { sweepLanes } = await import('../src/main/lanes.ts')
+const { sweepLanes } = await import('../src/main/laneWork.ts')
 
 const root = join(tmpdir(), 'paneforge-lane-sweep-test')
 rmSync(root, { recursive: true, force: true })
@@ -65,9 +69,12 @@ console.log('lane sweep')
   git(path, 'commit', '-qam', 'lane work')
   git(dir, 'merge', '-q', '--no-ff', '-m', 'merge lane', 'pf/w2')
 
-  const swept = sweepLanes([dir], [])
+  const swept = await sweepLanes(dir, [])
   check('merged lane is removed', !existsSync(path))
-  check('it is reported back', swept.length === 1 && swept[0].repo === dir)
+  check(
+    'it is reported back, so the pane in it can be sent home',
+    swept.length === 1 && swept[0].toLowerCase().endsWith('-w2')
+  )
   check('its branch is deleted', !git(dir, 'branch', '--list', 'pf/w2'))
   check('the work survived in the project', git(dir, 'show', 'HEAD:app.txt') === 'two')
   check(
@@ -86,7 +93,7 @@ console.log('lane sweep')
   git(dir, 'merge', '-q', '--squash', 'pf/w2')
   git(dir, 'commit', '-qm', 'squashed lane')
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check('a squash-merged lane is removed', !existsSync(path))
   check('its branch goes too, or the next w2 inherits it', !git(dir, 'branch', '--list', 'pf/w2'))
 }
@@ -104,7 +111,7 @@ console.log('lane sweep')
   git(dir, 'merge', '-q', '--squash', 'pf/w2')
   git(dir, 'commit', '-qm', 'squashed lane')
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check('a lane squashed from several commits is kept', existsSync(path))
 }
 
@@ -114,7 +121,7 @@ console.log('lane sweep')
   const path = lane(dir)
   writeFileSync(join(path, 'app.txt'), 'half an edit\n')
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check('a lane with uncommitted changes is kept', existsSync(path))
 }
 
@@ -124,7 +131,7 @@ console.log('lane sweep')
   const path = lane(dir)
   writeFileSync(join(path, 'notes.md'), 'thinking out loud\n')
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check('a lane holding an untracked file is kept', existsSync(path))
 }
 
@@ -135,7 +142,7 @@ console.log('lane sweep')
   writeFileSync(join(path, 'app.txt'), 'two\n')
   git(path, 'commit', '-qam', 'lane work')
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check('an unmerged lane is kept', existsSync(path))
   check('and its branch with it', git(dir, 'branch', '--list', 'pf/w2') !== '')
 }
@@ -145,12 +152,12 @@ console.log('lane sweep')
   const dir = repo('busy')
   const path = lane(dir)
 
-  sweepLanes([dir], [path])
+  await sweepLanes(dir, [path])
   check('a lane with a pane in it is kept', existsSync(path))
-  sweepLanes([dir], [join(path, 'src')])
+  await sweepLanes(dir, [join(path, 'src')])
   check('a pane in a subfolder of it counts too', existsSync(path))
   // Same folder, other spelling: this is what the caller actually passes on Windows.
-  sweepLanes([dir], [path.replace(/\\/g, '/').toUpperCase()])
+  await sweepLanes(dir, [path.replace(/\\/g, '/').toUpperCase()])
   check('the folder match is case and slash insensitive', existsSync(path))
 }
 
@@ -160,7 +167,7 @@ console.log('lane sweep')
   const path = `${dir}-w2`
   git(dir, 'worktree', 'add', '-q', '-b', 'my-feature', path)
 
-  sweepLanes([dir], [])
+  await sweepLanes(dir, [])
   check("a worktree on someone else's branch is never touched", existsSync(path))
 }
 
@@ -169,7 +176,7 @@ console.log('lane sweep')
   const dir = repo('untouched')
   const path = lane(dir)
 
-  const swept = sweepLanes([dir], [])
+  const swept = await sweepLanes(dir, [])
   check('a lane nothing was ever done in is removed', !existsSync(path) && swept.length === 1)
   check('with its ignored files', !existsSync(join(path, 'node_modules')))
 }

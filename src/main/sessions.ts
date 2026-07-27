@@ -315,6 +315,25 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Point an existing pane at a different folder and respawn it there. The pane, its
+   * title, its position and its id all survive.
+   *
+   * Used for one thing: a pane that was moved into a worktree lane, whose lane has
+   * turned out to hold nothing, going back to the project folder it came from (see
+   * main/laneWork.ts). Never resumes - the only caller does this because the
+   * conversation was just cleared, and `--continue` would fetch it straight back.
+   */
+  moveTo(id: string, cwd: string, patch: Partial<StartSessionRequest> = {}): Session | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    live.req = { ...live.req, ...patch, cwd, prompt: undefined, resume: false }
+    live.meta.cwd = cwd
+    live.meta.lane = patch.lane
+    live.meta.laneNote = patch.laneNote
+    return this.restart(id)
+  }
+
+  /**
    * Point an existing pane at a different CLI (or a different model of the same
    * CLI) and respawn it. The folder, title, position and id all survive, so
    * "try this in Codex instead" is one click rather than a new session.

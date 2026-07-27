@@ -93,9 +93,9 @@ Re-run after any source change. Needs Node 20+.
   a few seconds after the pane opens, so they cost no disk and deleting a lane never
   touches the original folder's copy. Two agents can build different features in one
   repo at the same time without overwriting each other or racing the git index. The
-  pane says which lane it is in; merge the branch back when you are done. Off by one
-  switch in Settings, and a folder that is not a repo is left shared with a warning.
-  A lane also gets the two things a bare worktree does not:
+  pane says which lane it is in. Off by one switch in Settings, and a folder that is
+  not a repo is left shared with a warning. A lane also gets the two things a bare
+  worktree does not:
   - **its own dev server port** - `PORT` (and `PF_LANE_PORT`) is set to one past
     whatever the project's own dev script asks for, so `npm run dev` in two lanes
     does not collide. Servers that read `PORT` need nothing; a Vite/Astro project
@@ -106,6 +106,14 @@ Re-run after any source change. Needs Node 20+.
     `/resume`, no memory and no granted permissions for a repo you are already deep
     in. The lane's project folder is linked to the original's, and the original's
     trust, allowed tools and recent prompts are copied onto the lane path.
+  - **an end** - click the lane chip on the pane to see what is in the lane (commits
+    it has that the branch it came from does not, uncommitted files, and the files it
+    would conflict on) and to merge it back in one click. The merge refuses rather
+    than improvising: uncommitted work in either checkout, or a real conflict, is
+    reported with the files named and nothing is touched. A lane holding nothing is
+    deleted on its own - branch and folder - so merged and never-used lanes do not
+    pile up, and a pane whose conversation is cleared in an empty lane goes back to
+    the project folder it came from. Nothing with work in it is ever removed.
 - **Board (Ctrl Shift K)** - tasks and shared memory for a project, stored in that
   project's `.paneforge/` folder so the agents running there can read it. Every
   agent started in a folder with memory is told to read it first.
