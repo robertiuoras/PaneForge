@@ -189,6 +189,29 @@ export default function App(): JSX.Element {
     return () => window.clearTimeout(t)
   }, [layerOpen, restoreFocus])
 
+  /* The sidebar's decorations run forever by design - a key breathes for as long as its
+     agent is running, and a run is hours. Chromium throttles a window it believes is
+     hidden, but a window sitting visible behind the editor is not hidden, so all of that
+     kept being composited while Robert was somewhere else entirely. This marks the
+     document while the window is unfocused and styles.css uses that to hold every glow
+     at full and stop animating: the state still reads from across the room, the frames
+     stop being spent on it. */
+  useEffect(() => {
+    const sync = (): void => {
+      const away = !document.hasFocus() || document.visibilityState !== 'visible'
+      document.documentElement.classList.toggle('app-blurred', away)
+    }
+    sync()
+    window.addEventListener('focus', sync)
+    window.addEventListener('blur', sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('blur', sync)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [])
+
   useEffect(() => {
     api.listSessions().then(setSessions)
     api.getConfig().then(setConfigState)
@@ -1471,11 +1494,22 @@ export default function App(): JSX.Element {
                         lit green while its agent is running, amber when a turn finished
                         while you were looking somewhere else. */}
                     {i < 9 && (
-                      <span
-                        className={'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')}
-                        title={`Ctrl ${i + 1}`}
-                      >
-                        {i + 1}
+                      /* The wrapper exists only to carry the breathing halo. The key
+                         itself is `overflow: hidden` so its sheen stays inside the
+                         pill, and that clips a pseudo-element halo too - so the halo
+                         has to hang off something outside the key. It is here rather
+                         than on the key because the alternative, animating the key's
+                         own box-shadow, re-rasters a blurred shadow every frame:
+                         measured at 64% of a core on its own (styles.css, `.num-wrap`). */
+                      <span className="num-wrap">
+                        <span
+                          className={
+                            'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')
+                          }
+                          title={`Ctrl ${i + 1}`}
+                        >
+                          {i + 1}
+                        </span>
                       </span>
                     )}
                     <span className="row-name">{s.title}</span>

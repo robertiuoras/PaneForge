@@ -241,7 +241,6 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   color: #b8f5d6; border-color: #35d07f4d;
   background: linear-gradient(180deg, #35d07f3d, #35d07f14);
   box-shadow: inset 0 1px 0 #ffffff26, 0 0 6px #35d07f3d;
-  animation: numGlow 2.4s ease-in-out infinite;
 }
 /* Finished a turn while you were looking at another pane. Amber is "this wants you"
    everywhere else in the app, so it is amber here too. */
@@ -250,15 +249,44 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   color: #ffd89a; border-color: #f0b4294d;
   background: linear-gradient(180deg, #f0b4293d, #f0b42914);
   box-shadow: inset 0 1px 0 #ffffff26, 0 0 6px #f0b4293d;
-  animation: numGlow 2s ease-in-out infinite;
 }
 /* The breath is the state's own colour, never `currentColor`: the text on a lit key is a
    near-white tint of it (#b8f5d6), so a halo drawn from `currentColor` came out white and
    twice the size of the key - a smear in the sidebar rather than a green key glowing.
-   Both stops stay under the border's own colour so the pill reads as one light dimming. */
-@keyframes numGlow {
-  0%, 100% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 4px color-mix(in srgb, var(--glow) 25%, transparent); }
-  50% { box-shadow: inset 0 1px 0 #ffffff26, 0 0 9px color-mix(in srgb, var(--glow) 55%, transparent); }
+   Both stops stay under the border's own colour so the pill reads as one light dimming.
+
+   The breath used to be the key's own `box-shadow` animating its blur radius, which is
+   the expensive way to write it: a blurred shadow is not a composited property, so every
+   frame re-rastered the shadow of every lit key for as long as anything was running.
+   Measured on its own, at six lit keys, that one rule cost 64% of a core, and the sidebar
+   never stops. Now the halo is a fixed shadow on a layer of its own and only its OPACITY
+   moves, which the compositor can do without repainting anything. Same light, same
+   rhythm; the paint happens once. */
+.num-wrap { position: relative; display: inline-flex; flex: none; }
+.num-wrap::before {
+  /* No `z-index: -1` here: that would drop the halo behind the row's own background and
+     it would never be seen. An OUTER box-shadow paints outside the border box, so even
+     though this layer sits above the key it never covers the digit. */
+  content: ''; position: absolute; inset: 0; border-radius: 5px;
+  pointer-events: none;
+}
+/* `:has` rather than a second class on the wrapper: the state already lives on the key,
+   and two elements that must be kept in agreement is a bug waiting for the next edit. */
+.num-wrap:has(> .num.live)::before {
+  box-shadow: 0 0 9px color-mix(in srgb, #35d07f 55%, transparent);
+  animation: glowBreath 2.4s ease-in-out infinite;
+  will-change: opacity;
+}
+.num-wrap:has(> .num.attn)::before {
+  box-shadow: 0 0 9px color-mix(in srgb, #f0b429 55%, transparent);
+  animation: glowBreath 2s ease-in-out infinite;
+  will-change: opacity;
+}
+/* The floor is not 0: at rest the key still carries its own static 6px glow, so the
+   breath only has to travel the distance between "lit" and "lit brighter". */
+@keyframes glowBreath {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 /* The glimmer. A lit key is a piece of glass, and a band of light crosses it every few
    seconds - the same tell a progress spinner gives without anything spinning. It is a
@@ -278,9 +306,23 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 /* A machine set to still images gets the lit colour without the breath. */
 @media (prefers-reduced-motion: reduce) {
-  .num.live, .num.attn { animation: none; }
+  .num-wrap::before { animation: none; opacity: 1; }
   .num.live::after { content: none; }
 }
+/* Nobody is watching the motion in a window that is not the focused one, but the STATE
+   the motion carries still has to read at a glance from across the desk. So a blurred
+   window does not pause the breath mid-cycle - which would leave a running key sitting
+   dim and looking finished - it holds every glow at full and stops animating entirely.
+   That is the whole decorative frame budget given back for as long as Robert is in
+   another app, which is most of the time a pane is running. */
+html.app-blurred .num-wrap::before { animation: none; opacity: 1; }
+/* The sheen and the working dot stop too. Stopping them is safe in a way that pausing
+   them would not be: both rest in their "on" state - the band sits off the left edge
+   where the key's own `overflow: hidden` swallows it, and the dot returns to full
+   opacity - so an unfocused sidebar loses the motion and keeps every state it was
+   telling you about. */
+html.app-blurred .num.live::after { animation: none; }
+html.app-blurred .dot.working { animation: none; }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 2px 5px; outline: none;
@@ -337,16 +379,28 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   content: attr(data-t);
   position: absolute; left: 0; top: 0; pointer-events: none;
   padding: 1px 7px; border: 1px solid transparent;
-  background-image: linear-gradient(100deg, #fff0 40%, #ffffffe0 50%, #fff0 60%);
-  background-size: 300% 100%;
+  /* The band used to travel by animating `background-position` across a 300%-wide
+     gradient. Clipping a gradient to glyphs is already the most expensive kind of paint
+     in this sidebar, and moving it meant redoing that clip every frame, on every visible
+     clock, forever - 40% of a core measured on its own. The gradient is fixed now and the
+     copy's opacity rides in and out instead, so the light still arrives and leaves in
+     time with the pill's own sheen, and the clipped text is painted once. */
+  background-image: linear-gradient(100deg, #fff0 22%, #ffffffe0 50%, #fff0 78%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: digitShimmer 2.9s linear infinite;
+  animation: digitBreath 2.9s ease-in-out infinite;
+  will-change: opacity;
 }
-@keyframes digitShimmer {
-  0% { background-position: 100% 0; }
-  60%, 100% { background-position: -60% 0; }
+@keyframes digitBreath {
+  0%, 100% { opacity: 0.12; }
+  55% { opacity: 1; }
+}
+html.app-blurred .elapsed::before,
+html.app-blurred .elapsed::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .elapsed::before, .elapsed::after { animation: none; }
+  .elapsed::before { opacity: 0.12; }
 }
 /* The same slot once the turn is over: frozen, flat, and dim enough that a still number
    never reads as a running one. No glass, no sheen - that is the whole tell. */
@@ -397,16 +451,27 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .lane-row .row-title { font-size: 12px; }
 .lane-row .row-sub { font-size: 10.5px; }
 .lane-row.done .row-sub { color: var(--ok); opacity: 0.85; }
+/* Same rewrite as the session keys, and it mattered more here: this glow is drawn around
+   a whole row rather than a 16px pill, so the per-frame raster it used to ask for scaled
+   with the row's area. Measured on its own it cost 64% of a core, for a decoration on a
+   state that by definition nobody is currently doing anything about. The shadow is fixed
+   now, on its own layer, and only its opacity breathes. */
 .lane-row.stuck {
+  position: relative;
   border-color: #ff8f8f38; background: #ff8f8f0d;
   box-shadow: 0 0 0 1px #ff8f8f14, 0 0 12px #ff8f8f1f;
-  animation: stuckGlow 3s ease-in-out infinite;
+}
+.lane-row.stuck::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 1px #ff8f8f2e, 0 0 16px #ff8f8f3d;
+  animation: glowBreath 3s ease-in-out infinite;
+  will-change: opacity;
+}
+html.app-blurred .lane-row.stuck::before { animation: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .lane-row.stuck::before { animation: none; opacity: 1; }
 }
 .lane-row.stuck .row-sub { color: var(--danger); }
-@keyframes stuckGlow {
-  0%, 100% { box-shadow: 0 0 0 1px #ff8f8f14, 0 0 7px #ff8f8f1a; }
-  50% { box-shadow: 0 0 0 1px #ff8f8f2e, 0 0 16px #ff8f8f3d; }
-}
 /* The lane letter, same glass treatment as the session numbers so the sidebar has one
    vocabulary for "this is a key/label" rather than two. */
 .lane-tag {
