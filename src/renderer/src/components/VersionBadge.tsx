@@ -92,7 +92,15 @@ export default function VersionBadge(): JSX.Element {
     }
     if (state?.phase === 'ready') {
       setRestarting(true)
-      requestAnimationFrame(() => api.installUpdate())
+      // A restart that gets queued instead (do-not-disturb came up between the render
+      // and the click) has to give the badge back, or it reads "restarting..." forever.
+      requestAnimationFrame(() => {
+        void Promise.resolve(api.installUpdate())
+          .then((r) => {
+            if (r && r.status !== 'installing') setRestarting(false)
+          })
+          .catch(() => setRestarting(false))
+      })
       return
     }
     if (state?.phase === 'available' && state.url) return api.openExternal(state.url)
@@ -119,7 +127,10 @@ export default function VersionBadge(): JSX.Element {
               : `${game.game} is running, so nothing will open, float or flash until it closes.`
           }
         >
-          quiet
+          {/* Naming the reason on the pill itself, not only in a tooltip nobody hovers:
+              "quiet" on its own is a state with no cause, and the cause is the whole
+              question it raises. */}
+          {game.manual ? 'quiet · by hand' : `quiet · ${(game.game ?? '').replace(/\.exe$/i, '') || 'game'}`}
         </span>
       )}
       {(restarting || v.text) && <span className="v-state">{restarting ? 'restarting…' : v.text}</span>}

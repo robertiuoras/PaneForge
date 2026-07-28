@@ -128,6 +128,41 @@ const cfg=(p)=>({gameMode:{enabled:true,processes:[],manual:false,...p}})
   ok(other===1,'and so does the held window')
   ok(g.deferredCount()===0,'queue is empty afterwards')
 
+  // --- a game that is running but NOT on screen ---------------------------
+  // The bug this covers: cs2.exe left open in the background is the normal state of this
+  // machine, and the watchlist alone read that as "do not disturb" for the whole day. So
+  // the update restart the user had already clicked sat queued forever and the sidebar
+  // just said "quiet". Our own window having focus settles it - a fullscreen game does
+  // not hold the display while another app owns the keyboard.
+  g.refreshGameWatch(cfg())
+  cp.__set(['explorer.exe','cs2.exe'])
+  let focused=false
+  g.setFocusProbe(()=>focused)
+  await g.checkNow()
+  ok(g.isGameActive()===true,'game on screen while our window is not focused')
+  let queued=0
+  g.whenClear('update-install',()=>queued++)
+  ok(queued===0,'and the restart is queued')
+  focused=true
+  const listings=cp.__calls()
+  await g.checkNow()
+  ok(g.isGameActive()===false,'the same running game does NOT hold do-not-disturb once our window has focus')
+  ok(queued===1,'and the queued restart is released the moment it does')
+  ok(cp.__calls()===listings,'focused costs no process listing either')
+  // Manual do-not-disturb is a decision, not a guess about the screen: focus must not
+  // override it, or the switch would do nothing while the app is being used.
+  g.refreshGameWatch(cfg({manual:true}))
+  await g.checkNow()
+  ok(g.isGameActive()===true,'manual do-not-disturb still wins while focused')
+  // A probe that throws is not allowed to be the reason interruptions get through.
+  g.refreshGameWatch(cfg())
+  g.setFocusProbe(()=>{throw new Error('window gone')})
+  await g.checkNow()
+  ok(g.isGameActive()===true,'a focus probe that throws falls back to holding')
+  g.setFocusProbe(null)
+  await g.checkNow()
+  ok(g.isGameActive()===true,'and so does no probe at all')
+
   // --- a custom watchlist --------------------------------------------------
   g.refreshGameWatch(cfg({processes:['someindiegame.exe']}))
   cp.__set(['cs2.exe'])

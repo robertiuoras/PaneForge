@@ -75,7 +75,7 @@ const api: Api = {
 
   updateState: () => ipcRenderer.invoke('update:state'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
-  installUpdate: () => ipcRenderer.send('update:install'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
   installUpdateAnyway: () => ipcRenderer.send('game:installAnyway'),
 
   gameStatus: () => ipcRenderer.invoke('game:status'),

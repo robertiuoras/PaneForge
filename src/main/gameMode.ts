@@ -55,6 +55,40 @@ export const DEFAULT_GAMES = [
 /** Nothing is running: the state the app starts in and falls back to on any error. */
 const CLEAR: GameState = { active: false, game: null, manual: false }
 
+/**
+ * Is PaneForge itself the window on screen right now? Injected by main so this module
+ * does not need BrowserWindow (and so the headless test can drive it).
+ *
+ * A game that is RUNNING is not a game that is ON SCREEN. Measured on this machine:
+ * cs2.exe sat in the background with 2h19m of CPU while the user was typing into
+ * PaneForge, and the process watchlist alone read that as "do not disturb" all day. So
+ * everything the feature holds back was held back indefinitely - the update restart that
+ * had already been clicked, the window reveal, the toast - and the sidebar simply said
+ * "quiet" with no way out. That is the one cause behind both "why does it show quiet"
+ * and "installing from the update popup does nothing".
+ *
+ * Our own window having focus settles it with no P/Invoke and no extra poll: an
+ * exclusive-fullscreen game does not hold the display while a different app owns the
+ * keyboard. If the user is typing in here, there is nothing left to protect.
+ */
+let focusProbe: (() => boolean) | null = null
+
+/** Main hands over "is my window the focused one". Safe to clear with null. */
+export function setFocusProbe(fn: (() => boolean) | null): void {
+  focusProbe = fn
+}
+
+/** Never allowed to be the reason DND turns ON - only ever the reason it turns off. */
+function weAreOnScreen(): boolean {
+  if (!focusProbe) return false
+  try {
+    return focusProbe()
+  } catch {
+    // A window on its way out must not decide this.
+    return false
+  }
+}
+
 let state: GameState = CLEAR
 let cfg: GameModeConfig | null = null
 let timer: NodeJS.Timeout | null = null
@@ -193,6 +227,14 @@ export async function checkNow(): Promise<GameState> {
     return state
   }
   if (!cfg?.enabled) {
+    emit(CLEAR)
+    return state
+  }
+  // The person is here. Whatever is running behind this window is not on the screen, so
+  // nothing needs holding back - and anything that was held goes now (see emit()).
+  // Checked before the process listing on purpose: it also saves the tasklist spawn for
+  // the whole time the app is the thing being used.
+  if (weAreOnScreen()) {
     emit(CLEAR)
     return state
   }
