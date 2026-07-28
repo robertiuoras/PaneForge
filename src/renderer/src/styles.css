@@ -227,7 +227,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .num {
   display: inline-block; position: relative; overflow: hidden; min-width: 16px; text-align: center;
   flex: none; line-height: 14px;
-  color: var(--muted); font-size: 10px; margin-right: 6px;
+  color: var(--muted); font-size: 10px;
   border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px;
   font-variant-numeric: tabular-nums;
   background: linear-gradient(180deg, #ffffff14, #ffffff05);
@@ -262,7 +262,14 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    never stops. Now the halo is a fixed shadow on a layer of its own and only its OPACITY
    moves, which the compositor can do without repainting anything. Same light, same
    rhythm; the paint happens once. */
-.num-wrap { position: relative; display: inline-flex; flex: none; }
+/* The gap to the title belongs to the WRAPPER, not to the key. It used to be
+   `margin-right: 6px` on `.num`, and because the wrapper is an inline-flex box the key's
+   margin counted as part of it: the wrapper measured 22px against a 16px key, so the halo
+   below - `inset: 0` on that wrapper - was drawn 6px wider than the pill and hung off its
+   right edge, a green smear beside the digit instead of a lit key. Measured over CDP:
+   wrap.width 22, num.width 16. Anything that must line up with the pill has to hang off
+   the wrapper only while the two boxes are the same box. */
+.num-wrap { position: relative; display: inline-flex; flex: none; margin-right: 6px; }
 .num-wrap::before {
   /* No `z-index: -1` here: that would drop the halo behind the row's own background and
      it would never be seen. An OUTER box-shadow paints outside the border box, so even
