@@ -9,16 +9,19 @@ Windows and Apple Silicon macOS. Free, no accounts, no server.
 
 ## Download
 
-No clone, no build, no account. Both links always point at the newest release.
+No clone, no build, no account. Every build lives on the
+**[Releases page](https://github.com/robertiuoras/PaneForge/releases/latest)** - that
+page always shows the newest one.
 
-### [⬇ Windows 10/11 - PaneForge-Setup.exe](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-Setup.exe)
+### Windows 10/11 - `PaneForge-Setup.exe`
 
-Run it. Installs for the current user in a few seconds, no admin prompt, and puts
-PaneForge on the Desktop and in the Start Menu.
+Take it from the Releases page and run it. Installs for the current user in a few
+seconds, no admin prompt, and puts PaneForge on the Desktop and in the Start Menu.
 
-### [⬇ macOS (Apple Silicon) - PaneForge-arm64.dmg](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-arm64.dmg)
+### macOS (Apple Silicon) - `PaneForge-arm64.dmg`
 
-Drag the app to Applications, then **right-click it > Open > Open** the first time.
+Same page. Drag the app to Applications, then **right-click it > Open > Open** the
+first time.
 
 Prefer one command? These do the same thing, plus the Gatekeeper/Smart App Control
 handling below, and can be re-run to update:
@@ -32,8 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/robertiuoras/PaneForge/master/scrip
 irm https://raw.githubusercontent.com/robertiuoras/PaneForge/master/scripts/install.ps1 | iex
 ```
 
-Every file, including the portable no-installer builds, is on the
-[Releases page](https://github.com/robertiuoras/PaneForge/releases/latest).
+The portable no-installer builds are on that same Releases page.
 
 <details>
 <summary><b>Windows or macOS says the app is untrusted - what to click</b></summary>
@@ -197,10 +199,13 @@ hour. Sharing with someone else is just sending them the Releases link.
 The same workflow uploads a second copy of each installer under a version-less name
 (`PaneForge-Setup.exe`, `PaneForge-arm64.dmg`, `PaneForge-win.zip`,
 `PaneForge-arm64.zip`) and rewrites the release body from
-`.github/release-notes.md`. That is what makes the `releases/latest/download/...`
-links at the top of this file permanent - they never need touching after a release.
-The versioned files and `latest*.yml` are untouched, because the auto-updater reads
-those.
+`.github/release-notes.md`. That fixed name is what `scripts/install.sh` and
+`install.ps1` fetch, so they never need touching after a release. The versioned files
+and `latest*.yml` are untouched, because the auto-updater reads those.
+
+Binary links do not go in this README: GitHub Support flagged the account for exactly
+that on 2026-07-28 (executables belong in a Release, not linked from the README).
+Point people at the Releases page instead.
 
 On Windows the download is quiet and so is the install: accepting the update runs the
 installer silently, with no setup window, and PaneForge comes back on its own with
