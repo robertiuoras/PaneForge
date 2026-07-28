@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
+import { ensureTrusted } from './claudeTrust'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
@@ -166,6 +167,9 @@ export class SessionManager extends EventEmitter {
   start(req: StartSessionRequest): Session {
     if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
     const agent: Agent = req.agent ?? 'claude'
+    // Before the CLI is spawned, not after: it reads .claude.json at startup and would
+    // already be sitting on the trust prompt by the time anything here could help.
+    if (agent === 'claude') ensureTrusted(req.cwd)
     const id = `s${++this.seq}-${Date.now().toString(36)}`
 
     const meta: Session = {
