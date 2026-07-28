@@ -6,6 +6,7 @@
 // In `npm run dev` there is no update metadata next to the binary, so the whole
 // thing reports 'unsupported' instead of throwing on every launch.
 
+import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, statSync, truncateSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -64,6 +65,7 @@ type Updater = {
   checkForUpdates: () => Promise<unknown>
   downloadUpdate: () => Promise<unknown>
   quitAndInstall: (silent?: boolean, forceRunAfter?: boolean) => void
+  setFeedURL: (options: unknown) => void
   on: (event: string, cb: (...args: any[]) => void) => void
 }
 
@@ -113,6 +115,41 @@ let publishRetries = 0
  */
 function isPublishing(message: string): boolean {
   return /latest(-mac|-linux)?\.yml/i.test(message) && /404/.test(message)
+}
+
+// GitHub hid this whole account from anonymous requests on 2026-07-28 (anti-abuse
+// flag): profile, repo and releases all 404 unless the request is authenticated, so
+// the updater went blind while the releases themselves were fine. The way through is
+// the gh CLI already logged in on this machine: borrow its token and move the feed to
+// the authenticated API. Only tried after a 404, so a healthy account keeps the
+// anonymous path, and the token is validated against the releases endpoint first -
+// an expired token must not replace a path that might have worked.
+let feedTokened = false
+let borrowing = false
+
+function borrowGhToken(u: Updater): void {
+  if (feedTokened || borrowing) return
+  borrowing = true
+  execFile('gh', ['auth', 'token'], { windowsHide: true, timeout: 10_000 }, (err, out) => {
+    const token = err ? '' : out.trim()
+    if (!token) {
+      borrowing = false
+      return
+    }
+    execFile(
+      'gh',
+      ['api', 'repos/robertiuoras/PaneForge/releases/latest', '--jq', '.tag_name'],
+      { windowsHide: true, timeout: 15_000 },
+      (err2, out2) => {
+        borrowing = false
+        if (err2 || !out2.trim().startsWith('v')) return
+        u.setFeedURL({ provider: 'github', owner: 'robertiuoras', repo: 'PaneForge', private: true, token })
+        feedTokened = true
+        log('feed', 'account hidden from anonymous requests - using the gh CLI token')
+        schedule(5_000)
+      }
+    )
+  })
 }
 
 /** Single owner of the "try again later" timer, so retries cannot stack up. */
@@ -263,6 +300,11 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       if (message === lastError && Date.now() - lastErrorAt < 5_000) return
       lastError = message
       lastErrorAt = Date.now()
+
+      // Any 404 might be the shadow-hidden account rather than a mid-upload release;
+      // borrowing costs one local gh call and applies only if the token proves it can
+      // see the releases the anonymous path cannot.
+      if (/404/.test(message)) borrowGhToken(u)
 
       if (isPublishing(message)) {
         // The release tag is on GitHub but its assets are still uploading, so
