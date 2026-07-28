@@ -155,6 +155,8 @@ export function startMode(): 'normal' | 'inactive' | 'minimized' {
   const flag = process.argv.includes('--minimized') || process.env.PANEFORGE_START === 'minimized'
   if (flag) return 'minimized'
   if (process.env.PANEFORGE_START === 'normal') return 'normal'
+  // `npm run dev -- --show`: on screen, still without taking the keyboard.
+  if (process.env.PANEFORGE_START === 'inactive') return 'inactive'
   if (isQuietRelaunch()) return 'inactive'
   return current ? 'inactive' : 'normal'
 }
