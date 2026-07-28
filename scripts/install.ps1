@@ -28,7 +28,15 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
   if ($sac -eq 1) {
-    Say 'Smart App Control is enforcing, so the installer would be blocked. Using the portable build instead.'
+    # SAC judges every unsigned BINARY, not just installers: the portable exe is blocked
+    # at launch exactly like the setup exe was (seen live 2026-07-28, the installed
+    # PaneForge.exe itself refused). So do not pretend the zip is a way around it - say
+    # what actually unblocks it, then still place the files so that one toggle is all
+    # that is left to do.
+    Say 'Smart App Control is enforcing. It blocks ANY unsigned app - the installer and PaneForge.exe itself.'
+    Say 'To run PaneForge: Windows Security > App & browser control > Smart App Control settings > Off.'
+    Say '(Windows 11 updates from April 2026 on can switch it back on later; older builds cannot without reinstalling Windows.)'
+    Say 'Placing the portable build now so PaneForge opens as soon as Smart App Control is off.'
     $dest = Join-Path $env:LOCALAPPDATA 'Programs\PaneForge'
     $zip = Join-Path $tmp 'PaneForge-win.zip'
 
@@ -49,8 +57,9 @@ try {
     $s.WorkingDirectory = $dest
     $s.Save()
 
-    Say 'Installed. Opening PaneForge (shortcut is on the Desktop).'
-    Start-Process $exe
+    # Launching now would only put the "blocked an app that may be unsafe" dialog on
+    # screen again. The shortcut is there for the moment SAC is off.
+    Say 'Files are in place (shortcut on the Desktop). Turn Smart App Control off, then open PaneForge.'
   }
   else {
     $exe = Join-Path $tmp 'PaneForge-Setup.exe'

@@ -181,6 +181,19 @@ function Settings({
         onPick={(v) => patch({ stashPeekMs: v })}
       />
       <Choice
+        label="Closes itself after"
+        hint="once the pointer leaves"
+        value={config.stashAutoCloseMs}
+        options={[
+          { value: 0, label: 'never' },
+          { value: 2000, label: '2s' },
+          { value: 5000, label: '5s' },
+          { value: 10_000, label: '10s' },
+          { value: 30_000, label: '30s' }
+        ]}
+        onPick={(v) => patch({ stashAutoCloseMs: v })}
+      />
+      <Choice
         label="Keep"
         hint="entries, oldest drop off"
         value={config.stashMaxItems}
@@ -338,13 +351,41 @@ function Overlay(): JSX.Element {
     }, HOVER_OPEN_MS)
   }
 
+  // Opened and then forgotten: fold back to the pill by itself. The hover path already
+  // closes 350ms after the pointer leaves, but a hotkey open is sticky - it used to sit
+  // over whatever window was underneath until someone closed it by hand, an hour after
+  // the paste it was opened for. So once the pointer is elsewhere (or never arrived),
+  // the list gives itself this long and then puts itself away. The settings panel and a
+  // file drag are deliberate stops, so they hold it open.
+  const idleTimer = useRef<number>()
+  const inside = useRef(false)
+
+  const armIdle = (): void => {
+    window.clearTimeout(idleTimer.current)
+    const ms = config?.stashAutoCloseMs ?? 5000
+    if (!open || !ms || settings || over || inside.current) return
+    idleTimer.current = window.setTimeout(() => {
+      sticky.current = false
+      want(false)
+    }, ms)
+  }
+
+  useEffect(() => {
+    armIdle()
+    return () => window.clearTimeout(idleTimer.current)
+  }, [open, settings, over, config?.stashAutoCloseMs])
+
   const enter = (): void => {
+    inside.current = true
+    window.clearTimeout(idleTimer.current)
     window.clearTimeout(closeTimer.current)
     if (!open) scheduleOpen()
   }
 
   const leave = (): void => {
+    inside.current = false
     cancelOpen()
+    armIdle()
     // The settings panel is a deliberate stop, not a glance: it must not close itself out
     // from under the pointer on the way to a choice near the edge.
     if (sticky.current || settings) return

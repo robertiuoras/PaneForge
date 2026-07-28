@@ -931,6 +931,7 @@ ipcMain.on('shelf:dragEnd', () => endShelfDrag())
 function stashConfig(cfg: Config): StashConfig {
   return {
     stashPeekMs: cfg.stashPeekMs,
+    stashAutoCloseMs: cfg.stashAutoCloseMs,
     stashMaxItems: cfg.stashMaxItems,
     stashMaxImages: cfg.stashMaxImages,
     stashFileHours: cfg.stashFileHours,

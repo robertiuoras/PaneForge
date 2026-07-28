@@ -443,9 +443,16 @@ function readImage(): void {
   // The thumbnail doubles as the fingerprint: two different screenshots of the same
   // window are the same size, and comparing scaled-down pixels is the cheap way to
   // tell them apart without hashing 33MB.
+  //
+  // JPEG, not PNG: the thumb rides in history.json and over IPC to two windows on every
+  // clipboard change, and PNG data URLs of screenshots averaged ~60KB each - over half a
+  // megabyte of a 98-item history was thumbnails. The same 160px thumb as JPEG is ~5KB,
+  // and at 54px tall nobody can see the difference.
   let thumb = ''
   try {
-    thumb = img.resize({ width: Math.min(160, width) }).toDataURL()
+    const small = img.resize({ width: Math.min(160, width) })
+    thumb = `data:image/jpeg;base64,${small.toJPEG(72).toString('base64')}`
+    if (thumb.length < 40) thumb = small.toDataURL()
   } catch {
     return
   }

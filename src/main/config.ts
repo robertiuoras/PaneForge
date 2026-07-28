@@ -145,6 +145,7 @@ function defaults(): Config {
     clipboardShelf: true,
     clipboardOverlay: true,
     stashPeekMs: 5000,
+    stashAutoCloseMs: 5000,
     stashMaxItems: 200,
     stashMaxImages: 24,
     stashFileHours: 24,

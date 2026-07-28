@@ -536,6 +536,13 @@ export interface Config {
    * what you want once you copy all day and stopped needing to be told.
    */
   stashPeekMs: number
+  /**
+   * How long the opened Stash list stays up once the pointer has left it (or never
+   * arrived), in ms. 0 leaves it open until it is closed by hand. Opening it is one
+   * hover; leaving it open forever means it is sitting over someone's window an hour
+   * after the paste it was opened for.
+   */
+  stashAutoCloseMs: number
   /** entries the Stash keeps, across restarts. Text is cheap; this is mostly text. */
   stashMaxItems: number
   /** images are a PNG each on disk, so they fall off a shorter list of their own */
@@ -694,6 +701,7 @@ export interface RecentItem {
 export type StashConfig = Pick<
   Config,
   | 'stashPeekMs'
+  | 'stashAutoCloseMs'
   | 'stashMaxItems'
   | 'stashMaxImages'
   | 'stashFileHours'
@@ -704,6 +712,7 @@ export type StashConfig = Pick<
 /** Exactly the keys the overlay may patch. Anything else on the wire is dropped. */
 export const STASH_CONFIG_KEYS = [
   'stashPeekMs',
+  'stashAutoCloseMs',
   'stashMaxItems',
   'stashMaxImages',
   'stashFileHours',

@@ -45,12 +45,14 @@ about the missing signature, not about the app, and it happens once.
 **Windows**
 
 - *"Windows protected your PC"* (SmartScreen) - click **More info**, then **Run anyway**.
-- *"Your administrator has blocked this app"*, or the installer closes with no message -
-  that is **Smart App Control**, which cannot be talked round per-app. Either turn it off
-  (Windows Security > App & browser control > Smart App Control) or download
-  [PaneForge-win.zip](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-win.zip),
-  which needs no installer: unzip it anywhere and run `PaneForge.exe`. The PowerShell
-  one-liner above detects this and uses the zip for you.
+- *"Smart App Control blocked an app that may be unsafe"*, *"Your administrator has
+  blocked this app"*, or the installer closes with no message - that is **Smart App
+  Control**, and it cannot be talked round per-app: it blocks the unsigned `PaneForge.exe`
+  itself, so the zip build does not dodge it either. The only way to run is to turn it
+  off: Windows Security > App & browser control > **Smart App Control settings** > Off.
+  Since the Windows 11 April 2026 update it can be switched back on later; on older
+  builds turning it off is one-way (it stays off until Windows is reinstalled), so
+  decide once. If you would rather not, wait for a signed build.
 - Edge or Chrome may also call the download *"not commonly downloaded"* - keep it from
   the download list.
 
