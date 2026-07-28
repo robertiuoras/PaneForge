@@ -132,97 +132,103 @@ export function setShelfTall(next: boolean): void {
 // the page reports the pointer in screen coordinates, and the window is moved to match.
 
 export function beginShelfDrag(): void {
-  if (!alive()) return
-  const b = shelf!.getBounds()
-  drag = { px: NaN, py: NaN, x: b.x, bottom: b.y + b.height, moved: false }
-  pendingMove = null
-  lastAt = { x: b.x, y: b.y }
+  if (!alive() || ghost) return
+  drag = { px: NaN, py: NaN, x: 0, bottom: 0, moved: false }
 }
 
 /**
- * Moving this window is expensive, and that is not a thing this code can fix: it is
- * transparent, always-on-top at screen-saver level and blurring what is behind it, so
- * every move is a DWM recomposite of whatever it is floating over. Measured on the
- * machine this was written on: 10.3ms average per `setBounds`, 41ms at worst.
+ * Moving this window with setPosition is expensive, and that is not a thing pacing can
+ * fix: it is transparent, always-on-top at screen-saver level, so every call is a DWM
+ * recomposite and blocks for it. Measured 2026-07-28 on this machine: ~27ms per
+ * setPosition, so a paced drag topped out at 37Hz however the calls were scheduled -
+ * and disabling the blur and shadows changed nothing (47 vs 44 positions painted per
+ * 1.2s sweep), so it is the transparency itself, not the styling.
  *
- * A pointer produces moves far faster than that (a 1000Hz mouse, coalesced by Chromium
- * to one per frame, is still 60-144 a second), so the naive "one message, one move"
- * built a queue that main could never drain: the pill kept crawling towards the cursor
- * for the better part of a second AFTER the mouse had stopped. That is the lag.
- *
- * Two things fix it, and both are about doing less rather than doing it faster:
- *
- *  * only ever the newest position matters - an intermediate one on the way to where the
- *    pointer is now is a frame nobody will see - so a move that arrives while one is
- *    still owed replaces it instead of joining a queue;
- *  * `setPosition` instead of `setBounds`, because the size is not changing and asking
- *    for a resize as well costs about 2ms of the 10 (8.2ms average, 21ms worst).
- *
- * The result cannot back up: at most one pending position exists at any moment, so the
- * window is always at most one frame behind the pointer no matter how fast the mouse is.
+ * So a drag moves the window ONCE: on the first real move it is expanded to cover every
+ * display (`lift`), the content slides inside it with a CSS transform - compositor
+ * work, no window move, every frame - and on release (`drop`) the window shrinks back
+ * to content size at the dragged-to position. The two bounds changes are hidden behind
+ * setOpacity(0), and the renderer says when it has repainted (`shown`) so the reveal
+ * never shows the content mid-jump.
  */
-const DRAG_FRAME_MS = 16
-let pendingMove: { x: number; y: number } | null = null
-let moveTimer: NodeJS.Timeout | null = null
-let lastAt: { x: number; y: number } | null = null
+let ghost: { orig: Electron.Rectangle; watchdog: NodeJS.Timeout } | null = null
 
-function flushMove(): void {
-  moveTimer = null
-  const next = pendingMove
-  pendingMove = null
-  if (!next || !alive()) return
-  // The pointer can travel several pixels inside one frame without the window's rounded
-  // position changing; that call is pure cost.
-  if (lastAt && lastAt.x === next.x && lastAt.y === next.y) return
-  lastAt = next
-  try {
-    shelf!.setPosition(next.x, next.y)
-  } catch {
-    /* dragged across a display that vanished - endShelfDrag puts it back in bounds */
+/** The one rectangle that covers every display there is. */
+function desktopBounds(): Electron.Rectangle {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const d of screen.getAllDisplays()) {
+    minX = Math.min(minX, d.bounds.x)
+    minY = Math.min(minY, d.bounds.y)
+    maxX = Math.max(maxX, d.bounds.x + d.bounds.width)
+    maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
   }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, width: 1920, height: 1080 }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-export function moveShelfDrag(px: number, py: number): void {
-  if (!alive() || !drag) return
-  // The first move is what fixes the grab point; before it there is no delta to apply.
-  if (Number.isNaN(drag.px)) {
-    drag.px = px
-    drag.py = py
-    return
-  }
-  const size = currentSize()
+export function liftShelfDrag(): { dx: number; dy: number; w: number; h: number } | null {
+  if (!alive() || !drag || ghost) return null
+  const orig = shelf!.getBounds()
+  const big = desktopBounds()
   drag.moved = true
-  pendingMove = {
-    x: Math.round(drag.x + (px - drag.px)),
-    y: Math.round(drag.bottom + (py - drag.py) - size.height)
+  ghost = {
+    orig,
+    // A drop that never arrives (the renderer died mid-drag, the pointer was lost)
+    // would leave an invisible-content window covering every display and eating every
+    // click. Nothing else can undo that state, so time it out.
+    watchdog: setTimeout(() => dropShelfDrag(0, 0), 60_000)
   }
-  // The first move of a gesture goes now, so the window does not start a frame late.
-  if (moveTimer) return
-  flushMove()
-  moveTimer = setTimeout(flushMove, DRAG_FRAME_MS)
+  try {
+    shelf!.setOpacity(0)
+    shelf!.setBounds(big)
+  } catch {
+    /* a display vanished mid-call; the watchdog or the drop still restores */
+  }
+  return { dx: orig.x - big.x, dy: orig.y - big.y, w: orig.width, h: orig.height }
 }
 
-/** Remember where it was let go, so it is still there after a restart. */
-export function endShelfDrag(): void {
-  if (!drag) return
-  const moved = drag.moved
+/** The renderer has painted the lifted (or dropped) frame; safe to show again. */
+export function shownShelfDrag(): void {
+  if (alive() && shelf!.getOpacity() < 1) shelf!.setOpacity(1)
+}
+
+/** Shrink back to content size where it was let go, and remember the spot. */
+export function dropShelfDrag(dx: number, dy: number): void {
   drag = null
-  // Let go mid-frame: the last position the pointer reached is still owed, and it is the
-  // one that gets written to the config below.
-  if (moveTimer) clearTimeout(moveTimer)
-  moveTimer = null
-  flushMove()
-  // A press that never turned into a drag is a click on the header, not a move: writing
-  // the config on every one of those would rewrite the file all afternoon.
-  if (!moved || !alive()) return
-  const b = shelf!.getBounds()
+  if (!ghost) return
+  const { orig, watchdog } = ghost
+  clearTimeout(watchdog)
+  ghost = null
+  if (!alive()) return
   try {
+    shelf!.setOpacity(0)
+    shelf!.setBounds({
+      x: Math.round(orig.x + dx),
+      y: Math.round(orig.y + dy),
+      width: orig.width,
+      height: orig.height
+    })
+    const b = shelf!.getBounds()
     setConfig({ stashPos: { x: b.x, y: b.y + b.height } })
   } catch {
     /* a position that could not be written is only a position */
   }
   // Put it back inside the work area if it was let go half off the edge.
   place()
+  // The renderer reveals the window the frame after it clears its transform; if it
+  // cannot (torn down mid-drag), reveal anyway rather than staying invisible forever.
+  setTimeout(() => shownShelfDrag(), 250)
+}
+
+/** A press that never turned into a drag: a click on the header, nothing to move. */
+export function endShelfDrag(): void {
+  drag = null
+  // The click path never lifted, but belt-and-braces: a stray end after a lift must
+  // not strand the expanded window.
+  if (ghost) dropShelfDrag(0, 0)
 }
 
 export function shelfWindowOpen(): boolean {
@@ -406,6 +412,8 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
     expanded = false
     tall = false
     drag = null
+    if (ghost) clearTimeout(ghost.watchdog)
+    ghost = null
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {

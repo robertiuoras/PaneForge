@@ -14,6 +14,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart } from './history'
+import { isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
 import type {
@@ -58,6 +59,12 @@ const REPAINT_GRACE_MS = 1200
 const BUFFER_LIMIT = 400_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
 const RESET = '\x1bc'
+/**
+ * A slash command that is still running after this long is real work, not
+ * housekeeping - /compact and a user-invoked skill both earn the bell, /clear's
+ * hook flash (a second or two) and /help never get near it.
+ */
+const SLASH_TURN_MS = 30_000
 
 interface Live {
   meta: Session
@@ -113,6 +120,17 @@ interface Live {
   sawFooter: boolean
   /** The frame the pane was looking at when it last said the turn was over. Diagnostics. */
   lastTail: string
+  /**
+   * What the user has typed since they last submitted, rebuilt from the keystrokes
+   * this process relays anyway. It exists to answer one question at Enter: does the
+   * line start with "/"? A slash command is housekeeping typed AT the CLI, not a
+   * question asked OF the agent - /clear redraws the screen, flashes a spinner while
+   * its hooks run, and settles, which walked through every gate below and rang the
+   * bell over a pane the user had cleared two seconds earlier and was still sitting at.
+   */
+  typed: string
+  /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
+  slashAt: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -203,7 +221,9 @@ export class SessionManager extends EventEmitter {
       turnPending: false,
       footerEndedAt: 0,
       sawFooter: false,
-      lastTail: ''
+      lastTail: '',
+      typed: '',
+      slashAt: 0
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -389,6 +409,9 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return
     live.proc.write(data)
+    // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
+    // "typing" to the gate below, but it still has to erase from this record.
+    live.typed = typeLine(live.typed, data)
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
@@ -402,7 +425,16 @@ export class SessionManager extends EventEmitter {
     // moment later, but a turn that is still drawing its first frame is already
     // running, and starting here is what makes the readout mean "since I asked".
     const submitted = data.includes('\r') || data.includes('\n')
-    if (submitted) this.beginRun(live)
+    if (submitted) {
+      const slash = isSlashCommand(live.typed)
+      live.typed = ''
+      this.beginRun(live)
+      // A slash command still gets the run clock (the readout should say how long
+      // /compact took) but not the bell: turnPending stays down unless the run turns
+      // out to be real work - see SLASH_TURN_MS where the footer ends.
+      live.slashAt = slash ? Date.now() : 0
+      if (slash) live.turnPending = false
+    }
     // Typing into a pane is both "I have asked it something" (so its next quiet
     // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
     if (!live.meta.engaged || live.meta.attention) {
@@ -506,6 +538,13 @@ export class SessionManager extends EventEmitter {
     if (busy) {
       const wasRunning = Boolean(s.meta.runSince)
       this.beginRun(s)
+      // Inside a slash command's window the footer confirming "busy" is the /clear
+      // hook flash, and beginRun just re-armed the bell for it; hold it down until
+      // the run has lasted long enough to be real work.
+      if (s.slashAt) {
+        if (now - s.slashAt >= SLASH_TURN_MS) s.slashAt = 0
+        else s.turnPending = false
+      }
       // A silent tool call produces no output for minutes, and the idle sweep used to
       // grey the dot out in the middle of it - the pane read as finished while the
       // agent was demonstrably still working. On-screen busy outranks the quiet clock.
@@ -517,6 +556,12 @@ export class SessionManager extends EventEmitter {
     // Remember when the footer went quiet, so the nudge can come sooner than the
     // blind backstop for the agents whose UI we can actually read.
     if (!s.footerEndedAt) s.footerEndedAt = now
+    // The slash command's run is over. If it ran long enough to be real work after
+    // all, raise the hand it was denied at submit; either way the window closes here.
+    if (s.slashAt) {
+      if (now - s.slashAt >= SLASH_TURN_MS) s.turnPending = true
+      s.slashAt = 0
+    }
     let changed = this.endRun(s)
     // The footer going away is the turn ending, so the dot says so now instead of a
     // minute later. The quiet clock used to own this transition, which left a pane that
