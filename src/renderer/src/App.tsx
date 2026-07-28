@@ -29,6 +29,7 @@ import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
+import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import LaneStrip, {
@@ -200,6 +201,9 @@ export default function App(): JSX.Element {
     const sync = (): void => {
       const away = !document.hasFocus() || document.visibilityState !== 'visible'
       document.documentElement.classList.toggle('app-blurred', away)
+      // Re-timed on the way back in, not only at startup: the window may have been
+      // dragged to the other monitor, which is a different panel and a different budget.
+      if (!away) measureRefreshRate()
     }
     sync()
     window.addEventListener('focus', sync)

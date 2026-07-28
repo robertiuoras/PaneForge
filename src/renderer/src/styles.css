@@ -315,7 +315,15 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    dim and looking finished - it holds every glow at full and stops animating entirely.
    That is the whole decorative frame budget given back for as long as Robert is in
    another app, which is most of the time a pane is running. */
-html.app-blurred .num-wrap::before { animation: none; opacity: 1; }
+/* The `:has()` is repeated here, and it is not decoration: `.num-wrap:has(> .num.live)`
+   scores higher than `html.app-blurred .num-wrap`, so the plain version of this rule LOST
+   and the halo went on breathing behind an unfocused window for as long as an agent ran.
+   Measured after the fact on a test copy: ten running keys held the GPU process at ~34%
+   of a core (peaks 63%) whether the window was focused or not, which is most of what "the
+   app is so laggy" was. Verified with `getComputedStyle(el, '::before').animationName`
+   reading `glowBreath` with `app-blurred` set. */
+html.app-blurred .num-wrap:has(> .num.live)::before,
+html.app-blurred .num-wrap:has(> .num.attn)::before { animation: none; opacity: 1; }
 /* The sheen and the working dot stop too. Stopping them is safe in a way that pausing
    them would not be: both rest in their "on" state - the band sits off the left edge
    where the key's own `overflow: hidden` swallows it, and the dot returns to full
@@ -323,6 +331,34 @@ html.app-blurred .num-wrap::before { animation: none; opacity: 1; }
    telling you about. */
 html.app-blurred .num.live::after { animation: none; }
 html.app-blurred .dot.working { animation: none; }
+/* Nothing at all loops behind an unfocused window. The five rules above are the ones
+   that also need a resting VALUE (a glow held at full, a band parked off the edge); this
+   catches everything else that loops - the badges, the connecting dot, the stuck lane -
+   so a new decoration is free by default instead of costing frames nobody is watching.
+   Transitions are untouched, so the window still responds normally the moment it is
+   clicked. `!important` because the rules it catches are ordinary ones written anywhere
+   in this file, several of which out-score a blanket selector - the same specificity trap
+   that had quietly disabled the glow rule above. */
+html.app-blurred *, html.app-blurred *::before, html.app-blurred *::after {
+  animation-play-state: paused !important;
+}
+
+/* --- high refresh displays -------------------------------------------------
+   Measured, not guessed. This machine's panel runs at 480Hz and the window is given 455
+   frames a second, so every looping decoration costs eight times what it was written to
+   cost. With ten running keys on screen the breathing halo alone measured 34% of a core
+   in the GPU process (peaks at 63%) plus 12% in the renderer; held lit instead, the same
+   ten keys measured 0.3%. Nothing cheaper worked - dropping `will-change` measured worse
+   at 39%, and a stepped timing function no better at 29% - because the cost is the layer
+   being re-composited 455 times a second, not the smoothness of the curve.
+
+   So above ~130fps the two loops that carry a cost are held at their lit end instead of
+   breathing. The key still says "this agent is running" in exactly the colour it did;
+   what goes is the movement, which is the part that was being redrawn 455 times a second
+   for a 2.4 second cycle. On a 60Hz or 120Hz machine nothing changes at all. */
+html.hi-refresh .num-wrap:has(> .num.live)::before,
+html.hi-refresh .num-wrap:has(> .num.attn)::before { animation: none; opacity: 1; }
+html.hi-refresh .num.live::after { animation: none; }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 2px 5px; outline: none;
