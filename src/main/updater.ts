@@ -228,7 +228,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       if (probing) return
       set({ phase: 'checking', error: undefined })
     })
-    u.on('update-available', (info: { version: string; releaseNotes?: string }) => {
+    u.on('update-available', (info: { version: string }) => {
       if (probing) return
       publishRetries = 0
       lastError = ''
@@ -236,7 +236,6 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
         phase: process.platform === 'darwin' ? 'available' : 'downloading',
         version: info?.version,
         percent: 0,
-        notes: notes(info?.releaseNotes),
         url: `${RELEASES_URL}/tag/v${info?.version ?? ''}`
       })
     })
@@ -249,8 +248,8 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     u.on('download-progress', (p: { percent: number }) =>
       set({ phase: 'downloading', percent: Math.round(p?.percent ?? 0) })
     )
-    u.on('update-downloaded', (info: { version: string; releaseNotes?: string }) =>
-      set({ phase: 'ready', version: info?.version, percent: 100, notes: notes(info?.releaseNotes) })
+    u.on('update-downloaded', (info: { version: string }) =>
+      set({ phase: 'ready', version: info?.version, percent: 100 })
     )
     u.on('error', (e: Error) => {
       const message = e?.message ?? String(e)
@@ -392,17 +391,4 @@ export function installUpdate(): boolean {
   // so it survives - and wants - this process going away the moment we return.
   u.quitAndInstall(true, true)
   return true
-}
-
-function notes(raw: unknown): string | undefined {
-  if (typeof raw === 'string') return raw.replace(/<[^>]+>/g, '').trim().slice(0, 600)
-  if (Array.isArray(raw)) {
-    return raw
-      .map((n: { note?: string }) => n?.note ?? '')
-      .join('\n')
-      .replace(/<[^>]+>/g, '')
-      .trim()
-      .slice(0, 600)
-  }
-  return undefined
 }

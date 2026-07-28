@@ -263,7 +263,6 @@ export interface UpdateState {
   version?: string
   /** 0-100 while downloading */
   percent?: number
-  notes?: string
   error?: string
   /** release page to open by hand, used where in-place update is not possible */
   url?: string
