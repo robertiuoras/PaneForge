@@ -35,6 +35,7 @@ import {
   gameState,
   isGameActive,
   onGameState,
+  setFocusProbe,
   refreshGameWatch,
   startGameWatch,
   whenClear
@@ -106,6 +107,7 @@ import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   GameModeStatus,
+  InstallOutcome,
   RemoteState,
   RestoreAnswer,
   RestoreOffer,
@@ -272,7 +274,12 @@ function createWindow(): void {
   win.on('focus', () => {
     win?.flashFrame(false)
     refreshRecents()
+    // Focus is the fastest answer there is to "is a game holding the display" - it is
+    // not - so do not make a held update or a held window wait up to 15s for the poller
+    // to work that out. Blur is checked too, for the other direction.
+    void checkGameNow().catch(() => undefined)
   })
+  win.on('blur', () => void checkGameNow().catch(() => undefined))
   // The clipboard overlay lives in the corner of the display this window is on, so it
   // moves with it - to the second monitor, or back.
   win.on('move', placeShelf)
@@ -1197,12 +1204,18 @@ let installStarted = false
  * updates itself that often. The download is already on disk by this point, so waiting
  * for the game to end costs nothing at all except the restart being later.
  */
-ipcMain.on('update:install', async () => {
-  if (installStarted) return
+ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
+  if (installStarted) return { status: 'installing' }
+  if (getUpdateState().phase !== 'ready') return { status: 'nothing-to-install' }
   // Asked fresh rather than read off the poller: a game started ten seconds ago is
   // exactly the case where this must not go ahead.
   await checkGameNow()
-  if (!whenClear('update-install', doInstall)) send('game:changed', gameStatus())
+  if (whenClear('update-install', doInstall)) return { status: 'installing' }
+  // Queued, not done. Say which, and what is holding it: the card is about to swap its
+  // button for "Restart anyway", and a card that cannot name the reason reads as broken.
+  const s = gameState()
+  send('game:changed', gameStatus())
+  return { status: 'held', game: s.game, manual: s.manual }
 })
 
 function doInstall(): void {
@@ -1511,6 +1524,10 @@ app.whenReady().then(() => {
     setShelfHidden(s.active)
     send('game:changed', gameStatus())
   })
+  // "A game is running" is not "a game is on screen": with our own window focused the
+  // display is demonstrably ours, so do-not-disturb steps aside. Without this a game
+  // left open in the background held every deferred restart forever.
+  setFocusProbe(() => !!win && !win.isDestroyed() && win.isVisible() && win.isFocused())
   startGameWatch(cfg)
   createWindow()
   applyVoiceHotkey(cfg)
