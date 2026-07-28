@@ -81,10 +81,10 @@ writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.export
 mkdirSync(join(repo, 'backend', 'node_modules', 'dep'), { recursive: true })
 writeFileSync(join(repo, 'backend', 'node_modules', 'dep', 'index.js'), '2\n')
 
-ok('a folder nobody else holds is left alone', resolveLane(repo, []).cwd === repo)
+ok('a folder nobody else holds is left alone', (await resolveLane(repo, [])).cwd === repo)
 
 const w2 = join(root, 'demo-w2')
-const lane = resolveLane(repo, [repo])
+const lane = (await resolveLane(repo, [repo]))
 ok('a second session in the same folder gets lane w2', lane.cwd === w2 && lane.lane === 'w2')
 ok('the lane is a checkout of the repo', existsSync(join(w2, 'app.js')))
 ok('.env is seeded', readFileSync(join(w2, '.env'), 'utf8') === 'SECRET=1\n')
@@ -108,16 +108,16 @@ ok('subfolder dependencies arrive too', existsSync(join(w2, 'backend', 'node_mod
 ok('no half-built temp folder is left behind', !existsSync(join(w2, 'node_modules.pf-tmp')))
 
 const w3 = join(root, 'demo-w3')
-const third = resolveLane(repo, [repo, w2])
+const third = (await resolveLane(repo, [repo, w2]))
 ok('a third session gets its own lane', third.lane === 'w3' && third.cwd === w3)
 await waitFor(join(w3, 'node_modules'))
 
-ok('a lane nobody is in is reused rather than piling up folders', resolveLane(repo, [repo]).cwd === w2)
-ok('a lane asked for another lane still branches off the main repo', resolveLane(w2, [w2]).cwd.startsWith(join(root, 'demo-w')))
+ok('a lane nobody is in is reused rather than piling up folders', (await resolveLane(repo, [repo])).cwd === w2)
+ok('a lane asked for another lane still branches off the main repo', (await resolveLane(w2, [w2])).cwd.startsWith(join(root, 'demo-w')))
 
 const plain = join(root, 'plain')
 mkdirSync(plain, { recursive: true })
-const shared = resolveLane(plain, [plain])
+const shared = (await resolveLane(plain, [plain]))
 ok('a folder that is not a repo is shared with a warning', shared.cwd === plain && Boolean(shared.note))
 
 // The junction failure, in the two shapes that hit it.

@@ -100,7 +100,7 @@ process.env.HOME = home
 delete process.env.CLAUDE_CONFIG_DIR
 
 // ---- the thing under test: a second session in a folder already in use ----
-const lane = lanes.resolveLane(repo, [repo])
+const lane = (await lanes.resolveLane(repo, [repo]))
 
 check('lane moved to its own folder', lane.cwd === `${repo}-w2`, lane.cwd)
 check('lane is on its own branch', lane.branch === 'pf/w2', String(lane.branch))
@@ -137,16 +137,16 @@ check('forward-slash form seeded too', Boolean(seeded[resolve(lane.cwd).replace(
 check('original entry untouched', seeded[resolve(repo)]?.lastCost === 1.23)
 
 // A third session gets a third folder and a third port, not the same one twice.
-const third = lanes.resolveLane(repo, [repo, lane.cwd])
+const third = (await lanes.resolveLane(repo, [repo, lane.cwd]))
 check('third session gets its own lane', third.cwd === `${repo}-w3`, third.cwd)
 check('third session gets its own port', third.port === 5102, String(third.port))
 
 // Restored panes: the lane is already the cwd, and it must still get its port.
-const again = lanes.laneExtras(lane.cwd, 'w2')
+const again = (await lanes.laneExtras(lane.cwd, 'w2'))
 check('restored lane keeps the same port', again.port === 5101, String(again.port))
 
 // A folder nobody else is in is left exactly as it was.
-const untouched = lanes.resolveLane(repo, [])
+const untouched = (await lanes.resolveLane(repo, []))
 check('unclashed launch is not moved', untouched.cwd === repo && !untouched.lane)
 check('unclashed launch gets no port', untouched.port === undefined)
 

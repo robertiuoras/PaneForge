@@ -27,7 +27,12 @@ export interface HostBackend {
   restart(id: string): Session | null
   rename(id: string, title: string): void
   switchAgent(id: string, agent: string, model?: string): Session | null
-  startSession(req: StartSessionRequest): Session
+  /**
+   * Promise, because a guest's launch goes through the same lane split a local one does
+   * and that asks git where the repo is - off the main thread, so the host window keeps
+   * drawing while a remote pane is being placed.
+   */
+  startSession(req: StartSessionRequest): Session | Promise<Session>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /** subscribe to pty output; returns an unsubscribe */
@@ -216,8 +221,9 @@ export class RemoteHost extends EventEmitter {
           return
         case 'start': {
           const req = m.req as StartSessionRequest
-          const started = this.backend.startSession(req)
-          conn.send({ t: 'started', rid: m.rid, session: started })
+          void Promise.resolve(this.backend.startSession(req)).then((started) =>
+            conn.send({ t: 'started', rid: m.rid, session: started })
+          )
           return
         }
         case 'projects':

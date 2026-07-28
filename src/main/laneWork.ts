@@ -21,7 +21,6 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
-import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
@@ -31,24 +30,63 @@ const LANE_DIR = /-w(\d)$/
 
 export type { LaneMergeResult, LaneWork }
 
-function git(cwd: string, args: string[], timeout = 20000): { ok: boolean; out: string } {
-  try {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout })
-    return { ok: r.status === 0, out: ((r.stdout ?? '') + (r.stderr ?? '')).trim() }
-  } catch {
-    return { ok: false, out: '' }
-  }
+interface GitRun {
+  /** git's exit code; -1 when it could not be run at all. */
+  status: number
+  ok: boolean
+  out: string
 }
 
-/** stdout only, for the commands whose stderr is progress noise. */
-function gitOut(cwd: string, args: string[], timeout = 20000): { ok: boolean; out: string } {
-  try {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout })
-    return { ok: r.status === 0, out: (r.stdout ?? '').trim() }
-  } catch {
-    return { ok: false, out: '' }
-  }
+/**
+ * Run git WITHOUT stopping the window.
+ *
+ * These were `spawnSync`. Every one of them froze the Electron main process - the thread
+ * that pumps the window's messages - until git exited, and laneWork() below runs seven of
+ * them per lane, for every lane of every open project, on a five-minute timer.
+ *
+ * Measured against the shipped v0.3.40, from outside the app, with
+ * SendMessageTimeout(WM_NULL) - which returns only when the main thread pumps, and is the
+ * same question Windows asks before it writes "Not Responding" on a title bar:
+ *
+ *   p50 0.2ms, p90 1.3ms, p99 10.5ms  ... and then an 8,053ms freeze.
+ *   Two of them, at 17:42:47 and 17:47:47 - exactly 300s apart, the sweep interval.
+ *   The main process burned 0.3s of CPU across a 3.2s stall: it was not computing,
+ *   it was sitting in spawnSync waiting on a child process.
+ *
+ * The timeouts made the worst case far worse than the average: one slow `git` (an
+ * antivirus scan, a held index.lock, an orphaned rev-parse - there was a real one alive
+ * for 25 minutes on this machine) blocked the window for the full 15-30s.
+ *
+ * execFile is the same command with a callback instead of a stall.
+ */
+function run(cwd: string, args: string[], timeout: number, stdoutOnly: boolean): Promise<GitRun> {
+  return new Promise((done) => {
+    execFile(
+      'git',
+      args,
+      { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const text = stdoutOnly ? (stdout ?? '') : (stdout ?? '') + (stderr ?? '')
+        // execFile reports a non-zero exit as an Error carrying the code; a git that
+        // could not be started at all has no numeric code, and -1 keeps that distinct
+        // from "git ran and said 1", which merge-tree gives real meaning to.
+        const code = (err as (Error & { code?: number | string }) | null)?.code
+        done({
+          status: err ? (typeof code === 'number' ? code : -1) : 0,
+          ok: !err,
+          out: text.trim()
+        })
+      }
+    )
+  })
 }
+
+const git = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
+  run(cwd, args, timeout, false)
+
+/** stdout only, for the commands whose stderr is progress noise. */
+const gitOut = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
+  run(cwd, args, timeout, true)
 
 /** Windows paths differ in case and slash direction for the same folder. */
 export function samePath(a: string, b: string): boolean {
@@ -57,8 +95,8 @@ export function samePath(a: string, b: string): boolean {
 }
 
 /** The main checkout of whatever repo this folder belongs to, worktree or not. */
-function mainRepo(cwd: string): string | null {
-  const common = gitOut(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+async function mainRepo(cwd: string): Promise<string | null> {
+  const common = await gitOut(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   if (!common.ok || !common.out) return null
   const dir = common.out.split(/\r?\n/)[0]
   if (!/[\\/]\.git$/.test(dir)) return null
@@ -66,13 +104,13 @@ function mainRepo(cwd: string): string | null {
   return existsSync(root) ? root : null
 }
 
-function head(cwd: string): string {
-  const r = gitOut(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+async function head(cwd: string): Promise<string> {
+  const r = await gitOut(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
   return r.ok ? r.out : ''
 }
 
-function dirtyCount(cwd: string): number {
-  const r = gitOut(cwd, ['status', '--porcelain'])
+async function dirtyCount(cwd: string): Promise<number> {
+  const r = await gitOut(cwd, ['status', '--porcelain'])
   if (!r.ok || !r.out) return 0
   return r.out.split(/\r?\n/).filter(Boolean).length
 }
@@ -85,17 +123,12 @@ function dirtyCount(cwd: string): number {
  * timer while an agent is typing in both folders. Git 2.38+; on anything older this
  * returns an empty list and the real merge stays the thing that finds out.
  */
-function conflictFiles(repo: string, base: string, branch: string): string[] {
-  const r = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', base, branch], {
-    cwd: repo,
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 30000
-  })
+async function conflictFiles(repo: string, base: string, branch: string): Promise<string[]> {
+  const r = await run(repo, ['merge-tree', '--write-tree', '--name-only', base, branch], 30000, true)
   // 0 = merges clean. 1 = conflicts, listed. Anything else (128) is an old git or a bad
   // ref, and claiming "no conflicts" there is the honest answer: we do not know.
   if (r.status !== 1) return []
-  const lines = (r.stdout ?? '').split(/\r?\n/)
+  const lines = r.out.split(/\r?\n/)
   const out: string[] = []
   // First line is the resulting tree oid; the file list runs to the first blank line,
   // after which git prints its human-readable conflict messages.
@@ -119,23 +152,27 @@ function laneLabel(dir: string, repo: string): string | null {
 /**
  * What is in a lane, or null when the folder is not a lane of its repo.
  *
- * Reads only: four git commands against the object store and the index, no working tree
+ * Reads only: seven git commands against the object store and the index, no working tree
  * is written. Safe to call while both the lane and the main checkout are in use.
+ *
+ * Seven, not four - and all of them used to be synchronous, which is what made the sweep
+ * that calls this freeze the window for eight seconds every five minutes. They are async
+ * now; see run() above for the measurement.
  */
-export function laneWork(dir: string): LaneWork | null {
+export async function laneWork(dir: string): Promise<LaneWork | null> {
   if (!existsSync(dir)) return null
-  const repo = mainRepo(dir)
+  const repo = await mainRepo(dir)
   if (!repo || samePath(repo, dir)) return null
   const lane = laneLabel(dir, repo)
   if (!lane) return null
 
-  const branch = head(dir)
-  const base = head(repo)
+  // The two checkouts are different folders, so these never queue behind each other.
+  const [branch, base] = await Promise.all([head(dir), head(repo)])
   if (!branch || !base || branch === 'HEAD' || base === 'HEAD') return null
 
-  const counted = gitOut(dir, ['rev-list', '--count', `${base}..HEAD`])
+  const counted = await gitOut(dir, ['rev-list', '--count', `${base}..HEAD`])
   const ahead = counted.ok ? Number(counted.out) || 0 : 0
-  const dirty = dirtyCount(dir)
+  const [dirty, baseDirty] = await Promise.all([dirtyCount(dir), dirtyCount(repo)])
   return {
     lane,
     dir: resolve(dir),
@@ -145,8 +182,8 @@ export function laneWork(dir: string): LaneWork | null {
     ahead,
     dirty,
     // Only worth computing when there is something to merge.
-    conflicts: ahead > 0 ? conflictFiles(repo, base, branch) : [],
-    baseDirty: dirtyCount(repo) > 0,
+    conflicts: ahead > 0 ? await conflictFiles(repo, base, branch) : [],
+    baseDirty: baseDirty > 0,
     empty: ahead === 0 && dirty === 0
   }
 }
@@ -163,8 +200,11 @@ export function laneWork(dir: string): LaneWork | null {
  * `--no-ff` on purpose: the merge commit is the record that lane w2 existed, which is
  * the only trace left once the folder is swept.
  */
-export function mergeLaneBack(dir: string, opts: { busy?: string[] } = {}): LaneMergeResult {
-  const work = laneWork(dir)
+export async function mergeLaneBack(
+  dir: string,
+  opts: { busy?: string[] } = {}
+): Promise<LaneMergeResult> {
+  const work = await laneWork(dir)
   if (!work) return { ok: false, reason: 'not-a-lane' }
   if (work.dirty > 0) {
     return {
@@ -183,7 +223,7 @@ export function mergeLaneBack(dir: string, opts: { busy?: string[] } = {}): Lane
   }
   if (work.conflicts.length) return { ok: false, reason: 'conflict', conflicts: work.conflicts }
 
-  const merged = git(work.repo, [
+  const merged = await git(work.repo, [
     'merge',
     '--no-ff',
     '--no-edit',
@@ -194,10 +234,10 @@ export function mergeLaneBack(dir: string, opts: { busy?: string[] } = {}): Lane
   if (!merged.ok) {
     // Only merge-tree said it was clean, so this is a case it cannot see (a hook, a
     // locked file). Leave the checkout exactly as it was found.
-    const conflicts = gitOut(work.repo, ['diff', '--name-only', '--diff-filter=U'])
-      .out.split(/\r?\n/)
+    const conflicts = (await gitOut(work.repo, ['diff', '--name-only', '--diff-filter=U'])).out
+      .split(/\r?\n/)
       .filter(Boolean)
-    git(work.repo, ['merge', '--abort'])
+    await git(work.repo, ['merge', '--abort'])
     return conflicts.length
       ? { ok: false, reason: 'conflict', conflicts }
       : { ok: false, reason: 'failed', detail: merged.out.split(/\r?\n/)[0] }
@@ -205,7 +245,7 @@ export function mergeLaneBack(dir: string, opts: { busy?: string[] } = {}): Lane
 
   // Merged and empty: the folder is now pure cost. It only goes if no session is in it.
   const held = (opts.busy ?? []).some((b) => samePath(b, work.dir))
-  const removed = held ? false : removeLaneSync(work.repo, work.dir, work.branch)
+  const removed = held ? false : await removeLane(work.repo, work.dir, work.branch)
   return { ok: true, commits: work.ahead, base: work.base, branch: work.branch, removed }
 }
 
@@ -214,12 +254,12 @@ export function mergeLaneBack(dir: string, opts: { busy?: string[] } = {}): Lane
  * which is the safety net: this is only ever called on a lane that has just been proven
  * empty, and if that changed in between, git says no and nothing is lost.
  */
-function removeLaneSync(repo: string, dir: string, branch: string): boolean {
-  git(repo, ['worktree', 'remove', dir], 120_000)
-  if (!finished(repo, dir)) return false
+async function removeLane(repo: string, dir: string, branch: string): Promise<boolean> {
+  await git(repo, ['worktree', 'remove', dir], 120_000)
+  if (!(await finished(repo, dir))) return false
   // -d, never -D: a branch with unmerged commits keeps existing, folder or no folder.
-  git(repo, ['branch', '-d', branch])
-  git(repo, ['worktree', 'prune'])
+  await git(repo, ['branch', '-d', branch])
+  await git(repo, ['worktree', 'prune'])
   return true
 }
 
@@ -236,8 +276,8 @@ function removeLaneSync(repo: string, dir: string, branch: string): boolean {
  * So the question asked is the one that matters - is this still a worktree of the repo -
  * and the empty shell of a folder is swept up separately.
  */
-function finished(repo: string, dir: string): boolean {
-  if (laneFolders(repo).some((p) => samePath(p, dir))) return false
+async function finished(repo: string, dir: string): Promise<boolean> {
+  if ((await laneFolders(repo)).some((p) => samePath(p, dir))) return false
   try {
     // Only ever an empty directory by this point: git deleted the contents itself.
     rmSync(dir, { recursive: true, force: true })
@@ -253,13 +293,13 @@ const exec = (cwd: string, args: string[], timeout: number): Promise<boolean> =>
   })
 
 /** The main checkout a folder belongs to (itself, when it is not a worktree). */
-export function repoOf(cwd: string): string | null {
+export function repoOf(cwd: string): Promise<string | null> {
   return mainRepo(cwd)
 }
 
 /** Lane folders of this repo, whether or not anything is in them. */
-export function laneFolders(repo: string): string[] {
-  const list = gitOut(repo, ['worktree', 'list', '--porcelain'])
+export async function laneFolders(repo: string): Promise<string[]> {
+  const list = await gitOut(repo, ['worktree', 'list', '--porcelain'])
   if (!list.ok) return []
   return list.out
     .split(/\r?\n/)
@@ -290,8 +330,8 @@ function inside(child: string, parent: string): boolean {
  * SEVERAL commits is not patch-equivalent to the one commit that replaced it and keeps
  * its folder - the point here is to be sure, not to be thorough.
  */
-function absorbed(repo: string, work: LaneWork): 'patch' | null {
-  const cherry = gitOut(repo, ['cherry', work.base, work.branch])
+async function absorbed(repo: string, work: LaneWork): Promise<'patch' | null> {
+  const cherry = await gitOut(repo, ['cherry', work.base, work.branch])
   if (!cherry.ok) return null
   const unique = cherry.out
     .split(/\r?\n/)
@@ -313,22 +353,22 @@ function absorbed(repo: string, work: LaneWork): 'patch' | null {
  */
 export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
   const removed: string[] = []
-  for (const dir of laneFolders(repo)) {
+  for (const dir of await laneFolders(repo)) {
     // A pane that cd'd into a subfolder of the lane reports that subfolder, and it is
     // just as much "somebody is in there" as the lane root is.
     if (busy.some((b) => inside(b, dir))) continue
-    const work = laneWork(dir)
+    const work = await laneWork(dir)
     if (!work || work.dirty > 0) continue
     // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-w2`
     // and be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel
     // should describe one either way - but nothing is REMOVED unless lanes.ts made it,
     // which is what the `pf/` branch says.
     if (work.branch !== `pf/${work.lane}`) continue
-    const how = work.empty ? 'history' : absorbed(repo, work)
+    const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
     await exec(repo, ['worktree', 'remove', dir], 120_000)
     // Not the exit code - see finished(). A lane can be gone and still make git unhappy.
-    if (!finished(repo, dir)) continue
+    if (!(await finished(repo, dir))) continue
     // `-d` is the safe delete and refuses anything the base branch does not have. A
     // squash-merged lane is exactly that case and always will be, and its patches have
     // just been shown to be in the project, so that one is deleted outright.
@@ -336,7 +376,7 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     removed.push(dir)
   }
   if (removed.length) await exec(repo, ['worktree', 'prune'], 20_000)
-  dropEmptyShells(repo)
+  await dropEmptyShells(repo)
   return removed
 }
 
@@ -351,8 +391,8 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
  *
  * Only ever an EMPTY `<repo>-wN` folder beside the repo, so there is nothing to lose.
  */
-function dropEmptyShells(repo: string): void {
-  const registered = laneFolders(repo)
+async function dropEmptyShells(repo: string): Promise<void> {
+  const registered = await laneFolders(repo)
   const parent = dirname(repo)
   let siblings: string[] = []
   try {
@@ -447,8 +487,8 @@ export function trackTyped(previous: string, data: string): { line: string; subm
  * original folder in exactly that case, and null in every other - work in the lane,
  * another session in the original, anything unreadable.
  */
-export function returnToBase(cwd: string, taken: string[]): string | null {
-  const work = laneWork(cwd)
+export async function returnToBase(cwd: string, taken: string[]): Promise<string | null> {
+  const work = await laneWork(cwd)
   if (!work || !work.empty) return null
   if (taken.some((t) => samePath(t, work.repo))) return null
   return work.repo
