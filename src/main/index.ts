@@ -82,6 +82,7 @@ import {
   moveShelfDrag,
   openShelfWindow,
   setShelfHidden,
+  setShelfQuiet,
   placeShelf,
   setShelfExpanded,
   setShelfTall,
@@ -177,6 +178,10 @@ function createWindow(): void {
   )
   const cfg = getConfig()
   const mode = startMode()
+  // A copy that opens minimized keeps its clipboard overlay off the screen too. The
+  // main window has always been careful here; the Stash was the one part of the app a
+  // test launch still painted over your work. See setShelfQuiet.
+  setShelfQuiet(mode === 'minimized')
   // maximize() shows the window as a side effect, and on Windows that show *activates* it:
   // it ends up as a ShowWindow(SW_MAXIMIZE), the exact focus steal showInactive exists to
   // avoid. So a launch that must not take the keyboard (the test copy an agent starts, an
@@ -320,6 +325,11 @@ function createWindow(): void {
     win.once('focus', keepAlive)
     win.once('restore', keepAlive)
   }
+  // Same signal, for the overlay: once a human has the window on screen, this is an
+  // app they are using and the Stash belongs on top again.
+  const wanted = (): void => setShelfQuiet(false)
+  win.once('focus', wanted)
+  win.once('restore', wanted)
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
@@ -1441,6 +1451,25 @@ function offerRestore(): void {
   if (desk.reason === 'update') {
     if (cfg.restoreAfterUpdate) restorePanes(desk.specs)
     else clearDesk()
+    return
+  }
+  // Nobody is sitting in front of a test copy. An agent runs `npm run try` to measure
+  // something and gets "restore your last session?" across the window instead - every
+  // click after that lands on the dialog, which is the leftover scripts/focus-test.mjs
+  // already writes a config file by hand to avoid. Unpackaged runs start fresh unless
+  // told otherwise; PANEFORGE_RESTORE=ask brings the question back, =always reopens the
+  // panes without asking. The installed app is untouched.
+  // `||`, not `??`: a variable set to nothing at all is how a launcher says "I am not
+  // choosing", and measured as the case that silently kept the dialog.
+  const forced = (process.env.PANEFORGE_RESTORE || (app.isPackaged ? '' : 'fresh'))
+    .trim()
+    .toLowerCase()
+  if (forced === 'fresh') {
+    clearDesk()
+    return
+  }
+  if (forced === 'always') {
+    restorePanes(desk.specs)
     return
   }
   if (cfg.restoreAfterRestart === 'never') {

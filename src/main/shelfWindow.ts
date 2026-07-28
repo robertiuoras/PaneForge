@@ -252,6 +252,8 @@ export function setShelfHidden(hidden: boolean): void {
     shelf!.hide()
     return
   }
+  // The game left, but a copy launched out of sight is still holding it back.
+  if (hiddenForQuiet) return
   shelf!.setAlwaysOnTop(true, 'screen-saver')
   place()
   shelf!.showInactive()
@@ -260,6 +262,43 @@ export function setShelfHidden(hidden: boolean): void {
 /** Whether a newly created overlay should stay out of sight (a game was already up). */
 export function shelfHiddenForGame(): boolean {
   return hiddenForGame
+}
+
+/** True while a copy that launched out of sight is holding the overlay back. */
+let hiddenForQuiet = false
+
+/**
+ * Keep the overlay off the screen for a copy that was launched minimized.
+ *
+ * A test copy an agent starts is careful about its main window - `showInactive()` then
+ * `minimize()`, no focus taken, a taskbar button and nothing else. The Stash was not
+ * part of that deal: it is `alwaysOnTop` at screen-saver level and `skipTaskbar`, so it
+ * appeared over whatever was on screen, from an app with no visible window to close it
+ * from. Measured 2026-07-28: `npm run try` put a visible Stash up 0.7s into the launch
+ * while the main window correctly stayed hidden the whole time.
+ *
+ * Released the moment a human touches the window (focus or restore), which is the same
+ * signal the idle-quit timer in index.ts trusts.
+ */
+export function setShelfQuiet(quiet: boolean): void {
+  if (quiet === hiddenForQuiet) return
+  hiddenForQuiet = quiet
+  if (!alive()) return
+  if (quiet) {
+    shelf!.setAlwaysOnTop(false)
+    shelf!.hide()
+    return
+  }
+  if (hiddenForGame) return
+  shelf!.setAlwaysOnTop(true, 'screen-saver')
+  shelf!.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  place()
+  shelf!.showInactive()
+}
+
+/** Either reason the overlay is currently being kept off the screen. */
+function keptBack(): boolean {
+  return hiddenForGame || hiddenForQuiet
 }
 
 /**
@@ -309,7 +348,7 @@ export function toggleShelf(): void {
   // that spot, without taking focus.
   // Not while a game has it put away: the hotkey toggles the state, and it appears when
   // the game does not need the screen any more.
-  if (expanded && !hiddenForGame) shelf!.showInactive()
+  if (expanded && !keptBack()) shelf!.showInactive()
 }
 
 export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
@@ -347,12 +386,12 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   })
   // Both of these are what a fullscreen game cannot survive, so a window built while a
   // game is already running is built without them and gets them from setShelfHidden(false).
-  if (!hiddenForGame) {
+  if (!keptBack()) {
     shelf.setAlwaysOnTop(true, 'screen-saver')
     shelf.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   }
   shelf.once('ready-to-show', () => {
-    if (!hiddenForGame) shelf?.showInactive()
+    if (!keptBack()) shelf?.showInactive()
     updateShelfItems(cached)
     if (cachedConfig) updateShelfConfig(cachedConfig)
     // Something may have asked for it open before the page existed (the hotkey bringing a
