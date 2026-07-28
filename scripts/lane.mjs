@@ -744,7 +744,11 @@ function autoship(kind = 'patch', session = 'auto') {
     const wait = Math.ceil((COOLDOWN_MS - since) / 60000)
     return {
       shipped: false,
-      reason: `v${state.lastShip.version} went out ${Math.round(since / 60000)}m ago. This work is on master and goes out with the next release (about ${wait}m). Do not ship it separately.`
+      // Says "still on its lane", not "on master": the merge happens inside ship(),
+      // which this return skips. An agent told the work is already on master goes
+      // looking for it there, does not find it, and starts undoing a release that was
+      // only ever waiting on the clock. Cost that exactly once, 2026-07-28.
+      reason: `v${state.lastShip.version} went out ${Math.round(since / 60000)}m ago. The work is committed and still on its lane; it merges and goes out with the next release (about ${wait}m). Do not ship it separately - run autoship again then.`
     }
   }
   // Nobody is watching an automatic release, so it checks itself first. A tag that fails
