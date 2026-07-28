@@ -979,6 +979,22 @@ function ship(kind, session) {
 
     const unreleased = git(MAIN, 'rev-list', '--count', `v${pkg.version}..HEAD`)
     if (unreleased === '0') {
+      // A release that died between the tag and the push (expired token, dropped
+      // network) leaves master looking released while origin never heard of it - and
+      // "nothing new since vX" means no later attempt would ever push it. Finish that
+      // release instead of bailing: the commit and tag already exist, only the pushes
+      // are missing. (Happened for real on v0.3.42, 2026-07-28.)
+      const tagOnOrigin = gitSafe(MAIN, 'ls-remote', '--tags', 'origin', `refs/tags/v${pkg.version}`)
+      if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
+        git(MAIN, 'push')
+        git(MAIN, 'push', 'origin', `v${pkg.version}`)
+        const s = read()
+        s.conflicts = conflicts
+        s.release = null
+        s.lastShip = { version: pkg.version, at: now(), lanes: merged.map((m) => m.lane) }
+        write(s)
+        return { shipped: true, version: pkg.version, merged, rebased: [], conflicts, resumed: true }
+      }
       const s = read()
       s.conflicts = conflicts
       s.release = null
