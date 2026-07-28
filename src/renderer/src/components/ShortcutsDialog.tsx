@@ -40,10 +40,21 @@ const KEYS: Key[] = [
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
   ['Ctrl Shift C', 'Always copy, never interrupt'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
-  ['Ctrl Shift V', 'The Stash: click text, a screenshot or a stashed file into the focused pane'],
+  // Called out: "how do I open the Stash" is the question this dialog gets asked for
+  // most, and there are two answers depending on which window you are in.
+  [
+    'Ctrl Shift V',
+    'Open the Stash inside the app: click text, a screenshot or a stashed file into the focused pane',
+    true
+  ],
   [
     'Ctrl Alt V',
-    'The floating Stash, from any app: click a line to copy it back, → sends it to the pane, ✕ forgets it'
+    'Open the floating Stash from ANY app: click a line to copy it back, → sends it to the pane, ✕ forgets it',
+    true
+  ],
+  [
+    'Hover the Stash pill',
+    'Also opens the list; it closes itself a few seconds after the pointer leaves (Stash ⚙ sets how long)'
   ],
   ['Drop a file on the Stash', 'Parks a copy you can drag straight back out into any other app'],
   ['Drag the Stash title', 'Move the Stash anywhere; double-click it to put it back'],
