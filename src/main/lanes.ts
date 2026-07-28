@@ -22,7 +22,7 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -61,13 +61,25 @@ export interface LaneExtras {
   sharedMemory: boolean
 }
 
-function git(cwd: string, args: string[], timeout = 15000): { ok: boolean; out: string } {
-  try {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout })
-    return { ok: r.status === 0, out: (r.stdout ?? '').trim() || (r.stderr ?? '').trim() }
-  } catch {
-    return { ok: false, out: '' }
-  }
+/**
+ * Run git without blocking the window.
+ *
+ * `spawnSync` here froze the Electron main process for as long as git took, and this one
+ * runs on the pane-open path: every second session in a repo paid it before its terminal
+ * appeared, and a slow git held the whole window - every other pane included - for up to
+ * the full 15s timeout. Same reasoning, and the same measurement, as laneWork.ts's run().
+ */
+function git(cwd: string, args: string[], timeout = 15000): Promise<{ ok: boolean; out: string }> {
+  return new Promise((done) => {
+    execFile(
+      'git',
+      args,
+      { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        done({ ok: !err, out: (stdout ?? '').trim() || (stderr ?? '').trim() })
+      }
+    )
+  })
 }
 
 /** Windows paths differ in case and slash direction for the same folder. */
@@ -81,8 +93,8 @@ function samePath(a: string, b: string): boolean {
  * `--git-common-dir` is the shared `.git` of the whole repo, so a lane asked to
  * spawn another lane still branches off the original, not off itself.
  */
-function mainRepo(cwd: string): string | null {
-  const common = git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+async function mainRepo(cwd: string): Promise<string | null> {
+  const common = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   if (!common.ok || !common.out) return null
   const dir = common.out.split(/\r?\n/)[0]
   // `<repo>/.git` normally; a bare or unusual layout is left alone.
@@ -92,9 +104,9 @@ function mainRepo(cwd: string): string | null {
 }
 
 /** Is this folder already a checkout of the same repo (ours to reuse)? */
-function isWorktreeOf(candidate: string, repo: string): boolean {
+async function isWorktreeOf(candidate: string, repo: string): Promise<boolean> {
   if (!existsSync(candidate)) return false
-  const root = mainRepo(candidate)
+  const root = await mainRepo(candidate)
   return Boolean(root && samePath(root, repo))
 }
 
@@ -482,8 +494,8 @@ function seedClaudeProjectSettings(repo: string, lane: string): void {
  * already knows its folder and label, and must not be moved again) gets the same
  * treatment as one being created.
  */
-export function laneExtras(laneCwd: string, label: string): LaneExtras {
-  const repo = mainRepo(laneCwd) ?? laneCwd
+export async function laneExtras(laneCwd: string, label: string): Promise<LaneExtras> {
+  const repo = (await mainRepo(laneCwd)) ?? laneCwd
   const base = detectDevPort(repo) ?? FALLBACK_PORT
   const port = Math.min(base + laneIndex(label) - 1, 65000)
   const sharedMemory = samePath(repo, laneCwd) ? false : shareClaudeMemory(repo, laneCwd)
@@ -537,11 +549,11 @@ function seedLane(repo: string, lane: string): void {
  * taken. Creating a lane is a few git calls and only happens on the second and
  * later session in one repo, so the common launch pays nothing.
  */
-export function resolveLane(cwd: string, taken: string[]): Lane {
+export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
   const clash = taken.some((t) => samePath(t, cwd))
   if (!clash) return { cwd }
 
-  const repo = mainRepo(cwd)
+  const repo = await mainRepo(cwd)
   if (!repo) {
     return { cwd, note: 'Second session in the same folder - not a git repo, so both share it.' }
   }
@@ -557,21 +569,26 @@ export function resolveLane(cwd: string, taken: string[]): Lane {
     if (existsSync(path)) {
       // Left behind by an earlier session and nobody is in it: reuse rather than
       // pile up folders. Anything at that path that is not this repo is skipped.
-      if (!isWorktreeOf(path, repo)) continue
+      if (!(await isWorktreeOf(path, repo))) continue
       seedLane(repo, path)
-      const head = git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
-      return { cwd: path, lane: label, branch: head.ok ? head.out : branch, ...laneExtras(path, label) }
+      const head = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      return {
+        cwd: path,
+        lane: label,
+        branch: head.ok ? head.out : branch,
+        ...(await laneExtras(path, label))
+      }
     }
 
     // New branch off whatever the repo has checked out now. If the branch already
     // exists from a previous lane, check that out instead of failing.
-    let made = git(repo, ['worktree', 'add', '-b', branch, path])
-    if (!made.ok) made = git(repo, ['worktree', 'add', path, branch])
+    let made = await git(repo, ['worktree', 'add', '-b', branch, path])
+    if (!made.ok) made = await git(repo, ['worktree', 'add', path, branch])
     if (!made.ok) {
       return { cwd, note: `Could not create a worktree lane: ${made.out.split('\n')[0]}` }
     }
     seedLane(repo, path)
-    return { cwd: path, lane: label, branch, ...laneExtras(path, label) }
+    return { cwd: path, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
   return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }

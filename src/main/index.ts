@@ -474,7 +474,7 @@ const remote = new Remote({
   switchAgent: (id, agent, model) => manager.switchAgent(id, agent, model),
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
-  startSession: (req) => manager.start(laneFor(req)),
+  startSession: async (req) => manager.start(await laneFor(req)),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   onData: (cb) => {
@@ -523,7 +523,10 @@ ipcMain.handle('sessions:list', () => allSessions())
  *
  * A swarm is deliberately exempt: its roles are briefed to share one checkout.
  */
-function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSessionRequest {
+async function laneFor(
+  req: StartSessionRequest,
+  extraTaken: string[] = []
+): Promise<StartSessionRequest> {
   if (!getConfig().autoLane) return req
   const taken = [
     ...manager
@@ -537,7 +540,7 @@ function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSess
   // the project folder is free again: the lane was only ever there to keep two agents
   // apart, and there is no second agent now. Without this, one busy afternoon leaves a
   // project permanently worked on from `-w2` while its own folder sits empty.
-  const home = returnToBase(req.cwd, taken)
+  const home = await returnToBase(req.cwd, taken)
   if (home) {
     return {
       ...req,
@@ -548,11 +551,12 @@ function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSess
     }
   }
 
-  const lane = resolveLane(req.cwd, taken)
+  const lane = await resolveLane(req.cwd, taken)
   if (lane.cwd === req.cwd) {
     // Reopening a pane that is already in its lane (workspace restore, or after an
     // update): nothing to move, but it still needs its port and its shared memory.
-    if (req.lane) return { ...req, laneEnv: req.laneEnv ?? laneExtras(req.cwd, req.lane).env }
+    if (req.lane)
+      return { ...req, laneEnv: req.laneEnv ?? (await laneExtras(req.cwd, req.lane)).env }
     return lane.note ? { ...req, laneNote: lane.note } : req
   }
   const memory = lane.sharedMemory ? ', sharing this project’s Claude memory' : ''
@@ -565,8 +569,10 @@ function laneFor(req: StartSessionRequest, extraTaken: string[] = []): StartSess
   }
 }
 
-ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => manager.start(laneFor(req)))
-ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
+ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) =>
+  manager.start(await laneFor(req))
+)
+ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
   const out: Session[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
   // together for one project must land in different lanes, and the session list
@@ -574,7 +580,7 @@ ipcMain.handle('sessions:startMany', (_e, reqs: StartSessionRequest[]) => {
   const claimed: string[] = []
   for (const r of reqs) {
     try {
-      const req = laneFor(r, claimed)
+      const req = await laneFor(r, claimed)
       claimed.push(req.cwd)
       out.push(manager.start(req))
     } catch {
@@ -655,7 +661,7 @@ async function laneWentQuiet(id: string): Promise<void> {
   await new Promise((r) => setTimeout(r, 2000))
   const s = manager.list().find((x) => x.id === id)
   if (!s || s.status === 'exited' || !s.lane || s.cwd !== before.cwd) return
-  const home = returnToBase(
+  const home = await returnToBase(
     s.cwd,
     busyDirs().filter((d) => d !== s.cwd)
   )
@@ -761,8 +767,8 @@ ipcMain.handle('lanes:board', () => laneBoard())
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
-ipcMain.handle('lanes:merge', (_e, cwd: string) => {
-  const result = mergeLaneBack(cwd, { busy: busyDirs() })
+ipcMain.handle('lanes:merge', async (_e, cwd: string) => {
+  const result = await mergeLaneBack(cwd, { busy: busyDirs() })
   // A lane that merged while its own pane was still in it is now empty, and will be
   // swept the moment that pane closes or is cleared.
   if (result.ok) send('sessions:changed', allSessions())
@@ -784,7 +790,7 @@ async function sweepEmptyLanes(): Promise<void> {
   if (now - sweptAt < 5 * 60_000) return
   sweptAt = now
   const busy = busyDirs()
-  for (const repo of knownRepos()) {
+  for (const repo of await knownRepos()) {
     try {
       // A pane that ended in a lane keeps the folder on screen after the folder is
       // gone, and restarting it would fail on a path the user never typed. So each
@@ -812,19 +818,17 @@ setInterval(() => {
  * outlive every pane that ever opened it, so the sweep below cannot only look at what
  * is open right now or a project's last lane would never be cleared.
  */
-function knownRepos(): string[] {
+async function knownRepos(): Promise<string[]> {
   const folders = [
     ...manager.list().map((s) => s.cwd),
     ...getConfig().presets.flatMap((p) => p.items.map((i) => i.path)),
     ...listProjects().map((p) => p.path)
   ]
-  const repos = new Set<string>()
-  for (const f of folders) {
-    if (!f) continue
-    const repo = repoOf(f)
-    if (repo) repos.add(repo)
-  }
-  return [...repos]
+  // One `git rev-parse` per folder, and a desk with every project open has plenty of
+  // them. They do not depend on each other, so they go out together rather than one
+  // after another - this used to be the front half of an eight-second freeze.
+  const found = await Promise.all([...new Set(folders.filter(Boolean))].map((f) => repoOf(f)))
+  return [...new Set(found.filter((r): r is string => Boolean(r)))]
 }
 
 // A pane ending is when a lane most often stops being needed, and waiting up to five

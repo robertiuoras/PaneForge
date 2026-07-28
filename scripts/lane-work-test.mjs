@@ -95,18 +95,18 @@ const commit = (cwd, file, text, msg) => {
 
 {
   const { repo, lane } = fixture('read')
-  const fresh = lw.laneWork(lane)
+  const fresh = (await lw.laneWork(lane))
   check('a fresh lane is recognised', fresh?.lane === 'w2' && fresh?.branch === 'pf/w2', JSON.stringify(fresh))
   check('a fresh lane is empty', fresh?.empty === true && fresh?.ahead === 0 && fresh?.dirty === 0)
   check('the base branch is the one the repo is on', fresh?.base === 'main', fresh?.base)
-  check('the main checkout is not a lane', lw.laneWork(repo) === null)
+  check('the main checkout is not a lane', (await lw.laneWork(repo)) === null)
 
   writeFileSync(join(lane, 'scratch.txt'), 'wip\n')
-  check('an untracked file makes a lane non-empty', lw.laneWork(lane)?.empty === false)
+  check('an untracked file makes a lane non-empty', (await lw.laneWork(lane))?.empty === false)
   rmSync(join(lane, 'scratch.txt'))
 
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  const ahead = lw.laneWork(lane)
+  const ahead = (await lw.laneWork(lane))
   check('a commit in the lane counts as ahead', ahead?.ahead === 1 && ahead?.empty === false)
   check('a non-overlapping change reports no conflicts', ahead?.conflicts.length === 0)
   // Reading must not have moved either checkout.
@@ -121,20 +121,20 @@ const commit = (cwd, file, text, msg) => {
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
   commit(lane, 'second.js', 'export const s = 2\n', 'add second')
 
-  const busy = lw.mergeLaneBack(lane, { busy: [lane] })
+  const busy = (await lw.mergeLaneBack(lane, { busy: [lane] }))
   check('a merge with a session still in the lane succeeds', busy.ok === true, JSON.stringify(busy))
   check('...and reports the commits it moved', busy.ok && busy.commits === 2)
   check('...and leaves the folder alone while a session holds it', busy.ok && busy.removed === false)
   check('...and the files are on the base branch', existsSync(join(repo, 'feature.js')))
   check('...as a merge commit, so the lane is on the record', git(repo, ['log', '-1', '--pretty=%s']).startsWith('merge lane w2'))
-  check('a second merge has nothing to do', lw.mergeLaneBack(lane).reason === 'nothing')
-  check('the merged lane now reads as empty', lw.laneWork(lane)?.empty === true)
+  check('a second merge has nothing to do', (await lw.mergeLaneBack(lane)).reason === 'nothing')
+  check('the merged lane now reads as empty', (await lw.laneWork(lane))?.empty === true)
 }
 
 {
   const { repo, lane } = fixture('merge-free')
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  const r = lw.mergeLaneBack(lane)
+  const r = (await lw.mergeLaneBack(lane))
   check('a merged lane nobody is in is removed', r.ok === true && r.removed === true, JSON.stringify(r))
   check('...folder gone', !existsSync(lane))
   check('...branch gone', !git(repo, ['branch', '--list', 'pf/w2']))
@@ -148,10 +148,10 @@ const commit = (cwd, file, text, msg) => {
   commit(lane, 'app.js', 'const a = "lane"\n', 'lane edit')
   commit(repo, 'app.js', 'const a = "main"\n', 'main edit')
 
-  const seen = lw.laneWork(lane)
+  const seen = (await lw.laneWork(lane))
   check('an overlapping change is surfaced before anyone merges', seen?.conflicts.includes('app.js'), JSON.stringify(seen?.conflicts))
 
-  const r = lw.mergeLaneBack(lane)
+  const r = (await lw.mergeLaneBack(lane))
   check('a conflicting merge refuses', r.ok === false && r.reason === 'conflict', JSON.stringify(r))
   check('...naming the files', r.ok === false && r.conflicts?.includes('app.js'))
   check('...leaving the main checkout clean', git(repo, ['status', '--porcelain']) === '')
@@ -163,7 +163,7 @@ const commit = (cwd, file, text, msg) => {
   const { lane } = fixture('lane-dirty')
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
   writeFileSync(join(lane, 'feature.js'), 'export const f = 2\n')
-  const r = lw.mergeLaneBack(lane)
+  const r = (await lw.mergeLaneBack(lane))
   check('a merge refuses while the lane has uncommitted work', r.ok === false && r.reason === 'lane-dirty', JSON.stringify(r))
 }
 
@@ -171,7 +171,7 @@ const commit = (cwd, file, text, msg) => {
   const { repo, lane } = fixture('base-dirty')
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
   writeFileSync(join(repo, 'README.md'), '# edited by hand\n')
-  const r = lw.mergeLaneBack(lane)
+  const r = (await lw.mergeLaneBack(lane))
   check('a merge refuses onto a dirty main checkout', r.ok === false && r.reason === 'base-dirty', JSON.stringify(r))
   check('...and did not touch that edit', readFileSync(join(repo, 'README.md'), 'utf8').includes('by hand'))
 }
@@ -237,12 +237,12 @@ const commit = (cwd, file, text, msg) => {
 
 {
   const { repo, lane } = fixture('return')
-  const back = lw.returnToBase(lane, [])
+  const back = (await lw.returnToBase(lane, []))
   check('an empty lane goes back to the project folder', Boolean(back) && lw.samePath(back, repo), String(back))
-  check('...unless another session is in it', lw.returnToBase(lane, [repo]) === null)
+  check('...unless another session is in it', (await lw.returnToBase(lane, [repo])) === null)
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  check('a lane with commits stays put', lw.returnToBase(lane, []) === null)
-  check('the main checkout is never sent anywhere', lw.returnToBase(repo, []) === null)
+  check('a lane with commits stays put', (await lw.returnToBase(lane, [])) === null)
+  check('the main checkout is never sent anywhere', (await lw.returnToBase(repo, [])) === null)
 }
 
 // ---------------------------------------------------------------- spotting /clear
