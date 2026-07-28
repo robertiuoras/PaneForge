@@ -269,6 +269,22 @@ export interface UpdateState {
   url?: string
 }
 
+/**
+ * What a click on "Restart now" actually did.
+ *
+ * `held` is the one that mattered: do-not-disturb queues the restart instead of running
+ * it, and until this existed the renderer could not tell that apart from a restart that
+ * was about to happen, so the button said "Restarting..." and nothing ever came of it.
+ * `game` names what is holding it, so the card can say so and offer the way past.
+ */
+export interface InstallOutcome {
+  status: 'installing' | 'held' | 'nothing-to-install'
+  /** the process that is holding it back, when `status` is 'held' */
+  game?: string | null
+  /** true when the hold is the manual do-not-disturb switch rather than a game */
+  manual?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Task board + shared memory (per project folder, committed or gitignored by you)
 
@@ -772,7 +788,13 @@ export interface Api {
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
-  installUpdate(): void
+  /**
+   * Start the restart-into-the-new-version. Resolves to what actually happened, because
+   * it does not always happen: with do-not-disturb up the restart is queued instead, and
+   * a button that had no way to learn that just sat on "Restarting..." forever, which is
+   * exactly what "installing from the update popup does not work" was.
+   */
+  installUpdate(): Promise<InstallOutcome>
   /** restart for the update even though a game is on screen - the way past the hold */
   installUpdateAnyway(): void
 
