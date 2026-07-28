@@ -1288,7 +1288,6 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   box-shadow: var(--shadow); padding: 13px 14px; display: flex; flex-direction: column; gap: 9px;
 }
 .ut-text { display: flex; flex-direction: column; gap: 3px; }
-.ut-notes { margin: 4px 0 0; max-height: 96px; overflow: auto; font: 11px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
 .ut-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* --------------------------------------------------------------------------
