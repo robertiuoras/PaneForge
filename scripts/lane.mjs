@@ -948,6 +948,14 @@ function ship(kind, session) {
     const dirty = git(MAIN, 'status', '--porcelain')
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
+    // An expired token used to surface only after the version was committed and
+    // tagged, which stranded the release (the resume path below is the recovery).
+    // Refuse up front instead: a dry-run push exercises credentials and the network
+    // and transfers nothing, so a release that cannot be pushed never gets cut.
+    const origin = gitSafe(MAIN, 'push', '--dry-run')
+    if (!origin.ok)
+      throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
+
     const merged = []
     const conflicts = {}
     for (const [id, mark] of Object.entries(state.ready)) {
