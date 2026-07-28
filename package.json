@@ -43,7 +43,8 @@
     "ship": "node scripts/lane.mjs ship",
     "lane": "node scripts/lane.mjs",
     "probe": "node scripts/probe.mjs",
-    "test:trust": "node scripts/trust-test.mjs"
+    "test:trust": "node scripts/trust-test.mjs",
+    "test:slash": "node scripts/slash-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
