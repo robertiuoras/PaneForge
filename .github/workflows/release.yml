@@ -90,4 +90,10 @@ jobs:
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
+          # Both builds can fail, in which case there is no release to describe and
+          # this job should say so rather than go red for a second reason.
+          if ! gh release view "v$version" >/dev/null 2>&1; then
+            echo "No release v$version - both builds must have failed. Nothing to write."
+            exit 0
+          fi
           gh release edit "v$version" --notes "$(sed "s/{{VERSION}}/$version/g" .github/release-notes.md)"
