@@ -46,3 +46,48 @@ jobs:
           # The app is not code signed: notarising needs a paid Apple account.
           # First launch on a friend's Mac therefore needs right-click > Open.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # electron-builder's own asset names carry the version, so a link to one dies
+      # at the next release. Upload a second copy of each installer under a fixed
+      # name as well, which makes
+      # https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-Setup.exe
+      # a permanent download link the README and any chat message can use. The
+      # versioned files and the *.yml update feed are left exactly as they were:
+      # the auto-updater reads those and must not see anything new.
+      - name: Upload fixed-name copies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          mkdir -p stable
+          shopt -s nullglob
+          found=0
+          for f in dist/*"$version"*.exe dist/*"$version"*.dmg dist/*"$version"*.zip; do
+            name=$(basename "$f")
+            fixed=$(printf '%s' "$name" | sed -e "s/[ -]\{0,1\}${version//./\\.}//" -e 's/ /-/g')
+            cp "$f" "stable/$fixed"
+            found=1
+          done
+          if [ "$found" = 0 ]; then echo "no build artifacts matched $version"; exit 1; fi
+          ls -l stable
+          gh release upload "v$version" stable/* --clobber
+
+  # One job, after both builds, so the release page itself tells a first-time
+  # visitor which of the nine files they want.
+  notes:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write install instructions into the release body
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          gh release edit "v$version" --notes "$(sed "s/{{VERSION}}/$version/g" .github/release-notes.md)"

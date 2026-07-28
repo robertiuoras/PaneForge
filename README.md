@@ -7,34 +7,61 @@ choose which AI and which model runs in it.
 
 Windows and Apple Silicon macOS. Free, no accounts, no server.
 
-## Install (just want to use it)
+## Download
 
-Grab the latest build from [Releases](https://github.com/robertiuoras/PaneForge/releases/latest).
-Nothing to configure, no account, no server: the app is a window around the CLIs you
-already have.
+No clone, no build, no account. Both links always point at the newest release.
 
-**Windows** - download `PaneForge-Setup-x.y.z.exe` and run it. It installs for the
-current user only (no admin prompt), takes a few seconds, puts PaneForge on the Desktop
-and in the Start Menu, and opens itself.
+### [⬇ Windows 10/11 - PaneForge-Setup.exe](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-Setup.exe)
 
-The one thing that will surprise you: the build is **not code signed**, because a
-Windows certificate costs a few hundred dollars a year. So Windows shows a warning the
-first time, and you have to tell it to go ahead:
+Run it. Installs for the current user in a few seconds, no admin prompt, and puts
+PaneForge on the Desktop and in the Start Menu.
 
-- *"Windows protected your PC"* (SmartScreen) - click **More info**, then
-  **Run anyway**.
-- *"Your administrator has blocked this app"* / the installer closes with no message -
-  that is **Smart App Control**, which cannot be talked round per-app. Either turn it
-  off (Windows Security > App & browser control > Smart App Control) or use the
-  `PaneForge-x.y.z-win.zip` from the same release, which needs no installer: unzip it
-  anywhere and run `PaneForge.exe` from the folder.
-- Edge or Chrome may also say the download is *"not commonly downloaded"* - keep it from
+### [⬇ macOS (Apple Silicon) - PaneForge-arm64.dmg](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-arm64.dmg)
+
+Drag the app to Applications, then **right-click it > Open > Open** the first time.
+
+Prefer one command? These do the same thing, plus the Gatekeeper/Smart App Control
+handling below, and can be re-run to update:
+
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/robertiuoras/PaneForge/master/scripts/install.sh | bash
+```
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/robertiuoras/PaneForge/master/scripts/install.ps1 | iex
+```
+
+Every file, including the portable no-installer builds, is on the
+[Releases page](https://github.com/robertiuoras/PaneForge/releases/latest).
+
+<details>
+<summary><b>Windows or macOS says the app is untrusted - what to click</b></summary>
+
+The build is **not code signed**: a Windows certificate costs a few hundred dollars a
+year and notarising on macOS needs a paid Apple developer account. That warning is
+about the missing signature, not about the app, and it happens once.
+
+**Windows**
+
+- *"Windows protected your PC"* (SmartScreen) - click **More info**, then **Run anyway**.
+- *"Your administrator has blocked this app"*, or the installer closes with no message -
+  that is **Smart App Control**, which cannot be talked round per-app. Either turn it off
+  (Windows Security > App & browser control > Smart App Control) or download
+  [PaneForge-win.zip](https://github.com/robertiuoras/PaneForge/releases/latest/download/PaneForge-win.zip),
+  which needs no installer: unzip it anywhere and run `PaneForge.exe`. The PowerShell
+  one-liner above detects this and uses the zip for you.
+- Edge or Chrome may also call the download *"not commonly downloaded"* - keep it from
   the download list.
 
-**macOS (Apple Silicon)** - download `PaneForge-x.y.z-arm64.dmg` and drag the app to
-Applications. Unsigned there too (that needs a paid Apple developer account), so the
-first launch must be **right-click the app > Open > Open**. Once only. If macOS still
-refuses, run `xattr -dr com.apple.quarantine /Applications/PaneForge.app`.
+**macOS**
+
+- First launch must be **right-click the app > Open > Open**. Once only.
+- If macOS still refuses: `xattr -dr com.apple.quarantine /Applications/PaneForge.app`
+  (the `install.sh` one-liner already does this).
+- Intel Macs have no published build - use *Build it yourself* below.
+
+</details>
 
 None of this recurs: updates after the first install are silent (see below).
 
@@ -58,6 +85,9 @@ The app checks for new versions in the background and offers the update itself, 
 is the only time you download anything by hand.
 
 ## Build it yourself
+
+Only needed if you want to change the code, or you are on an Intel Mac (no published
+build). Otherwise use the downloads above.
 
 ```
 npm install
@@ -161,6 +191,14 @@ npm run ship minor    # 0.2.0 -> 0.3.0
 GitHub Actions then builds Windows and macOS and publishes both to a Release, which
 is the same feed running copies poll. Everyone is offered the update within half an
 hour. Sharing with someone else is just sending them the Releases link.
+
+The same workflow uploads a second copy of each installer under a version-less name
+(`PaneForge-Setup.exe`, `PaneForge-arm64.dmg`, `PaneForge-win.zip`,
+`PaneForge-arm64.zip`) and rewrites the release body from
+`.github/release-notes.md`. That is what makes the `releases/latest/download/...`
+links at the top of this file permanent - they never need touching after a release.
+The versioned files and `latest*.yml` are untouched, because the auto-updater reads
+those.
 
 On Windows the download is quiet and so is the install: accepting the update runs the
 installer silently, with no setup window, and PaneForge comes back on its own with
