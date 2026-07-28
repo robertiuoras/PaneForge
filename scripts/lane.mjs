@@ -39,7 +39,7 @@
 // stops having any: whoever finishes last cuts the version, for everyone.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
@@ -948,6 +948,14 @@ function ship(kind, session) {
     const dirty = git(MAIN, 'status', '--porcelain')
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
+    // An expired token used to surface only after the version was committed and
+    // tagged, which stranded the release (the resume path below is the recovery).
+    // Refuse up front instead: a dry-run push exercises credentials and the network
+    // and transfers nothing, so a release that cannot be pushed never gets cut.
+    const origin = gitSafe(MAIN, 'push', '--dry-run')
+    if (!origin.ok)
+      throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
+
     const merged = []
     const conflicts = {}
     for (const [id, mark] of Object.entries(state.ready)) {
@@ -988,12 +996,13 @@ function ship(kind, session) {
       if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
         git(MAIN, 'push')
         git(MAIN, 'push', 'origin', `v${pkg.version}`)
+        const resumedBuilt = publishFallback(pkg.version)
         const s = read()
         s.conflicts = conflicts
         s.release = null
         s.lastShip = { version: pkg.version, at: now(), lanes: merged.map((m) => m.lane) }
         write(s)
-        return { shipped: true, version: pkg.version, merged, rebased: [], conflicts, resumed: true }
+        return { shipped: true, version: pkg.version, merged, rebased: [], conflicts, resumed: true, built: resumedBuilt }
       }
       const s = read()
       s.conflicts = conflicts
@@ -1009,6 +1018,7 @@ function ship(kind, session) {
     git(MAIN, 'tag', `v${next}`)
     git(MAIN, 'push')
     git(MAIN, 'push', 'origin', `v${next}`)
+    const built = publishFallback(next)
 
     // Every lane that just shipped catches up to master, so the next feature in that lane
     // does not start from a stale base and conflict on the release commit. A real merge, not
@@ -1032,7 +1042,7 @@ function ship(kind, session) {
     fresh.lastShip = { version: next, at: now(), lanes: merged.map((m) => m.lane) }
     write(fresh)
 
-    return { shipped: true, version: next, merged, rebased, conflicts }
+    return { shipped: true, version: next, merged, rebased, conflicts, built }
   } catch (e) {
     const s = read()
     if (s.release?.session === (session ?? 'unknown')) {
@@ -1041,6 +1051,86 @@ function ship(kind, session) {
     }
     throw e
   }
+}
+
+// ---------------------------------------------------------------- local publish fallback
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function runSafe(cmd, args, opts = {}) {
+  const r = spawnSync(cmd, args, {
+    cwd: MAIN,
+    encoding: 'utf8',
+    shell: process.platform === 'win32', // npx and gh are .cmd shims on Windows
+    windowsHide: true,
+    timeout: opts.timeout ?? 30_000,
+    killSignal: 'SIGKILL',
+    env: opts.env ?? process.env
+  })
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim()
+  return { ok: r.status === 0, out }
+}
+
+// GitHub Actions normally builds the installers when the tag lands. On 2026-07-28
+// GitHub disabled Actions for the whole account (anti-abuse flag; support ticket is
+// the only way back and takes days), which turned every release into a tag with no
+// installers: the updater feed never moved and nobody was told. So after the tag is
+// pushed, watch briefly for the workflow run; if none appears, build THIS platform
+// here and publish it exactly the way .github/workflows/release.yml would have -
+// same assets, same fixed-name copies, same notes. When Actions comes back the run
+// shows up in the first poll and the fallback stands down by itself.
+function publishFallback(version) {
+  // The throwaway repos the lane tests build have no publish config: nothing to do.
+  const pub = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).build?.publish?.[0]
+  if (!pub || pub.provider !== 'github') return { by: 'skipped' }
+  const repo = `${pub.owner}/${pub.repo}`
+  for (let i = 0; i < 3; i++) {
+    sleep(15_000)
+    const r = runSafe('gh', [
+      'api',
+      `repos/${repo}/actions/runs?event=push&per_page=10`,
+      '--jq',
+      '[.workflow_runs[].head_branch]'
+    ])
+    if (r.ok && r.out.includes(`v${version}`)) return { by: 'actions' }
+  }
+
+  const token = runSafe('gh', ['auth', 'token'])
+  if (!token.ok) return { by: 'failed', reason: 'gh has no token, cannot publish locally' }
+  const env = { ...process.env, GH_TOKEN: token.out, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+  const target = process.platform === 'darwin' ? '--mac' : '--win'
+
+  const vite = runSafe('npx', ['electron-vite', 'build'], { env, timeout: 300_000 })
+  if (!vite.ok) return { by: 'failed', reason: `electron-vite build failed: ${vite.out.slice(-200)}` }
+  const eb = runSafe('npx', ['electron-builder', target, '--publish', 'always'], {
+    env,
+    timeout: 600_000
+  })
+  if (!eb.ok) return { by: 'failed', reason: `electron-builder failed: ${eb.out.slice(-200)}` }
+
+  // Fixed-name copies (PaneForge-Setup.exe etc), so the README's permanent
+  // /releases/latest/download/ links keep working - same renaming the workflow does.
+  const dist = join(MAIN, 'dist')
+  for (const name of readdirSync(dist)) {
+    if (!name.includes(version) || !/\.(exe|dmg|zip)$/.test(name)) continue
+    const fixed = name
+      .replace(new RegExp(`[ -]?${version.replace(/\./g, '\\.')}`), '')
+      .replace(/ /g, '-')
+    const copy = join(dist, fixed)
+    copyFileSync(join(dist, name), copy)
+    runSafe('gh', ['release', 'upload', `v${version}`, copy, '--clobber'], { env, timeout: 300_000 })
+  }
+
+  const notesSrc = join(MAIN, '.github', 'release-notes.md')
+  if (existsSync(notesSrc)) {
+    const body = readFileSync(notesSrc, 'utf8').replaceAll('{{VERSION}}', version)
+    const tmp = join(dist, 'release-notes.txt')
+    writeFileSync(tmp, body, 'utf8')
+    runSafe('gh', ['release', 'edit', `v${version}`, '--notes-file', tmp], { env, timeout: 60_000 })
+  }
+  return { by: 'local' }
 }
 
 function status(session) {
@@ -1096,11 +1186,17 @@ const arg = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.l
 
 try {
   const session = arg('session')
+  const sayBuilt = (b) =>
+    b?.by === 'local'
+      ? 'GitHub Actions is disabled for the account, so this machine built and published the installer itself. Running copies update within 30 minutes.'
+      : b?.by === 'failed'
+        ? `Tag is pushed but NO installers exist: ${b.reason}. Fix and run: node scripts/lane.mjs ship`
+        : 'GitHub is building Windows and macOS. Running copies update within 30 minutes.'
   const sayRelease = (r) => {
     if (!r) return
     if (r.shipped) {
       console.log(`Released v${r.version} automatically${r.merged?.length ? ` (lanes ${r.merged.map((m) => m.lane).join(', ')})` : ''}.`)
-      console.log('GitHub is building Windows and macOS. Running copies update within 30 minutes.')
+      console.log(sayBuilt(r.built))
     } else if (r.reason && r.reason !== 'nothing to release') {
       console.log(`No release yet: ${r.reason}`)
     }
@@ -1149,7 +1245,7 @@ try {
       console.log(`Shipped v${r.version}.`)
       if (r.merged.length) console.log(`Included lanes: ${r.merged.map((m) => m.lane).join(', ')}`)
       if (r.rebased.length) console.log(`Lanes brought up to date: ${r.rebased.join(', ')}`)
-      console.log('GitHub is building Windows and macOS. Running copies update within 30 minutes.')
+      console.log(sayBuilt(r.built))
     } else {
       console.log(`Not shipped: ${r.reason}`)
     }
