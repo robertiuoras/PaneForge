@@ -78,9 +78,11 @@ import {
 import {
   beginShelfDrag,
   closeShelfWindow,
+  dropShelfDrag,
   endShelfDrag,
-  moveShelfDrag,
+  liftShelfDrag,
   openShelfWindow,
+  shownShelfDrag,
   setShelfHidden,
   setShelfQuiet,
   placeShelf,
@@ -924,7 +926,9 @@ ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
 // that leaves the window mid-drag stops sending it events, so it sends the screen point
 // and main does the arithmetic against where the drag started.
 ipcMain.on('shelf:dragStart', () => beginShelfDrag())
-ipcMain.on('shelf:dragMove', (_e, x: number, y: number) => moveShelfDrag(x, y))
+ipcMain.handle('shelf:dragLift', () => liftShelfDrag())
+ipcMain.on('shelf:dragShown', () => shownShelfDrag())
+ipcMain.handle('shelf:dragDrop', (_e, dx: number, dy: number) => dropShelfDrag(dx, dy))
 ipcMain.on('shelf:dragEnd', () => endShelfDrag())
 
 /** Just the Stash's own knobs, which is all of the config the overlay ever sees. */

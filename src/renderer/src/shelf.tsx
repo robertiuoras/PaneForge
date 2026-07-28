@@ -66,19 +66,36 @@ function useWindowDrag(): {
 } {
   const from = useRef<{ x: number; y: number } | null>(null)
   const moved = useRef(false)
-  // The newest pointer position that has not been sent yet, and the frame that will send
-  // it. Moving this window costs main several milliseconds (see shelfWindow.ts), and a
-  // pointer reports faster than that, so sending every event built a backlog the window
-  // was still working through after the mouse had stopped. One send per frame, always
-  // the latest position: nothing to queue, so nothing to fall behind by.
-  const next = useRef<{ x: number; y: number } | null>(null)
-  const frame = useRef(0)
+  // Set while the window is lifted (expanded over the whole desktop, see
+  // shelfWindow.ts): where the content sits inside it at delta zero, and its size.
+  // 'pending' between asking for the lift and main answering, so a burst of moves
+  // cannot lift twice.
+  const lifted = useRef<{ dx: number; dy: number; w: number; h: number } | 'pending' | null>(null)
+  const delta = useRef({ x: 0, y: 0 })
 
-  const send = (): void => {
-    frame.current = 0
-    const p = next.current
-    next.current = null
-    if (p) shelf.dragWindow.move(p.x, p.y)
+  // The content slides with a transform on `.wrap` - compositor work, no IPC, no
+  // window move - which is what makes the drag track the pointer at full frame rate
+  // where per-frame setPosition topped out at 37Hz. Inline styles on purpose: React
+  // never sets `style` on `.wrap`, so a re-render mid-drag (an item landing) cannot
+  // clobber them.
+  const slide = (): void => {
+    const g = lifted.current
+    if (!g || g === 'pending') return
+    const el = document.querySelector<HTMLElement>('.wrap')
+    if (!el) return
+    el.style.position = 'fixed'
+    el.style.left = '0'
+    el.style.top = '0'
+    el.style.width = `${g.w}px`
+    el.style.height = `${g.h}px`
+    el.style.willChange = 'transform'
+    el.style.transform = `translate(${g.dx + delta.current.x}px, ${g.dy + delta.current.y}px)`
+  }
+  const unslide = (): void => {
+    const el = document.querySelector<HTMLElement>('.wrap')
+    if (!el) return
+    for (const k of ['position', 'left', 'top', 'width', 'height', 'willChange', 'transform'])
+      el.style.removeProperty(k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()))
   }
 
   return {
@@ -89,6 +106,7 @@ function useWindowDrag(): {
         if (e.button !== 0 || (e.target as HTMLElement).closest?.('button')) return
         from.current = { x: e.screenX, y: e.screenY }
         moved.current = false
+        delta.current = { x: 0, y: 0 }
         ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
         shelf.dragWindow.start()
       },
@@ -102,21 +120,47 @@ function useWindowDrag(): {
         )
           return
         moved.current = true
-        next.current = { x: e.screenX, y: e.screenY }
-        if (!frame.current) frame.current = requestAnimationFrame(send)
+        delta.current = { x: e.screenX - from.current.x, y: e.screenY - from.current.y }
+        if (!lifted.current) {
+          lifted.current = 'pending'
+          void shelf.dragWindow.lift().then((g) => {
+            // null: the drag ended (or the window closed) before the lift landed.
+            if (!from.current || !g) {
+              lifted.current = null
+              return
+            }
+            lifted.current = g
+            slide()
+            // Painted where it was: the window can come back without a visible jump.
+            requestAnimationFrame(() => shelf.dragWindow.shown())
+          })
+          return
+        }
+        slide()
       },
       onPointerUp: (e: React.PointerEvent) => {
         if (!from.current) return
         ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+        delta.current = { x: e.screenX - from.current.x, y: e.screenY - from.current.y }
         from.current = null
-        // Let go between frames: where the pointer finished is where it should end up.
-        if (frame.current) cancelAnimationFrame(frame.current)
-        send()
-        shelf.dragWindow.end()
+        const g = lifted.current
+        lifted.current = null
+        if (!g) {
+          // Never lifted: a click, nothing moved.
+          shelf.dragWindow.end()
+          return
+        }
+        // Drop first (the window shrinks to the final spot behind opacity 0), then take
+        // the transform off and only then let it show - the other order flashes the
+        // content in the big window's corner for a frame.
+        void shelf.dragWindow.drop(delta.current.x, delta.current.y).then(() => {
+          unslide()
+          requestAnimationFrame(() => shelf.dragWindow.shown())
+        })
       }
     },
     wasDrag: () => moved.current,
-    dragging: () => !!from.current
+    dragging: () => !!from.current || !!lifted.current
   }
 }
 

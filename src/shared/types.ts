@@ -962,10 +962,21 @@ export interface ShelfApi {
   /**
    * Move the window itself by dragging its header. `focusable: false` rules out the usual
    * draggable-region, so the page reports the pointer in screen coordinates instead.
+   *
+   * The move itself is a lift/slide/drop: the OS window is expanded once over the whole
+   * desktop and the content slides inside it with a CSS transform, because moving a
+   * transparent always-on-top window with setPosition costs a DWM recomposite per call
+   * (~27ms measured) and no pacing makes 37Hz feel like a drag. See shelfWindow.ts.
    */
   dragWindow: {
     start(): void
-    move(x: number, y: number): void
+    /** Expand the window over the desktop; answers with where the content sits inside
+     * it and its size, or null when no drag is active. */
+    lift(): Promise<{ dx: number; dy: number; w: number; h: number } | null>
+    /** The renderer has painted the lifted (or dropped) content; safe to show again. */
+    shown(): void
+    /** Shrink back to content size at the dragged-to position and remember it. */
+    drop(dx: number, dy: number): Promise<void>
     end(): void
   }
   onItems(cb: (items: RecentItem[]) => void): () => void
