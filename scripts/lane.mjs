@@ -1110,8 +1110,9 @@ function publishFallback(version) {
   })
   if (!eb.ok) return { by: 'failed', reason: `electron-builder failed: ${eb.out.slice(-200)}` }
 
-  // Fixed-name copies (PaneForge-Setup.exe etc), so the README's permanent
-  // /releases/latest/download/ links keep working - same renaming the workflow does.
+  // Fixed-name copies (PaneForge-Setup.exe etc), so install.sh / install.ps1 keep
+  // finding the newest build by name - same renaming the workflow does. Nothing in
+  // the repo LINKS these files; that is what got the account flagged on 2026-07-28.
   const dist = join(MAIN, 'dist')
   for (const name of readdirSync(dist)) {
     if (!name.includes(version) || !/\.(exe|dmg|zip)$/.test(name)) continue

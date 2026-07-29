@@ -203,9 +203,12 @@ The same workflow uploads a second copy of each installer under a version-less n
 `install.ps1` fetch, so they never need touching after a release. The versioned files
 and `latest*.yml` are untouched, because the auto-updater reads those.
 
-Binary links do not go in this README: GitHub Support flagged the account for exactly
-that on 2026-07-28 (executables belong in a Release, not linked from the README).
-Point people at the Releases page instead.
+Binary links do not go anywhere in this repo - not the README, and not the release
+notes either: GitHub Support flagged the account for exactly that on 2026-07-28
+(executables belong in a Release's own Assets list, not linked from a page). The
+release body names the files and lets GitHub's own Assets list do the linking, and
+the 50 bodies published before that ruling were rewritten to match. The only address
+handed out anywhere is the Releases page.
 
 On Windows the download is quiet and so is the install: accepting the update runs the
 installer silently, with no setup window, and PaneForge comes back on its own with
