@@ -7,6 +7,7 @@
 // print progress bars and colour, and some (winget, pip) prompt; a real terminal
 // keeps all of that working and lets the user watch it.
 
+import { spawn } from 'node:child_process'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
 
@@ -14,6 +15,17 @@ export interface RunHandle {
   /** kill the running install */
   cancel: () => void
 }
+
+/**
+ * Installs that are still running.
+ *
+ * Nothing holds the handle these return - both callers await the promise and drop it -
+ * so without this list an install survives the app that started it. Its output goes to a
+ * renderer that no longer exists, its progress is unwatchable, and what is left on the
+ * machine is a `powershell -Command "npm i -g ..."` nobody can see or stop. Closing the
+ * window is meant to close everything.
+ */
+const running = new Set<pty.IPty>()
 
 /** Shell that can run a one-liner containing pipes and &&, per platform. */
 function shellFor(command: string): { bin: string; args: string[] } {
@@ -50,8 +62,10 @@ export function runCommand(
     return { cancel: () => undefined }
   }
 
+  running.add(proc)
   proc.onData(onData)
   proc.onExit(({ exitCode }) => {
+    running.delete(proc)
     if (finished) return
     finished = true
     onDone(exitCode)
@@ -60,11 +74,51 @@ export function runCommand(
   return {
     cancel: () => {
       finished = true
+      running.delete(proc)
       try {
         proc.kill()
       } catch {
         /* already gone */
       }
+    }
+  }
+}
+
+/**
+ * Stop every install still going, process tree and all. Called on the way out, beside
+ * the pane teardown it mirrors.
+ *
+ * The tree is the point: the pty is a shell, and the thing actually downloading is npm or
+ * winget two processes below it. ConPTY's own kill returns before anything has died and
+ * the app does not wait around afterwards, so on Windows the taskkill is what makes this
+ * true rather than merely asked for.
+ */
+export function stopInstalls(): void {
+  const live = [...running]
+  running.clear()
+  if (!live.length) return
+  if (process.platform === 'win32') {
+    const args = live
+      .map((p) => p.pid)
+      .filter((pid) => typeof pid === 'number' && pid > 0)
+      .flatMap((pid) => ['/PID', String(pid)])
+    if (args.length) {
+      try {
+        spawn('taskkill', ['/F', '/T', ...args], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        }).unref()
+      } catch {
+        /* no taskkill on PATH - the kill below is still the real one */
+      }
+    }
+  }
+  for (const p of live) {
+    try {
+      p.kill()
+    } catch {
+      /* already gone */
     }
   }
 }

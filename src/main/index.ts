@@ -95,7 +95,7 @@ import {
   updateShelfConfig,
   updateShelfItems
 } from './shelfWindow'
-import { refreshPath, runCommand } from './install'
+import { refreshPath, runCommand, stopInstalls } from './install'
 import {
   checkForUpdates,
   getUpdateState,
@@ -1622,6 +1622,9 @@ app.on('window-all-closed', () => {
   // device says "went away" straight away instead of a minute later.
   remote.stop()
   manager.shutdown()
+  // An install running in Settings is a process tree of ours too, and its output goes to
+  // a window that is already gone.
+  stopInstalls()
   hardExit()
 })
 
@@ -1663,5 +1666,6 @@ app.on('before-quit', () => {
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.
   manager.shutdown()
+  stopInstalls()
 })
 app.on('will-quit', () => globalShortcut.unregisterAll())

@@ -166,6 +166,8 @@ dialog says it was doing. `npm run test:consoles` pins the sweep that kills cons
 left behind - including the guard that stops it touching a console whose parent is alive.
 `npm run test:gitpoll` drives a fake clock over the badge's `git status` cache, so the
 thirty-second idle window is checked in milliseconds rather than by waiting.
+`npm run test:install` starts a real install pty that sits there and proves quitting
+takes its whole process tree - nothing is installed and nothing is written.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 `npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING
