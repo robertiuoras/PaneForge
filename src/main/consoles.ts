@@ -91,20 +91,11 @@ function reap(pids: number[], delayMs: number): void {
     // -EncodedCommand rather than -Command: the script contains quotes and braces, and
     // Windows argument escaping through a spawn() array is where that goes wrong.
     const encoded = Buffer.from(reapScript(pids, delayMs), 'utf16le').toString('base64')
-    const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true
-    })
-    try {
-      writeFileSync(join(app.getPath('userData'), 'consoles-debug.log'), `spawned pid=${child.pid} at ${new Date().toISOString()}\n`, { flag: 'a' })
-    } catch { /* debug only */ }
-    child.on('error', (e) => {
-      try {
-        writeFileSync(join(app.getPath('userData'), 'consoles-debug.log'), `error ${String(e)}\n`, { flag: 'a' })
-      } catch { /* debug only */ }
-    })
-    child.unref()
+    }).unref()
   } catch {
     /* no PowerShell on PATH - the leak is a tidy-up, not a correctness problem */
   }

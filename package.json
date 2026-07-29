@@ -46,7 +46,8 @@
     "test:trust": "node scripts/trust-test.mjs",
     "test:slash": "node scripts/slash-test.mjs",
     "test:restore": "node scripts/restore-context-test.mjs",
-    "test:consoles": "node scripts/console-sweep-test.mjs"
+    "test:consoles": "node scripts/console-sweep-test.mjs",
+    "test:gitpoll": "node scripts/git-poll-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

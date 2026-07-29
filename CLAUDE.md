@@ -160,6 +160,12 @@ until switched on, and discovery is a UDP broadcast that carries no secret.
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
+`npm run test:restore` covers what a reopened desk is made of: which conversation each
+pane goes back into (never another pane's, never one older than the pane) and what the
+dialog says it was doing. `npm run test:consoles` pins the sweep that kills console hosts
+left behind - including the guard that stops it touching a console whose parent is alive.
+`npm run test:gitpoll` drives a fake clock over the badge's `git status` cache, so the
+thirty-second idle window is checked in milliseconds rather than by waiting.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 `npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING
