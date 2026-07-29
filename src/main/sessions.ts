@@ -14,6 +14,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart } from './history'
+import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
@@ -176,6 +177,9 @@ export class SessionManager extends EventEmitter {
         // Already the lane's own folder: reopening must land back in it, not be
         // treated as a fresh clash and pushed one lane further along.
         lane: s.meta.lane,
+        // The conversation this pane is actually in, so restoring reopens THAT one
+        // rather than whatever happens to be newest in the folder by then.
+        resumeId: resumeIdFor(s.meta.id),
         // The port the pane's dev server was told to use, kept across the restart
         // so a server started before an update comes back on the same one.
         laneEnv: s.req.laneEnv
@@ -228,6 +232,7 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)
+    noteSession(id, req.cwd, agent)
     this.queuePrompt(id, req.prompt, req.promptDelay)
 
     this.emitSessions()
@@ -284,6 +289,9 @@ export class SessionManager extends EventEmitter {
       /* already dead */
     }
     recordEnd(id)
+    // A restart is a new conversation unless the CLI is being asked to resume one, and
+    // either way the pane is writing a different file from here.
+    noteSession(id, live.meta.cwd, live.meta.agent)
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
     live.buffer.set(RESET)
     live.meta.status = 'starting'
@@ -427,6 +435,13 @@ export class SessionManager extends EventEmitter {
     const submitted = data.includes('\r') || data.includes('\n')
     if (submitted) {
       const slash = isSlashCommand(live.typed)
+      // `/clear` and `/resume` are the two ways a pane changes which conversation it is
+      // in without restarting. The pane keeps its transcript until told otherwise (a
+      // second pane on the same repo must not be able to drift onto it), so this is
+      // where being told happens.
+      if (slash && /^\s*\/(clear|resume)\b/.test(live.typed)) {
+        noteSession(id, live.meta.cwd, live.meta.agent)
+      }
       live.typed = ''
       this.beginRun(live)
       // A slash command still gets the run clock (the readout should say how long
@@ -604,6 +619,7 @@ export class SessionManager extends EventEmitter {
       /* already dead */
     }
     recordEnd(id)
+    forgetSession(id)
     this.sessions.delete(id)
     this.emitSessions()
   }
@@ -672,7 +688,7 @@ export class SessionManager extends EventEmitter {
     const spec = specFor(agent)
     // resume is per-CLI: `claude --continue` but `codex resume --last`, and some
     // agents have nothing at all - buildArgs drops the flag rather than guessing.
-    const args = buildArgs(spec, { resume: req.resume, model: req.model })
+    const args = buildArgs(spec, { resume: req.resume, resumeId: req.resumeId, model: req.model })
     return pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,

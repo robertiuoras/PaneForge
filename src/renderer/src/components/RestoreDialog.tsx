@@ -77,6 +77,14 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
               <span className="restore-path">{p.cwd}</span>
               {p.gone === 'folder' && <span className="tag">folder gone</span>}
               {p.gone === 'agent' && <span className="tag">{p.agent} not installed</span>}
+              {/* The last thing typed into this pane's conversation - the only line here
+                  that answers "which of these was the one I care about". Full text on
+                  hover, because the useful half is often past the width of the row. */}
+              {p.lastPrompt && (
+                <span className="restore-prompt" title={p.lastPrompt}>
+                  {p.lastPrompt}
+                </span>
+              )}
             </div>
           ))}
         </div>

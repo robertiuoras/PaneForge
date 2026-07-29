@@ -88,6 +88,12 @@ export interface StartSessionRequest {
   model?: string
   /** resume the most recent session in that directory (`claude --continue`) */
   resume?: boolean
+  /**
+   * Resume THIS conversation rather than whichever is newest in the folder. Written into
+   * the desk when the pane's own transcript could be named, and dropped again if that
+   * transcript is gone by the time the panes are offered back.
+   */
+  resumeId?: string
   /** text typed into the agent once it is ready */
   prompt?: string
   /** extra ms before the prompt is typed, used to stagger a swarm launch */
@@ -630,6 +636,13 @@ export interface RestorePane {
   title: string
   agent: Agent
   model?: string
+  /** the conversation this pane will be put back into, when it could be named */
+  resumeId?: string
+  /**
+   * The last thing typed into that conversation. A folder name says where a pane was;
+   * this is the only thing on the dialog that says what it was for.
+   */
+  lastPrompt?: string
   /** why this one cannot be reopened: shown greyed and never started */
   gone?: 'folder' | 'agent'
 }

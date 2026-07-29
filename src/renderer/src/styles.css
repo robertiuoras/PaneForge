@@ -933,6 +933,13 @@ body.sizing * { user-select: none !important; }
   color: var(--muted); font-size: 11px; direction: rtl; text-align: left;
   max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The last prompt of that pane's conversation, on its own line: the first line is
+   already full, and the name and the tick have to stay lined up down the column. */
+.dialog.restore .proj { flex-wrap: wrap; row-gap: 2px; }
+.restore-prompt {
+  flex-basis: 100%; margin-left: 23px; color: var(--muted); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.85;
+}
 /* A pane whose folder or agent has gone: shown, so its absence is explained rather
    than silent, but not something that can be ticked. */
 .proj.gone { opacity: 0.45; cursor: default; }

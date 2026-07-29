@@ -9,27 +9,67 @@ import { execFile } from 'node:child_process'
 import type { GitInfo } from '../shared/types'
 
 const TTL = 6000
-const cache = new Map<string, { at: number; info: GitInfo | null }>()
+/**
+ * How long a folder nothing is happening in keeps its answer.
+ *
+ * The badge polls every six seconds per pane and each miss is a real `git status` against
+ * a real working tree - measured at 30ms to several hundred on a big repo. But the only
+ * thing that changes a working tree is an agent editing it, and a pane sitting idle with
+ * an unchanged repo answered the same thing ten polls running. So: full rate while the
+ * agent in that folder is working or while the answer is still moving, and a slow tick
+ * once two polls in a row have said exactly the same thing about a folder nobody is
+ * touching. A change anywhere puts it straight back to six seconds.
+ */
+const IDLE_TTL = 30_000
+/** Identical answers in a row before the folder is treated as settled. */
+const SETTLED_AFTER = 2
+
+interface Entry {
+  at: number
+  info: GitInfo | null
+  /** consecutive reads that came back identical */
+  same: number
+}
+const cache = new Map<string, Entry>()
 // One `git status` in flight per folder. Without this a grid of panes whose polls
 // drift into the same tick each start their own process against the same repo.
 const inFlight = new Map<string, Promise<GitInfo | null>>()
 
-export async function gitInfo(cwd: string): Promise<GitInfo | null> {
+/**
+ * `busy` is "an agent is working in this folder right now" - the only case where the
+ * answer is expected to change under us, and the case that keeps the fast tick.
+ */
+export async function gitInfo(cwd: string, busy = false): Promise<GitInfo | null> {
   const hit = cache.get(cwd)
   const now = Date.now()
-  if (hit && now - hit.at < TTL) return hit.info
+  const ttl = !busy && hit && hit.same >= SETTLED_AFTER ? IDLE_TTL : TTL
+  if (hit && now - hit.at < ttl) return hit.info
 
   const running = inFlight.get(cwd)
   if (running) return running
 
   const job = read(cwd)
     .then((info) => {
-      cache.set(cwd, { at: Date.now(), info })
+      const prev = cache.get(cwd)
+      const same = prev && identical(prev.info, info) ? prev.same + 1 : 0
+      cache.set(cwd, { at: Date.now(), info, same })
       return info
     })
     .finally(() => inFlight.delete(cwd))
   inFlight.set(cwd, job)
   return job
+}
+
+/** Same branch, same counts: nothing a badge would have redrawn. */
+function identical(a: GitInfo | null, b: GitInfo | null): boolean {
+  if (!a || !b) return a === b
+  return (
+    a.branch === b.branch &&
+    a.dirty === b.dirty &&
+    a.staged === b.staged &&
+    a.ahead === b.ahead &&
+    a.behind === b.behind
+  )
 }
 
 /**

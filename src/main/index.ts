@@ -49,6 +49,8 @@ import {
   titleSuffix
 } from './profile'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import { rememberAppPid, sweepOldConsoles, sweepOwnConsolesOnExit } from './consoles'
+import { lastPrompt, resumable } from './transcripts'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
@@ -764,7 +766,14 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
   return 'No `cursor` or `code` on PATH - opened the folder instead.'
 })
 
-ipcMain.handle('git:info', (_e, path: string) => gitInfo(path))
+ipcMain.handle('git:info', (_e, path: string) =>
+  // A folder with an agent mid-turn in it is the one that keeps the fast poll: it is the
+  // only way the working tree changes while the app is looking at it.
+  gitInfo(
+    path,
+    manager.list().some((s) => s.cwd === path && s.status === 'working')
+  )
+)
 ipcMain.handle('lanes:board', () => laneBoard())
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
@@ -1408,7 +1417,14 @@ function restorePanes(specs: StartSessionRequest[]): void {
   restoredThisRun = true
   for (const req of specs.slice(0, MAX_RESTORE)) {
     try {
-      manager.start({ ...req, resume: true, prompt: undefined })
+      manager.start({
+        ...req,
+        resume: true,
+        // Reopen the conversation this pane was in by name, and fall back to "the newest
+        // one here" if that transcript has been deleted since the desk was written.
+        resumeId: resumable(req.cwd, req.resumeId) ? req.resumeId : undefined,
+        prompt: undefined
+      })
     } catch {
       // Folder moved or the agent is no longer installed - skip that pane only.
     }
@@ -1426,12 +1442,17 @@ let offer: RestoreOffer | null = null
 function describe(spec: StartSessionRequest, i: number): RestorePane {
   const agent = spec.agent ?? 'claude'
   const installed = listAgents().find((a) => a.id === agent)?.available ?? false
+  // A conversation deleted since the desk was written cannot be resumed by name, and
+  // asking the CLI for one it does not have is worse than continuing the newest.
+  const resumeId = resumable(spec.cwd, spec.resumeId) ? spec.resumeId : undefined
   return {
     id: String(i),
     cwd: spec.cwd,
     title: spec.title || basename(spec.cwd),
     agent,
     model: spec.model,
+    resumeId,
+    lastPrompt: lastPrompt(spec.cwd, resumeId),
     gone: paneMissing(spec) ? 'folder' : installed ? undefined : 'agent'
   }
 }
@@ -1520,7 +1541,13 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const wanted = new Set(answer.ids ?? [])
   const specs = pending.panes
     .filter((p) => wanted.has(p.id) && !p.gone)
-    .map((p) => ({ cwd: p.cwd, title: p.title, agent: p.agent, model: p.model }))
+    .map((p) => ({
+      cwd: p.cwd,
+      title: p.title,
+      agent: p.agent,
+      model: p.model,
+      resumeId: p.resumeId
+    }))
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
   restorePanes(specs)
@@ -1553,6 +1580,9 @@ app.whenReady().then(() => {
   // First line of this process's story: the one that was missing when an update came
   // back and nobody could tell whether it had.
   updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`)
+  // Whatever the runs before this one left running. Delayed inside, and a no-op on a
+  // machine that has never leaked one. See consoles.ts.
+  sweepOldConsoles(rememberAppPid())
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
   // Before the window: everything that opens, floats or flashes below asks this first,
@@ -1616,6 +1646,10 @@ app.on('window-all-closed', () => {
  */
 function hardExit(): void {
   updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
+  // The one thing shutdown() cannot reach: the ConPTY console hosts are OUR children,
+  // not the agents', so no taskkill of an agent tree names them. This runs after we are
+  // gone and only touches consoles whose parent is gone with us. See consoles.ts.
+  sweepOwnConsolesOnExit()
   process.exit(0)
 }
 

@@ -38,6 +38,13 @@ export interface AgentSpec {
   args?: string[]
   /** args that continue the last conversation in the same folder; omitted = unsupported */
   resumeArgs?: string[]
+  /**
+   * args that reopen ONE named conversation, with its id appended. "The newest chat in
+   * this folder" and "the chat this pane was in" stop being the same answer the moment a
+   * second pane opens on the same repo, or another window has a turn there afterwards -
+   * so a restore that knows the id says the id. Omitted = only `resumeArgs` is possible.
+   */
+  resumeIdArgs?: string[]
   /** flag that selects a model, e.g. `--model`; omitted = the CLI has no such flag */
   modelFlag?: string
   /** 'arg' appends the model as a positional (ollama run <model>) instead of a flag */
@@ -95,6 +102,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     label: 'Claude Code',
     bin: 'claude',
     resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
     modelFlag: '--model',
     models: CLAUDE_MODELS,
     color: '#d97757',
@@ -297,8 +305,16 @@ export function modelHint(m: ModelChoice): string | undefined {
 }
 
 /** Full argv for one launch: resume form or fresh form, plus the model. */
-export function buildArgs(spec: AgentSpec, opts: { resume?: boolean; model?: string }): string[] {
-  const argv = opts.resume && spec.resumeArgs ? [...spec.resumeArgs] : [...(spec.args ?? [])]
+export function buildArgs(
+  spec: AgentSpec,
+  opts: { resume?: boolean; resumeId?: string; model?: string }
+): string[] {
+  const named = opts.resume && opts.resumeId && spec.resumeIdArgs
+  const argv = named
+    ? [...(spec.resumeIdArgs as string[]), opts.resumeId as string]
+    : opts.resume && spec.resumeArgs
+      ? [...spec.resumeArgs]
+      : [...(spec.args ?? [])]
   const model = opts.model?.trim()
   if (!model) return argv
   if (spec.modelStyle === 'arg') argv.push(model)
