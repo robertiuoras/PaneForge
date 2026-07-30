@@ -6,6 +6,8 @@ import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
+// Hints below name shortcuts; on a Mac those live on Cmd, so print them through this.
+import { keyLabel } from '../platform'
 
 const api = window.api
 
@@ -157,7 +159,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.copyOnSelect}
                   onChange={(v) => onChange({ copyOnSelect: v })}
                   label="Selecting text in a pane copies it"
-                  hint="Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes."
+                  hint={keyLabel(
+                    'Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes.'
+                  )}
                 />
                 <Switch
                   checked={config.mouseSelect}
@@ -169,7 +173,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.autoFixUi}
                   onChange={(v) => onChange({ autoFixUi: v })}
                   label="Repair a pane's display after a resize"
-                  hint="Makes the agent repaint its whole frame once the size settles, so a resize cannot leave torn boxes behind. Ctrl+Shift+L does it on demand."
+                  hint={keyLabel(
+                    "Makes the agent repaint its whole frame once the size settles, so a resize cannot leave torn boxes behind. Ctrl+Shift+L does it on demand."
+                  )}
                 />
                 <Switch
                   checked={config.notifyOnIdle}
@@ -266,14 +272,18 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     checked={config.clipboardShelf}
                     onChange={(v) => onChange({ clipboardShelf: v })}
                     label="Keep what I copy on the Stash"
-                    hint="Anything you copy anywhere - text, or a screenshot - lands bottom-left and stays on a history that survives restarts. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched at all."
+                    hint={keyLabel(
+                      'Anything you copy anywhere - text, or a screenshot - lands bottom-left and stays on a history that survives restarts. Click text to paste it into the focused pane, click an image to type the path of a saved PNG the agent can read, or drag it out to another app. Ctrl+Shift+V reopens it. Off stops the clipboard being watched at all.'
+                    )}
                   />
                   <Switch
                     checked={config.clipboardOverlay}
                     onChange={(v) => onChange({ clipboardOverlay: v })}
                     label="Float the Stash over every other app"
                     disabled={!config.clipboardShelf}
-                    hint="A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the whole Stash: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in. Files can be dropped straight onto the pill."
+                    hint={keyLabel(
+                      'A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the whole Stash: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in. Files can be dropped straight onto the pill.'
+                    )}
                   />
                 </div>
               </div>
@@ -289,7 +299,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     { value: '5000', label: '5 seconds' },
                     { value: '10000', label: '10 seconds' },
                     { value: '30000', label: '30 seconds' },
-                    { value: '0', label: 'Never open by itself', hint: 'Ctrl+Shift+V only' }
+                    { value: '0', label: 'Never open by itself', hint: keyLabel('Ctrl+Shift+V only') }
                   ]}
                 />
                 <span className="hint">
@@ -515,7 +525,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <label>Dictation</label>
                 <span className="hint">
                   Click the mic in any pane's header and talk - it goes into that pane, whichever agent is
-                  running there. Ctrl+Shift+Space does the same for the focused pane, from anywhere. Audio is
+                  running there. {keyLabel('Ctrl+Shift+Space')} does the same for the focused pane, from
+                  anywhere. Audio is
                   transcribed by a Whisper model running on this machine - nothing is uploaded, and it costs
                   nothing.
                 </span>

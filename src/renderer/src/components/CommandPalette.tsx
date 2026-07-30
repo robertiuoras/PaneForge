@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { keyLabel } from '../platform'
 
 export interface Command {
   id: string
@@ -99,7 +100,7 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
                   {c.icon}
                   <span className="cmd-title">{c.title}</span>
                   {c.hint && <span className="cmd-hint">{c.hint}</span>}
-                  {c.keys && <span className="kbd-box">{c.keys}</span>}
+                  {c.keys && <span className="kbd-box">{keyLabel(c.keys)}</span>}
                 </div>
               </div>
             )

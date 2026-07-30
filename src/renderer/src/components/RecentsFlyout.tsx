@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { RecentItem } from '@shared/types'
+import { keyLabel } from '../platform'
 
 const api = window.api
 
@@ -319,7 +320,9 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
       </div>
       {pinned && (
         <div className="shelf-foot">
-          <span className="hint">Drag the title to move it - Ctrl Shift V or Esc closes</span>
+          <span className="hint">
+            {keyLabel('Drag the title to move it - Ctrl Shift V or Esc closes')}
+          </span>
           <button className="ghost small" onClick={onClose}>
             Close
           </button>

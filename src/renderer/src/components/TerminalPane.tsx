@@ -39,7 +39,8 @@ interface Props {
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
-const isMac = navigator.userAgent.includes('Mac')
+// Same detector the window-level shortcuts use, so the two halves cannot disagree.
+import { isMac } from '../platform'
 
 /**
  * Panes register their repair function here, so the toolbar button, the shortcut and the

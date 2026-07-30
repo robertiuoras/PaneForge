@@ -22,6 +22,7 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { RecentItem, StashConfig } from '@shared/types'
+import { keyLabel } from './platform'
 import './shelf.css'
 
 const shelf = window.shelf
@@ -301,7 +302,7 @@ function Settings({
         <button
           className="mini danger"
           onClick={() => patch({ clipboardOverlay: false })}
-          title="Hide this window. Ctrl+Alt+V brings it back."
+          title={keyLabel('Hide this window. Ctrl+Alt+V brings it back.')}
         >
           hide
         </button>
@@ -496,7 +497,7 @@ function Overlay(): JSX.Element {
             if ((e.target as HTMLElement).closest?.('.pill-grip')) return
             if (!drag.wasDrag()) want(true)
           }}
-          title="Stash — Ctrl+Alt+V. Drop a file here to park it. Drag it by the grip on the right."
+          title={keyLabel('Stash — Ctrl+Alt+V. Drop a file here to park it. Drag it by the grip on the right.')}
         >
           <span className="glyph" aria-hidden="true">
             ▤
@@ -722,7 +723,9 @@ function Overlay(): JSX.Element {
                 </div>
               ))}
             </div>
-            <div className="foot">Click puts it in the pane · also copies · drag a tile out · Ctrl+Alt+V</div>
+            <div className="foot">
+              {keyLabel('Click puts it in the pane · also copies · drag a tile out · Ctrl+Alt+V')}
+            </div>
           </>
         )}
       </div>

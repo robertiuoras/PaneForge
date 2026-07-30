@@ -11,6 +11,9 @@
 import { useMemo, useState } from 'react'
 import { Segmented } from './Controls'
 import MicIcon from './MicIcon'
+// The rows below are written with Ctrl because that is what Windows and Linux use; on a
+// Mac the same shortcuts are on Cmd, so every key is printed through `keyLabel`.
+import { keyLabel, MOD } from '../platform'
 
 interface Props {
   onClose: () => void
@@ -94,14 +97,14 @@ const TOPICS: Topic[] = [
     body: (
       <>
         <p>
-          A <b>pane</b> is one terminal running one AI agent in one folder. Ctrl T starts one;
+          A <b>pane</b> is one terminal running one AI agent in one folder. {MOD} T starts one;
           the list on the left is all of them. A pane keeps running whether or not you are
           looking at it, so an agent working through something long does not need the window.
         </p>
         <p>
           The dot on a card is what that agent is doing: working, waiting for you, or finished.
-          Ctrl Shift R restarts the agent without losing the pane or the folder it is in, and
-          Ctrl Shift A swaps it for another AI you have installed.
+          {MOD} Shift R restarts the agent without losing the pane or the folder it is in, and
+          {MOD} Shift A swaps it for another AI you have installed.
         </p>
       </>
     )
@@ -182,7 +185,7 @@ const TOPICS: Topic[] = [
     body: (
       <>
         <p>
-          Ctrl G shows every pane at once instead of one at a time. Typing still goes to the
+          {MOD} G shows every pane at once instead of one at a time. Typing still goes to the
           focused pane only — the one with the lit border — so a grid of eight agents is safe
           to leave up.
         </p>
@@ -220,8 +223,8 @@ const TOPICS: Topic[] = [
     body: (
       <>
         <p>
-          A shelf for things you want to hand to an agent. Ctrl Shift V opens it over the
-          window; Ctrl Alt V opens the floating one, which works from any other app. Click a
+          A shelf for things you want to hand to an agent. {MOD} Shift V opens it over the
+          window; {keyLabel('Ctrl Alt V')} opens the floating one, which works from any other app. Click a
           line to put it back on the clipboard, → to send it straight into the focused pane, ✕
           to forget it.
         </p>
@@ -237,7 +240,7 @@ const TOPICS: Topic[] = [
     find: 'swarm mission roles parallel many agents ctrl shift s',
     body: (
       <p>
-        Ctrl Shift S takes one mission and opens a pane per role, each with its own brief, all
+        {MOD} Shift S takes one mission and opens a pane per role, each with its own brief, all
         in the same project. Use it when a job splits cleanly into parts that do not need to
         watch each other. When they do need to share a project folder, they get lanes, as
         above.
@@ -249,7 +252,7 @@ const TOPICS: Topic[] = [
     find: 'board tasks memory notes ctrl shift k',
     body: (
       <p>
-        Ctrl Shift K opens the board for the focused pane&apos;s folder: a task list and a
+        {MOD} Shift K opens the board for the focused pane&apos;s folder: a task list and a
         notes file that every agent working in that folder can read and write. It is how two
         panes in one project agree on what is done without you relaying it.
       </p>
@@ -260,7 +263,7 @@ const TOPICS: Topic[] = [
     find: 'remote device another machine mac pc ctrl shift d',
     body: (
       <p>
-        Ctrl Shift D brings another machine&apos;s panes into this window, so a run started on
+        {MOD} Shift D brings another machine&apos;s panes into this window, so a run started on
         the desktop can be read and typed into from the laptop. The agent keeps running on the
         machine it started on.
       </p>
@@ -271,7 +274,7 @@ const TOPICS: Topic[] = [
     find: 'voice mic dictate speak whisper transcribe',
     body: (
       <p>
-        Ctrl Shift Space, or the mic floating at the bottom-left of a pane, dictates into the
+        {MOD} Shift Space, or the mic floating at the bottom-left of a pane, dictates into the
         prompt. Press once to start, again to transcribe. Nothing is sent anywhere until you
         press it, and the text lands in the prompt box for you to edit before it goes.
       </p>
@@ -321,7 +324,7 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
           <span className="hint">Esc closes</span>
         </div>
         <div className="key-row lead">
-          <span className="kbd-box">{HELP_KEY[0]}</span>
+          <span className="kbd-box">{keyLabel(HELP_KEY[0])}</span>
           <span>{HELP_KEY[1]}</span>
         </div>
         {!needle && (
@@ -345,7 +348,7 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
           {showKeys &&
             keyRows.map(([k, what, hot]) => (
               <div className={'key-row' + (hot ? ' hot' : '')} key={k}>
-                <span className="kbd-box">{k}</span>
+                <span className="kbd-box">{keyLabel(k)}</span>
                 <span>
                   {what}
                   {hot && <MicIcon size={12} />}

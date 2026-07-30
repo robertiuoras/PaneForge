@@ -25,6 +25,7 @@ import HistoryDialog from './components/HistoryDialog'
 import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import TerminalPane, { paneFocus, paneInsert, paneRepair } from './components/TerminalPane'
+import { keyLabel, modKey } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
@@ -792,13 +793,15 @@ export default function App(): JSX.Element {
       // Ctrl+/ (and Ctrl+? on the same physical key) is where everything else puts help,
       // and it is the one people try before F1. A bare "?" cannot have it: that character
       // is typed into agents all day.
-      if (e.ctrlKey && !e.altKey && (e.key === '/' || e.key === '?')) {
+      // `modKey` is Cmd on a Mac and Ctrl everywhere else - every shortcut below reads it
+      // rather than ctrlKey, so a Mac's Ctrl keeps belonging to the shell.
+      if (modKey(e) && !e.altKey && (e.key === '/' || e.key === '?')) {
         e.preventDefault()
         e.stopPropagation()
         setHelp((h) => !h)
         return
       }
-      if (!e.ctrlKey || e.altKey) return
+      if (!modKey(e) || e.altKey) return
       const k = e.key.toLowerCase()
 
       if (k === 't') {
@@ -1324,12 +1327,12 @@ export default function App(): JSX.Element {
             PaneForge
           </span>
           <span className="icons">
-            <button className="icon" title="Settings (Ctrl ,)" onClick={() => setSettings(true)}>
+            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
               ⚙
             </button>
             <button
               className="icon help"
-              title="Every shortcut and what it does (F1 or Ctrl /)"
+              title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
               onClick={() => setHelp(true)}
             >
               ?
@@ -1338,14 +1341,14 @@ export default function App(): JSX.Element {
         </div>
 
         <button className="primary" onClick={() => setPicking(true)}>
-          <span className="plus">+</span> New session <span className="kbd">Ctrl T</span>
+          <span className="plus">+</span> New session <span className="kbd">{keyLabel('Ctrl T')}</span>
         </button>
         <button className="ghost search-btn" onClick={() => setPalette(true)}>
           <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
             <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Search sessions and actions <span className="kbd">Ctrl K</span>
+          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
         </button>
 
         {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
@@ -1354,14 +1357,14 @@ export default function App(): JSX.Element {
         <div className="quick">
           <button
             className="ghost quick-btn"
-            title="Swarm: several agents on one mission (Ctrl Shift S)"
+            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
             onClick={() => setSwarm(true)}
           >
             <SwarmIcon />
           </button>
           <button
             className="ghost quick-btn"
-            title="Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)"
+            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
             disabled={!activeId}
             onClick={() => {
               const s = sessions.find((x) => x.id === activeId)
@@ -1372,7 +1375,7 @@ export default function App(): JSX.Element {
           </button>
           <button
             className="ghost quick-btn"
-            title="History: search past sessions (Ctrl H)"
+            title={keyLabel('History: search past sessions (Ctrl H)')}
             onClick={() => setHistory(true)}
           >
             <HistoryIcon />
@@ -1381,8 +1384,8 @@ export default function App(): JSX.Element {
             className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
             title={
               remoteLive
-                ? `Devices: ${remoteLive} connected (Ctrl Shift D)`
-                : 'Devices: work on another machine’s panes from here (Ctrl Shift D)'
+                ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
+                : keyLabel('Devices: work on another machine’s panes from here (Ctrl Shift D)')
             }
             onClick={() => setDevices(true)}
           >
@@ -1510,7 +1513,7 @@ export default function App(): JSX.Element {
                           className={
                             'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')
                           }
-                          title={`Ctrl ${i + 1}`}
+                          title={keyLabel(`Ctrl ${i + 1}`)}
                         >
                           {i + 1}
                         </span>
@@ -1576,7 +1579,7 @@ export default function App(): JSX.Element {
               )}
               <button
                 className="x"
-                title="Close session (Ctrl W)"
+                title={keyLabel('Close session (Ctrl W)')}
                 onClick={(e) => {
                   e.stopPropagation()
                   close(s.id)
@@ -1586,7 +1589,9 @@ export default function App(): JSX.Element {
               </button>
             </div>
           ))}
-          {sessions.length === 0 && <div className="empty">No sessions. Ctrl T to start one.</div>}
+          {sessions.length === 0 && (
+            <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
+          )}
         </div>
 
         <div className="foot">
@@ -1594,8 +1599,8 @@ export default function App(): JSX.Element {
             value={grid ? 'grid' : 'single'}
             onChange={(v) => patchConfig({ grid: v === 'grid' })}
             options={[
-              { value: 'single', label: 'Focus', title: 'One pane at a time (Ctrl G)' },
-              { value: 'grid', label: 'Grid', title: 'Every pane at once (Ctrl G)' }
+              { value: 'single', label: 'Focus', title: keyLabel('One pane at a time (Ctrl G)') },
+              { value: 'grid', label: 'Grid', title: keyLabel('Every pane at once (Ctrl G)') }
             ]}
           />
           <button className="ghost small" onClick={saveRunningAsWorkspace} disabled={!sessions.length}>
@@ -1711,12 +1716,16 @@ export default function App(): JSX.Element {
                 >
                   <TrashIcon size={13} />
                 </button>
-                <button className="icon" title="Restart agent (Ctrl Shift R)" onClick={() => api.restartSession(s.id)}>
+                <button
+                  className="icon"
+                  title={keyLabel('Restart agent (Ctrl Shift R)')}
+                  onClick={() => api.restartSession(s.id)}
+                >
                   ⟳
                 </button>
                 <button
                   className="icon fix"
-                  title="Fix the display: refit and repaint, keeping the run (Ctrl Shift L)"
+                  title={keyLabel('Fix the display: refit and repaint, keeping the run (Ctrl Shift L)')}
                   onClick={() => fixUi(s.id)}
                 >
                   Fix
@@ -1742,7 +1751,7 @@ export default function App(): JSX.Element {
                     ✎
                   </button>
                 )}
-                <button className="icon" title="Close (Ctrl W)" onClick={() => close(s.id)}>
+                <button className="icon" title={keyLabel('Close (Ctrl W)')} onClick={() => close(s.id)}>
                   x
                 </button>
               </span>
@@ -1780,7 +1789,7 @@ export default function App(): JSX.Element {
                     ? `Listening - click to transcribe into ${s.title}`
                     : voice.phase !== 'idle'
                       ? 'Already listening for another pane'
-                      : `Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`
+                      : keyLabel(`Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`)
                 }
                 aria-label="Dictate into this pane"
                 disabled={voice.phase !== 'idle' && voice.target !== s.id}
@@ -1800,7 +1809,7 @@ export default function App(): JSX.Element {
               <AppLogo size={44} />
             </div>
             <h1>PaneForge</h1>
-            <p>Start only the sessions you need. Ctrl T, tick a few projects, Enter.</p>
+            <p>{keyLabel('Start only the sessions you need. Ctrl T, tick a few projects, Enter.')}</p>
             <div className="ph-agents">
               {agents
                 .filter((a) => a.available && a.id !== 'shell')
@@ -1819,7 +1828,9 @@ export default function App(): JSX.Element {
                   </button>
                 ))}
             </div>
-            <p className="hint">Ctrl K to search everything. F1 or Ctrl / for every shortcut.</p>
+            <p className="hint">
+              {keyLabel('Ctrl K to search everything. F1 or Ctrl / for every shortcut.')}
+            </p>
           </div>
         )}
       </main>
