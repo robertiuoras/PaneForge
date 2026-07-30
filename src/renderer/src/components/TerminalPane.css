@@ -19,6 +19,16 @@
      over it would put a dead column down the side of every pane. */
   pointer-events: none;
   cursor: default;
+  /* Above every layer xterm stacks inside the pane, or the tags are decoration.
+     `.xterm-wrap` is `position: relative` with `z-index: auto`, so it is NOT a stacking
+     context - which means xterm's own layers compete with this rail directly rather than
+     being contained by the terminal. `.xterm-link-layer` is `z-index: 2` and covers the
+     whole screen, so with no z-index here it painted over the rail and ate every click:
+     measured, `elementFromPoint` at the centre of all four visible tags returned
+     `xterm-link-layer`, never `.mark`. 9 clears the link layer (2), the decorations (6),
+     the top-layer decorations (7) and the overview ruler (8); xterm's accessibility layer
+     at 10 is `pointer-events: none` and does not care. `scripts/rail-test.mjs` pins it. */
+  z-index: 9;
 }
 
 .mark {

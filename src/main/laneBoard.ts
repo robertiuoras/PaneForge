@@ -72,7 +72,14 @@ function findRepo(): string | null {
   // for a moment when no chat is in it), and this app runs for days at a time. Both names
   // are looked for so a machine mid-rename, either way round, still finds its lanes.
   if (repo !== undefined && (repo === null || existsSync(repo))) return repo
-  const roots = [join(homedir(), 'Desktop', 'Projects'), join(homedir(), 'Projects')]
+  // `~/Desktop` is behind TCC on macOS and this runs on the way up, so looking there
+  // would open a system prompt before the window - for a strip that only ever appears on
+  // the one machine PaneForge is developed on. `PANEFORGE_REPO` covers a Mac that really
+  // does keep the checkout on its Desktop. See `defaultRoot()` in config.ts.
+  const roots =
+    process.platform === 'darwin'
+      ? [join(homedir(), 'Projects')]
+      : [join(homedir(), 'Desktop', 'Projects'), join(homedir(), 'Projects')]
   const candidates = [
     process.env.PANEFORGE_REPO,
     ...roots.flatMap((r) => [join(r, 'PaneForge'), join(r, 'claude-orchestrator')])

@@ -48,6 +48,10 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
   const [code, setCode] = useState('')
   const [pairing, setPairing] = useState(false)
   const [error, setError] = useState('')
+  /** An invite already on this machine's clipboard: pairing is then one button. */
+  const [waiting, setWaiting] = useState<{ name: string; expires: number } | null>(null)
+  /** The typed-by-hand fallback, hidden until it is asked for. */
+  const [manual, setManual] = useState(false)
   const [name, setName] = useState(state?.self.name ?? '')
   const [showCode, setShowCode] = useState(false)
   /**
@@ -104,6 +108,17 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
     if (state && !pairing) setName((n) => (n === '' ? state.self.name : n))
   }, [state, pairing])
 
+  // If the invite was copied on the other machine a moment ago it is already here, and
+  // asking the person to paste something they can see they have copied is a step for the
+  // sake of one. Re-checked on a timer because this dialog is usually opened BEFORE
+  // walking over to press Copy on the other device.
+  useEffect(() => {
+    const look = (): void => void api.clipboardInvite().then(setWaiting)
+    look()
+    const t = window.setInterval(look, 2000)
+    return () => window.clearInterval(t)
+  }, [])
+
   if (!state) {
     return (
       <div className="overlay" onMouseDown={onClose}>
@@ -133,6 +148,64 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
       setAddress('')
       setCode('')
       flash(`Paired with ${input.name || input.address}. Its panes are in your list.`)
+    } finally {
+      setPairing(false)
+    }
+  }
+
+  /**
+   * Pair from one pasted line. This is the path meant to be used: the invite carries the
+   * address, the port and the code together, so there is nothing to read off one screen
+   * and retype on another.
+   */
+  const pasteInvite = async (text: string): Promise<void> => {
+    if (pairing || !text.trim()) return
+    setPairing(true)
+    setError('')
+    try {
+      const res = await api.pairRemoteText(text)
+      onState(res.state)
+      if (res.ok) {
+        setCode('')
+        setAddress('')
+        flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
+        onClose()
+        return
+      }
+      // A bare code is not a failure, it is half of what is needed: fill it in and open
+      // the fields that ask for the rest, rather than making them start again.
+      if (res.code) {
+        setCode(res.code)
+        setManual(true)
+        setError('That is a pairing code on its own. It needs an address too - or press “Copy invite” on the other device and paste that instead.')
+        return
+      }
+      setError(res.error ?? 'Could not pair from that.')
+    } finally {
+      setPairing(false)
+    }
+  }
+
+  /**
+   * Pair with the invite already on this machine's clipboard.
+   *
+   * The text never comes into the renderer: the main process reads the clipboard, pairs,
+   * and answers with the same shape a paste would have produced. A pairing code is a key,
+   * and there is no reason for the window to hold one.
+   */
+  const pairClipboard = async (): Promise<void> => {
+    if (pairing) return
+    setPairing(true)
+    setError('')
+    try {
+      const res = await api.pairFromClipboard()
+      onState(res.state)
+      if (res.ok) {
+        flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
+        onClose()
+        return
+      }
+      setError(res.error ?? 'Could not pair from that invite.')
     } finally {
       setPairing(false)
     }
@@ -193,6 +266,33 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
           {self.hosting && (
             <div className="dev-self">
+              {/* The one action on this card. Everything under it is what an invite is
+                  made of, kept for the case where the two machines cannot share a
+                  clipboard - it is not the way in any more. */}
+              <div className="dev-invite">
+                <button
+                  className="primary"
+                  disabled={!self.addresses.length}
+                  title={
+                    self.addresses.length
+                      ? 'Copy one line. Paste it into Devices on the other machine and it pairs itself.'
+                      : 'This device is not on a network, so there is no address to invite anyone to.'
+                  }
+                  onClick={() => {
+                    void api.remoteInvite().then((text) => {
+                      api.copyText(text)
+                      flash('Invite copied. Paste it into Devices on the other machine.')
+                    })
+                  }}
+                >
+                  Copy invite
+                </button>
+                <span className="hint">
+                  {self.addresses.length
+                    ? 'One line: this device’s address, port and code. Good for 15 minutes.'
+                    : 'No network - nothing to invite anyone to yet.'}
+                </span>
+              </div>
               <div className="dev-field">
                 <span className="dev-key">Pairing code</span>
                 <code className={'dev-code' + (showCode ? '' : ' masked')}>
@@ -377,7 +477,38 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         <div className="setting">
           <div className="setting-row">
             <label>Pair another device</label>
-            <span className="hint">its code is on that machine, under Devices</span>
+            <span className="hint">press “Copy invite” over there, paste it here</span>
+          </div>
+
+          {waiting && (
+            <button
+              className="dev-waiting"
+              disabled={pairing}
+              title={`Pair with ${waiting.name} using the invite already on this machine's clipboard`}
+              onClick={() => void pairClipboard()}
+            >
+              <span className="dot on" />
+              <strong>{waiting.name || 'A device'}</strong>
+              <span className="hint">invite is on your clipboard - click to pair</span>
+            </button>
+          )}
+
+          <div className="dev-paste">
+            <input
+              className="dev-invite-in"
+              placeholder="Paste the invite from your other device"
+              aria-label="Paste an invite"
+              autoFocus
+              value=""
+              // The paste IS the action: there is nothing to check before pairing, and a
+              // separate button here would be one click that never means anything else.
+              onChange={(e) => void pasteInvite(e.target.value)}
+              onPaste={(e) => {
+                e.preventDefault()
+                void pasteInvite(e.clipboardData.getData('text'))
+              }}
+            />
+            {pairing && <span className="hint">Pairing...</span>}
           </div>
 
           {state.found.length > 0 && (
@@ -399,13 +530,18 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             </div>
           )}
 
-          <div className="dev-add">
+          {!manual && (
+            <button className="ghost small dev-manual" onClick={() => setManual(true)}>
+              Type an address and code instead
+            </button>
+          )}
+
+          <div className="dev-add" hidden={!manual}>
             <input
               placeholder="Pairing code"
               aria-label="Pairing code"
               className="dev-code-in"
               value={code}
-              autoFocus
               onChange={(e) => setCode(e.target.value.toUpperCase())}
             />
             <input

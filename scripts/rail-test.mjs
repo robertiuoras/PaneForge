@@ -251,6 +251,53 @@ async function run(cdp) {
     await evalIn(cdp, "[...document.querySelectorAll('.mark')].findIndex((el) => el.classList.contains('newest')) === document.querySelectorAll('.mark').length - 1"),
     'last tag in DOM order carries .newest'
   )
+
+  // A tag that is drawn and cannot be pressed is the bug this pins. `.xterm-wrap` is
+  // `position: relative` with no z-index, so it is not a stacking context and xterm's own
+  // layers compete with the rail rather than being contained by the terminal:
+  // `.xterm-link-layer` is z-index 2 and covers the whole screen, so a rail with no
+  // z-index of its own was painted over and every click landed on the link layer. Hit
+  // testing is the only way to see that - the tags measure and render exactly right.
+  const reach = await evalIn(
+    cdp,
+    `(() => {
+      // "Reachable" is: the thing at a tag's centre is a TAG. Not necessarily this one -
+      // two prompts on the same buffer line share a hit box, and the newer sits on top by
+      // design. What must never be there is the terminal.
+      const at = (el) => {
+        const r = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        return Boolean(hit && (el.contains(hit) || hit.contains(el) || hit.closest('.mark')))
+      }
+      const marks = [...document.querySelectorAll('.mark')]
+      const covered = marks.filter((el) => !at(el))
+      const pill = document.querySelector('.jump-newest')
+      return {
+        marks: marks.length,
+        covered: covered.length,
+        blocker: covered.length
+          ? (() => {
+              const r = covered[0].getBoundingClientRect()
+              const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+              return hit ? String(hit.className || hit.tagName) : 'nothing'
+            })()
+          : '',
+        pill: pill ? at(pill) : null
+      }
+    })()`
+  )
+  check(
+    'every tag on the rail can actually be clicked',
+    reach.marks > 0 && reach.covered === 0,
+    reach.covered
+      ? `${reach.covered} of ${reach.marks} tags hit-test to "${reach.blocker}" instead of themselves`
+      : `${reach.marks} tags, each is the element at its own centre`
+  )
+  check(
+    'the "newest" pill is reachable too, when it is showing',
+    reach.pill !== false,
+    reach.pill === null ? 'not on screen in this run - nothing to check' : 'pill is the element at its own centre'
+  )
 }
 
 async function main() {

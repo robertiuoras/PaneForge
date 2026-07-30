@@ -55,7 +55,8 @@
     "test:prereq": "node scripts/install-prereq-test.mjs",
     "test:dock": "node scripts/dock-test.mjs",
     "test:quiet": "node scripts/quiet-launch-test.mjs",
-    "test:macupdate": "node scripts/mac-update-test.mjs"
+    "test:macupdate": "node scripts/mac-update-test.mjs",
+    "test:macsign": "node scripts/mac-sign-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
@@ -115,10 +116,21 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PaneForge"
+      "shortcutName": "PaneForge",
+      "include": "build/installer.nsh"
     },
+    "afterPack": "scripts/mac-sign.mjs",
     "mac": {
       "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "PaneForge records what you dictate into a pane and types it at the agent's prompt. Nothing is recorded until you press the microphone.",
+        "NSDesktopFolderUsageDescription": "PaneForge opens agents in your project folders. It only looks in the folder you chose as your projects root.",
+        "NSDocumentsFolderUsageDescription": "PaneForge opens agents in your project folders. It only looks in the folder you chose as your projects root.",
+        "NSDownloadsFolderUsageDescription": "PaneForge reads a folder here only when you pick one as a project.",
+        "NSRemovableVolumesUsageDescription": "PaneForge reads a folder on an external disk only when you pick one as a project.",
+        "NSLocalNetworkUsageDescription": "PaneForge finds your other computers running PaneForge on this network, so their panes can appear in this window. It never leaves your network.",
+        "NSAppleEventsUsageDescription": "PaneForge does not script other apps; macOS asks for this when a pane's agent runs a command that does."
+      },
       "target": [
         {
           "target": "dmg",

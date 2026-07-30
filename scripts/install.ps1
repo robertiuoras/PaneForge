@@ -12,10 +12,38 @@ $repo = 'robertiuoras/PaneForge'
 
 function Say($msg) { Write-Host $msg -ForegroundColor Cyan }
 
-if ((Get-Process PaneForge -ErrorAction SilentlyContinue)) {
-  Write-Host 'PaneForge is running. Close it first, then run this again.' -ForegroundColor Yellow
-  return
+# Installing must leave exactly one PaneForge behind, so anything already here goes
+# first: the running copy (its exe cannot be replaced while it is open), and the other
+# install layout. This script can produce EITHER `Programs\PaneForge` (the portable
+# fallback below) or `Programs\claude-orchestrator` (the NSIS build - the directory comes
+# from package.json's `name`), and installing both ways over time leaves two apps, two
+# shortcuts and two updaters. `build/installer.nsh` does the same from inside the .exe.
+function Remove-PreviousPaneForge {
+  $running = Get-Process PaneForge -ErrorAction SilentlyContinue
+  if ($running) {
+    Say 'Closing the PaneForge that is already running ...'
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 700
+  }
+  # The registered uninstaller, when the .exe build is what is installed. /S is silent.
+  foreach ($hive in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+                    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall') {
+    Get-ChildItem $hive -ErrorAction SilentlyContinue | ForEach-Object {
+      $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+      if ($p.DisplayName -eq 'PaneForge' -and $p.QuietUninstallString) {
+        Say "Removing the installed PaneForge $($p.DisplayVersion) ..."
+        try { Start-Process 'cmd.exe' -ArgumentList '/c', $p.QuietUninstallString -Wait -WindowStyle Hidden } catch {}
+      }
+    }
+  }
+  $portable = Join-Path $env:LOCALAPPDATA 'Programs\PaneForge'
+  if (Test-Path $portable) {
+    Say "Removing the previous portable copy at $portable ..."
+    Remove-Item $portable -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
+
+Remove-PreviousPaneForge
 
 # 0 = off, 1 = enforcing, 2 = evaluation. Enforcing is the one that blocks us.
 $sac = 0

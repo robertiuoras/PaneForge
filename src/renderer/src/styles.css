@@ -679,9 +679,13 @@ body.sizing * { user-select: none !important; }
   padding: 8px 14px; font-size: 12px; pointer-events: none; box-shadow: var(--shadow);
 }
 
-/* Only visible once the view has left the tail: one click back to the newest line. */
+/* Only visible once the view has left the tail: one click back to the newest line.
+   z-index for the same reason as the marker rail (see TerminalPane.css): xterm's link
+   layer sits at z-index 2 over the whole pane and this pill had none, so it was drawn
+   and could not be pressed. 10 keeps it over the rail's 9, which is the order the rail
+   relied on DOM position for before either had a z-index. */
 .jump-newest {
-  position: absolute; right: 22px; bottom: 12px;
+  position: absolute; right: 22px; bottom: 12px; z-index: 10;
   background: var(--surface-3); color: var(--text);
   border: 1px solid var(--line-strong); border-radius: 999px;
   padding: 5px 12px; font-size: 11px; cursor: pointer;
@@ -1214,7 +1218,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
    whichever you meant, you hit the other. The left edge has nothing floating over it.
    The pane is the containing block. */
 .mic-float {
-  position: absolute; left: 12px; bottom: 12px; z-index: 4;
+  position: absolute; left: 12px; bottom: 12px; z-index: 10;
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; line-height: 1;
   border-radius: 50%; cursor: pointer;
@@ -1381,6 +1385,25 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .dev-name { width: 190px; max-width: 100%; }
 .dev-port { width: 74px; text-align: center; }
 .dev-self { display: flex; flex-direction: column; gap: 6px; }
+/* Pairing is one copy and one paste, so the copy is the only accented control on this
+   card and the address, port and code below it are what it is made of rather than a
+   second way to do the same thing. */
+.dev-invite { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dev-invite .hint { flex: 1 1 200px; min-width: 0; }
+/* The other half, on the machine doing the pairing: a paste box wide enough that a
+   400-character invite does not look like it was truncated on the way in. */
+.dev-paste { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dev-invite-in { flex: 1; min-width: 0; }
+/* The invite is already here: one button, no paste at all. */
+.dev-waiting {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  margin-bottom: 8px; padding: 9px 11px; text-align: left;
+  background: #35d07f10; border: 1px solid #35d07f33; border-radius: var(--r);
+  color: var(--text); font-size: 12.5px; cursor: pointer;
+}
+.dev-waiting:hover { background: #35d07f1c; border-color: #35d07f55; }
+.dev-waiting .hint { margin-left: auto; }
+.dev-manual { align-self: flex-start; margin-bottom: 8px; }
 /* label | value | actions, so the code and the address line up under each other
    instead of wrapping wherever the button widths happen to land. */
 .dev-field {

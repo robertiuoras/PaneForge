@@ -898,6 +898,33 @@ export interface Api {
     error?: string
     state: RemoteState
   }>
+  /**
+   * The single line to copy on this device so the other one can pair by pasting it.
+   * Carries every address, the port and the code, and stops being accepted after
+   * fifteen minutes - see `main/remote/invite.ts`.
+   */
+  remoteInvite(): Promise<string>
+  /**
+   * Pair from a pasted invite, trying each address it carries. `code` comes back set
+   * when the paste turned out to be a bare pairing code, which still needs an address.
+   */
+  pairRemoteText(text: string): Promise<{
+    ok: boolean
+    error?: string
+    code?: string
+    name?: string
+    state: RemoteState
+  }>
+  /** Pair from that clipboard invite, without its text passing through the window. */
+  pairFromClipboard(): Promise<{
+    ok: boolean
+    error?: string
+    code?: string
+    name?: string
+    state: RemoteState
+  }>
+  /** An invite already sitting on this machine's clipboard, so pairing is one click. */
+  clipboardInvite(): Promise<{ name: string; expires: number } | null>
   forgetRemote(id: string): Promise<RemoteState>
   /** connect to or disconnect from a device already paired */
   connectRemote(id: string, on: boolean): Promise<RemoteState>
