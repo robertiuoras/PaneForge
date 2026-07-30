@@ -208,9 +208,11 @@ records the chat, not the folder, because every chat records the main checkout i
 in - so matching by folder let one new pane silently "own" two dead chats' lanes and wipe
 them off the strip while they were still held. It also pins the reclaim: a hold no
 running copy of the app is hosting, quiet for fifteen minutes, is given back by
-`lane.mjs release` - and a copy hosting no panes (every `npm run try`) reclaims nothing,
-because each copy publishes the chats it hosts to `.git/paneforge-panes.json` and they are
-judged dead only when they are in nobody's list.
+`lane.mjs release`. Liveness is judged across copies, never per window: every copy
+publishes the chats it hosts to `.git/paneforge-panes.json`, and a chat counts as gone
+only when it is in nobody's list. Without that, the test copy `npm run try` opens - which
+hosts no chats at all - would decide every chat in the real window had died and hand out
+checkouts people are typing in.
 
 ## Gotchas that look like mistakes
 
