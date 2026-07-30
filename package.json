@@ -116,7 +116,8 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PaneForge"
+      "shortcutName": "PaneForge",
+      "include": "build/installer.nsh"
     },
     "afterPack": "scripts/mac-sign.mjs",
     "mac": {
