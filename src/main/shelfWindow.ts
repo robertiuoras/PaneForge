@@ -43,6 +43,31 @@ let cachedConfig: StashConfig | null = null
 /** Where a drag started: the pointer, and the window's bottom-left at that moment. */
 let drag: { px: number; py: number; x: number; bottom: number; moved: boolean } | null = null
 
+/**
+ * Put the overlay on every desktop - without costing the app its Dock icon.
+ *
+ * `setVisibleOnAllWorkspaces(_, { visibleOnFullScreen: true })` is not just a collection
+ * behaviour on macOS. Since 10.14 an NSWindow may not float over a fullscreen app unless
+ * the process is an accessory, so Electron does the only thing that works:
+ * `TransformProcessType(kProcessTransformToUIElementApplication)` - the exact call behind
+ * `app.dock.hide()`, applied to the WHOLE app and never undone. PaneForge asked for this
+ * 0.7s into every launch, so on macOS it had no Dock icon at all: nothing to click,
+ * nothing to Cmd-Tab to, and nothing to right-click and Keep in Dock. Measured
+ * 2026-07-30 with a stripped-down Electron app: `dock.isVisible()` goes true -> false on
+ * that one call, and on no other option this window sets.
+ *
+ * `skipTransformProcessType` opts out. The window still joins all Spaces and still keeps
+ * `FullScreenAuxiliary`; what it gives up is floating above another app's *fullscreen*
+ * window, which is a fair trade for the app existing in the Dock. Windows is unaffected
+ * either way - it has no such transform.
+ */
+function floatOnAllWorkspaces(win: BrowserWindow): void {
+  win.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: process.platform === 'darwin'
+  })
+}
+
 function alive(): boolean {
   return !!shelf && !shelf.isDestroyed() && !shelf.webContents.isDestroyed()
 }
@@ -297,7 +322,7 @@ export function setShelfQuiet(quiet: boolean): void {
   }
   if (hiddenForGame) return
   shelf!.setAlwaysOnTop(true, 'screen-saver')
-  shelf!.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  floatOnAllWorkspaces(shelf!)
   place()
   shelf!.showInactive()
 }
@@ -394,7 +419,7 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   // game is already running is built without them and gets them from setShelfHidden(false).
   if (!keptBack()) {
     shelf.setAlwaysOnTop(true, 'screen-saver')
-    shelf.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    floatOnAllWorkspaces(shelf)
   }
   shelf.once('ready-to-show', () => {
     if (!keptBack()) shelf?.showInactive()
