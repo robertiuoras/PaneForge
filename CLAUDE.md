@@ -64,6 +64,15 @@ sitting in a conflicted merge: it is the one state no other chat is allowed to t
 `npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
 still exists for a release you want right now, but nothing should need it.
 
+Every automatic release is a **patch** bump - `ready`, the session-end mark and the retry
+timer all call `autoship('patch')`. A minor or major has to be asked for by name
+(`node scripts/lane.mjs ship minor`), and it is the one thing `ready` cannot express: work
+finished while a chat was still testing has gone out as a patch minutes before the chat
+got round to asking for the minor. That is not a problem - `ship minor` from there cuts
+the version you wanted - but the release page will say only what changed since the patch,
+so the feature list needs putting back on it by hand (`gh release edit`), AFTER the
+workflow's `notes` job has run, since that job rewrites the body from its own range.
+
 Automatic releases batch: one every thirty minutes at most (`COOLDOWN_MS` in
 `scripts/lane.mjs`). Inside that window `ready` says so and leaves the work on master,
 where the next `ready` or session end takes it out. Do not "fix" that by running
