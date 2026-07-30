@@ -49,6 +49,7 @@
     "test:consoles": "node scripts/console-sweep-test.mjs",
     "test:gitpoll": "node scripts/git-poll-test.mjs",
     "test:install": "node scripts/install-stop-test.mjs",
+    "test:prereq": "node scripts/install-prereq-test.mjs",
     "test:dock": "node scripts/dock-test.mjs",
     "test:macupdate": "node scripts/mac-update-test.mjs"
   },

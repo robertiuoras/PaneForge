@@ -71,6 +71,7 @@ const api: Api = {
   profile: () => ipcRenderer.invoke('app:profile'),
 
   installAgent: (id) => ipcRenderer.invoke('agents:install', id),
+  uninstallAgent: (id) => ipcRenderer.invoke('agents:uninstall', id),
   locateAgent: (id) => ipcRenderer.invoke('agents:locate', id),
 
   updateState: () => ipcRenderer.invoke('update:state'),

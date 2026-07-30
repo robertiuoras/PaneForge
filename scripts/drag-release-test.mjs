@@ -113,7 +113,9 @@ await evaluate(`(async () => {
   const b = Array.from(document.querySelectorAll('.overlay button')).find((x) => /Start fresh/.test(x.textContent))
   if (b) b.click()
   await new Promise((r) => setTimeout(r, 300))
-  const cwd = 'C:/Users/Gamer/Desktop/Projects/jarvis'
+  // Any real folder will do - the test is about the divider, not what is in the pane.
+  // Hardcoding one names its author's machine and unrelated projects in a public repo.
+  const cwd = ${JSON.stringify(process.cwd().replace(/\\/g, '/'))}
   while (document.querySelectorAll('.pane').length < 2) {
     await window.api.startSession({ cwd, agent: 'shell' })
     await new Promise((r) => setTimeout(r, 1200))

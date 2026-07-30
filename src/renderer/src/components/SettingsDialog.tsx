@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
-import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
+import {
+  installCommand,
+  modelHint,
+  modelLabel,
+  modelValue,
+  supportsModel,
+  uninstallCommand
+} from '@shared/agents'
 import type { Agent, AdminStatus, Config, RestoreMode, UpdateState, VoiceStatus } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
@@ -59,7 +66,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
   const [voice, setVoice] = useState<VoiceStatus | null>(null)
+  // Which agent the console below is for, and whether it is being put on or taken off.
   const [installing, setInstalling] = useState('')
+  const [mode, setMode] = useState<'install' | 'uninstall'>('install')
+  // Removing a CLI is one click away from being an accident, so the button asks once.
+  // In-renderer rather than a message box: nothing here may pop a window.
+  const [confirmOff, setConfirmOff] = useState('')
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [rescan, setRescan] = useState(0)
@@ -76,10 +88,17 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
     if (dir) onChange({ root: dir })
   }
 
-  const onInstalled = useCallback((ok: boolean) => {
-    setRescan((n) => n + 1)
-    setMsg(ok ? 'Installed. It is available in the picker now.' : 'Install did not finish - see the log above.')
-  }, [])
+  const onInstalled = useCallback(
+    (ok: boolean) => {
+      setRescan((n) => n + 1)
+      if (mode === 'uninstall') {
+        setMsg(ok ? 'Removed. It is gone from the picker.' : 'Uninstall did not finish - see the log above.')
+        return
+      }
+      setMsg(ok ? 'Installed. It is available in the picker now.' : 'Install did not finish - see the log above.')
+    },
+    [mode]
+  )
 
   const toggleAdmin = async (on: boolean): Promise<void> => {
     setBusy('admin')
@@ -433,8 +452,32 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       <span className="hint">{a.available ? a.path : a.note || `${a.bin} not on PATH`}</span>
                       <div className="agent-actions">
                         {!a.available && installCommand(a) && (
-                          <button className="ghost small" onClick={() => setInstalling(a.id)}>
+                          <button
+                            className="ghost small"
+                            title={installCommand(a)}
+                            onClick={() => {
+                              setMode('install')
+                              setConfirmOff('')
+                              setMsg('')
+                              setInstalling(a.id)
+                            }}
+                          >
                             Install
+                          </button>
+                        )}
+                        {a.available && uninstallCommand(a) && (
+                          <button
+                            className={'ghost small' + (confirmOff === a.id ? ' danger' : '')}
+                            title={uninstallCommand(a)}
+                            onClick={() => {
+                              if (confirmOff !== a.id) return setConfirmOff(a.id)
+                              setConfirmOff('')
+                              setMode('uninstall')
+                              setMsg('')
+                              setInstalling(a.id)
+                            }}
+                          >
+                            {confirmOff === a.id ? 'Really remove?' : 'Uninstall'}
                           </button>
                         )}
                         {!a.available && (
@@ -482,7 +525,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     </div>
                   </>
                 )}
-                {installing && <Installer id={installing} />}
+                {installing && <Installer id={installing} mode={mode} />}
               </div>
 
               <div className="setting">
@@ -734,10 +777,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   )
 }
 
-/** Kicks the install off exactly once per agent id the console is opened for. */
-function Installer({ id }: { id: string }): null {
+/** Kicks the install (or removal) off exactly once per agent id the console opens for. */
+function Installer({ id, mode }: { id: string; mode: 'install' | 'uninstall' }): null {
   useEffect(() => {
-    if (id && id !== '__voice__') api.installAgent(id)
-  }, [id])
+    if (!id || id === '__voice__') return
+    if (mode === 'uninstall') void api.uninstallAgent(id)
+    else void api.installAgent(id)
+  }, [id, mode])
   return null
 }

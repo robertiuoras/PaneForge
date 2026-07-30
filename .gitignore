@@ -10,3 +10,21 @@ release/
 
 # per-checkout agent memory, never shipped
 .claude/
+
+# What agents write for each other in whatever folder a pane was opened in (board.ts).
+# It is free text, which is where a pasted key or a private detail lands, and this repo
+# is public - so it is ignored here rather than one `git add -A` from being published.
+.paneforge/
+
+# Nothing secret-shaped may ever be committed by accident. Nothing matches today; this
+# is the guard, not a cleanup.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.npmrc
+.netrc

@@ -95,7 +95,7 @@ import {
   updateShelfConfig,
   updateShelfItems
 } from './shelfWindow'
-import { refreshPath, runCommand, stopInstalls } from './install'
+import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
@@ -108,7 +108,7 @@ import {
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
-import { installCommand } from '../shared/agents'
+import { installCommand, uninstallCommand } from '../shared/agents'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -1161,6 +1161,7 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
   if (installing.has(id)) return
   const spec = specFor(id)
   const command = installCommand(spec)
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
   if (!command) {
     send('agents:install-event', {
       agentId: id,
@@ -1171,30 +1172,70 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
     return
   }
   installing.add(id)
-  send('agents:install-event', { agentId: id, chunk: `> ${command}\r\n\r\n` })
-  await new Promise<void>((resolve) => {
-    runCommand(
-      command,
-      (chunk) => send('agents:install-event', { agentId: id, chunk }),
-      (code) => {
-        installing.delete(id)
-        // A brand new install folder is only on the PATH of new processes, so pull
-        // the current PATH out of the registry before deciding it failed.
-        refreshPath()
-        invalidateAgents()
-        const found = which(spec.bin) !== spec.bin
-        send('agents:install-event', {
-          agentId: id,
-          chunk: found
-            ? `\r\n${spec.label} is ready.\r\n`
-            : `\r\nInstaller exited with code ${code} and ${spec.bin} is still not on PATH.\r\n`,
-          done: true,
-          ok: found
-        })
-        resolve()
-      }
-    )
-  })
+  try {
+    if (!(await ensurePrereq(command, say))) {
+      send('agents:install-event', { agentId: id, chunk: '', done: true, ok: false })
+      return
+    }
+    say(`> ${command}\r\n\r\n`)
+    const code = await runOnce(command, say)
+    // A brand new install folder is only on the PATH of new processes, so pull
+    // the current PATH out of the registry before deciding it failed.
+    refreshPath()
+    invalidateAgents()
+    const found = onPath(spec.bin)
+    send('agents:install-event', {
+      agentId: id,
+      chunk: found
+        ? `\r\n${spec.label} is ready.\r\n`
+        : `\r\nInstaller exited with code ${code} and ${spec.bin} is still not on PATH.\r\n`,
+      done: true,
+      ok: found
+    })
+  } finally {
+    installing.delete(id)
+  }
+})
+
+/**
+ * Take an agent back off the machine. The same console the install used reports it,
+ * and the same one-at-a-time guard applies: installing and removing the same CLI at
+ * once is how you end up with a half of each.
+ */
+ipcMain.handle('agents:uninstall', async (_e, id: string) => {
+  if (installing.has(id)) return
+  const spec = specFor(id)
+  const command = uninstallCommand(spec)
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
+  if (!command) {
+    send('agents:install-event', {
+      agentId: id,
+      chunk: `${spec.label} has no scripted uninstaller - remove it the way you installed it.\r\n`,
+      done: true,
+      ok: false
+    })
+    return
+  }
+  installing.add(id)
+  try {
+    say(`> ${command}\r\n\r\n`)
+    const code = await runOnce(command, say)
+    refreshPath()
+    invalidateAgents()
+    // Success is the binary being GONE, which is the opposite test from an install and
+    // the only one that survives an uninstaller exiting 0 without doing anything.
+    const gone = !onPath(spec.bin)
+    send('agents:install-event', {
+      agentId: id,
+      chunk: gone
+        ? `\r\n${spec.label} has been removed.\r\n`
+        : `\r\nUninstaller exited with code ${code} and ${spec.bin} is still on PATH.\r\n`,
+      done: true,
+      ok: gone
+    })
+  } finally {
+    installing.delete(id)
+  }
 })
 
 ipcMain.handle('agents:locate', async (_e, id: string) => {
@@ -1350,23 +1391,22 @@ ipcMain.handle('voice:transcribe', (_e, wav: ArrayBuffer) => {
 })
 ipcMain.handle('voice:install', async () => {
   const command = voice.installCommand()
-  send('agents:install-event', { agentId: '__voice__', chunk: `> ${command}\r\n\r\n` })
-  await new Promise<void>((resolve) => {
-    runCommand(
-      command,
-      (chunk) => send('agents:install-event', { agentId: '__voice__', chunk }),
-      () => {
-        refreshPath()
-        const ok = voice.voiceStatus().available
-        send('agents:install-event', {
-          agentId: '__voice__',
-          chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
-          done: true,
-          ok
-        })
-        resolve()
-      }
-    )
+  const say = (chunk: string): void => send('agents:install-event', { agentId: '__voice__', chunk })
+  // Whisper is a pip install, so on a machine with no Python this failed exactly the
+  // way the agent installs did.
+  if (!(await ensurePrereq(command, say))) {
+    send('agents:install-event', { agentId: '__voice__', chunk: '', done: true, ok: false })
+    return
+  }
+  say(`> ${command}\r\n\r\n`)
+  await runOnce(command, say)
+  refreshPath()
+  const ok = voice.voiceStatus().available
+  send('agents:install-event', {
+    agentId: '__voice__',
+    chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
+    done: true,
+    ok
   })
 })
 

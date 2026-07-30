@@ -89,7 +89,7 @@ type Repo = { id: string; path: string; name: string; defaultBranch: string };
 type Agent = {
   id: string;
   repoId: string;
-  branch: string;            // e.g. agent/fix-airtasker-modal
+  branch: string;            // e.g. agent/fix-login-modal
   worktreePath: string;      // <repo>/.worktrees/<branch> or sibling dir
   pid?: number;
   status: "starting" | "running" | "waiting_input" | "idle" | "done" | "error" | "exited";
