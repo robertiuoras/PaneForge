@@ -43,6 +43,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
+import { hasChanges, notes } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -1124,14 +1125,58 @@ function publishFallback(version) {
     runSafe('gh', ['release', 'upload', `v${version}`, copy, '--clobber'], { env, timeout: 300_000 })
   }
 
-  const notesSrc = join(MAIN, '.github', 'release-notes.md')
-  if (existsSync(notesSrc)) {
-    const body = readFileSync(notesSrc, 'utf8').replaceAll('{{VERSION}}', version)
+  // Same body the workflow would have written, changes and all - `notes` reads the
+  // template and the commit range itself, so the two paths cannot drift apart.
+  if (existsSync(join(MAIN, '.github', 'release-notes.md'))) {
     const tmp = join(dist, 'release-notes.txt')
-    writeFileSync(tmp, body, 'utf8')
+    writeFileSync(tmp, notes(MAIN, version), 'utf8')
     runSafe('gh', ['release', 'edit', `v${version}`, '--notes-file', tmp], { env, timeout: 60_000 })
   }
   return { by: 'local' }
+}
+
+// A release page is worth reading for an hour after it is cut, and not worth an API
+// call after that.
+const NOTES_MS = 60 * 60 * 1000
+
+/**
+ * Write "what changed" onto the newest release, after whoever built it is finished.
+ *
+ * The workflow publishes the body itself, from a template it substitutes `{{VERSION}}`
+ * into and nothing else - and `.github/workflows/` cannot be edited from this machine
+ * (the `gh` token has `repo` but not `workflow`, so the push is rejected by name). So
+ * the changes are written here instead, from the retry timer that already runs every
+ * minute: the workflow's notes job lands a few minutes after the tag, this notices the
+ * body has no "## What changed" in it, and fills it in. Being a check-then-write rather
+ * than a one-shot is what makes it correct - CI overwriting the body is simply seen on
+ * the next tick and put back.
+ *
+ * It costs nothing on a quiet machine: no release in the last hour, no call at all.
+ */
+function reconcileNotes(state) {
+  const last = state.lastShip
+  if (!last?.version || !last.at || Date.now() - last.at > NOTES_MS) return null
+  if (!existsSync(join(MAIN, '.github', 'release-notes.md'))) return null
+
+  const tag = `v${last.version}`
+  const view = runSafe('gh', ['release', 'view', tag, '--json', 'body', '--jq', '.body'], {
+    timeout: 30_000
+  })
+  // No release yet (the build is still running), or gh cannot answer: try again in a
+  // minute. Nothing here is worth failing a retry over.
+  if (!view.ok || hasChanges(view.out)) return null
+
+  const body = notes(MAIN, last.version)
+  if (!hasChanges(body)) return null
+  const tmp = join(MAIN, 'dist', 'release-notes.txt')
+  try {
+    mkdirSync(join(MAIN, 'dist'), { recursive: true })
+    writeFileSync(tmp, body, 'utf8')
+  } catch {
+    return null
+  }
+  const edit = runSafe('gh', ['release', 'edit', tag, '--notes-file', tmp], { timeout: 60_000 })
+  return edit.ok ? last.version : null
 }
 
 function status(session) {
@@ -1267,6 +1312,9 @@ try {
     // The clock is what was missing. autoship is a no-op unless there is something to put
     // out, nobody is mid-edit and the cooldown has passed.
     sayRelease(autoship('patch', session ?? 'auto'))
+    // Last, because the release above may be the one that needs describing.
+    const described = reconcileNotes(reap(read()))
+    if (described) console.log(`Wrote what changed onto the v${described} release page.`)
   } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)

@@ -18,6 +18,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(tmpdir(), 'paneforge-idle-lane-test')
@@ -39,7 +40,7 @@ const repo = join(root, 'demo')
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
 writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
-for (const f of ['lane.mjs', 'test-app.mjs']) copyFileSync(join(here, f), join(repo, 'scripts', f))
+installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')
 git(repo, 'config', 'user.name', 'test')

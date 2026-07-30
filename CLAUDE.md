@@ -196,6 +196,36 @@ MID-gesture, not after: the overlay is moved by hand from screen coordinates, an
 the arithmetic was 105px out horizontally and 100px vertically because AppKit had quietly
 clamped the window it was computed from. It also pins the size of the grip's hit box,
 since a press that misses the handle opens the list instead of moving the window.
+`npm run test:notes` is about the release page saying what changed.
+`scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
+version tag and this one and sorts them into New / Fixed / Faster / Other changes.
+
+Where it gets written from is the awkward part, and it is not an accident.
+`.github/workflows/release.yml` publishes the body on most releases, by `sed`-ing
+`{{VERSION}}` into `.github/release-notes.md` - and that workflow cannot be edited from
+this machine at all: pushing any commit that touches `.github/workflows/` is rejected
+outright, because the `gh` token has `repo` but not `workflow` scope. So the template
+still has to read correctly with nothing but `{{VERSION}}` substituted, which is why it
+keeps its "New in this build: see the commit history" line rather than a `{{CHANGES}}`
+placeholder that CI would publish verbatim. The changes replace that line afterwards,
+from `reconcileNotes` in `lane.mjs`, on the retry timer that already runs every minute:
+it looks at the newest release for an hour after it is cut, and fills the body in
+whenever it has no `## What changed` in it. Check-then-write, not one-shot - CI
+overwriting the body is just noticed on the next tick and put back. `publishFallback`
+writes the same body directly on the path where Actions never ran.
+
+The test builds a real repo with real tags and pins the ways the range goes wrong
+silently: v0.3.9 must not sort above v0.3.10, a version with no tag yet means "since the
+newest tag", the `release:` bump and lane merges are not changes, a subject with no
+prefix is still reported, and a release with nothing new keeps the commit link instead
+of printing an empty heading. It also pins both template shapes, so switching the
+workflow over to `{{CHANGES}}` the day that token gains `workflow` scope is a one-line
+change with a test already behind it.
+
+`scripts/lane-fixture.mjs` is why the four lane tests no longer carry a hand-written
+`['lane.mjs', 'test-app.mjs']` copy list: giving lane.mjs one more import broke all four
+at once, with an ERR_MODULE_NOT_FOUND naming a temp directory rather than the cause. The
+list is derived from lane.mjs's own relative imports now.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 `npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING
