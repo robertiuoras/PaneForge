@@ -14,6 +14,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,21 +48,19 @@ module.exports={autoUpdater:{autoDownload:false,autoInstallOnAppQuit:false,allow
 
 // electron / electron-updater stay runtime requires so the drive script and the module
 // under test share one stub instance.
-// esbuild's JS shim, not `npx esbuild`: Node 24 refuses to spawn a .cmd without a shell.
-execFileSync(
-  process.execPath,
-  [
-    join(root, 'node_modules', 'esbuild', 'bin', 'esbuild'),
-    'src/main/updater.ts',
-    '--bundle',
-    '--format=cjs',
-    '--platform=node',
-    `--outfile=${join(work, 'updater.bundle.cjs')}`,
-    '--external:electron',
-    '--external:electron-updater'
-  ],
-  { cwd: root, stdio: 'pipe' }
-)
+// esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+// Windows, where that path is a JS shim. On macOS and Linux it is the native binary, so
+// handing it to node died with "SyntaxError: Invalid or unexpected token" and this test
+// could never have run on a Mac.
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/updater.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: join(work, 'updater.bundle.cjs'),
+  external: ['electron', 'electron-updater']
+})
 
 const drive = join(work, 'drive.cjs')
 writeFileSync(
@@ -90,7 +89,11 @@ ok(Object.keys(h).length>=5,'wired all updater events')
 ;(async()=>{
   let b=at(); await u.checkForUpdates(); ok(at()===b+1,'idle check runs')
   h['checking-for-update'](); b=at(); await u.checkForUpdates(); ok(at()===b,'no second check while checking')
-  h['update-available']({version:'0.3.9'}); ok(u.getUpdateState().phase==='downloading','download starts on available')
+  // macOS cannot install one of these updates (unsigned, so Squirrel.Mac refuses it), so
+  // there the same event ends at "there is a new version, here is the page" instead.
+  const mac=process.platform==='darwin'
+  h['update-available']({version:'0.3.9'})
+  ok(u.getUpdateState().phase===(mac?'available':'downloading'),mac?'a Mac is offered the release page':'download starts on available')
   h['download-progress']({percent:42}); b=at(); await u.checkForUpdates()
   ok(at()===b,'no second check while downloading')
   ok(u.getUpdateState().percent===42,'progress kept, not reset')

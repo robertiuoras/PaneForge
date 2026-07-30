@@ -378,11 +378,12 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       if (/404/.test(message)) borrowGhToken(u)
 
       // A Mac never downloads from the feed (autoDownload is off above), so the only
-      // thing a failed check costs here is the version number - and the releases API
+      // thing a failed feed read costs here is the version number - and the releases API
       // still has that even when the release carries no mac assets. Retrying a
       // `latest-mac.yml` 404 that will never resolve is what put a permanent
-      // "update failed" in the corner of this app on macOS.
-      if (process.platform === 'darwin') return macFallback(message)
+      // "update failed" in the corner of this app on macOS. Only the feed read is
+      // rerouted: a checksum or a download failure still says so.
+      if (process.platform === 'darwin' && /\.yml|404/i.test(message)) return macFallback(message)
 
       if (isPublishing(message)) {
         // The release tag is on GitHub but its assets are still uploading, so
