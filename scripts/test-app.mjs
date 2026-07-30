@@ -20,6 +20,49 @@
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
+/**
+ * Wait until the copy that was just told to close has actually gone.
+ *
+ * `pkill` only asks. The dying process still holds its profile's single-instance lock for
+ * a moment, and a new copy launched into that moment sees the lock, exits, and leaves
+ * nothing behind: no window, no devtools port, and no error either - `npm run try` prints
+ * its cheerful "a second PaneForge is opening" and there is no second PaneForge. Measured
+ * 2026-07-30 while testing the Stash drag: every first launch after a close died this way
+ * and every second one worked, which reads as a flaky test rather than a race here.
+ */
+export async function waitTestAppsGone(root, ms = 8000) {
+  const marker = join(root, 'node_modules', 'electron')
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    let running = false
+    try {
+      if (process.platform === 'win32') {
+        const like = `${marker.replace(/'/g, "''")}*`
+        const r = spawnSync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `@(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
+              `Where-Object { $_.CommandLine -like '${like}' -or $_.CommandLine -like '"${like}' }).Count`
+          ],
+          { encoding: 'utf8', timeout: 15000 }
+        )
+        running = Number((r.stdout ?? '').trim()) > 0
+      } else {
+        const r = spawnSync('pgrep', ['-f', marker], { encoding: 'utf8', timeout: 15000 })
+        running = !!(r.stdout ?? '').trim()
+      }
+    } catch {
+      return true /* cannot tell - launching anyway beats not launching */
+    }
+    if (!running) return true
+    await new Promise((r) => setTimeout(r, 200))
+  }
+  return false
+}
+
 export function closeTestApps(root) {
   const marker = join(root, 'node_modules', 'electron')
   try {

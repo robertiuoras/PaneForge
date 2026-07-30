@@ -25,7 +25,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { closeTestApps } from './test-app.mjs'
+import { closeTestApps, waitTestAppsGone } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -90,6 +90,10 @@ console.log(`== Launching the ${profile} copy`)
 // new launch would raise the OLD window - running OLD code - and exit. That reads as "my
 // change did not apply". Close it first; only this checkout's Electron is matched.
 closeTestApps(root)
+// And wait for it to be gone rather than only asked to go: the lock outlives the ask by a
+// moment, and a launch into that moment exits silently with no window and no message.
+if (!(await waitTestAppsGone(root)))
+  console.log('(the previous test copy is taking its time closing - launching anyway)')
 // Detached: the test app must outlive this command, and the agent pane that ran it
 // must not sit there attached to its output waiting for it to exit.
 //
