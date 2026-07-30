@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { appVisible, onAppVisible } from '../appVisible'
+import { laneState, laneTip } from '../laneWords'
 
 const api = window.api
 
@@ -82,37 +83,9 @@ export function laneOfSession(
   return lanes.get(sessionId)
 }
 
-function ago(ms: number): string {
-  const m = Math.round((Date.now() - ms) / 60000)
-  if (m < 60) return `${Math.max(1, m)}m`
-  const h = Math.round(m / 60)
-  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
-}
-
-/** What the lane is doing, in the words a human would use. */
-function laneState(lane: LaneBoardEntry): string {
-  if (lane.conflicted) return `conflicts with master, ${ago(lane.conflictSince ?? Date.now())}`
-  if (lane.ready) return 'done, waiting for the release'
-  if (!lane.held) return 'free'
-  // "working" was a lie the strip told about every lane: a chat claims one the moment it
-  // starts, so four chats that had typed nothing all read as busy. What the lane file
-  // actually knows is who holds it and when that chat was last heard from.
-  return Date.now() - lane.seen < 5 * 60 * 1000
-    ? 'a chat has it, busy now'
-    : `a chat has it, quiet ${ago(lane.seen)}`
-}
-
-function laneTip(lane: LaneBoardEntry): string {
-  if (!lane.conflicted) return `${lane.dir} (${lane.branch})`
-  return (
-    `${lane.dir}\nWill not merge: ${lane.conflictDetail ?? 'see the lane'}\n` +
-    (lane.resolver
-      ? 'A chat has taken this over.'
-      : lane.adoptable
-        ? 'Its own chat has gone quiet, so any chat can finish it.'
-        : 'Its own chat is still around and should fix it.')
-  )
-}
+// The sentences themselves live in ../laneWords, which imports nothing: the strip only polls
+// while the window is on screen, so what it would say is checked there rather than by reading
+// a DOM that may not exist. See scripts/lane-holder-test.mjs.
 
 /** The job handed to a chat to unstick a lane, in the form lane.mjs expects back. */
 function fixPrompt(lane: LaneBoardEntry): string {
@@ -143,7 +116,7 @@ export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
     <span
       className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
       title={
-        `This chat is building PaneForge itself in lane ${lane.lane} (${lane.branch}) - ${laneState(lane)}.\n` +
+        `This chat is building PaneForge itself in lane ${lane.lane} (${lane.branch}) - ${laneState(lane, true)}.\n` +
         `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}`
       }
     >
@@ -237,7 +210,7 @@ function LaneRow({
         <div className="row-title">{lane.branch}</div>
         <div className="row-sub">
           {laneState(lane)}
-          {lane.conflicted && lane.resolver ? ' - a chat has it' : ''}
+          {lane.conflicted && lane.resolver ? ` - chat ${lane.resolver.slice(0, 8)} has it` : ''}
         </div>
       </div>
       {lane.conflicted && !lane.resolver && (

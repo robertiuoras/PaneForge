@@ -20,7 +20,7 @@
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
-    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs",
+    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs && node scripts/lane-holder-test.mjs",
     "test:laneowner": "node scripts/lane-owner-test.mjs",
     "test:lanework": "node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs",
     "test:lanelag": "node scripts/lane-lag-test.mjs",

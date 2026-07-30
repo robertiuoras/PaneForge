@@ -506,6 +506,14 @@ function claim(session, cwd, prefer, tentative = false) {
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
       c.seen = now()
+      // A hold records the folder its chat came from once, on the claim that created it -
+      // and a lane claimed by hand (`lane.mjs claim --session <id>`, which is what a chat
+      // refused by the guard is told to run) records nothing at all. That lane then reads
+      // "a chat has it" on the strip forever, with no way to find out whose chat: the one
+      // hold nobody can identify is the one held from outside this window, which is the
+      // only kind the strip draws. Later claims carry the folder, so take the first one
+      // that does rather than leaving the hold anonymous for its whole life.
+      if (cwd && !c.cwd) c.cwd = cwd
       // Once a chat has written in its lane the lane is really held, and a later prompt
       // that happens not to mention PaneForge must not hand it back.
       if (!tentative) delete c.tentative
@@ -1257,7 +1265,12 @@ try {
   }
 
   if (cmd === 'claim')
-    console.log(JSON.stringify(claim(session, arg('cwd'), arg('prefer'), argv.includes('--tentative')), null, 2))
+    // The hook always says where its chat is; a chat typing this itself usually does not,
+    // and its own working directory is the answer it would have given. Better a folder
+    // that might be a PaneForge checkout than a hold nothing can put a name to.
+    console.log(
+      JSON.stringify(claim(session, arg('cwd') ?? process.cwd(), arg('prefer'), argv.includes('--tentative')), null, 2)
+    )
   else if (cmd === 'guard') {
     const reason = guard(session, arg('path'))
     if (reason) {
