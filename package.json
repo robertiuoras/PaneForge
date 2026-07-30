@@ -52,6 +52,7 @@
     "test:install": "node scripts/install-stop-test.mjs",
     "test:prereq": "node scripts/install-prereq-test.mjs",
     "test:dock": "node scripts/dock-test.mjs",
+    "test:quiet": "node scripts/quiet-launch-test.mjs",
     "test:macupdate": "node scripts/mac-update-test.mjs"
   },
   "dependencies": {

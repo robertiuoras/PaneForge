@@ -112,6 +112,14 @@ foreground.
 
 - Show a window the user did not ask for with `showInactive()`, never `show()`.
   `focusWindow()` is for user-initiated paths only.
+- A launch nobody asked to see (`npm run try`, i.e. `--minimized`) shows nothing at all on
+  macOS. `revealPlan()` in `src/main/profile.ts` decides that per platform: Windows still
+  has to `showInactive()` then `minimize()`, because a window that was never shown cannot
+  be restored from its taskbar button - but doing the same on a Mac is a window appearing
+  over your work and genie-animating into the Dock on every launch, which is what
+  developing PaneForge felt like all day. The Dock icon of a running app is the way back
+  in: `activate` (and `did-become-active`, for Cmd-Tab) reveals it, ignoring the
+  activation macOS emits for the launch itself. `npm run test:quiet` pins both halves.
 - A restart the app decided on (update, admin relaunch) calls `markQuietRelaunch()` in
   `src/main/profile.ts` before exiting. The new process consumes that marker, starts
   `inactive` and flashes the taskbar button once instead of stealing the keyboard.

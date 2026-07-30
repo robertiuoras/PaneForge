@@ -161,6 +161,31 @@ export function startMode(): 'normal' | 'inactive' | 'minimized' {
   return current ? 'inactive' : 'normal'
 }
 
+/**
+ * What `ready-to-show` should actually do with the window, per platform.
+ *
+ * `minimized` means "do not put this on my screen", and the two desktops disagree about
+ * how to obey that. On Windows a window that has never been shown cannot be restored
+ * from the taskbar, so the launch has to `showInactive()` and then `minimize()` - the
+ * button exists, the keyboard never moves, and the window is gone from the screen inside
+ * one paint.
+ *
+ * macOS has no such constraint and punishes the same trick: `orderFront` followed by
+ * `miniaturize` is a window appearing over your work and then genie-animating into the
+ * Dock, half a second of movement across the whole screen, on every `npm run try`. And
+ * the Dock icon of a running app is there whether or not it ever showed a window, so the
+ * way back in already exists - clicking it fires `activate`, which reveals it (see
+ * index.ts). So on darwin a quiet launch shows nothing at all.
+ */
+export function revealPlan(
+  mode: 'normal' | 'inactive' | 'minimized',
+  platform: NodeJS.Platform = process.platform
+): 'active' | 'inactive' | 'minimized' | 'hidden' {
+  if (mode === 'normal') return 'active'
+  if (mode === 'inactive') return 'inactive'
+  return platform === 'darwin' ? 'hidden' : 'minimized'
+}
+
 /** " - dev" for window titles, '' for the normal app. */
 export function titleSuffix(): string {
   return current ? ` - ${current}` : ''

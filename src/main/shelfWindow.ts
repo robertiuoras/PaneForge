@@ -367,8 +367,8 @@ let hiddenForQuiet = false
 /**
  * Keep the overlay off the screen for a copy that was launched minimized.
  *
- * A test copy an agent starts is careful about its main window - `showInactive()` then
- * `minimize()`, no focus taken, a taskbar button and nothing else. The Stash was not
+ * A test copy an agent starts is careful about its main window - a taskbar button and
+ * nothing else on Windows, and on macOS not even shown (see revealPlan). The Stash was not
  * part of that deal: it is `alwaysOnTop` at screen-saver level and `skipTaskbar`, so it
  * appeared over whatever was on screen, from an app with no visible window to close it
  * from. Measured 2026-07-28: `npm run try` put a visible Stash up 0.7s into the launch

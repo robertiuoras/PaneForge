@@ -45,6 +45,7 @@ import {
   isQuietRelaunch,
   markQuietRelaunch,
   profileName,
+  revealPlan,
   startMode,
   titleSuffix
 } from './profile'
@@ -134,6 +135,9 @@ let win: BrowserWindow | null = null
 // True while the window is standing in for a maximized one: sized to the work area
 // because a real maximize() would have taken focus. See createWindow.
 let pseudoMax = false
+// A window deliberately left off the screen must not be put back on it by the `activate`
+// macOS emits for the launch itself. See the activate handler.
+let quietUntil = 0
 
 // First thing in the process: an uncaught error in the main process otherwise opens a
 // modal message box that steals focus from whatever you are typing in. Logged instead.
@@ -248,15 +252,23 @@ function createWindow(): void {
       updateLog('window', 'shown (normal launch)')
       return win?.show()
     }
+    const plan = revealPlan(mode)
     const reveal = (): void => {
       if (!alive()) return
+      // Nothing at all on a Mac: no window ordered front, no genie animation into the
+      // Dock, no Dock bounce. The icon is the way back in and `activate` below opens it.
+      if (plan === 'hidden') {
+        quietUntil = Date.now() + 3000
+        updateLog('window', 'held off screen (minimized, darwin)')
+        return
+      }
       updateLog('window', `shown (${mode})`)
       // showInactive draws the window without pulling focus off the app you are typing
       // in. minimize() after it, rather than instead of it, because minimizing a window
       // that has never been shown leaves it in a state Windows will not restore from
       // the taskbar.
       win!.showInactive()
-      if (mode === 'minimized') win!.minimize()
+      if (plan === 'minimized') win!.minimize()
       // Back from an update: the window is there, on the taskbar, with the panes restored,
       // but it did not take the keyboard. Flash the taskbar button once so it is obvious
       // the app came back instead of silently dying.
@@ -401,6 +413,10 @@ function focusWindow(asked = false): void {
   if (!alive()) return createWindow()
   const w = win!
   if (w.isMinimized()) w.restore()
+  // A quiet launch on macOS leaves the window built but never shown, and focus() on a
+  // window that is not on screen does nothing at all - the app would come to the front
+  // with no window in it. Every caller here is a person asking for the app.
+  if (!w.isVisible()) w.show()
   w.focus()
 }
 
@@ -1652,8 +1668,25 @@ app.whenReady().then(() => {
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) return createWindow()
+    // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a
+    // taskbar button, and it is the only way back into a copy that launched hidden -
+    // which is what every `npm run try` on a Mac now does. Deliberate, so it focuses.
+    //
+    // Except at launch: macOS also emits `activate` for the launch itself, and a copy an
+    // agent started must not answer that by showing itself. Anything this close to
+    // startup is the launch, not a click.
+    if (Date.now() < quietUntil) return
+    focusWindow(true)
   })
+  // Cmd-Tab into an app whose windows are all hidden does not always reach `activate`,
+  // and an app you switched to that shows you nothing looks broken. Same guard, so the
+  // activation that comes with the launch itself is still ignored.
+  if (process.platform === 'darwin')
+    app.on('did-become-active', () => {
+      if (Date.now() < quietUntil) return
+      if (alive() && !win!.isVisible()) focusWindow(true)
+    })
 })
 
 // Agents are child processes of this app: leaving them running after the window

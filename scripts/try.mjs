@@ -109,10 +109,14 @@ spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
   env: { ...process.env, PANEFORGE_PROFILE: profile }
 }).unref()
 
+const dockOrTaskbar = process.platform === 'darwin' ? 'Dock' : 'taskbar'
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.
 ${
   minimized
-    ? 'It stays minimized and silent - click it in the taskbar when you want it (--show opens it).'
+    ? process.platform === 'darwin'
+      ? `No window appears at all - not even for the moment it takes to minimize one. Click its
+${dockOrTaskbar} icon when you want it (--show opens it on screen instead).`
+      : 'It stays minimized and silent - click it in the taskbar when you want it (--show opens it).'
     : 'It will not take focus: keep typing where you are, it just appears behind.'
 }
 Your live app is untouched: separate settings, separate workspaces, separate panes.
