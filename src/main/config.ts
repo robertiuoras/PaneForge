@@ -72,8 +72,21 @@ export const DEFAULT_ROLES: SwarmRole[] = [
  */
 export function defaultRoot(): string {
   const home = homedir()
+  /**
+   * macOS gates Desktop, Documents, Downloads and anything under iCloud Drive behind
+   * TCC, and the prompt fires on the first `stat` inside them - not on a read. Probing
+   * this list at first launch therefore opened three or four system dialogs at once,
+   * before the window was even up, with no way to tell which of them was PaneForge
+   * asking for what. Nothing here is worth that: the folders below it find the same
+   * checkouts on every Mac that has them, and a Desktop full of projects is one press
+   * of Browse away - a prompt the person asked for, in answer to a click.
+   *
+   * Windows has no equivalent gate, so it keeps the full list. `~/OneDrive/Desktop` is
+   * on it because a redirected Desktop is the normal Windows setup now.
+   */
+  const gated = process.platform === 'darwin'
   const candidates = [
-    ['Desktop', 'Projects'],
+    ...(gated ? [] : [['Desktop', 'Projects']]),
     ['Projects'],
     ['projects'],
     ['source', 'repos'],
@@ -83,9 +96,13 @@ export function defaultRoot(): string {
     ['src'],
     ['repos'],
     ['git'],
-    ['Documents', 'Projects'],
-    ['OneDrive', 'Desktop', 'Projects'],
-    ['OneDrive', 'Documents', 'Projects']
+    ...(gated
+      ? []
+      : [
+          ['Documents', 'Projects'],
+          ['OneDrive', 'Desktop', 'Projects'],
+          ['OneDrive', 'Documents', 'Projects']
+        ])
   ].map((parts) => join(home, ...parts))
 
   for (const dir of candidates) {
