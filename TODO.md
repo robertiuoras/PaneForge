@@ -149,19 +149,20 @@ This is where tmux is thirty years ahead and the items are small.
   attaches and detaches, closing the window leaves the agents running. **Better than tmux:**
   we can offer both — attach to a live pty, or the transcript-resume we already have when
   the host was not running.
-- [ ] **D2. Search the scrollback** — S. **Highest value per hour on this list.**
-  `@xterm/addon-search` is one npm install and two bindings (`Ctrl F`, `n`/`N`) in
-  `TerminalPane.tsx`. tmux has had `C-r`/`C-s` in copy mode forever; we have no way to find
-  anything in a pane that has scrolled.
+- [x] **D2. Search the scrollback** — S. **Done in v0.4.0.** `Ctrl F` opens a find bar in
+  the focused pane; every match is highlighted, Enter and Shift Enter step, Escape closes
+  and hands the keyboard back. It searches THAT pane’s buffer, so with four open the answer
+  is never another agent’s scrollback. `npm run test:view` pins it.
 - [ ] **D3. Keyboard copy mode** — M. Copy-on-select needs a mouse. tmux: `C-b [`, move,
   select, copy, exit. xterm.js exposes the buffer and selection APIs; a small vi-ish mode
   (`hjkl`, word motions, `v` select, `y` yank into the Stash) covers it. Pairs with D2.
-- [ ] **D4. Zoom a pane** — S. `C-b z` toggles one pane to full window and back without
-  disturbing the layout. `Ctrl G` toggles the whole grid; there is no "make *this* one big
-  for a minute". Trivial in `gridLayout.ts`, used constantly.
-- [ ] **D5. Preset layouts** — S. tmux ships even-horizontal, even-vertical, main-horizontal,
-  main-vertical, tiled, and one key to cycle them. Our grid is drag-only, so a disturbed
-  layout is fixed by hand. Add the five presets plus a cycle key.
+- [x] **D4. Zoom a pane** — S. **Done in v0.4.0.** `Ctrl Shift Z`, or the zoom button on the
+  pane title, makes the focused pane the whole window and back. The grid, its sizes and the
+  order underneath are untouched, and the zoom is dropped by itself if that pane closes.
+- [x] **D5. Preset layouts** — S. **Done in v0.4.0.** Tiled, columns, rows, big left and
+  big top, cycled with `Ctrl Shift G` or picked by name from the palette. Named after what
+  you get rather than after the split tmux would have made, and each keeps its own dragged
+  sizes: a `2x3` reached by stacking three panes beside a big one is not a tiled `2x3`.
 - [ ] **D6. Swap / move panes by keyboard** — S. tmux marks a pane (`C-b m`) and swaps
   (`{` / `}`). We can only drag. Add mark + swap and directional move.
 - [ ] **D7. Synchronised typing** — S. We have a broadcast box: one line, sent once. tmux's
@@ -202,8 +203,10 @@ This is where tmux is thirty years ahead and the items are small.
 
 ## Order to build in
 
-1. **D2, D4, D5, D6, D7, D11, D15** — a day or two, all terminal craft, all visible
-   immediately. tmux parity is the cheapest quality in this document.
+1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
+   **D6, D7, D11, D15** are the rest of that day — keyboard swap, synchronised typing,
+   pinned Stash entries, and what the pane border says. tmux parity is still the cheapest
+   quality in this document.
 2. **A1, A2, A3, A4** — diff + commit + PR. The one gap a user switching from T3 Code would
    name first, and the README already admits it.
 3. **C3, C5, C8, C1** — permission modes, project scripts, resource readout, rebindable keys.
