@@ -28,7 +28,11 @@ import { closeTestApps, waitTestAppsGone } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const keep = process.argv.includes('--keep')
-const PORT = 9414
+// Overridable for the same reason PF_RAIL_PORT is: a copy that died can leave this port
+// bound to a pid that no longer exists, and every run afterwards reports "did the test copy
+// start?" when the copy started and simply could not be talked to.
+//   PF_QUIET_PORT=9514 npm run test:quiet
+const PORT = Number(process.env.PF_QUIET_PORT ?? 9414)
 const PROFILE = 'quiet-probe'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
