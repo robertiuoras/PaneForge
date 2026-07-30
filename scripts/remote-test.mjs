@@ -51,7 +51,8 @@ function bundle() {
     [
       `export { RemoteHost } from ${JSON.stringify(join(root, 'src/main/remote/host.ts').replace(/\\/g, '/'))}`,
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
-      `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`
+      `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
+      `export { makeInvite, readInvite, INVITE_MINUTES } from ${JSON.stringify(join(root, 'src/main/remote/invite.ts').replace(/\\/g, '/'))}`
     ].join('\n'),
     'utf8'
   )
@@ -128,7 +129,52 @@ async function until(fn, ms = 8000) {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
-  const { RemoteHost, RemoteClient, newCode } = mod
+  const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES } = mod
+
+  // ------------------------------------------------------------------- invites
+  // The one line that replaced three typed fields. Everything here is about the round
+  // trip surviving the way a person actually moves it: selected with a stray quote, sent
+  // through something that wraps lines, pasted with the prefix clipped off the front.
+  {
+    const now = 1_700_000_000_000
+    const self = { name: 'Desk PC', addresses: ['192.168.1.20', '10.0.0.3'], port: 7311, code: 'AB12-CD34' }
+    const blob = makeInvite(self, now)
+    ok('an invite is one line', /^PF1-[A-Za-z0-9_-]+$/.test(blob), blob.slice(0, 24))
+    const back = readInvite(blob, now)
+    ok(
+      'it round-trips the address, port, code and name',
+      back.kind === 'invite' &&
+        back.invite.code === self.code &&
+        back.invite.port === self.port &&
+        back.invite.name === self.name &&
+        back.invite.addresses.join() === self.addresses.join(),
+      JSON.stringify(back)
+    )
+    ok(
+      'a paste that picked up quotes and newlines still reads',
+      readInvite(`"${blob.slice(0, 12)}\n${blob.slice(12)}"  `, now).kind === 'invite'
+    )
+    ok('a selection that clipped the prefix still reads', readInvite(blob.slice(4), now).kind === 'invite')
+    ok(
+      'an invite older than the window is refused, by name',
+      (() => {
+        const r = readInvite(blob, now + INVITE_MINUTES * 60_000 + 1)
+        return r.kind === 'expired' && r.name === 'Desk PC'
+      })(),
+      JSON.stringify(readInvite(blob, now + INVITE_MINUTES * 60_000 + 1))
+    )
+    // A real code's shape, from wire.ts's alphabet - lower case and unspaced, the way one
+    // arrives after a trip through a chat window.
+    ok('a bare pairing code is still recognised as one', readInvite(' acde-fghj ', now).kind === 'code')
+    ok('one typed without its dash is the same code', readInvite('ACDEFGHJ', now).code === 'ACDE-FGHJ')
+    ok('anything else is refused rather than half-read', readInvite('hello there', now).kind === 'none')
+    ok('a look-alike character is not quietly accepted', readInvite('ACDE-FGH0', now).kind === 'none')
+    ok(
+      'the code inside is the only secret, and it is the same one',
+      JSON.parse(Buffer.from(blob.slice(4).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()).c ===
+        self.code
+    )
+  }
 
   const code = newCode()
   const port = await freePort()

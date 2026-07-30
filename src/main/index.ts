@@ -21,6 +21,7 @@ import { DataPump } from './dataPump'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { Remote } from './remote'
+import { readInvite } from './remote/invite'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
@@ -914,6 +915,32 @@ ipcMain.handle(
     return { ok: !error, error: error || undefined, state: remote.state() }
   }
 )
+/** One line to copy on the device you are leaving. */
+ipcMain.handle('remote:invite', () => remote.invite())
+/** ...and one paste on the device you are picking up. */
+ipcMain.handle('remote:pairText', async (_e, text: string) => {
+  const res = await remote.pairFromText(String(text ?? ''))
+  return { ...res, state: remote.state() }
+})
+/**
+ * Is there already an invite on this machine's clipboard?
+ *
+ * The whole point of the invite is that pairing is copy-then-paste; noticing the paste
+ * has already happened removes the second half of that too - open Devices on the second
+ * machine and the button is there. Only the parsed name and expiry cross into the
+ * renderer: the clipboard's actual contents are none of its business, and the code
+ * inside stays in the main process until pairing uses it.
+ */
+/** Pair straight from that clipboard invite, without the text passing through a window. */
+ipcMain.handle('remote:pairClipboard', async () => {
+  const res = await remote.pairFromText(clipboard.readText())
+  return { ...res, state: remote.state() }
+})
+ipcMain.handle('remote:clipboardInvite', () => {
+  const read = readInvite(clipboard.readText())
+  if (read.kind !== 'invite') return null
+  return { name: read.invite.name, expires: read.invite.expires }
+})
 ipcMain.handle('remote:forget', (_e, id: string) => {
   remote.forget(String(id))
   return remote.state()

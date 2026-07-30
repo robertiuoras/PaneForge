@@ -25,9 +25,18 @@ import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
+import { makeInvite, readInvite } from './invite'
 import { deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 
 export { joinId, splitId }
+
+/** What came of a pasted invite. `code` is set when the paste was a bare pairing code. */
+export interface PairFromText {
+  ok: boolean
+  error?: string
+  code?: string
+  name?: string
+}
 
 export class Remote extends EventEmitter {
   private discovery: Discovery
@@ -235,6 +244,53 @@ export class Remote extends EventEmitter {
     const error = await this.probe(probe)
     if (error) return error
     return ''
+  }
+
+  /**
+   * The one line to copy. Everything the other device needs to reach this one, packed
+   * so that pairing is a paste rather than three typed fields. See `invite.ts` for why
+   * carrying the code in it is no more exposed than showing it on screen, and for the
+   * expiry that is the thing it adds.
+   */
+  invite(): string {
+    const c = getConfig().remote
+    return makeInvite({ name: c.name, addresses: localAddresses(), port: c.port, code: c.code })
+  }
+
+  /**
+   * Pair from whatever was pasted.
+   *
+   * An invite carries every address the other device answers on, and only that device
+   * knows which of them this one can route to - a laptop on Wi-Fi and a desktop on
+   * Ethernet often share neither subnet nor a working `.local` name. So they are tried in
+   * order and the first that answers wins, rather than making the person guess. A refusal
+   * from every one of them reports the LAST error, which is the one about the network
+   * rather than the one about the code.
+   */
+  async pairFromText(text: string): Promise<PairFromText> {
+    const read = readInvite(text)
+    if (read.kind === 'none')
+      return { ok: false, error: 'That is not a PaneForge invite. Press “Copy invite” on the other device.' }
+    if (read.kind === 'expired')
+      return {
+        ok: false,
+        error: `That invite${read.name ? ` from ${read.name}` : ''} has expired. Press “Copy invite” over there again.`
+      }
+    // A bare code is not enough to reach anything, but it is what the person had before
+    // this existed - so it fills the field in rather than being rejected.
+    if (read.kind === 'code') return { ok: false, code: read.code, error: '' }
+    const inv = read.invite
+    let last = ''
+    for (const address of inv.addresses) {
+      const error = await this.pair({ address, port: inv.port, code: inv.code, name: inv.name })
+      if (!error) return { ok: true, name: inv.name }
+      last = error
+    }
+    return {
+      ok: false,
+      name: inv.name,
+      error: last || `Could not reach ${inv.name || 'that device'} on any address in its invite.`
+    }
   }
 
   forget(id: string): void {

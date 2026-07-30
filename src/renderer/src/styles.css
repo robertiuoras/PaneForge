@@ -1385,6 +1385,25 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .dev-name { width: 190px; max-width: 100%; }
 .dev-port { width: 74px; text-align: center; }
 .dev-self { display: flex; flex-direction: column; gap: 6px; }
+/* Pairing is one copy and one paste, so the copy is the only accented control on this
+   card and the address, port and code below it are what it is made of rather than a
+   second way to do the same thing. */
+.dev-invite { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dev-invite .hint { flex: 1 1 200px; min-width: 0; }
+/* The other half, on the machine doing the pairing: a paste box wide enough that a
+   400-character invite does not look like it was truncated on the way in. */
+.dev-paste { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dev-invite-in { flex: 1; min-width: 0; }
+/* The invite is already here: one button, no paste at all. */
+.dev-waiting {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  margin-bottom: 8px; padding: 9px 11px; text-align: left;
+  background: #35d07f10; border: 1px solid #35d07f33; border-radius: var(--r);
+  color: var(--text); font-size: 12.5px; cursor: pointer;
+}
+.dev-waiting:hover { background: #35d07f1c; border-color: #35d07f55; }
+.dev-waiting .hint { margin-left: auto; }
+.dev-manual { align-self: flex-start; margin-bottom: 8px; }
 /* label | value | actions, so the code and the address line up under each other
    instead of wrapping wherever the button widths happen to land. */
 .dev-field {
