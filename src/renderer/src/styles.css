@@ -679,9 +679,13 @@ body.sizing * { user-select: none !important; }
   padding: 8px 14px; font-size: 12px; pointer-events: none; box-shadow: var(--shadow);
 }
 
-/* Only visible once the view has left the tail: one click back to the newest line. */
+/* Only visible once the view has left the tail: one click back to the newest line.
+   z-index for the same reason as the marker rail (see TerminalPane.css): xterm's link
+   layer sits at z-index 2 over the whole pane and this pill had none, so it was drawn
+   and could not be pressed. 10 keeps it over the rail's 9, which is the order the rail
+   relied on DOM position for before either had a z-index. */
 .jump-newest {
-  position: absolute; right: 22px; bottom: 12px;
+  position: absolute; right: 22px; bottom: 12px; z-index: 10;
   background: var(--surface-3); color: var(--text);
   border: 1px solid var(--line-strong); border-radius: 999px;
   padding: 5px 12px; font-size: 11px; cursor: pointer;
@@ -1214,7 +1218,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
    whichever you meant, you hit the other. The left edge has nothing floating over it.
    The pane is the containing block. */
 .mic-float {
-  position: absolute; left: 12px; bottom: 12px; z-index: 4;
+  position: absolute; left: 12px; bottom: 12px; z-index: 10;
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; line-height: 1;
   border-radius: 50%; cursor: pointer;
