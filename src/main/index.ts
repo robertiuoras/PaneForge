@@ -25,7 +25,8 @@ import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
-import { laneBoard, laneRetry } from './laneBoard'
+import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
+import type { LanePane } from './laneBoard'
 import { which } from './which'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
@@ -51,7 +52,7 @@ import {
 } from './profile'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
 import { rememberAppPid, sweepOldConsoles, sweepOwnConsolesOnExit } from './consoles'
-import { lastPrompt, resumable } from './transcripts'
+import { lastPrompt, resumable, resumeIdFor } from './transcripts'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
@@ -792,7 +793,17 @@ ipcMain.handle('git:info', (_e, path: string) =>
     manager.list().some((s) => s.cwd === path && s.status === 'working')
   )
 )
-ipcMain.handle('lanes:board', () => laneBoard())
+/**
+ * The panes a lane hold can belong to. Local only: the lane state file is this machine's,
+ * and a mirrored pane's conversation lives on the device that runs it.
+ */
+const lanePanes = (): LanePane[] =>
+  manager
+    .list()
+    .filter((s) => s.status !== 'exited')
+    .map((s) => ({ id: s.id, cwd: s.cwd, resumeId: resumeIdFor(s.id) }))
+
+ipcMain.handle('lanes:board', () => attachLaneOwners(laneBoard(), lanePanes()))
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
@@ -836,6 +847,9 @@ async function sweepEmptyLanes(): Promise<void> {
 // returns immediately unless a lane is conflicted or waiting to go out.
 setInterval(() => {
   laneRetry()
+  // And the lanes held by chats that are not here any more: a killed pane never runs its
+  // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
+  laneReclaim(lanePanes())
   // Same clock, different lanes: the user's own worktree lanes, tidied when they are
   // empty. Throttled to five minutes inside, and a no-op for a repo with no lanes.
   void sweepEmptyLanes()

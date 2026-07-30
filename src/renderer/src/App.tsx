@@ -37,7 +37,7 @@ import LaneStrip, {
   LaneChip,
   laneOfSession,
   useLaneBoard,
-  useLanesByCwd
+  useLanesByPane
 } from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog from './components/SwarmDialog'
@@ -1311,7 +1311,7 @@ export default function App(): JSX.Element {
   // PaneForge's own dev lanes, on a machine that develops PaneForge. Null everywhere else,
   // and then nothing below draws anything.
   const laneBoard = useLaneBoard()
-  const lanesByCwd = useLanesByCwd(laneBoard)
+  const lanesByPane = useLanesByPane(laneBoard)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   // A pane that was cleared in an empty lane is moved back to the project folder by the
@@ -1548,8 +1548,8 @@ export default function App(): JSX.Element {
                   ) : null}
                   {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
                       sidebar used to repeat in a second list of the same sessions. */}
-                  {laneOfSession(lanesByCwd, s.cwd) ? (
-                    <LaneChip lane={laneOfSession(lanesByCwd, s.cwd)!} />
+                  {laneOfSession(lanesByPane, s.id) ? (
+                    <LaneChip lane={laneOfSession(lanesByPane, s.id)!} />
                   ) : null}
                   {s.status === 'exited' ? (
                     <span className="chip dead">exited {s.exitCode ?? ''}</span>
