@@ -802,6 +802,8 @@ export interface Api {
 
   /** run an agent's install command, streaming output back via onInstall */
   installAgent(id: string): Promise<void>
+  /** run an agent's uninstall command, streaming to the same console */
+  uninstallAgent(id: string): Promise<void>
   /** file picker that wires an existing binary up as an agent override */
   locateAgent(id: string): Promise<string | null>
 

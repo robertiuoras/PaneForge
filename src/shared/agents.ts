@@ -58,6 +58,14 @@ export interface AgentSpec {
   /** platform-specific install commands, preferred over `install` when present */
   installWin?: string
   installMac?: string
+  /**
+   * How to take it back off, same per-platform shape as `install`. Omitted means the
+   * CLI has no scripted removal and the UI shows no button for it: a button that
+   * leaves half an install behind is worse than sending the user to the docs.
+   */
+  uninstall?: string
+  uninstallWin?: string
+  uninstallMac?: string
   /** usable with no paid subscription (free tier, own API key, or fully local) */
   free?: boolean
   /** one line shown under the name in Settings: what it costs, what it needs */
@@ -107,6 +115,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     models: CLAUDE_MODELS,
     color: '#d97757',
     install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
     note: 'Anthropic subscription or API key',
     docs: 'https://docs.claude.com/en/docs/claude-code'
   },
@@ -120,6 +129,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     models: ['gpt-5.6-terra', 'gpt-5.1-codex-max', 'gpt-5.1-codex'],
     color: '#10a37f',
     install: 'npm i -g @openai/codex',
+    uninstall: 'npm rm -g @openai/codex',
     note: 'ChatGPT plan or OpenAI API key',
     docs: 'https://developers.openai.com/codex/cli'
   },
@@ -134,6 +144,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     ],
     color: '#4285f4',
     install: 'npm i -g @google/gemini-cli',
+    uninstall: 'npm rm -g @google/gemini-cli',
     free: true,
     note: 'Free tier with a Google account - no card needed',
     docs: 'https://github.com/google-gemini/gemini-cli'
@@ -146,6 +157,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     models: ['qwen3-coder-plus', 'qwen3-coder-flash'],
     color: '#7c3aed',
     install: 'npm i -g @qwen-code/qwen-code',
+    uninstall: 'npm rm -g @qwen-code/qwen-code',
     free: true,
     note: 'Free daily quota with a Qwen account',
     docs: 'https://github.com/QwenLM/qwen-code'
@@ -162,6 +174,8 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     color: '#e5e7eb',
     installWin: 'winget install --id Ollama.Ollama -e --accept-package-agreements --accept-source-agreements',
     installMac: 'brew install ollama',
+    uninstallWin: 'winget uninstall --id Ollama.Ollama -e',
+    uninstallMac: 'brew uninstall ollama',
     free: true,
     note: 'Fully local and offline - free forever, no account',
     docs: 'https://ollama.com'
@@ -174,6 +188,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     modelFlag: '--model',
     color: '#c9d1d9',
     install: 'npm i -g @github/copilot',
+    uninstall: 'npm rm -g @github/copilot',
     note: 'GitHub Copilot subscription (free tier available)',
     docs: 'https://github.com/features/copilot/cli'
   },
@@ -198,6 +213,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     models: ['anthropic/claude-sonnet-5', 'openai/gpt-5.1-codex', 'google/gemini-2.5-pro'],
     color: '#fbbf24',
     install: 'npm i -g opencode-ai',
+    uninstall: 'npm rm -g opencode-ai',
     free: true,
     note: 'Open source - bring any key, or point it at a local model',
     docs: 'https://opencode.ai'
@@ -209,6 +225,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     modelFlag: '--model',
     color: '#f97316',
     install: 'npm i -g @charmland/crush',
+    uninstall: 'npm rm -g @charmland/crush',
     free: true,
     note: 'Open source - works with free and local providers',
     docs: 'https://github.com/charmbracelet/crush'
@@ -220,6 +237,8 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     color: '#22d3ee',
     installMac: 'brew install block-goose-cli',
     installWin: 'winget install --id Block.Goose -e --accept-package-agreements --accept-source-agreements',
+    uninstallMac: 'brew uninstall block-goose-cli',
+    uninstallWin: 'winget uninstall --id Block.Goose -e',
     free: true,
     note: 'Open source, runs on any model including local ones',
     docs: 'https://block.github.io/goose/'
@@ -230,6 +249,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     bin: 'amp',
     color: '#f472b6',
     install: 'npm i -g @sourcegraph/amp',
+    uninstall: 'npm rm -g @sourcegraph/amp',
     note: 'Sourcegraph account',
     docs: 'https://ampcode.com'
   },
@@ -241,6 +261,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     models: ['sonnet', 'gpt-5', 'gemini/gemini-2.5-pro', 'ollama/qwen2.5-coder'],
     color: '#34d399',
     install: 'python -m pip install aider-install && aider-install',
+    uninstall: 'python -m pip uninstall -y aider-install aider-chat',
     free: true,
     note: 'Open source - free with a local Ollama model',
     docs: 'https://aider.chat'
@@ -290,6 +311,47 @@ export function installCommand(spec: AgentSpec, platform: string = PLATFORM): st
   if (platform === 'win32') return spec.installWin ?? spec.install ?? ''
   if (platform === 'darwin') return spec.installMac ?? spec.install ?? ''
   return spec.install ?? ''
+}
+
+/** The uninstall command for this machine, or '' when the agent has no scripted removal. */
+export function uninstallCommand(spec: AgentSpec, platform: string = PLATFORM): string {
+  if (platform === 'win32') return spec.uninstallWin ?? spec.uninstall ?? ''
+  if (platform === 'darwin') return spec.uninstallMac ?? spec.uninstall ?? ''
+  return spec.uninstall ?? ''
+}
+
+/**
+ * The toolchain an install line needs before it can run at all.
+ *
+ * Most of this catalogue is `npm i -g`, which on a machine with no Node says
+ * "npm is not recognized" and nothing else - the one failure a person who is not a
+ * developer cannot act on, and the reason a fresh Windows box could install none of
+ * these. Reading it off the command rather than a field per agent means a custom
+ * agent someone adds in Settings gets the same treatment.
+ */
+export type Prereq = 'node' | 'python'
+
+export function prereqFor(command: string): { need: Prereq; bin: string } | null {
+  const c = command.trim().toLowerCase()
+  if (/^(npm|npx)\b/.test(c) || /&&\s*(npm|npx)\b/.test(c)) return { need: 'node', bin: 'npm' }
+  if (/^python\b|^pip3?\b|\bpython -m pip\b/.test(c)) return { need: 'python', bin: 'python' }
+  return null
+}
+
+/** How to get that toolchain, per platform. '' when we should not guess. */
+export function prereqInstall(need: Prereq, platform: string = PLATFORM): string {
+  if (platform === 'win32') {
+    return need === 'node'
+      ? 'winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements'
+      : 'winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements'
+  }
+  if (platform === 'darwin') return need === 'node' ? 'brew install node' : 'brew install python'
+  return ''
+}
+
+/** Where to send someone whose machine has no package manager to bootstrap from. */
+export function prereqDocs(need: Prereq): string {
+  return need === 'node' ? 'https://nodejs.org/en/download' : 'https://www.python.org/downloads/'
 }
 
 export function modelValue(m: ModelChoice): string {

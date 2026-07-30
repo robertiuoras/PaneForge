@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
+import { prereqDocs, prereqFor, prereqInstall } from '../shared/agents'
 
 export interface RunHandle {
   /** kill the running install */
@@ -84,6 +85,13 @@ export function runCommand(
   }
 }
 
+/** The same run, awaited. Resolves with the exit code; never rejects. */
+export function runOnce(command: string, onData: (chunk: string) => void): Promise<number> {
+  return new Promise((resolve) => {
+    runCommand(command, onData, resolve)
+  })
+}
+
 /**
  * Stop every install still going, process tree and all. Called on the way out, beside
  * the pane teardown it mirrors.
@@ -155,6 +163,58 @@ export function refreshPath(): void {
   } catch {
     /* registry read failed - the user can still restart the app */
   }
+}
+
+/** Is this executable on PATH right now? `which` returns the input when it is not. */
+export function onPath(bin: string): boolean {
+  return which(bin) !== bin
+}
+
+/**
+ * Make sure the toolchain an install line needs actually exists, installing it first
+ * when it does not.
+ *
+ * Most of the catalogue is `npm i -g`, so a Windows machine with no Node could install
+ * none of it: the console printed `npm is not recognized` and stopped, which tells a
+ * person who is not a developer nothing they can act on. The button is meant to be the
+ * whole answer, so it installs Node too.
+ *
+ * Returns false when the prerequisite is still missing afterwards - the caller stops
+ * rather than running a command that cannot work.
+ */
+export async function ensurePrereq(
+  command: string,
+  say: (chunk: string) => void,
+  platform: string = process.platform
+): Promise<boolean> {
+  const need = prereqFor(command)
+  if (!need || onPath(need.bin)) return true
+
+  const label = need.need === 'node' ? 'Node.js' : 'Python'
+  const boot = prereqInstall(need.need, platform)
+  // No scripted bootstrap (Linux, where the right package manager is anyone's guess),
+  // or no winget on an older Windows: name the one thing to install, and where from.
+  if (!boot || (platform === 'win32' && !onPath('winget'))) {
+    say(
+      `\r\nThis needs ${label}, and it is not on this machine.\r\n` +
+        `Install it from ${prereqDocs(need.need)}, then reopen PaneForge and press Install again.\r\n`
+    )
+    return false
+  }
+
+  say(`${label} is needed first and is not installed. Getting it.\r\n> ${boot}\r\n\r\n`)
+  const code = await runOnce(boot, say)
+  // winget lands Node in a folder that is only on the PATH of new processes.
+  refreshPath()
+  if (!onPath(need.bin)) {
+    say(
+      `\r\nCould not install ${label} automatically (exit code ${code}).\r\n` +
+        `Install it from ${prereqDocs(need.need)}, then press Install again.\r\n`
+    )
+    return false
+  }
+  say(`\r\n${label} is ready. Continuing.\r\n\r\n`)
+  return true
 }
 
 function cleanEnv(): Record<string, string> {

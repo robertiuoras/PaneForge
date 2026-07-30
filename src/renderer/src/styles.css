@@ -957,6 +957,10 @@ button.primary.danger {
 }
 button.primary.danger:hover { background: linear-gradient(180deg, #6d323d, #512730); border-color: #ff8f8f80; }
 
+/* An Uninstall button that has been clicked once and is asking to be sure. */
+button.ghost.danger { border-color: #ff8f8f66; color: #ffd7d7; }
+button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
+
 .setting { display: flex; flex-direction: column; gap: 7px; }
 .setting > label {
   color: var(--muted); font-size: 10.5px; font-weight: 600;
