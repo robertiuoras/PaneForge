@@ -166,6 +166,14 @@ Re-run after any source change. Needs Node 20+.
 - **Voice (Ctrl Shift Space)** - hold to talk, and the text lands in the focused
   pane. Transcribed by a Whisper model on your own machine: free, offline, nothing
   uploaded. Settings > Voice installs the engine in one click.
+- **Find in a pane (Ctrl F)** - search that pane's scrollback, 20,000 lines of it, with
+  every match highlighted and Enter / Shift Enter to step. It searches the pane you are
+  in, so with four agents running the answer is never somebody else's output. Escape
+  closes it and gives the keyboard straight back to the agent.
+- **Arrange the grid (Ctrl Shift G)** - tiled, columns, rows, one big pane on the left,
+  one big pane on top. Each layout remembers the sizes you dragged for it, and any pane
+  can be zoomed to the whole window and back (**Ctrl Shift Z**) without disturbing the
+  arrangement underneath.
 - **Grid view**, **status dots**, **broadcast box** (one line to every session),
   **restart in place**, rename, open in editor/Explorer.
 
