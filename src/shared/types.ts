@@ -2,6 +2,8 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { AgentInfo, AgentSpec } from './agents'
+import type { Improvement } from './promptSchema'
+import type { ImproveMetrics } from './promptBudget'
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -418,6 +420,81 @@ export interface GameModeStatus {
   waiting: number
 }
 
+/**
+ * Prompt and capability intelligence - improving a draft before it is sent.
+ *
+ * Off by default, and that is not caution for its own sake: this is the first feature in
+ * the app that spends the user's model budget on something they did not ask a turn for.
+ *
+ * `auto` is present in the union and unreachable from Settings in this version. Automatic
+ * generation should follow evidence about latency, acceptance and downstream quality
+ * rather than precede it, and the union being ready is what keeps that a one-line change
+ * rather than a refactor.
+ */
+export interface PromptImproveConfig {
+  mode: 'off' | 'suggest' | 'auto'
+  /** Which CLI runs the improver. '' = the same agent as the pane. */
+  engine: string
+  /** Model for the improver; '' = that CLI's default. A cheap tier is the right choice. */
+  model: string
+  /** How readily it may ask. `minimal` allows one question, `balanced` allows three. */
+  clarify: 'minimal' | 'balanced'
+  /** What the budget is spent on. `tokens` drops retrieved knowledge first. */
+  optimise: 'quality' | 'balanced' | 'tokens'
+  /** Consult the capability catalogue at all. */
+  capabilities: boolean
+  /** ms of quiet before the pane's footer offers the chip. Generation never starts here. */
+  idleMs: number
+  /** Obsidian vault root. '' disables the Markdown knowledge provider. */
+  vaultPath: string
+  /** Absolute path to `vaultindex.py`. '' disables the indexed knowledge provider. */
+  indexScript: string
+  /** Write improvement events to prompt-audit.log. Hashes and counts only. */
+  telemetry: boolean
+  /** Also keep the text of improved prompts, so a golden case can be contributed. */
+  telemetryText: boolean
+}
+
+export type ImproveOutcomeKind = 'accepted' | 'rejected' | 'cancelled' | 'failed'
+
+/** What Settings and the sheet need to know without running anything. */
+export interface ImproveStatus {
+  /** A CLI that can run the improver was found on PATH. */
+  available: boolean
+  /** Which one would be used for a pane with no agent of its own. */
+  engine: string
+  /** Command that installs one, for the one-click button - the Voice tab's shape. */
+  install: string
+  /** Knowledge sources that answered when asked. Empty is a normal state. */
+  providers: string[]
+  /** A vault path that exists on this machine, offered as a starting point. */
+  vaultCandidate: string
+}
+
+export interface ImproveOptions {
+  /**
+   * Include `draft`/`inbox` knowledge, labelled unverified everywhere it appears.
+   *
+   * The same escape hatch `vaultindex.py --include-untrusted` has. Not reachable from the
+   * UI: it exists for the tests and the demonstration, where the bundled fixture
+   * catalogue is the only knowledge there is and all of it is honestly `draft`.
+   */
+  includeUntrusted?: boolean
+}
+
+/** One improvement, as it crosses the bridge. The original is always carried back. */
+export interface ImproveResult {
+  ok: boolean
+  error?: string
+  original: string
+  improvement?: Improvement
+  /** Where the brief's references came from, shown separately from the prompt. */
+  sources: Array<{ id: string; title: string; provider: string; source: string; trusted: boolean }>
+  /** "held back: 1 secret, 2 code blocks", or empty. */
+  held: string
+  metrics: ImproveMetrics
+}
+
 export interface VoiceStatus {
   /** a local transcriber was found on PATH */
   available: boolean
@@ -630,6 +707,8 @@ export interface Config {
   /** delete stored transcripts older than this; 0 keeps everything */
   historyDays: number
   voice: VoiceConfig
+  /** improve a draft prompt before it is sent - see PromptImproveConfig. Off by default. */
+  promptImprove: PromptImproveConfig
   /** stay out of the way while a game is running - see GameModeConfig */
   gameMode: GameModeConfig
   /**
@@ -958,6 +1037,30 @@ export interface Api {
   remoteAgents(device: string): Promise<AgentInfo[]>
   /** open a pane on that device; it appears here mirrored, like the rest of its panes */
   startRemote(device: string, req: StartSessionRequest): Promise<Session>
+
+  /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
+  improveStatus(): Promise<ImproveStatus>
+  /**
+   * Improve a draft. Never submits anything and never writes to the pane: the result is
+   * shown first and only `applyImproved` touches the terminal.
+   */
+  improvePrompt(id: string, draft: string, options?: ImproveOptions): Promise<ImproveResult>
+  /** One second pass, with the answers to the questions the first pass asked. Never a third. */
+  answerImprove(
+    id: string,
+    draft: string,
+    answers: Array<{ question: string; answer: string }>,
+    options?: ImproveOptions
+  ): Promise<ImproveResult>
+  /** Abort whatever is in flight for this pane. Silent, and safe to call when nothing is. */
+  cancelImprove(id: string): void
+  /**
+   * Accept: empty the prompt box and paste the improved text into it. There is no `\r` in
+   * what this writes and no option that adds one - the user presses Enter.
+   */
+  applyImproved(id: string, text: string): Promise<{ ok: boolean; error?: string }>
+  /** What happened to a suggestion, for the development metrics. Off unless telemetry is on. */
+  recordImprove(outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number): void
 
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */

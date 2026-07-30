@@ -1,0 +1,216 @@
+/* The improve sheet.
+ *
+ * Sits over the focused pane only, anchored to the bottom where the prompt box is, so the
+ * suggestion appears next to the thing it is about. It never moves, never floats over
+ * another app, and never asks for the foreground. */
+
+.improve-sheet {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 70%;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.improve-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.improve-title {
+  font-weight: 600;
+}
+
+.improve-meta,
+.improve-muted {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.improve-right {
+  margin-left: auto;
+}
+
+.improve-original,
+.improve-diff {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.improve-add {
+  background: #35d07f26;
+  color: var(--ok);
+}
+
+.improve-remove {
+  background: #ff8f8f1f;
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.improve-edit {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-height: 96px;
+  max-height: 30vh;
+  resize: vertical;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+}
+
+.improve-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.improve-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.improve-assumed,
+.improve-sources,
+.improve-held {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.improve-untrusted {
+  color: var(--warn);
+}
+
+.improve-error {
+  color: var(--danger);
+}
+
+.improve-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.improve-btn {
+  padding: 5px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--fast);
+}
+
+.improve-btn:hover {
+  background: var(--line);
+}
+
+.improve-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.improve-primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.improve-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.improve-q-text {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.improve-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.improve-chip {
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.improve-chip-on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.improve-free {
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+/* The offer itself: a chip in the pane footer, next to the git badge and the clock.
+ * Not a popup, not a toast, nothing that moves. */
+.improve-chip-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.improve-chip-offer:hover {
+  border-color: var(--accent);
+}
+
+/* Bottom-right of the pane. The mic owns the bottom-left and "↓ Newest" appears at the
+ * bottom-right only while a pane is scrolled up - which is never while someone is typing
+ * a prompt into the box at the bottom, so the two cannot land on the same pixels. */
+.improve-float {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 30;
+}

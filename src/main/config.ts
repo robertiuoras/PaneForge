@@ -181,6 +181,22 @@ function defaults(): Config {
     historyDays: 30,
     autoLane: true,
     voice: { enabled: true, model: 'base', language: 'auto' },
+    // Off, and every other default chosen so that turning it on once changes as little as
+    // possible: the pane's own agent, one question at most, balanced budget, no telemetry,
+    // and no knowledge source configured until the user points at one.
+    promptImprove: {
+      mode: 'off',
+      engine: '',
+      model: '',
+      clarify: 'minimal',
+      optimise: 'balanced',
+      capabilities: true,
+      idleMs: 1200,
+      vaultPath: '',
+      indexScript: '',
+      telemetry: false,
+      telemetryText: false
+    },
     // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
@@ -202,6 +218,10 @@ export function getConfig(): Config {
       ...raw,
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
+      // Merged rather than replaced: a config written before this feature existed has the
+      // key missing entirely, and an upgrade must land on `mode: 'off'` rather than on
+      // `undefined`, which every read below would then have to guard.
+      promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       // Merged rather than replaced so an upgrade keeps this device's identity and
       // its pairings while gaining any key added since the file was written.
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },

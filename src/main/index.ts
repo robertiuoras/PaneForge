@@ -29,6 +29,10 @@ import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped }
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { which } from './which'
+import { cancelImprove, improve, resolveEngine } from './improve'
+import { firstExistingVault } from './knowledge'
+import { recordImprovement } from './promptAudit'
+import { insertSequence } from '../shared/promptSchema'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
   cancelDeferred,
@@ -117,6 +121,10 @@ import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   GameModeStatus,
+  ImproveOptions,
+  ImproveOutcomeKind,
+  ImproveResult,
+  ImproveStatus,
   InstallOutcome,
   RemoteState,
   RestoreAnswer,
@@ -130,6 +138,8 @@ import type {
   TurnClock,
   UpdateState
 } from '../shared/types'
+import type { AgentSpec } from '../shared/agents'
+import type { ImproveMetrics } from '../shared/promptBudget'
 
 const manager = new SessionManager()
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
@@ -1444,6 +1454,141 @@ ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
 ipcMain.handle('history:delete', (_e, id: string) => history.remove(id))
+
+// --- prompt improvement ----------------------------------------------------
+//
+// A mirrored pane improves ON THE HOST and never on the mirror - the same rule the busy
+// footer follows. The mirror has neither the repository nor the project's memory, so an
+// improvement computed here would be a brief about a folder this machine does not have.
+// Rather than route the request over the link (stage 2 work), it is declined by name.
+
+ipcMain.handle('improve:status', (): ImproveStatus => {
+  const cfg = getConfig().promptImprove
+  const specs = listAgents(false).map((a) => a as AgentSpec)
+  const engine = resolveEngine(cfg.engine, '', specs, cfg.model)
+  const providers: string[] = []
+  if (cfg.indexScript) providers.push('vault-index')
+  if (cfg.vaultPath) providers.push('markdown')
+  if (cfg.capabilities) providers.push('catalogue')
+  return {
+    available: Boolean(engine),
+    engine: engine?.id ?? '',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    providers,
+    vaultCandidate: firstExistingVault()
+  }
+})
+
+async function runImprove(
+  id: string,
+  draft: string,
+  answers: Array<{ question: string; answer: string }> | undefined,
+  options: ImproveOptions | undefined
+): Promise<ImproveResult> {
+  const decline = (error: string): ImproveResult => ({
+    ok: false,
+    error,
+    original: draft,
+    sources: [],
+    held: '',
+    metrics: {
+      originalTokens: 0,
+      improvedTokens: 0,
+      contextTokens: 0,
+      knowledgeTokens: 0,
+      knowledgeNotes: 0,
+      ms: 0,
+      questions: 0,
+      taskType: 'other',
+      engine: '',
+      outcome: 'failed',
+      secretsHeld: 0
+    }
+  })
+
+  const cfg = getConfig().promptImprove
+  if (cfg.mode === 'off') return decline('prompt improvement is off')
+  if (remote.owns(id)) return decline('that pane runs on another device - improve it there')
+
+  const session = allSessions().find((s) => s.id === id)
+  if (!session) return decline('no such pane')
+
+  const outcome = await improve({
+    sessionId: id,
+    cwd: session.cwd,
+    agent: session.agent,
+    draft,
+    git: await gitInfo(session.cwd).catch(() => null),
+    config: cfg,
+    specs: listAgents(false).map((a) => a as AgentSpec),
+    answers,
+    includeUntrusted: options?.includeUntrusted
+  })
+
+  return {
+    ok: outcome.ok,
+    error: outcome.error,
+    original: outcome.original,
+    improvement: outcome.improvement,
+    // Provenance crosses the bridge as ids and titles, never as the note bodies: the
+    // sheet cites, it does not re-display somebody's vault.
+    sources: outcome.sources.map((n) => ({
+      id: n.id,
+      title: n.title,
+      provider: n.provider,
+      source: n.source,
+      trusted: n.trusted
+    })),
+    held: outcome.held,
+    metrics: outcome.metrics
+  }
+}
+
+ipcMain.handle('improve:run', (_e, id: string, draft: string, options?: ImproveOptions) =>
+  runImprove(id, draft, undefined, options)
+)
+ipcMain.handle(
+  'improve:answer',
+  (
+    _e,
+    id: string,
+    draft: string,
+    answers: Array<{ question: string; answer: string }>,
+    options?: ImproveOptions
+  ) => runImprove(id, draft, answers, options)
+)
+ipcMain.on('improve:cancel', (_e, id: string) => cancelImprove(id))
+
+ipcMain.handle('improve:apply', async (_e, id: string, text: string) => {
+  if (remote.owns(id)) return { ok: false, error: 'that pane runs on another device' }
+  const session = allSessions().find((s) => s.id === id)
+  if (!session) return { ok: false, error: 'no such pane' }
+
+  const { wipe, payload, error } = insertSequence(text, session.agent)
+  if (!payload) return { ok: false, error: error ?? 'nothing safe to insert' }
+
+  // The same measured shape `clearPane()` uses: empty the box, wait for the CLI to settle,
+  // then paste. 320ms is the measured settle - at 40ms the key arrived before the TUI had
+  // redrawn. Bracketed paste so newlines land in the box instead of submitting it.
+  manager.write(id, wipe)
+  await new Promise((r) => setTimeout(r, 320))
+  manager.write(id, payload)
+  return { ok: true }
+})
+
+ipcMain.on(
+  'improve:record',
+  (_e, outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number) => {
+    const cfg = getConfig().promptImprove
+    // Hashes and counts. The text is only kept when the user has ticked for it, and even
+    // then a draft that still looks like it carries a credential is refused.
+    recordImprovement({ ...metrics, outcome }, '', '', {
+      enabled: cfg.telemetry,
+      keepText: false,
+      editedChars
+    })
+  }
+)
 
 // --- voice -----------------------------------------------------------------
 

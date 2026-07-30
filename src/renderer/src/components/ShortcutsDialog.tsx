@@ -34,6 +34,10 @@ const KEYS: Key[] = [
   ['Ctrl W', 'Close the focused session'],
   ['Ctrl Shift R', 'Restart the focused agent in place'],
   ['Ctrl Shift L', 'Fix the display: refit and repaint the pane without losing the run'],
+  [
+    'Ctrl Shift I',
+    'Improve the prompt you are typing - a suggestion you read and accept, never sent for you'
+  ],
   ['Ctrl Shift A', 'Switch the focused pane to the next installed AI (Claude, Codex, ...)'],
   ['Ctrl G', 'Toggle grid view (every session at once)'],
   ['Ctrl Shift G', 'Cycle the grid: tiled, columns, rows, one big on the left, one big on top'],

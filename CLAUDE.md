@@ -219,6 +219,30 @@ then zoomed), and a window that is not being drawn can find every match and coun
 which is why the bar says "found" rather than "no matches" when the search landed but
 nothing was counted, and why the test wants `--show`.
 
+`npm run test:improve` is the prompt-improvement feature, model-free: the one draft
+reconstruction (`shared/draft.ts`, which replaced the three copies that used to disagree),
+the envelope that holds secrets and long code back and restores them byte-exact, the
+sanitiser, and the whole retrieval and budget pipeline against real fixture vaults on
+disk. Its cheap, load-bearing half is `prompt-insert-test.mjs`: the improved text is not
+displayed, it is TYPED into an agent with real tools in a real repo, so every assertion
+there is about the exact byte stream reaching `write()` - no `\r` ever, no leading `/`
+`!` or `#`, no escape that could close the bracketed paste early and hand the rest to the
+terminal as keys.
+
+`npm run test:improveview` is the half only a real window can answer, and it needs one up
+(`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`). The draft
+is reconstructed from keystrokes, so it is driven by real keystrokes through xterm's own
+input path and read back out of `window.__pf.draft(id)`. Two things it pinned that cost an
+hour each: a pane keeps reading `status: 'working'` for ~3.5 s after the last keystroke,
+because the shell echoing its own prompt line is output like any other - so a single idle
+timer always fired while the pane was still busy and the chip could never appear at all;
+and `Session.engaged` is not "busy" but "something has been asked of this session", which
+typing is, and it never goes back down, so guarding on it suppressed the chip forever.
+Accept is proved by the terminal, not by a spy on the bridge - `applyImproved` writes from
+the main process on purpose, so the byte stream is built in one place - and "did not
+submit" is the improved text sitting on the prompt row with the cursor never having moved
+down to a fresh one.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.

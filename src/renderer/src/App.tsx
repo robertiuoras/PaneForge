@@ -24,7 +24,17 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
-import TerminalPane, { paneFind, paneFocus, paneInsert, paneRepair } from './components/TerminalPane'
+import TerminalPane, {
+  onPaneDraft,
+  paneDraft,
+  paneFind,
+  paneFocus,
+  paneInsert,
+  paneRepair
+} from './components/TerminalPane'
+import ImproveSheet, { type SheetState } from './components/ImproveSheet'
+import { looksFinished } from '../../shared/draft'
+import './components/ImproveSheet.css'
 import { keyLabel, modKey } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
@@ -135,6 +145,10 @@ export default function App(): JSX.Element {
   const peekTimer = useRef<number>()
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
+  // Read from inside listeners that outlive a render - the draft watcher below fires on
+  // every keystroke and must not re-subscribe each time the session list changes.
+  const sessionsRef = useRef<Session[]>([])
+  sessionsRef.current = sessions
 
   /**
    * The keyboard belongs to the pane you are working in, and finds its own way back there.
@@ -724,6 +738,123 @@ export default function App(): JSX.Element {
    * The Enter is a beat late on purpose, so the CLI's slash menu has settled on /clear
    * before the key that accepts it arrives. A plain shell has no slash commands.
    */
+  /**
+   * Prompt improvement.
+   *
+   * Three pieces of state and one rule between them: **generation only ever starts on a
+   * deliberate action.** `offered` is a heuristic on the draft and costs nothing; the chip
+   * it puts in the pane is the whole of what happens by itself.
+   */
+  const [improveOffer, setImproveOffer] = useState<string | null>(null)
+  const [sheet, setSheet] = useState<{ id: string; state: SheetState } | null>(null)
+  const [asked, setAsked] = useState(false)
+  const improveMode = config?.promptImprove.mode ?? 'off'
+  const improveIdleMs = config?.promptImprove.idleMs ?? 1200
+  const sheetRef = useRef<{ id: string; state: SheetState } | null>(null)
+  sheetRef.current = sheet
+
+  useEffect(() => {
+    if (improveMode === 'off') {
+      setImproveOffer(null)
+      setSheet(null)
+      return
+    }
+    let timer: number | undefined
+    const stop = onPaneDraft((id, state) => {
+      // Typing while a suggestion is being generated aborts it, silently. This is the
+      // rule the whole interaction rests on: the moment the person goes back to writing,
+      // whatever was being computed about the older words is wrong and is thrown away.
+      const open = sheetRef.current
+      if (open?.id === id && open.state.phase === 'working') {
+        api.cancelImprove(id)
+        setSheet(null)
+      }
+      // The offer is withdrawn the instant a key lands and re-earned by going quiet.
+      setImproveOffer(null)
+      window.clearTimeout(timer)
+
+      // Re-armed rather than dropped while the pane is busy.
+      //
+      // Measured in a real window: typing into a pane leaves it at `status: 'working'`
+      // for about 3.5 seconds afterwards, because the CLI echoing and redrawing its own
+      // prompt box IS output. A single timer at 1200 ms therefore always fired while the
+      // pane was still busy, gave up, and - since no further keystroke was coming - never
+      // ran again. The chip could not appear at all. So the check repeats until the pane
+      // settles, bounded so a genuinely long turn does not leave a timer spinning.
+      //
+      // `status`, not `engaged`: `engaged` means "something has been asked of this
+      // session", which typing is, and it never goes back down.
+      let tries = 0
+      const arm = (): void => {
+        timer = window.setTimeout(() => {
+          const s = sessionsRef.current.find((x) => x.id === id)
+          if (!s || s.status === 'exited') return
+          if (s.status === 'working') {
+            if (++tries < 12) arm()
+            return
+          }
+          if (!state.certain) return
+          if (looksFinished(state.text)) setImproveOffer(id)
+        }, improveIdleMs)
+      }
+      arm()
+    })
+    return () => {
+      stop()
+      window.clearTimeout(timer)
+    }
+  }, [improveMode, improveIdleMs])
+
+  const runImprove = useCallback(
+    async (id: string) => {
+      const draft = paneDraft.get(id)
+      const text = draft?.text.trim() ?? ''
+      if (!text) return flash('Nothing typed in that pane yet.')
+      setImproveOffer(null)
+      setAsked(false)
+      setSheet({ id, state: { phase: 'working', original: text } })
+      const result = await api.improvePrompt(id, text)
+      // A cancel that landed while this was in flight has already cleared the sheet, and
+      // the late answer must not reopen it.
+      if (sheetRef.current?.id !== id) return
+      setSheet({
+        id,
+        state: result.ok
+          ? { phase: 'review', result }
+          : { phase: 'failed', original: text, error: result.error ?? 'no answer' }
+      })
+    },
+    [flash]
+  )
+
+  const answerImprove = useCallback(
+    async (answers: Array<{ question: string; answer: string }>) => {
+      const open = sheetRef.current
+      if (!open || open.state.phase !== 'review') return
+      const result = open.state.result
+      // Exactly one second pass, ever. A dialogue that goes three rounds is a prompt that
+      // should have been typed.
+      if (asked || !answers.length) {
+        if (!answers.length && !asked) {
+          setSheet({ id: open.id, state: { phase: 'asking', result } })
+          return
+        }
+        return
+      }
+      setAsked(true)
+      setSheet({ id: open.id, state: { phase: 'working', original: result.original } })
+      const next = await api.answerImprove(open.id, result.original, answers)
+      if (sheetRef.current?.id !== open.id) return
+      setSheet({
+        id: open.id,
+        state: next.ok
+          ? { phase: 'review', result: next }
+          : { phase: 'failed', original: result.original, error: next.error ?? 'no answer' }
+      })
+    },
+    [asked]
+  )
+
   const clearPane = useCallback(
     (s: Session) => {
       const shell = s.agent === 'shell'
@@ -883,7 +1014,13 @@ export default function App(): JSX.Element {
       if (!modKey(e) || e.altKey) return
       const k = e.key.toLowerCase()
 
-      if (k === 't') {
+      if (k === 'i' && e.shiftKey) {
+        e.preventDefault()
+        const id = activeRef.current
+        if (improveMode === 'off') flash('Prompt improvement is off - turn it on in Settings.')
+        else if (!id) flash('Open a pane first.')
+        else void runImprove(id)
+      } else if (k === 't') {
         e.preventDefault()
         setPicking(true)
       } else if ((k === 'k' && !e.shiftKey) || (k === 'p' && e.shiftKey)) {
@@ -1979,6 +2116,48 @@ export default function App(): JSX.Element {
               >
                 {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={15} />}
               </button>
+            )}
+            {/* The offer. A chip in the pane's own corner, next to the prompt box it is
+                about - not a popup, not a toast, nothing that moves and nothing that
+                takes the keyboard. It appears only when the draft has gone quiet, reads
+                as finished, and the agent is not mid-turn. */}
+            {improveOffer === s.id && !sheet && (
+              <button
+                className="improve-chip-offer improve-float"
+                title={keyLabel('Improve this prompt before sending it (Ctrl Shift I)')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void runImprove(s.id)
+                }}
+              >
+                Improve prompt
+              </button>
+            )}
+            {sheet?.id === s.id && (
+              <ImproveSheet
+                sessionId={s.id}
+                state={sheet.state}
+                onAccepted={(text, editedChars) => {
+                  const open = sheet.state
+                  void api.applyImproved(s.id, text).then((r) => {
+                    if (!r.ok) return flash(r.error ?? 'Could not insert that.')
+                    flash('Improved prompt is in the box - press Enter to send it.')
+                  })
+                  if (open.phase === 'review') {
+                    api.recordImprove('accepted', open.result.metrics, editedChars)
+                  }
+                  setSheet(null)
+                }}
+                onRejected={() => {
+                  const open = sheet.state
+                  // Reject writes nothing at all. The pane is exactly as it was.
+                  if (open.phase === 'working') api.cancelImprove(s.id)
+                  if (open.phase === 'review') api.recordImprove('rejected', open.result.metrics)
+                  setSheet(null)
+                  paneFocus.get(s.id)?.()
+                }}
+                onAnswered={(answers) => void answerImprove(answers)}
+              />
             )}
           </div>
         ))}

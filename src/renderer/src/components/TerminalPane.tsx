@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
+import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import './TerminalPane.css'
 
 const api = window.api
@@ -48,6 +49,30 @@ import { isMac } from '../platform'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/**
+ * What each pane's user has typed but not sent, reconstructed from the keystrokes this
+ * app relays anyway. See `shared/draft.ts` for why it is reconstructed rather than read.
+ *
+ * A map plus a listener set, exactly like `paneRepair` above and for the same reason: the
+ * footer chip, the shortcut and the improve sheet all need the focused pane's draft, and
+ * threading it through App as props would put a state update on every keystroke into the
+ * component that owns every pane.
+ */
+export const paneDraft = new Map<string, DraftState>()
+
+type DraftListener = (id: string, state: DraftState) => void
+const draftListeners = new Set<DraftListener>()
+
+export function onPaneDraft(cb: DraftListener): () => void {
+  draftListeners.add(cb)
+  return () => draftListeners.delete(cb)
+}
+
+function publishDraft(id: string, state: DraftState): void {
+  paneDraft.set(id, state)
+  for (const cb of draftListeners) cb(id, state)
+}
 
 /**
  * Put text into a pane the way a paste does, from anywhere in the app.
@@ -424,7 +449,13 @@ export default function TerminalPane({
     // pane's cost scales with its grid and no two panes have the same one.
     dbg.__pf = {
       ...(dbg.__pf ?? {}),
-      [sessionId]: { term: t, fit: f, host: host.current, dropWebgl: () => gl?.dispose() }
+      [sessionId]: { term: t, fit: f, host: host.current, dropWebgl: () => gl?.dispose() },
+      // The draft is reconstructed from keystrokes rather than read off the screen, so it
+      // is the one thing about a pane that no amount of DOM or buffer inspection can
+      // answer. `prompt-view-test.mjs` reads it back after typing through xterm's own
+      // input path, which is the only honest way to check the reconstruction in a real
+      // window.
+      draft: (id: string) => paneDraft.get(id) ?? null
     }
 
     // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
@@ -484,7 +515,7 @@ export default function TerminalPane({
      */
     const MARK_CAP = 80
     const list: Mark[] = []
-    let pending = ''
+    let pending: DraftState = newDraft()
     let dead = false
     const publish = (): void => {
       if (!dead) setMarks(list.slice())
@@ -559,51 +590,19 @@ export default function TerminalPane({
       syncTotal()
     }
 
-    // What xterm wraps a paste in while the agent has bracketed paste on, which Claude Code
-    // and Codex both do - so this, not a run of key events, is the normal path for a pasted
-    // prompt. The closing wrapper can land in the same chunk or not, hence the optional tail.
-    const BRACKETED = /^\x1b\[200~([\s\S]*?)(?:\x1b\[201~)?$/
-    // A prompt longer than this is not readable in a hover label anyway, and the pending
-    // buffer must not grow without bound on a session that never submits.
-    const MAX_PROMPT = 400
-    // A pasted prompt is one prompt however many lines it had, so its newlines join it up
-    // rather than submitting it.
-    const join = (s: string): string => (pending + s).replace(/[\r\n]+/g, ' ').slice(0, MAX_PROMPT)
-
+    // One reconstruction, in `shared/draft.ts`, rather than the copy that used to live
+    // here. The rail wants a short flattened label and the improver wants the whole thing,
+    // so both read one state and take what they need from it.
     const feedInput = (d: string): void => {
-      const paste = BRACKETED.exec(d)
-      if (paste) {
-        pending = join(paste[1])
-        return
-      }
-      // Arrow keys, function keys, alt+enter - never prompt text.
-      if (d.charCodeAt(0) === 0x1b) return
-      // Anything longer than a keystroke arrived in one piece, so it is pasted or composed
-      // text rather than a key.
-      if (d.length > 1) {
-        pending = join(d)
-        return
-      }
-      if (d === '\x7f' || d === '\b') {
-        pending = pending.slice(0, -1)
-        return
-      }
-      // Ctrl+C and Ctrl+U both throw the line away, so the rail has to as well.
-      if (d === '\x03' || d === '\x15') {
-        pending = ''
-        return
-      }
-      if (d === '\r' || d === '\n') {
-        const text = pending.trim()
-        pending = ''
+      const r = feedDraft(pending, d)
+      pending = r.state
+      publishDraft(sessionId, r.state)
+      for (const line of r.submitted) {
+        const text = flatDraft(line, RAIL_LABEL_CHARS)
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.
         if (text.length > 1) addMark(text)
-        return
       }
-      // Tab, and every other control byte that is not handled above.
-      if (d.charCodeAt(0) < 0x20) return
-      pending = (pending + d).slice(0, MAX_PROMPT)
     }
 
     // The rail's scale changes as output arrives and as the view moves, but a write only

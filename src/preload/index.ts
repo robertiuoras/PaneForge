@@ -122,6 +122,15 @@ const api: Api = {
   remoteAgents: (device) => ipcRenderer.invoke('remote:agents', device),
   startRemote: (device, req: StartSessionRequest) => ipcRenderer.invoke('remote:start', device, req),
 
+  improveStatus: () => ipcRenderer.invoke('improve:status'),
+  improvePrompt: (id, draft, options) => ipcRenderer.invoke('improve:run', id, draft, options),
+  answerImprove: (id, draft, answers, options) =>
+    ipcRenderer.invoke('improve:answer', id, draft, answers, options),
+  cancelImprove: (id) => ipcRenderer.send('improve:cancel', id),
+  applyImproved: (id, text) => ipcRenderer.invoke('improve:apply', id, text),
+  recordImprove: (outcome, metrics, editedChars) =>
+    ipcRenderer.send('improve:record', outcome, metrics, editedChars),
+
   voiceStatus: () => ipcRenderer.invoke('voice:status'),
   transcribe: (wav) => ipcRenderer.invoke('voice:transcribe', wav),
   installVoice: () => ipcRenderer.invoke('voice:install'),
