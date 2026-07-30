@@ -24,7 +24,7 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
-import TerminalPane, { paneFocus, paneInsert, paneRepair } from './components/TerminalPane'
+import TerminalPane, { paneFind, paneFocus, paneInsert, paneRepair } from './components/TerminalPane'
 import { keyLabel, modKey } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
@@ -45,7 +45,22 @@ import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
 import { playChime } from './useChime'
 import { useVoice } from './useVoice'
-import { drag as dragTrack, dividerPx, equal, shapeKey, template, usable } from './gridLayout'
+import {
+  drag as dragTrack,
+  dividerPx,
+  equal,
+  isLayout,
+  LAYOUT_LABEL,
+  LAYOUTS,
+  layoutDefaults,
+  nextLayout,
+  planGrid,
+  shapeKey,
+  template,
+  trackPx,
+  usable,
+  type LayoutKind
+} from './gridLayout'
 
 const api = window.api
 
@@ -750,6 +765,70 @@ export default function App(): JSX.Element {
 
   const grid = config?.grid ?? false
 
+  /**
+   * One pane made full-window for a minute, without disturbing the grid.
+   *
+   * Ctrl G already toggles the whole grid, but coming back from it re-lays every pane out
+   * and lands on whatever was focused - so "let me read this one properly" cost the
+   * arrangement. A zoom is remembered as a session id and nothing else changes: the grid
+   * setting, the sizes and the order are all exactly where they were when it ends.
+   *
+   * Only meaningful inside the grid, and dropped by itself when that pane closes - a
+   * zoom pointing at a session that is gone would be a window showing nothing.
+   */
+  const [zoomId, setZoomId] = useState<string | null>(null)
+  const zoom = grid && zoomId && sessions.some((s) => s.id === zoomId) ? zoomId : null
+  useEffect(() => {
+    if (zoomId && !sessions.some((s) => s.id === zoomId)) setZoomId(null)
+  }, [zoomId, sessions])
+  // A zoomed pane is drawn by the same path as focus mode - one pane, absolutely
+  // positioned over the whole area - so it needs no layout of its own.
+  const tiled = grid && !zoom
+
+  const visibleIds = useMemo(
+    () =>
+      new Set(
+        zoom
+          ? [zoom]
+          : grid
+            ? sessions.map((s) => s.id)
+            : sessions.filter((s) => s.id === activeId).map((s) => s.id)
+      ),
+    [grid, zoom, sessions, activeId]
+  )
+
+  // Which of the five arrangements the grid is in. Anything unknown on disk - a config
+  // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
+  const layout: LayoutKind = isLayout(config?.gridLayout ?? '')
+    ? (config?.gridLayout as LayoutKind)
+    : 'tiled'
+  const plan = useMemo(
+    () => planGrid(layout, tiled ? sessions.length : 1),
+    [layout, tiled, sessions.length]
+  )
+  const cols = plan.cols
+  const rows = plan.rows
+
+  const cycleLayout = useCallback(() => {
+    const next = nextLayout(layout)
+    // Turned on in the same write, not a second one: arranging the grid while looking at
+    // one pane is asking to see it, and two patches would race each other to the file.
+    patchConfig({ gridLayout: next, grid: true })
+    setZoomId(null)
+    flash(`Layout: ${LAYOUT_LABEL[next]}`)
+  }, [layout, grid, patchConfig, flash])
+
+  const toggleZoom = useCallback(
+    (id?: string | null) => {
+      const target = id ?? activeRef.current
+      if (!target) return flash('Nothing focused - open a pane first.')
+      if (!grid) return flash('Zoom is for the grid - Ctrl G shows every pane at once.')
+      setZoomId((z) => (z === target ? null : target))
+      setActiveId(target)
+    },
+    [grid, flash]
+  )
+
   // Ctrl-based shortcuts are captured on the window: xterm would otherwise swallow
   // them as terminal input.
   useEffect(() => {
@@ -851,9 +930,27 @@ export default function App(): JSX.Element {
         if (!s || usable.length < 2) return
         const next = usable[(usable.findIndex((a) => a.id === s.agent) + 1) % usable.length]
         switchAgent(s, next.id, config?.defaultModels[next.id] ?? '')
+      } else if (k === 'g' && e.shiftKey) {
+        // Shift is the grid's own arrangement: same key as the grid, one level in.
+        e.preventDefault()
+        cycleLayout()
       } else if (k === 'g') {
         e.preventDefault()
         patchConfig({ grid: !grid })
+      } else if (k === 'z' && e.shiftKey) {
+        // Not a bare Ctrl+Z: that is SIGTSTP in a shell and undo in every agent's
+        // prompt, and this app does not get to take either of them.
+        e.preventDefault()
+        toggleZoom()
+      } else if (k === 'f' && (!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
+        // Find inside the pane's scrollback. Claimed from the terminal deliberately -
+        // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
+        // purpose, and it is where every other program on the machine puts search.
+        e.preventDefault()
+        e.stopPropagation()
+        const open = activeId ? paneFind.get(activeId) : null
+        if (open) open()
+        else flash('Open a pane first - there is nothing to search.')
       } else if (k === ',') {
         e.preventDefault()
         setSettings(true)
@@ -891,7 +988,9 @@ export default function App(): JSX.Element {
     ask,
     fixUi,
     shelfPinned,
-    shelfInWindow
+    shelfInWindow,
+    cycleLayout,
+    toggleZoom
   ])
 
   /**
@@ -958,6 +1057,37 @@ export default function App(): JSX.Element {
         title: grid ? 'Show one pane at a time' : 'Show every pane in a grid',
         keys: 'Ctrl G',
         run: () => patchConfig({ grid: !grid })
+      },
+      // One entry per arrangement rather than one "cycle" entry: the palette is where
+      // you go when you know what you want, and cycling four times through a dialog to
+      // reach it is the opposite of that. The cycle key is Ctrl Shift G.
+      ...LAYOUTS.map((kind) => ({
+        id: `layout:${kind}`,
+        group: 'Actions',
+        title: `Grid layout: ${LAYOUT_LABEL[kind]}`,
+        hint:
+          kind === 'tiled'
+            ? 'every pane the same size'
+            : kind === 'columns'
+              ? 'side by side, one row'
+              : kind === 'rows'
+                ? 'stacked, one column'
+                : kind === 'main-left'
+                  ? 'one big pane on the left, the rest stacked beside it'
+                  : 'one big pane on top, the rest along the bottom',
+        keys: kind === layout ? 'current' : 'Ctrl Shift G',
+        run: () => {
+          patchConfig({ gridLayout: kind, grid: true })
+          setZoomId(null)
+        }
+      })),
+      {
+        id: 'zoom',
+        group: 'This pane',
+        title: zoom ? 'Unzoom: back to the grid' : 'Zoom this pane to the whole window',
+        hint: 'the grid and its sizes are left exactly as they are',
+        keys: 'Ctrl Shift Z',
+        run: () => toggleZoom()
       },
       {
         id: 'shelf',
@@ -1078,16 +1208,12 @@ export default function App(): JSX.Element {
     closeAll,
     flash,
     fixUi,
-    saveRunningAsWorkspace
+    saveRunningAsWorkspace,
+    layout,
+    zoom,
+    toggleZoom
   ])
 
-  const visibleIds = useMemo(
-    () => new Set(grid ? sessions.map((s) => s.id) : sessions.filter((s) => s.id === activeId).map((s) => s.id)),
-    [grid, sessions, activeId]
-  )
-  // Near-square layout, same rule the old .bat grid used, but for whatever N is open.
-  const cols = grid ? Math.max(1, Math.ceil(Math.sqrt(sessions.length))) : 1
-  const rows = grid ? Math.max(1, Math.ceil(sessions.length / cols)) : 1
 
   /**
    * Moving and sizing panes in the grid.
@@ -1110,7 +1236,7 @@ export default function App(): JSX.Element {
   const [box, setBox] = useState({ w: 0, h: 0, gap: 9, padX: 0, padY: 0 })
   useEffect(() => {
     const el = panesRef.current
-    if (!el || !grid) return
+    if (!el || !tiled) return
     const measure = (): void => {
       const cs = getComputedStyle(el)
       const gap = parseFloat(cs.columnGap) || 0
@@ -1128,18 +1254,22 @@ export default function App(): JSX.Element {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [grid])
+  }, [tiled])
 
-  const key = shapeKey(cols, rows)
+  const key = shapeKey(cols, rows, layout)
   const saved = config?.gridSizes?.[key]
+  // What the tracks are worth before anybody has dragged them. Equal shares everywhere
+  // except the two layouts with a main pane, where equal shares would make "big left"
+  // indistinguishable from tiled.
+  const base = useMemo(() => layoutDefaults(layout, cols, rows), [layout, cols, rows])
   // While a divider is being dragged the fractions live here rather than in the config:
   // a pointermove is not a settings change, and writing the file sixty times a second to
   // find out where somebody is going to let go would be absurd.
   const [live, setLive] = useState<{ key: string; cols: number[]; rows: number[] } | null>(null)
   const sizes = useMemo(() => {
     if (live && live.key === key) return { cols: live.cols, rows: live.rows }
-    return { cols: usable(saved?.cols, cols), rows: usable(saved?.rows, rows) }
-  }, [live, key, saved, cols, rows])
+    return { cols: usable(saved?.cols, cols, base.cols), rows: usable(saved?.rows, rows, base.rows) }
+  }, [live, key, saved, cols, rows, base])
 
   const dividerDrag = useCallback(
     (e: React.PointerEvent, axis: 'cols' | 'rows', i: number) => {
@@ -1199,14 +1329,19 @@ export default function App(): JSX.Element {
     [box, sizes, key, config, patchConfig]
   )
 
-  /** Double-click a divider: that axis goes back to equal shares. */
+  /**
+   * Double-click a divider: that axis goes back to what the layout starts at - equal
+   * shares in three of the five, and the main pane's 62% in the two that have one. Going
+   * back to equal there would be a reset that leaves the layout looking like a different
+   * one, which is not what "put it back" means.
+   */
   const dividerReset = useCallback(
     (axis: 'cols' | 'rows') => {
       const next =
-        axis === 'cols' ? { cols: equal(cols), rows: sizes.rows } : { cols: sizes.cols, rows: equal(rows) }
+        axis === 'cols' ? { cols: base.cols, rows: sizes.rows } : { cols: sizes.cols, rows: base.rows }
       patchConfig({ gridSizes: { ...(config?.gridSizes ?? {}), [key]: next } })
     },
-    [cols, rows, sizes, key, config, patchConfig]
+    [base, sizes, key, config, patchConfig]
   )
 
   // The pane being dragged, and the one it would change places with. An outline rather
@@ -1218,7 +1353,7 @@ export default function App(): JSX.Element {
 
   const beginPaneMove = useCallback(
     (e: React.PointerEvent, id: string) => {
-      if (e.button !== 0 || !grid) return
+      if (e.button !== 0 || !tiled) return
       if ((e.target as HTMLElement).closest('button, input')) return
       const startX = e.clientX
       const startY = e.clientY
@@ -1297,7 +1432,7 @@ export default function App(): JSX.Element {
       window.addEventListener('pointerup', up)
       window.addEventListener('pointercancel', up)
     },
-    [grid]
+    [tiled]
   )
   const waiting = sessions.filter((s) => s.attention).length
   // Devices in either direction: ones whose panes are in this list, and ones watching
@@ -1612,9 +1747,9 @@ export default function App(): JSX.Element {
 
       <main
         ref={panesRef}
-        className={'panes' + (grid ? ' grid' : '')}
+        className={'panes' + (tiled ? ' grid' : '')}
         style={
-          grid
+          tiled
             ? { gridTemplateColumns: template(sizes.cols), gridTemplateRows: template(sizes.rows) }
             : undefined
         }
@@ -1623,31 +1758,43 @@ export default function App(): JSX.Element {
             positioned rather than made of grid cells, because a CSS grid gap is not
             addressable - and it means the strip can be wider than the 9px gap it sits in
             without taking a single pixel away from any pane. */}
-        {grid &&
+        {tiled &&
           box.w > 0 &&
           sizes.cols.slice(0, -1).map((_, i) => (
             <div
               key={`c${i}`}
               className="grid-divider col"
-              style={{ left: box.padX + dividerPx(sizes.cols, box.w, box.gap, i) }}
+              // In "big top" the first row is one pane across the whole width, so a column
+              // divider drawn the full height of the grid would be a grab strip lying over
+              // it that resizes nothing it is touching. It starts below that pane instead.
+              style={{
+                left: box.padX + dividerPx(sizes.cols, box.w, box.gap, i),
+                top: layout === 'main-top' ? box.padY + trackPx(sizes.rows, box.h, box.gap)[0] : undefined
+              }}
               onPointerDown={(e) => dividerDrag(e, 'cols', i)}
               onDoubleClick={() => dividerReset('cols')}
-              title="Drag to resize these columns. Double-click for equal shares."
+              title="Drag to resize these columns. Double-click to put them back."
             />
           ))}
-        {grid &&
+        {tiled &&
           box.h > 0 &&
           sizes.rows.slice(0, -1).map((_, i) => (
             <div
               key={`r${i}`}
               className="grid-divider row"
-              style={{ top: box.padY + dividerPx(sizes.rows, box.h, box.gap, i) }}
+              // Same, the other way round: "big left" has one pane down the whole left
+              // column, and these lines only divide the stack to the right of it.
+              style={{
+                top: box.padY + dividerPx(sizes.rows, box.h, box.gap, i),
+                left:
+                  layout === 'main-left' ? box.padX + trackPx(sizes.cols, box.w, box.gap)[0] : undefined
+              }}
               onPointerDown={(e) => dividerDrag(e, 'rows', i)}
               onDoubleClick={() => dividerReset('rows')}
-              title="Drag to resize these rows. Double-click for equal shares."
+              title="Drag to resize these rows. Double-click to put them back."
             />
           ))}
-        {sessions.map((s) => (
+        {sessions.map((s, i) => (
           // Every pane stays mounted so its scrollback survives tab switches;
           // unmounting the xterm instance would blank the session.
           <div
@@ -1656,17 +1803,29 @@ export default function App(): JSX.Element {
             className={
               'pane' +
               (visibleIds.has(s.id) ? '' : ' hidden') +
-              (grid && s.id === activeId ? ' focused' : '') +
+              (tiled && s.id === activeId ? ' focused' : '') +
               (s.id === movingId ? ' moving' : '') +
               (s.id === dropId ? ' drop-target' : '')
             }
             // The agent's brand colour drives this pane's accent, so a grid of four
-            // panes is readable without checking the labels.
-            style={{ '--agent': agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99' } as React.CSSProperties}
+            // panes is readable without checking the labels. The cell is set explicitly
+            // rather than left to auto-placement, because two of the five layouts have a
+            // pane that spans a whole axis and auto-placement cannot say so.
+            style={
+              {
+                '--agent': agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99',
+                ...(tiled && plan.cells[i]
+                  ? {
+                      gridColumn: `${plan.cells[i].col} / span ${plan.cells[i].colSpan}`,
+                      gridRow: `${plan.cells[i].row} / span ${plan.cells[i].rowSpan}`
+                    }
+                  : null)
+              } as React.CSSProperties
+            }
             onMouseDown={() => setActiveId(s.id)}
           >
             <div
-              className={'pane-title' + (grid ? ' draggable' : '')}
+              className={'pane-title' + (tiled ? ' draggable' : '')}
               onPointerDown={(e) => beginPaneMove(e, s.id)}
             >
               <StatusDot status={s.status} engaged={s.engaged} />
@@ -1716,6 +1875,26 @@ export default function App(): JSX.Element {
                 >
                   <TrashIcon size={13} />
                 </button>
+                {/* Only in the grid, where it means something - and it stays on screen
+                    while zoomed, because a button that vanishes once it has been used is
+                    a window with no way back out of it except a shortcut. */}
+                {grid && (
+                  <button
+                    className={'icon' + (zoom === s.id ? ' on' : '')}
+                    title={keyLabel(
+                      zoom === s.id
+                        ? 'Back to the grid (Ctrl Shift Z)'
+                        : 'Zoom this pane to the whole window (Ctrl Shift Z)'
+                    )}
+                    aria-label={zoom === s.id ? 'Back to the grid' : 'Zoom this pane'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleZoom(s.id)
+                    }}
+                  >
+                    {zoom === s.id ? '⤡' : '⤢'}
+                  </button>
+                )}
                 <button
                   className="icon"
                   title={keyLabel('Restart agent (Ctrl Shift R)')}

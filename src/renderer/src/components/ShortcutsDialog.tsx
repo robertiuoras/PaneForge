@@ -36,6 +36,13 @@ const KEYS: Key[] = [
   ['Ctrl Shift L', 'Fix the display: refit and repaint the pane without losing the run'],
   ['Ctrl Shift A', 'Switch the focused pane to the next installed AI (Claude, Codex, ...)'],
   ['Ctrl G', 'Toggle grid view (every session at once)'],
+  ['Ctrl Shift G', 'Cycle the grid: tiled, columns, rows, one big on the left, one big on top'],
+  ['Ctrl Shift Z', 'Zoom the focused pane to the whole window and back - the grid is untouched'],
+  [
+    'Ctrl F',
+    'Find in this pane: every match highlighted, Enter for the next, Shift Enter for the one before, Escape to close',
+    true
+  ],
   ['Ctrl 1 - 9', 'Jump to that session'],
   ['Ctrl Tab', 'Next session'],
   ['Ctrl Shift Tab', 'Previous session'],
@@ -65,7 +72,7 @@ const KEYS: Key[] = [
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
   ['Drag a pane by its title', 'In the grid: moves it, and the gap it will drop into lights up'],
   ['Drag the edge between panes', 'In the grid: makes one bigger and its neighbour smaller'],
-  ['Double-click that edge', 'Puts the row or column back to equal shares'],
+  ['Double-click that edge', 'Puts that row or column back to the layout’s own shares'],
   ['Ctrl Shift S', 'Swarm: one mission, one pane per role'],
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],

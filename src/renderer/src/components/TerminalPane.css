@@ -129,3 +129,52 @@
 .xterm-wrap .xterm-viewport::-webkit-scrollbar-thumb {
   cursor: default;
 }
+
+/* The find bar. Top-right of the pane rather than the middle of the window, because with
+   four panes open the question "which pane am I searching" has to be answerable without
+   reading the text in the box - it sits in the pane it searches. Clear of the scrollbar
+   (17px) and of the mark rail's tags (20px more), so it covers neither. */
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 5px 4px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  animation: rise var(--fast);
+}
+.find-input {
+  width: 168px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+/* Fixed width, right-aligned: the counter changes on every keystroke, and a box that
+   grows with it drags the two step buttons sideways under the pointer. */
+.find-count {
+  min-width: 52px;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.find-step {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+.find-step:hover { color: var(--text); border-color: var(--line-strong); }

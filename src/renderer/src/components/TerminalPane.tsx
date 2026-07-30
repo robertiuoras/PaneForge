@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import './TerminalPane.css'
@@ -70,6 +71,16 @@ export const paneInsert = new Map<string, (text: string) => void>()
 export const paneFocus = new Map<string, () => void>()
 
 /**
+ * Open this pane's find bar, from the window-level Ctrl+F.
+ *
+ * The shortcut has to be caught on the window - xterm would otherwise send Ctrl+F to the
+ * agent as readline's "forward one character" - but the search itself belongs to the pane
+ * that owns the buffer. Same shape as the other three maps: App decides which pane, the
+ * pane knows how.
+ */
+export const paneFind = new Map<string, () => void>()
+
+/**
  * The live terminals, for scripts/probe.mjs to ask questions of.
  *
  * Every scroll bug this app has had lives in the gap between what the buffer thinks
@@ -82,6 +93,18 @@ export const paneFocus = new Map<string, () => void>()
  */
 export const paneTerms = new Map<string, Terminal>()
 ;(window as unknown as { __paneTerms: Map<string, Terminal> }).__paneTerms = paneTerms
+
+/**
+ * The live search addons, on the same handle and for the same reason as `paneTerms`.
+ *
+ * A search that reports "no matches" for a word that is plainly on screen is answerable
+ * from here - `window.__paneSearch.get(id).findNext('x', opts)` returns whether it found
+ * anything - and is not answerable from the DOM at all: with the GPU renderer the
+ * highlights are decorations over a canvas, so a probe counting elements cannot tell a
+ * search that found nothing from one that found five and drew them somewhere else.
+ */
+export const paneSearch = new Map<string, SearchAddon>()
+;(window as unknown as { __paneSearch: Map<string, SearchAddon> }).__paneSearch = paneSearch
 
 /**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
@@ -251,6 +274,33 @@ export default function TerminalPane({
     return changed
   }
   const [dropping, setDropping] = useState(false)
+
+  /**
+   * Finding something in this pane's scrollback.
+   *
+   * A pane holds 20,000 lines and there was no way to find anything in them: the only
+   * tools were the wheel and the prompt rail, and the rail only knows where prompts were
+   * submitted. This is the terminal's own search, so it reads the buffer rather than the
+   * DOM - with the WebGL renderer there is no text in the DOM to read, and Chromium's own
+   * Ctrl+F finds nothing at all in a pane.
+   */
+  const search = useRef<SearchAddon | null>(null)
+  // The term this pane last handed to the addon, which is not the same as the term the
+  // addon thinks it last searched for - see runFind.
+  const lastTerm = useRef('')
+  const findInput = useRef<HTMLInputElement>(null)
+  const [finding, setFinding] = useState(false)
+  const [query, setQuery] = useState('')
+  // What the addon says about the term as it is typed: which match is lit and how many
+  // there are. -1 means it stopped counting, which it does past a thousand matches.
+  const [hits, setHits] = useState({ index: -1, count: 0 })
+  // Whether the last search found nothing at all, which is not the same question as how
+  // many matches are highlighted. The count comes from the addon's decorations, and those
+  // need a terminal that is being drawn; a pane whose matches were all found and none
+  // counted has been measured. Printing "no matches" from that number is the box lying
+  // about the buffer, so the two are kept apart: "no matches" only when the search itself
+  // came back with nothing, and a bare "found" when it landed somewhere uncounted.
+  const [missed, setMissed] = useState(false)
   // Every prompt submitted to this pane, oldest first. State rather than a ref because the
   // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
   const [marks, setMarks] = useState<Mark[]>([])
@@ -354,6 +404,16 @@ export default function TerminalPane({
       /* no WebGL on this box - the DOM renderer is already what is drawing */
       gl = null
     }
+
+    // Loaded after the renderer, because the highlight for every other match is drawn as
+    // an xterm decoration and a decoration needs something to be drawn on.
+    const sa = new SearchAddon()
+    t.loadAddon(sa)
+    search.current = sa
+    paneSearch.set(sessionId, sa)
+    const offResults = sa.onDidChangeResults(({ resultIndex, resultCount }) =>
+      setHits({ index: resultIndex, count: resultCount })
+    )
 
     // Debug handle. Given --remote-debugging-port, an agent can read cols/rows, call fit,
     // and check where the viewport sits, instead of guessing at pixel bugs from screenshots.
@@ -964,6 +1024,19 @@ export default function TerminalPane({
         /* detached mid-teardown - the next active-pane effect focuses it */
       }
     })
+    paneFind.set(sessionId, () => {
+      setFinding(true)
+      // Ctrl+F pressed while the bar is already open means "let me type a new term",
+      // so the text is selected rather than the caret left where it was. The wait is the
+      // input being mounted by the render this state change causes - and it is a timeout
+      // rather than requestAnimationFrame because rAF does not run in a window Windows
+      // considers hidden or occluded, which is the same trap the active-pane focus effect
+      // documents. Measured: against a minimized window the caret never arrived at all.
+      window.setTimeout(() => {
+        findInput.current?.focus()
+        findInput.current?.select()
+      }, 0)
+    })
     paneInsert.set(sessionId, (text) => {
       // Dictation lands in a pane that may have been scrolled up while it was being
       // transcribed; the point of inserting is to see it, so this follows the tail again.
@@ -1038,6 +1111,10 @@ export default function TerminalPane({
       paneTerms.delete(sessionId)
       paneInsert.delete(sessionId)
       paneFocus.delete(sessionId)
+      paneFind.delete(sessionId)
+      paneSearch.delete(sessionId)
+      offResults.dispose()
+      search.current = null
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)
@@ -1158,6 +1235,71 @@ export default function TerminalPane({
     return { mark: m, top: frac * Math.max(0, track.height - thumb) }
   })
 
+  /**
+   * Run the search and land on a match.
+   *
+   * `incremental` on the forward search is what makes typing feel like a browser's find
+   * bar: each new character extends the match under the cursor instead of jumping to the
+   * next one somewhere else in 20,000 lines. Stepping with the buttons or Enter turns it
+   * off, because there the point is to move.
+   *
+   * Finding something is also the clearest possible statement that this pane should stop
+   * following the tail - the agent printing another line while you read a match from ten
+   * minutes ago would otherwise yank the view straight back to the bottom.
+   */
+  const runFind = (term: string, back: boolean, incremental: boolean): void => {
+    const sa = search.current
+    if (!sa) return
+    if (!term) {
+      setMissed(false)
+      lastTerm.current = ''
+      sa.clearDecorations()
+      setHits({ index: -1, count: 0 })
+      return
+    }
+    // The addon only re-scans when the term is not the one it searched for last - and it
+    // sets that term itself: 200ms after any output it silently re-runs the last search to
+    // move the highlights the new lines shifted under. A term typed into this box after
+    // that has happened is "the same term" to the addon, so it keeps whatever that pass
+    // left behind and reports its count. Measured against a live pane: three lines
+    // containing the word, "no matches" in the box, and pressing Enter - a second search
+    // of the same term - answering 1/5. Clearing first costs one scan of the buffer and
+    // makes the number in the box always this search's own.
+    if (term !== lastTerm.current) {
+      lastTerm.current = term
+      sa.clearDecorations()
+    }
+    const opts = {
+      caseSensitive: false,
+      incremental,
+      decorations: {
+        matchBackground: '#4a4420',
+        matchBorder: '#7a7238',
+        matchOverviewRuler: '#c9b84a',
+        activeMatchBackground: '#2f5d8a',
+        activeMatchBorder: '#7dd3fc',
+        activeMatchColorOverviewRuler: '#7dd3fc'
+      }
+    }
+    const found = back ? sa.findPrevious(term, opts) : sa.findNext(term, opts)
+    setMissed(!found)
+    if (found) {
+      pinned.current = false
+      setScrolledUp(true)
+    }
+  }
+
+  const closeFind = (): void => {
+    setFinding(false)
+    setHits({ index: -1, count: 0 })
+    setMissed(false)
+    lastTerm.current = ''
+    search.current?.clearDecorations()
+    // The keyboard goes back where it came from. Leaving it in a closed input is the
+    // "why is nothing I type reaching the agent" bug, and it would be this pane's fault.
+    term.current?.focus()
+  }
+
   return (
     <div
       ref={wrap}
@@ -1175,6 +1317,66 @@ export default function TerminalPane({
       onDrop={onDrop}
     >
       <div className="xterm-host" ref={host} />
+      {finding && (
+        <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
+          <input
+            ref={findInput}
+            className="find-input"
+            placeholder="Find in this pane"
+            value={query}
+            spellCheck={false}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              runFind(e.target.value, false, true)
+            }}
+            onKeyDown={(e) => {
+              // Handled here and stopped here: the window-level shortcut handler treats a
+              // bare Ctrl+F as "open the find bar", and Escape as "close every dialog".
+              e.stopPropagation()
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                closeFind()
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                runFind(query, e.shiftKey, false)
+              } else if (e.key === 'F3') {
+                e.preventDefault()
+                runFind(query, e.shiftKey, false)
+              }
+            }}
+          />
+          <span className="find-count">
+            {!query
+              ? ''
+              : missed
+                ? 'no matches'
+                : hits.count === 0
+                  ? 'found'
+                  : hits.index < 0
+                    ? `${hits.count}+`
+                    : `${hits.index + 1}/${hits.count}`}
+          </span>
+          <button
+            className="find-step"
+            title="Previous match (Shift Enter)"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => runFind(query, true, false)}
+          >
+            ↑
+          </button>
+          <button
+            className="find-step"
+            title="Next match (Enter)"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => runFind(query, false, false)}
+          >
+            ↓
+          </button>
+          <button className="find-step" title="Close (Escape)" onClick={closeFind}>
+            ✕
+          </button>
+        </div>
+      )}
       {/* Rendered before the pill and the drop hint on purpose: all three are positioned,
           so DOM order is what keeps a tag near the tail from painting over the pill. */}
       {marks.length > 0 && (

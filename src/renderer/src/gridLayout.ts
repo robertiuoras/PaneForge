@@ -22,7 +22,131 @@ export interface GridSize {
 /** No track may be dragged smaller than this. Below it a terminal is not a terminal. */
 export const MIN_TRACK_PX = 140
 
-export const shapeKey = (cols: number, rows: number): string => `${cols}x${rows}`
+/**
+ * The five shapes a grid can be put into, and the order the cycle key walks them in.
+ *
+ * tmux calls these even-horizontal, even-vertical, main-horizontal, main-vertical and
+ * tiled. Those names describe the *split* rather than the result and read backwards to
+ * anyone who has not used tmux for a decade, so the same five layouts are named after
+ * what you get: columns side by side, rows stacked, one big pane on the left or on top,
+ * or everything the same size.
+ *
+ * `tiled` is what the grid has always done and stays the default, so nobody's window
+ * changes shape because this exists.
+ */
+export type LayoutKind = 'tiled' | 'columns' | 'rows' | 'main-left' | 'main-top'
+
+export const LAYOUTS: LayoutKind[] = ['tiled', 'columns', 'rows', 'main-left', 'main-top']
+
+export const LAYOUT_LABEL = {
+  tiled: 'Tiled',
+  columns: 'Columns',
+  rows: 'Rows',
+  'main-left': 'Big left',
+  'main-top': 'Big top'
+}
+
+/** Whether a string off disk is still one of the layouts this build knows. */
+export function isLayout(x: string): boolean {
+  for (const k of LAYOUTS) if (k === x) return true
+  return false
+}
+
+/** The next layout in the cycle, wrapping. */
+export function nextLayout(kind: LayoutKind): LayoutKind {
+  const i = LAYOUTS.indexOf(kind)
+  return LAYOUTS[(i + 1) % LAYOUTS.length]
+}
+
+/** One pane's cell, in 1-based CSS grid lines. */
+export interface Cell {
+  col: number
+  row: number
+  colSpan: number
+  rowSpan: number
+}
+
+export interface GridPlan {
+  cols: number
+  rows: number
+  /** Where each pane goes, in the order the sessions are in. */
+  cells: Cell[]
+}
+
+/**
+ * How many tracks a layout needs for `n` panes, and which cell each pane lands in.
+ *
+ * Explicit cells rather than letting the grid auto-place, because two of the five
+ * layouts have a pane that spans: `main-left` is one pane down the whole left side with
+ * the rest stacked beside it, and auto-placement cannot express that. The other three
+ * come out exactly where auto-placement would have put them, so the placement is uniform
+ * and there is one code path in the renderer instead of two.
+ *
+ * One pane is one pane in every layout - a "big left" of one is a full window, not a
+ * half-empty grid - so `n === 1` short-circuits before any of the shapes are considered.
+ */
+export function planGrid(kind: LayoutKind, n: number): GridPlan {
+  const cells: Cell[] = []
+  if (n <= 0) return { cols: 1, rows: 1, cells }
+
+  if (kind === 'tiled' || n === 1) {
+    // Near-square, the rule the grid has used since it was a .bat file.
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)))
+    const rows = Math.max(1, Math.ceil(n / cols))
+    for (let i = 0; i < n; i++)
+      cells.push({ col: (i % cols) + 1, row: Math.floor(i / cols) + 1, colSpan: 1, rowSpan: 1 })
+    return { cols, rows, cells }
+  }
+
+  if (kind === 'columns') {
+    for (let i = 0; i < n; i++) cells.push({ col: i + 1, row: 1, colSpan: 1, rowSpan: 1 })
+    return { cols: n, rows: 1, cells }
+  }
+
+  if (kind === 'rows') {
+    for (let i = 0; i < n; i++) cells.push({ col: 1, row: i + 1, colSpan: 1, rowSpan: 1 })
+    return { cols: 1, rows: n, cells }
+  }
+
+  if (kind === 'main-left') {
+    const rows = n - 1
+    cells.push({ col: 1, row: 1, colSpan: 1, rowSpan: rows })
+    for (let i = 1; i < n; i++) cells.push({ col: 2, row: i, colSpan: 1, rowSpan: 1 })
+    return { cols: 2, rows, cells }
+  }
+
+  const cols = n - 1
+  cells.push({ col: 1, row: 1, colSpan: cols, rowSpan: 1 })
+  for (let i = 1; i < n; i++) cells.push({ col: i, row: 2, colSpan: 1, rowSpan: 1 })
+  return { cols, rows: 2, cells }
+}
+
+/**
+ * What the main pane is worth before anybody drags a divider.
+ *
+ * Equal shares would make "big left" a lie for two panes - a 50/50 split is what tiled
+ * already does - so the layouts with a main pane start it at 62% of its axis. Everything
+ * else starts equal, and a dragged size beats both.
+ */
+export const MAIN_SHARE = 0.62
+
+export function layoutDefaults(kind: LayoutKind, cols: number, rows: number): GridSize {
+  const split = (n: number): Fractions => [MAIN_SHARE * n, (1 - MAIN_SHARE) * n]
+  if (kind === 'main-left' && cols === 2) return { cols: split(2), rows: equal(rows) }
+  if (kind === 'main-top' && rows === 2) return { cols: equal(cols), rows: split(2) }
+  return { cols: equal(cols), rows: equal(rows) }
+}
+
+/**
+ * The key a dragged layout is saved under.
+ *
+ * Tiled keeps the bare `3x2` it has always used, so no saved layout is lost to this
+ * change. The others are prefixed: a `2x3` reached by stacking three panes next to a big
+ * one is not the same arrangement as a tiled `2x3`, and sharing a key would apply one's
+ * column widths to the other.
+ */
+export const shapeKey = (cols: number, rows: number, kind: LayoutKind = 'tiled'): string =>
+  kind === 'tiled' ? `${cols}x${rows}` : `${kind}:${cols}x${rows}`
 
 /** n equal tracks: the default, and what a double-click on a divider goes back to. */
 export const equal = (n: number): Fractions => Array(n).fill(1)
@@ -32,11 +156,12 @@ export const equal = (n: number): Fractions => Array(n).fill(1)
  *
  * A saved layout can be the wrong length - the grid was 3x2 when it was saved and the
  * window now holds 3x3 - and a saved zero or NaN would collapse a track to nothing with no
- * way to drag it back. Anything that does not fit is equal shares, which is the old
- * behaviour, so a bad value costs a layout and never a usable grid.
+ * way to drag it back. Anything that does not fit is the fallback, which is equal shares
+ * unless the layout has a main pane, so a bad value costs a layout and never a usable grid.
  */
-export function usable(f: Fractions | undefined, n: number): Fractions {
-  if (!f || f.length !== n || f.some((x) => !Number.isFinite(x) || x <= 0)) return equal(n)
+export function usable(f: Fractions | undefined, n: number, fallback: Fractions = equal(n)): Fractions {
+  if (!f || f.length !== n || f.some((x) => !Number.isFinite(x) || x <= 0))
+    return fallback.length === n ? fallback : equal(n)
   const sum = f.reduce((a, b) => a + b, 0)
   // Normalised to sum to n so one track's fraction reads as "how many equal panes wide".
   return f.map((x) => (x * n) / sum)

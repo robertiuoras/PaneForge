@@ -100,6 +100,10 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   transition: background var(--fast), color var(--fast);
 }
 .icon:hover { background: var(--surface-3); color: var(--text); }
+/* A toggle that is on - the zoom button of the pane currently filling the window. Lit
+   rather than merely hovered, because "which pane am I zoomed into" has to be readable
+   without moving the mouse. */
+.icon.on { background: var(--surface-3); color: var(--accent); }
 .section {
   color: var(--muted); font-size: 10.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.7px; padding: 4px 2px 0;

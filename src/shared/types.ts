@@ -596,6 +596,15 @@ export interface Config {
    * absent and gets equal shares.
    */
   gridSizes: Record<string, { cols: number[]; rows: number[] }>
+  /**
+   * How the grid arranges panes: everything the same size, one row of columns, one column
+   * of rows, or one big pane on the left or on top. Ctrl Shift G cycles it.
+   *
+   * The union is written out here rather than imported from `renderer/gridLayout`, which
+   * is where `LayoutKind` lives and which the main process must not import. The two are
+   * the same five strings and `isLayout()` is what checks a value read off disk.
+   */
+  gridLayout: 'tiled' | 'columns' | 'rows' | 'main-left' | 'main-top'
   /** ask before closing a session that is still running */
   confirmClose: boolean
   launchAtLogin: boolean

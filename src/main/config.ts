@@ -170,6 +170,7 @@ function defaults(): Config {
     stashPos: null,
     grid: false,
     gridSizes: {},
+    gridLayout: 'tiled',
     confirmClose: true,
     launchAtLogin: false,
     adminMode: false,
