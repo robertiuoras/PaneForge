@@ -127,6 +127,7 @@ import type {
   StashConfig,
   SwarmRequest,
   TaskItem,
+  TurnClock,
   UpdateState
 } from '../shared/types'
 
@@ -490,7 +491,7 @@ const remote = new Remote({
   write: (id, data) => manager.write(id, data),
   resize: (id, cols, rows) => manager.resize(id, cols, rows),
   redraw: (id) => manager.redraw(id),
-  setBusy: (id, busy, tail) => manager.setBusyOnScreen(id, busy, tail),
+  setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
   clearAttention: (id) => manager.clearAttention(id),
   kill: (id) => manager.kill(id),
   restart: (id) => manager.restart(id),
@@ -724,9 +725,12 @@ ipcMain.on('pty:redraw', (_e, id: string) =>
  * arriving from a mirror that is a few frames behind could only ever contradict the
  * first one, and a false "finished" is the chime going off mid-turn.
  */
-ipcMain.on('sessions:busy', (_e, id: string, busy: boolean, tail?: string) => {
-  if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail)
-})
+ipcMain.on(
+  'sessions:busy',
+  (_e, id: string, busy: boolean, tail?: string, clock?: TurnClock) => {
+    if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail, clock)
+  }
+)
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 

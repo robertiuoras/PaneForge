@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { readsBusy } from '../../../shared/busy'
+import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import './TerminalPane.css'
 
 const api = window.api
@@ -884,12 +884,18 @@ export default function TerminalPane({
       // it again costs one IPC message every couple of minutes.
       //
       // A `false` needs no repeat: that clears the deadline outright.
-      if (now === busy && !(now && at - lastReport > BUSY_RESTATE)) return
+      // How long the agent itself says this turn has been going. That number, not the
+      // app's guess at when the turn started, is what the sidebar's clock is anchored
+      // to - so it is worth re-sending far more often than the "still busy" heartbeat:
+      // a turn boundary the app read wrong is only corrected on the next one of these.
+      const clock = now ? readsElapsedMs(text, true) : null
+      const restate = clock ? 15_000 : BUSY_RESTATE
+      if (now === busy && !(now && at - lastReport > restate)) return
       busy = now
       lastReport = at
       // The frame goes with a `false` only: that is the reading that can ring the bell,
       // and it is the one worth being able to read back afterwards.
-      api.setBusy(sessionId, now, now ? undefined : text)
+      api.setBusy(sessionId, now, now ? undefined : text, clock ?? undefined)
     }
 
     /**

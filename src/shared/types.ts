@@ -24,6 +24,14 @@ export interface Project {
   isGit: boolean
 }
 
+/**
+ * The turn clock read straight off the agent's own footer: how long IT says the turn
+ * has been running, and how coarsely it printed that (`24m 3s` is second-accurate,
+ * `24m` says nothing about the seconds). Defined next to the reader that produces it.
+ */
+import type { TurnClock } from './busy'
+export type { TurnClock }
+
 export interface Session {
   id: string
   title: string
@@ -772,8 +780,13 @@ export interface Api {
    * The pane telling main whether the agent still looks busy on screen. Only the
    * renderer can see the rendered frame, and "still working" must not chime.
    */
-  /** `tail` is the frame that decided a `false`, kept for the attention audit log. */
-  setBusy(id: string, busy: boolean, tail?: string): void
+  /**
+   * `tail` is the frame that decided a `false`, kept for the attention audit log.
+   * `clock` is how long the agent's own footer says the turn has been running, with
+   * the precision it printed - the run clock is anchored to it rather than to when
+   * this app happened to notice the turn.
+   */
+  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   clearAttention(id: string): void

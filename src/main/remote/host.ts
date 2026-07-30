@@ -11,7 +11,7 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
-import type { Project, Session, StartSessionRequest } from '../../shared/types'
+import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Everything the host is allowed to do to this app on a guest's behalf. */
@@ -21,7 +21,7 @@ export interface HostBackend {
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
   redraw(id: string): void
-  setBusy(id: string, busy: boolean, tail?: string): void
+  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   clearAttention(id: string): void
   kill(id: string): void
   restart(id: string): Session | null
@@ -201,7 +201,16 @@ export class RemoteHost extends EventEmitter {
           this.backend.redraw(id)
           return
         case 'busy':
-          this.backend.setBusy(id, Boolean(m.busy), typeof m.tail === 'string' ? m.tail : '')
+          this.backend.setBusy(
+            id,
+            Boolean(m.busy),
+            typeof m.tail === 'string' ? m.tail : '',
+            // Sent only when the far end could read the agent's own turn counter off
+            // the frame; a mirror never judges busy at all, so this is usually absent.
+            m.clock && typeof m.clock === 'object'
+              ? (m.clock as unknown as TurnClock)
+              : undefined
+          )
           return
         case 'ack':
           this.backend.clearAttention(id)

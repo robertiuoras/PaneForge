@@ -35,7 +35,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { readsBusy } = createRequire(import.meta.url)(out)
+const { readsBusy, readsElapsedMs, anchoredStart } = createRequire(import.meta.url)(out)
 
 /** The statusline and input box that sit BELOW the working line on this machine. */
 const CHROME = [
@@ -75,9 +75,91 @@ for (const [name, frame, want] of cases) {
   }
 }
 
+// The agent prints how long IT thinks the turn has been running, and that number is
+// the one Robert compares against. PaneForge's own clock is a guess at when the turn
+// started - a turn boundary the app read wrong, a pane opened mid-turn, or a session
+// restored from disk all leave it low, which is how a 24 minute turn showed as 12.
+// Claude Code's formatter is `8s` / `24m 3s` / `24m` / `1h 2m 3s` / `1h 2m` / `1h`.
+const S = 1000
+const M = 60 * S
+const H = 60 * M
+const clocks = [
+  ['seconds only', '✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, 8 * S],
+  ['minutes and seconds', '✢ Smooshing… (24m 3s · ↓ 282 tokens)\n' + CHROME, 24 * M + 3 * S],
+  ['whole minutes', '✻ Herding… (24m · ↑ 1.2k tokens)\n' + CHROME, 24 * M],
+  ['hours', '✻ Herding… (1h 2m 3s · ↓ 91 tokens)\n' + CHROME, H + 2 * M + 3 * S],
+  ['legacy interrupt hint carries it', '✻ Thinking… (esc to interrupt · 2m 14s)\n' + CHROME, 2 * M + 14 * S],
+  // Everything that must NOT be mistaken for a turn clock.
+  ['no counter yet', '✶ Cultivating…\n' + CHROME, null],
+  ['statusline percentages', '✶ Cultivating…\n' + CHROME.replace('5h 48%', '5h 48% (wk 69%)'), null],
+  ['model name in parens', '✶ Cultivating…\n' + CHROME, null],
+  ['finished turn summary', '✻ Sautéed for 10s · 1 shell still running\n' + CHROME, null]
+]
+for (const [name, frame, want] of clocks) {
+  const got = readsElapsedMs(frame)
+  if (got !== want) {
+    bad++
+    console.error(`FAIL clock ${name}: readsElapsedMs = ${got}, expected ${want}`)
+  } else {
+    console.log(`ok   clock ${name}`)
+  }
+}
+
+// The precision the reading was printed at, so the run clock only re-anchors when the
+// gap is bigger than the rounding the CLI itself did.
+const grains = [
+  ['seconds', '✢ Smooshing… (8s · ↓ 282 tokens)', S],
+  ['minutes and seconds', '✢ Smooshing… (24m 3s · ↓ 2 tokens)', S],
+  ['whole minutes', '✻ Herding… (24m · ↑ 2 tokens)', M],
+  ['whole hours', '✻ Herding… (1h · ↑ 2 tokens)', H]
+]
+for (const [name, frame, want] of grains) {
+  const got = readsElapsedMs(frame, true)?.grain
+  if (got !== want) {
+    bad++
+    console.error(`FAIL grain ${name}: ${got}, expected ${want}`)
+  } else {
+    console.log(`ok   grain ${name}`)
+  }
+}
+
+// The bug itself, reproduced: a turn Claude Code had been running for 24 minutes read
+// as 12 in the sidebar, because the app started its own clock over halfway through -
+// which is what any missed turn boundary does, silently and for the rest of the turn.
+const NOW = 1_700_000_000_000
+const anchors = [
+  [
+    'a clock started 12m late is pulled back to the agent',
+    NOW - 12 * M,
+    readsElapsedMs('✻ Herding… (24m 3s · ↓ 91 tokens)', true),
+    NOW - (24 * M + 3 * S)
+  ],
+  [
+    'a clock left running from a turn that ended is pulled forward',
+    NOW - 40 * M,
+    readsElapsedMs('✢ Smooshing… (8s · ↓ 282 tokens)', true),
+    NOW - 8 * S
+  ],
+  // Most ticks: already right, so the readout must not twitch.
+  ['agreement leaves it alone', NOW - 24 * M, readsElapsedMs('✻ Herding… (24m 1s · ↑ 2 tokens)', true), null],
+  // "24m" could be anything up to 24m59s; correcting inside that would walk the number
+  // backwards every minute.
+  ['a coarse reading does not fight its own rounding', NOW - (24 * M + 40 * S), readsElapsedMs('✻ Herding… (24m · ↑ 2 tokens)', true), null]
+]
+for (const [name, runSince, clock, want] of anchors) {
+  const got = anchoredStart(NOW, runSince, clock)
+  if (got !== want) {
+    bad++
+    console.error(`FAIL anchor ${name}: ${got}, expected ${want}`)
+  } else {
+    console.log(`ok   anchor ${name}`)
+  }
+}
+
+const total = cases.length + clocks.length + grains.length + anchors.length
 if (bad) {
-  console.error(`\n${bad} of ${cases.length} frames read wrong. A pane that cannot see its`)
+  console.error(`\n${bad} of ${total} frames read wrong. A pane that cannot see its`)
   console.error('agent working freezes the turn clock and rings the bell mid-turn.')
   process.exit(1)
 }
-console.log(`\nall ${cases.length} frames read correctly`)
+console.log(`\nall ${total} frames read correctly`)

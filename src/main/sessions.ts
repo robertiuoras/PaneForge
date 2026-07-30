@@ -18,12 +18,14 @@ import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
+import { anchoredStart } from '../shared/busy'
 import type {
   Agent,
   Session,
   SessionStatus,
   StartSessionRequest,
-  SwarmRequest
+  SwarmRequest,
+  TurnClock
 } from '../shared/types'
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
@@ -465,15 +467,43 @@ export class SessionManager extends EventEmitter {
    * Start of a turn. Idempotent: the submit keystroke and the pane's busy footer
    * both report the same turn, and whichever lands first owns the start time.
    */
-  private beginRun(live: Live): void {
+  private beginRun(live: Live, clock?: TurnClock): boolean {
     // Set even when a turn is already counting: this is the flag that says "there is
     // something here worth telling you about when it goes quiet", and a second prompt
     // sent into a running turn is still work you are waiting on.
     live.turnPending = true
     live.footerEndedAt = 0
-    if (live.meta.runSince) return
-    live.meta.runSince = Date.now()
+    if (live.meta.runSince) return this.anchorRun(live, clock)
+    // Start where the AGENT says the turn started, not where this app noticed it. A pane
+    // that mounts onto a turn already in progress - a restored desk, a session opened in
+    // a second window, a turn whose first frames this app read as idle - would otherwise
+    // count from now and report a fraction of the real time.
+    live.meta.runSince = Date.now() - (clock?.ms ?? 0)
     live.meta.lastRunMs = undefined
+    return true
+  }
+
+  /**
+   * Pull the run clock onto the agent's own counter.
+   *
+   * This is the fix for "the pane says 12m and the terminal says 24m". The app's start
+   * time is a guess made at one moment - whichever of the submit keystroke or the first
+   * busy frame it saw - and every way of getting that moment wrong (a footer missed for
+   * a second, a turn boundary invented mid-turn, a pane remounted) is silent and
+   * permanent for the rest of the turn. The CLI is printing the true elapsed on every
+   * frame, so the pane sends it up every fifteen seconds and the clock is corrected
+   * against it.
+   *
+   * Only when the two disagree by more than the CLI's own rounding: a reading of "24m"
+   * says nothing about the seconds, and correcting by less than that would drag the
+   * readout backwards every minute.
+   */
+  private anchorRun(live: Live, clock?: TurnClock): boolean {
+    if (!clock || !live.meta.runSince) return false
+    const want = anchoredStart(Date.now(), live.meta.runSince, clock)
+    if (want === null) return false
+    live.meta.runSince = want
+    return true
   }
 
   /** End of a turn: freeze what it took and stop counting. */
@@ -533,7 +563,7 @@ export class SessionManager extends EventEmitter {
    * repeat it every second or so, so the deadline it sets expires by itself if the pane
    * goes away.
    */
-  setBusyOnScreen(id: string, busy: boolean, tail = ''): void {
+  setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock): void {
     const s = this.sessions.get(id)
     if (!s) return
     const now = Date.now()
@@ -552,7 +582,7 @@ export class SessionManager extends EventEmitter {
     // session) and ends one the instant the agent stops saying it is running.
     if (busy) {
       const wasRunning = Boolean(s.meta.runSince)
-      this.beginRun(s)
+      const moved = this.beginRun(s, clock)
       // Inside a slash command's window the footer confirming "busy" is the /clear
       // hook flash, and beginRun just re-armed the bell for it; hold it down until
       // the run has lasted long enough to be real work.
@@ -565,7 +595,7 @@ export class SessionManager extends EventEmitter {
       // agent was demonstrably still working. On-screen busy outranks the quiet clock.
       const wasWorking = s.meta.status === 'working'
       if (s.meta.status !== 'exited') s.meta.status = 'working'
-      if (!wasRunning || !wasWorking) this.emitSessions()
+      if (!wasRunning || !wasWorking || moved) this.emitSessions()
       return
     }
     // Remember when the footer went quiet, so the nudge can come sooner than the
