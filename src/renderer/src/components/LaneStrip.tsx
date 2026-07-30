@@ -51,51 +51,35 @@ export function useLaneBoard(): LaneBoard | null {
 }
 
 /**
- * One folder, one spelling. The two sides of this comparison come from different places -
- * a lane's folder is whatever the chat's hook passed to lane.mjs, a pane's is whatever it
- * was started with - so one of them arrives with backslashes, or a trailing one, or a
- * drive letter in the other case, and a plain === quietly finds nothing.
- */
-const samePath = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-
-/**
- * The pane a lane belongs to. The chat holding a lane started somewhere else (a lane is a
- * checkout, not a cwd), so the pane is found by the folder it was started in, which is
- * what lane.mjs records.
+ * The pane a lane belongs to.
+ *
+ * Answered in the main process (laneBoard.ts `attachLaneOwners`), which is the only side
+ * that can: a lane records the CHAT holding it, and matching that to a pane needs the
+ * pane's conversation id, which never leaves the main process. Matching by folder here
+ * instead was wrong in the case that actually happens - every chat records the main
+ * checkout it started in, so one new pane opened there "owned" two dead chats' lanes at
+ * once and both disappeared off the strip while still held.
  */
 export function laneOwner(lane: LaneBoardEntry, sessions: Session[]): Session | undefined {
-  if (!lane.from) return undefined
-  const from = samePath(lane.from)
-  const live = sessions.filter((s) => s.status !== 'exited')
-  const exact = live.find((s) => samePath(s.cwd) === from)
-  if (exact) return exact
-  // A chat that `cd`s into a subfolder reports that subfolder, and its pane still reports
-  // the folder it was opened in - so lane c, held by the chat in this very pane but
-  // recorded as `...-c\scripts`, was listed under "Lanes elsewhere" as a lane belonging to
-  // no open pane. Either one may be the deeper path (a pane opened on a subfolder of the
-  // lane), so containment is checked both ways, and the longest match wins so a pane on
-  // `<repo>` never steals a lane that belongs to a pane on `<repo>\scripts`.
-  const under = (a: string, b: string): boolean => a === b || a.startsWith(b + '/')
-  return live
-    .filter((s) => under(from, samePath(s.cwd)) || under(samePath(s.cwd), from))
-    .sort((a, b) => samePath(b.cwd).length - samePath(a.cwd).length)[0]
+  if (!lane.ownerPane) return undefined
+  return sessions.find((s) => s.id === lane.ownerPane && s.status !== 'exited')
 }
 
-/** Lanes keyed by the cwd of the pane holding them, for the chip on a session card. */
-export function useLanesByCwd(board: LaneBoard | null): Map<string, LaneBoardEntry> {
+/** Lanes keyed by the pane holding them, for the chip on a session card. */
+export function useLanesByPane(board: LaneBoard | null): Map<string, LaneBoardEntry> {
   return useMemo(() => {
     const m = new Map<string, LaneBoardEntry>()
-    for (const l of board?.lanes ?? []) if (l.from) m.set(samePath(l.from), l)
+    for (const l of board?.lanes ?? []) if (l.ownerPane) m.set(l.ownerPane, l)
     return m
   }, [board])
 }
 
-/** The lane a pane holds, if any. Callers hold the map from useLanesByCwd. */
+/** The lane a pane holds, if any. Callers hold the map from useLanesByPane. */
 export function laneOfSession(
   lanes: Map<string, LaneBoardEntry>,
-  cwd: string
+  sessionId: string
 ): LaneBoardEntry | undefined {
-  return lanes.get(samePath(cwd))
+  return lanes.get(sessionId)
 }
 
 function ago(ms: number): string {

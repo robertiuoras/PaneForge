@@ -149,6 +149,17 @@ export interface LaneBoardEntry {
   branch: string
   /** folder the chat holding this lane started in, when it said */
   from: string | null
+  /**
+   * The chat holding it, as lane.mjs recorded it (a Claude session id). Several lanes are
+   * routinely held from the SAME folder by different chats, so the folder cannot say who
+   * has one - this can.
+   */
+  session: string | null
+  /**
+   * The pane that chat is running in, when one of this window's panes is it. Null means
+   * nothing on this screen is that chat: it ended without saying so, or it runs elsewhere.
+   */
+  ownerPane: string | null
   /** a live chat holds it right now */
   held: boolean
   /** epoch ms the holding chat was last seen doing something */

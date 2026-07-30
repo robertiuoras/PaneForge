@@ -203,7 +203,14 @@ things: it builds real repositories with real worktrees and checks every case th
 must refuse (uncommitted, untracked, unmerged, squashed from several commits, a pane
 open in it or in a subfolder of it, a branch that is not `pf/wN`). Add a case there
 before relaxing a rule - it is how the "somebody else's worktree at `myapp-w2`" hole
-was found.
+was found. `lane-owner-test.mjs` in the same suite is about who HOLDS a lane: a hold
+records the chat, not the folder, because every chat records the main checkout it started
+in - so matching by folder let one new pane silently "own" two dead chats' lanes and wipe
+them off the strip while they were still held. It also pins the reclaim: a hold no
+running copy of the app is hosting, quiet for fifteen minutes, is given back by
+`lane.mjs release` - and a copy hosting no panes (every `npm run try`) reclaims nothing,
+because each copy publishes the chats it hosts to `.git/paneforge-panes.json` and they are
+judged dead only when they are in nobody's list.
 
 ## Gotchas that look like mistakes
 
