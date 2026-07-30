@@ -22,14 +22,28 @@ const js = src
   .replace(/^export type .*$/gm, '')
   .replace(/^export interface [\s\S]*?^}$/gm, '')
   .replace(/: Fractions\[\]/g, '')
-  .replace(/: (Fractions|GridSize|number|string|boolean)(\[\])?( \| undefined)?/g, '')
+  .replace(/: (Fractions|GridSize|LayoutKind|GridPlan|Cell|number|string|boolean)(\[\])?( \| undefined)?/g, '')
   .replace(/<[A-Za-z]+(\[\])?>/g, '')
 const dir = join(tmpdir(), 'paneforge-grid-test')
 rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 const mod = join(dir, 'gridLayout.mjs')
 writeFileSync(mod, js, 'utf8')
-const { drag, dividerPx, equal, shapeKey, template, trackPx, usable, MIN_TRACK_PX } = await import(
+const {
+  drag,
+  dividerPx,
+  equal,
+  isLayout,
+  layoutDefaults,
+  LAYOUTS,
+  nextLayout,
+  planGrid,
+  shapeKey,
+  template,
+  trackPx,
+  usable,
+  MIN_TRACK_PX
+} = await import(
   'file://' + mod.replace(/\\/g, '/')
 )
 
@@ -93,6 +107,97 @@ ok('in a box too small for the minimum it stops at half', near(trackPx(tiny, 200
 const from = usable([3, 1], 2)
 const nudged = drag(from, 400, 0, 0, -50)
 ok('a drag is measured from the current size', near(trackPx(nudged, 400, 0)[0], 250), trackPx(nudged, 400, 0)[0])
+
+// ---------------------------------------------------------------- the five layouts
+//
+// Every one of these is a way a layout can be silently wrong rather than obviously
+// broken: a cell count that does not match the panes leaves one pane invisible, two cells
+// on the same square draw two terminals on top of each other, and a cell past the last
+// track leaves a pane in a row the grid does not have.
+
+const cellsFit = (plan, n) => {
+  if (plan.cells.length !== n) return 'cell count ' + plan.cells.length + ' for ' + n + ' panes'
+  const seen = new Set()
+  for (const c of plan.cells) {
+    if (c.col < 1 || c.row < 1) return 'cell outside the grid'
+    if (c.col + c.colSpan - 1 > plan.cols) return 'cell past the last column'
+    if (c.row + c.rowSpan - 1 > plan.rows) return 'cell past the last row'
+    for (let x = c.col; x < c.col + c.colSpan; x++)
+      for (let y = c.row; y < c.row + c.rowSpan; y++) {
+        const k = x + ',' + y
+        if (seen.has(k)) return 'two panes in cell ' + k
+        seen.add(k)
+      }
+  }
+  return ''
+}
+
+for (const kind of LAYOUTS)
+  for (let n = 1; n <= 9; n++) {
+    const bad = cellsFit(planGrid(kind, n), n)
+    ok(`${kind} with ${n}: every pane gets its own cell inside the grid`, !bad, bad)
+  }
+
+ok('an empty desk still has a grid to draw into', planGrid('tiled', 0).cols === 1 && planGrid('tiled', 0).rows === 1)
+ok('tiled is near-square', planGrid('tiled', 5).cols === 3 && planGrid('tiled', 5).rows === 2)
+ok('columns is one row of panes', planGrid('columns', 4).cols === 4 && planGrid('columns', 4).rows === 1)
+ok('rows is one column of panes', planGrid('rows', 4).cols === 1 && planGrid('rows', 4).rows === 4)
+
+const left = planGrid('main-left', 4)
+ok('big left is two columns and one row per other pane', left.cols === 2 && left.rows === 3)
+ok('and the main pane spans every row of them', left.cells[0].rowSpan === 3, JSON.stringify(left.cells[0]))
+ok(
+  'while the rest are one cell each in the second column',
+  left.cells.slice(1).every((c) => c.col === 2 && c.rowSpan === 1)
+)
+
+const top = planGrid('main-top', 4)
+ok('big top is two rows and one column per other pane', top.cols === 3 && top.rows === 2)
+ok('and the main pane spans every column of them', top.cells[0].colSpan === 3, JSON.stringify(top.cells[0]))
+ok(
+  'while the rest are one cell each in the second row',
+  top.cells.slice(1).every((c) => c.row === 2 && c.colSpan === 1)
+)
+
+// One pane is one pane. A "big left" of one that drew two columns would be a window with
+// a terminal in half of it and nothing at all in the other half.
+for (const kind of LAYOUTS) {
+  const one = planGrid(kind, 1)
+  ok(`${kind} with a single pane is the whole window`, one.cols === 1 && one.rows === 1, `${one.cols}x${one.rows}`)
+}
+
+// ---------------------------------------------------------------- saving a layout's sizes
+
+ok('tiled keeps the bare key it has always saved under', shapeKey(3, 2) === '3x2')
+ok('and still does when it says so out loud', shapeKey(3, 2, 'tiled') === '3x2')
+ok('another layout of the same shape saves separately', shapeKey(2, 3, 'main-left') === 'main-left:2x3')
+ok('so the two cannot read each other', shapeKey(2, 3) !== shapeKey(2, 3, 'main-left'))
+
+const mainCols = layoutDefaults('main-left', 2, 3).cols
+ok('big left starts with a big left column', mainCols[0] > mainCols[1], mainCols.join(','))
+ok('and its two columns still sum to the track count', near(sum(mainCols), 2))
+ok('big top starts with a tall top row', layoutDefaults('main-top', 3, 2).rows[0] > 1)
+ok('tiled starts equal', JSON.stringify(layoutDefaults('tiled', 2, 2).cols) === '[1,1]')
+ok('a layout with nothing saved uses its own default, not equal shares', near(usable(undefined, 2, mainCols)[0], mainCols[0]))
+ok('a saved size still beats it', near(usable([1, 1], 2, mainCols)[0], 1))
+ok('and a default of the wrong length cannot leak into another shape', JSON.stringify(usable(undefined, 3, mainCols)) === '[1,1,1]')
+
+// ---------------------------------------------------------------- the cycle key
+
+ok(
+  'the cycle visits every layout once and comes back',
+  (() => {
+    let k = 'tiled'
+    const seen = []
+    for (let i = 0; i < LAYOUTS.length; i++) {
+      seen.push(k)
+      k = nextLayout(k)
+    }
+    return k === 'tiled' && seen.length === new Set(seen).size && seen.length === LAYOUTS.length
+  })()
+)
+ok('a layout name off disk is recognised', isLayout('main-top'))
+ok('and one this build has never heard of is not', !isLayout('hexagons'))
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

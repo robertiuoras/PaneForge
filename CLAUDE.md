@@ -196,6 +196,20 @@ MID-gesture, not after: the overlay is moved by hand from screen coordinates, an
 the arithmetic was 105px out horizontally and 100px vertically because AppKit had quietly
 clamped the window it was computed from. It also pins the size of the grip's hit box,
 since a press that misses the handle opens the list instead of moving the window.
+`npm run test:view` is the grid and the find bar in a real window, and it needs one up
+(`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`). The
+arithmetic behind the five layouts is pinned without a window by `npm run test:grid`; what
+that cannot answer is whether the panes land where it says, since the cells are CSS grid
+lines and the dividers are absolutely positioned over the gaps. Nor can the DOM answer
+anything about the find bar: with the WebGL renderer there is no text in it and the
+highlights are decorations over a canvas, so the addon's own count - the number the bar
+prints - is the only honest source. Two things it pins that cost an hour each to see: a
+pane RESIZED after text was written into it loses that text, because the shell repaints
+the screen it owns (so a search that "found nothing" was a test writing into a pane it
+then zoomed), and a window that is not being drawn can find every match and count none -
+which is why the bar says "found" rather than "no matches" when the search landed but
+nothing was counted, and why the test wants `--show`.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
