@@ -55,7 +55,8 @@
     "test:prereq": "node scripts/install-prereq-test.mjs",
     "test:dock": "node scripts/dock-test.mjs",
     "test:quiet": "node scripts/quiet-launch-test.mjs",
-    "test:macupdate": "node scripts/mac-update-test.mjs"
+    "test:macupdate": "node scripts/mac-update-test.mjs",
+    "test:macsign": "node scripts/mac-sign-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
@@ -117,6 +118,7 @@
       "createStartMenuShortcut": true,
       "shortcutName": "PaneForge"
     },
+    "afterPack": "scripts/mac-sign.mjs",
     "mac": {
       "category": "public.app-category.developer-tools",
       "extendInfo": {
