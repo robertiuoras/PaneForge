@@ -119,14 +119,20 @@ check('the template keeps its own text', full.startsWith('Download v0.3.10'), fu
 check('changes replace the commit link', full.includes('### Fixed') && !full.includes('New in this build'), full)
 check('no placeholder survives', !/\{\{[A-Z]+\}\}/.test(full), full)
 
-// 12. A template that DOES carry the placeholder still works, so the workflow can be
-//     switched over the day the token has the scope for it.
+// 12. The template the workflow actually uses now that the token may write to
+//     .github/workflows: a {{CHANGES}} placeholder, substituted by this script.
 writeFileSync(join(repo, '.github', 'release-notes.md'), 'Download v{{VERSION}}\n\n{{CHANGES}}\n')
 const placeheld = notes(repo, '0.3.10')
 check('a {{CHANGES}} template is filled too', placeheld.includes('### Fixed'), placeheld)
 check('and leaves no placeholder', !/\{\{[A-Z]+\}\}/.test(placeheld), placeheld)
 
-// 13. The empty case leaves the template alone rather than blanking it.
+// 13. A release with nothing to list must not leave a blank space where the changes
+//     would have been - under either template shape.
+const emptyPlaceheld = notes(repo, '0.4.1')
+check('an empty {{CHANGES}} release links instead', emptyPlaceheld.includes('commit history'), emptyPlaceheld)
+check('and leaves no placeholder either', !/\{\{[A-Z]+\}\}/.test(emptyPlaceheld), emptyPlaceheld)
+check('and writes no empty heading', !emptyPlaceheld.includes('## What changed'), emptyPlaceheld)
+
 writeFileSync(join(repo, '.github', 'release-notes.md'), `Download v{{VERSION}}\n\n${LINK}\n`)
 const empty = notes(repo, '0.4.1')
 check('an empty release still links somewhere', empty.includes('commit history'), empty)

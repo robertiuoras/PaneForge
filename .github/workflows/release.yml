@@ -106,13 +106,20 @@ jobs:
           gh release upload "v$version" stable/* --clobber
 
   # One job, after both builds, so the release page itself tells a first-time
-  # visitor which of the nine files they want.
+  # visitor which of the nine files they want - and what changed since the last
+  # version, which scripts/release-notes.mjs reads out of the commit subjects.
   notes:
     needs: build
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # Tags and full history. The notes are the log between the previous version
+      # tag and this one, and checkout's default single shallow commit has neither -
+      # which would publish the "nothing to list" fallback on every release instead
+      # of the changes, silently and without failing anything.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Write install instructions into the release body
         shell: bash
@@ -127,4 +134,6 @@ jobs:
             echo "No release v$version - both builds must have failed. Nothing to write."
             exit 0
           fi
-          gh release edit "v$version" --notes "$(sed "s/{{VERSION}}/$version/g" .github/release-notes.md)"
+          node scripts/release-notes.mjs "$version" > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
+          gh release edit "v$version" --notes-file "$RUNNER_TEMP/release-notes.md"

@@ -200,27 +200,34 @@ since a press that misses the handle opens the list instead of moving the window
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
 
-Where it gets written from is the awkward part, and it is not an accident.
-`.github/workflows/release.yml` publishes the body on most releases, by `sed`-ing
-`{{VERSION}}` into `.github/release-notes.md` - and that workflow cannot be edited from
-this machine at all: pushing any commit that touches `.github/workflows/` is rejected
-outright, because the `gh` token has `repo` but not `workflow` scope. So the template
-still has to read correctly with nothing but `{{VERSION}}` substituted, which is why it
-keeps its "New in this build: see the commit history" line rather than a `{{CHANGES}}`
-placeholder that CI would publish verbatim. The changes replace that line afterwards,
-from `reconcileNotes` in `lane.mjs`, on the retry timer that already runs every minute:
-it looks at the newest release for an hour after it is cut, and fills the body in
-whenever it has no `## What changed` in it. Check-then-write, not one-shot - CI
-overwriting the body is just noticed on the next tick and put back. `publishFallback`
-writes the same body directly on the path where Actions never ran.
+Three things publish that body and all three call the same function, so they cannot
+print different pages: the workflow's `notes` job, `publishFallback` in `lane.mjs` for
+the releases Actions never built, and `reconcileNotes` on the retry timer. The template
+is `.github/release-notes.md` and the changes go where `{{CHANGES}}` is.
+
+`reconcileNotes` is the backstop, and worth keeping even though CI now writes the
+changes itself: on the retry timer that already runs every minute, it looks at the
+newest release for an hour after it is cut and fills in any body with no
+`## What changed` in it. Check-then-write rather than one-shot, so a body overwritten by
+anything - an older checkout cutting a release, a re-run of an older workflow - is
+noticed on the next tick and put back. It costs nothing when no release is that new.
+
+The workflow's `notes` job checks out with `fetch-depth: 0`. Without it there are no
+tags and no history to diff against, and the job would quietly publish the "nothing to
+list" fallback on every release while going green.
+
+That job could not be edited from this machine until 2026-07-31: pushing any commit
+touching `.github/workflows/` was rejected because the `gh` token had `repo` but not
+`workflow` scope. `gh auth refresh -h github.com -s workflow` is the fix, and the
+`-h` is not optional when it is not a person typing it.
 
 The test builds a real repo with real tags and pins the ways the range goes wrong
 silently: v0.3.9 must not sort above v0.3.10, a version with no tag yet means "since the
 newest tag", the `release:` bump and lane merges are not changes, a subject with no
 prefix is still reported, and a release with nothing new keeps the commit link instead
-of printing an empty heading. It also pins both template shapes, so switching the
-workflow over to `{{CHANGES}}` the day that token gains `workflow` scope is a one-line
-change with a test already behind it.
+of printing an empty heading. It pins both template shapes - the `{{CHANGES}}` one in
+the repo now, and the older "New in this build" line - because a release cut from a
+checkout older than the switch-over reads its own template, not this one.
 
 `scripts/lane-fixture.mjs` is why the four lane tests no longer carry a hand-written
 `['lane.mjs', 'test-app.mjs']` copy list: giving lane.mjs one more import broke all four

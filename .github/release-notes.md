@@ -20,4 +20,4 @@ the only reason either OS complains. Updates after the first install are automat
 The `*-{{VERSION}}-*` files are the same builds with the version in the name, and
 `latest.yml` / `latest-mac.yml` are the feed the app's own updater reads.
 
-New in this build: see the [commit history](https://github.com/robertiuoras/PaneForge/commits/v{{VERSION}}).
+{{CHANGES}}
