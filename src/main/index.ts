@@ -83,6 +83,7 @@ import {
   dropShelfDrag,
   endShelfDrag,
   liftShelfDrag,
+  moveShelfDrag,
   openShelfWindow,
   shownShelfDrag,
   setShelfHidden,
@@ -937,6 +938,7 @@ ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
 // and main does the arithmetic against where the drag started.
 ipcMain.on('shelf:dragStart', () => beginShelfDrag())
 ipcMain.handle('shelf:dragLift', () => liftShelfDrag())
+ipcMain.on('shelf:dragMove', (_e, dx: number, dy: number) => moveShelfDrag(dx, dy))
 ipcMain.on('shelf:dragShown', () => shownShelfDrag())
 ipcMain.handle('shelf:dragDrop', (_e, dx: number, dy: number) => dropShelfDrag(dx, dy))
 ipcMain.on('shelf:dragEnd', () => endShelfDrag())

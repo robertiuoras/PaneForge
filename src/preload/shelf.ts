@@ -30,6 +30,7 @@ const api: ShelfApi = {
   dragWindow: {
     start: () => ipcRenderer.send('shelf:dragStart'),
     lift: () => ipcRenderer.invoke('shelf:dragLift'),
+    move: (dx, dy) => ipcRenderer.send('shelf:dragMove', dx, dy),
     shown: () => ipcRenderer.send('shelf:dragShown'),
     drop: (dx, dy) => ipcRenderer.invoke('shelf:dragDrop', dx, dy),
     end: () => ipcRenderer.send('shelf:dragEnd')

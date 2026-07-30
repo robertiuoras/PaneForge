@@ -180,6 +180,14 @@ that a failed swap puts the old bundle back, and that the relaunch is `open -g` 
 foreground) - or absent entirely when the swap happens because the user quit. The download
 half is proved against the live release with `node scripts/mac-update-test.mjs --live
 <version>`, which is left out of the suite because it pulls ~120 MB.
+`npm run test:stashdrag` needs a test copy up (`npm run try -- --keep --show
+--remote-debugging-port=9333`) and drags the Stash overlay with real CDP input, because
+`setPointerCapture` - which the drag is built on - refuses a pointer id no physical
+pointer owns. What it measures is the gap between the pointer and the thing it grabbed
+MID-gesture, not after: the overlay is moved by hand from screen coordinates, and on macOS
+the arithmetic was 105px out horizontally and 100px vertically because AppKit had quietly
+clamped the window it was computed from. It also pins the size of the grip's hit box,
+since a press that misses the handle opens the list instead of moving the window.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 `npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING

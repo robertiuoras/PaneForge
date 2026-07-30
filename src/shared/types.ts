@@ -947,6 +947,13 @@ export interface Api {
  * on purpose: that window sits over every other application, so it can read the
  * clipboard history and change nothing else about the app.
  */
+/**
+ * What `dragWindow.lift()` answers. The sliding form carries the content's offset inside
+ * the expanded window and the content's size; `{ live: true }` means main is moving the
+ * window itself and the renderer should only keep reporting the pointer.
+ */
+export type ShelfLift = { dx: number; dy: number; w: number; h: number } | { live: true } | null
+
 export interface ShelfApi {
   list(): Promise<RecentItem[]>
   /** put it back on the OS clipboard, ready for Ctrl+V wherever you already were */
@@ -985,12 +992,16 @@ export interface ShelfApi {
    */
   dragWindow: {
     start(): void
-    /** Expand the window over the desktop; answers with where the content sits inside
-     * it and its size, or null when no drag is active. */
-    lift(): Promise<{ dx: number; dy: number; w: number; h: number } | null>
+    /** Begin actually moving. Either the window is expanded over the desktop and the
+     * content slides inside it (Windows - answers with where the content sits inside it
+     * and its size), or main moves the window per pointer report (`{ live: true }`,
+     * macOS). Null when no drag is active any more. */
+    lift(): Promise<ShelfLift>
+    /** A pointer move during a live drag: put the window there. Ignored otherwise. */
+    move(dx: number, dy: number): void
     /** The renderer has painted the lifted (or dropped) content; safe to show again. */
     shown(): void
-    /** Shrink back to content size at the dragged-to position and remember it. */
+    /** Settle at the dragged-to position and remember it. */
     drop(dx: number, dy: number): Promise<void>
     end(): void
   }

@@ -23,7 +23,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, screen } from 'electron'
 import { getConfig, setConfig } from './config'
-import type { RecentItem, StashConfig } from '../shared/types'
+import type { RecentItem, ShelfLift, StashConfig } from '../shared/types'
 
 /** The resting size: a pill with the count on it. */
 const COLLAPSED = { width: 190, height: 38 }
@@ -40,8 +40,8 @@ let tall = false
 let getMain: (() => BrowserWindow | null) | null = null
 let cached: RecentItem[] = []
 let cachedConfig: StashConfig | null = null
-/** Where a drag started: the pointer, and the window's bottom-left at that moment. */
-let drag: { px: number; py: number; x: number; bottom: number; moved: boolean } | null = null
+/** Where a drag started: the window's bounds at the moment it was picked up. */
+let drag: { orig: Electron.Rectangle; moved: boolean } | null = null
 
 /**
  * Put the overlay on every desktop - without costing the app its Dock icon.
@@ -158,24 +158,40 @@ export function setShelfTall(next: boolean): void {
 
 export function beginShelfDrag(): void {
   if (!alive() || ghost) return
-  drag = { px: NaN, py: NaN, x: 0, bottom: 0, moved: false }
+  drag = { orig: shelf!.getBounds(), moved: false }
 }
 
 /**
- * Moving this window with setPosition is expensive, and that is not a thing pacing can
- * fix: it is transparent, always-on-top at screen-saver level, so every call is a DWM
- * recomposite and blocks for it. Measured 2026-07-28 on this machine: ~27ms per
+ * Moving this window with setPosition is expensive ON WINDOWS, and that is not a thing
+ * pacing can fix: it is transparent, always-on-top at screen-saver level, so every call
+ * is a DWM recomposite and blocks for it. Measured 2026-07-28 on that machine: ~27ms per
  * setPosition, so a paced drag topped out at 37Hz however the calls were scheduled -
  * and disabling the blur and shadows changed nothing (47 vs 44 positions painted per
  * 1.2s sweep), so it is the transparency itself, not the styling.
  *
- * So a drag moves the window ONCE: on the first real move it is expanded to cover every
- * display (`lift`), the content slides inside it with a CSS transform - compositor
+ * So a drag there moves the window ONCE: on the first real move it is expanded to cover
+ * every display (`lift`), the content slides inside it with a CSS transform - compositor
  * work, no window move, every frame - and on release (`drop`) the window shrinks back
  * to content size at the dragged-to position. The two bounds changes are hidden behind
  * setOpacity(0), and the renderer says when it has repainted (`shown`) so the reveal
  * never shows the content mid-jump.
+ *
+ * macOS has no DWM and no such cost - measured 2026-07-30 on this Mac, on a window with
+ * these exact options: 0.35ms per setPosition, 0.08ms per setBounds. There the trick is
+ * all downside, and it was visibly wrong. AppKit refuses to put a window's frame under
+ * the menu bar unless it was built with `enableLargerThanScreen`, so asking for the whole
+ * desktop at y=0 landed the window at y=33 (measured: requested {0,0,1512,982}, got
+ * {0,33,1512,982}) - and the content, slid by a transform computed from the rectangle it
+ * ASKED for, was nowhere near the hand holding it: `npm run test:stashdrag` against the
+ * old code puts the grabbed grip (-105, +100) px from the pointer mid-drag, and 128px
+ * from where it was let go. That is the gap between the mouse and the Stash.
+ *
+ * So macOS drags the window itself, once per pointer move (`LIVE_DRAG`): no ghost window
+ * over every display, no transform, no opacity dance, and nothing in between the pointer
+ * and the window to be off by.
  */
+const LIVE_DRAG = process.platform === 'darwin'
+
 let ghost: { orig: Electron.Rectangle; watchdog: NodeJS.Timeout } | null = null
 
 /** The one rectangle that covers every display there is. */
@@ -194,11 +210,13 @@ function desktopBounds(): Electron.Rectangle {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-export function liftShelfDrag(): { dx: number; dy: number; w: number; h: number } | null {
+export function liftShelfDrag(): ShelfLift {
   if (!alive() || !drag || ghost) return null
-  const orig = shelf!.getBounds()
-  const big = desktopBounds()
   drag.moved = true
+  // Where moving the window is cheap, that is the whole implementation: the renderer
+  // reports the pointer and `moveShelfDrag` puts the window there.
+  if (LIVE_DRAG) return { live: true }
+  const orig = drag.orig
   ghost = {
     orig,
     // A drop that never arrives (the renderer died mid-drag, the pointer was lost)
@@ -208,11 +226,50 @@ export function liftShelfDrag(): { dx: number; dy: number; w: number; h: number 
   }
   try {
     shelf!.setOpacity(0)
-    shelf!.setBounds(big)
+    shelf!.setBounds(desktopBounds())
   } catch {
     /* a display vanished mid-call; the watchdog or the drop still restores */
   }
+  // Where the window ENDED UP, never where it was asked to go: a window manager is free
+  // to clamp that rectangle (macOS does, by the height of the menu bar), and a transform
+  // built on the request would then hold the content that far from the pointer.
+  const big = shelf!.getBounds()
   return { dx: orig.x - big.x, dy: orig.y - big.y, w: orig.width, h: orig.height }
+}
+
+/** A pointer move during a live drag: the window goes where the pointer took it. */
+export function moveShelfDrag(dx: number, dy: number): void {
+  if (!alive() || !drag || ghost) return
+  drag.moved = true
+  const { orig } = drag
+  try {
+    shelf!.setBounds({
+      x: Math.round(orig.x + dx),
+      y: Math.round(orig.y + dy),
+      width: orig.width,
+      height: orig.height
+    })
+  } catch {
+    /* a display vanished mid-move; the next move (or the drop) puts it right */
+  }
+}
+
+/** The end of a live drag: settle on the last position and remember it. */
+function moveShelfDragFinal(orig: Electron.Rectangle, dx: number, dy: number): void {
+  try {
+    shelf!.setBounds({
+      x: Math.round(orig.x + dx),
+      y: Math.round(orig.y + dy),
+      width: orig.width,
+      height: orig.height
+    })
+    const b = shelf!.getBounds()
+    setConfig({ stashPos: { x: b.x, y: b.y + b.height } })
+  } catch {
+    /* a position that could not be written is only a position */
+  }
+  // Put it back inside the work area if it was let go half off the edge.
+  place()
 }
 
 /** The renderer has painted the lifted (or dropped) frame; safe to show again. */
@@ -222,7 +279,16 @@ export function shownShelfDrag(): void {
 
 /** Shrink back to content size where it was let go, and remember the spot. */
 export function dropShelfDrag(dx: number, dy: number): void {
+  const live = drag && !ghost ? drag : null
   drag = null
+  if (live) {
+    // Nothing to shrink - the window has been where the pointer is all along. Put it
+    // exactly there one last time (the last pointer move can be a frame stale), keep the
+    // spot, and let place() pull it back if it was let go half off the edge.
+    if (!alive()) return
+    moveShelfDragFinal(live.orig, dx, dy)
+    return
+  }
   if (!ghost) return
   const { orig, watchdog } = ghost
   clearTimeout(watchdog)

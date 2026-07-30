@@ -33,6 +33,7 @@
     "test:rename": "node scripts/rename-repo-test.mjs",
     "test:rail": "node scripts/rail-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
+    "test:stashdrag": "node scripts/stash-drag-test.mjs",
     "postinstall": "electron-builder install-app-deps",
     "package": "electron-vite build && electron-builder --win --dir",
     "dist:win": "electron-vite build && electron-builder --win --publish never",

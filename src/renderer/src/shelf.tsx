@@ -71,8 +71,23 @@ function useWindowDrag(): {
   // shelfWindow.ts): where the content sits inside it at delta zero, and its size.
   // 'pending' between asking for the lift and main answering, so a burst of moves
   // cannot lift twice.
-  const lifted = useRef<{ dx: number; dy: number; w: number; h: number } | 'pending' | null>(null)
+  // 'live' where main moves the window itself (macOS): nothing slides, the pointer is
+  // just reported on.
+  const lifted = useRef<
+    { dx: number; dy: number; w: number; h: number } | 'pending' | 'live' | null
+  >(null)
   const delta = useRef({ x: 0, y: 0 })
+  const frame = useRef(0)
+
+  // One window move per frame, whatever the pointer's report rate: two setBounds in one
+  // frame can only draw the second one.
+  const live = (): void => {
+    if (frame.current) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      if (lifted.current === 'live') shelf.dragWindow.move(delta.current.x, delta.current.y)
+    })
+  }
 
   // The content slides with a transform on `.wrap` - compositor work, no IPC, no
   // window move - which is what makes the drag track the pointer at full frame rate
@@ -81,7 +96,7 @@ function useWindowDrag(): {
   // clobber them.
   const slide = (): void => {
     const g = lifted.current
-    if (!g || g === 'pending') return
+    if (!g || g === 'pending' || g === 'live') return
     const el = document.querySelector<HTMLElement>('.wrap')
     if (!el) return
     el.style.position = 'fixed'
@@ -130,11 +145,22 @@ function useWindowDrag(): {
               lifted.current = null
               return
             }
+            if ('live' in g) {
+              // Main moves the window. The pointer has travelled further while that
+              // roundtrip was in the air, so send where it is now.
+              lifted.current = 'live'
+              live()
+              return
+            }
             lifted.current = g
             slide()
             // Painted where it was: the window can come back without a visible jump.
             requestAnimationFrame(() => shelf.dragWindow.shown())
           })
+          return
+        }
+        if (lifted.current === 'live') {
+          live()
           return
         }
         slide()
@@ -146,9 +172,18 @@ function useWindowDrag(): {
         from.current = null
         const g = lifted.current
         lifted.current = null
+        if (frame.current) {
+          cancelAnimationFrame(frame.current)
+          frame.current = 0
+        }
         if (!g) {
           // Never lifted: a click, nothing moved.
           shelf.dragWindow.end()
+          return
+        }
+        if (g === 'live') {
+          // The window is already there; the drop is the last pixel and the remembering.
+          void shelf.dragWindow.drop(delta.current.x, delta.current.y)
           return
         }
         // Drop first (the window shrinks to the final spot behind opacity 0), then take
