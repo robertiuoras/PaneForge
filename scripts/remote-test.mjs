@@ -10,7 +10,7 @@
 // wire/host/client deliberately import nothing from Electron - only types - which is
 // what makes them testable in plain Node at all.
 
-import { spawnSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -56,23 +56,17 @@ function bundle() {
     'utf8'
   )
   const file = join(out, 'remote.mjs')
-  const res = spawnSync(
-    process.execPath,
-    [
-      join(root, 'node_modules/esbuild/bin/esbuild'),
-      entry,
-      '--bundle',
-      '--platform=node',
-      '--format=esm',
-      '--log-level=warning',
-      `--outfile=${file}`
-    ],
-    { encoding: 'utf8', cwd: root }
-  )
-  if (res.status !== 0) {
-    console.error(res.stderr || res.stdout)
-    throw new Error('esbuild failed')
-  }
+  // esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+  // Windows, where that path is a JS shim. On macOS and Linux it is the native binary.
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    logLevel: 'warning',
+    outfile: file
+  })
   return file
 }
 

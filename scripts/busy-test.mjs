@@ -12,7 +12,7 @@
 //
 //   node scripts/busy-test.mjs
 
-import { execFileSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { mkdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -25,19 +25,16 @@ rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
 const out = join(work, 'busy.bundle.cjs')
-// esbuild's JS shim, not `npx esbuild`: Node 24 refuses to spawn a .cmd without a shell.
-execFileSync(
-  process.execPath,
-  [
-    join(root, 'node_modules', 'esbuild', 'bin', 'esbuild'),
-    'src/shared/busy.ts',
-    '--bundle',
-    '--format=cjs',
-    '--platform=node',
-    `--outfile=${out}`
-  ],
-  { cwd: root, stdio: 'pipe' }
-)
+// esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+// Windows, where that path is a JS shim. On macOS and Linux it is the native binary.
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/busy.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: out
+})
 const { readsBusy } = createRequire(import.meta.url)(out)
 
 /** The statusline and input box that sit BELOW the working line on this machine. */

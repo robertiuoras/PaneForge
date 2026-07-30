@@ -20,9 +20,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-lane-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+const wanted = join(tmpdir(), 'paneforge-lane-test')
+rmSync(wanted, { recursive: true, force: true })
+mkdirSync(wanted, { recursive: true })
+// realpath, because macOS hands out /var/folders/... while git answers with the
+// /private/var it resolves to. Every path assertion below is a string compare, so
+// without this four of them failed on a Mac against lanes that were in fact correct.
+const root = realpathSync(wanted)
 
 // A lane also links Claude Code's own config folder to the original's. That part
 // is covered by lane-memory-test.mjs against a throwaway HOME; here it is simply

@@ -9,7 +9,7 @@
 //
 //   node scripts/slash-test.mjs
 
-import { execFileSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { mkdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -22,19 +22,16 @@ rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
 const out = join(work, 'slash.bundle.cjs')
-// esbuild's JS shim, not `npx esbuild`: Node 24 refuses to spawn a .cmd without a shell.
-execFileSync(
-  process.execPath,
-  [
-    join(root, 'node_modules', 'esbuild', 'bin', 'esbuild'),
-    'src/shared/slashTurn.ts',
-    '--bundle',
-    '--format=cjs',
-    '--platform=node',
-    `--outfile=${out}`
-  ],
-  { cwd: root, stdio: 'pipe' }
-)
+// esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+// Windows, where that path is a JS shim. On macOS and Linux it is the native binary.
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/slashTurn.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: out
+})
 const { typeLine, isSlashCommand } = createRequire(import.meta.url)(out)
 
 /** Feed a sequence of write() chunks and say whether Enter would read as a command. */

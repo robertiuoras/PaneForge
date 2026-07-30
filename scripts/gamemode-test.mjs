@@ -18,6 +18,7 @@
 //   node scripts/gamemode-test.mjs
 
 import { execFileSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -56,20 +57,17 @@ module.exports={
 // here: `require('node:child_process')` is resolved as a builtin before any hook runs,
 // so the first version of this test silently measured the real process list - and
 // passed the "cs2 is running" assertions on this machine because CS2 really was.
-// esbuild's JS shim, not `npx esbuild`: Node 24 refuses to spawn a .cmd without a shell.
-execFileSync(
-  process.execPath,
-  [
-    join(root, 'node_modules', 'esbuild', 'bin', 'esbuild'),
-    'src/main/gameMode.ts',
-    '--bundle',
-    '--format=cjs',
-    '--platform=node',
-    `--outfile=${join(work, 'gamemode.bundle.cjs')}`,
-    '--external:node:child_process'
-  ],
-  { cwd: root, stdio: 'pipe' }
-)
+// esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+// Windows, where that path is a JS shim. On macOS and Linux it is the native binary.
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/gameMode.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: join(work, 'gamemode.bundle.cjs'),
+  external: ['node:child_process']
+})
 
 const bundle = join(work, 'gamemode.bundle.cjs')
 const src = readFileSync(bundle, 'utf8')
@@ -85,6 +83,11 @@ const drive = join(work, 'drive.cjs')
 writeFileSync(
   drive,
   `const cp=require('./cp-stub.cjs')
+// gameMode.ts lists processes with tasklist, so it returns an empty set unless
+// process.platform is win32 - off Windows every "a game is running" assertion would
+// fail for that reason alone. The list it reads is the stub above, never the real
+// machine's, so pinning the platform keeps the test deterministic everywhere.
+Object.defineProperty(process,'platform',{value:'win32'})
 const g=require('./gamemode.bundle.cjs')
 const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}

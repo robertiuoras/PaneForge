@@ -10,7 +10,7 @@
 //
 // It runs against a throwaway CLAUDE_CONFIG_DIR, never the real ~/.claude.json.
 
-import { spawnSync } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -28,16 +28,14 @@ function check(name, ok, detail = '') {
 
 // The module is TypeScript and has no Electron imports, so one esbuild pass is enough
 // to run it directly - no need to boot the app to test a pure function.
+// esbuild's own API, not its CLI: the .bin entry is a shell script on macOS/Linux and a
+// .cmd on Windows, each needing its own spawn dance. The API needs none of it.
 const built = join(work, 'claudeTrust.mjs')
-const r = spawnSync(
-  join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild'),
-  [join(root, 'src', 'main', 'claudeTrust.ts'), '--format=esm', `--outfile=${built}`],
-  { encoding: 'utf8', shell: process.platform === 'win32' }
-)
-if (r.status !== 0) {
-  console.error(r.stderr || r.stdout)
-  process.exit(1)
-}
+buildSync({
+  entryPoints: [join(root, 'src', 'main', 'claudeTrust.ts')],
+  format: 'esm',
+  outfile: built
+})
 
 const cfgDir = join(work, 'claude')
 mkdirSync(cfgDir, { recursive: true })
