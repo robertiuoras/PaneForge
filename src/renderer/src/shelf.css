@@ -123,9 +123,10 @@ button {
    handle you cannot see is a handle you do not know is there, so the pill read as a button
    that inexplicably moved. It is always drawn now, faint enough to stay out of the way and
    solid enough to say "grab here", and it brightens as the pointer approaches.
-   It is wider than it looks: the hit area runs to the edge of the pill, because the point
-   of it is to be grabbable without aiming. */
+   It is much wider than it looks - see the hit area below - because the point of it is to
+   be grabbable without aiming. */
 .pill-grip {
+  position: relative;
   flex: none;
   margin-left: auto;
   width: 22px;
@@ -148,6 +149,22 @@ button {
   opacity: 0.5;
   cursor: grab;
   transition: opacity 120ms ease;
+}
+
+/* The target, which is not the drawing. 22px of lines is a thing you have to aim at, and
+   missing it left of the lines is a click on the pill - which opens the list, which is the
+   opposite of what the hand was doing. So the handle takes the whole right third of the
+   pill: 68px wide, full height, out to the border on the right. Laid out as a pseudo
+   element on purpose - widening the grip itself would eat the "stashed" label's room,
+   and pointer events over generated content still report the grip as the target, so the
+   drag and the click-guard need no changes. */
+.pill-grip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -12px;
+  left: -34px;
 }
 
 .pill:hover .pill-grip {
