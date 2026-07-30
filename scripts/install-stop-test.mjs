@@ -28,7 +28,15 @@ function load(rel) {
   const mod = { exports: {} }
   compiled.set(rel, mod.exports)
   new Function('require', 'module', 'exports', js)(
-    (id) => (id === './which' ? load('src/main/which.ts') : require_(id)),
+    // Any relative import is another file of this app's source, resolved against the one
+    // being compiled; anything else is a real module. Hard-coding the one relative import
+    // this file happened to have meant the day install.ts imported a second one
+    // (`../shared/agents`), the whole test died with MODULE_NOT_FOUND naming this script -
+    // which reads as the test being broken rather than as the source having moved on.
+    (id) =>
+      id.startsWith('.')
+        ? load(join(dirname(rel), id).replace(/\\/g, '/') + (id.endsWith('.ts') ? '' : '.ts'))
+        : require_(id),
     mod,
     mod.exports
   )
