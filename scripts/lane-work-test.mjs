@@ -16,6 +16,7 @@
 //
 //   node scripts/lane-work-test.mjs
 
+import { buildSync } from 'esbuild'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -37,32 +38,29 @@ function git(cwd, args) {
   return (r.stdout ?? '').trim()
 }
 
-/** Compile laneWork.ts on its own (node builtins only) and import it. */
+/**
+ * Bundle laneWork.ts (node builtins only) and import it.
+ *
+ * Bundled rather than compiled file-by-file: `tsc` leaves a relative import extensionless,
+ * which Node's ESM loader refuses, so the first *value* import laneWork gained from
+ * `shared/` broke this test with an ERR_MODULE_NOT_FOUND naming a temp directory rather
+ * than the cause. esbuild follows the imports itself and there is nothing to keep in sync.
+ *
+ * esbuild's own API, not its CLI: `node node_modules/esbuild/bin/esbuild` only works on
+ * Windows, where that path is a JS shim. On macOS and Linux it is the native binary.
+ */
 async function loadLaneWork() {
-  const out = join(work, 'build')
-  execFileSync(
-    process.execPath,
-    [
-      join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-      join('src', 'main', 'laneWork.ts'),
-      '--outDir',
-      out,
-      // Pinned so the layout of the build folder does not depend on whether the type-only
-      // import of shared/types.ts pulled a second file into the program.
-      '--rootDir',
-      'src',
-      '--module',
-      'es2022',
-      '--target',
-      'es2022',
-      '--moduleResolution',
-      'bundler',
-      '--skipLibCheck'
-    ],
-    { cwd: repoRoot, stdio: 'pipe' }
-  )
-  writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-  return import(pathToFileURL(join(out, 'main', 'laneWork.js')).href)
+  const out = join(work, 'laneWork.bundle.mjs')
+  buildSync({
+    absWorkingDir: repoRoot,
+    entryPoints: [join('src', 'main', 'laneWork.ts')],
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node20',
+    outfile: out
+  })
+  return import(pathToFileURL(out).href)
 }
 
 const lw = await loadLaneWork()

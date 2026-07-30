@@ -12,12 +12,29 @@
 //
 //   node scripts/lane-sweep-test.mjs
 
+import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const { sweepLanes } = await import('../src/main/laneWork.ts')
+// Bundled rather than imported as TypeScript: Node's type stripping resolves a relative
+// import literally, so `../shared/draft` (extensionless, as the whole of src/ is written,
+// because electron-vite resolves it) is not a file it can find. esbuild follows the
+// imports the way the app's own build does.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+const bundle = join(tmpdir(), 'paneforge-lane-sweep-laneWork.mjs')
+buildSync({
+  absWorkingDir: repoRoot,
+  entryPoints: [join('src', 'main', 'laneWork.ts')],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  target: 'node20',
+  outfile: bundle
+})
+const { sweepLanes } = await import(pathToFileURL(bundle).href)
 
 const root = join(tmpdir(), 'paneforge-lane-sweep-test')
 rmSync(root, { recursive: true, force: true })

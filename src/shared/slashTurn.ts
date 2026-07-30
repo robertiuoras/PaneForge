@@ -10,6 +10,12 @@
 // chime (unless it turns out to run long - that promotion lives in sessions.ts).
 //
 // `npm run test:slash` holds this against real keystroke shapes.
+//
+// The loop itself now lives in `shared/draft.ts` - one parser for the three things that
+// reconstruct what is being typed. This file keeps only the question it asks and the
+// narrow rules that question needs, as `SLASH_OPTIONS`.
+
+import { feedDraft, SLASH_OPTIONS } from './draft'
 
 /**
  * Fold one chunk of keystrokes into the line-so-far. Backspace erases ("/cl" backspaced
@@ -18,12 +24,9 @@
  * follow errs toward "a real prompt", which is the reading that keeps the bell armed.
  */
 export function typeLine(typed: string, data: string): string {
-  if (!data || data.startsWith('\x1b')) return typed
-  for (const ch of data) {
-    if (ch === '\x7f' || ch === '\b') typed = typed.slice(0, -1)
-    else if (ch >= ' ') typed = (typed + ch).slice(-200)
-  }
-  return typed
+  // Enter clears the line here as it does everywhere; the caller asks the question
+  // before feeding the Enter, so a submitted line is read while it still exists.
+  return feedDraft({ text: typed, certain: true, inPaste: false }, data, SLASH_OPTIONS).state.text
 }
 
 /** The question the whole file exists for, asked at Enter. */

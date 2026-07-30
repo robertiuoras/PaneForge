@@ -23,6 +23,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
 
 /** `<repo>-w2` - the folder shape lanes.ts creates, and the only shape swept here. */
@@ -426,55 +427,13 @@ async function dropEmptyShells(repo: string): Promise<void> {
  * none of them can make the last word `/clear` on their own.
  */
 export function trackTyped(previous: string, data: string): { line: string; submitted: string[] } {
-  let line = previous
-  const submitted: string[] = []
-  for (let i = 0; i < data.length; i++) {
-    const code = data.charCodeAt(i)
-
-    if (code === 27) {
-      // An ESC that ends the chunk is the Escape key, and the line is abandoned.
-      if (i === data.length - 1) {
-        line = ''
-        break
-      }
-      // Anything else starting with ESC is a control sequence the terminal is sending,
-      // not something a person typed. This is the bug that made the whole thing look
-      // broken: xterm reports focus as ESC [ O / ESC [ I, so the moment a pane lost
-      // focus its next line began "[O" and never matched again - measured in the running
-      // app, where /clear submitted the line "[O/clear".
-      const next = data[i + 1]
-      if (next === '[' || next === 'O') {
-        i += 2
-        // CSI/SS3 run to their final byte, which is anything in @ to ~.
-        while (i < data.length) {
-          const c = data.charCodeAt(i)
-          if (c >= 0x40 && c <= 0x7e) break
-          i++
-        }
-      } else if (next === ']') {
-        // OSC (a title, a hyperlink) runs to BEL or ESC \.
-        i += 2
-        while (i < data.length) {
-          if (data.charCodeAt(i) === 7) break
-          if (data.charCodeAt(i) === 27 && data[i + 1] === '\\') {
-            i++
-            break
-          }
-          i++
-        }
-      } else i += 1
-      continue
-    }
-
-    if (code === 13 || code === 10) {
-      submitted.push(line.trim())
-      line = ''
-    } else if (code === 8 || code === 127) line = line.slice(0, -1)
-    // Ctrl-C and Ctrl-U both throw away what has been typed so far.
-    else if (code === 3 || code === 21) line = ''
-    else if (code >= 32) line += data[i]
-  }
-  return { line: line.slice(-32), submitted }
+  // The loop itself is `shared/draft.ts` now - one parser for the three places that
+  // reconstruct what a pane is typing. `LANE_OPTIONS` is this caller's half of it: parse
+  // escapes properly (xterm reports focus as ESC [ O / ESC [ I, and reading that as
+  // typing is what once made /clear submit the line "[O/clear"), ignore pastes, and keep
+  // only the last 32 characters.
+  const r = feedDraft({ text: previous, certain: true, inPaste: false }, data, LANE_OPTIONS)
+  return { line: r.state.text, submitted: r.submitted }
 }
 
 /**
