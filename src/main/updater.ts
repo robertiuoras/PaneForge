@@ -8,6 +8,7 @@
 
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, statSync, truncateSync } from 'node:fs'
+import { get } from 'node:https'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { UpdateState } from '../shared/types'
@@ -115,6 +116,76 @@ let publishRetries = 0
  */
 function isPublishing(message: string): boolean {
   return /latest(-mac|-linux)?\.yml/i.test(message) && /404/.test(message)
+}
+
+/**
+ * The mac half of the feed is optional, so a missing one must not read as a failure.
+ *
+ * A Mac can never install one of these updates anyway - the app is unsigned and
+ * Squirrel.Mac refuses it - so all the feed is ever used for on darwin is "there is a
+ * newer version, here is the page". `latest-mac.yml` only exists when a release was cut
+ * by the CI matrix; every release cut straight from the Windows machine (which is most
+ * of them: electron-builder creates the tag through the API, so no tag push event ever
+ * reaches Actions) has Windows assets only. electron-updater 404s on those forever and
+ * the corner of the app has read "update failed" ever since, while the app was in fact
+ * up to date.
+ *
+ * So on darwin a failed feed read falls back to the plain public releases API, which
+ * needs no assets at all - only the tag name. Error is reported only if that fails too.
+ */
+const API_LATEST = 'https://api.github.com/repos/robertiuoras/PaneForge/releases/latest'
+
+function macFallback(message: string): void {
+  const done = (err?: string): void => {
+    if (!err) return
+    log('mac fallback failed', err.slice(0, 160))
+    set({ phase: 'error', error: message, percent: undefined })
+    schedule(3 * 60_000)
+  }
+  const req = get(
+    API_LATEST,
+    {
+      headers: {
+        'user-agent': `PaneForge/${app.getVersion()}`,
+        accept: 'application/vnd.github+json'
+      },
+      timeout: 15_000
+    },
+    (res) => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        return done(`releases API ${res.statusCode}`)
+      }
+      let body = ''
+      res.setEncoding('utf8')
+      res.on('data', (c) => {
+        body += c
+      })
+      res.on('end', () => {
+        try {
+          const tag = String(JSON.parse(body)?.tag_name ?? '')
+          const version = tag.replace(/^v/, '')
+          if (!version) return done('no tag_name in the releases API response')
+          if (newer(version, have())) {
+            log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
+            set({
+              phase: 'available',
+              version,
+              percent: undefined,
+              error: undefined,
+              url: `${RELEASES_URL}/tag/${tag}`
+            })
+          } else {
+            set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
+          }
+        } catch (e) {
+          done((e as Error)?.message ?? String(e))
+        }
+      })
+    }
+  )
+  req.on('timeout', () => req.destroy(new Error('releases API timed out')))
+  req.on('error', (e) => done(e?.message ?? String(e)))
 }
 
 // GitHub hid this whole account from anonymous requests on 2026-07-28 (anti-abuse
@@ -305,6 +376,13 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       // borrowing costs one local gh call and applies only if the token proves it can
       // see the releases the anonymous path cannot.
       if (/404/.test(message)) borrowGhToken(u)
+
+      // A Mac never downloads from the feed (autoDownload is off above), so the only
+      // thing a failed check costs here is the version number - and the releases API
+      // still has that even when the release carries no mac assets. Retrying a
+      // `latest-mac.yml` 404 that will never resolve is what put a permanent
+      // "update failed" in the corner of this app on macOS.
+      if (process.platform === 'darwin') return macFallback(message)
 
       if (isPublishing(message)) {
         // The release tag is on GitHub but its assets are still uploading, so

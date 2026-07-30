@@ -1,14 +1,24 @@
 # Builds PaneForge for Windows and Apple Silicon and publishes both to a GitHub
 # Release, which is also the feed the app's auto-updater reads.
 #
-# Triggered by pushing a tag (`npm run ship` does that for you) or by hand from
-# the Actions tab. Public repo, so these minutes are free.
+# Triggered by pushing a tag (`npm run ship` does that for you), by a release being
+# published, or by hand from the Actions tab. Public repo, so these minutes are free.
+#
+# The `release` trigger is the one that matters for Macs. A release cut on the Windows
+# machine (`scripts/lane.mjs` -> electron-builder --publish always) creates its tag
+# THROUGH THE API as part of the release, and GitHub fires no tag push event for that -
+# so v0.3.42 through v0.3.50 never ran this workflow, never built a Mac, and every Mac
+# running PaneForge sat on a permanent "update failed" because latest-mac.yml did not
+# exist. A published release fires this and the Mac half gets built and uploaded.
+# (A release published by GITHUB_TOKEN cannot re-trigger a workflow, so no loop.)
 
 name: Release
 
 on:
   push:
     tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -46,6 +56,27 @@ jobs:
           # The app is not code signed: notarising needs a paid Apple account.
           # First launch on a friend's Mac therefore needs right-click > Open.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # electron-builder's own publisher cannot be trusted to have uploaded anything.
+      # When the release already exists and is published - which is the normal case
+      # here, because the machine that cut the version created it minutes earlier -
+      # its GitHub publisher quietly uploads nothing. That is how the 0.3.50 release
+      # ended up with Windows metadata only: the Mac job went green having published
+      # not one file. Upload the update feed and the versioned artifacts explicitly;
+      # --clobber makes it idempotent when the publisher DID do its job.
+      - name: Upload update feed and versioned artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          shopt -s nullglob
+          files=(dist/latest*.yml dist/*"$version"*.exe dist/*"$version"*.dmg dist/*"$version"*.zip dist/*"$version"*.blockmap)
+          if [ ${#files[@]} -eq 0 ]; then echo "nothing built for $version"; exit 1; fi
+          printf '%s\n' "${files[@]}"
+          gh release view "v$version" >/dev/null 2>&1 || gh release create "v$version" --title "$version" --notes ""
+          gh release upload "v$version" "${files[@]}" --clobber
 
       # electron-builder's own asset names carry the version, so a link to one dies
       # at the next release. Upload a second copy of each installer under a fixed
