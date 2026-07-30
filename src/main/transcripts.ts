@@ -31,6 +31,9 @@ const START_SLACK_MS = 60_000
 /** The tail of a transcript that has to hold the last prompt. Some are tens of MB. */
 const TAIL_BYTES = 256 * 1024
 
+/** The head of a transcript that has to hold its opening records. */
+const HEAD_BYTES = 256 * 1024
+
 /** Enough of a prompt to recognise the work, short enough for one line of a dialog. */
 const PROMPT_CHARS = 220
 
@@ -68,6 +71,38 @@ function transcripts(dir: string): { file: string; at: number }[] {
   }
 }
 
+/**
+ * True while a transcript belongs to a session someone is sitting in front of.
+ *
+ * Headless runs (`claude -p ...`) file their transcript in the same per-cwd folder as
+ * the real session, and they finish AFTER it: the /clear handoff writer, and the
+ * dispatcher's agentic runs, which are given the repo as their cwd because they have
+ * to edit it. So the newest transcript in a folder is quite often a robot's, and it is
+ * newest at exactly the moment a pane re-picks - which is what /clear makes it do.
+ * Claiming one put the pane's resume id on a machine conversation: reopening the desk
+ * brought the pane back up inside a Haiku handoff distill, on that run's model, which
+ * is what "Claude Code keeps turning into Haiku" turned out to be.
+ *
+ * The marker is `"type":"mode"`. An interactive session writes one in its first lines
+ * and again on every turn; a `-p` run never writes one at all. Only the head is read,
+ * because transcripts run to tens of megabytes.
+ */
+function interactive(file: string): boolean {
+  let fd = -1
+  try {
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(HEAD_BYTES)
+    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
+    return buf.toString('utf8', 0, n).includes('"type":"mode"')
+  } catch {
+    // Unreadable is not evidence of anything. Falling back to "yes" keeps the old
+    // behaviour rather than silently refusing to ever resume this pane.
+    return true
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+}
+
 /** A pane started (or restarted): from here on it owns one conversation. */
 export function noteSession(id: string, cwd: string, agent: string): void {
   started.set(id, { cwd, agent, at: Date.now() })
@@ -100,7 +135,9 @@ export function transcriptFor(id: string): string | null {
   const taken = new Set([...claimed].filter(([k]) => k !== id).map(([, v]) => v))
   // Newest first, and only files written since this pane started: an older conversation
   // in the same folder belongs to whoever had it, not to whoever opened a pane last.
-  const pick = transcripts(dir).find((t) => t.at >= s.at - START_SLACK_MS && !taken.has(t.file))
+  const pick = transcripts(dir).find(
+    (t) => t.at >= s.at - START_SLACK_MS && !taken.has(t.file) && interactive(t.file)
+  )
   if (!pick) return null
   claimed.set(id, pick.file)
   return pick.file

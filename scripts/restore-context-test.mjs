@@ -132,7 +132,15 @@ const cwd = mkdtempSync(join(tmpdir(), 'pf-restore-'))
 const projects = join(homedir(), '.claude', 'projects', slug(cwd))
 mkdirSync(projects, { recursive: true })
 
+/** An interactive session's opening record. A headless `-p` run never writes one. */
+const mode = rec({ type: 'mode', mode: 'default' })
+
 function transcript(id, lines, ageMs = 0) {
+  return headless(id, [mode, ...lines], ageMs)
+}
+
+/** The same file WITHOUT the interactive marker: what `claude -p` leaves behind. */
+function headless(id, lines, ageMs = 0) {
   const file = join(projects, `${id}.jsonl`)
   writeFileSync(file, lines.join('\n'), 'utf8')
   if (ageMs) {
@@ -194,6 +202,40 @@ try {
 } finally {
   rmSync(projects, { recursive: true, force: true })
   rmSync(cwd, { recursive: true, force: true })
+}
+
+// ------------------------------------------------- a robot's chat is not a pane's
+
+// A headless `claude -p` run files its transcript in the same per-cwd folder as the
+// real session and finishes AFTER it, so it is the newest file at exactly the moment a
+// pane re-picks - which is what /clear makes it do. Two of them run against real
+// repos: the /clear handoff writer, and the dispatcher's agentic runs, which are given
+// the repo as their cwd because they have to edit it. Claiming one put the pane's
+// resume id on a machine conversation, and reopening the desk brought the pane back up
+// inside a Haiku handoff distill.
+//
+// Its own folder, so the abandoned-chat rules above cannot supply the answer.
+const cwd2 = mkdtempSync(join(tmpdir(), 'pf-headless-'))
+const projects2 = join(homedir(), '.claude', 'projects', slug(cwd2))
+mkdirSync(projects2, { recursive: true })
+const write2 = (id, lines) => writeFileSync(join(projects2, `${id}.jsonl`), lines.join('\n'), 'utf8')
+
+try {
+  T.noteSession('pane5', cwd2, 'claude')
+  write2('handoff', [user('Distill this Claude Code session digest')])
+  assert.equal(T.resumeIdFor('pane5'), undefined, 'claimed a headless -p transcript')
+
+  // The pane's own conversation, written after it, is still the answer.
+  write2('chat-mine', [mode, user('the real work')])
+  assert.equal(T.resumeIdFor('pane5'), 'chat-mine')
+
+  // And once claimed it stays claimed, even though the robot writes again afterwards.
+  write2('handoff', [user('Distill this Claude Code session digest'), assistant('done')])
+  assert.equal(T.resumeIdFor('pane5'), 'chat-mine', 'drifted onto a headless transcript')
+} finally {
+  T.forgetSession('pane5')
+  rmSync(projects2, { recursive: true, force: true })
+  rmSync(cwd2, { recursive: true, force: true })
 }
 
 // ------------------------------------------------------- the argv that resumes
