@@ -22,7 +22,13 @@ import { closeTestApps } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const keep = process.argv.includes('--keep')
-const PORT = 9412
+// Overridable because a port can be held by a copy that is no longer running: a rail-probe
+// that died left its sockets bound to a pid that no longer exists, Chromium's "Cannot start
+// http server for devtools" went to the copy's own stderr, which is `stdio: 'ignore'`, and
+// what this test printed instead was "No renderer on :9412 after 60s - did the test copy
+// start?" for every run afterwards. It had started; it simply could not be talked to.
+//   PF_RAIL_PORT=9413 npm run test:rail
+const PORT = Number(process.env.PF_RAIL_PORT ?? 9412)
 const PROFILE = 'rail-probe'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
