@@ -212,8 +212,12 @@ handed out anywhere is the Releases page.
 
 On Windows the download is quiet and so is the install: accepting the update runs the
 installer silently, with no setup window, and PaneForge comes back on its own with
-the panes it had open, each one resuming its agent's last conversation. macOS cannot
-self-replace an unsigned app, so there the same prompt hands over the download page.
+the panes it had open, each one resuming its agent's last conversation. macOS does the
+same thing without an installer: the release zip is expanded next to the app's data and a
+small script moves the new bundle into `/Applications` the moment the old process exits,
+then reopens it in the background. Squirrel.Mac is what refuses an unsigned update, and a
+folder move needs no Squirrel. A Mac only gets handed the download page when it cannot do
+that at all - an Intel Mac, or a copy still running from inside the mounted .dmg.
 
 ## Dev
 
@@ -295,9 +299,13 @@ Not built yet: diff/merge review, reattaching to sessions after an app restart
   prebuilt binaries and no install script.
 - Claude Code's own env markers (`CLAUDECODE`, `CLAUDE_CODE_*`) and Codex's
   `CODEX_SANDBOX*` are stripped before spawning, or a nested agent runs crippled.
-- macOS cannot replace an unsigned app in place, so on a Mac the update prompt
-  hands you the download instead of restarting itself. Windows updates silently and
-  restarts.
+- macOS updates itself without a signing certificate by treating the .app as what it
+  is - a folder. `src/main/macUpdate.ts` downloads the release zip, expands it with
+  `ditto` (never `unzip`: it flattens the framework symlinks and the bundle will not
+  launch), checks the version inside, and leaves a detached shell script to move it in
+  after this process exits. Squirrel.Mac, which electron-updater would use, validates
+  code signatures and refuses an ad-hoc signed build - so it is not used on darwin at
+  all. `npm run test:macupdate` covers the swap.
 - Ignoring the update prompt on Windows is not the same as refusing it: the
   downloaded update installs when you close the app, so the fix is there next time
   you start it. Nothing is swapped under a live pane - the panes are gone by then.

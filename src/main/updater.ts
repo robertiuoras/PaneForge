@@ -13,6 +13,14 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { UpdateState } from '../shared/types'
 import { lastShip } from './laneBoard'
+import {
+  adoptStaged,
+  canSwap,
+  clearStaged,
+  setMacUpdateLog,
+  stageMacUpdate,
+  swapAndRelaunch
+} from './macUpdate'
 
 type Emit = (s: UpdateState) => void
 
@@ -135,6 +143,46 @@ function isPublishing(message: string): boolean {
  */
 const API_LATEST = 'https://api.github.com/repos/robertiuoras/PaneForge/releases/latest'
 
+/**
+ * A new version, on a Mac. Either this app can swap itself or you get the page.
+ *
+ * Squirrel.Mac is what cannot install an unsigned build; a folder move can, so
+ * `macUpdate.ts` does the download and the swap and this app updates itself on a Mac like
+ * it does on Windows - quietly, on the next restart. Everything that made that impossible
+ * is still true when `canSwap()` is false (an Intel Mac with no matching asset, a copy
+ * still running from the read-only .dmg, a dev build), and then the badge does what it did
+ * before: names the version and opens the release page.
+ */
+function offerMac(version: string): void {
+  const url = `${RELEASES_URL}/tag/v${version}`
+  if (!canSwap()) {
+    log('mac cannot self-swap - handing over the release page', version)
+    set({ phase: 'available', version, percent: undefined, error: undefined, url })
+    return
+  }
+  if (macStaging === version) return
+  macStaging = version
+  set({ phase: 'downloading', version, percent: 0, error: undefined, url })
+  void stageMacUpdate(version, (p) => {
+    if (state.version === version && state.phase === 'downloading') set({ percent: p })
+  })
+    .then(() => {
+      macStaging = ''
+      set({ phase: 'ready', version, percent: 100, error: undefined, url })
+    })
+    .catch((e: Error) => {
+      macStaging = ''
+      const message = e?.message ?? String(e)
+      log('mac self-update failed', message.slice(0, 200))
+      // The page still works, and it is what this app did for every release before now.
+      // A failed download must not leave the one machine that needs it with nothing.
+      set({ phase: 'available', version, percent: undefined, error: undefined, url })
+    })
+}
+
+/** The version being downloaded for a Mac right now, so two checks cannot both fetch it. */
+let macStaging = ''
+
 function macFallback(message: string): void {
   const done = (err?: string): void => {
     if (!err) return
@@ -168,13 +216,7 @@ function macFallback(message: string): void {
           if (!version) return done('no tag_name in the releases API response')
           if (newer(version, have())) {
             log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
-            set({
-              phase: 'available',
-              version,
-              percent: undefined,
-              error: undefined,
-              url: `${RELEASES_URL}/tag/${tag}`
-            })
+            offerMac(version)
           } else {
             set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
           }
@@ -316,9 +358,10 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
   }
   if (!wired) {
     wired = true
-    // macOS refuses to swap in an unsigned update: Squirrel.Mac validates the code
-    // signature, and this app ships unsigned. So on a Mac the app finds the new
-    // version and hands you the release page instead of pretending it can self-update.
+    setMacUpdateLog(log)
+    // macOS refuses to swap in an unsigned update THROUGH SQUIRREL: it validates the code
+    // signature, and this app ships unsigned. So electron-updater never downloads on a
+    // Mac - `macUpdate.ts` fetches the release zip and swaps the bundle on exit instead.
     u.autoDownload = process.platform !== 'darwin'
     // A downloaded update installs itself when the app exits. The panes are already
     // gone by then, so nothing is swapped out from under a running agent - and a fix
@@ -332,6 +375,19 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       error: (m: unknown) => log('error', m),
       debug: () => undefined
     }
+    // A Mac that quit with "later" already has the new bundle expanded on disk. Picking it
+    // back up is the difference between one 120 MB download and one per restart.
+    if (process.platform === 'darwin') {
+      const found = adoptStaged()
+      if (found && newer(found, app.getVersion())) {
+        set({
+          phase: 'ready',
+          version: found,
+          percent: 100,
+          url: `${RELEASES_URL}/tag/v${found}`
+        })
+      } else if (found) clearStaged()
+    }
     u.on('checking-for-update', () => {
       if (probing) return
       set({ phase: 'checking', error: undefined })
@@ -340,8 +396,11 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       if (probing) return
       publishRetries = 0
       lastError = ''
+      // electron-updater is not downloading this one on a Mac (autoDownload is off there),
+      // so the mac path takes the version and fetches the zip itself.
+      if (process.platform === 'darwin') return offerMac(String(info?.version ?? ''))
       set({
-        phase: process.platform === 'darwin' ? 'available' : 'downloading',
+        phase: 'downloading',
         version: info?.version,
         percent: 0,
         url: `${RELEASES_URL}/tag/v${info?.version ?? ''}`
@@ -465,6 +524,12 @@ async function supersede(): Promise<void> {
     log('supersede', `${pending} -> ${found}`)
     probing = false
     u.autoDownload = restore
+    // The staged bundle is a folder, not a temp file electron-updater manages, so the old
+    // one is thrown away here before the newer one is fetched over the same path.
+    if (process.platform === 'darwin') {
+      clearStaged()
+      return offerMac(found)
+    }
     set({ phase: 'downloading', version: found, percent: 0 })
     await u.downloadUpdate()
   } catch (e) {
@@ -503,6 +568,10 @@ export async function checkForUpdates(): Promise<UpdateState> {
 export function installUpdate(): boolean {
   const u = load()
   if (!u || state.phase !== 'ready') return false
+  // A Mac has no installer to run: the new bundle is already expanded next to the app's
+  // data and a detached shell script moves it into place as soon as this process is gone.
+  // Same contract as below - true means "something is running that needs this exe to exit".
+  if (process.platform === 'darwin') return swapAndRelaunch()
   // Silent: the NSIS installer runs with no window at all, so an update looks like the
   // app blinking rather than a setup wizard taking over the screen. forceRunAfter
   // brings PaneForge straight back up. Both flags matter - a non-silent install shows

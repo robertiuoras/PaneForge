@@ -173,6 +173,13 @@ fullscreen apps without `skipTransformProcessType`, because Electron implements 
 turning the whole process into an accessory and never turning it back - which is
 `app.dock.hide()` for the app, from a line about one overlay window. On a Mac it also
 runs a real Electron to check that Electron itself still behaves that way.
+`npm run test:macupdate` is about the one thing that can leave a Mac with no PaneForge at
+all: the app replacing its own bundle. It builds a real fake install, a real ditto zip and
+runs the real swap script, and checks that the app is NOT moved while its process is alive,
+that a failed swap puts the old bundle back, and that the relaunch is `open -g` (never the
+foreground) - or absent entirely when the swap happens because the user quit. The download
+half is proved against the live release with `node scripts/mac-update-test.mjs --live
+<version>`, which is left out of the suite because it pulls ~120 MB.
 `npm run test:remote` runs the device link end to end over a real loopback socket -
 pairing, refusal, mirroring, keystrokes back, and that nothing on the wire is readable.
 `npm run test:lanes` ends with `lane-sweep-test.mjs`, the one test about DELETING

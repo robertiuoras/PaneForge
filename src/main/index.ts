@@ -96,6 +96,7 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { refreshPath, runCommand, stopInstalls } from './install'
+import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
   getUpdateState,
@@ -1647,8 +1648,26 @@ app.on('window-all-closed', () => {
  * outright by shutdown(), so there is nothing left for a graceful exit to do. Same ten
  * quits after this change: 250ms to 1.1s, no stalls, no orphaned agents.
  */
+/**
+ * A staged Mac update installs itself on the way out, like the Windows one does.
+ *
+ * `autoInstallOnAppQuit` is electron-updater's, and electron-updater is not what installs
+ * a Mac update here (it cannot: Squirrel refuses an unsigned build). So the same promise -
+ * ignore the card and the fix is there next time you start - is kept by moving the staged
+ * bundle in from a detached script as this process exits. Without a relaunch: the user
+ * closed the app, and an update is no reason to reopen it.
+ */
+let quitSwapDone = false
+function installStagedMacUpdateOnQuit(): void {
+  if (process.platform !== 'darwin' || quitSwapDone || installStarted) return
+  if (getUpdateState().phase !== 'ready') return
+  quitSwapDone = true
+  if (swapAndRelaunch(false)) updateLog('exit', 'installing the staged mac update on quit')
+}
+
 function hardExit(): void {
   updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
+  installStagedMacUpdateOnQuit()
   // The one thing shutdown() cannot reach: the ConPTY console hosts are OUR children,
   // not the agents', so no taskkill of an agent tree names them. This runs after we are
   // gone and only touches consoles whose parent is gone with us. See consoles.ts.
@@ -1667,5 +1686,6 @@ app.on('before-quit', () => {
   // the work between them.
   manager.shutdown()
   stopInstalls()
+  installStagedMacUpdateOnQuit()
 })
 app.on('will-quit', () => globalShortcut.unregisterAll())

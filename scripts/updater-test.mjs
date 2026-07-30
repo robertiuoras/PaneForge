@@ -111,9 +111,14 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   ok(at()===b+1,'the poll still looks while a build waits')
   ok(u.getUpdateState().phase==='ready','the probe does not disturb the ready badge')
   ok(!calls.includes('download'),'the same version is not downloaded twice')
+  // A Mac never lets electron-updater download (Squirrel cannot install an unsigned
+  // build): src/main/macUpdate.ts fetches the zip and swaps the bundle instead, and this
+  // headless run is not a bundle at all, so the newer version ends at the release page.
   stub.__feed('0.3.10'); await u.pollOnce()
-  ok(calls.includes('download'),'a newer release downloads over the pending one')
+  ok(mac?!calls.includes('download'):calls.includes('download'),
+     mac?'a Mac supersedes through its own path, not electron-updater':'a newer release downloads over the pending one')
   ok(u.getUpdateState().version==='0.3.10','pending version replaced')
+  if(mac) ok(u.getUpdateState().phase==='available','a Mac that cannot swap itself still gets the page')
   h['update-downloaded']({version:'0.3.10'}); ok(u.getUpdateState().phase==='ready','ready on the newer build')
 
   // Four minutes passed between v0.3.30's tag and its latest.yml finishing upload, and a
