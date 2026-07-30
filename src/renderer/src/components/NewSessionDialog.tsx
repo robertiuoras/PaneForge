@@ -183,33 +183,38 @@ export default function NewSessionDialog({
           onKeyDown={(e) => e.key === 'Enter' && go()}
         />
 
-        <AgentInstallBar agents={agents} onInstalled={reprobe} />
+        {/* The chips and the actions are pinned to the bottom together. Pinning only the
+            button row let it ride up over the chips as soon as the dialog scrolled - the
+            install chips ended at 620px and the pinned row started at 616. */}
+        <div className="dialog-foot">
+          <AgentInstallBar agents={agents} onInstalled={reprobe} />
 
-        <div className="dialog-row">
-          <Checkbox
-            checked={resume && canResume}
-            disabled={!canResume}
-            onChange={setResume}
-            label="Resume last session"
-            title={canResume ? '' : `${agents.find((a) => a.id === agent)?.label ?? agent} has no resume flag`}
-          />
-          <AgentPicker
-            agents={agents}
-            agent={agent}
-            model={model}
-            onChange={(a, m) => {
-              setAgent(a)
-              // Switching CLI carries its own remembered model, not the previous one's.
-              setModel(a === agent ? m : defaultModels[a] ?? '')
-            }}
-          />
-          <button className="ghost" onClick={save} disabled={!ticked.length}>
-            Save as workspace
-          </button>
-          <button className="primary" onClick={() => go()}>
-            <AgentLogo id={agent} spec={agents.find((a) => a.id === agent)} size={14} />
-            Start {ticked.length > 1 ? `${ticked.length} sessions` : ''}
-          </button>
+          <div className="dialog-row">
+            <Checkbox
+              checked={resume && canResume}
+              disabled={!canResume}
+              onChange={setResume}
+              label="Resume last session"
+              title={canResume ? '' : `${agents.find((a) => a.id === agent)?.label ?? agent} has no resume flag`}
+            />
+            <AgentPicker
+              agents={agents}
+              agent={agent}
+              model={model}
+              onChange={(a, m) => {
+                setAgent(a)
+                // Switching CLI carries its own remembered model, not the previous one's.
+                setModel(a === agent ? m : defaultModels[a] ?? '')
+              }}
+            />
+            <button className="ghost" onClick={save} disabled={!ticked.length}>
+              Save as workspace
+            </button>
+            <button className="primary" onClick={() => go()}>
+              <AgentLogo id={agent} spec={agents.find((a) => a.id === agent)} size={14} />
+              Start {ticked.length > 1 ? `${ticked.length} sessions` : ''}
+            </button>
+          </div>
         </div>
       </div>
     </div>

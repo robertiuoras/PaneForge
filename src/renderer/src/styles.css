@@ -895,10 +895,22 @@ body.sizing * { user-select: none !important; }
    pinning it to the bottom of the scroll area keeps the actions on screen. The
    negative margin cancels the padding again so nothing moves when there is no
    scrolling at all, which is the normal full-screen case. */
-.dialog > .dialog-row:last-child {
+.dialog > .dialog-row:last-child,
+.dialog > .dialog-foot {
   position: sticky; bottom: 0; z-index: 1;
   background: var(--surface-2);
   padding-bottom: 16px; margin-bottom: -16px;
+}
+/* More than the buttons has to be pinned in the new-session dialog: the install chips
+   sit directly above them, and pinning the row alone parked it ON them the moment the
+   project list overflowed - the chips ended at 620px and the pinned row started at 616,
+   4px of overlap where an 11px gap belongs. Pinned as one block instead, with a strip of
+   the dialog's own background above it so a row of chips scrolling underneath is covered
+   rather than half-visible. The negative margins cancel the padding, so nothing moves in
+   the usual case where the dialog does not scroll at all. */
+.dialog > .dialog-foot {
+  display: flex; flex-direction: column; gap: 11px;
+  padding-top: 8px; margin-top: -8px;
 }
 @keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(0.985); } }
 .dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
