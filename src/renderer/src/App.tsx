@@ -1775,7 +1775,10 @@ export default function App(): JSX.Element {
                 (s.id === activeId ? ' active' : '') +
                 (s.attention ? ' attn' : '') +
                 (justDone.includes(s.id) ? ' just-done' : '') +
-                (dragId === s.id ? ' dragging' : '')
+                (dragId === s.id ? ' dragging' : '') +
+                // Holding a lane AND mid-turn: the one combination where this pane is
+                // changing a checkout that a release will pick up on its own.
+                (laneOfSession(lanesByPane, s.id) && s.status === 'working' ? ' lane-live' : '')
               }
               onPointerDown={(e) => beginDrag(e, s.id)}
               onClick={() => {
