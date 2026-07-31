@@ -33,7 +33,7 @@ import TerminalPane, {
   paneRepair
 } from './components/TerminalPane'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
-import { looksFinished } from '../../shared/draft'
+import { looksFinished, looksSplittable } from '../../shared/draft'
 import './components/ImproveSheet.css'
 import { keyLabel, modKey } from './platform'
 import MicIcon from './components/MicIcon'
@@ -50,7 +50,7 @@ import LaneStrip, {
   useLanesByPane
 } from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
-import SwarmDialog from './components/SwarmDialog'
+import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
 import { playChime } from './useChime'
@@ -819,6 +819,41 @@ export default function App(): JSX.Element {
       window.clearTimeout(timer)
     }
   }, [improveMode, improveIdleMs])
+
+  /**
+   * Offering to cut one ask into several panes.
+   *
+   * Same contract as the improve chip, and the same reason for it: a plan costs a whole
+   * CLI start-up (measured at 61.5 s for this repo, 35 s from inside the app), so nothing
+   * is planned and no pane is opened until somebody clicks. The chip is the whole of what
+   * happens by itself.
+   *
+   * No `status === 'working'` gate, unlike the improve chip. Typing into a pane leaves it
+   * reading `working` for about 3.5 s - the CLI echoing its own prompt box is output like
+   * any other - which is what kept that chip from ever appearing until the check was made
+   * to re-arm. This one has nothing to re-arm for: whether the agent is mid-turn says
+   * nothing about whether the words in the box are three jobs.
+   */
+  const [splitOffer, setSplitOffer] = useState<string | null>(null)
+  const [swarmStart, setSwarmStart] = useState<SwarmStart | null>(null)
+  useEffect(() => {
+    let timer: number | undefined
+    const stop = onPaneDraft((id, state) => {
+      setSplitOffer(null)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const s = sessionsRef.current.find((x) => x.id === id)
+        if (!s || s.status === 'exited') return
+        // `certain` means the draft was reconstructed rather than guessed at; offering to
+        // split words we are not sure we have is offering to split the wrong prompt.
+        if (state.certain && looksSplittable(state.text)) setSplitOffer(id)
+      }, 1500)
+    })
+    return () => {
+      stop()
+      window.clearTimeout(timer)
+    }
+  }, [])
 
   const runImprove = useCallback(
     async (id: string, again?: { exclude?: string[]; tweak?: string }) => {
@@ -2158,17 +2193,38 @@ export default function App(): JSX.Element {
                 about - not a popup, not a toast, nothing that moves and nothing that
                 takes the keyboard. It appears only when the draft has gone quiet, reads
                 as finished, and the agent is not mid-turn. */}
-            {improveOffer === s.id && !sheet && (
-              <button
-                className="improve-chip-offer improve-float"
-                title={keyLabel('Improve this prompt before sending it (Ctrl Shift I)')}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  void runImprove(s.id)
-                }}
-              >
-                Improve prompt
-              </button>
+            {(improveOffer === s.id || splitOffer === s.id) && !sheet && (
+              <div className="pane-offers">
+                {splitOffer === s.id && (
+                  <button
+                    className="split-chip-offer"
+                    title={
+                      'This reads as several separate jobs. Cut it into workstreams and give ' +
+                      'each one its own pane and its own checkout, so they cannot edit the same ' +
+                      'file.\nNothing is planned or opened until you click.'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSwarmStart({ mode: 'split', cwd: s.cwd, mission: paneDraft.get(s.id)?.text ?? '', plan: true })
+                      setSwarm(true)
+                    }}
+                  >
+                    Split across panes
+                  </button>
+                )}
+                {improveOffer === s.id && (
+                  <button
+                    className="improve-chip-offer"
+                    title={keyLabel('Improve this prompt before sending it (Ctrl Shift I)')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void runImprove(s.id)
+                    }}
+                  >
+                    Improve prompt
+                  </button>
+                )}
+              </div>
             )}
             {sheet?.id === s.id && (
               <ImproveSheet
@@ -2262,9 +2318,14 @@ export default function App(): JSX.Element {
           agents={agents}
           roles={config.swarmRoles}
           defaultModels={config.defaultModels}
+          initial={swarmStart ?? undefined}
           onSaveRoles={(swarmRoles: SwarmRole[]) => patchConfig({ swarmRoles })}
-          onClose={() => setSwarm(false)}
+          onClose={() => {
+            setSwarm(false)
+            setSwarmStart(null)
+          }}
           onLaunched={(n) => {
+            setSwarmStart(null)
             setSwarm(false)
             patchConfig({ grid: true })
             flash(`${n} agents started on the mission.`)

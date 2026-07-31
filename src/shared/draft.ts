@@ -307,3 +307,36 @@ export function looksFinished(text: string, min = 40): boolean {
   }
   return true
 }
+
+/**
+ * Verbs that name a piece of WORK rather than a question about it. A prompt with several
+ * of these is a prompt that is several jobs, which is the thing worth splitting.
+ */
+const DOING =
+  /\b(add|build|make|create|write|implement|wire|port|migrate|refactor|rework|redesign|rename|move|delete|remove|drop|fix|repair|handle|support|show|hide|update|change|replace|document|test|cover|ship|release|expose|extract|split|merge|cache|optimi[sz]e|speed up|clean up|set up)\b/i
+
+/**
+ * Does this draft ask for several separate jobs?
+ *
+ * The same contract as `looksFinished`: free, wrong sometimes, and it only ever decides
+ * whether a chip appears. Nothing is planned and no pane is opened until the chip is
+ * clicked, because a plan costs a whole CLI start-up (measured at 61.5 s bare for this
+ * repo) and panes that open by themselves are panes nobody asked for.
+ *
+ * A "job" is a bullet, a numbered item, or a sentence with a doing-verb in it. Counting
+ * conjunctions instead was the obvious rule and it is useless: half of ordinary English
+ * has an "and" in it, and a chip that appears on every prompt is a chip nobody reads.
+ */
+export function looksSplittable(text: string, min = 120): boolean {
+  const raw = text.replace(/\r/g, '')
+  if (!looksFinished(raw, 60)) return false
+  if (flatDraft(raw).length < min) return false
+  const listed = raw.split('\n').filter((l) => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(l))
+  const jobs = listed.length
+    ? listed.filter((l) => DOING.test(l))
+    : flatDraft(raw)
+        .split(/(?<=[.!?;])\s+|\s+(?:and (?:then |also )?|then |plus )(?=\w)/i)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 12 && DOING.test(s))
+  return jobs.length >= 3
+}
