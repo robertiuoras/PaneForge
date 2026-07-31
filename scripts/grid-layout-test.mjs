@@ -36,6 +36,7 @@ const {
   isLayout,
   layoutDefaults,
   LAYOUTS,
+  moveInOrder,
   nextLayout,
   planGrid,
   shapeKey,
@@ -198,6 +199,26 @@ ok(
 )
 ok('a layout name off disk is recognised', isLayout('main-top'))
 ok('and one this build has never heard of is not', !isLayout('hexagons'))
+
+// -------------------------------------------------- moving a pane by keyboard
+//
+// The keyboard move and the drag write the SAME list, so the two must agree about what
+// moving means. The drag swaps; if this ever starts inserting, a key nobody was watching
+// would reshuffle every pane after the one being moved.
+
+const four = ['a', 'b', 'c', 'd']
+ok('one slot on swaps with the next pane', JSON.stringify(moveInOrder(four, 'b', 1)) === '["a","c","b","d"]')
+ok('one slot back swaps with the one before', JSON.stringify(moveInOrder(four, 'c', -1)) === '["a","c","b","d"]')
+ok('a further move is still a swap, never an insert', JSON.stringify(moveInOrder(four, 'a', 2)) === '["c","b","a","d"]')
+ok('the list it was given is never mutated', JSON.stringify(four) === '["a","b","c","d"]')
+ok('off the front does nothing', moveInOrder(four, 'a', -1) === four)
+ok('off the end does nothing - no wrap to the far corner', moveInOrder(four, 'd', 1) === four)
+ok('a pane that is not in the list is left alone', moveInOrder(four, 'zz', 1) === four)
+ok('one pane cannot be moved anywhere', moveInOrder(['only'], 'only', 1)[0] === 'only')
+ok(
+  'every pane is still there afterwards',
+  new Set(moveInOrder(four, 'b', 1)).size === four.length
+)
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

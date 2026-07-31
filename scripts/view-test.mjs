@@ -15,9 +15,10 @@
 // counting elements cannot tell a search that found nothing from one that found five. The
 // only honest source is the addon's own result count, which is what the bar prints.
 //
-// Nothing here writes to a pty. The text being searched is written into the terminal
-// itself (`__paneTerms`), so no command runs, nothing is installed and no folder is
-// touched beyond a temp directory the panes are opened in.
+// Nothing here RUNS anything. The text being searched is written into the terminal itself
+// (`__paneTerms`), and the synchronised-typing section at the end types into a real pty
+// but never sends a `\r` and clears the line afterwards - so no command runs, nothing is
+// installed and no folder is touched beyond a temp directory the panes are opened in.
 //
 // Run it against a SHOWN window (--show, not --minimized). Everything here is measured
 // from rectangles and from a count the addon works out from its highlight decorations,
@@ -285,6 +286,101 @@ ok('find: a term that is not there says so', find.missing === 'no matches', find
 ok("find: and a term that is only in another pane is not this pane's", find.otherPane === 'no matches', find.otherPane)
 ok('find: Escape closes it', find.closed === true)
 ok('find: and hands the keyboard back to the terminal', find.keyboardBack === true)
+
+// ------------------------------------------ synchronised typing, and moving a pane
+//
+// This is the one part of the file that does write to a pty, and it has to: the claim is
+// that a keystroke typed into ONE pane arrives in the others, and the only place that can
+// be read back is the other pane's own screen, which is the shell echoing what it was
+// sent. Nothing is submitted - there is no `\r` anywhere below - so no command runs, and
+// each line is wiped with Ctrl+U afterwards.
+//
+// The keystrokes go through `triggerDataEvent`, xterm's own input path, rather than
+// `api.write`. `api.write` is the thing under test: a test that called it directly would
+// pass with the whole feature deleted.
+
+const mod = process.platform === 'darwin' ? 'metaKey' : 'ctrlKey'
+const sync = await evaluate(`(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const ids = () => [...document.querySelectorAll('.pane[data-id]')].map((p) => p.dataset.id)
+  const key = (k) => window.dispatchEvent(
+    new KeyboardEvent('keydown', { key: k, ${mod}: true, shiftKey: true, bubbles: true, cancelable: true })
+  )
+  const screen = (id) => {
+    const t = window.__paneTerms.get(id)
+    const buf = t.buffer.active
+    let s = ''
+    for (let i = 0; i < buf.length; i++) s += (buf.getLine(i)?.translateToString(true) ?? '') + '\\n'
+    return s
+  }
+  const out = { before: ids() }
+  const [a, b] = out.before
+  const t = window.__pf[a].term
+  const typeIn = async (text) => {
+    for (const ch of text) {
+      t._core.coreService.triggerDataEvent(ch, true)
+      await wait(4)
+    }
+    await wait(1400)
+  }
+  // Ctrl+U: the shell's own "forget this line", so the next check starts from an empty
+  // prompt instead of matching what the last one typed.
+  const clearLine = async () => {
+    t._core.coreService.triggerDataEvent('\\u0015', true)
+    await wait(350)
+  }
+
+  document.querySelector('.pane[data-id="' + a + '"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  await wait(200)
+  out.ringedBefore = document.querySelectorAll('.pane.synced').length
+
+  key('Y')
+  await wait(350)
+  out.ringed = document.querySelectorAll('.pane.synced').length
+  await typeIn('wombatsync')
+  out.here = screen(a).includes('wombatsync')
+  out.there = screen(b).includes('wombatsync')
+  await clearLine()
+
+  key('Y')
+  await wait(300)
+  out.ringedAfter = document.querySelectorAll('.pane.synced').length
+  await typeIn('lonelyword')
+  out.aloneHere = screen(a).includes('lonelyword')
+  out.aloneThere = screen(b).includes('lonelyword')
+  await clearLine()
+
+  key('ArrowRight')
+  await wait(500)
+  out.moved = ids()
+  key('ArrowLeft')
+  await wait(500)
+  out.back = ids()
+  return out
+})()`)
+
+ok('sync: nothing is ringed until it is switched on', sync.ringedBefore === 0, sync.ringedBefore)
+ok('sync: every pane is ringed while it is on', sync.ringed === 4, sync.ringed)
+ok('sync: the pane being typed in gets the keystrokes', sync.here === true)
+ok('sync: and so does a pane nobody is looking at', sync.there === true)
+ok('sync: switching it off un-rings them', sync.ringedAfter === 0, sync.ringedAfter)
+ok('sync: off, the keystrokes stay in one pane', sync.aloneHere === true)
+ok('sync: and reach no other pane', sync.aloneThere === false)
+ok(
+  'move: Ctrl Shift → swaps the focused pane with the next one',
+  sync.moved[0] === sync.before[1] && sync.moved[1] === sync.before[0],
+  `${sync.before} -> ${sync.moved}`
+)
+ok(
+  'move: and only those two - the other panes do not shuffle',
+  JSON.stringify(sync.moved.slice(2)) === JSON.stringify(sync.before.slice(2)),
+  `${sync.moved}`
+)
+ok(
+  'move: Ctrl Shift ← puts it back',
+  JSON.stringify(sync.back) === JSON.stringify(sync.before),
+  `${sync.back}`
+)
 
 // ---------------------------------------------------------------- leave no desk behind
 

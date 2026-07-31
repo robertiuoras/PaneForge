@@ -58,6 +58,33 @@ export function nextLayout(kind: LayoutKind): LayoutKind {
   return LAYOUTS[(i + 1) % LAYOUTS.length]
 }
 
+/**
+ * Move one pane along the order the cells are filled from, and return the new order.
+ *
+ * The grid has always been re-arrangeable by dragging one pane onto another, which is a
+ * mouse and a steady hand; tmux marks a pane and swaps it with a key. This is the key.
+ *
+ * Two decisions, both taken from the drag rather than invented here. It **swaps** with
+ * the pane `delta` slots away instead of lifting one out and re-inserting it: inserting
+ * shuffles every pane after the drop into a different cell, so three panes nobody asked
+ * about would move (`App.tsx`'s drag says the same thing at more length). And it moves by
+ * SLOTS in this list, not by "one cell left", because the five layouts fill their cells
+ * from the list - "left" means nothing at all in `rows`, and something different in
+ * `main-left` for the first pane than for the other four.
+ *
+ * Off either end is a no-op rather than a wrap. Wrapping would fling the pane you are
+ * holding to the far corner on a key you were leaning on, and a layout has no undo.
+ */
+export function moveInOrder(ids: string[], id: string, delta: number): string[] {
+  const from = ids.indexOf(id)
+  if (from < 0) return ids
+  const to = from + delta
+  if (to < 0 || to >= ids.length) return ids
+  const next = ids.slice()
+  ;[next[from], next[to]] = [next[to], next[from]]
+  return next
+}
+
 /** One pane's cell, in 1-based CSS grid lines. */
 export interface Cell {
   col: number
