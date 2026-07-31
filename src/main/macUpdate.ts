@@ -348,6 +348,7 @@ if kill -0 ${process.pid} 2>/dev/null; then echo "old process still running - no
 rm -rf ${q(old)}
 mv ${q(target)} ${q(old)} || { echo "could not move the old bundle aside"; exit 1; }
 mv ${q(stagedApp)} ${q(target)} || { echo "move in failed - putting the old one back"; mv ${q(old)} ${q(target)}; exit 1; }
+if [ ! -x ${q(target)}/Contents/MacOS/PaneForge ]; then echo "moved-in bundle has no executable - rolling back to the old one"; rm -rf ${q(target)}; mv ${q(old)} ${q(target)}; exit 1; fi
 rm -rf ${q(old)}
 echo "swapped${relaunch ? ', relaunching' : ' - not relaunching, the user quit'}"
 ${relaunch ? `open -g -a ${q(target)}` : 'exit 0'}
