@@ -52,6 +52,17 @@ const cases = [
   ['claude 2.1 spinner with counter', '✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, true],
   ['claude 2.1 spinner, no counter yet', '✶ Cultivating…\n' + CHROME, true],
   ['claude 2.1 spinner under tool output', '● Bash(sleep 25; echo done)\n⎿  Running in the background (↓ to manage)\n✻ Herding…\n' + CHROME, true],
+  // Captured 2026-08-01 from claude 2.1.220 in a real pty, while the Stop hooks ran.
+  // The glyph is an ASCII asterisk (U+002A), which SPINNING refuses on purpose, and
+  // the duration is no longer the first segment in the bracket. This frame read as
+  // FINISHED for as long as the hooks took, which cut the turn clock in half.
+  [
+    'claude 2.1 running a stop hook',
+    '* Considering… (running stop hooks… 0/4 · 52s · ↓ 5.2k tokens)\n' + CHROME,
+    true
+  ],
+  // Same capture, the first repaint of the turn: no glyph and no counter yet.
+  ['claude 2.1 bare gerund', 'Considering…\n' + CHROME, true],
   // Older Claude Code and Codex, which still say how to stop themselves.
   ['legacy esc-to-interrupt', '✻ Thinking… (esc to interrupt)\n' + CHROME, true],
   ['codex footer', 'Esc to interrupt · 12s\n' + CHROME, true],
@@ -60,6 +71,9 @@ const cases = [
   ['idle pane', '▝▜█████▛▘  Opus 5 (1M context) with high effort · Claude Max\n' + CHROME, false],
   // A markdown list in an answer sits in exactly these rows.
   ['bullet list in an answer', '* one of the things we tried…\n- and another…\n' + CHROME, false],
+  // A duration in brackets is only a run counter when it sits in a `·`-separated
+  // footer group. An answer or a tool summary quoting one is a finished thing.
+  ['duration quoted in prose', 'The whole run took (2m 14s) end to end.\n' + CHROME, false],
   // A question outranks a spinner: the CLI is mid-turn but nothing moves until you answer.
   ['permission prompt over a spinner', '✢ Smooshing… (8s · ↓ 282 tokens)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n', false]
 ]
@@ -86,6 +100,12 @@ const H = 60 * M
 const clocks = [
   ['seconds only', '✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, 8 * S],
   ['minutes and seconds', '✢ Smooshing… (24m 3s · ↓ 282 tokens)\n' + CHROME, 24 * M + 3 * S],
+  // The duration is not the first segment when a hook is running - read past it.
+  [
+    'counter behind a hook progress segment',
+    '* Considering… (running stop hooks… 0/4 · 52s · ↓ 5.2k tokens)\n' + CHROME,
+    52 * S
+  ],
   ['whole minutes', '✻ Herding… (24m · ↑ 1.2k tokens)\n' + CHROME, 24 * M],
   ['hours', '✻ Herding… (1h 2m 3s · ↓ 91 tokens)\n' + CHROME, H + 2 * M + 3 * S],
   ['legacy interrupt hint carries it', '✻ Thinking… (esc to interrupt · 2m 14s)\n' + CHROME, 2 * M + 14 * S],

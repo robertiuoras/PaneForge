@@ -31,12 +31,14 @@ const SAYS_INTERRUPT =
 const SPINNING = /^[^\S\n]*[✢✳✶✻✽✷✺◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S[^\n]*…/m
 
 /**
- * The live counter that ticks beside the spinner - "(8s · ↓ 282 tokens)", and the
- * "(esc to interrupt · 12s)" of older builds. Independent of whatever word the CLI
- * decided to spin today, which is the point: one of these three has to survive the
- * next rename.
+ * The gerund on its own, with no glyph in front of it at all: Claude Code 2.1.220
+ * paints "Considering…" bare for the first repaint of a turn, before it has a
+ * spinner frame or a counter to show. Deliberately narrow - one capitalised word,
+ * an ellipsis, and nothing else on the line - because the whole reason SPINNING
+ * insists on a glyph is that prose and markdown live in these same rows, and
+ * "* one of the things we tried…" must not read as a running agent.
  */
-const COUNTING = /\(\d+s\s*·/
+const LONE_GERUND = /^[^\S\n]*[A-Z][a-z]+…[^\S\n]*$/m
 
 /**
  * The agent is asking *you* something: a permission prompt, a tool approval, a choice.
@@ -48,10 +50,39 @@ const COUNTING = /\(\d+s\s*·/
 export const ASK_PROMPT =
   /do you want to (proceed|continue|make|create|allow|run)|allow (this )?(command|tool|edit)\?|❯\s*\d+\.\s|\(y\/n\)\s*$|press enter to (confirm|continue)|waiting for your (input|reply)/im
 
+/**
+ * The live counter that ticks beside the spinner - "(8s · ↓ 282 tokens)", and the
+ * "(esc to interrupt · 12s)" of older builds. Independent of whatever word the CLI
+ * decided to spin today, which is the point: one of these has to survive the next
+ * rename.
+ *
+ * It reuses the clock reader rather than carrying a regex of its own, because the
+ * counter is no longer the first thing inside the brackets. Claude Code 2.1.220
+ * running a Stop hook prints
+ *
+ *   * Considering… (running stop hooks… 0/4 · 52s · ↓ 5.2k tokens)
+ *
+ * - an ASCII asterisk, which SPINNING refuses on purpose, and a bracket whose
+ * first segment is not the duration, which the old `/\(\d+s\s*·/` refused too. So
+ * the whole frame read as FINISHED, mid-turn, for as long as the hooks ran: the
+ * run clock was cut, `lastRunMs` froze, and the next spinner frame started a fresh
+ * turn from zero. That is how a turn Claude Code called 24m showed as 12m - not
+ * the anchor being wrong, but the turn being cut in half underneath it.
+ *
+ * The separator is required so this stays a FOOTER reading. A bare "(2m 14s)" in
+ * an answer or a tool summary is not a running agent; the counter always sits in a
+ * `·`-delimited group beside the token count or the interrupt hint.
+ */
+function hasTurnCounter(text: string): boolean {
+  return scanDuration(text)?.footer === true
+}
+
 /** True while the frame says an agent is running and is not waiting on an answer. */
 export function readsBusy(text: string): boolean {
   if (ASK_PROMPT.test(text)) return false
-  return SAYS_INTERRUPT.test(text) || SPINNING.test(text) || COUNTING.test(text)
+  return (
+    SAYS_INTERRUPT.test(text) || SPINNING.test(text) || LONE_GERUND.test(text) || hasTurnCounter(text)
+  )
 }
 
 /**
@@ -81,10 +112,22 @@ export function readsElapsedMs(
   text: string,
   withGrain = false
 ): number | { ms: number; grain: number } | null {
-  let found: { ms: number; grain: number } | null = null
+  const found = scanDuration(text)
+  if (!found) return null
+  return withGrain ? { ms: found.ms, grain: found.grain } : found.ms
+}
+
+/**
+ * The one pass over the frame that both the clock and the busy read use. Kept
+ * single because two copies of "which bracket is the footer" is exactly how the
+ * busy read and the clock ended up disagreeing about the same frame.
+ */
+function scanDuration(text: string): { ms: number; grain: number; footer: boolean } | null {
+  let found: { ms: number; grain: number; footer: boolean } | null = null
   // Every parenthesised run on the frame, last one wins: the footer is at the bottom.
   for (const paren of text.matchAll(/\(([^)\n]{1,80})\)/g)) {
-    for (const part of paren[1].split('·')) {
+    const parts = paren[1].split('·')
+    for (const part of parts) {
       const s = part.trim()
       if (!/^\d/.test(s)) continue
       const m = DURATION.exec(s)
@@ -96,12 +139,14 @@ export function readsElapsedMs(
         ms: (h * 3600 + min * 60 + sec) * 1000,
         // What the CLI rounded to. A reading of "24m" says nothing about the seconds,
         // so a clock anchored to it must not be corrected by less than a minute.
-        grain: m[3] ? 1000 : m[2] ? 60_000 : 3_600_000
+        grain: m[3] ? 1000 : m[2] ? 60_000 : 3_600_000,
+        // Sat beside something else in the same bracket, so this is a CLI footer
+        // rather than a duration that happens to be in brackets in an answer.
+        footer: parts.length > 1
       }
     }
   }
-  if (!found) return null
-  return withGrain ? found : found.ms
+  return found
 }
 
 /**
