@@ -29,6 +29,25 @@ const shelf = window.shelf
 
 type Filter = 'all' | 'text' | 'image' | 'file'
 
+/**
+ * Only the rows you can see are drawn.
+ *
+ * Every row is one line of text beside a fixed tile, so they are all exactly as tall as
+ * each other - which is what makes the cheap kind of virtualisation correct here. It is
+ * worth doing because a full 200-entry Stash is 9598px of list inside a 363px window: 26
+ * times more DOM than is on screen, 1632 nodes, re-reconciled in full every time anything
+ * is copied anywhere on the machine and again every 20 seconds for the "2m ago" labels.
+ * Measured at 8-13.5ms per re-render, which is a dropped frame per copy.
+ *
+ * ROW_H is only the starting guess; the real height is read off the first row once it is
+ * on screen, so a font or padding change cannot silently put the spacers out.
+ */
+const ROW_H = 48
+/** Below this, drawing the lot is cheaper than the bookkeeping. */
+const VIRT_MIN = 40
+/** Rows kept mounted beyond each edge, so a flick does not show empty space. */
+const OVERSCAN = 6
+
 function ago(at: number): string {
   const s = Math.max(0, Math.round((Date.now() - at) / 1000))
   if (s < 60) return `${s}s`
@@ -368,6 +387,11 @@ function Overlay(): JSX.Element {
   const closeTimer = useRef<number>()
   const copiedTimer = useRef<number>()
   const drag = useWindowDrag()
+  // What the scroller can see: where it is and how tall it is. Both in pixels.
+  const listRef = useRef<HTMLDivElement>(null)
+  const [view, setView] = useState({ top: 0, h: 400 })
+  const rowH = useRef(ROW_H)
+  const scrollFrame = useRef(0)
 
   useEffect(() => {
     shelf.list().then(setItems)
@@ -397,6 +421,37 @@ function Overlay(): JSX.Element {
     const t = window.setInterval(() => bump((n) => n + 1), 20_000)
     return () => window.clearInterval(t)
   }, [open])
+
+  // The window resizes between its three states and the settings panel takes half of it,
+  // so the visible height is read after every render rather than once. Both writes are
+  // guarded by an equality check, so this cannot loop.
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    // Fractional: a row is 47.95px, and rounding it to 48 puts the bottom spacer 9px out
+    // over 200 entries - which is 9px of dead space under the last row.
+    const row = el.querySelector<HTMLElement>('.item')?.getBoundingClientRect().height
+    if (row) rowH.current = row
+    if (el.clientHeight && el.clientHeight !== view.h) setView((v) => ({ ...v, h: el.clientHeight }))
+  })
+
+  // A different tab, or a fresh open, starts at the top - and the slice has to be told,
+  // because setting scrollTop by hand fires no scroll event.
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+    setView((v) => (v.top === 0 ? v : { ...v, top: 0 }))
+  }, [filter, open, settings])
+
+  // One slice per frame, whatever rate the wheel reports at.
+  const onScroll = (): void => {
+    if (scrollFrame.current) return
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = 0
+      const top = listRef.current?.scrollTop ?? 0
+      setView((v) => (v.top === top ? v : { ...v, top }))
+    })
+  }
+  useEffect(() => () => cancelAnimationFrame(scrollFrame.current), [])
 
   const want = (next: boolean): void => {
     // Nothing resizes this window while it is being moved. Every path that opens the list
@@ -562,7 +617,16 @@ function Overlay(): JSX.Element {
     )
   }
 
+  const cap = config?.stashMaxItems ?? 200
+  const full = items.length >= cap
   const shown = filter === 'all' ? items : items.filter((i) => i.kind === filter)
+  const virt = shown.length > VIRT_MIN
+  const rh = rowH.current
+  const first = virt ? Math.max(0, Math.floor(view.top / rh) - OVERSCAN) : 0
+  const last = virt
+    ? Math.min(shown.length, Math.ceil((view.top + view.h) / rh) + OVERSCAN)
+    : shown.length
+  const slice = virt ? shown.slice(first, last) : shown
   const counts = {
     text: items.filter((i) => i.kind === 'text').length,
     image: items.filter((i) => i.kind === 'image').length,
@@ -581,7 +645,18 @@ function Overlay(): JSX.Element {
         <div className="head" {...drag.handlers} title="Drag to move the Stash anywhere">
           <span className="grip" aria-hidden="true" />
           <strong>Stash</strong>
-          <span className="count">{items.length}</span>
+          {/* At the cap the list is silently forgetting its oldest entry on every copy,
+              and a bare "200" is the one number that cannot say so. */}
+          <span
+            className={'count' + (full ? ' full' : '')}
+            title={
+              full
+                ? `Full: ${items.length} of ${cap}. The oldest entry drops off each time you copy — Clear, or raise "Keep" under ⚙.`
+                : `${items.length} of ${cap} kept`
+            }
+          >
+            {full ? `${items.length}/${cap}` : items.length}
+          </span>
           <span className="spacer" />
           <button
             className="mini"
@@ -638,7 +713,7 @@ function Overlay(): JSX.Element {
                 ))}
               </div>
             )}
-            <div className="list">
+            <div className="list" ref={listRef} onScroll={virt ? onScroll : undefined}>
               {!items.length && (
                 <div className="empty">
                   <span className="empty-glyph" aria-hidden="true">
@@ -648,7 +723,8 @@ function Overlay(): JSX.Element {
                 </div>
               )}
               {!!items.length && !shown.length && <div className="empty">Nothing of that kind.</div>}
-              {shown.map((it) => (
+              {first > 0 && <div style={{ height: first * rh }} aria-hidden="true" />}
+              {slice.map((it) => (
                 <div
                   key={it.id}
                   className={
@@ -757,6 +833,9 @@ function Overlay(): JSX.Element {
                   </span>
                 </div>
               ))}
+              {last < shown.length && (
+                <div style={{ height: (shown.length - last) * rh }} aria-hidden="true" />
+              )}
             </div>
             <div className="foot">
               {keyLabel('Click puts it in the pane · also copies · drag a tile out · Ctrl+Alt+V')}

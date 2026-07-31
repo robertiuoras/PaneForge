@@ -230,6 +230,13 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Full: warm rather than red. Nothing is broken - the oldest entry is falling off, which
+   is what the list is for - it just has to be possible to notice. */
+.head .count.full {
+  color: rgba(230, 175, 90, 0.95);
+  cursor: help;
+}
+
 .head .spacer,
 .panel-foot .spacer {
   flex: 1;
