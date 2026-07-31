@@ -19,7 +19,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { capabilityDir, find, loadAll, reindex, safe, shared, today, update, vaultPath } from './capability-store.mjs'
+import { capabilityDir, find, loadAll, reindex, safe, shared, syncNoteStatus, today, update, vaultPath } from './capability-store.mjs'
 
 const argv = process.argv.slice(2)
 const flag = (n) => argv.includes(n)
@@ -83,12 +83,18 @@ function commit(next, extra = {}) {
     out({ ok: true, dryRun: true, id, stageBefore: capability.stage(record), stageAfter: capability.stage(next), ...extra })
   }
   update(id, () => next)
+  // The note the person reads and the record the app ranks must agree. The index ranks on
+  // the NOTE's status, so skipping this leaves a verified capability permanently outside
+  // trusted retrieval.
+  const stageAfter = capability.stage(next)
+  const noteUpdated = syncNoteStatus(id, next.status, stageAfter)
   const indexed = reindex()
   out({
     ok: true,
     id,
     stageBefore: capability.stage(record),
-    stageAfter: capability.stage(next),
+    stageAfter,
+    noteUpdated,
     indexed,
     ...extra
   })

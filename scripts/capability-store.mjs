@@ -142,6 +142,42 @@ export function reindex() {
   }
 }
 
+/**
+ * Carry a status change onto the record's Obsidian note.
+ *
+ * Without this the two stores disagree: the catalogue says `verified` while the note a
+ * person reads still says `inbox`, and the index - which ranks on the NOTE's status - keeps
+ * the promoted capability out of trusted retrieval forever. It was visible as
+ * `awaiting_review: 1` on the agent's own dashboard for a record that had been verified.
+ *
+ * Frontmatter only. The body is a person's to edit and is never rewritten from here.
+ */
+export function syncNoteStatus(id, status, stageWord) {
+  const path = join(vaultPath(), '30 Knowledge', 'capabilities', `${id}.md`)
+  if (!existsSync(path)) return null
+  let text
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+  const end = text.indexOf('\n---', 4)
+  if (!text.startsWith('---') || end < 0) return null
+  const head = text
+    .slice(0, end)
+    .replace(/^status:.*$/m, `status: ${status}`)
+    .replace(/^updated:.*$/m, `updated: ${today()}`)
+  let body = text.slice(end)
+  // The one human-readable line that repeats the stage, kept honest too.
+  body = body.replace(/^stage \*\*[A-Za-z -]+\*\*.*$/m, `stage **${stageWord}**`)
+  try {
+    writeFileSync(path, head + body, 'utf8')
+    return path
+  } catch {
+    return null
+  }
+}
+
 /** Untrusted text going into Markdown: never let it open a fence or a frontmatter block. */
 export function safe(text) {
   return String(text ?? '').replace(/\r/g, '').replace(/^---$/gm, '- - -').replace(/```/g, "'''").trim()
