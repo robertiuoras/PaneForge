@@ -136,13 +136,45 @@ export function laneRetry(): void {
       // so the retry does not depend on node being on the app's PATH.
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     },
-    () => {
+    (_err, stdout, stderr) => {
       retrying = false
+      // What it said, kept. This runs with no window and its output went nowhere, so a
+      // release that refuses every ten minutes ("No release yet: ...") was invisible:
+      // lane a stayed finished-but-unshipped for a day and the only way to find out why
+      // was to re-run the command by hand. See noteRetry.
+      noteRetry(board.repo, `${stdout ?? ''}${stderr ?? ''}`)
       // Whatever it did (cleared a lane, marked one ready, shipped) is in the state file
       // now; drop the TTL cache so the strip shows it on its next poll, not in 4s.
       cache = { at: 0, board: null }
     }
   )
+}
+
+/** Enough retry log to see a pattern, small enough to never be a problem. */
+const RETRY_LOG_MAX = 64 * 1024
+
+/**
+ * One line per thing the timed retry actually said, in the repo's own .git.
+ *
+ * Not a real logger: silence is the normal case, so this file only ever grows when
+ * something is stuck, and the oldest half is dropped rather than rotated.
+ */
+function noteRetry(main: string, out: string): void {
+  const said = out.trim()
+  if (!said) return
+  const file = join(main, '.git', 'paneforge-lane-retry.log')
+  try {
+    let prev = ''
+    try {
+      prev = readFileSync(file, 'utf8')
+    } catch {
+      /* first line */
+    }
+    const next = `${prev}${new Date().toISOString()} ${said.replace(/\s*\n\s*/g, ' | ')}\n`
+    writeFileSync(file, next.length > RETRY_LOG_MAX ? next.slice(-RETRY_LOG_MAX) : next, 'utf8')
+  } catch {
+    /* a log we cannot write is not worth losing the retry over */
+  }
 }
 
 /** As much of a pane as lane ownership depends on. */

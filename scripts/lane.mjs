@@ -592,7 +592,37 @@ function ensureWorktree(id) {
       /* npm install in the lane still works, it is just slower */
     }
   }
+  excludeModules(dir)
   return dir
+}
+
+/**
+ * Keep the link above out of git from the worktree's own side.
+ *
+ * `.gitignore` said `node_modules/` for a long time, and a trailing slash matches a
+ * directory and not a link - so `git add -A` in a lane committed the junction. Merging
+ * that lane replaced the main checkout's REAL node_modules with a symlink pointing at
+ * itself and the tree the merge landed in had no dependencies at all (2026-08-01, lane
+ * a). The .gitignore is fixed, but a lane branch cut before that fix still carries the
+ * old one; `info/exclude` lives in the shared .git, applies to the main checkout and
+ * every lane worktree at once, and is on no branch at all - so it holds whatever the
+ * lane has checked out. Run on every ensureWorktree rather than only at creation, so
+ * lanes made before this pick it up the next time they are used.
+ */
+function excludeModules(dir) {
+  const r = gitSafe(dir, 'rev-parse', '--git-path', 'info/exclude')
+  if (!r.ok) return
+  const raw = r.out.trim()
+  if (!raw) return
+  const file = resolve(dir, raw)
+  try {
+    const cur = existsSync(file) ? readFileSync(file, 'utf8') : ''
+    if (/^node_modules\/?$/m.test(cur)) return
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}node_modules\n`, 'utf8')
+  } catch {
+    /* an exclude we cannot write is not a reason to fail the lane */
+  }
 }
 
 // ---------------------------------------------------------------- commands
