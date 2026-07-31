@@ -141,6 +141,65 @@
   border-color: var(--accent);
 }
 
+/* Accept and Reject read as a tick and a cross before they read as words. The colour is
+ * the same pair the diff uses two boxes higher up, so green already means "this is what
+ * you would be taking" on this card. */
+.improve-accept {
+  background: #35d07f26;
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.improve-accept:hover {
+  background: #35d07f3d;
+}
+
+.improve-reject {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line-strong));
+}
+
+.improve-reject:hover {
+  background: #ff8f8f1f;
+}
+
+/* Ask for a change: one line, so it reads as a note on the suggestion rather than as a
+ * second place to write the prompt. */
+.improve-tweak {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.improve-tweak .improve-free {
+  flex: 1;
+}
+
+/* The one moving thing on the card that is waiting, and it is 10px across. */
+.improve-spin {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: improve-spin 0.8s linear infinite;
+}
+
+@keyframes improve-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .improve-spin {
+    animation-duration: 3s;
+  }
+}
+
 .improve-questions {
   display: flex;
   flex-direction: column;
@@ -186,33 +245,86 @@
   border-radius: var(--r-sm);
 }
 
-/* The offer itself: a chip in the pane footer, next to the git badge and the clock.
- * Not a popup, not a toast, nothing that moves. */
+/* The offer itself. Still not a popup, not a toast, and nothing that takes the keyboard -
+ * but no longer a 11px chip in a corner, because the one thing in this app nothing else
+ * does was the hardest thing in it to notice. */
 .improve-chip-offer {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  font-size: 11px;
+  gap: 7px;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 999px;
+  box-shadow: var(--shadow);
   cursor: pointer;
+  /* Transform and shadow only: neither reflows, so a chip appearing and being hovered
+     cannot cost the pane below it a layout pass while a CLI is repainting into it. */
+  transition: transform var(--fast), box-shadow var(--fast), background var(--fast);
+}
+
+/* The sparkle. A pseudo-element rather than an emoji in the markup, so the label stays a
+ * plain string for the tests and for anything reading the button out loud. */
+.improve-chip-offer::before {
+  content: '✦';
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.9;
 }
 
 .improve-chip-offer:hover {
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  transform: translateY(-1px);
 }
 
-/* Bottom-right of the pane. The mic owns the bottom-left and "↓ Newest" appears at the
- * bottom-right only while a pane is scrolled up - which is never while someone is typing
- * a prompt into the box at the bottom, so the two cannot land on the same pixels. */
+.improve-chip-offer:active {
+  transform: translateY(0);
+}
+
+/* Centred along the bottom of the pane, over the prompt box it is about.
+ *
+ * It used to sit in the bottom-right corner, level with the mic and the "↓ Newest" badge,
+ * which is where a pane puts the things it does not much want you to look at. The middle
+ * is where the eye already is while a prompt is being typed. Nothing else lives here: the
+ * mic owns the bottom-left, "↓ Newest" the bottom-right, and both are far enough away at
+ * this width that they cannot be hit by mistake. */
 .improve-float {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
   z-index: 30;
+  animation: improve-rise var(--fast) ease-out;
+}
+
+/* Hover has to keep the centring, or the button jumps half its own width sideways. */
+.improve-float:hover {
+  transform: translateX(-50%) translateY(-1px);
+}
+
+.improve-float:active {
+  transform: translateX(-50%);
+}
+
+@keyframes improve-rise {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .improve-float {
+    animation: none;
+  }
 }
 
 /* Research this request, and the capability chips it can add. */

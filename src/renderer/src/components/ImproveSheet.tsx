@@ -70,6 +70,16 @@ interface Props {
    * something the user just said they did not want.
    */
   onRerun?: (exclude: string[]) => void
+  /**
+   * "Shorter", "keep the file names", "ask me about the auth part" - a note on the
+   * suggestion, which produces a new one written to it.
+   *
+   * A re-run and not an edit of the box, for the same reason removal is: the words have to
+   * be rewritten around the instruction, and the diff has to keep meaning what it says.
+   * The removals so far ride along, or asking for a change would quietly bring back a
+   * capability that had been taken out.
+   */
+  onTweak?: (tweak: string, exclude: string[]) => void
 }
 
 export default function ImproveSheet({
@@ -78,7 +88,8 @@ export default function ImproveSheet({
   onAccepted,
   onRejected,
   onAnswered,
-  onRerun
+  onRerun,
+  onTweak
 }: Props): React.JSX.Element {
   const result = state.phase === 'review' || state.phase === 'asking' ? state.result : null
   const suggested = result?.improvement?.improved ?? ''
@@ -87,7 +98,23 @@ export default function ImproveSheet({
   const [research, setResearch] = useState<'idle' | 'running'>('idle')
   const [report, setReport] = useState<ResearchReport | null>(null)
   const [removed, setRemoved] = useState<string[]>([])
+  const [tweak, setTweak] = useState('')
+  const [elapsed, setElapsed] = useState(0)
   const areaRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * Seconds, counted out loud while it works.
+   *
+   * The run is a headless CLI and takes twenty-odd seconds - measured 22.5 s for a small
+   * one on 2026-07-31 - which is far past the point where a still card reads as a hung
+   * app. Nothing here decides anything; it is the difference between waiting and wondering.
+   */
+  useEffect(() => {
+    if (state.phase !== 'working') return setElapsed(0)
+    setElapsed(0)
+    const t = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(t)
+  }, [state.phase, state.phase === 'working' ? state.original : ''])
 
   /**
    * One bounded research pass, on demand and never automatically.
@@ -136,7 +163,16 @@ export default function ImproveSheet({
     return (
       <div className="improve-sheet" role="dialog" aria-label="Improving prompt">
         <div className="improve-head">
-          <span className="improve-title">Improving…</span>
+          <span className="improve-title">
+            <span className="improve-spin" aria-hidden="true" />
+            Improving…
+          </span>
+          {/* The seconds, because the honest answer to "is it stuck" is a number. A run
+              that has gone past the usual is still working; one that has gone past the
+              deadline is killed and says so. */}
+          <span className="improve-meta">
+            {elapsed}s{elapsed > 45 ? ' · longer than usual' : ' · usually 20-40s'}
+          </span>
           {/* Through onRejected, which cancels AND closes. Cancelling the request while
               leaving the overlay up is a button that appears to do nothing: the spawn is
               gone but the sheet sits there until a reply that is never coming. */}
@@ -146,7 +182,7 @@ export default function ImproveSheet({
         </div>
         <div className="improve-original">{state.original}</div>
         <div className="improve-foot improve-muted">
-          Typing in the pane cancels this. Nothing is sent.
+          Editing the prompt cancels this. Nothing is sent.
         </div>
       </div>
     )
@@ -162,7 +198,16 @@ export default function ImproveSheet({
           </button>
         </div>
         <div className="improve-error">{state.error}</div>
-        <div className="improve-foot improve-muted">Your prompt is untouched.</div>
+        <div className="improve-foot">
+          {/* A failure that can only be closed is a dead end, and the commonest one - a
+              run that took longer than the deadline - succeeds on the second go. */}
+          {onRerun ? (
+            <button className="improve-btn improve-primary" onClick={() => onRerun([])}>
+              Try again
+            </button>
+          ) : null}
+          <span className="improve-muted">Your prompt is untouched.</span>
+        </div>
       </div>
     )
   }
@@ -384,12 +429,40 @@ export default function ImproveSheet({
 
       {result.held ? <div className="improve-held">{result.held}</div> : null}
 
+      {/* Ask for something different, in words, rather than editing the box by hand.
+          Submitting re-runs the improver with the note attached, so what comes back is a
+          whole suggestion written to it - and the removals so far ride along, or a change
+          request would quietly bring back a capability that had been taken out. */}
+      {onTweak ? (
+        <form
+          className="improve-tweak"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const note = tweak.trim()
+            if (!note) return
+            setTweak('')
+            onTweak(note, removed)
+          }}
+        >
+          <input
+            className="improve-free"
+            value={tweak}
+            placeholder="Ask for a change - shorter, keep the file names, ask me about auth…"
+            aria-label="ask for a change to this suggestion"
+            onChange={(e) => setTweak(e.target.value)}
+          />
+          <button className="improve-btn" type="submit" disabled={!tweak.trim()}>
+            Suggest again
+          </button>
+        </form>
+      ) : null}
+
       <div className="improve-foot">
         <button
-          className="improve-btn improve-primary"
+          className="improve-btn improve-accept"
           onClick={() => onAccepted(text, editedChars)}
         >
-          Accept
+          <span aria-hidden="true">✓</span> Accept
         </button>
         {imp.questions.length ? (
           <button className="improve-btn" onClick={() => onAnswered([])}>
@@ -404,8 +477,8 @@ export default function ImproveSheet({
         <button className="improve-btn" onClick={() => setText(result.original)}>
           Restore original
         </button>
-        <button className="improve-btn" onClick={onRejected}>
-          Reject (Esc)
+        <button className="improve-btn improve-reject" onClick={onRejected}>
+          <span aria-hidden="true">✗</span> Reject (Esc)
         </button>
         <span className="improve-muted improve-right">
           your draft is kept · nothing is sent
