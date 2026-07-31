@@ -56,8 +56,13 @@ const RULES: Rule[] = [
   },
   {
     type: 'ops',
-    strong: /\b(deploy|deployment|ci\b|pipeline|docker|kubernetes|k8s|release|rollback|migration|infra\w*|terraform|env(?:ironment)? var\w*)\b/i,
-    weak: /\b(server|production|prod\b|staging|build fails)\b/i
+    // `deploy\w*` rather than `deploy|deployment`: "deployed env" matched neither, and the
+    // draft it came from - rotate a key that is in the deployed env - scored as a FEATURE
+    // on the word "want" alone. Scheduled work is here for the same reason: a cron that
+    // stopped reporting a heartbeat had no ops keyword at all and classified as `other`.
+    // Both measured by `prompt-eval.mjs`, which is what the golden set is for.
+    strong: /\b(deploy\w*|ci\b|pipeline|docker|kubernetes|k8s|release|rollback|migration|infra\w*|terraform|env(?:ironment)? var\w*|cron|scheduler|scheduled (?:job|task)|heartbeat|rotate|credentials?)\b/i,
+    weak: /\b(server|production|prod\b|staging|build fails|nightly|secret)\b/i
   },
   {
     type: 'question',
