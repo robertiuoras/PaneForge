@@ -23,14 +23,15 @@
 //   node scripts/lane-holder-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-lane-holder-test')
+// realpath: /var/folders vs /private/var/folders on macOS - see lane-sweep-test.
+const root = join(realpathSync(tmpdir()), 'paneforge-lane-holder-test')
 rmSync(root, { recursive: true, force: true })
 mkdirSync(root, { recursive: true })
 

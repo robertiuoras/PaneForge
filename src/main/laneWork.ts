@@ -21,7 +21,7 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
@@ -91,7 +91,32 @@ const gitOut = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =
 
 /** Windows paths differ in case and slash direction for the same folder. */
 export function samePath(a: string, b: string): boolean {
-  const norm = (p: string): string => resolve(p).replace(/[\\/]+$/, '').toLowerCase()
+  // realpath, not resolve alone: every path git hands back is already real, and on macOS
+  // the folder that matters is /var, a symlink to /private/var. A lane living under a
+  // symlinked parent therefore compared unequal to the same lane as git spells it, and
+  // laneWork() called the folder "not a lane" of its own repo. A path that is not on disk
+  // keeps the old answer rather than throwing.
+  const norm = (p: string): string => {
+    let head = resolve(p)
+    const rest: string[] = []
+    // The deepest part that exists gets resolved and the rest is kept as spelt: a pane
+    // names a folder that may not be on disk (a chat's cwd inside a lane that was swept),
+    // and a half-resolved path must not compare unequal to a fully resolved one.
+    for (;;) {
+      try {
+        head = realpathSync(head)
+        break
+      } catch {
+        const up = dirname(head)
+        if (up === head) break
+        rest.unshift(basename(head))
+        head = up
+      }
+    }
+    return join(head, ...rest)
+      .replace(/[\\/]+$/, '')
+      .toLowerCase()
+  }
   return norm(a) === norm(b)
 }
 

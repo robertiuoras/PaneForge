@@ -18,13 +18,15 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const repoRoot = resolve(import.meta.dirname, '..')
-const work = mkdtempSync(join(tmpdir(), 'pf-lanework-'))
+// realpath: macOS hands out /var/folders/... for a temp dir that git and the app both
+// spell /private/var/folders/..., and every path assertion below would compare the two.
+const work = realpathSync(mkdtempSync(join(tmpdir(), 'pf-lanework-')))
 let failures = 0
 
 function check(name, ok, detail = '') {

@@ -14,7 +14,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -24,7 +24,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // because electron-vite resolves it) is not a file it can find. esbuild follows the
 // imports the way the app's own build does.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const bundle = join(tmpdir(), 'paneforge-lane-sweep-laneWork.mjs')
+// realpath: macOS spells the temp dir /var/folders/... where git and the app both say
+// /private/var/folders/..., which every path assertion below would trip over.
+const tmp = realpathSync(tmpdir())
+const bundle = join(tmp, 'paneforge-lane-sweep-laneWork.mjs')
 buildSync({
   absWorkingDir: repoRoot,
   entryPoints: [join('src', 'main', 'laneWork.ts')],
@@ -36,7 +39,7 @@ buildSync({
 })
 const { sweepLanes } = await import(pathToFileURL(bundle).href)
 
-const root = join(tmpdir(), 'paneforge-lane-sweep-test')
+const root = join(tmp, 'paneforge-lane-sweep-test')
 rmSync(root, { recursive: true, force: true })
 mkdirSync(root, { recursive: true })
 

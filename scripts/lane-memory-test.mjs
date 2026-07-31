@@ -17,13 +17,14 @@
 // temp folder and imported directly - no Electron, no app, ~2s.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const repoRoot = resolve(import.meta.dirname, '..')
-const work = mkdtempSync(join(tmpdir(), 'pf-lane-'))
+// realpath: see lane-work-test - /var/folders vs /private/var/folders on macOS.
+const work = realpathSync(mkdtempSync(join(tmpdir(), 'pf-lane-')))
 let failures = 0
 
 function check(name, ok, detail = '') {
