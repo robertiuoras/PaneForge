@@ -275,6 +275,38 @@ explicit `--install`, into a throwaway directory with no credentials in its envi
 `--ignore-scripts` - and it never RUNS what it installed, because the build links modules
 rather than executing them.
 
+`npm run test:split` is the other way several agents take one job, and the difference
+from a swarm is the whole point. A swarm is several roles in ONE checkout, kept apart by
+their briefs - right when they interleave, wrong for four independent features, because
+"do not edit files another role owns" is a sentence in a prompt and a sentence does not
+survive an agent that needs one import from over there. A split cuts the task into
+workstreams and sends each through the same `laneFor` the session list uses, so each one
+is in its own worktree: they cannot write the same file because they are not looking at
+the same file.
+
+The model proposes and `src/main/split.ts` decides. The load-bearing check is that no
+two lanes claim the same path - a plan that overlaps is REFUSED, never repaired, because
+repairing it means guessing which lane the file belonged to and the cost of guessing is
+paid later, in a merge, by someone who was not there. Containment counts (`src/main` and
+`src/main/split.ts` are the same claim), case counts (these file systems are
+case-insensitive), and `.` is the whole repository rather than a path that collides with
+nothing.
+
+Two of its rules were written by running the real CLI rather than by reading the code,
+and neither is visible without doing that. Claimed paths keep their capitals: they are
+compared lowercased but STORED as given, because the string ends up in the brief the
+agent is started with and `src/renderer/src/components/settingsdialog.tsx` is a file
+that does not exist on a Mac. And the brief cap is 2400, not 1200, because a real
+three-lane plan came back with ~1300-character briefs and the first cap truncated every
+one of them mid-sentence.
+
+`SPLIT_DEADLINE_MS` is 240 s and the number was measured, for the same reason the
+improver's was: a real plan for this repository takes **61.5 s** from a bare `claude -p`
+and 35 s from inside the app, and the first version shipped with improvement's 90 s,
+where every click died on its own deadline and reported "produced no answer" - which
+reads as a broken feature rather than as a wrong constant. The dialog counts the seconds
+out loud so a slow plan looks slow rather than stuck.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.

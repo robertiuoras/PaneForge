@@ -93,6 +93,38 @@ p = parsePlan(plan([lane('one', ['src/main']), lane('two', ['src/mainWindow.ts']
 check('src/main does not swallow src/mainWindow.ts', p.lanes.length === 2, p.refused)
 
 // ---------------------------------------------------------------------------
+// What a real answer looked like, and the two things it broke
+//
+// Both were found by running the actual CLI against the actual prompt, not by reading
+// the code: the plan came back with 1,300-character briefs and mixed-case paths, and
+// the first version of this file silently cut the first and lowercased the second.
+
+p = parsePlan(
+  plan([
+    lane('prefs', ['src/renderer/src/components/SettingsDialog.tsx']),
+    lane('export', ['src/main/historyExport.ts'])
+  ])
+)
+check(
+  'a claimed path keeps its capitals - on a Mac the lowercased one does not exist',
+  p.lanes[0].owns[0] === 'src/renderer/src/components/SettingsDialog.tsx' &&
+    p.lanes[1].owns[0] === 'src/main/historyExport.ts',
+  JSON.stringify(p.lanes.map((l) => l.owns))
+)
+check(
+  'the brief an agent is started with names the file in its real case',
+  laneBrief(p, 0, 'x').includes('src/renderer/src/components/SettingsDialog.tsx')
+)
+
+const long = 'Build the preferences tab. '.repeat(60) // ~1,600 chars, a real brief's size
+p = parsePlan(plan([lane('a', ['src/a.ts'], long), lane('b', ['src/b.ts'])]))
+check(
+  'a real-sized brief is not truncated',
+  p.lanes[0].brief.length === long.trim().length,
+  `${p.lanes[0].brief.length} of ${long.trim().length}`
+)
+
+// ---------------------------------------------------------------------------
 // The refusals that are the planner's own
 
 p = parsePlan('{"refused":"The schema has to exist before the pipeline can read it."}')
@@ -146,7 +178,7 @@ check(`at most ${MAX_LANES} lanes`, p.lanes.length === MAX_LANES, String(p.lanes
 
 p = parsePlan(good)
 const brief = laneBrief(p, 0, 'Add settings and a capability catalogue')
-check('the brief names this lane’s own files', brief.includes('src/renderer/components/settings.tsx'))
+check('the brief names this lane’s own files', brief.includes('src/renderer/components/Settings.tsx'))
 check('the brief names what the OTHER lane owns', brief.includes('src/main/knowledge'))
 check('the brief does not leak the other lane’s instructions', !brief.includes('build catalogue'))
 check('the brief repeats the contracts', brief.includes('Config.splitLanes'))

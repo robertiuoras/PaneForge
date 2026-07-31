@@ -30,8 +30,8 @@ import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped }
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { which } from './which'
-import { cancelImprove, DEADLINE_MS, improve, resolveEngine, runCli } from './improve'
-import { laneBrief, parsePlan, splitPayload } from './split'
+import { cancelImprove, improve, resolveEngine, runCli } from './improve'
+import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
 import { cancelResearch, research } from './researchRun'
 import { buildContextPack } from './contextPack'
 import { stage } from '../shared/capability'
@@ -783,9 +783,10 @@ ipcMain.handle(
 
     const out = await runCli(engine, splitPayload(req.mission, tree), {
       key: `split:${req.cwd}`,
-      // Same reason improvement's deadline is 90s and not 20: this is a whole CLI
-      // start-up plus a real answer, and a deadline under it reads as a broken feature.
-      deadlineMs: DEADLINE_MS
+      // Its own deadline, not improvement's: a plan is a much longer answer than a
+      // rewritten prompt, and 90s was measured to be under what it costs. See
+      // SPLIT_DEADLINE_MS for the number that was measured.
+      deadlineMs: SPLIT_DEADLINE_MS
     })
     return out ? parsePlan(out) : nothing('The planner produced no answer.')
   }

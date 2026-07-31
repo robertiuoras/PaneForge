@@ -38,8 +38,29 @@ export type { SplitLane, SplitPlan }
 export const MIN_LANES = 2
 export const MAX_LANES = 4
 
-/** Longest brief kept. Past this the plan is padding, and it is typed into a CLI. */
-const BRIEF_LIMIT = 1200
+/**
+ * How long the planner is given before the click is called a failure.
+ *
+ * Measured, because the last feature that guessed this number shipped a deadline under
+ * the work and every click died as "produced no answer" - which reads as a broken
+ * feature rather than as a wrong constant. A real three-lane plan for this repository
+ * took **61.5 s** from a bare `claude -p`, and the app's own overhead put the first
+ * in-app attempt at just over the 90 s it was given. Four minutes is not what it costs;
+ * it is what it is allowed to cost before the answer is thrown away, and the dialog
+ * counts the seconds out loud so a slow one looks slow rather than stuck.
+ */
+export const SPLIT_DEADLINE_MS = 240_000
+
+/**
+ * Longest brief kept.
+ *
+ * Measured rather than guessed: a real three-lane plan for this repository came back
+ * with briefs of about 1,300 characters each, so the first cap of 1,200 truncated every
+ * one of them mid-sentence - and a brief is not a description, it is the instruction the
+ * agent is started with. The ceiling is still here because it is typed into a CLI, just
+ * high enough that a normal plan is never cut.
+ */
+const BRIEF_LIMIT = 2400
 const NAME_LIMIT = 60
 /** Most paths one lane may claim. A lane that owns forty files owns the repo. */
 const OWNS_LIMIT = 24
@@ -82,23 +103,33 @@ export function splitPayload(mission: string, files: string[] = []): string {
 }
 
 /**
- * Reduce a claimed path to the form two claims can be compared in.
+ * The claim as it will be shown and as the agent will be told it: separators the way
+ * git writes them, no `./`, no trailing slash, no glob tail.
  *
- * Backslashes to forward, no leading `./`, no trailing slash, lowercased - the file
- * systems this runs on are case-insensitive, so `src/App.tsx` and `src/app.tsx` are one
- * file and must collide. A glob tail (`/**`, `/*`) is the directory it sits in.
+ * Case is left exactly as it came. That is not cosmetic - this string ends up in the
+ * brief the agent is started with, and `src/renderer/components/settingsdialog.tsx` is
+ * a file that does not exist on a Mac.
  */
-function normalise(p: string): string {
-  let s = String(p ?? '')
+function tidy(p: string): string {
+  return String(p ?? '')
     .trim()
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
     .replace(/\/+$/, '')
-    .toLowerCase()
-  s = s.replace(/\/\*+$/, '')
-  // `.`, `./` and `*` all mean the repository root, and the root contains every other
-  // claim - so it must reduce to the same empty string they are all compared against,
-  // or it silently collides with nothing and the plan looks disjoint.
+    .replace(/\/\*+$/, '')
+}
+
+/**
+ * The same claim reduced to the form two claims are COMPARED in - lowercased, because
+ * the file systems this runs on are case-insensitive and `src/App.tsx` and
+ * `src/app.tsx` are one file that two lanes must not both own.
+ *
+ * `.`, `./` and `*` all mean the repository root, and the root contains every other
+ * claim - so they reduce to the empty string everything else is measured against,
+ * rather than to a token that silently collides with nothing.
+ */
+function keyOf(p: string): string {
+  const s = tidy(p).toLowerCase()
   return s === '.' || s === '*' ? '' : s
 }
 
@@ -165,13 +196,16 @@ export function parsePlan(text: string): SplitPlan {
     if (seenName.has(key)) continue
 
     const owns: string[] = []
+    const keys: string[] = []
     for (const o of Array.isArray(l.owns) ? l.owns : []) {
-      const n = normalise(String(o))
+      const k = keyOf(String(o))
       // Checked before `escapes`, which would also reject the empty string but with a
       // message about escaping the project, which is not what happened.
-      if (!n) return none(`“${name}” claims the whole repository - that is not a lane.`)
-      if (escapes(n)) return none(`A lane claimed a path outside the project: ${String(o)}`)
-      if (!owns.includes(n)) owns.push(n)
+      if (!k) return none(`“${name}” claims the whole repository - that is not a lane.`)
+      if (escapes(k)) return none(`A lane claimed a path outside the project: ${String(o)}`)
+      if (keys.includes(k)) continue
+      keys.push(k)
+      owns.push(tidy(String(o)))
       if (owns.length >= OWNS_LIMIT) break
     }
     if (!owns.length) continue
@@ -190,7 +224,7 @@ export function parsePlan(text: string): SplitPlan {
     for (let j = i + 1; j < lanes.length; j++)
       for (const a of lanes[i].owns)
         for (const b of lanes[j].owns)
-          if (collide(a, b))
+          if (collide(keyOf(a), keyOf(b)))
             return none(
               `“${lanes[i].name}” and “${lanes[j].name}” both own ${a === b ? a : `${a} and ${b}`} - that is one workstream, not two.`
             )
