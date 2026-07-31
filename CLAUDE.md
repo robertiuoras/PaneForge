@@ -243,6 +243,28 @@ the main process on purpose, so the byte stream is built in one place - and "did
 submit" is the improved text sitting on the prompt row with the cursor never having moved
 down to a fresh one.
 
+`npm run test:research` is the Phase 2 gate, model-free and network-free: what a research
+run is allowed to believe, and what it must refuse. Three cases are the reason it exists. A
+lead is not evidence - a finding cited only to a Reddit thread or a showcase page is
+rejected outright rather than stored at low confidence. A source that was never opened is
+not a source, because a search snippet reads exactly like a citation once it is in a JSON
+field. And hostile text is REJECTED, never sanitised: repairing it would mean deciding
+which half of a poisoned note was the honest half. It also pins the derived lifecycle -
+`Discovered → Evaluated → Tested → Verified → Recommended` is computed by `stage()` from the
+stored vault status plus the evidence on the record, so nothing reaches Tested without a
+sandbox run and nothing reaches Recommended without something having shipped. There is no
+field anyone can set.
+
+The pipeline that fills the catalogue is documented in `RESEARCH-POLICY.md`, and the one
+thing worth knowing before touching it is that `scripts/capability-ingest.mjs` is the ONLY
+door in. The scheduled agent lives in taskdriver and is Python; the gate is TypeScript; an
+agent that validated its own findings would be a second implementation of the
+untrusted-content boundary, and the drift would only ever be visible as something hostile
+getting stored. `capability-sandbox.mjs` is the only thing allowed to install, only with an
+explicit `--install`, into a throwaway directory with no credentials in its environment and
+`--ignore-scripts` - and it never RUNS what it installed, because the build links modules
+rather than executing them.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
