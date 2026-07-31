@@ -167,15 +167,30 @@ try {
   assert.equal(T.resumeIdFor('pane2'), 'chat-b')
   assert.equal(T.resumeIdFor('pane1'), 'chat-a', 'pane one lost its chat to pane two')
 
-  // /clear starts a new transcript inside the same pane. The pane follows it only
-  // because it said so - sessions.ts re-notes the pane when that command is submitted.
-  transcript('chat-c', [user('after the clear')])
-  assert.equal(T.resumeIdFor('pane2'), 'chat-b', 'moved conversation without being told')
+  // /clear starts a new transcript inside the same pane, and being re-noted is NOT
+  // enough to follow it. sessions.ts re-notes when the command is submitted, which is
+  // seconds before the CLI has written anything: measured on a real pane, the old chat's
+  // last write was 10:45:49 and the new chat was born 10:45:55. At the re-note the only
+  // transcript in the folder is the one being abandoned, it is newer than the slack
+  // allows for, and the pane claims it straight back - and then holds it for good.
+  //
+  // That was not cosmetic. Lane holds are recorded against the CHAT id, so a pane one
+  // /clear old owned no lane: its card showed nothing and its lane was drawn under
+  // "lanes elsewhere" while the pane sat two inches below it.
   T.noteSession('pane2', cwd, 'claude')
-  assert.equal(T.resumeIdFor('pane2'), 'chat-c')
+  assert.equal(T.resumeIdFor('pane2'), 'chat-b', 'the re-note should re-take the old chat')
+  transcript('chat-c', [user('after the clear')])
+  assert.equal(T.resumeIdFor('pane2'), 'chat-c', 'did not follow the pane into its new chat')
   // And the OTHER pane must not drift onto the conversation pane two just left, even
   // though it is newer than its own and nobody is holding it any more.
   assert.equal(T.resumeIdFor('pane1'), 'chat-a', 'pane one drifted onto an abandoned chat')
+
+  // The same clear, with the two panes asked in the other order. Whichever is asked
+  // first, the new chat belongs to the pane whose own transcript went quiet just before
+  // it was born - the other one is still writing to its own.
+  transcript('chat-d', [user('pane one is still here')])
+  assert.equal(T.resumeIdFor('pane1'), 'chat-a', 'pane one took a chat born after it went quiet')
+  assert.equal(T.resumeIdFor('pane2'), 'chat-c', 'pane two left the chat it had just moved into')
 
   // The dialog reads the prompt out of the conversation it is about to reopen.
   assert.equal(T.lastPrompt(cwd, 'chat-a'), 'pane one prompt')

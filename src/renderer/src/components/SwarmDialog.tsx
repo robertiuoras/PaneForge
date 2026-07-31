@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { modelLabel, modelValue, supportsModel } from '@shared/agents'
 import type { Project, SplitPlan, SwarmRole } from '@shared/types'
@@ -8,11 +8,27 @@ import Select from './Select'
 
 const api = window.api
 
+/**
+ * What the dialog was opened WITH, when something other than the toolbar opened it.
+ *
+ * The split offer chip in a pane knows all three answers already - the folder that pane is
+ * in and the words in its prompt box - and re-typing them into a dialog is the reason a
+ * feature that exists goes unused. `plan` starts the planner on open, which is still a
+ * deliberate action: it is the click on the chip.
+ */
+export interface SwarmStart {
+  mode?: 'roles' | 'split'
+  cwd?: string
+  mission?: string
+  plan?: boolean
+}
+
 interface Props {
   projects: Project[]
   agents: AgentInfo[]
   roles: SwarmRole[]
   defaultModels: Record<string, string>
+  initial?: SwarmStart
   onSaveRoles: (roles: SwarmRole[]) => void
   onClose: () => void
   onLaunched: (count: number) => void
@@ -38,17 +54,18 @@ export default function SwarmDialog({
   agents,
   roles,
   defaultModels,
+  initial,
   onSaveRoles,
   onClose,
   onLaunched
 }: Props): JSX.Element {
-  const [cwd, setCwd] = useState(projects[0]?.path ?? '')
-  const [mission, setMission] = useState('')
+  const [cwd, setCwd] = useState(initial?.cwd ?? projects[0]?.path ?? '')
+  const [mission, setMission] = useState(initial?.mission ?? '')
   const [local, setLocal] = useState<SwarmRole[]>(roles)
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const [mode, setMode] = useState<'roles' | 'split'>('roles')
+  const [mode, setMode] = useState<'roles' | 'split'>(initial?.mode ?? 'roles')
   const [plan, setPlan] = useState<SplitPlan | null>(null)
   const [planning, setPlanning] = useState(false)
   // Planning is a whole CLI start-up plus a real answer - measured at 22-33s for the
@@ -87,6 +104,15 @@ export default function SwarmDialog({
       setPlanning(false)
     }
   }
+
+  // Opened from a pane's own offer: the folder and the words are already here, so the
+  // planner starts without a second click. Once only - re-planning is the button.
+  const autoPlanned = useRef(false)
+  useEffect(() => {
+    if (autoPlanned.current || !initial?.plan || !cwd || !mission.trim()) return
+    autoPlanned.current = true
+    void makePlan()
+  }, [initial, cwd, mission])
 
   const launchSplit = async (): Promise<void> => {
     if (!plan || !lanes.length || busy) return

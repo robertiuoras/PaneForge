@@ -485,6 +485,32 @@ html.app-blurred .elapsed::after { animation: none; }
 }
 @media (prefers-reduced-motion: reduce) { .chip.pf-lane.stuck { animation: none; } }
 
+/* A pane that holds a lane AND is mid-turn: work is being done that a release will
+   collect by itself, in a checkout that is not the one on screen. The chip says which
+   lane; this says it is happening right now, from across the room.
+   Only `opacity` moves. The ring's blur is rasterised once and then breathed - the same
+   lesson as `.num-wrap`, where animating a box-shadow directly measured at 64% of a
+   core. `:not(.dragging)` so the drop frame stays the only thing around a dragged card. */
+.row:not(.dragging).lane-live::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: calc(var(--r) + 2px);
+  border: 1px solid #8b9dff66;
+  box-shadow: 0 0 0 3px #8b9dff12, 0 0 14px #8b9dff38;
+  pointer-events: none;
+  animation: laneRing 2.6s ease-in-out infinite;
+}
+@keyframes laneRing {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+/* Still a ring, nothing moving: reduced motion, a window nobody is looking at, and a
+   240 Hz display where every animated frame is a frame the compositor has to make. */
+@media (prefers-reduced-motion: reduce) { .row.lane-live::after { animation: none; opacity: 0.75; } }
+html.app-blurred .row:not(.dragging).lane-live::after,
+html.hi-refresh .row:not(.dragging).lane-live::after { animation: none; opacity: 0.75; }
+
 /* ---- PaneForge's own dev lanes (LaneStrip) ---- */
 /* A lane that cannot merge blocks its own work from every release, and used to say so
    nowhere. Red, and it keeps glowing until it is not true any more. */

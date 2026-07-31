@@ -28,7 +28,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { feedDraft, newDraft, flatDraft, looksFinished, LANE_OPTIONS, SLASH_OPTIONS } =
+const { feedDraft, newDraft, flatDraft, looksFinished, looksSplittable, LANE_OPTIONS, SLASH_OPTIONS } =
   createRequire(import.meta.url)(out)
 
 const ESC = String.fromCharCode(27)
@@ -146,6 +146,55 @@ check(
 check('a trailing comma is not finished', looksFinished('add a signup page, a login page,') === false)
 check('a slash command is never offered', looksFinished('/clear the context and start again') === false)
 check('a bang line is never offered', looksFinished('!npm run build and then tell me what broke') === false)
+
+// --- looksSplittable --------------------------------------------------------
+//
+// The chip this gates opens a dialog that starts a real CLI plan, so a false yes costs a
+// minute of somebody's attention. It is meant to say no to almost everything.
+
+check(
+  'one job is not a split',
+  looksSplittable(
+    'the login form is broken on mobile - the submit button sits under the keyboard and the ' +
+      'error text is cut off, so nobody can see what went wrong on a small screen.'
+  ) === false
+)
+check(
+  'three bullets, each a job, is a split',
+  looksSplittable(
+    [
+      'a few things for the dashboard, whenever you get to them:',
+      '- add offer replies with a test',
+      '- fix the avatar upload on safari',
+      '- move the billing page onto the new table'
+    ].join('\n')
+  ) === true
+)
+check(
+  'three bullets that are notes, not jobs, is not a split',
+  looksSplittable(
+    [
+      'what I know about the slowness so far, before anyone starts on it:',
+      '- it is slow on mobile',
+      '- only on safari',
+      '- since last tuesday'
+    ].join('\n')
+  ) === false
+)
+check(
+  'three jobs in prose is a split',
+  looksSplittable(
+    'add offer replies to the dashboard and then fix the avatar upload on safari, ' +
+      'plus migrate the billing page onto the new table when you get a chance.'
+  ) === true
+)
+check('a short list is not a split', looksSplittable('add a login page and fix the header') === false)
+check(
+  'a draft still being typed is never a split',
+  looksSplittable(
+    'add offer replies to the dashboard and fix the avatar upload on safari and migrate the billing and'
+  ) === false
+)
 
 rmSync(work, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failing` : '\nall good')

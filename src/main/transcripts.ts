@@ -41,11 +41,33 @@ interface Started {
   cwd: string
   agent: string
   at: number
+  /** the transcript this pane held when it last said it had moved, if it held one */
+  prior?: string
 }
 
 const started = new Map<string, Started>()
 /** paneId -> transcript file it has taken, so two panes on one repo never share one. */
 const claimed = new Map<string, string>()
+/**
+ * Transcripts a pane has moved OFF, which nothing may drift onto.
+ *
+ * A claim being dropped is not the same as a conversation being free. When a pane
+ * `/clear`s, the conversation it leaves behind is unclaimed and newer than whatever the
+ * other pane on that folder is in - so without this the other pane would adopt it, which
+ * is the exact drift `transcriptFor` was made sticky to prevent.
+ */
+const released = new Set<string>()
+/**
+ * Panes whose claim is known to be the conversation they are actually in.
+ *
+ * A pane is settled once it holds a conversation that BEGAN after the pane last said it
+ * had moved. Until then its claim is a guess made in a gap: `/clear` re-notes the pane the
+ * moment the command is submitted, seconds before the CLI has written a single line of the
+ * new transcript, so at that instant the newest file in the folder is the one being
+ * abandoned and the pane takes it straight back. Only an unsettled pane ever changes its
+ * mind, which is what stops a settled one drifting onto a neighbour's chat.
+ */
+const settled = new Set<string>()
 
 /** Claude Code's folder name for a working directory. */
 function projectDir(cwd: string): string {
@@ -103,27 +125,49 @@ function interactive(file: string): boolean {
   }
 }
 
-/** A pane started (or restarted): from here on it owns one conversation. */
-export function noteSession(id: string, cwd: string, agent: string): void {
-  started.set(id, { cwd, agent, at: Date.now() })
+/**
+ * A pane started, restarted, or changed conversation: from here on it owns one.
+ *
+ * `resumeId` is the conversation it was started ON, and passing it settles the pane
+ * immediately instead of leaving it to work out which file is its own. That matters for
+ * a reopened desk: the resumed conversation was written yesterday, so every rule based on
+ * "newer than this pane" would decide the pane had moved on the first new chat in that
+ * folder - and take somebody else's.
+ */
+export function noteSession(id: string, cwd: string, agent: string, resumeId?: string): void {
+  started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id) })
   claimed.delete(id)
+  settled.delete(id)
+  const file = resumeId ? transcriptPath(cwd, resumeId) : null
+  if (file) {
+    claimed.set(id, file)
+    settled.add(id)
+    released.delete(file)
+  }
 }
 
 export function forgetSession(id: string): void {
   started.delete(id)
   claimed.delete(id)
+  settled.delete(id)
 }
 
 /**
  * The transcript file this pane is writing, or null while it has not written one yet.
  *
- * A claim, once made, sticks until the file is deleted or the pane says it has moved
- * (noteSession again - what `/clear`, `/resume` and a restart all do). The rule that
- * looks more natural, "whichever is newest that nobody else has", is wrong in a way a
- * test caught: two panes on one repo, the second one clears, and the FIRST pane then
- * drifts onto the conversation the second one just abandoned, because it is newer than
- * its own and no longer claimed. It would then be offered back under the wrong pane's
- * name, with the wrong work in it.
+ * A claim sticks until the pane says it has moved (noteSession - a restart), the file is
+ * deleted, or the pane is seen moving on its own: `/clear` starts a whole new conversation
+ * inside a pty nobody restarted, so nothing tells us. The rule that looks more natural,
+ * "whichever is newest that nobody else has", is wrong in a way a test caught: two panes on
+ * one repo, the second one clears, and the FIRST pane then drifts onto the conversation the
+ * second one just abandoned, because it is newer than its own and no longer claimed. It
+ * would then be offered back under the wrong pane's name, with the wrong work in it.
+ *
+ * So the claim follows a clear, and an abandoned conversation is `released` rather than
+ * freed - the drift the sticky rule existed to stop is stopped by naming it, not by
+ * refusing to ever move. Staleness was not cosmetic: lane holds are recorded against the
+ * CHAT id, so a pane one `/clear` old owned no lane at all. Its card said nothing, and its
+ * lane was drawn under "lanes elsewhere" while the pane sat two inches below.
  */
 export function transcriptFor(id: string): string | null {
   const s = started.get(id)
@@ -131,16 +175,96 @@ export function transcriptFor(id: string): string | null {
   const dir = projectDir(s.cwd)
   if (!existsSync(dir)) return null
   const mine = claimed.get(id)
-  if (mine && existsSync(mine)) return mine
   const taken = new Set([...claimed].filter(([k]) => k !== id).map(([, v]) => v))
+  if (mine && existsSync(mine)) {
+    if (settled.has(id)) return mine
+    const next = movedTo(id, s, mine, taken)
+    if (!next) return mine
+    // The old one is not handed to anybody: it is this pane's history, not a free chat.
+    released.add(mine)
+    claimed.set(id, next)
+    settled.add(id)
+    return next
+  }
   // Newest first, and only files written since this pane started: an older conversation
   // in the same folder belongs to whoever had it, not to whoever opened a pane last.
   const pick = transcripts(dir).find(
-    (t) => t.at >= s.at - START_SLACK_MS && !taken.has(t.file) && interactive(t.file)
+    (t) =>
+      t.at >= s.at - START_SLACK_MS &&
+      !taken.has(t.file) &&
+      !released.has(t.file) &&
+      interactive(t.file)
   )
   if (!pick) return null
   claimed.set(id, pick.file)
+  // A pane that has just cleared lands here and the only file to be had is the one it is
+  // leaving: it is still the pane's conversation until the new one exists, so taking it
+  // is right, but it is not the answer and the pane stays free to move once one appears.
+  // Recognised by name rather than by age - the gap between the re-note and the CLI's
+  // first line is however long the CLI takes, and a rule with a clock in it is a rule
+  // that is right on a slow machine and wrong on a fast one.
+  if (pick.file !== s.prior) settled.add(id)
   return pick.file
+}
+
+/** When a file was created, or its last write if the platform will not say. */
+function birth(file: string): number {
+  try {
+    const st = statSync(file)
+    return st.birthtimeMs || st.mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+function mtime(file: string): number {
+  try {
+    return statSync(file).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The conversation this pane has moved into since it claimed its own, or null.
+ *
+ * A `/clear` looks like exactly one thing on disk: the claimed transcript stops being
+ * written, and a new one is born a moment later. Measured on a real pane - old chat last
+ * written 10:45:49, new chat born 10:45:55.
+ *
+ * The only hard part is two panes on ONE folder, where that new file could belong to
+ * either. It belongs to whichever of them stopped writing just before it appeared: a pane
+ * that is still in its own conversation goes on writing, so its transcript's last write is
+ * later than the newcomer's birth, while the pane that cleared froze a second before it.
+ * So a rival whose transcript went quiet in that gap, later than mine did, is the one that
+ * moved and this pane stays where it is.
+ */
+function movedTo(id: string, s: Started, mine: string, taken: Set<string>): string | null {
+  const mineAt = mtime(mine)
+  const cand = transcripts(projectDir(s.cwd)).find(
+    (t) =>
+      t.file !== mine &&
+      !taken.has(t.file) &&
+      !released.has(t.file) &&
+      // Born after this pane said it had moved, and after the last line was written to the
+      // conversation it is leaving. Both, because "newer" alone is any live chat in the
+      // folder, and a pane is not allowed to walk into one of those.
+      birth(t.file) >= s.at - START_SLACK_MS &&
+      birth(t.file) >= mineAt &&
+      interactive(t.file)
+  )
+  if (!cand) return null
+  const born = birth(cand.file)
+  // Two panes on one folder that both cleared are both looking at this file. It belongs
+  // to whichever of them went quiet LAST before it was born.
+  for (const [other, o] of started) {
+    if (other === id || o.cwd !== s.cwd || settled.has(other)) continue
+    const theirs = claimed.get(other)
+    if (!theirs) continue
+    const at = mtime(theirs)
+    if (at > mineAt && at <= born) return null
+  }
+  return cand.file
 }
 
 /** The conversation id to resume this pane with - the transcript's own file name. */

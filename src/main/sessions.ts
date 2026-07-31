@@ -234,7 +234,10 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)
-    noteSession(id, req.cwd, agent)
+    // Started ON a conversation (a reopened desk) rather than into a fresh one: say so,
+    // or the pane spends its life holding a file older than itself and looking for a
+    // newer one to belong to.
+    noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
     this.queuePrompt(id, req.prompt, req.promptDelay)
 
     this.emitSessions()
@@ -293,7 +296,12 @@ export class SessionManager extends EventEmitter {
     recordEnd(id)
     // A restart is a new conversation unless the CLI is being asked to resume one, and
     // either way the pane is writing a different file from here.
-    noteSession(id, live.meta.cwd, live.meta.agent)
+    noteSession(
+      id,
+      live.meta.cwd,
+      live.meta.agent,
+      live.req.resume ? live.req.resumeId : undefined
+    )
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
     live.buffer.set(RESET)
     live.meta.status = 'starting'

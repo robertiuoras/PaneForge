@@ -285,6 +285,48 @@
   transform: translateY(0);
 }
 
+/* The other offer a draft can earn: this ask is several jobs, and they can have a pane
+ * each. Deliberately quieter than Improve - it is the rarer answer, and two chips
+ * competing for the same glance is two chips nobody reads. */
+.split-chip-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-raised, #1b1d22);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform var(--fast), box-shadow var(--fast), background var(--fast);
+}
+.split-chip-offer::before {
+  content: '⑂';
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.split-chip-offer:hover { background: #ffffff14; transform: translateY(-1px); }
+.split-chip-offer:active { transform: translateY(0); }
+
+/* Both offers are about the same words in the same box, so they share one row rather
+ * than one sitting on top of the other: each chip used to centre itself absolutely. */
+.pane-offers {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: improve-rise var(--fast) ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .pane-offers { animation: none; } }
+
 /* Centred along the bottom of the pane, over the prompt box it is about.
  *
  * It used to sit in the bottom-right corner, level with the mic and the "↓ Newest" badge,
