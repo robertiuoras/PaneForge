@@ -10,6 +10,8 @@ interface Props {
   sessions: Session[]
   /** focus the pane a job was handed to */
   onFocus: (id: string) => void
+  /** open the "How lanes work" card */
+  onHelp: () => void
 }
 
 /**
@@ -102,7 +104,13 @@ function fixPrompt(lane: LaneBoardEntry): string {
  * Colour carries the only state worth interrupting for: red means this pane's finished
  * work is being left out of every release.
  */
-export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
+export function LaneChip({
+  lane,
+  onHelp
+}: {
+  lane: LaneBoardEntry
+  onHelp?: () => void
+}): JSX.Element {
   // "lane a" beside a "w2" worktree chip read as two halves of one fact, and they are not
   // related at all: w2 is this pane's own checkout of whatever project it opened, and this
   // is a lane in PaneForge's release pool that the chat in this pane happens to hold. The
@@ -115,9 +123,18 @@ export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
   return (
     <span
       className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
+      role={onHelp ? 'button' : undefined}
+      onClick={
+        onHelp &&
+        ((e) => {
+          e.stopPropagation()
+          onHelp()
+        })
+      }
       title={
-        `This chat is building PaneForge itself in lane ${lane.lane} (${lane.branch}) - ${laneState(lane, true)}.\n` +
-        `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}`
+        `This chat is also editing PaneForge itself, in its own copy of it (lane ${lane.lane}) - ${laneState(lane, true)}.\n` +
+        `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}` +
+        (onHelp ? '\nClick: how lanes work.' : '')
       }
     >
       {label}
@@ -125,7 +142,7 @@ export function LaneChip({ lane }: { lane: LaneBoardEntry }): JSX.Element {
   )
 }
 
-export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Element | null {
+export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): JSX.Element | null {
   // A job is handed over once. Keyed by when the conflict started, so a lane that gets
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
@@ -160,15 +177,21 @@ export default function LaneStrip({ board, sessions, onFocus }: Props): JSX.Elem
       <div className="section">
         <span className="section-title">Lanes elsewhere ({orphans.length})</span>
         {stuck > 0 && (
-          <span className="badge stuck" title="Finished work that will not merge into master, so no release includes it">
+          <span
+            className="badge stuck"
+            title="Two chats changed the same lines, so this work won't merge until someone picks. Everything else still ships."
+          >
             {stuck} stuck
           </span>
         )}
         {board.releasing !== null && (
-          <span className="badge run" title="A release is being cut right now">
+          <span className="badge run" title="Finished lanes are being folded into one update right now">
             releasing
           </span>
         )}
+        <button className="ghost small lane-what" onClick={onHelp} title="How lanes work">
+          ?
+        </button>
       </div>
       <div className="lanes">
         {orphans.map((l) => (

@@ -46,8 +46,11 @@ export function holderName(lane: LaneBoardEntry): string {
  * it is.
  */
 export function laneState(lane: LaneBoardEntry, mine = false, now = Date.now()): string {
-  if (lane.conflicted) return `conflicts with master, ${ago(lane.conflictSince ?? now, now)}`
-  if (lane.ready) return 'done, waiting for the release'
+  // "conflicts with master" was written for the person who wrote the release script.
+  // What a reader needs is what it means (this work is being left out) and what ends it
+  // (somebody picks between two versions) - the tooltip carries the git specifics.
+  if (lane.conflicted) return `won't merge - needs a decision, ${ago(lane.conflictSince ?? now, now)}`
+  if (lane.ready) return 'done - ships with the next update'
   if (!lane.held) return 'free'
   // "working" was a lie the strip told about every lane: a chat claims one the moment it
   // starts, so four chats that had typed nothing all read as busy. What the lane file
