@@ -18,6 +18,7 @@ import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
 import LaneDialog from './components/LaneDialog'
+import LaneHelp from './components/LaneHelp'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
@@ -1745,6 +1746,7 @@ export default function App(): JSX.Element {
   const lanesByPane = useLanesByPane(laneBoard)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
+  const [laneHelp, setLaneHelp] = useState(false)
   // A pane that was cleared in an empty lane is moved back to the project folder by the
   // main process; that is a thing happening to your window, so it says so.
   useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
@@ -1853,7 +1855,12 @@ export default function App(): JSX.Element {
 
         {/* Only the PaneForge lanes no open pane accounts for; the rest are chips on the
             session cards below. Renders nothing at all off a PaneForge machine. */}
-        <LaneStrip board={laneBoard} sessions={sessions} onFocus={setActiveId} />
+        <LaneStrip
+          board={laneBoard}
+          sessions={sessions}
+          onFocus={setActiveId}
+          onHelp={() => setLaneHelp(true)}
+        />
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
@@ -1983,7 +1990,10 @@ export default function App(): JSX.Element {
                   {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
                       sidebar used to repeat in a second list of the same sessions. */}
                   {laneOfSession(lanesByPane, s.id) ? (
-                    <LaneChip lane={laneOfSession(lanesByPane, s.id)!} />
+                    <LaneChip
+                      lane={laneOfSession(lanesByPane, s.id)!}
+                      onHelp={() => setLaneHelp(true)}
+                    />
                   ) : null}
                   {s.status === 'exited' ? (
                     <span className="chip dead">exited {s.exitCode ?? ''}</span>
@@ -2468,7 +2478,14 @@ export default function App(): JSX.Element {
           onClose={() => setHistory(false)}
         />
       )}
-      {laneCwd && <LaneDialog cwd={laneCwd} onClose={() => setLaneCwd(null)} />}
+      {laneCwd && (
+        <LaneDialog
+          cwd={laneCwd}
+          onClose={() => setLaneCwd(null)}
+          onHelp={() => setLaneHelp(true)}
+        />
+      )}
+      {laneHelp && <LaneHelp onClose={() => setLaneHelp(false)} />}
       {ask && (
         <ConfirmDialog
           title={ask.title}

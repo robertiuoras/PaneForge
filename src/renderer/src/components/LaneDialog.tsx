@@ -19,6 +19,8 @@ const api = window.api
 interface Props {
   cwd: string
   onClose: () => void
+  /** open the "How lanes work" card */
+  onHelp: () => void
 }
 
 function summary(w: LaneWork): string {
@@ -39,7 +41,7 @@ function blocker(w: LaneWork): string | null {
   return null
 }
 
-export default function LaneDialog({ cwd, onClose }: Props): JSX.Element {
+export default function LaneDialog({ cwd, onClose, onHelp }: Props): JSX.Element {
   const [work, setWork] = useState<LaneWork | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
@@ -75,10 +77,13 @@ export default function LaneDialog({ cwd, onClose }: Props): JSX.Element {
       <div className="dialog confirm" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>{work ? `Lane ${work.lane}` : 'Lane'}</strong>
+          <button className="ghost small lane-what" onClick={onHelp} title="How lanes work">
+            what is this?
+          </button>
         </div>
         {work === undefined && <div className="confirm-body">Reading the lane…</div>}
         {work === null && (
-          <div className="confirm-body">This pane is not in a worktree lane any more.</div>
+          <div className="confirm-body">This pane is not in a lane any more.</div>
         )}
         {work && (
           <div className="confirm-body">

@@ -485,6 +485,14 @@ html.app-blurred .elapsed::after { animation: none; }
 }
 @media (prefers-reduced-motion: reduce) { .chip.pf-lane.stuck { animation: none; } }
 
+/* "How lanes work" - the one place lanes get whole sentences. Every lane surface links
+   here, which is what lets the chips and rows stay a few words each. */
+.lane-what { color: var(--muted); flex: none; }
+.lane-help { max-width: 440px; }
+.lane-help .confirm-body p { margin: 0 0 10px; line-height: 1.5; }
+.lane-help .confirm-body p:last-child { margin-bottom: 0; }
+.lane-help .chip { pointer-events: none; }
+
 /* A pane that holds a lane AND is mid-turn: work is being done that a release will
    collect by itself, in a checkout that is not the one on screen. The chip says which
    lane; this says it is happening right now, from across the room.

@@ -204,10 +204,16 @@ ok('a pane is not told who it is', laneState(fromTaskdriver, true, NOW + 60_000)
 
 // A free lane says nothing about a holder, and a stuck one leads with the thing to act on.
 ok('a free lane is still just free', laneState(entry({ held: false }), false, NOW) === 'free')
+// Plain words on purpose: "conflicts with master" assumed the reader wrote the release
+// script. The row says what it means and what ends it; git specifics live in the tooltip.
 ok(
   'a conflict still leads with the conflict',
-  laneState(entry({ conflicted: true, conflictSince: NOW }), false, NOW + 3 * 60_000).startsWith('conflicts with master'),
+  laneState(entry({ conflicted: true, conflictSince: NOW }), false, NOW + 3 * 60_000).startsWith("won't merge - needs a decision"),
   laneState(entry({ conflicted: true, conflictSince: NOW }), false, NOW + 3 * 60_000)
+)
+ok(
+  'finished work says it ships with the next update',
+  laneState(entry({ ready: true }), false, NOW) === 'done - ships with the next update'
 )
 
 // The tooltip is where the whole path and the full id go, so the row can stay short.
