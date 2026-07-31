@@ -1527,7 +1527,8 @@ async function runImprove(
     specs: listAgents(false).map((a) => a as AgentSpec),
     answers,
     includeUntrusted: options?.includeUntrusted,
-    exclude: options?.exclude
+    exclude: options?.exclude,
+    tweak: options?.tweak
   })
 
   // The derived stage, for catalogue entries only. A vault note has a status but no

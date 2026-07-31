@@ -327,6 +327,41 @@ ok(
   JSON.stringify(refused)
 )
 
+// ------------------------------------------------- a suggestion actually arrives
+//
+// The one claim every other assertion here assumed and none of them made: that a click on
+// the offer ends in a suggestion on this machine, inside the deadline.
+//
+// It shipped for a week unable to do that. `DEADLINE_MS` was 20 s and one real run of the
+// improver measured 22,540 ms, so every attempt was killed and reported as "produced no
+// answer (cancelled, or timed out)" - which reads as the feature being broken. Nothing
+// caught it because the sheet tests deliberately do not assert which phase they land in,
+// calling that a race, and the model-free suite never spawns anything.
+//
+// So this one waits for the phase rather than sampling it, and prints the number. A
+// machine or a CLI that gets slower shows up here as a rising figure long before it shows
+// up as a deadline that is too short again.
+const arrived = await evaluate(`(async () => {
+  const t0 = Date.now()
+  const r = await window.api.improvePrompt(
+    ${JSON.stringify(id)},
+    'the signup form rejects a valid password on mobile, please look at it'
+  )
+  return {
+    ms: Date.now() - t0,
+    ok: r.ok,
+    error: r.error,
+    improved: (r.improvement && r.improvement.improved) || '',
+    engine: r.metrics && r.metrics.engine
+  }
+})()`)
+ok(
+  'AN IMPROVEMENT ACTUALLY COMES BACK, inside the deadline',
+  arrived.ok === true && arrived.improved.length > 20,
+  JSON.stringify({ ...arrived, improved: arrived.improved.slice(0, 80) })
+)
+console.log(`      ${arrived.engine} answered in ${arrived.ms}ms (deadline 90000ms)`)
+
 // --------------------------------------------------------------- put it back
 
 await evaluate(`(async () => {

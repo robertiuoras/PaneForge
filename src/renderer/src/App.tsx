@@ -764,8 +764,18 @@ export default function App(): JSX.Element {
       // Typing while a suggestion is being generated aborts it, silently. This is the
       // rule the whole interaction rests on: the moment the person goes back to writing,
       // whatever was being computed about the older words is wrong and is thrown away.
+      //
+      // "Typing" means the DRAFT CHANGED, not that a key arrived. The improvement takes
+      // twenty-odd seconds of real time (measured: 22.5 s for a small one), and over that
+      // long a person moves the cursor, hits a modifier, or clicks back into the pane -
+      // none of which makes the older words any less current, and all of which used to
+      // silently kill the run and put the offer chip back as if nothing had happened.
       const open = sheetRef.current
-      if (open?.id === id && open.state.phase === 'working') {
+      if (
+        open?.id === id &&
+        open.state.phase === 'working' &&
+        state.text.trim() !== open.state.original
+      ) {
         api.cancelImprove(id)
         setSheet(null)
       }
@@ -806,27 +816,41 @@ export default function App(): JSX.Element {
   }, [improveMode, improveIdleMs])
 
   const runImprove = useCallback(
-    async (id: string, exclude?: string[]) => {
+    async (id: string, again?: { exclude?: string[]; tweak?: string }) => {
       const draft = paneDraft.get(id)
       // On a re-run the pane's draft has already been replaced by nothing the user typed,
       // so the original carried on the open sheet is the honest source of the text.
-      const carried = exclude?.length && sheetRef.current?.state.phase === 'review'
-        ? sheetRef.current.state.result.original
-        : ''
+      const carried =
+        again && sheetRef.current?.state.phase === 'review'
+          ? sheetRef.current.state.result.original
+          : ''
       const text = carried || draft?.text.trim() || ''
       if (!text) return flash('Nothing typed in that pane yet.')
       setImproveOffer(null)
       setAsked(false)
       setSheet({ id, state: { phase: 'working', original: text } })
-      const result = await api.improvePrompt(id, text, exclude?.length ? { exclude } : undefined)
+      const options =
+        again?.exclude?.length || again?.tweak
+          ? { exclude: again.exclude, tweak: again.tweak }
+          : undefined
+      // Caught, because the alternative is the sheet sitting on "Improving…" for ever: a
+      // rejected bridge call leaves the state exactly where it was set, and there is no
+      // second chance to move it.
+      let result: Awaited<ReturnType<typeof api.improvePrompt>> | null = null
+      let threw = ''
+      try {
+        result = await api.improvePrompt(id, text, options)
+      } catch (e) {
+        threw = e instanceof Error ? e.message : String(e)
+      }
       // A cancel that landed while this was in flight has already cleared the sheet, and
       // the late answer must not reopen it.
       if (sheetRef.current?.id !== id) return
       setSheet({
         id,
-        state: result.ok
+        state: result?.ok
           ? { phase: 'review', result }
-          : { phase: 'failed', original: text, error: result.error ?? 'no answer' }
+          : { phase: 'failed', original: text, error: result?.error || threw || 'no answer' }
       })
     },
     [flash]
@@ -2162,7 +2186,8 @@ export default function App(): JSX.Element {
                   paneFocus.get(s.id)?.()
                 }}
                 onAnswered={(answers) => void answerImprove(answers)}
-                onRerun={(exclude) => void runImprove(s.id, exclude)}
+                onRerun={(exclude) => void runImprove(s.id, { exclude })}
+                onTweak={(tweak, exclude) => void runImprove(s.id, { tweak, exclude })}
               />
             )}
           </div>

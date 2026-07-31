@@ -31,6 +31,16 @@ export interface ImproveRequestInput {
   clarify: ClarifyLevel
   /** Answers to a previous round's questions, when this is the second pass. */
   answers?: Array<{ question: string; answer: string }>
+  /**
+   * What the person asked to be different about the rewrite, after reading one.
+   *
+   * Instruction, not data - unlike the draft, which is fenced because it may have been
+   * pasted from anywhere. This line was typed into the sheet by the person sitting in
+   * front of it, and the whole point of it is that it changes what the model does. The
+   * fence tokens are still stripped and it is capped, so it cannot close a block or eat
+   * the budget the draft needs.
+   */
+  tweak?: string
 }
 
 export interface ImproveRequest {
@@ -135,6 +145,16 @@ export function buildImproveRequest(input: ImproveRequestInput): ImproveRequest 
     SCHEMA
   ].join('\n')
 
+  // Last in the rules and phrased as a correction, because it is one: the person has read
+  // an improvement and said what was wrong with it. Capped at 80 tokens - a change that
+  // needs a paragraph is a new draft, not a note on this one.
+  const tweak = input.tweak?.trim()
+    ? '\nThe person read your previous rewrite and asked for this change to it, which ' +
+      'takes priority over the style rules above where they disagree:\n' +
+      fitTokens(stripDelimiters(input.tweak.trim()), 80) +
+      '\n'
+    : ''
+
   const answers = input.answers?.length
     ? '\nAnswers to your questions:\n' +
       input.answers.map((a) => `- ${a.question}\n  ${a.answer}`).join('\n') +
@@ -147,7 +167,8 @@ export function buildImproveRequest(input: ImproveRequestInput): ImproveRequest 
     context ? `Project context:\n${context}\n` : '',
     knowledgeText ? `${NOTES_OPEN}\n${knowledgeText}${NOTES_CLOSE}\n` : '',
     `${DRAFT_OPEN}\n${draft}\n${DRAFT_CLOSE}`,
-    answers
+    answers,
+    tweak
   ]
     .filter(Boolean)
     .join('\n')

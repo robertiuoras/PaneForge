@@ -487,6 +487,15 @@ export interface ImproveOptions {
    * capability in it, so hiding the chip would leave the text still recommending it.
    */
   exclude?: string[]
+  /**
+   * A note on the rewrite, typed after reading one: "shorter", "keep the file names",
+   * "ask me about the auth part".
+   *
+   * A re-run rather than an edit of the text in the box, so what comes back is a whole
+   * suggestion written to that instruction - and the word diff against the original still
+   * means what it says.
+   */
+  tweak?: string
 }
 
 /** One retrieved reference as the sheet shows it. */
