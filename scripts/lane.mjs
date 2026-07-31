@@ -635,6 +635,9 @@ function claim(session, cwd, prefer, tentative = false) {
         lane: id,
         dir: laneDir(id),
         branch: laneBranch(id),
+        // The branch the lane MERGES INTO, which is not its own: a caller that said
+        // "merges into ${branch}" told a chat in lane-a that its work merged into lane-a.
+        mainBranch: MB,
         profile: laneProfile(id),
         repo: MAIN,
         release: RELEASE,
@@ -696,6 +699,9 @@ function claim(session, cwd, prefer, tentative = false) {
     lane: free,
     dir,
     branch: laneBranch(free),
+    // The branch the lane MERGES INTO, which is not its own: a caller that said
+    // "merges into ${branch}" told a chat in lane-a that its work merged into lane-a.
+    mainBranch: MB,
     profile: laneProfile(free),
     repo: MAIN,
     release: RELEASE,
