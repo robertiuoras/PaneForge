@@ -62,7 +62,8 @@
     "test:quiet": "node scripts/quiet-launch-test.mjs",
     "test:macupdate": "node scripts/mac-update-test.mjs",
     "test:macsign": "node scripts/mac-sign-test.mjs",
-    "test:view": "node scripts/view-test.mjs"
+    "test:view": "node scripts/view-test.mjs",
+    "test:research": "node scripts/research-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

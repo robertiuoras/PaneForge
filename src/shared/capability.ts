@@ -49,6 +49,70 @@ export interface Outcome {
   note: string
 }
 
+/**
+ * Evidence from one controlled run in the sandbox. The only thing that moves a record to
+ * `Tested`, and with `pass: true` the only thing that lets a human move it to `Verified`.
+ *
+ * Recorded, never authored by the thing being tested: every field here comes from an exit
+ * code, a byte count or a timer in `scripts/capability-sandbox.mjs`.
+ */
+export interface CapabilityTest {
+  /** ISO date the sandbox ran. */
+  at: string
+  /** The fixture it ran in. Never a real project - see the sandbox script's header. */
+  fixture: string
+  /** Did install + build + the fixture's own check all exit zero. */
+  pass: boolean
+  /** Bytes added to the fixture's production bundle, measured. -1 when not measured. */
+  bundleBytes: number
+  /** Milliseconds for install + build. Developer experience, measured not guessed. */
+  ms: number
+  /** One clause. What went wrong, or what was notable. */
+  note: string
+}
+
+/**
+ * How fast the truth about this kind of thing goes out of date.
+ *
+ * This is the whole of freshness management: a review interval attached to the record
+ * rather than a global sweep, because "check everything weekly" is how a research agent
+ * spends its budget re-reading a W3C recommendation that has not moved since 2018.
+ */
+export type Volatility = 'fast' | 'medium' | 'slow' | 'inert'
+
+/** Days between reviews, per volatility class. */
+export const REVIEW_DAYS: Record<Volatility, number> = {
+  fast: 30,
+  medium: 90,
+  slow: 365,
+  // Rejected and deprecated records are not reviewed on a clock at all. They are
+  // revisited when evidence arrives - a new major version, a maintainer returning - which
+  // is an event, not a date. A number here would be a research run whose conclusion is
+  // known before it starts.
+  inert: 3650
+}
+
+/**
+ * The lifecycle the brief asks for, DERIVED rather than stored.
+ *
+ * `Discovered → Evaluated → Tested → Verified → Recommended` is the vocabulary a person
+ * reads; `inbox draft reviewed verified superseded archived` is the vocabulary the vault
+ * index ranks on and `proposals.py` promotes through. Storing both would be two sources of
+ * truth about whether something has been checked - the exact failure the header of this
+ * file exists to prevent - so one is computed from the other plus the evidence on the
+ * record. There is no field anyone can set to "Verified" without a `tests` entry.
+ */
+export type Stage =
+  | 'discovered'
+  | 'evaluated'
+  | 'tested'
+  | 'verified'
+  | 'recommended'
+  | 'rejected'
+  | 'deprecated'
+  | 'superseded'
+  | 'needs-review'
+
 export interface Capability {
   id: string
   name: string
@@ -83,6 +147,64 @@ export interface Capability {
   /** Only on `superseded`: why it was ruled out, so nobody reconsiders it for free. */
   whyNot?: string
   supersededBy?: string
+
+  // ---- Phase 2. All optional, all defaulted by `parseCapability` ----------
+  //
+  // Optional on purpose: a Phase 1 record on disk is still a valid record, and a research
+  // run that could only write a complete one would write nothing. What is missing reads as
+  // "not checked", which is the honest answer and is what lowers confidence.
+
+  /** Free-text tags for retrieval. The closed `category` is what caps are applied to. */
+  tags?: string[]
+  /** Where it was FOUND - a Reddit thread, a showcase, an awards site. Never the evidence. */
+  discoveredVia?: string
+  /** Repository URL. The thing a licence and a commit date are actually read from. */
+  repo?: string
+  /** OS/runtime requirements: `node>=18`, `windows`, `wasm`. Empty means none noticed. */
+  platforms?: string[]
+  /** Visual register it produces: `minimal`, `brutalist`, `playful`. Design retrieval. */
+  visualStyles?: string[]
+  /** Project kinds it suits: `landing`, `dashboard`, `docs`, `admin`. */
+  projectTypes?: string[]
+  /** One clause with a DATE in it: "last commit 2026-06, 4 maintainers". */
+  maintenance?: string
+  /** ISO date of the newest release seen. Drives "a new major appeared" refreshes. */
+  lastRelease?: string
+  /**
+   * Stars, downloads, "everyone uses it".
+   *
+   * Recorded because a research note that omits it looks incomplete, and deliberately
+   * absent from `score()` - see that function's comment. It is context for a human, never
+   * an input to ranking.
+   */
+  popularity?: string
+  /** One clause. Touch targets, viewport behaviour, whether it is usable on a phone. */
+  mobile?: string
+  /** One clause. What leaves the machine, and to whom. Separate from `security`. */
+  privacy?: string
+  /** What installing it actually costs: peer deps, a build step, a native module. */
+  install?: string
+  /** How hard it is to use well, honestly. */
+  complexity?: 'trivial' | 'moderate' | 'involved' | 'unknown'
+  /** Other capability ids that do the same job. Not `overlaps`, which is about the repo. */
+  alternatives?: string[]
+  /** How fast this goes stale. Decides `nextReview`. */
+  volatility?: Volatility
+  /** ISO date the next review is due. Derived from `lastVerified` + `REVIEW_DAYS`. */
+  nextReview?: string
+  /** Sandbox evidence. Non-empty is what `Tested` means. */
+  tests?: CapabilityTest[]
+  /** Set when a `superseded` record was ruled out rather than replaced. */
+  ruling?: 'rejected' | 'deprecated' | 'superseded'
+  /** A human asked for another look, regardless of the clock. */
+  needsReview?: boolean
+  /**
+   * The research run that produced this record, and the date each claim was checked.
+   *
+   * Provenance is not decoration: a record with no `checkedAt` cannot be told apart from
+   * one checked today, and that is how a two-year-old benchmark gets quoted as current.
+   */
+  provenance?: { run?: string; checkedAt?: string; sources?: string[] }
 }
 
 /**
@@ -138,6 +260,61 @@ export function isRecommendable(c: Capability): boolean {
 export function isProven(c: Capability): boolean {
   return c.status === 'verified' && c.outcomes.some((o) => o.result === 'shipped')
 }
+
+/** Has this record got at least one passing sandbox run behind it? */
+export function isTested(c: Capability): boolean {
+  return Boolean(c.tests?.some((t) => t.pass))
+}
+
+/** When the next review falls due. Explicit field wins; otherwise volatility decides. */
+export function nextReviewDate(c: Capability): string {
+  if (c.nextReview && !Number.isNaN(Date.parse(c.nextReview))) return c.nextReview
+  const base = Date.parse(c.lastVerified)
+  if (Number.isNaN(base)) return ''
+  const days = REVIEW_DAYS[c.volatility ?? 'medium']
+  return new Date(base + days * 86_400_000).toISOString().slice(0, 10)
+}
+
+/**
+ * Is this record due another look?
+ *
+ * Two ways in: a human set `needsReview`, or its own interval elapsed. Deliberately NOT
+ * the same question as `isStale` - staleness is a fixed 180 days used to put a STALE flag
+ * on anything old that reaches a prompt, whereas this is what the research agent queues.
+ * A W3C note that is 200 days old is stale-flagged and still not worth a research run.
+ */
+export function needsReview(c: Capability, now: number = Date.now()): boolean {
+  if (c.needsReview) return true
+  if ((c.volatility ?? 'medium') === 'inert') return false
+  const due = nextReviewDate(c)
+  if (!due) return true
+  return Date.parse(due) <= now
+}
+
+/**
+ * The stage a person is shown, computed from the stored status and the evidence.
+ *
+ * Order matters: the terminal rulings are decided first, then `needs-review`, then the
+ * ladder from the top down. `verified` with no passing test is still `verified` - a human
+ * moving the status is evidence too - but nothing reaches `tested` without a sandbox run
+ * and nothing reaches `recommended` without something having shipped.
+ */
+export function stage(c: Capability, now: number = Date.now()): Stage {
+  if (c.status === 'superseded' || c.status === 'archived') {
+    if (c.ruling === 'deprecated') return 'deprecated'
+    if (c.ruling === 'rejected') return 'rejected'
+    return c.supersededBy ? 'superseded' : 'rejected'
+  }
+  if (needsReview(c, now)) return 'needs-review'
+  if (isProven(c)) return 'recommended'
+  if (c.status === 'verified') return 'verified'
+  if (isTested(c)) return 'tested'
+  if (c.status === 'reviewed' || c.status === 'draft') return 'evaluated'
+  return 'discovered'
+}
+
+/** Stages that may be presented as something to act on. The rest must be labelled. */
+export const ACTIONABLE_STAGES: readonly Stage[] = ['verified', 'recommended']
 
 const CONFIDENCE_WEIGHT: Record<Confidence, number> = { low: 0.6, medium: 1, high: 1.3 }
 const STATUS_WEIGHT: Record<Lifecycle, number> = {
@@ -309,7 +486,70 @@ export function parseCapability(raw: unknown): { ok: true; value: Capability } |
       overlaps: strings(r.overlaps),
       sensitivity,
       whyNot: typeof r.whyNot === 'string' ? r.whyNot.slice(0, 200) : undefined,
-      supersededBy: typeof r.supersededBy === 'string' ? r.supersededBy.slice(0, 80) : undefined
+      supersededBy: typeof r.supersededBy === 'string' ? r.supersededBy.slice(0, 80) : undefined,
+
+      tags: strings(r.tags).slice(0, 12),
+      discoveredVia: clause(r.discoveredVia, 200),
+      repo: clause(r.repo, 200),
+      platforms: strings(r.platforms).slice(0, 8),
+      visualStyles: strings(r.visualStyles).slice(0, 8),
+      projectTypes: strings(r.projectTypes).slice(0, 8),
+      maintenance: clause(r.maintenance, 160),
+      lastRelease: Number.isNaN(Date.parse(String(r.lastRelease))) ? undefined : String(r.lastRelease),
+      popularity: clause(r.popularity, 120),
+      mobile: clause(r.mobile, 160),
+      privacy: clause(r.privacy, 160),
+      install: clause(r.install, 160),
+      complexity: (['trivial', 'moderate', 'involved'] as const).includes(r.complexity as never)
+        ? (r.complexity as Capability['complexity'])
+        : 'unknown',
+      alternatives: strings(r.alternatives).slice(0, 6),
+      volatility: (['fast', 'medium', 'slow', 'inert'] as const).includes(r.volatility as never)
+        ? (r.volatility as Volatility)
+        : 'medium',
+      nextReview: Number.isNaN(Date.parse(String(r.nextReview))) ? undefined : String(r.nextReview),
+      // Tests are evidence, so a malformed one is dropped rather than defaulted: an entry
+      // with no `pass` field must not read as a passing run.
+      tests: Array.isArray(r.tests)
+        ? (r.tests as CapabilityTest[])
+            .filter((t) => t && typeof t.at === 'string' && typeof t.pass === 'boolean')
+            .map((t) => ({
+              at: t.at,
+              fixture: String(t.fixture ?? '').slice(0, 80),
+              pass: t.pass,
+              bundleBytes: typeof t.bundleBytes === 'number' ? t.bundleBytes : -1,
+              ms: typeof t.ms === 'number' ? t.ms : -1,
+              note: String(t.note ?? '').slice(0, 160)
+            }))
+            .slice(0, 10)
+        : [],
+      ruling: (['rejected', 'deprecated', 'superseded'] as const).includes(r.ruling as never)
+        ? (r.ruling as Capability['ruling'])
+        : undefined,
+      needsReview: r.needsReview === true,
+      provenance:
+        r.provenance && typeof r.provenance === 'object'
+          ? {
+              run: clause((r.provenance as Record<string, unknown>).run, 80),
+              checkedAt: clause((r.provenance as Record<string, unknown>).checkedAt, 40),
+              // Not `strings()`: that caps each entry at 80 characters, which silently
+              // truncates a documentation URL into one that 404s when a human clicks it.
+              sources: (Array.isArray((r.provenance as Record<string, unknown>).sources)
+                ? ((r.provenance as Record<string, unknown>).sources as unknown[])
+                : []
+              )
+                .filter((x): x is string => typeof x === 'string')
+                .map((s) => s.slice(0, 300))
+                .slice(0, 8)
+            }
+          : undefined
     }
   }
+}
+
+/** A single free-text clause off untrusted input: trimmed, capped, never empty-string. */
+function clause(v: unknown, max: number): string | undefined {
+  if (typeof v !== 'string') return undefined
+  const s = v.trim().slice(0, max)
+  return s || undefined
 }
