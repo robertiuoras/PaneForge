@@ -1301,6 +1301,12 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .role.off { opacity: 0.45; }
 .role-name { width: 120px; padding: 4px 7px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text); }
 .role .brief { flex-basis: 100%; }
+/* A lane's file list. It takes the row's slack and truncates rather than wrapping,
+   because a lane owning six paths would otherwise make its row three times the height
+   of the others and the list would stop reading as a list. The full set is the title. */
+.role .owns { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, 'Cascadia Mono', Consolas, monospace); font-size: 11px; }
+.hint.refused { margin: 7px 0 0; color: var(--warn); }
+label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--muted); }
 .chip.role { background: var(--accent-dim); color: var(--accent); }
 
 .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 10px 0; }

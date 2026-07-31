@@ -358,6 +358,39 @@ export interface SwarmRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Split
+//
+// The other shape: not several roles sharing one checkout, but one task cut into
+// workstreams that each get their OWN worktree lane. See main/split.ts for why the
+// file ownership below is the load-bearing part rather than a hint.
+
+/** One workstream of a split: what to build, and the files it alone may write. */
+export interface SplitLane {
+  name: string
+  brief: string
+  /** repo-relative paths or directories. Never overlapping another lane's. */
+  owns: string[]
+  /** unticked lanes are left out of the launch and their files stay unclaimed */
+  enabled?: boolean
+}
+
+export interface SplitPlan {
+  lanes: SplitLane[]
+  /** what every lane must implement identically - written into all of their briefs */
+  contracts: string
+  /** set when there is no usable split; `lanes` is empty and this says why */
+  refused?: string
+}
+
+export interface SplitRequest {
+  cwd: string
+  mission: string
+  plan: SplitPlan
+  agent?: Agent
+  model?: string
+}
+
+// ---------------------------------------------------------------------------
 // History
 
 /** A finished or running session's transcript on disk. */
@@ -1001,6 +1034,11 @@ export interface Api {
   saveMemory(path: string, memory: string): Promise<ProjectBoard>
 
   startSwarm(req: SwarmRequest): Promise<Session[]>
+
+  /** Ask the local coding CLI how this task divides. Never throws - see `refused`. */
+  planSplit(req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan>
+  /** One pane per lane, each moved into its own git worktree before it starts. */
+  startSplit(req: SplitRequest): Promise<Session[]>
 
   listHistory(): Promise<HistoryEntry[]>
   searchHistory(query: string): Promise<HistoryHit[]>

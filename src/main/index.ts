@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -29,7 +30,8 @@ import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped }
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { which } from './which'
-import { cancelImprove, improve, resolveEngine } from './improve'
+import { cancelImprove, DEADLINE_MS, improve, resolveEngine, runCli } from './improve'
+import { laneBrief, parsePlan, splitPayload } from './split'
 import { cancelResearch, research } from './researchRun'
 import { buildContextPack } from './contextPack'
 import { stage } from '../shared/capability'
@@ -135,6 +137,8 @@ import type {
   RestoreOffer,
   RestorePane,
   Session,
+  SplitPlan,
+  SplitRequest,
   StartSessionRequest,
   StashConfig,
   SwarmRequest,
@@ -747,6 +751,79 @@ ipcMain.on(
 )
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
+
+// --- split one task across lanes -------------------------------------------
+//
+// A swarm shares a checkout because its roles interleave. A split does the opposite:
+// every workstream is moved into its own git worktree, through the same `laneFor` the
+// session list uses, so two agents cannot reach the same file rather than being asked
+// not to. main/split.ts explains why that is the difference worth having.
+ipcMain.handle(
+  'sessions:planSplit',
+  async (_e, req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan> => {
+    const nothing = (refused: string): SplitPlan => ({ lanes: [], contracts: '', refused })
+    if (!req.mission.trim()) return nothing('Describe the task first.')
+
+    const cfg = getConfig().promptImprove
+    const specs = listAgents(false).map((a) => a as AgentSpec)
+    const engine = resolveEngine(cfg.engine, req.agent ?? '', specs, cfg.model)
+    if (!engine) return nothing('No coding CLI on PATH to plan the split with.')
+
+    // The top level of the repository, so the plan claims paths that exist. Only the
+    // top level: a full tree is most of a context window and the planner is choosing
+    // owners, not writing the code.
+    let tree: string[] = []
+    try {
+      tree = readdirSync(req.cwd, { withFileTypes: true })
+        .filter((d) => !d.name.startsWith('.') && d.name !== 'node_modules')
+        .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
+    } catch {
+      /* a folder we cannot list still gets a plan, just a blinder one */
+    }
+
+    const out = await runCli(engine, splitPayload(req.mission, tree), {
+      key: `split:${req.cwd}`,
+      // Same reason improvement's deadline is 90s and not 20: this is a whole CLI
+      // start-up plus a real answer, and a deadline under it reads as a broken feature.
+      deadlineMs: DEADLINE_MS
+    })
+    return out ? parsePlan(out) : nothing('The planner produced no answer.')
+  }
+)
+
+ipcMain.handle('sessions:split', async (_e, req: SplitRequest): Promise<Session[]> => {
+  const lanes = req.plan.lanes.filter((l) => l.enabled !== false)
+  if (!lanes.length) return []
+  const plan: SplitPlan = { ...req.plan, lanes }
+  const out: Session[] = []
+  // Same claim list as a workspace launch: the session list has not caught up mid-loop,
+  // so without this every lane would be handed the same free worktree.
+  const claimed: string[] = []
+  for (const [i, lane] of lanes.entries()) {
+    try {
+      const started = await laneFor(
+        {
+          cwd: req.cwd,
+          title: lane.name,
+          role: lane.name,
+          agent: req.agent as StartSessionRequest['agent'],
+          model: req.model,
+          prompt: laneBrief(plan, i, req.mission),
+          // Staggered like a swarm, and for a second reason here: each launch may have
+          // to create a worktree, and N `git worktree add` on one repository at once
+          // is a fight over one index lock.
+          promptDelay: i * 900
+        },
+        claimed
+      )
+      claimed.push(started.cwd)
+      out.push(manager.start(started))
+    } catch {
+      // One lane that could not be made must not cost the others their launch.
+    }
+  }
+  return out
+})
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {

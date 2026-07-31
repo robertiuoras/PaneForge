@@ -11,6 +11,7 @@ import type {
   RemoteState,
   RestoreAnswer,
   Session,
+  SplitRequest,
   StartSessionRequest,
   SwarmRequest,
   TaskItem,
@@ -35,6 +36,9 @@ const api: Api = {
   redraw: (id) => ipcRenderer.send('pty:redraw', id),
   setBusy: (id, busy, tail, clock) => ipcRenderer.send('sessions:busy', id, busy, tail, clock),
   startSwarm: (req: SwarmRequest) => ipcRenderer.invoke('sessions:swarm', req),
+  planSplit: (req: { cwd: string; mission: string; agent?: string }) =>
+    ipcRenderer.invoke('sessions:planSplit', req),
+  startSplit: (req: SplitRequest) => ipcRenderer.invoke('sessions:split', req),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<Config>) => ipcRenderer.invoke('config:set', patch),

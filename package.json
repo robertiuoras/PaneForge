@@ -64,6 +64,7 @@
     "test:macsign": "node scripts/mac-sign-test.mjs",
     "test:view": "node scripts/view-test.mjs",
     "test:research": "node scripts/research-test.mjs",
+    "test:split": "node scripts/split-test.mjs",
     "capability:list": "node scripts/capability-lifecycle.mjs --list",
     "capability:sandbox": "node scripts/capability-sandbox.mjs",
     "capability:lifecycle": "node scripts/capability-lifecycle.mjs",
