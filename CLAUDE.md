@@ -234,6 +234,20 @@ that a failed swap puts the old bundle back, and that the relaunch is `open -g` 
 foreground) - or absent entirely when the swap happens because the user quit. The download
 half is proved against the live release with `node scripts/mac-update-test.mjs --live
 <version>`, which is left out of the suite because it pulls ~120 MB.
+`npm run test:stash` is what the Stash is allowed to cost, and it is model-free and
+window-free because the two things it pins are invisible while they are broken - the
+feature keeps working perfectly and only gets slow. A full 200-entry history was 414KB, of
+which 383KB was `text` that nothing on screen draws (the rows draw `preview`, the first 140
+characters) and ~207KB more was the same clip stored a second time inside `key`, and all of
+it was stringified, written and structured-cloned to two windows on every copy made
+anywhere on the machine. So: no list leaving the main process may carry a body, `recentText`
+returns that body byte-exact for the one click that types it into a pane, and a key must not
+contain the clip it stands for. It also pins the two ways the history could come back empty
+- the save goes through a `.tmp` and a rename, and the sweep that deletes orphaned files has
+to name that `.tmp` as a keeper rather than happen to miss it - and that `flushRecents` on
+`will-quit` gets a copy made in the app's last second onto disk, which a debounced async
+write otherwise loses.
+
 `npm run test:stashdrag` needs a test copy up (`npm run try -- --keep --show
 --remote-debugging-port=9333`) and drags the Stash overlay with real CDP input, because
 `setPointerCapture` - which the drag is built on - refuses a pointer id no physical

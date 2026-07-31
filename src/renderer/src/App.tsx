@@ -540,14 +540,19 @@ export default function App(): JSX.Element {
         api.write(id, (/[\s"']/.test(path) ? `"${path}"` : path) + ' ')
         flash(it.kind === 'file' ? 'File path typed into the pane.' : 'Image path typed into the pane.')
       } else {
-        if (!it.text) return
-        // As a paste, not as typing. Every agent here runs a TUI with bracketed paste on,
-        // and a stash entry is usually several lines: written to the pty they arrive as
-        // Enter after Enter and the first line is submitted on its own. The same route
-        // dictation takes, for the same reason.
-        const insert = paneInsert.get(id)
-        if (insert) insert(it.text)
-        else api.write(id, it.text)
+        // The list arrives without the clip bodies (383KB of a full history, none of it
+        // ever drawn), so the one entry being typed is fetched here. `it.text` is still
+        // honoured for anything that already has it.
+        void Promise.resolve(it.text || api.recentText(it.id)).then((text) => {
+          if (!text) return
+          // As a paste, not as typing. Every agent here runs a TUI with bracketed paste on,
+          // and a stash entry is usually several lines: written to the pty they arrive as
+          // Enter after Enter and the first line is submitted on its own. The same route
+          // dictation takes, for the same reason.
+          const insert = paneInsert.get(id)
+          if (insert) insert(text)
+          else api.write(id, text)
+        })
       }
       setShelfPeek(false)
     },

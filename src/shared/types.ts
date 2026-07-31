@@ -867,7 +867,11 @@ export interface RecentItem {
   kind: 'text' | 'image' | 'file'
   /** epoch ms it landed on the shelf */
   at: number
-  /** full text, text items only */
+  /**
+   * Full text, text items only - and only in the main process. Every copy of this list
+   * that reaches a window has it stripped (`lean()` in recents.ts); ask for it by id with
+   * `recentText`.
+   */
   text?: string
   /** our copy on disk - the path typed into a pane, and the file an OS drag carries */
   path?: string
@@ -1058,6 +1062,12 @@ export interface Api {
   toggleStash(): void
   /** the clipboard shelf, newest first */
   listRecents(): Promise<RecentItem[]>
+  /**
+   * The body of one stash entry. The list arrives without them - a full history is 383KB
+   * of text nothing on screen shows - so the one click that types a clip into a pane
+   * fetches that clip.
+   */
+  recentText(id: string): Promise<string>
   /** put a shelf item back on the OS clipboard */
   copyRecent(id: string): void
   /** hand an image item to the OS drag layer, so it can be dropped in any app */

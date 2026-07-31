@@ -100,6 +100,7 @@ const api: Api = {
   deleteHistory: (id) => ipcRenderer.invoke('history:delete', id),
 
   listRecents: () => ipcRenderer.invoke('recents:list'),
+  recentText: (id) => ipcRenderer.invoke('recents:text', id),
   copyRecent: (id) => ipcRenderer.send('recents:copy', id),
   dragRecent: (id) => ipcRenderer.send('recents:drag', id),
   removeRecent: (id) => ipcRenderer.send('recents:remove', id),

@@ -79,10 +79,12 @@ import {
   clearRecents,
   configureRecents,
   copyRecent,
+  flushRecents,
   getRecent,
   listRecents,
   pinRecent,
   recentPath,
+  recentText,
   recentsDir,
   refreshRecents,
   removeRecent,
@@ -1065,6 +1067,9 @@ ipcMain.handle('clipboard:read', () => clipboard.readText())
 
 // The clipboard shelf: the last things copied, one click from the focused pane.
 ipcMain.handle('recents:list', () => listRecents())
+// The clip bodies never ride along with the list (see `lean` in recents.ts): the window
+// asks for the one it is about to type.
+ipcMain.handle('recents:text', (_e, id: string) => recentText(id))
 ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
 ipcMain.on('recents:clear', () => clearRecents())
 ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
@@ -2094,4 +2099,9 @@ app.on('before-quit', () => {
   stopInstalls()
   installStagedMacUpdateOnQuit()
 })
-app.on('will-quit', () => globalShortcut.unregisterAll())
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+  // The history is saved on a debounce now that the write is async; a copy made in the
+  // last second of the app's life would otherwise never reach disk.
+  flushRecents()
+})
