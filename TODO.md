@@ -163,12 +163,18 @@ This is where tmux is thirty years ahead and the items are small.
   big top, cycled with `Ctrl Shift G` or picked by name from the palette. Named after what
   you get rather than after the split tmux would have made, and each keeps its own dragged
   sizes: a `2x3` reached by stacking three panes beside a big one is not a tiled `2x3`.
-- [ ] **D6. Swap / move panes by keyboard** — S. tmux marks a pane (`C-b m`) and swaps
-  (`{` / `}`). We can only drag. Add mark + swap and directional move.
-- [ ] **D7. Synchronised typing** — S. We have a broadcast box: one line, sent once. tmux's
-  `synchronize-panes` mirrors **every keystroke** to every pane in the window, which is what
-  you want for "all four of you, Ctrl-C, then re-read the plan". Toggle, with the panes
-  visibly outlined while it is on.
+- [x] **D6. Swap / move panes by keyboard** — S. **Done in v0.4.11.** `Ctrl Shift ←` / `→`
+  moves the focused pane one slot along the grid. No mark step: tmux needs one because
+  `{`/`}` swap with a pane you cannot see from the one you are in, and here you can. It
+  **swaps** rather than re-inserting, which is what the drag already did - inserting
+  shuffles every pane after the drop into a different cell. `moveInOrder` in
+  `gridLayout.ts`, pinned by `npm run test:grid` and, in a real window, `test:view`.
+- [x] **D7. Synchronised typing** — S. **Done in v0.4.11.** `Ctrl Shift Y` sends every
+  keystroke - control codes and arrows included, not a line at a time like the broadcast
+  box - to every open pane, and rings them all in amber while it is on. Only the pane
+  being typed IN fans out, so two panes cannot echo each other round in a loop, and a
+  mirrored keystroke feeds the receiving pane's draft as well as its pty, so the improve
+  chip does not drift out of step with what is on its screen.
 - [ ] **D8. Idle and bell alerts** — M. tmux has `monitor-activity`, `monitor-silence`,
   `monitor-bell` with per-window actions. We chime when a turn ends. Add: alert when a pane
   has been **silent** for N minutes (the agent is stuck or waiting, and with eight panes you
@@ -180,10 +186,12 @@ This is where tmux is thirty years ahead and the items are small.
   opening a second pane to run its own tests, and reading the output back.
 - [ ] **D10. Pipe a pane's output** — S. `pipe-pane` tees a pane live to a file or command.
   We write transcripts at the end. Live tee lets a watcher (or another agent) follow a run.
-- [ ] **D11. Named / pinned Stash entries** — S. tmux has 50 auto buffers plus **named**
-  buffers that are never evicted, `load-buffer` and `save-buffer`. Our Stash evicts by age
-  and size with no way to say "keep this one". Add pin + save-to-file, and a keyboard-only
-  picker.
+- [x] **D11. Pinned Stash entries** — S. **Already done when this list was written**, which
+  is worth more than the tick: the item was researched from tmux's side and never checked
+  against ours. `pinRecent` in `src/main/recents.ts` holds an entry out of every cap, the
+  file clock and the sweep, and sorts it above the rest; the 📌 is on every row in
+  `shelf.tsx`. What is still missing is the *keyboard-only picker* and `save-buffer` -
+  a smaller item than this one, and it belongs under D3 (copy mode) when that lands.
 - [ ] **D12. Hooks** — M. `set-hook` runs a command on an event. We have none. Fire on
   pane-opened / turn-finished / pane-exited / lane-merged, running a user command with the
   session as env. This is also the honest way to let Robert wire PaneForge into taskdriver
@@ -195,18 +203,21 @@ This is where tmux is thirty years ahead and the items are small.
 - [ ] **D14. Floating pane / popup** — M. tmux 3.8 has floating panes and `display-popup`.
   The Stash overlay proves we can float a window; a scratch pane over the grid (quick shell,
   a `git log`, a build) that closes with Escape is the same machinery.
-- [ ] **D15. Pane border status** — S. tmux puts a format string in the pane border
-  (`pane-border-format`). Ours carries a title. Add the branch, the model and the elapsed
-  time to the border/footer — we already compute all three (`GitBadge`, `Elapsed`).
+- [x] **D15. Pane border status** — S. **Done in v0.4.11.** The branch (`GitBadge`) and the
+  model (the picker) were already on the pane title; the turn clock was only in the
+  sidebar, which is the thing you are not looking at in a grid of four. It is on the pane
+  now - counting while the agent works, then the last turn's length, then `exited N`.
 
 ---
 
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
-   **D6, D7, D11, D15** are the rest of that day — keyboard swap, synchronised typing,
-   pinned Stash entries, and what the pane border says. tmux parity is still the cheapest
-   quality in this document.
+   ~~**D6, D7, D15**~~ — shipped in v0.4.11: keyboard pane swap, synchronised typing, and
+   the turn clock on the pane border. D11 turned out to be built already. **D10, D3, D8**
+   are what is left of the cheap half — tee a pane's output, keyboard copy mode, and an
+   alert when a pane has been silent too long. tmux parity is still the cheapest quality
+   in this document.
 2. **A1, A2, A3, A4** — diff + commit + PR. The one gap a user switching from T3 Code would
    name first, and the README already admits it.
 3. **C3, C5, C8, C1** — permission modes, project scripts, resource readout, rebindable keys.

@@ -651,6 +651,18 @@ body.sizing * { user-select: none !important; }
   border-color: color-mix(in srgb, var(--agent) 45%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--agent) 22%, transparent);
 }
+/* Synchronised typing. Deliberately NOT the agent accent, which every pane already wears
+   a shade of: a mode that sends your keystrokes to panes you are not looking at has to be
+   readable as one state across all of them, and an amber ring is the only thing on this
+   screen that is not something else already. The focused pane keeps its own ring on top,
+   so "which one am I in" is still answered while the mode is on. */
+.pane.synced {
+  border-color: #d99a2b;
+  box-shadow: 0 0 0 1px #d99a2b66;
+}
+.pane.synced.focused {
+  box-shadow: 0 0 0 2px #d99a2b, 0 0 0 1px color-mix(in srgb, var(--agent) 22%, transparent);
+}
 .pane-title {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 7px 6px 11px; color: var(--muted); font-size: 11px;
@@ -660,6 +672,10 @@ body.sizing * { user-select: none !important; }
 .pt-name { color: var(--text); white-space: nowrap; font-weight: 550; }
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
 .pt-actions { display: flex; gap: 1px; flex: none; align-items: center; }
+/* The turn clock on the pane's own border. `flex: none` so it is the path that gets
+   squeezed in a narrow pane, never the digits - a clock ellipsised to "1m…" is worse
+   than no clock. */
+.pt-clock { flex: none; font-variant-numeric: tabular-nums; font-size: 10px; }
 /* The inset belongs on the host, not on .xterm. Measured both ways at the same pane size
    (870px tall): padding here proposes 57 rows whose last row still lands 12px clear of the
    clipped edge, while padding on .xterm proposes 56 and clips the last row by 3px - the fit

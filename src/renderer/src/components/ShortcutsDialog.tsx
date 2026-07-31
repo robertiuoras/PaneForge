@@ -43,6 +43,15 @@ const KEYS: Key[] = [
   ['Ctrl Shift G', 'Cycle the grid: tiled, columns, rows, one big on the left, one big on top'],
   ['Ctrl Shift Z', 'Zoom the focused pane to the whole window and back - the grid is untouched'],
   [
+    'Ctrl Shift ← →',
+    'Move the focused pane one slot along the grid - it swaps places, nothing else shifts'
+  ],
+  [
+    'Ctrl Shift Y',
+    'Type into every pane at once: every keystroke, including Ctrl+C and arrows. The panes are ringed in amber while it is on',
+    true
+  ],
+  [
     'Ctrl F',
     'Find in this pane: every match highlighted, Enter for the next, Shift Enter for the one before, Escape to close',
     true

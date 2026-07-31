@@ -30,7 +30,8 @@ import TerminalPane, {
   paneFind,
   paneFocus,
   paneInsert,
-  paneRepair
+  paneRepair,
+  syncedPanes
 } from './components/TerminalPane'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished } from '../../shared/draft'
@@ -63,6 +64,7 @@ import {
   LAYOUT_LABEL,
   LAYOUTS,
   layoutDefaults,
+  moveInOrder,
   nextLayout,
   planGrid,
   shapeKey,
@@ -994,6 +996,53 @@ export default function App(): JSX.Element {
     [grid, flash]
   )
 
+  /**
+   * Move the focused pane one slot along the grid, by keyboard.
+   *
+   * Same order the drag writes and the same swap it performs (`moveInOrder`), so a pane
+   * moved with the arrows and a pane dragged end up in the same list - which is what main
+   * is told, what the Ctrl-1..9 keys count and what a restore after an update reads back.
+   */
+  const movePane = useCallback(
+    (delta: number) => {
+      const target = activeRef.current
+      if (!target) return flash('Nothing focused - open a pane first.')
+      const ids = sessions.map((s) => s.id)
+      if (ids.length < 2) return
+      const next = moveInOrder(ids, target, delta)
+      if (next === ids) return flash(delta < 0 ? 'Already first.' : 'Already last.')
+      setOrder(next)
+      api.reorderSessions(next)
+    },
+    [sessions, flash]
+  )
+
+  /**
+   * Synchronised typing: every keystroke into every open pane at once.
+   *
+   * Kept as an app-level flag rather than a per-pane one because the question is always
+   * "all of you" - four agents that have to be interrupted, or told the same correction.
+   * The group is every open session, and it is rebuilt whenever the session list changes
+   * so a pane opened while it is on joins, and a closed one leaves (`TerminalPane` drops
+   * its own id too, in case the pane goes away between renders).
+   */
+  const [syncTyping, setSyncTyping] = useState(false)
+  useEffect(() => {
+    syncedPanes.clear()
+    if (!syncTyping) return
+    for (const s of sessions) syncedPanes.add(s.id)
+    return () => syncedPanes.clear()
+  }, [syncTyping, sessions])
+
+  const toggleSyncTyping = useCallback(() => {
+    if (sessions.length < 2 && !syncTyping)
+      return flash('Synchronised typing needs a second pane to type into.')
+    setSyncTyping((on) => {
+      flash(on ? 'Synchronised typing off.' : `Synchronised typing ON - ${sessions.length} panes.`)
+      return !on
+    })
+  }, [sessions.length, syncTyping, flash])
+
   // Ctrl-based shortcuts are captured on the window: xterm would otherwise swallow
   // them as terminal input.
   useEffect(() => {
@@ -1113,7 +1162,17 @@ export default function App(): JSX.Element {
         // prompt, and this app does not get to take either of them.
         e.preventDefault()
         toggleZoom()
-      } else if (k === 'f' && (!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
+      } else if (k === 'y' && e.shiftKey) {
+        // Y for sYnc: B (broadcast) is tmux's own prefix key and the one chord people
+        // press by muscle memory expecting nothing to happen here.
+        e.preventDefault()
+        toggleSyncTyping()
+      } else if (e.key.startsWith('Arrow') && e.shiftKey && !typing) {
+        // Move the focused pane, not the focus. Shift is the difference from Ctrl+Tab,
+        // which walks the focus and leaves the grid alone.
+        e.preventDefault()
+        movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
+      } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
         // purpose, and it is where every other program on the machine puts search.
@@ -1161,7 +1220,9 @@ export default function App(): JSX.Element {
     shelfPinned,
     shelfInWindow,
     cycleLayout,
-    toggleZoom
+    toggleZoom,
+    movePane,
+    toggleSyncTyping
   ])
 
   /**
@@ -1259,6 +1320,32 @@ export default function App(): JSX.Element {
         hint: 'the grid and its sizes are left exactly as they are',
         keys: 'Ctrl Shift Z',
         run: () => toggleZoom()
+      },
+      {
+        id: 'move-pane-back',
+        group: 'This pane',
+        title: 'Move this pane one slot earlier',
+        hint: 'swaps with the pane before it - the same move a drag makes',
+        keys: 'Ctrl Shift ←',
+        run: () => movePane(-1)
+      },
+      {
+        id: 'move-pane-on',
+        group: 'This pane',
+        title: 'Move this pane one slot later',
+        hint: 'swaps with the pane after it',
+        keys: 'Ctrl Shift →',
+        run: () => movePane(1)
+      },
+      {
+        id: 'sync-typing',
+        group: 'Actions',
+        title: syncTyping ? 'Stop typing into every pane' : 'Type into every pane at once',
+        hint: syncTyping
+          ? 'back to typing in one pane'
+          : 'every keystroke, including Ctrl+C and arrows, goes to all of them',
+        keys: 'Ctrl Shift Y',
+        run: () => toggleSyncTyping()
       },
       {
         id: 'shelf',
@@ -1382,7 +1469,10 @@ export default function App(): JSX.Element {
     saveRunningAsWorkspace,
     layout,
     zoom,
-    toggleZoom
+    toggleZoom,
+    movePane,
+    syncTyping,
+    toggleSyncTyping
   ])
 
 
@@ -1976,7 +2066,11 @@ export default function App(): JSX.Element {
               (visibleIds.has(s.id) ? '' : ' hidden') +
               (tiled && s.id === activeId ? ' focused' : '') +
               (s.id === movingId ? ' moving' : '') +
-              (s.id === dropId ? ' drop-target' : '')
+              (s.id === dropId ? ' drop-target' : '') +
+              // Every pane in the group is outlined while synchronised typing is on.
+              // A mode that silently sends your keys somewhere else has to be visible
+              // from the pane you are looking at, not from a menu.
+              (syncTyping ? ' synced' : '')
             }
             // The agent's brand colour drives this pane's accent, so a grid of four
             // panes is readable without checking the labels. The cell is set explicitly
@@ -2023,6 +2117,20 @@ export default function App(): JSX.Element {
                   to read a branch off - the badge would either be blank or, worse,
                   show this machine's checkout of a path that happens to match. */}
               {!s.remote && <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />}
+              {/* What tmux puts in the pane border: the branch (above), the model (the
+                  picker, to the right) and how long this has been going. The sidebar has
+                  said the last of those for months, and the sidebar is the thing you are
+                  not looking at in a grid of four - "which of these is still working" is
+                  a question about the pane, asked at the pane. */}
+              {s.status === 'exited' ? (
+                <span className="chip dead">exited {s.exitCode ?? ''}</span>
+              ) : s.runSince ? (
+                <Elapsed since={s.runSince} className="elapsed pt-clock" title="This turn" />
+              ) : s.lastRunMs !== undefined ? (
+                <span className="elapsed done pt-clock" title="Last turn">
+                  {formatElapsed(s.lastRunMs)}
+                </span>
+              ) : null}
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
                 <AgentPicker

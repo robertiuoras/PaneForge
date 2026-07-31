@@ -61,6 +61,28 @@ export const paneRepair = new Map<string, () => void>()
  */
 export const paneDraft = new Map<string, DraftState>()
 
+/**
+ * The panes every keystroke is mirrored into, while synchronised typing is on.
+ *
+ * Empty the rest of the time, so the fan-out below costs one `Set.has` per keystroke and
+ * nothing else. App owns what is in here; a pane only ever reads it.
+ *
+ * We already had a broadcast box - one line, typed once, sent to every pane. That is the
+ * wrong shape for the thing people actually want from tmux's `synchronize-panes`: "all
+ * four of you, Ctrl-C, then re-read the plan" is a control code, an arrow key and a menu
+ * choice, none of which is a line you can type into a box.
+ */
+export const syncedPanes = new Set<string>()
+
+/**
+ * Each pane's draft reconstruction, keyed by session.
+ *
+ * A pane whose keystrokes arrived from ANOTHER pane never sees its own `onData`, so its
+ * draft would drift away from what its terminal is echoing - and the improve chip reads
+ * that draft. The mirror feeds it the same bytes instead.
+ */
+const paneFeed = new Map<string, (d: string) => void>()
+
 type DraftListener = (id: string, state: DraftState) => void
 const draftListeners = new Set<DraftListener>()
 
@@ -632,6 +654,14 @@ export default function TerminalPane({
       setScrolledUp(false)
       feedInput(d)
       api.write(sessionId, d)
+      // Synchronised typing. Only the pane being typed IN fans out, so two panes in the
+      // group can never echo each other round in a loop.
+      if (syncedPanes.has(sessionId))
+        for (const id of syncedPanes) {
+          if (id === sessionId) continue
+          api.write(id, d)
+          paneFeed.get(id)?.(d)
+        }
     })
 
     t.onSelectionChange(() => {
@@ -1015,6 +1045,7 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneFeed.set(sessionId, feedInput)
     paneTerms.set(sessionId, t)
     paneFocus.set(sessionId, () => {
       try {
@@ -1107,6 +1138,10 @@ export default function TerminalPane({
       window.clearTimeout(settle2)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneFeed.delete(sessionId)
+      // A closed pane cannot be typed into, and leaving its id in the group would send
+      // every keystroke to a session that is gone.
+      syncedPanes.delete(sessionId)
       paneTerms.delete(sessionId)
       paneInsert.delete(sessionId)
       paneFocus.delete(sessionId)
