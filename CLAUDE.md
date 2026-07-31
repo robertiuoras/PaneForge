@@ -243,6 +243,16 @@ the main process on purpose, so the byte stream is built in one place - and "did
 submit" is the improved text sitting on the prompt row with the cursor never having moved
 down to a fresh one.
 
+Its last assertion is the one every other assertion here assumed and none of them made:
+that a suggestion actually comes back. The sheet tests deliberately do not say which phase
+they land in, calling that a race, so nothing noticed that `DEADLINE_MS` was 20 s while the
+work takes 22.5 s bare and 32.6 s from inside the app - every click was killed by its own
+deadline and reported as "produced no answer", which reads as a broken feature rather than
+as a wrong number. It prints the milliseconds, so a CLI that gets slower shows up as a
+rising figure instead. The companion rule is that only a CHANGED draft cancels a run in
+flight: a keystroke used to, and over half a minute a person moves the cursor or clicks
+back into the pane, which silently threw the answer away and put the offer chip back.
+
 `npm run test:research` is the Phase 2 gate, model-free and network-free: what a research
 run is allowed to believe, and what it must refuse. Three cases are the reason it exists. A
 lead is not evidence - a finding cited only to a Reddit thread or a showcase page is
