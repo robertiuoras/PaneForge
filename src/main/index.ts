@@ -30,7 +30,10 @@ import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard
 import type { LanePane } from './laneBoard'
 import { which } from './which'
 import { cancelImprove, improve, resolveEngine } from './improve'
-import { firstExistingVault } from './knowledge'
+import { cancelResearch, research } from './researchRun'
+import { buildContextPack } from './contextPack'
+import { stage } from '../shared/capability'
+import { firstExistingVault, loadCapabilities } from './knowledge'
 import { recordImprovement } from './promptAudit'
 import { insertSequence } from '../shared/promptSchema'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
@@ -127,6 +130,7 @@ import type {
   ImproveStatus,
   InstallOutcome,
   RemoteState,
+  ResearchReport,
   RestoreAnswer,
   RestoreOffer,
   RestorePane,
@@ -1522,8 +1526,14 @@ async function runImprove(
     config: cfg,
     specs: listAgents(false).map((a) => a as AgentSpec),
     answers,
-    includeUntrusted: options?.includeUntrusted
+    includeUntrusted: options?.includeUntrusted,
+    exclude: options?.exclude
   })
+
+  // The derived stage, for catalogue entries only. A vault note has a status but no
+  // lifecycle - it was never a candidate that could be sandboxed - so it reports its
+  // status and is not offered a Remove control it has nothing to re-run without.
+  const byId = new Map(loadCapabilities().map((c) => [c.id, c]))
 
   return {
     ok: outcome.ok,
@@ -1532,13 +1542,19 @@ async function runImprove(
     improvement: outcome.improvement,
     // Provenance crosses the bridge as ids and titles, never as the note bodies: the
     // sheet cites, it does not re-display somebody's vault.
-    sources: outcome.sources.map((n) => ({
-      id: n.id,
-      title: n.title,
-      provider: n.provider,
-      source: n.source,
-      trusted: n.trusted
-    })),
+    sources: outcome.sources.map((n) => {
+      const cap = byId.get(n.id)
+      return {
+        id: n.id,
+        title: n.title,
+        provider: n.provider,
+        source: n.source,
+        trusted: n.trusted,
+        stage: cap ? stage(cap) : n.status,
+        stale: n.stale,
+        removable: Boolean(cap)
+      }
+    }),
     held: outcome.held,
     metrics: outcome.metrics
   }
@@ -1558,6 +1574,52 @@ ipcMain.handle(
   ) => runImprove(id, draft, answers, options)
 )
 ipcMain.on('improve:cancel', (_e, id: string) => cancelImprove(id))
+
+// --- research this request -------------------------------------------------
+//
+// Never automatic, and never on a mirrored pane for the same reason improvement is not:
+// the research is about the project in front of the person, and this device does not have
+// that folder.
+ipcMain.handle('research:run', async (_e, id: string, draft: string): Promise<ResearchReport> => {
+  const nothing = (detail: string): ResearchReport => ({
+    ok: false,
+    outcome: 'failed',
+    detail,
+    kept: [],
+    rejected: [],
+    sources: [],
+    duplicates: 0,
+    ms: 0
+  })
+
+  const cfg = getConfig().promptImprove
+  if (cfg.mode === 'off') return nothing('prompt improvement is off')
+  if (remote.owns(id)) return nothing('that pane runs on another device - research it there')
+  const session = allSessions().find((s) => s.id === id)
+  if (!session) return nothing('no such pane')
+
+  const engine = resolveEngine(
+    cfg.engine,
+    session.agent,
+    listAgents(false).map((a) => a as AgentSpec),
+    cfg.model
+  )
+  if (!engine) return nothing('no CLI on PATH that could run the research')
+
+  const git = await gitInfo(session.cwd).catch(() => null)
+  // The stack, so a finding that cannot work here is never fetched. Only the framework
+  // ids leave this machine - not the context pack, not a path, not a dependency list.
+  const context = buildContextPack(session.cwd, git, 200)
+  return research({
+    sessionId: id,
+    // A sentence about the task, capped - never the draft verbatim, which is the thing
+    // that may hold a secret and which the envelope exists to keep out of a request.
+    task: draft.replace(/\s+/g, ' ').trim().slice(0, 300),
+    stack: context.stack,
+    engine
+  })
+})
+ipcMain.on('research:cancel', (_e, id: string) => cancelResearch(id))
 
 ipcMain.handle('improve:apply', async (_e, id: string, text: string) => {
   if (remote.owns(id)) return { ok: false, error: 'that pane runs on another device' }

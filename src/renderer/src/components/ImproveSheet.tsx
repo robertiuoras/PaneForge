@@ -14,10 +14,38 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { diffWords, changeRatio } from '../../../shared/diffWords'
-import type { ImproveResult } from '../../../shared/types'
+import type { ImproveResult, ResearchReport } from '../../../shared/types'
 import type { ImproveQuestion } from '../../../shared/promptSchema'
 
 const api = window.api
+
+/**
+ * The lifecycle word shown beside a reference.
+ *
+ * `verified` and `recommended` are the only two a person may act on without reading
+ * further, so everything else is spelled out rather than left blank - a chip with no
+ * label reads as approved.
+ */
+const STAGE_LABEL: Record<string, string> = {
+  discovered: 'unverified',
+  evaluated: 'evaluated, untested',
+  tested: 'tested in a sandbox',
+  verified: 'verified',
+  recommended: 'recommended',
+  'needs-review': 'due a re-check',
+  rejected: 'ruled out',
+  deprecated: 'deprecated',
+  superseded: 'superseded'
+}
+
+/** Just the host, so a long documentation URL does not wrap the sheet. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, '')
+  } catch {
+    return url.slice(0, 40)
+  }
+}
 
 export type SheetState =
   | { phase: 'working'; original: string }
@@ -34,6 +62,14 @@ interface Props {
   onRejected: () => void
   /** Answers to the questions the first pass asked. Exactly one second pass, ever. */
   onAnswered: (answers: Array<{ question: string; answer: string }>) => void
+  /**
+   * Improve again, without these capability ids.
+   *
+   * Removal has to be a re-run and not a redraw: the improved text was written with that
+   * capability named in it, so hiding the chip would leave the prompt still recommending
+   * something the user just said they did not want.
+   */
+  onRerun?: (exclude: string[]) => void
 }
 
 export default function ImproveSheet({
@@ -41,13 +77,33 @@ export default function ImproveSheet({
   state,
   onAccepted,
   onRejected,
-  onAnswered
+  onAnswered,
+  onRerun
 }: Props): React.JSX.Element {
   const result = state.phase === 'review' || state.phase === 'asking' ? state.result : null
   const suggested = result?.improvement?.improved ?? ''
   const [text, setText] = useState(suggested)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [research, setResearch] = useState<'idle' | 'running'>('idle')
+  const [report, setReport] = useState<ResearchReport | null>(null)
+  const [removed, setRemoved] = useState<string[]>([])
   const areaRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * One bounded research pass, on demand and never automatically.
+   *
+   * The user's draft is preserved throughout: this writes nothing into the box and does
+   * not replace the suggestion. It records what was found, and rebuilding the prompt is a
+   * second, explicit click.
+   */
+  const doResearch = async (): Promise<void> => {
+    if (!result || research === 'running') return
+    setResearch('running')
+    setReport(null)
+    const r = await api.researchRequest(sessionId, result.original)
+    setResearch('idle')
+    setReport(r)
+  }
 
   // A new suggestion replaces what is in the box; an edit the user made to the previous
   // one is theirs and is not carried across, because it was written against other words.
@@ -231,10 +287,98 @@ export default function ImproveSheet({
               {i ? ', ' : ''}
               <span className={s.trusted ? '' : 'improve-untrusted'} title={s.source}>
                 {s.title}
-                {s.trusted ? '' : ' (unverified)'}
+                {/* The lifecycle word, not a tick. "recommended" and "discovered" are
+                    different claims and the difference is the whole point of the
+                    catalogue; collapsing both to "reference" is what makes an untested
+                    library read like an endorsed one. */}
+                {STAGE_LABEL[s.stage] ? ` · ${STAGE_LABEL[s.stage]}` : ''}
+                {s.stale ? ' · stale' : ''}
               </span>
+              {s.removable && onRerun ? (
+                <button
+                  className="improve-chip-x"
+                  title={`Remove ${s.title} and improve again without it`}
+                  onClick={() => {
+                    // Kept across the re-run: removing a second capability must not bring
+                    // the first one back.
+                    const next = [...removed, s.id]
+                    setRemoved(next)
+                    onRerun(next)
+                  }}
+                  aria-label={`remove ${s.title}`}
+                >
+                  ×
+                </button>
+              ) : null}
             </span>
           ))}
+        </div>
+      ) : null}
+
+      <div className="improve-research">
+        {research === 'running' ? (
+          <>
+            <span>Researching… nothing is being installed.</span>
+            <button
+              className="improve-btn"
+              onClick={() => {
+                api.cancelResearch(sessionId)
+                setResearch('idle')
+              }}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            className="improve-btn"
+            title="One bounded pass over public documentation. Installs nothing."
+            onClick={() => void doResearch()}
+          >
+            Research this request
+          </button>
+        )}
+      </div>
+
+      {report ? (
+        <div className="improve-report">
+          <div>
+            {report.outcome === 'skipped'
+              ? `Already known — ${report.detail}`
+              : report.detail}
+          </div>
+          {report.kept.length ? (
+            <ul className="improve-list">
+              {report.kept.map((k) => (
+                <li key={k.id}>
+                  <strong>{k.name}</strong> ({k.category}) — {k.description}{' '}
+                  <span className="improve-untrusted">new, untested</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {report.sources.length ? (
+            <div className="improve-sources">
+              checked:{' '}
+              {report.sources.map((s, i) => (
+                <span key={s.url} title={`${s.sourceClass}${s.opened ? '' : ' (not opened)'}`}>
+                  {i ? ', ' : ''}
+                  {hostOf(s.url)}
+                  {s.opened ? '' : ' (not opened)'}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {report.rejected.length ? (
+            <div className="improve-untrusted">
+              {report.rejected.length} rejected: {report.rejected.map((r) => r.why).join('; ')}
+            </div>
+          ) : null}
+          {report.kept.length && onRerun ? (
+            <button className="improve-btn" onClick={() => onRerun(removed)}>
+              Improve again with what was found
+            </button>
+          ) : null}
         </div>
       ) : null}
 

@@ -480,6 +480,28 @@ export interface ImproveOptions {
    * catalogue is the only knowledge there is and all of it is honestly `draft`.
    */
   includeUntrusted?: boolean
+  /**
+   * Capability ids the user removed from a previous answer.
+   *
+   * Removal is a re-run rather than a redraw: the improved prompt was written with that
+   * capability in it, so hiding the chip would leave the text still recommending it.
+   */
+  exclude?: string[]
+}
+
+/** One retrieved reference as the sheet shows it. */
+export interface ImproveSource {
+  id: string
+  title: string
+  provider: string
+  source: string
+  trusted: boolean
+  /** The derived lifecycle word: discovered, evaluated, tested, verified, recommended... */
+  stage: string
+  /** Past its review window. Usable, but it has to say so. */
+  stale: boolean
+  /** Can the user remove this one and re-run? Only catalogue entries. */
+  removable: boolean
 }
 
 /** One improvement, as it crosses the bridge. The original is always carried back. */
@@ -489,10 +511,28 @@ export interface ImproveResult {
   original: string
   improvement?: Improvement
   /** Where the brief's references came from, shown separately from the prompt. */
-  sources: Array<{ id: string; title: string; provider: string; source: string; trusted: boolean }>
+  sources: ImproveSource[]
   /** "held back: 1 secret, 2 code blocks", or empty. */
   held: string
   metrics: ImproveMetrics
+}
+
+/** What one on-demand research pass returns to the sheet. */
+export interface ResearchReport {
+  ok: boolean
+  /** completed | no-finding | skipped | deferred | failed | needs-human */
+  outcome: string
+  /** One line, safe to show. */
+  detail: string
+  /** New, and untested. Never presented as a recommendation. */
+  kept: Array<{ id: string; name: string; category: string; description: string; stage: string; source: string }>
+  /** Dropped, with the reason - so a run that kept nothing is not a run that found nothing. */
+  rejected: Array<{ id: string; why: string }>
+  /** What it says it opened, shown so the user can judge the sources themselves. */
+  sources: Array<{ url: string; sourceClass: string; opened: boolean; checkedAt: string }>
+  /** Already known. The number that proves research was avoided. */
+  duplicates: number
+  ms: number
 }
 
 export interface VoiceStatus {
@@ -1054,6 +1094,16 @@ export interface Api {
   ): Promise<ImproveResult>
   /** Abort whatever is in flight for this pane. Silent, and safe to call when nothing is. */
   cancelImprove(id: string): void
+  /**
+   * Research this request: one bounded pass over public sources, on demand.
+   *
+   * Never automatic. It installs nothing, it does not rewrite the draft, and what it finds
+   * comes back labelled Discovered - the prompt is only rebuilt afterwards, by asking for
+   * an improvement again.
+   */
+  researchRequest(id: string, draft: string): Promise<ResearchReport>
+  /** Stop a research pass. Does not touch an improvement running for the same pane. */
+  cancelResearch(id: string): void
   /**
    * Accept: empty the prompt box and paste the improved text into it. There is no `\r` in
    * what this writes and no option that adds one - the user presses Enter.

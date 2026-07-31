@@ -806,14 +806,19 @@ export default function App(): JSX.Element {
   }, [improveMode, improveIdleMs])
 
   const runImprove = useCallback(
-    async (id: string) => {
+    async (id: string, exclude?: string[]) => {
       const draft = paneDraft.get(id)
-      const text = draft?.text.trim() ?? ''
+      // On a re-run the pane's draft has already been replaced by nothing the user typed,
+      // so the original carried on the open sheet is the honest source of the text.
+      const carried = exclude?.length && sheetRef.current?.state.phase === 'review'
+        ? sheetRef.current.state.result.original
+        : ''
+      const text = carried || draft?.text.trim() || ''
       if (!text) return flash('Nothing typed in that pane yet.')
       setImproveOffer(null)
       setAsked(false)
       setSheet({ id, state: { phase: 'working', original: text } })
-      const result = await api.improvePrompt(id, text)
+      const result = await api.improvePrompt(id, text, exclude?.length ? { exclude } : undefined)
       // A cancel that landed while this was in flight has already cleared the sheet, and
       // the late answer must not reopen it.
       if (sheetRef.current?.id !== id) return
@@ -2157,6 +2162,7 @@ export default function App(): JSX.Element {
                   paneFocus.get(s.id)?.()
                 }}
                 onAnswered={(answers) => void answerImprove(answers)}
+                onRerun={(exclude) => void runImprove(s.id, exclude)}
               />
             )}
           </div>

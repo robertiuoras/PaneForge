@@ -127,6 +127,8 @@ const api: Api = {
   answerImprove: (id, draft, answers, options) =>
     ipcRenderer.invoke('improve:answer', id, draft, answers, options),
   cancelImprove: (id) => ipcRenderer.send('improve:cancel', id),
+  researchRequest: (id, draft) => ipcRenderer.invoke('research:run', id, draft),
+  cancelResearch: (id) => ipcRenderer.send('research:cancel', id),
   applyImproved: (id, text) => ipcRenderer.invoke('improve:apply', id, text),
   recordImprove: (outcome, metrics, editedChars) =>
     ipcRenderer.send('improve:record', outcome, metrics, editedChars),

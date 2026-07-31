@@ -63,7 +63,11 @@
     "test:macupdate": "node scripts/mac-update-test.mjs",
     "test:macsign": "node scripts/mac-sign-test.mjs",
     "test:view": "node scripts/view-test.mjs",
-    "test:research": "node scripts/research-test.mjs"
+    "test:research": "node scripts/research-test.mjs",
+    "capability:list": "node scripts/capability-lifecycle.mjs --list",
+    "capability:sandbox": "node scripts/capability-sandbox.mjs",
+    "capability:lifecycle": "node scripts/capability-lifecycle.mjs",
+    "capability:ingest": "node scripts/capability-ingest.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

@@ -214,3 +214,39 @@
   bottom: 10px;
   z-index: 30;
 }
+
+/* Research this request, and the capability chips it can add. */
+.improve-research {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.improve-report {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent, #6aa9ff);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The remove control on a suggested capability. Small, and never the first thing the
+   eye lands on - the reference matters more than the ability to drop it. */
+.improve-chip-x {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.improve-chip-x:hover {
+  opacity: 1;
+}
