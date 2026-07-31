@@ -19,11 +19,12 @@
 //
 //   node scripts/lane-lag-test.mjs
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { buildSync } from 'esbuild'
 
 const repoRoot = resolve(import.meta.dirname, '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-lanelag-'))
@@ -57,29 +58,32 @@ function git(cwd, args) {
   return (r.stdout ?? '').trim()
 }
 
+/**
+ * Get the real `laneWork.ts` as something node can import.
+ *
+ * This used to be `tsc <file>`, and it was red on master twice over without either failure
+ * saying anything about lanes. First, a standalone tsc compiles with strictNullChecks OFF
+ * (the project's tsconfig is not read), and under that setting an unrelated shared type
+ * stops being assignable - so the test died on a type error `npm run typecheck` does not
+ * have. Then, with that fixed, tsc emits the import specifiers exactly as written, and
+ * node's ESM loader will not resolve an extensionless `../shared/draft`.
+ *
+ * esbuild answers both: it bundles rather than type-checks, so the module arrives as one
+ * file with nothing left to resolve. The behaviour under test is git-call scheduling,
+ * which no compiler has an opinion about.
+ */
 async function loadLaneWork() {
-  const out = join(work, 'build')
-  execFileSync(
-    process.execPath,
-    [
-      join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-      join('src', 'main', 'laneWork.ts'),
-      '--outDir',
-      out,
-      '--rootDir',
-      'src',
-      '--module',
-      'es2022',
-      '--target',
-      'es2022',
-      '--moduleResolution',
-      'bundler',
-      '--skipLibCheck'
-    ],
-    { cwd: repoRoot, stdio: 'pipe' }
-  )
-  writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-  return import(pathToFileURL(join(out, 'main', 'laneWork.js')).href)
+  const out = join(work, 'laneWork.mjs')
+  buildSync({
+    absWorkingDir: repoRoot,
+    entryPoints: [join('src', 'main', 'laneWork.ts')],
+    outfile: out,
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node20'
+  })
+  return import(pathToFileURL(out).href)
 }
 
 const lw = await loadLaneWork()

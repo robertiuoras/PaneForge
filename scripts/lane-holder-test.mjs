@@ -141,7 +141,12 @@ execFileSync(
     'es2022',
     '--moduleResolution',
     'bundler',
-    '--skipLibCheck'
+    '--skipLibCheck',
+    // The project compiles strict. Without this flag the same files are compiled with
+    // strictNullChecks OFF, where an unrelated shared type stops being assignable and
+    // the test dies on a type error `npm run typecheck` does not have (three lane tests
+    // were red on master for exactly this, saying nothing about lanes).
+    '--strict'
   ],
   { cwd: join(here, '..'), stdio: 'pipe' }
 )
