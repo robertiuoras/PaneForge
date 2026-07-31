@@ -76,17 +76,117 @@ function gitSafe(cwd, ...args) {
 
 // This file can live in a worktree, so "the repo" always means the MAIN checkout:
 // git-common-dir points at <main>/.git from anywhere inside any worktree.
-const commonDir = resolve(join(here, '..'), git(join(here, '..'), 'rev-parse', '--git-common-dir'))
+//
+// And "the repo" is not always this one. Lanes were built for PaneForge because PaneForge
+// is where several chats collide, but nothing about the problem is about PaneForge: two
+// chats in one checkout of anything overwrite each other's edits and race the same index.
+// So the repository is an argument - `--repo <dir>`, or LANE_REPO - and the hook that
+// claims lanes passes whichever repository the chat is actually sitting in. There is ONE
+// copy of this engine, the one inside PaneForge, driving every project on the machine. A
+// copy per project would drift, and the only symptom of that drift would be two chats
+// quietly sharing one checkout, which is the exact thing this exists to prevent.
+function argOf(name) {
+  const a = process.argv
+  const eq = a.find((x) => x.startsWith(`--${name}=`))
+  if (eq) return eq.slice(name.length + 3)
+  const i = a.indexOf(`--${name}`)
+  return i >= 0 ? a[i + 1] : undefined
+}
+const asked = argOf('repo') ?? process.env.LANE_REPO ?? null
+const own = resolve(join(here, '..'))
+const commonDir = resolve(asked ? resolve(asked) : own, git(asked ? resolve(asked) : own, 'rev-parse', '--git-common-dir'))
 const MAIN = dirname(commonDir)
 const STATE = join(commonDir, 'paneforge-lanes.json')
 
+/**
+ * Is the repo being driven the checkout this script ships in?
+ *
+ * Only two things turn on it, and both are PaneForge's alone: releases default to cutting
+ * a version here and to merging everywhere else, and the `npm run try` copies a lane opens
+ * are only ever closed in the repo that has them. `--repo <this repo>` (which the hook
+ * always passes, PaneForge included) still counts as its own checkout - the flag says
+ * WHICH repo, not that it is somebody else's.
+ */
+const OWN = (() => {
+  if (!asked) return true
+  try {
+    return dirname(resolve(own, git(own, 'rev-parse', '--git-common-dir'))) === MAIN
+  } catch {
+    return false
+  }
+})()
+
+/**
+ * Per-repository settings, read from `.lanes.json` in the repo root. Every field is
+ * optional and the defaults are what PaneForge has always done:
+ *
+ *   { "lanes": false }        this repo does not use lanes at all (the hook obeys it)
+ *   { "branch": "main" }      the branch lanes are cut from and merged back into
+ *   { "release": "merge" }    what finishing a lane does - see below
+ *   { "pool": ["main","a"] }  how many chats may work here at once
+ *
+ * `release` is the whole difference between PaneForge and everything else, and it is a
+ * declaration rather than a guess on purpose. "version" bumps package.json, tags, pushes
+ * and publishes - which in a repo that deploys on push IS a production release, and no
+ * project should start doing that because a script recognised an npm script name. A repo
+ * that is not this one therefore defaults to "merge": finished lanes are merged into the
+ * branch and pushed, batched exactly the same way, and no version is ever cut. Opting a
+ * repo into real releases is one line in its own `.lanes.json`.
+ */
+function loadProfile() {
+  let cfg = {}
+  try {
+    cfg = JSON.parse(readFileSync(join(MAIN, '.lanes.json'), 'utf8'))
+  } catch {
+    /* no file, or unreadable - the defaults below are the whole of the behaviour */
+  }
+  // The branch the main checkout has checked out IS the branch lanes belong to: it is what
+  // `main` (the lane) sits on, so a repo whose default is `main` rather than `master` needs
+  // no configuration at all. origin/HEAD is the fallback for a detached main checkout.
+  let branch = cfg.branch
+  if (!branch) {
+    const head = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+    if (head.ok && head.out) branch = head.out
+    else {
+      const o = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+      branch = o.ok && o.out ? o.out.replace(/^origin\//, '') : 'master'
+    }
+  }
+  const release = cfg.release ?? (OWN ? 'version' : 'merge')
+  if (!['version', 'merge', 'none'].includes(release))
+    throw new Error(`.lanes.json: unknown release "${release}" - use "version", "merge" or "none"`)
+  return {
+    branch,
+    release,
+    pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : ['main', 'a', 'b', 'c'],
+    enabled: cfg.lanes !== false
+  }
+}
+const PROFILE = loadProfile()
+
+/** The branch lanes are cut from and merged back into. `master` here, `main` elsewhere. */
+const MB = PROFILE.branch
+/** What this repo does with finished work: cut a version, merge and push, or neither. */
+const RELEASE = PROFILE.release
+
 /** Lane pool. `main` first: one chat alone should never be pushed onto a branch. */
 // Worktrees are only created when a lane is first handed out, so headroom is free.
-const POOL = ['main', 'a', 'b', 'c']
+const POOL = PROFILE.pool
 const laneDir = (id) => (id === 'main' ? MAIN : join(dirname(MAIN), `${basename(MAIN)}-${id}`))
-const laneBranch = (id) => (id === 'main' ? 'master' : `lane-${id}`)
+const laneBranch = (id) => (id === 'main' ? MB : `lane-${id}`)
 /** Matches scripts/try.mjs, which derives the PaneForge profile from the folder name. */
 const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
+
+/**
+ * Close the `npm run try` copies a lane left running - PaneForge's own, and nobody else's.
+ *
+ * The sweep matches processes by the folder they were launched from, so pointing it at
+ * some other project's lane would find nothing anyway. Gating it is about not spawning a
+ * process sweep, on every claim, in every repository on the machine, to find nothing.
+ */
+function closeLaneApps(dir) {
+  if (OWN) closeTestApps(dir)
+}
 
 // A claim is dropped after this long without the session being seen. Sessions usually
 // end with a SessionEnd hook that frees the lane properly; this is for the ones that
@@ -214,7 +314,7 @@ function reap(state) {
       // closed the `npm run try` window it left running either. Both go here.
       dropClaims(state, c.session)
       delete state.lanes[id]
-      closeTestApps(laneDir(id))
+      closeLaneApps(laneDir(id))
     }
   }
   if (state.release && now() - state.release.at > LOCK_MS) state.release = null
@@ -285,11 +385,11 @@ function catchUp(id, { keepConflict = false } = {}) {
   // Never merge on top of someone's uncommitted edit.
   if (gitSafe(dir, 'status', '--porcelain').out) return { moved: false, conflicts: [], dirty: true }
   // Already contains master -> nothing to do (and no empty merge commit).
-  if (gitSafe(dir, 'merge-base', '--is-ancestor', 'master', 'HEAD').ok) {
+  if (gitSafe(dir, 'merge-base', '--is-ancestor', MB, 'HEAD').ok) {
     return { moved: false, conflicts: [], dirty: false }
   }
   enableRerere()
-  const m = gitSafe(dir, 'merge', '--no-edit', 'master')
+  const m = gitSafe(dir, 'merge', '--no-edit', MB)
   if (m.ok) return { moved: true, conflicts: [], dirty: false }
   const conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
     .out.split('\n')
@@ -326,11 +426,11 @@ function healLane(id) {
   if (clean && aheadOf(laneBranch(id)) === 0) {
     // Every change in this lane is already in master: start the next chat from master
     // instead of from a branch full of commits that only look unshipped.
-    if (gitSafe(dir, 'reset', '--hard', 'master').ok) did.push('reset to master')
+    if (gitSafe(dir, 'reset', '--hard', MB).ok) did.push(`reset to ${MB}`)
   } else if (clean) {
     const c = catchUp(id)
-    if (c.moved) did.push('merged master')
-    if (c.conflicts.length) did.push(`conflicts with master in ${c.conflicts.join(', ')}`)
+    if (c.moved) did.push(`merged ${MB}`)
+    if (c.conflicts.length) did.push(`conflicts with ${MB} in ${c.conflicts.join(', ')}`)
   }
   return did.length ? did.join(', ') : null
 }
@@ -354,7 +454,7 @@ function noteConflict(bag, id, detail, previous) {
     detail,
     resolver: was?.resolver ?? null,
     resolverAt: was?.resolverAt ?? null,
-    master: gitSafe(MAIN, 'rev-parse', 'master').out,
+    master: gitSafe(MAIN, 'rev-parse', MB).out,
     retryAt: now() + RETRY_MS
   }
   return bag[id]
@@ -389,7 +489,7 @@ function mergeFiles(out) {
  */
 function retryConflicts(state) {
   let changed = false
-  const head = gitSafe(MAIN, 'rev-parse', 'master').out
+  const head = gitSafe(MAIN, 'rev-parse', MB).out
   for (const [id, c] of Object.entries(state.conflicts)) {
     if (id === 'main' || !existsSync(laneDir(id))) continue
     if (c.retryAt && now() < c.retryAt && c.master === head) continue
@@ -446,7 +546,7 @@ function retryConflicts(state) {
  * old to answer (the caller then leaves the conflict where it was).
  */
 function offTreeConflicts(id) {
-  const r = gitSafe(MAIN, 'merge-tree', '--write-tree', '--name-only', 'master', laneBranch(id))
+  const r = gitSafe(MAIN, 'merge-tree', '--write-tree', '--name-only', MB, laneBranch(id))
   if (r.ok) return false
   if (/unknown option|usage:|not a valid object/i.test(r.out)) return null
   return true
@@ -477,7 +577,7 @@ function ensureWorktree(id) {
     // A reused lane branch may be behind master; start it fresh from master when new.
     const add = known
       ? ['worktree', 'add', dir, branch]
-      : ['worktree', 'add', '-b', branch, dir, 'master']
+      : ['worktree', 'add', '-b', branch, dir, MB]
     const r = gitSafe(MAIN, ...add)
     if (!r.ok) throw new Error(`could not create lane ${id}: ${r.out}`)
   }
@@ -536,6 +636,9 @@ function claim(session, cwd, prefer, tentative = false) {
         dir: laneDir(id),
         branch: laneBranch(id),
         profile: laneProfile(id),
+        repo: MAIN,
+        release: RELEASE,
+        own: OWN,
         fresh: false,
         tentative: Boolean(c.tentative)
       }
@@ -567,7 +670,7 @@ function claim(session, cwd, prefer, tentative = false) {
       .sort((a, b) => (a[1].seen ?? 0) - (b[1].seen ?? 0))[0]
     if (idle) {
       delete state.lanes[idle[0]]
-      closeTestApps(laneDir(idle[0]))
+      closeLaneApps(laneDir(idle[0]))
       free = idle[0]
     }
   }
@@ -584,12 +687,23 @@ function claim(session, cwd, prefer, tentative = false) {
   // last chat left behind is settled here, before this one writes a line.
   const healed = healLane(free)
   if (healed) {
-    if (/conflicts with master/.test(healed)) noteConflict(state.conflicts, free, healed)
+    if (/conflicts with /.test(healed)) noteConflict(state.conflicts, free, healed)
     else delete state.conflicts[free]
   }
   state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now(), ...(tentative ? { tentative: true } : {}) }
   write(state)
-  return { lane: free, dir, branch: laneBranch(free), profile: laneProfile(free), fresh: true, healed, tentative }
+  return {
+    lane: free,
+    dir,
+    branch: laneBranch(free),
+    profile: laneProfile(free),
+    repo: MAIN,
+    release: RELEASE,
+    own: OWN,
+    fresh: true,
+    healed,
+    tentative
+  }
 }
 
 /**
@@ -633,7 +747,7 @@ function guard(session, path) {
     try {
       const got = claim(session, dirname(target), lane.id)
       if (got.lane === lane.id) return null
-      return `PaneForge: this session's lane is ${got.dir}. Make the change there, not in ${lane.dir}.`
+      return `${basename(MAIN)}: this session's lane is ${got.dir}. Make the change there, not in ${lane.dir}.`
     } catch {
       return null
     }
@@ -641,24 +755,51 @@ function guard(session, path) {
   const mine = Object.entries(state.lanes).find(([, c]) => c.session === session)
   const where = mine ? laneDir(mine[0]) : null
   return (
-    `PaneForge: ${lane.dir} belongs to another chat right now.` +
+    `${basename(MAIN)}: ${lane.dir} belongs to another chat right now.` +
     (where
       ? ` Yours is ${where} - make the same change there.`
-      : ' Run `node scripts/lane.mjs claim --session <id>` to get your own checkout.')
+      : ` Run \`node ${join(own, 'scripts', 'lane.mjs')} claim --repo ${MAIN} --session <id>\` to get your own checkout.`)
   )
 }
 
 // ---------------------------------------------------------------- what a lane holds
 
-/** Commits on master that no tag has gone out with yet. */
+/**
+ * Work sitting on the release branch that has not gone anywhere yet.
+ *
+ * What "gone anywhere" means is the repo's own answer. Where finishing cuts a version it
+ * is the last tag, so anything after `v<package.json version>` still has to go out. Where
+ * finishing only merges and pushes, it is `origin/<branch>`: a commit nobody else can see
+ * yet is exactly the thing a release would hand over. A repo that neither tags nor pushes
+ * has nothing to count.
+ */
 function unreleasedOnMaster() {
   try {
-    const version = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).version
-    const r = gitSafe(MAIN, 'rev-list', '--count', `v${version}..HEAD`)
-    return r.ok ? Number(r.out) : 0
+    if (RELEASE === 'none') return 0
+    if (RELEASE === 'merge') {
+      const r = gitSafe(MAIN, 'rev-list', '--count', `origin/${MB}..HEAD`)
+      return r.ok ? Number(r.out) : 0
+    }
+    return commitsSinceVersion(JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).version)
   } catch {
     return 0
   }
+}
+
+/**
+ * Commits since the tag for `version`, and everything when there is no such tag.
+ *
+ * PaneForge has always had a tag for whatever is in its package.json, so `v<version>..HEAD`
+ * was safe. It is not safe anywhere else: a repository that has just turned releases on has
+ * a version in package.json and no tag matching it anywhere, and git answers that with a
+ * fatal "ambiguous argument", which surfaced as `No release yet: Command failed` - a repo
+ * that could never cut its first release and said nothing about why.
+ */
+function commitsSinceVersion(version) {
+  const tag = `v${version}`
+  const known = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/tags/${tag}`).ok
+  const r = gitSafe(MAIN, 'rev-list', '--count', known ? `${tag}..HEAD` : 'HEAD')
+  return r.ok ? Number(r.out) : 0
 }
 
 /**
@@ -670,7 +811,7 @@ function unreleasedOnMaster() {
  * compares patches, so a duplicate counts as what it is: already released.
  */
 function aheadOf(branch) {
-  const r = gitSafe(MAIN, 'cherry', 'master', branch)
+  const r = gitSafe(MAIN, 'cherry', MB, branch)
   if (!r.ok) return 0
   return r.out.split('\n').filter((l) => l.startsWith('+')).length
 }
@@ -731,7 +872,7 @@ function typecheckFailure() {
     .filter((l) => /error TS/.test(l))
     .slice(0, 3)
     .join('; ')
-  return `master does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
+  return `${MB} does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
 }
 
 /**
@@ -780,10 +921,10 @@ function markReady(state, id) {
   const session = state.lanes[id]?.session ?? null
   if (id === 'main') {
     state.ready.main = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), session }
-    return { lane: id, note: 'master is the release branch - nothing to merge' }
+    return { lane: id, note: `${MB} is the release branch - nothing to merge` }
   }
   const ahead = aheadOf(laneBranch(id))
-  if (!ahead) throw new Error(`lane ${id} has no commits master does not already have`)
+  if (!ahead) throw new Error(`lane ${id} has no commits ${MB} does not already have`)
   state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: ahead, session }
   return { lane: id, commits: ahead, note: 'goes out with the next release, not a separate one' }
 }
@@ -878,7 +1019,7 @@ function ready(session, wanted) {
     noteConflict(state.conflicts, id, caught.conflicts.join(', '))
     write(state)
     throw new Error(
-      `lane ${id} and master both changed:\n  ${caught.conflicts.join('\n  ')}\n` +
+      `lane ${id} and ${MB} both changed:\n  ${caught.conflicts.join('\n  ')}\n` +
         `The merge is open in ${laneDir(id)}. Resolve those files, ` +
         `\`git add\` them, \`git commit\`, then run ready again - the release then merges by itself.`
     )
@@ -892,7 +1033,7 @@ function ready(session, wanted) {
   // "PaneForge - dev-b" sitting in Alt+Tab for as long as the chat stayed open - which,
   // when the release is blocked on another lane, is hours. Close it at the moment the
   // work is declared done instead.
-  closeTestApps(laneDir(id))
+  closeLaneApps(laneDir(id))
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
   return { ...marked, release: autoship('patch', session) }
@@ -928,7 +1069,7 @@ function releaseClaim(session) {
       delete state.lanes[id]
       // The test copy this chat opened belongs to the chat, not to the next one that
       // claims the lane - and `--minimized` means nobody sees it to close it by hand.
-      closeTestApps(laneDir(id))
+      closeLaneApps(laneDir(id))
       freed = id
     }
   }
@@ -961,9 +1102,12 @@ function ship(kind, session) {
     // tagged, which stranded the release (the resume path below is the recovery).
     // Refuse up front instead: a dry-run push exercises credentials and the network
     // and transfers nothing, so a release that cannot be pushed never gets cut.
-    const origin = gitSafe(MAIN, 'push', '--dry-run')
-    if (!origin.ok)
-      throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
+    // A repo configured to push nothing is not asked to prove it can push.
+    if (RELEASE !== 'none') {
+      const origin = gitSafe(MAIN, 'push', '--dry-run')
+      if (!origin.ok)
+        throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
+    }
 
     const merged = []
     const conflicts = {}
@@ -984,6 +1128,59 @@ function ship(kind, session) {
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
     }
 
+    /**
+     * The half of a release every repo has: put the lanes that just went out back on top
+     * of the branch, keep the ready marks of the ones that could not merge, and record
+     * what went out. `version` is null where no version was cut.
+     */
+    const finish = (version, built) => {
+      // Every lane that just shipped catches up, so the next feature in that lane does not
+      // start from a stale base and conflict on the release commit. A real merge, not
+      // ff-only: a lane with its own commits can never fast-forward, which is exactly the
+      // lane that drifts and conflicts. A lane that cannot merge cleanly is recorded and
+      // told to its own chat, not silently skipped.
+      const rebased = []
+      for (const id of POOL) {
+        if (id === 'main') continue
+        const c = catchUp(id)
+        if (c.moved) rebased.push(id)
+        if (c.conflicts.length) noteConflict(conflicts, id, `${MB} merge: ${c.conflicts.join(', ')}`, state.conflicts)
+      }
+
+      const fresh = read()
+      // A lane that could not merge keeps its ready mark: its work still has to go out,
+      // in the next release, once someone has resolved it.
+      fresh.ready = Object.fromEntries(Object.entries(fresh.ready).filter(([id]) => conflicts[id]))
+      fresh.conflicts = conflicts
+      fresh.release = null
+      fresh.lastShip = { version, at: now(), lanes: merged.map((m) => m.lane) }
+      write(fresh)
+
+      return { shipped: true, version, merged, rebased, conflicts, built }
+    }
+
+    // A repository that does not cut versions is finished at the merge. It still gets the
+    // whole of the rest: one lock, one batch, one cooldown, lanes brought back up to date.
+    // Only the version number is missing, and the version number is the part that is
+    // genuinely PaneForge's - `release: "version"` in its .lanes.json is what asks for it.
+    if (RELEASE !== 'version') {
+      if (!merged.length && !unreleasedOnMaster()) {
+        const s = read()
+        s.conflicts = conflicts
+        s.release = null
+        write(s)
+        return { shipped: false, reason: 'nothing to release', conflicts }
+      }
+      if (RELEASE === 'merge') {
+        const pushed = gitSafe(MAIN, 'push')
+        // The lanes are already merged locally at this point, so say that rather than
+        // "release failed": the work is on the branch and one `git push` finishes it.
+        if (!pushed.ok)
+          throw new Error(`lanes merged into ${MB}, but origin refused the push: ${pushed.out.slice(0, 200)}`)
+      }
+      return finish(null, { by: 'skipped' })
+    }
+
     const pkgPath = join(MAIN, 'package.json')
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
     const [maj, min, pat] = pkg.version.split('.').map(Number)
@@ -994,8 +1191,8 @@ function ship(kind, session) {
           ? `${maj}.${min + 1}.0`
           : `${maj}.${min}.${pat + 1}`
 
-    const unreleased = git(MAIN, 'rev-list', '--count', `v${pkg.version}..HEAD`)
-    if (unreleased === '0') {
+    const unreleased = commitsSinceVersion(pkg.version)
+    if (unreleased === 0) {
       // A release that died between the tag and the push (expired token, dropped
       // network) leaves master looking released while origin never heard of it - and
       // "nothing new since vX" means no later attempt would ever push it. Finish that
@@ -1027,31 +1224,7 @@ function ship(kind, session) {
     git(MAIN, 'tag', `v${next}`)
     git(MAIN, 'push')
     git(MAIN, 'push', 'origin', `v${next}`)
-    const built = publishFallback(next)
-
-    // Every lane that just shipped catches up to master, so the next feature in that lane
-    // does not start from a stale base and conflict on the release commit. A real merge, not
-    // ff-only: a lane with its own commits can never fast-forward, which is exactly the lane
-    // that drifts and conflicts. A lane that cannot merge cleanly is recorded and told to
-    // its own chat, not silently skipped.
-    const rebased = []
-    for (const id of POOL) {
-      if (id === 'main') continue
-      const c = catchUp(id)
-      if (c.moved) rebased.push(id)
-      if (c.conflicts.length) noteConflict(conflicts, id, `master merge: ${c.conflicts.join(', ')}`, state.conflicts)
-    }
-
-    const fresh = read()
-    // A lane that could not merge keeps its ready mark: its work still has to go out,
-    // in the next release, once someone has resolved it.
-    fresh.ready = Object.fromEntries(Object.entries(fresh.ready).filter(([id]) => conflicts[id]))
-    fresh.conflicts = conflicts
-    fresh.release = null
-    fresh.lastShip = { version: next, at: now(), lanes: merged.map((m) => m.lane) }
-    write(fresh)
-
-    return { shipped: true, version: next, merged, rebased, conflicts, built }
+    return finish(next, publishFallback(next))
   } catch (e) {
     const s = read()
     if (s.release?.session === (session ?? 'unknown')) {
@@ -1163,6 +1336,7 @@ const NOTES_MS = 60 * 60 * 1000
  */
 function reconcileNotes(state) {
   const last = state.lastShip
+  if (RELEASE !== 'version') return null
   if (!last?.version || !last.at || Date.now() - last.at > NOTES_MS) return null
   if (!existsSync(join(MAIN, '.github', 'release-notes.md'))) return null
 
@@ -1194,6 +1368,16 @@ function status(session) {
   if (reaped) write(state)
   return {
     main: MAIN,
+    // What this repository is, in the three words a caller needs to phrase anything: the
+    // branch lanes live off, what finishing does here, and whether this is the checkout
+    // the engine ships in. The hook reads these to know whether to talk about releases.
+    repo: basename(MAIN),
+    branch: MB,
+    // NOT `release` - that name is already taken below by the in-flight release lock, and
+    // an object literal with the same key twice keeps the LAST one, so this read `null`
+    // for every repo until the collision was noticed.
+    mode: RELEASE,
+    own: OWN,
     lanes: POOL.map((id) => {
       const w = laneWork(id)
       return {
@@ -1239,6 +1423,13 @@ const arg = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.l
   (argv.includes(`--${name}`) ? argv[argv.indexOf(`--${name}`) + 1] : undefined)
 
 try {
+  // `{"lanes": false}` in a repo's .lanes.json is that repo saying it does not want any of
+  // this. The hook obeys it too, but the engine is where it has to be final: a chat that
+  // runs a lane command by hand in an opted-out repo must not create a worktree in it.
+  if (!PROFILE.enabled && cmd !== 'status') {
+    console.log(`${basename(MAIN)} has lanes turned off in its .lanes.json - nothing done.`)
+    process.exit(0)
+  }
   const session = arg('session')
   const sayBuilt = (b) =>
     b?.by === 'local'
@@ -1249,16 +1440,23 @@ try {
   const sayRelease = (r) => {
     if (!r) return
     if (r.shipped) {
-      console.log(`Released v${r.version} automatically${r.merged?.length ? ` (lanes ${r.merged.map((m) => m.lane).join(', ')})` : ''}.`)
-      console.log(sayBuilt(r.built))
+      const lanes = r.merged?.length ? ` (lanes ${r.merged.map((m) => m.lane).join(', ')})` : ''
+      // No version means this repo merges rather than releases: say what actually
+      // happened. "Released vnull" is how a message stops being read at all.
+      if (r.version) {
+        console.log(`Released v${r.version} automatically${lanes}.`)
+        console.log(sayBuilt(r.built))
+      } else {
+        console.log(`Finished work merged into ${MB}${RELEASE === 'merge' ? ' and pushed' : ''}${lanes}.`)
+      }
     } else if (r.reason && r.reason !== 'nothing to release') {
       console.log(`No release yet: ${r.reason}`)
     }
     for (const [id, c] of Object.entries(r.conflicts ?? {})) {
       console.log(
-        `Lane ${id} is finished but conflicts with master, so it was left out of the release. ` +
-          `It is retried by itself every ${Math.round(RETRY_MS / 60000)}m and goes out on its own if master stops ` +
-          `disagreeing with it. To finish it now: node scripts/lane.mjs resolve --session <id> --lane ${id} ` +
+        `Lane ${id} is finished but conflicts with ${MB}, so it was left out of the release. ` +
+          `It is retried by itself every ${Math.round(RETRY_MS / 60000)}m and goes out on its own if ${MB} stops ` +
+          `disagreeing with it. To finish it now: node ${join(own, 'scripts', 'lane.mjs')} resolve --repo ${MAIN} --session <id> --lane ${id} ` +
           `(opens the merge in ${c.dir}).`
       )
     }
@@ -1301,10 +1499,10 @@ try {
   else if (cmd === 'ship') {
     const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'patch').toLowerCase(), session)
     if (r.shipped) {
-      console.log(`Shipped v${r.version}.`)
+      console.log(r.version ? `Shipped v${r.version}.` : `Merged into ${MB}${RELEASE === 'merge' ? ' and pushed' : ''}.`)
       if (r.merged.length) console.log(`Included lanes: ${r.merged.map((m) => m.lane).join(', ')}`)
       if (r.rebased.length) console.log(`Lanes brought up to date: ${r.rebased.join(', ')}`)
-      console.log(sayBuilt(r.built))
+      if (r.version) console.log(sayBuilt(r.built))
     } else {
       console.log(`Not shipped: ${r.reason}`)
     }

@@ -28,6 +28,43 @@ worktree `claude-orchestrator-a` / `-b` on `lane-a` / `lane-b`. Work only in the
 were given; writing into another chat's checkout is refused by a PreToolUse hook, not by
 convention. `node scripts/lane.mjs status` shows who holds what.
 
+None of that is about PaneForge, and since 2026-07-31 it is not only for PaneForge. Two
+chats in one checkout of ANY repository overwrite each other's edits and race the same
+index, so `lane.mjs` takes `--repo <dir>` and the hook passes whichever repository the
+chat is actually sitting in. There is ONE engine - this file - driving every project on
+the machine; a copy per repo would drift, and the only symptom of the drift would be two
+chats quietly sharing one checkout, which is the thing lanes exist to prevent.
+
+What a repository gets is decided by `.lanes.json` in its root, every field optional:
+
+```json
+{ "lanes": false, "branch": "main", "release": "merge", "pool": ["main", "a"] }
+```
+
+`release` is the whole difference between here and everywhere else, and it is a
+declaration rather than a guess on purpose. `"version"` bumps package.json, tags, pushes
+and publishes - which in a repo that deploys on push IS a production release, and no
+project should start doing that because a script recognised an npm script name. So any
+repo that is not this one defaults to `"merge"`: finished lanes are merged into its branch
+and pushed, batched behind the same lock and the same cooldown, and no version is ever
+cut. This repo's own `.lanes.json` says `"version"`, which is what it always did.
+
+The branch is the repo's own - whatever the main checkout has checked out, so a project on
+`main` rather than `master` needs no configuration at all. A repo with no remote, and
+`claude-memory` (edited from every chat on the machine, by hooks as well as agents), never
+get lanes. A chat alone in a repo is told nothing: it gets `main`, which is the folder it
+was already in, and silence is the point - a line about lanes on every prompt in every
+project is how a useful line stops being read.
+
+`npm run test:lanes` ends with `lane-anyrepo-test.mjs`, which drives the real script
+against real throwaway repos on `main` with real remotes. It pins the two answers that are
+easy to get wrong once a second repo exists: a repo that never asked for releases must
+NEVER cut a version, and one that asked must cut exactly the version this repo would.
+Finding it needed writing: a repository that has just turned releases on has a version in
+package.json and no tag matching it, and `v0.1.0..HEAD` is a fatal "ambiguous argument"
+that surfaced as `No release yet: Command failed` - a repo that could never cut its first
+release and never said why.
+
 ## Releasing happens by itself
 
 There is one command, and it is not a release:
