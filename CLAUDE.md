@@ -234,6 +234,55 @@ that a failed swap puts the old bundle back, and that the relaunch is `open -g` 
 foreground) - or absent entirely when the swap happens because the user quit. The download
 half is proved against the live release with `node scripts/mac-update-test.mjs --live
 <version>`, which is left out of the suite because it pulls ~120 MB.
+
+`npm run test:macsign` is why the Mac stops asking for permission to read your Documents
+folder every single release. macOS stores a TCC grant against the app's *designated
+requirement*, and an ad-hoc signature has no certificate to name the app by, so that
+requirement is the binary's own hash - `cdhash H"ec87a5..."`. This repo cuts a patch
+whenever a chat finishes, the app auto-updates, and every one of those releases threw away
+Documents, Desktop, Downloads, iCloud Drive, local network and Apple Events and asked for
+all of it again. Nothing in the app can fix that: not an entitlement, not the
+`NS*UsageDescription` strings, not `xattr -d com.apple.quarantine`, because none of them
+is what TCC decided to key the grant on.
+
+Signing with any certificate at all changes the requirement to `identifier
+"com.robert.paneforge" and certificate root = H"..."`, which has no cdhash in it and
+therefore survives every rebuild. `scripts/mac-cert.mjs create` makes that certificate -
+self-signed, twenty years, `codeSigning` EKU - and prints the two repository secrets
+(`PF_CERT_P12`, `PF_CERT_PASSWORD`) that let CI sign with the SAME one, since a second
+certificate is a second root hash and one more reset. It buys nothing from Gatekeeper: a
+self-signed build is still refused on first launch, so `install.sh` and `macUpdate.ts` go
+on clearing quarantine exactly as before. The test pins the ad-hoc case as well as the
+signed one - without it, it could not tell "the certificate fixed this" from "this was
+never broken" - and its last assertion is the only one TCC actually depends on: change the
+app, sign again, the requirement is byte-identical.
+
+Four things it cost an hour each to learn, none of them visible from the code:
+
+- `set-keychain-settings -t 0 -u`, which every guide to CI signing includes, asks the
+  Security agent for authorisation. With no GUI session there is nobody to answer, so it
+  fails as "User canceled the operation" - and it leaves the keychain in a state where the
+  next call, the import itself, fails the same way. On a desktop it does worse: it puts a
+  password dialog on Robert's screen for a keychain whose password is empty. It is gone;
+  `mac-sign.mjs` unlocks the keychain a second before signing instead, which the 300-second
+  auto-lock cannot outrun.
+- The identity does not need to be TRUSTED. `security find-identity -v` hides it -
+  `CSSMERR_TP_NOT_TRUSTED` - while codesign signs with it perfectly happily, and the kernel
+  runs the result, quarantined or not. Trusting a root is another dialog nobody can click.
+- The key lives in its own keychain, never `login`, because `set-key-partition-list` needs
+  that keychain's password and the login one is Robert's. Without that call every signature
+  dies as `errSecInternalComponent`, an error that mentions nothing about keychains.
+- OpenSSL 3 writes a p12 macOS cannot read. `security import` reports "MAC verification
+  failed during PKCS12 import (wrong password?)" about a password that is correct;
+  `-certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1` is the fix.
+
+The test's own fixture had never run on a Mac newer than Big Sur: it built its framework
+out of `/usr/lib/libSystem.B.dylib`, which has not been a file on disk since the dyld
+shared cache swallowed it, and the framework it built had no `Versions/A/Resources/
+Info.plist`, which codesign rejects as "bundle format unrecognized, invalid, or unsuitable"
+- while signing the MAIN executable, because signing anything inside a bundle walks the
+whole bundle. Both are fixed and worth not reintroducing.
+
 `npm run test:stash` is what the Stash is allowed to cost, and it is model-free and
 window-free because the two things it pins are invisible while they are broken - the
 feature keeps working perfectly and only gets slow. A full 200-entry history was 414KB, of

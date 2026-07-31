@@ -62,21 +62,19 @@ function installP12(p12, password, keychain) {
   }
   run('security', ['create-keychain', '-p', '', keychain])
   run('security', ['unlock-keychain', '-p', '', keychain])
-  // A new keychain relocks after 300s and on sleep, and an Electron build is longer than
-  // that - so without this the failure lands on the last nested item, minutes in. It is
-  // best-effort because `set-keychain-settings` asks the Security agent for authorisation
-  // and a shell with no GUI session cannot answer, which arrives as the unhelpful
-  // "User canceled the operation". That is survivable: `mac-sign.mjs` unlocks the
-  // keychain again immediately before it signs, which is a second away rather than
-  // minutes, so the timeout never gets to matter either way.
-  try {
-    run('security', ['set-keychain-settings', '-t', '0', '-u', keychain], {
-      stdio: ['ignore', 'ignore', 'ignore']
-    })
-  } catch {
-    /* relocking is handled at signing time instead */
-  }
 
+  // There is deliberately no `set-keychain-settings -t 0 -u` here, though every guide to
+  // signing on CI has one. It asks the Security agent for authorisation, and outside a
+  // GUI session there is nobody to answer: it fails as "User canceled the operation" and
+  // - the part that costs an hour - it leaves the keychain in a state where the NEXT
+  // call, the import itself, fails the same way. On a desktop it does worse than fail: it
+  // puts a password dialog on Robert's screen for a keychain whose password is empty, so
+  // nothing he types can work.
+  //
+  // What it would have bought is turning off the 300-second auto-lock, which matters
+  // because an Electron build is longer than that. `mac-sign.mjs` unlocks again
+  // immediately before it signs instead - a second before, rather than minutes - so the
+  // timeout never gets the chance to expire in between.
   run('security', ['import', p12, '-k', keychain, '-P', password, '-T', '/usr/bin/codesign'])
   // codesign is a different process, so the key's ACL must name it. Without this every
   // signature fails with errSecInternalComponent - an error that says nothing about

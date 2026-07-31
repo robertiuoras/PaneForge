@@ -147,7 +147,12 @@ try {
     // The property TCC actually depends on, and the only way to see it is to change the
     // code and sign again. A requirement that shifts here is a permission prompt on every
     // update, which is exactly the bug this is all for.
-    writeFileSync(join(macos, 'changed.txt'), 'a release later')
+    //
+    // The change is a different main executable, not an extra file dropped beside it:
+    // codesign refuses to seal a bundle with a stray non-code file in Contents/MacOS, so
+    // that version of this test failed on the signature rather than on the assertion. A
+    // new binary is what a new release actually is, anyway.
+    copyFileSync('/bin/ls', join(macos, 'PaneForge'))
     mod.signBundle(app, identity)
     ok(
       'and the requirement is unchanged after the app changes',

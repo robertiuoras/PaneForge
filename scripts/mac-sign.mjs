@@ -175,8 +175,11 @@ export function designatedRequirement(app) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
-  const line = out.split('\n').find((l) => l.startsWith('designated =>'))
-  return line ? line.slice('designated =>'.length).trim() : ''
+  // `# designated =>` on some macOS versions, bare `designated =>` on others, and reading
+  // it wrongly is silent: the check for a cdhash then passes on every bundle because the
+  // string is empty.
+  const line = out.split('\n').find((l) => l.includes('designated =>'))
+  return line ? line.slice(line.indexOf('designated =>') + 'designated =>'.length).trim() : ''
 }
 
 /** electron-builder calls this with the packed app's context. */
