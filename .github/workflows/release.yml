@@ -49,12 +49,25 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The signing identity `scripts/mac-sign.mjs` uses in afterPack. It is self-signed,
+      # so this buys nothing from Gatekeeper - what it buys is that macOS stops re-asking
+      # for Documents/Desktop/Downloads/iCloud on every single update, because a signed
+      # app's permission grants are keyed to the certificate instead of to the binary's
+      # hash. Skipped without the secrets, and the build then says so and goes ad-hoc.
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-14'
+        run: node scripts/mac-cert.mjs import
+        env:
+          PF_CERT_P12: ${{ secrets.PF_CERT_P12 }}
+          PF_CERT_PASSWORD: ${{ secrets.PF_CERT_PASSWORD }}
+
       - name: Build and publish
         run: npx electron-vite build && npx electron-builder ${{ matrix.args }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The app is not code signed: notarising needs a paid Apple account.
-          # First launch on a friend's Mac therefore needs right-click > Open.
+          # electron-builder must not go looking for an Apple identity of its own: there is
+          # none, notarising needs a paid account, and first launch still wants
+          # right-click > Open. All signing here happens in afterPack.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # electron-builder's own publisher cannot be trusted to have uploaded anything.
