@@ -116,6 +116,7 @@ import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } 
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
+  consumeInstallRetry,
   getUpdateState,
   initUpdater,
   installUpdate,
@@ -2112,7 +2113,13 @@ app.whenReady().then(() => {
   // After the window exists: a device that reconnects immediately would otherwise
   // push its session list at a renderer that is not listening yet.
   remote.start()
-  initUpdater((s: UpdateState) => send('update:changed', s), cfg.autoUpdate)
+  initUpdater((s: UpdateState) => {
+    send('update:changed', s)
+    // A "Restart now" whose install never applied: the relaunch is the old version
+    // with the same build downloaded and ready again. Finish the user's click instead
+    // of showing them the same toast - once; updater.ts stops the loop at two tries.
+    if (s.phase === 'ready' && consumeInstallRetry(s.version)) doInstall()
+  }, cfg.autoUpdate)
   offerRestore()
   openFromArgs(process.argv)
   if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])

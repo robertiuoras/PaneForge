@@ -7,7 +7,15 @@
 // thing reports 'unsupported' instead of throwing on every launch.
 
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, statSync, truncateSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  statSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -104,6 +112,76 @@ function set(patch: Partial<UpdateState>): void {
 /** A check or a download is already running - starting a second one is what breaks it. */
 function busy(): boolean {
   return state.phase === 'checking' || state.phase === 'downloading'
+}
+
+// --- did the last install actually happen? ---------------------------------
+//
+// 2026-08-01: "Restart now" ran the installer and the relaunch was still the old
+// version - the NSIS install failed silently (mid-game, the installer exe took 8s to
+// even start under the AV scan and gave up on the still-running app) and the only
+// visible result was the same toast asking for the same restart. Clicking it again
+// worked. So the click is finished for the user instead: a marker written before every
+// quitAndInstall is how the next launch tells "updated" from "came back unchanged",
+// and an unchanged relaunch installs the already-downloaded build again by itself,
+// once. Two failed attempts stop the loop - the toast is back anyway, and a third try
+// is the user's call.
+const ATTEMPT = () => join(app.getPath('userData'), 'install-attempt.json')
+
+type Attempt = { version: string; tries: number }
+
+function readAttempt(): Attempt | null {
+  try {
+    const raw = JSON.parse(readFileSync(ATTEMPT(), 'utf8')) as Partial<Attempt>
+    return typeof raw.version === 'string' && typeof raw.tries === 'number'
+      ? { version: raw.version, tries: raw.tries }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function recordInstallAttempt(version: string): void {
+  const prior = readAttempt()
+  const tries = (prior?.version === version ? prior.tries : 0) + 1
+  try {
+    writeFileSync(ATTEMPT(), JSON.stringify({ version, tries }), 'utf8')
+  } catch {
+    /* best-effort: without the marker the worst case is the old behaviour */
+  }
+  log('install', `attempt ${tries} for v${version}`)
+}
+
+let retryVersion: string | null = null
+
+/** At launch: consume the marker, decide whether the last install needs finishing. */
+function checkLastAttempt(): void {
+  const a = readAttempt()
+  if (!a) return
+  try {
+    unlinkSync(ATTEMPT())
+  } catch {
+    /* unreadable marker is as good as none */
+  }
+  if (!newer(a.version, app.getVersion())) return // it applied - nothing to do
+  if (a.tries >= 2) {
+    log('install', `v${a.version} still not applied after ${a.tries} attempts - leaving the restart to the user`)
+    return
+  }
+  // Put the count back so the retry's own recordInstallAttempt makes this attempt 2.
+  try {
+    writeFileSync(ATTEMPT(), JSON.stringify(a), 'utf8')
+  } catch {
+    /* same best-effort as above */
+  }
+  retryVersion = a.version
+  log('install', `v${a.version} did not apply (still v${app.getVersion()}) - retrying when it is ready again`)
+}
+
+/** True exactly once, when `version` is the build a failed install should retry. */
+export function consumeInstallRetry(version: string | undefined): boolean {
+  if (!retryVersion || retryVersion !== version) return false
+  retryVersion = null
+  return true
 }
 
 // One failed check reaches this module as a burst of identical errors; these two
@@ -358,6 +436,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
   }
   if (!wired) {
     wired = true
+    checkLastAttempt()
     setMacUpdateLog(log)
     // macOS refuses to swap in an unsigned update THROUGH SQUIRREL: it validates the code
     // signature, and this app ships unsigned. So electron-updater never downloads on a
@@ -568,6 +647,9 @@ export async function checkForUpdates(): Promise<UpdateState> {
 export function installUpdate(): boolean {
   const u = load()
   if (!u || state.phase !== 'ready') return false
+  // Written before the installer runs: the next launch compares its own version
+  // against this to notice an install that silently did nothing (see checkLastAttempt).
+  if (state.version) recordInstallAttempt(state.version)
   // A Mac has no installer to run: the new bundle is already expanded next to the app's
   // data and a detached shell script moves it into place as soon as this process is gone.
   // Same contract as below - true means "something is running that needs this exe to exit".

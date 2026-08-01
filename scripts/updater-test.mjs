@@ -138,12 +138,93 @@ ok(Object.keys(h).length>=5,'wired all updater events')
 `
 )
 
+// The failed-install retry ("Restart now" ran the installer and the relaunch was the
+// same version, wearing the same toast - 2026-08-01). Each case is its own process
+// because the decision is made once, at initUpdater, from the marker the last run left.
+const retryDrive = join(work, 'drive-retry.cjs')
+writeFileSync(
+  retryDrive,
+  `const path=require('node:path'),fs=require('node:fs'),Module=require('node:module')
+const orig=Module._resolveFilename
+Module._resolveFilename=function(r,...a){
+  if(r==='electron')return path.join(__dirname,'electron-stub.cjs')
+  if(r==='electron-updater')return path.join(__dirname,'updater-stub.cjs')
+  return orig.call(this,r,...a)}
+const repo=path.join(__dirname,'repo')
+fs.mkdirSync(path.join(repo,'.git'),{recursive:true})
+process.env.PANEFORGE_REPO=repo
+const stub=require('./updater-stub.cjs'),el=require('./electron-stub.cjs')
+const marker=path.join(el.__dir,'install-attempt.json')
+fs.rmSync(marker,{force:true})
+if(process.env.MARKER)fs.writeFileSync(marker,process.env.MARKER)
+const u=require('./updater.bundle.cjs')
+const fail=[]
+const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
+u.initUpdater(()=>{},false)
+const h=stub.__handlers
+switch(process.env.CASE){
+  case 'none':
+    ok(u.consumeInstallRetry('0.3.9')===false,'no marker, no retry')
+    break
+  case 'retry':
+    ok(u.consumeInstallRetry('0.3.8')===false,'a different version does not consume the retry')
+    ok(u.consumeInstallRetry('0.3.9')===true,'an install that did not apply retries its version')
+    ok(u.consumeInstallRetry('0.3.9')===false,'the retry fires once')
+    ok(fs.existsSync(marker),'the attempt count survives for the retry to increment')
+    h['update-downloaded']({version:'0.3.9'})
+    try{u.installUpdate()}catch{}
+    {const a=JSON.parse(fs.readFileSync(marker,'utf8'))
+     ok(a.version==='0.3.9'&&a.tries===2,'the retry is recorded as attempt 2')}
+    break
+  case 'give-up':
+    ok(u.consumeInstallRetry('0.3.9')===false,'two failed attempts stop the loop')
+    ok(!fs.existsSync(marker),'the exhausted marker is cleared')
+    break
+  case 'applied':
+    ok(u.consumeInstallRetry('0.3.6')===false,'an applied install retries nothing')
+    ok(!fs.existsSync(marker),'the marker is cleared once the version is running')
+    break
+  case 'fresh':
+    h['update-downloaded']({version:'0.3.9'})
+    try{u.installUpdate()}catch{}
+    {const a=JSON.parse(fs.readFileSync(marker,'utf8'))
+     ok(a.version==='0.3.9'&&a.tries===1,'installUpdate records attempt 1')}
+    break
+}
+console.log(fail.length?'case FAILED: '+fail.join(', '):'case green')
+process.exit(fail.length?1:0)
+`
+)
+
+const retryCases = [
+  ['none', ''],
+  ['fresh', ''],
+  ['retry', '{"version":"0.3.9","tries":1}'],
+  ['give-up', '{"version":"0.3.9","tries":2}'],
+  ['applied', '{"version":"0.3.6","tries":1}']
+]
+
 let out = ''
 try {
   out = execFileSync(process.execPath, [drive], { cwd: root, encoding: 'utf8' })
 } catch (e) {
   out = String(e.stdout ?? '') + String(e.stderr ?? '')
 }
+let retryGreen = 0
+for (const [CASE, MARKER] of retryCases) {
+  let r = ''
+  try {
+    r = execFileSync(process.execPath, [retryDrive], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, CASE, MARKER }
+    })
+  } catch (e) {
+    r = String(e.stdout ?? '') + String(e.stderr ?? '')
+  }
+  out += r
+  if (/case green/.test(r)) retryGreen++
+}
 process.stdout.write(out)
 rmSync(work, { recursive: true, force: true })
-if (!/all green/.test(out)) process.exit(1)
+if (!/all green/.test(out) || retryGreen !== retryCases.length) process.exit(1)
