@@ -43,6 +43,11 @@ export function vaultPath() {
   return process.env.PF_VAULT || join(homedir(), 'Documents', 'Obsidian Vault')
 }
 
+/**
+ * The Obsidian index this machine happens to have. The default is one author's private
+ * path on purpose: nothing here needs it, `reindex()` returns null when it is absent, and
+ * a wrong guess is quieter than a required setting. Point `PF_INDEX_SCRIPT` at your own.
+ */
 export function indexScriptPath() {
   if (process.env.PF_INDEX_SCRIPT) return process.env.PF_INDEX_SCRIPT
   const projects =
