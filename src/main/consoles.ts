@@ -49,11 +49,63 @@ export function reapScript(pids: number[], delayMs: number): string {
   return [
     `Start-Sleep -Milliseconds ${Math.max(0, Math.round(delayMs))}`,
     `$own = @(${pids.join(',')})`,
+    // The sweep now reaches its shell through a wrapper (see spawnDetachedNoWindow),
+    // so its own console host could one day match the kill conditions - our pid as
+    // parent, parent gone, headless. Killing that drops this script's console mid-run,
+    // so whatever this PowerShell sits under - its direct parent - is exempt by pid.
+    '$me = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue).ParentProcessId',
     '$live = @((Get-Process -ErrorAction SilentlyContinue).Id)',
     "Get-CimInstance Win32_Process -Filter \"Name='conhost.exe'\" -ErrorAction SilentlyContinue |",
-    '  Where-Object { $own -contains $_.ParentProcessId -and $live -notcontains $_.ParentProcessId -and $_.CommandLine -like "*--headless*" } |',
+    '  Where-Object { $_.ProcessId -ne $me -and $own -contains $_.ParentProcessId -and $live -notcontains $_.ParentProcessId -and $_.CommandLine -like "*--headless*" } |',
     '  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
   ].join('\n')
+}
+
+// What wscript runs for spawnDetachedNoWindow. WScript.Shell.Run with window style 0
+// gives the child real SW_HIDE semantics, and wscript.exe itself is a GUI binary, so no
+// layer of the chain ever owns a console window. Arguments are quote-wrapped, so they
+// must not themselves contain double quotes - ours are paths and base64.
+const HIDDEN_VBS = [
+  "' Written by PaneForge (consoles.ts). Runs the given command hidden, without waiting.",
+  'Dim sh, cmd, i',
+  'Set sh = CreateObject("WScript.Shell")',
+  'cmd = ""',
+  'For i = 0 To WScript.Arguments.Count - 1',
+  '  If i > 0 Then cmd = cmd & " "',
+  '  cmd = cmd & """" & WScript.Arguments(i) & """"',
+  'Next',
+  'If cmd <> "" Then sh.Run cmd, 0, False'
+].join('\r\n')
+
+function hiddenLauncher(): string {
+  const file = join(app.getPath('userData'), 'run-hidden.vbs')
+  try {
+    if (readFileSync(file, 'utf8') === HIDDEN_VBS) return file
+  } catch {
+    /* missing or unreadable - write it fresh */
+  }
+  writeFileSync(file, HIDDEN_VBS, 'utf8')
+  return file
+}
+
+/**
+ * A detached console child with no window at all.
+ *
+ * `windowsHide: true` is not enough once Windows Terminal is the default terminal:
+ * Windows 11 delegates a detached console app to a visible Terminal window regardless
+ * of CREATE_NO_WINDOW. Measured 2026-08-01 on this machine - the sweep below popped a
+ * "Terminal" window on every app open. `conhost --headless <cmd>` pops nothing but
+ * also silently never RUNS the child on this build (26200) - proven with marker files -
+ * so the working shape is wscript + Shell.Run window-style 0, the same fix the
+ * TaskdriverBrainSync task needed for this exact problem class.
+ */
+export function spawnDetachedNoWindow(bin: string, args: string[]): void {
+  const win = process.platform === 'win32'
+  spawn(win ? 'wscript.exe' : bin, win ? ['//B', '//Nologo', hiddenLauncher(), bin, ...args] : args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  }).unref()
 }
 
 function file(): string {
@@ -91,11 +143,7 @@ function reap(pids: number[], delayMs: number): void {
     // -EncodedCommand rather than -Command: the script contains quotes and braces, and
     // Windows argument escaping through a spawn() array is where that goes wrong.
     const encoded = Buffer.from(reapScript(pids, delayMs), 'utf16le').toString('base64')
-    spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref()
+    spawnDetachedNoWindow('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded])
   } catch {
     /* no PowerShell on PATH - the leak is a tidy-up, not a correctness problem */
   }
