@@ -498,11 +498,11 @@ html.app-blurred .elapsed::after { animation: none; }
   color: var(--muted); background: none; border-color: var(--line-strong);
   max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.chip.place.copy {
+.chip.place.lane-chip {
   cursor: pointer; color: var(--accent-text);
   border-color: var(--accent-dim); background: var(--accent-dim);
 }
-.chip.place.copy:hover { filter: brightness(1.35); }
+.chip.place.lane-chip:hover { filter: brightness(1.35); }
 
 /* The two alerts that are not "your turn finished". The bell is the pane's own voice,
    so it keeps the accent; a stalled turn is a warning about the clock next to it and

@@ -158,8 +158,8 @@ const TOPICS: Topic[] = [
         </p>
         <p>
           Click the chip to see what is in the lane and to merge it back without leaving the
-          window. It only ever removes a lane it made (<code>-w2</code> on a{' '}
-          <code>pf/w2</code> branch)
+          window. It only ever removes a lane it made (<code>-a</code> on a{' '}
+          <code>lane-a</code> branch)
           that has nothing uncommitted in it, no untracked files, no pane open on it, and no
           commit the project does not already have. Anything else keeps its folder — including
           a lane whose several commits were squashed into one, which cannot be told apart from

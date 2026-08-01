@@ -98,21 +98,21 @@ mkdirSync(join(py, 'vendor', 'composer'), { recursive: true })
 writeFileSync(join(py, 'vendor', 'autoload.php'), '<?php\n')
 
 const pyLane = await resolveLane(py, [py])
-const w2 = join(root, 'api-w2')
-ok('a python repo gets a lane like any other', pyLane.cwd === w2 && pyLane.lane === 'w2')
+const laneA = join(root, 'api-a')
+ok('a python repo gets a lane like any other', pyLane.cwd === laneA && pyLane.lane === 'a')
 ok('the port comes from the stack, not the 3000 fallback', pyLane.port >= 8001 && pyLane.port < 8041)
 
 ok(
   'a virtualenv is cloned into the lane',
-  await waitUntil(() => read(join(w2, '.venv', 'pyvenv.cfg')).includes('prompt'))
+  await waitUntil(() => read(join(laneA, '.venv', 'pyvenv.cfg')).includes('prompt'))
 )
 ok(
   'the cloned venv points at the lane, not the folder it came from',
-  await waitUntil(() => read(join(w2, '.venv', 'pyvenv.cfg')).includes(resolve(w2)))
+  await waitUntil(() => read(join(laneA, '.venv', 'pyvenv.cfg')).includes(resolve(laneA)))
 )
-ok('...and no longer at the original', !read(join(w2, '.venv', 'pyvenv.cfg')).includes(resolve(py, '.venv')))
-ok('the activate script is repointed too', read(join(w2, '.venv', 'bin', 'activate')).includes(resolve(w2)))
-ok('so is a console script shebang', read(join(w2, '.venv', 'bin', 'pytest')).includes(resolve(w2)))
+ok('...and no longer at the original', !read(join(laneA, '.venv', 'pyvenv.cfg')).includes(resolve(py, '.venv')))
+ok('the activate script is repointed too', read(join(laneA, '.venv', 'bin', 'activate')).includes(resolve(laneA)))
+ok('so is a console script shebang', read(join(laneA, '.venv', 'bin', 'pytest')).includes(resolve(laneA)))
 
 // The hardlink trap: the rewrite must delete the file first, or it writes through
 // the link and the original session's environment is edited out from under it.
@@ -121,12 +121,12 @@ ok('...and the original activate script too', read(join(venv, 'bin', 'activate')
 ok('...and the original console script too', read(join(venv, 'bin', 'pytest')).includes(resolve(venv)))
 ok(
   'a binary console script is copied, not corrupted by a text rewrite',
-  await waitUntil(() => readFileSync(join(w2, '.venv', 'Scripts', 'pytest.exe'))[0] === 0x4d)
+  await waitUntil(() => readFileSync(join(laneA, '.venv', 'Scripts', 'pytest.exe'))[0] === 0x4d)
 )
 
 ok(
   'a composer vendor folder is cloned as well',
-  await waitUntil(() => existsSync(join(w2, 'vendor', 'autoload.php')))
+  await waitUntil(() => existsSync(join(laneA, 'vendor', 'autoload.php')))
 )
 
 // ------------------------------------------------------------------ free ports
@@ -155,7 +155,7 @@ writeFileSync(join(dock, 'go.mod'), 'module x\n')
 commit(dock)
 const dockLane = await resolveLane(dock, [dock])
 ok('a compose file gives the HOST port, not the container port', dockLane.port >= 8086 && dockLane.port < 8126)
-ok('a lane gets its own compose project, so two lanes do not share containers', dockLane.env.COMPOSE_PROJECT_NAME === 'dock-w2')
+ok('a lane gets its own compose project, so two lanes do not share containers', dockLane.env.COMPOSE_PROJECT_NAME === 'dock-a')
 
 // compose refuses a project name that does not start with a letter or a digit.
 const odd = join(root, '.My_Odd Repo')
@@ -177,11 +177,11 @@ writeFileSync(
   `model = "gpt-5"\n\n[projects.'${resolve(py).toLowerCase()}']\ntrust_level = "trusted"\n\n[history]\npersistence = "save-all"\n`
 )
 
-const w3 = join(root, 'api-w3')
-await resolveLane(py, [py, w2])
+const laneB = join(root, 'api-b')
+await resolveLane(py, [py, laneA])
 const after = read(codexCfg)
-ok('a lane inherits the original folder’s Codex trust', after.includes(`[projects.'${resolve(w3).toLowerCase()}']`))
-ok('...with the trust level it actually had', /\[projects\.'[^']*api-w3'\]\s*\r?\ntrust_level = "trusted"/.test(after))
+ok('a lane inherits the original folder’s Codex trust', after.includes(`[projects.'${resolve(laneB).toLowerCase()}']`))
+ok('...with the trust level it actually had', /\[projects\.'[^']*api-b'\]\s*\r?\ntrust_level = "trusted"/.test(after))
 ok('...without swallowing the sections after it', after.includes('[history]') && after.includes('persistence'))
 ok('...and without granting the lane anything extra', after.split('trust_level').length === 3)
 
@@ -191,13 +191,13 @@ mkdirSync(untrusted, { recursive: true })
 writeFileSync(join(untrusted, 'x.txt'), '1\n')
 commit(untrusted)
 await resolveLane(untrusted, [untrusted])
-ok('a repo with no Codex trust stays untrusted in its lane', !read(codexCfg).includes('stranger-w2'))
+ok('a repo with no Codex trust stays untrusted in its lane', !read(codexCfg).includes('stranger-a'))
 
 // Running it twice must not append the same section again.
-rmSync(w3, { recursive: true, force: true })
+rmSync(laneB, { recursive: true, force: true })
 git(py, 'worktree', 'prune')
-await resolveLane(py, [py, w2])
-ok('re-seeding a lane does not duplicate the section', read(codexCfg).split('api-w3').length === 2)
+await resolveLane(py, [py, laneA])
+ok('re-seeding a lane does not duplicate the section', read(codexCfg).split('api-b').length === 2)
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
 process.exit(failed ? 1 : 0)

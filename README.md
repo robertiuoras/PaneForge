@@ -120,8 +120,9 @@ Re-run after any source change. Needs Node 20+.
 - **Swarm (Ctrl Shift S)** - one mission, one pane per role (Planner, Builder,
   Reviewer, Tester), each told what it owns so they stop editing the same file.
   Roles are editable and remembered.
-- **Worktree lanes** - open a second session in a project you already have open and
-  it lands in its own git worktree (`<project>-w2`, branch `pf/w2`), carrying the
+- **Lanes** ([how they work](docs/lanes.md)) - open a second session in a project you
+  already have open and it lands in its own checkout (`<project>-a`, branch
+  `lane-a`, then `-b`, `-c`), carrying the
   things a fresh checkout cannot have: your `.env` files, your local editor and
   agent settings, the submodules a bare `worktree add` leaves empty, and whatever
   the project installed - `node_modules`, a `.venv`, a composer or bundler

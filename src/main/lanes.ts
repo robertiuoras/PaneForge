@@ -4,8 +4,19 @@
 // same repo, so "open a second session here" stops being a trap.
 //
 // This runs on the way in to a session start: the second session in a folder is
-// moved into `<repo>-w2` without being asked, the third into `-w3`, and so on.
+// moved into `<repo>-a` without being asked, the third into `-b`, and so on.
 // Nothing is ever moved out of the original folder - the first session keeps it.
+//
+// The letters are shared, not decorative. scripts/lane.mjs - the half that merges
+// finished lanes back and cuts releases - has always called its checkouts `<repo>-a`
+// on branch `lane-a`, while this half made `<repo>-w2` on `pf/w2`. Two systems, one
+// idea, two vocabularies: a Projects folder ended up holding `Toolstash-a` next to
+// `Toolstash-w2` with nothing to say what the difference was, and the prompt hook -
+// which asks for the lane matching the folder a chat sits in - would ask lane.mjs for
+// a lane called `w2` and have it try to create `lane-w2` on top of the `pf/w2`
+// worktree already there. They are one naming scheme now. Lanes made under the old
+// one keep working (laneWork.ts still reads, merges and sweeps `-w<N>`/`pf/w<N>`);
+// they are simply never created again, and disappear once their work has landed.
 
 import {
   copyFileSync,
@@ -27,8 +38,16 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
-/** Highest lane number offered. Past this the folder is genuinely oversubscribed. */
-const MAX_LANES = 9
+/**
+ * Every lane label, in the order they are handed out: `<repo>-a`, then `-b`, and so on.
+ * Past the end of this list the folder is genuinely oversubscribed and the session shares.
+ *
+ * Letters rather than numbers because a pane already carries a NUMBER (its Ctrl+N switch
+ * key), and two digits on one card with nothing to say which is which is the confusion this
+ * replaced. It is also the alphabet scripts/lane.mjs has always used for the same folders.
+ */
+const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
+const MAX_LANES = LANE_LABELS.length
 
 /**
  * Dev-server port a lane starts from when the project never names one.
@@ -308,8 +327,17 @@ function composeProject(repo: string, label: string): string {
   return `${cleaned || 'project'}-${label}`
 }
 
-/** "w2" -> 2. Anything unparseable is treated as the first lane. */
+/**
+ * A lane's position among the checkouts of its project, counting the project's own folder
+ * as 1. So the first lane is 2, which is what the dev-server port offset has always meant.
+ *
+ * "a" -> 2, "b" -> 3, and the legacy "w2" -> 2 for lanes made before the labels changed,
+ * so an old lane's port does not move under a running dev server. Anything unparseable is
+ * treated as the first lane.
+ */
 function laneIndex(label: string): number {
+  const letter = LANE_LABELS.indexOf(label as (typeof LANE_LABELS)[number])
+  if (letter >= 0) return letter + 2
   const n = Number(label.replace(/^\D+/, ''))
   return Number.isInteger(n) && n >= 2 ? n : 2
 }
@@ -799,12 +827,11 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 
   const parent = dirname(repo)
   const name = basename(repo)
-  for (let i = 2; i <= MAX_LANES; i++) {
-    const label = `w${i}`
+  for (const label of LANE_LABELS) {
     const path = join(parent, `${name}-${label}`)
     if (taken.some((t) => samePath(t, path))) continue
 
-    const branch = `pf/${label}`
+    const branch = `lane-${label}`
     if (existsSync(path)) {
       // Left behind by an earlier session and nobody is in it: reuse rather than
       // pile up folders. Anything at that path that is not this repo is skipped.
