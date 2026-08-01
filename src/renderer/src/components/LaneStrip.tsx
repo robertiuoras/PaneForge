@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
+import { paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
-import { laneState, laneTip } from '../laneWords'
+import { laneBusy, laneLabel, laneState, laneTip } from '../laneWords'
 
 const api = window.api
 
@@ -101,8 +102,10 @@ function fixPrompt(lane: LaneBoardEntry): string {
 /**
  * The lane a pane holds, on the pane's own card beside its agent and model.
  *
- * Colour carries the only state worth interrupting for: red means this pane's finished
- * work is being left out of every release.
+ * Colour carries the three states a release cares about, and nothing else: blue while a
+ * chat is working in that checkout right now, green once its work is finished and waiting
+ * for the next version, red when the work will not merge and is being left out of every
+ * release. A lane merely held, with nobody typing, stays grey.
  */
 export function LaneChip({
   lane,
@@ -113,16 +116,23 @@ export function LaneChip({
 }): JSX.Element {
   // "lane a" beside a "w2" worktree chip read as two halves of one fact, and they are not
   // related at all: w2 is this pane's own checkout of whatever project it opened, and this
-  // is a lane in PaneForge's release pool that the chat in this pane happens to hold. The
-  // prefix is the whole difference, so it is in the label rather than only the tooltip.
+  // is a lane in a release pool that the chat in this pane happens to hold.
+  //
+  // The prefix used to be the literal letters "PF", which was right while PaneForge was the
+  // only repository with lanes and became a lie the day any repo could have them: a chat
+  // holding taskdriver's lane b had a chip on it reading "PF lane b". It is the project's
+  // own name now, from the lane's folder.
   const label = lane.conflicted
-    ? `PF lane ${lane.lane} stuck`
+    ? `${laneLabel(lane)} stuck`
     : lane.ready
-      ? `PF lane ${lane.lane} done`
-      : `PF lane ${lane.lane}`
+      ? `${laneLabel(lane)} done`
+      : laneLabel(lane)
   return (
     <span
-      className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
+      className={
+        'chip pf-lane' +
+        (lane.conflicted ? ' stuck' : lane.ready ? ' done' : laneBusy(lane) ? ' busy' : '')
+      }
       role={onHelp ? 'button' : undefined}
       onClick={
         onHelp &&
@@ -132,7 +142,8 @@ export function LaneChip({
         })
       }
       title={
-        `This chat is also editing PaneForge itself, in its own copy of it (lane ${lane.lane}) - ${laneState(lane, true)}.\n` +
+        `This chat is also editing ${laneLabel(lane).split(' · ')[0]}, in its own copy of it ` +
+        `(lane ${lane.lane}) - ${laneState(lane, true)}.\n` +
         `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}` +
         (onHelp ? '\nClick: how lanes work.' : '')
       }
@@ -223,17 +234,41 @@ function LaneRow({
     api.write(target.id, fixPrompt(lane))
   }
 
+  // The pane holding this lane, as its Ctrl-N number.
+  //
+  // Only the HOLDER can be resolved: `ownerPane` is matched in the main process, which is
+  // the one side that can see a pane's conversation id (laneBoard.ts `attachLaneOwners`).
+  // A resolver is recorded as a bare chat id with no such match, so it stays a short hex
+  // string - `paneRef` prints whichever of the two it was given.
+  const owner = laneOwner(lane, sessions)
+  const holderPane = owner ? sessions.indexOf(owner) + 1 : undefined
+  // Every row here belongs to a chat that is NOT a pane in this window - that is what the
+  // strip is - so "somebody is working in it right now" is the one fact about it no card
+  // can carry, and it was the one fact drawn in the same grey as a lane nobody has touched
+  // since yesterday.
+  const busy = laneBusy(lane)
+
   return (
     <div
-      className={'row lane-row' + (lane.conflicted ? ' stuck' : '') + (lane.ready ? ' done' : '')}
-      title={laneTip(lane)}
+      className={
+        'row lane-row' +
+        (lane.conflicted ? ' stuck' : '') +
+        (lane.ready ? ' done' : '') +
+        (busy ? ' busy' : '')
+      }
+      title={laneTip(lane, holderPane)}
     >
-      <span className={'lane-tag' + (lane.conflicted ? ' stuck' : '')}>{lane.lane}</span>
+      <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
+        {lane.lane}
+      </span>
       <div className="row-text">
-        <div className="row-title">{lane.branch}</div>
+        {/* Was `lane.branch`, which is the single word this whole change exists to stop
+            printing: several rows saying `master`, for different repositories, with
+            nothing on any of them naming one. */}
+        <div className="row-title">{laneLabel(lane)}</div>
         <div className="row-sub">
-          {laneState(lane)}
-          {lane.conflicted && lane.resolver ? ` - chat ${lane.resolver.slice(0, 8)} has it` : ''}
+          {laneState(lane, false, Date.now(), holderPane)}
+          {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
         </div>
       </div>
       {lane.conflicted && !lane.resolver && (

@@ -29,7 +29,9 @@ import {
   buildActivity,
   type PresenceCounts
 } from '@shared/discordRpc'
+import { DEFAULT_THEME } from '@shared/theme'
 import AgentLogo from './AgentLogo'
+import AppearanceTab from './AppearanceTab'
 import InstallConsole from './InstallConsole'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
@@ -45,7 +47,47 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
+type Tab = 'general' | 'appearance' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
+
+/**
+ * The rail down the left of the dialog.
+ *
+ * Seven tabs in a horizontal segmented strip was already at the width of the dialog, and
+ * an eighth would have wrapped. A vertical rail has room for the eighth and the ninth,
+ * and - the actual reason - room for a WORD about each one, so "Prompts" and "Stash"
+ * stop being nouns you have to click to understand.
+ *
+ * `find` is what each tab can be searched by. The box above the rail filters the rail
+ * rather than the settings themselves: filtering the settings means hiding controls from
+ * inside the groups that explain them, which is how a search feature turns a settings
+ * page into a list of orphaned switches.
+ */
+const TABS: { id: Tab; label: string; note: string; find: string }[] = [
+  { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
+  { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
+  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex gemini copilot cursor install uninstall model custom cli path' },
+  { id: 'stash', label: 'Stash', note: 'Clipboard history', find: 'clipboard copy paste history overlay pin float peek images files' },
+  { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
+  { id: 'prompts', label: 'Prompts', note: 'Improving what you type', find: 'improve prompt rewrite clarify optimise vault knowledge capability telemetry engine' },
+  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },
+  { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
+]
+
+/**
+ * The tabs a query hits, in rail order.
+ *
+ * Every word of the query has to appear somewhere in the tab's name, note or keyword
+ * list - AND rather than OR, so "discord idle" narrows instead of widening. An empty
+ * query is every tab, which is the case that runs on every render.
+ */
+function matches(query: string): typeof TABS {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return TABS
+  return TABS.filter((t) => {
+    const hay = `${t.label} ${t.note} ${t.find}`.toLowerCase()
+    return words.every((w) => hay.includes(w))
+  })
+}
 
 /**
  * Adding an agent is four prompts rather than a form: it happens once per CLI, and
@@ -83,6 +125,7 @@ function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): 
 
 export default function SettingsDialog({ config, agents, onChange, onClose }: Props): JSX.Element {
   const [tab, setTab] = useState<Tab>('general')
+  const [find, setFind] = useState('')
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
   const [voice, setVoice] = useState<VoiceStatus | null>(null)
@@ -140,29 +183,57 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const setDiscord = (patch: Partial<DiscordStyle>): void =>
     onChange({ discordStyle: { ...config.discordStyle, ...patch } })
 
+  // The current tab is never filtered away, however badly it matches: a rail that removes
+  // the entry you are reading leaves a panel on screen with nothing selected beside it.
+  const hits = matches(find)
+  const shown = hits.length && !hits.some((t) => t.id === tab)
+    ? TABS.filter((t) => t.id === tab || hits.includes(t))
+    : hits
+
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="dialog wide settings" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>Settings</strong>
           <span className="hint">saved instantly, no restart needed</span>
         </div>
 
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v as Tab)}
-          options={[
-            { value: 'general', label: 'General' },
-            { value: 'agents', label: 'Agents' },
-            { value: 'stash', label: 'Stash' },
-            { value: 'voice', label: 'Voice' },
-            { value: 'prompts', label: 'Prompts' },
-            { value: 'discord', label: 'Discord' },
-            { value: 'system', label: 'System' }
-          ]}
-        />
+        <div className="settings-shell">
+          <div className="settings-nav">
+            <input
+              className="search nav-find"
+              placeholder="Search settings"
+              value={find}
+              spellCheck={false}
+              onChange={(e) => {
+                const q = e.target.value
+                setFind(q)
+                // Jump as you type: with the rail filtered to one entry, having to then
+                // click it is a second action for a decision already made.
+                const hit = matches(q)
+                if (q.trim() && hit.length && !hit.some((t) => t.id === tab)) setTab(hit[0].id)
+              }}
+            />
+            {shown.map((t) => (
+              <button
+                key={t.id}
+                className={'nav-item' + (tab === t.id ? ' on' : '')}
+                onClick={() => setTab(t.id)}
+              >
+                <span className="nav-label">{t.label}</span>
+                <span className="nav-note">{t.note}</span>
+              </button>
+            ))}
+            {!shown.length && <div className="hint nav-empty">Nothing matches "{find}".</div>}
+          </div>
 
         <div className="tab-body">
+          {tab === 'appearance' && (
+            <AppearanceTab
+              theme={config.theme ?? DEFAULT_THEME}
+              onChange={(theme) => onChange({ theme })}
+            />
+          )}
           {tab === 'general' && (
             <>
               <div className="setting">
@@ -1174,6 +1245,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               </div>
             </>
           )}
+        </div>
         </div>
 
         <div className="dialog-row">

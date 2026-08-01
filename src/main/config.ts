@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
+import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
 import { newCode } from './remote/wire'
@@ -211,6 +212,7 @@ function defaults(): Config {
     gameMode: { enabled: true, processes: [], manual: false },
     swarmRoles: DEFAULT_ROLES,
     remote: defaultRemote(),
+    theme: { ...DEFAULT_THEME },
     window: { width: 1500, height: 940, maximized: false }
   }
 }
@@ -239,6 +241,10 @@ export function getConfig(): Config {
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },
       // An empty roles array in an old config would leave the swarm dialog blank.
       swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles,
+      // Every config written before the Appearance tab existed has no theme at all, and a
+      // missing `accent` reaches `paletteFor` as `undefined.trim()`. Merged, not replaced,
+      // so a theme saved before a knob was added still gains that knob's default.
+      theme: { ...base.theme!, ...(raw.theme ?? {}) },
       defaultModels: migrateModels(raw.defaultModels),
       discordClientId: migrateDiscordId(raw.discordClientId, base.discordClientId)
     }

@@ -46,6 +46,20 @@ interface Props {
    * true copy of what is on screen over there rather than a reflow of it.
    */
   mirror?: { cols: number; rows: number } | null
+  /**
+   * The four colours the terminal's own chrome is drawn in, from the app's theme.
+   *
+   * Handed over as strings because xterm renders to a canvas and cannot read a CSS
+   * variable. Only the chrome: the sixteen ANSI colours belong to the AGENT, and
+   * recolouring those means a CLI's own red stops looking like its red.
+   */
+  termTheme?: {
+    background: string
+    foreground: string
+    cursor: string
+    cursorAccent: string
+    selectionBackground: string
+  }
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
@@ -286,7 +300,8 @@ export default function TerminalPane({
   copyOnSelect,
   mouseSelect,
   autoFixUi,
-  mirror = null
+  mirror = null,
+  termTheme
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
@@ -306,6 +321,10 @@ export default function TerminalPane({
   mirrorRef.current = mirror
   const fontRef = useRef(fontSize)
   fontRef.current = fontSize
+  // Same reason as the font: the terminal is built once per session, and changing the
+  // theme must not tear down a running agent's scrollback to recolour its background.
+  const themeRef = useRef(termTheme)
+  themeRef.current = termTheme
   // Full-screen TUIs (Claude Code, vim) repaint constantly and xterm drops the
   // selection on the next buffer change, so the highlight vanishes before the user
   // can hit Ctrl+C. Remember the last real selection and copy that instead.
@@ -432,12 +451,11 @@ export default function TerminalPane({
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 20000,
-      theme: {
+      theme: themeRef.current ?? {
         background: '#0c0c10',
         foreground: '#e6e6e6',
         cursor: '#7dd3fc',
-        selectionBackground: '#2f5d8a',
-        selectionForeground: '#ffffff'
+        selectionBackground: '#2f5d8a'
       }
     })
     const f = new FitAddon()
@@ -1302,6 +1320,22 @@ export default function TerminalPane({
       t.dispose()
     }
   }, [sessionId])
+
+  /**
+   * Recolour without rebuilding.
+   *
+   * Assigning `options.theme` repaints the canvas and keeps the buffer, so dragging the
+   * accent slider recolours a pane with a running agent in it and loses no scrollback.
+   * The guard matters more than it looks: this runs on every render, and handing xterm a
+   * fresh object with identical strings still makes it clear and redraw the whole screen.
+   */
+  useEffect(() => {
+    const t = term.current
+    if (!t || !termTheme) return
+    const now = t.options.theme
+    if (now && now.background === termTheme.background && now.cursor === termTheme.cursor) return
+    t.options.theme = termTheme
+  }, [termTheme])
 
   // Font size is a live setting: change it and every pane re-lays out immediately.
   useEffect(() => {
