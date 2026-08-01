@@ -4,6 +4,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
+import {
+  applyKey,
+  scrollFor,
+  selectionOf,
+  startState,
+  type CopyCtx,
+  type CopyState
+} from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import './TerminalPane.css'
 
@@ -126,6 +134,8 @@ export const paneFocus = new Map<string, () => void>()
  * pane knows how.
  */
 export const paneFind = new Map<string, () => void>()
+/** Enter keyboard copy mode in this pane (Ctrl Shift U, or the palette). */
+export const paneCopyMode = new Map<string, () => void>()
 
 /**
  * The live terminals, for scripts/probe.mjs to ask questions of.
@@ -348,6 +358,20 @@ export default function TerminalPane({
   // about the buffer, so the two are kept apart: "no matches" only when the search itself
   // came back with nothing, and a bare "found" when it landed somewhere uncounted.
   const [missed, setMissed] = useState(false)
+  /**
+   * Keyboard copy mode: the pane's scrollback navigated and selected with no mouse.
+   *
+   * The state is a ref because every keypress redraws the SELECTION, which is xterm's
+   * job and not React's - re-rendering the component per keystroke to move a highlight
+   * would repaint the mark rail and the find bar as well. The one thing React draws is
+   * the strip at the bottom saying the mode is on, so that gets its own small state.
+   */
+  const copy = useRef<CopyState | null>(null)
+  const [copyOn, setCopyOn] = useState(false)
+  const [copySel, setCopySel] = useState(false)
+  // xterm's key handler is attached long before copy mode is built, so it reaches the
+  // mode through a ref rather than being re-attached when one exists.
+  const copyKeyRef = useRef<(e: KeyboardEvent) => boolean>(() => false)
   // Every prompt submitted to this pane, oldest first. State rather than a ref because the
   // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
   const [marks, setMarks] = useState<Mark[]>([])
@@ -714,6 +738,13 @@ export default function TerminalPane({
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown' || e.altKey) return true
+      // Copy mode owns the keyboard while it is on: `j` is a motion, not a keystroke for
+      // the agent. Returning false is what stops xterm writing it to the pty - the same
+      // door the app's own Ctrl chords use below.
+      if (copyKeyRef.current(e)) {
+        e.preventDefault()
+        return false
+      }
       const mod = isMac ? e.metaKey : e.ctrlKey
       if (!mod) return true
       const key = e.key.toLowerCase()
@@ -1074,6 +1105,104 @@ export default function TerminalPane({
         findInput.current?.select()
       }, 0)
     })
+    /**
+     * Keyboard copy mode. Everything about WHERE the cursor goes is in
+     * `shared/copyMode.ts`; this is the half that only a terminal can do - read the
+     * buffer, draw the selection, keep the cursor on screen.
+     */
+    const lineAt = (row: number): string =>
+      t.buffer.active.getLine(row)?.translateToString(true) ?? ''
+
+    /**
+     * The last line with anything on it - NOT the last line the buffer has.
+     *
+     * A terminal's buffer is always a whole number of screens, so an idle pane's buffer
+     * ends in as many blank rows as the agent has not filled yet. Measured in a real
+     * window: a pane two lines into its life reported `length` 70, so `G` - "the end" -
+     * put the cursor 68 rows below the last thing anyone had printed, in blank space,
+     * where `$` selects nothing and a yank comes back empty. The scan is bounded by the
+     * number of trailing blank rows, which is at most one screen.
+     */
+    const contentEnd = (): number => {
+      const b = t.buffer.active
+      let row = b.length - 1
+      while (row > 0 && !lineAt(row).trim()) row--
+      return row
+    }
+
+    const copyCtx = (): CopyCtx => ({
+      cols: t.cols,
+      lastRow: contentEnd(),
+      viewRows: t.rows,
+      lineText: lineAt
+    })
+
+    const drawCopy = (): void => {
+      const s = copy.current
+      if (!s) return
+      const ctx = copyCtx()
+      const to = scrollFor(s, t.buffer.active.viewportY, t.rows)
+      if (to !== null) t.scrollToLine(to)
+      const sel = selectionOf(s, ctx)
+      // A one-cell selection IS the cursor here: with the WebGL renderer there is no DOM
+      // to put a caret in, and xterm's own cursor belongs to the shell, not to us.
+      t.select(sel.col, sel.row, sel.length)
+      setCopySel(Boolean(s.anchor))
+    }
+
+    const leaveCopy = (): void => {
+      copy.current = null
+      setCopyOn(false)
+      setCopySel(false)
+      t.clearSelection()
+      t.focus()
+    }
+
+    const enterCopy = (): void => {
+      if (copy.current) return leaveCopy()
+      const b = t.buffer.active
+      // Start where the agent's own cursor is, which is what the person was reading.
+      copy.current = startState(b.baseY + b.cursorY, b.cursorX)
+      setCopyOn(true)
+      t.focus()
+      drawCopy()
+    }
+
+    /** Returns true when the key was consumed by copy mode. */
+    const copyKey = (e: KeyboardEvent): boolean => {
+      const s = copy.current
+      if (!s) return false
+      // Nothing with a modifier except the two half-page chords: the app's own shortcuts
+      // (Ctrl+K, Ctrl+Tab, the pane keys) have to keep working with the mode on, or the
+      // only way out of a mode nobody meant to enter is the mouse.
+      if (e.altKey || e.metaKey) return false
+      if (e.ctrlKey && e.key !== 'd' && e.key !== 'u') return false
+      const { state, action } = applyKey(s, e.key, e.ctrlKey, copyCtx())
+      copy.current = state
+      if (action === 'yank') {
+        const text = t.getSelection()
+        if (text) api.copyText(text)
+        leaveCopy()
+        return true
+      }
+      if (action === 'exit') {
+        leaveCopy()
+        return true
+      }
+      if (action === 'find') {
+        // One keyboard owner per pane. The find bar takes the keys the moment it opens,
+        // so staying in copy mode would mean two things reading the same keystrokes.
+        leaveCopy()
+        paneFind.get(sessionId)?.()
+        return true
+      }
+      drawCopy()
+      return true
+    }
+
+    copyKeyRef.current = copyKey
+    paneCopyMode.set(sessionId, enterCopy)
+
     paneInsert.set(sessionId, (text) => {
       // Dictation lands in a pane that may have been scrolled up while it was being
       // transcribed; the point of inserting is to see it, so this follows the tail again.
@@ -1146,6 +1275,8 @@ export default function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneFeed.delete(sessionId)
+      paneCopyMode.delete(sessionId)
+      copy.current = null
       // A closed pane cannot be typed into, and leaving its id in the group would send
       // every keystroke to a session that is gone.
       syncedPanes.delete(sessionId)
@@ -1468,6 +1599,23 @@ export default function TerminalPane({
         >
           ↓ Newest
         </button>
+      )}
+      {/* A modal mode with nothing on screen saying so is the worst kind: every key
+          does something else and the pane looks exactly as it did. This is also where
+          the keys are documented - a copy mode whose motions have to be looked up is
+          slower than the mouse it replaces. */}
+      {copyOn && (
+        <div className="copy-strip">
+          <b>COPY</b>
+          <span>hjkl / arrows move</span>
+          <span>w b e word</span>
+          <span>0 ^ $ line</span>
+          <span>g G ends</span>
+          <span className={copySel ? 'on' : undefined}>v select</span>
+          <span>y yank</span>
+          <span>/ find</span>
+          <span>Esc exit</span>
+        </div>
       )}
       {dropping && <div className="drop-hint">Drop files to put their paths in the prompt</div>}
     </div>

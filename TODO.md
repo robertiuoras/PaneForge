@@ -153,9 +153,16 @@ This is where tmux is thirty years ahead and the items are small.
   the focused pane; every match is highlighted, Enter and Shift Enter step, Escape closes
   and hands the keyboard back. It searches THAT pane’s buffer, so with four open the answer
   is never another agent’s scrollback. `npm run test:view` pins it.
-- [ ] **D3. Keyboard copy mode** — M. Copy-on-select needs a mouse. tmux: `C-b [`, move,
-  select, copy, exit. xterm.js exposes the buffer and selection APIs; a small vi-ish mode
-  (`hjkl`, word motions, `v` select, `y` yank into the Stash) covers it. Pairs with D2.
+- [x] **D3. Keyboard copy mode** — M. **Done in v0.4.13.** `Ctrl Shift U`: `hjkl` or the
+  arrows, `w b e` by word, `0 ^ $ g G`, Ctrl-D/U by half a screen, `v` to select, `V` for
+  whole lines, `y` to copy into the clipboard and the Stash, `/` hands over to the find
+  bar, Escape leaves. A strip along the bottom of the pane lists all of it, because a
+  modal mode with nothing on screen saying so is the worst kind. The word motions are
+  vi's WORD ones, not its small `w`: in a terminal the thing being reached for is a path
+  or a flag, and `src/main/pipe.ts` is one thing to a person and eight stops to vi.
+  `npm run test:copymode` pins the arithmetic; `npm run test:view` pins the two things
+  only a window can answer - that the mode opens in the pane you are typing into, and
+  that no motion key ever reaches the pty.
 - [x] **D4. Zoom a pane** — S. **Done in v0.4.0.** `Ctrl Shift Z`, or the zoom button on the
   pane title, makes the focused pane the whole window and back. The grid, its sizes and the
   order underneath are untouched, and the zoom is dropped by itself if that pane closes.

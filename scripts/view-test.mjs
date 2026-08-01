@@ -35,6 +35,10 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/** The checkout itself, as a path a pane can be opened in (root below is a URL). */
+const repoDir = fileURLToPath(new URL('..', import.meta.url))
 
 const port = process.env.PF_PORT ?? '9333'
 const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
@@ -380,6 +384,79 @@ ok(
   'move: Ctrl Shift ← puts it back',
   JSON.stringify(sync.back) === JSON.stringify(sync.before),
   `${sync.back}`
+)
+
+// ------------------------------------------------------- keyboard copy mode (D3)
+//
+// The arithmetic is pinned model-free by `npm run test:copymode`. What only a real
+// window can answer is the wiring, and it has two ways to be wrong that both look like
+// nothing at all: the mode entering in a pane other than the one you are typing into
+// (measured - the shortcut acts on the ACTIVE pane, and a probe that started a pane
+// without focusing it drove one pane while measuring another), and the motion keys
+// reaching the pty. `j` arriving at a shell as a keystroke is not a broken highlight;
+// it is a letter typed into an agent's prompt by pressing a navigation key.
+
+const copy = await evaluate(`(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const out = {}
+  for (const s of await window.api.listSessions()) await window.api.killSession(s.id)
+  await wait(600)
+  const s = await window.api.startSession({ cwd: ${JSON.stringify(repoDir)}, agent: 'shell', title: 'copytest' })
+  for (let i = 0; i < 60 && !(window.__pf && window.__pf[s.id]); i++) await wait(250)
+  const t = window.__pf[s.id].term
+  await wait(2600)
+  document.querySelector('.pane[data-id="' + s.id + '"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  await wait(200)
+  t.focus()
+  await wait(200)
+  const LINE = 'ZZZ target line for copy mode 42'
+  t.write('\\r\\n' + LINE)
+  await wait(400)
+  const lineOf = () => {
+    const b = t.buffer.active
+    return b.getLine(b.baseY + b.cursorY)?.translateToString(true) ?? ''
+  }
+  const ta = t.element.querySelector('.xterm-helper-textarea')
+  // Real keydowns on xterm's own textarea, so the custom key handler is what decides
+  // whether they reach the pty - calling the mode's functions directly would pass with
+  // the whole interception deleted.
+  const paneKey = (k) => ta.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'u', ${mod}: true, shiftKey: true, bubbles: true, cancelable: true }))
+  await wait(300)
+  out.stripInMine = document.querySelector('.copy-strip')?.closest('.pane')?.dataset.id === s.id
+  const cell = t.getSelectionPosition()
+  out.cursorIsOneCell = Boolean(cell) && cell.end.x - cell.start.x === 1
+  paneKey('G'); await wait(120)
+  paneKey('0'); paneKey('v'); await wait(120)
+  out.selecting = Boolean(document.querySelector('.copy-strip span.on'))
+  paneKey('$'); await wait(200)
+  out.selected = t.getSelection()
+  paneKey('y'); await wait(500)
+  out.left = !document.querySelector('.copy-strip')
+  out.clipboard = await window.api.readClipboard()
+  out.pty = lineOf()
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'u', ${mod}: true, shiftKey: true, bubbles: true, cancelable: true }))
+  await wait(250)
+  paneKey('j'); paneKey('Escape')
+  await wait(250)
+  out.escaped = !document.querySelector('.copy-strip')
+  out.ptyAfter = lineOf()
+  out.target = LINE
+  await window.api.killSession(s.id)
+  return out
+})()`)
+
+ok('copy: Ctrl Shift U opens copy mode in the focused pane', copy.stripInMine === true)
+ok('copy: with no selection the cursor is a single cell', copy.cursorIsOneCell === true)
+ok('copy: v marks the strip as selecting', copy.selecting === true)
+ok('copy: G 0 v $ selects exactly that line', copy.selected === copy.target, copy.selected)
+ok('copy: y copies it', copy.clipboard === copy.target, copy.clipboard)
+ok('copy: and leaves the mode', copy.left === true)
+ok('copy: Escape leaves without copying', copy.escaped === true)
+ok(
+  'copy: no motion key ever reaches the pty',
+  copy.pty === copy.target && copy.ptyAfter === copy.target,
+  `${copy.pty} | ${copy.ptyAfter}`
 )
 
 // ---------------------------------------------------------------- leave no desk behind

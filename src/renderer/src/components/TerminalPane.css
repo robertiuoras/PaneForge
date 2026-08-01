@@ -134,6 +134,31 @@
    four panes open the question "which pane am I searching" has to be answerable without
    reading the text in the box - it sits in the pane it searches. Clear of the scrollbar
    (17px) and of the mark rail's tags (20px more), so it covers neither. */
+/* Keyboard copy mode is on in this pane. Along the bottom rather than beside the find
+   bar: the keys being listed are the point of it, and a strip the width of the pane can
+   list them all without a second row appearing halfway through a session. */
+.copy-strip {
+  position: absolute;
+  left: 7px; right: 7px; bottom: 7px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.copy-strip b { color: var(--accent); letter-spacing: 0.08em; }
+/* The one key whose state is not obvious from the screen: a selection being extended
+   looks the same as a cursor being moved until you look at what is highlighted. */
+.copy-strip span.on { color: var(--accent); }
+
 .find-bar {
   position: absolute;
   top: 8px;

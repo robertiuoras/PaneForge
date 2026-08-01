@@ -421,6 +421,20 @@ handled, or an unhandled one takes the whole main process down with it. That str
 the transcript's too - one implementation, since a transcript and its tee disagreeing
 about the same run is a bug nobody would ever look for.
 
+`npm run test:copymode` is keyboard copy mode's arithmetic, away from xterm because it
+is the half that is wrong in ways a screenshot cannot show. Three of its rules were
+written by things that were already broken: `V` had to become a SHAPE rather than a pair
+of columns (as columns, `V` then `j` selected one whole line plus a single stray
+character of the next, and that is what a yank put on the clipboard); a horizontal key
+that moves nothing must not move the wanted column either, or `l` at the end of a short
+line silently shifts where the next `j` lands; and `G` means the last line with anything
+ON it, not the last line the buffer has - measured in a real window, a pane two lines
+into its life reported a buffer 70 rows long, so "the end" was 68 rows below the last
+thing printed, where `$` selects nothing and a yank comes back empty. The window half is
+in `test:view`, and it exists because of a measurement too: the shortcut acts on the
+ACTIVE pane, so a probe that starts a pane without focusing it drives one pane while
+measuring another and reports a feature that does nothing.
+
 `npm run test:silence` is the alert that says a running turn has gone quiet, and it
 exists because a rule about MINUTES cannot be checked by hand - nobody re-tests a five
 minute timer, so every mistake it can make ships, and every mistake it can make is the

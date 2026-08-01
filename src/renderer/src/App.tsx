@@ -27,6 +27,7 @@ import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } fr
 import RemoteDialog from './components/RemoteDialog'
 import TerminalPane, {
   onPaneDraft,
+  paneCopyMode,
   paneDraft,
   paneFind,
   paneFocus,
@@ -1263,6 +1264,14 @@ export default function App(): JSX.Element {
         // prompt, and this app does not get to take either of them.
         e.preventDefault()
         toggleZoom()
+      } else if (k === 'u' && e.shiftKey) {
+        // U for "up the scrollback". C is copy, and tmux's own `[` needs a modifier this
+        // app cannot claim on every keyboard layout - on a German one it is AltGr+8.
+        e.preventDefault()
+        e.stopPropagation()
+        const enter = activeId ? paneCopyMode.get(activeId) : null
+        if (enter) enter()
+        else flash('Open a pane first - there is nothing to copy from.')
       } else if (k === 'y' && e.shiftKey) {
         // Y for sYnc: B (broadcast) is tmux's own prefix key and the one chord people
         // press by muscle memory expecting nothing to happen here.
@@ -1421,6 +1430,18 @@ export default function App(): JSX.Element {
         hint: 'the grid and its sizes are left exactly as they are',
         keys: 'Ctrl Shift Z',
         run: () => toggleZoom()
+      },
+      {
+        id: 'copy-mode',
+        group: 'This pane',
+        title: 'Copy from this pane without the mouse',
+        hint: 'move with hjkl, v to select, y to copy - the scrollback, keyboard only',
+        keys: 'Ctrl Shift U',
+        run: () => {
+          const enter = activeRef.current ? paneCopyMode.get(activeRef.current) : null
+          if (enter) enter()
+          else flash('Open a pane first - there is nothing to copy from.')
+        }
       },
       {
         id: 'pipe-pane',

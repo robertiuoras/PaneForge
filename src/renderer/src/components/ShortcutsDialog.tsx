@@ -56,6 +56,11 @@ const KEYS: Key[] = [
     'Find in this pane: every match highlighted, Enter for the next, Shift Enter for the one before, Escape to close',
     true
   ],
+  [
+    'Ctrl Shift U',
+    'Copy from this pane with the keyboard: hjkl or arrows to move, w b e by word, v to start a selection, y to copy it, Escape to leave',
+    true
+  ],
   ['Ctrl 1 - 9', 'Jump to that session'],
   ['Ctrl Tab', 'Next session'],
   ['Ctrl Shift Tab', 'Previous session'],
