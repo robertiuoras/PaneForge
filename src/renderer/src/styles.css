@@ -1099,6 +1099,27 @@ body.sizing * { user-select: none !important; }
 .dialog-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dialog-row .primary { margin-left: auto; }
 
+/* ---- which project the first message is about ----
+   One line under the message box. It has to read as a statement of what is about to
+   happen ("Opening in Toolstash"), not as a suggestion to consider, because the tick
+   has already been made by the time it is on screen. */
+.route {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 6px 2px 0; font-size: 11px; min-height: 20px;
+}
+.route-on { color: var(--accent); font-weight: 600; }
+.route-why { color: var(--muted); }
+.route-x {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 2px;
+}
+.route-x:hover { color: var(--text); }
+.route-alt {
+  background: none; border: 1px solid var(--line-strong); color: var(--muted);
+  border-radius: 5px; padding: 1px 7px; font-size: 11px; cursor: pointer;
+}
+.route-alt:hover { color: var(--text); border-color: var(--accent); }
+
 /* ---- restore the last desk ---- */
 .dialog.restore { width: 560px; }
 /* The folder under the pane's name: enough to tell two panes called "src" apart,

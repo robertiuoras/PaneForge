@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { Agent, Project, StartSessionRequest } from '@shared/types'
+import type { Agent, Project, RouteMatch, StartSessionRequest } from '@shared/types'
 import AgentPicker, { AgentInstallBar } from './AgentPicker'
 import AgentLogo from './AgentLogo'
 import { Checkbox } from './Controls'
@@ -46,6 +46,16 @@ export default function NewSessionDialog({
   const [agent, setAgent] = useState<Agent>(defaultAgent)
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
   const [prompt, setPrompt] = useState('')
+  // What the first message says it is about. `routed` is the project this dialog ticked
+  // on the message's behalf, kept apart from the user's own ticks so it can be swapped
+  // when the message changes and dropped the moment the user disagrees with it.
+  const [route, setRoute] = useState<RouteMatch[]>([])
+  const [routed, setRouted] = useState<string | null>(null)
+  const [manual, setManual] = useState(false)
+  // The ref shadows `routed` because the debounced reply lands in a closure that was
+  // built before the previous match was stored, and ticking off the wrong path there
+  // would leave two projects ticked from one message.
+  const routedRef = useRef<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   // Only ever shown when the list is empty, to say WHICH folder came up empty.
   const [root, setRoot] = useState('')
@@ -70,9 +80,77 @@ export default function NewSessionDialog({
   useEffect(() => setSel(0), [q])
 
   const canResume = !!agents.find((a) => a.id === agent)?.resumeArgs
+  const routedMatch = route.find((m) => m.path === routed) ?? null
 
-  const toggle = (path: string): void =>
+  /**
+   * A tick the user made themselves. From here on the message stops choosing the project:
+   * having typed a message and then picked a folder, they have already answered the
+   * question this feature exists to ask.
+   */
+  const toggle = (path: string): void => {
+    setManual(true)
     setTicked((t) => (t.includes(path) ? t.filter((p) => p !== path) : [...t, path]))
+  }
+
+  /*
+   * Both of these read the previous route into a local BEFORE touching state, and the
+   * updater closes over that local rather than over the ref.
+   *
+   * Reading `routedRef.current` inside the updater looks equivalent and is not: React
+   * runs the updater at render time, by which point the line below has already moved the
+   * ref on, so the filter removes the project it is about to add instead of the one it
+   * replaced. Measured in a real window - retyping the message left Toolstash AND
+   * PaneForge ticked, and the x removed neither.
+   */
+
+  /** Tick what the message named, replacing whatever it named a keystroke ago. */
+  const applyRoute = useCallback((path: string): void => {
+    const previous = routedRef.current
+    routedRef.current = path
+    setTicked((t) => {
+      const kept = t.filter((p) => p !== previous)
+      return kept.includes(path) ? kept : [...kept, path]
+    })
+    setRouted(path)
+  }, [])
+
+  /** Untick what the message chose, without the user having said anything about it. */
+  const dropRouteQuietly = useCallback((): void => {
+    const previous = routedRef.current
+    routedRef.current = null
+    setTicked((t) => t.filter((p) => p !== previous))
+    setRouted(null)
+  }, [])
+
+  /** The user rejecting the suggestion, which also stops it coming back as they type. */
+  const dropRoute = (): void => {
+    dropRouteQuietly()
+    setManual(true)
+  }
+
+  /*
+   * Routing runs on the message, debounced, and never while the user is choosing folders
+   * by hand. The 200ms is not for the main process - the match is a string comparison
+   * against a cached alias list - it is so a half-typed word does not tick a project for
+   * one frame on the way to naming a different one.
+   */
+  useEffect(() => {
+    const text = prompt.trim()
+    if (text.length < 3) {
+      setRoute([])
+      return
+    }
+    const timer = setTimeout(() => {
+      void api.routeProjects(text).then((r) => {
+        setRoute(r.matches)
+        if (manual) return
+        if (r.confident && r.matches[0]) applyRoute(r.matches[0].path)
+        else if (routedRef.current) dropRouteQuietly()
+      })
+    }, 200)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt, manual, applyRoute])
 
   /** Ticked projects if any, otherwise whatever row is highlighted. */
   const chosen = (p?: Project): StartSessionRequest[] => {
@@ -177,11 +255,55 @@ export default function NewSessionDialog({
 
         <input
           className="search prompt"
+          // Routing decides which folder a session opens in from state nothing else can
+          // see. These two say what it decided, so route-view-test.mjs can measure it in
+          // a real window instead of inferring it from which row looks ticked.
+          data-routed={routed ?? ''}
+          data-manual={manual ? '1' : '0'}
           placeholder="Optional first message, sent to every session started here"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && go()}
         />
+
+        {/*
+         * What the message is about. A session opened in the wrong project is silent and
+         * expensive - the agent reads the wrong instructions, searches the wrong indexes
+         * and can write into the wrong checkout - and the only moment it is cheap to fix
+         * is this one, before the session exists. So a message that clearly names a
+         * project ticks it, visibly, with the reason and a way to say no.
+         */}
+        {route.length > 0 && (
+          <div className="route">
+            {routedMatch ? (
+              <>
+                <span className="route-on">Opening in {routedMatch.name}</span>
+                <span className="route-why">{routedMatch.why}</span>
+                <button className="route-x" onClick={dropRoute} title="Do not use this project">
+                  ×
+                </button>
+              </>
+            ) : (
+              <span className="route-why">Message may mean:</span>
+            )}
+            {route
+              .filter((m) => m.path !== routed)
+              .slice(0, 3)
+              .map((m) => (
+                <button
+                  key={m.path}
+                  className="route-alt"
+                  onClick={() => {
+                    setManual(true)
+                    setTicked((t) => (t.includes(m.path) ? t : [...t, m.path]))
+                  }}
+                  title={m.why}
+                >
+                  {m.name}
+                </button>
+              ))}
+          </div>
+        )}
 
         {/* The chips and the actions are pinned to the bottom together. Pinning only the
             button row let it ride up over the chips as soon as the dialog scrolled - the

@@ -22,6 +22,9 @@ import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import type { PresenceCounts } from '../shared/discordRpc'
 import { listProjects } from './projects'
+import { routeCandidates } from './projectAliases'
+import { routePrompt } from '../shared/projectRoute'
+import type { RouteResult } from '../shared/projectRoute'
 import { getConfig, setConfig } from './config'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -186,16 +189,35 @@ const profile = initProfile()
 
 // A second launch (double-clicked shortcut) should raise the window we already have,
 // not start a second app with its own set of agents.
-if (!app.requestSingleInstanceLock()) {
+/*
+ * What this launch was asked to open, worked out HERE, in the process whose argv it is.
+ *
+ * It cannot be worked out in the app that ends up doing it. Chromium rewrites the command
+ * line it hands to `second-instance`: `--open <dir> --prompt <text>` arrives as
+ * `[exe, --open, --prompt, <text?>, --allow-file-access-from-files, ., <dir>]` - switches
+ * hoisted, values pushed past the positional `.`, one of Electron's own switches spliced
+ * into the middle. Reading `argv[i + 1]` there gives `--prompt` where the folder should
+ * be, which is why `--open` did nothing whenever PaneForge was already running: the copy
+ * that could read the arguments was the copy that was quitting, and it started the pane
+ * in itself a moment before it died.
+ *
+ * `additionalData` is the documented way across, and it carries the answer rather than
+ * the question.
+ */
+const launchRequest = parseOpenArgs(process.argv)
+
+if (!app.requestSingleInstanceLock(launchRequest)) {
   app.quit()
 } else {
-  app.on('second-instance', (_e, argv) => {
+  app.on('second-instance', (_e, argv, _cwd, extra) => {
     // Mid-update the installer launches the new exe while this one is still holding the
     // lock, so that launch arrives here as a second instance. Raising the window then
     // would undo the whole point of the silent update: it pops a dying app to the front
     // over whatever the user is doing. Take the args, leave the focus alone.
     if (!installStarted) focusWindow(true)
-    openFromArgs(argv)
+    // The other copy's parse when it sent one; its raw argv only as a fallback for a
+    // launcher that predates this and cannot pass anything across.
+    openRequest(isOpenRequest(extra) ? extra : parseOpenArgs(argv))
   })
 }
 
@@ -647,6 +669,7 @@ remote.on('attention', (s: Session) => raiseAttention(s))
 remote.on('changed', (state: RemoteState) => send('remote:changed', state))
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())
 /**
@@ -1942,16 +1965,69 @@ function applyVoiceHotkey(cfg: Config): void {
 }
 
 /** `PaneForge --open <path>` starts a session in that folder on launch. */
-function openFromArgs(argv: string[]): void {
-  const i = argv.indexOf('--open')
-  const dir = i >= 0 ? argv[i + 1] : undefined
-  if (dir) {
-    try {
-      manager.start({ cwd: dir })
-    } catch {
-      /* bad path on the command line - ignore rather than crash the launch */
-    }
+/**
+ * Which project a message is about. Empty or near-empty text answers "no idea" without
+ * touching the disk, because the renderer calls this on every keystroke of the first
+ * message box.
+ */
+function routeText(text: string): RouteResult {
+  if (!text || text.trim().length < 3) return { matches: [], confident: false }
+  return routePrompt(text, routeCandidates(listProjects()))
+}
+
+/**
+ * `--open <dir>` starts a session there. `--prompt <text>` sends that first message, and
+ * `--route <text>` works out the folder from the message itself - which is how something
+ * outside the app (a shell alias, a Claude Code hook that has spotted a chat in the wrong
+ * project) hands a misplaced job to a session started in the right one.
+ */
+export interface OpenRequest {
+  open?: string
+  prompt?: string
+  route?: string
+}
+
+/** Read from a command line that is still in the order it was typed. */
+export function parseOpenArgs(argv: string[]): OpenRequest {
+  const req: OpenRequest = {}
+  const take = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag)
+    const value = i >= 0 ? argv[i + 1] : undefined
+    return value && !value.startsWith('--') ? value : undefined
   }
+  const open = take('--open')
+  const prompt = take('--prompt')
+  const route = take('--route')
+  if (open) req.open = open
+  if (prompt) req.prompt = prompt
+  if (route) req.route = route
+  return req
+}
+
+function isOpenRequest(value: unknown): value is OpenRequest {
+  if (!value || typeof value !== 'object') return false
+  const r = value as OpenRequest
+  return typeof r.open === 'string' || typeof r.route === 'string'
+}
+
+/**
+ * Routing only ever acts when it is confident. A guess would open a project nobody asked
+ * for, which is a worse failure than doing nothing: the whole point of the feature is
+ * that the folder a session opens in stops being a surprise.
+ */
+function openRequest(req: OpenRequest): void {
+  const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
+  if (!target) return
+  try {
+    manager.start({ cwd: target, prompt: req.prompt ?? req.route ?? undefined })
+  } catch {
+    /* bad path on the command line - ignore rather than crash the launch */
+  }
+}
+
+function confidentRoute(text: string): string | undefined {
+  const r = routeText(text)
+  return r.confident ? r.matches[0]?.path : undefined
 }
 
 /**
@@ -2170,8 +2246,10 @@ app.whenReady().then(() => {
     if (s.phase === 'ready' && consumeInstallRetry(s.version)) doInstall()
   }, cfg.autoUpdate)
   offerRestore()
-  openFromArgs(process.argv)
-  if (process.env['PANEFORGE_OPEN']) openFromArgs(['--open', process.env['PANEFORGE_OPEN'] as string])
+  // Only the copy that owns the window: a launch that lost the lock is on its way out,
+  // and starting a pane in it puts an agent in a process that is about to exit.
+  if (app.hasSingleInstanceLock()) openRequest(launchRequest)
+  if (process.env['PANEFORGE_OPEN']) openRequest({ open: process.env['PANEFORGE_OPEN'] as string })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) return createWindow()
     // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a

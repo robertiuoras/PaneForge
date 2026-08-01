@@ -5,9 +5,10 @@ import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle } from './discordRpc'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
+import type { RouteMatch, RouteResult } from './projectRoute'
 import type { ThemeConfig } from './theme'
 
-export type { DiscordStyle, ThemeConfig }
+export type { DiscordStyle, RouteMatch, RouteResult, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -998,6 +999,11 @@ export const STASH_CONFIG_KEYS = [
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
   listProjects(): Promise<Project[]>
+  /**
+   * Which project a first message is about, ranked. Empty text means no matches, so
+   * this is safe to call on every keystroke; it reads no files that are not cached.
+   */
+  routeProjects(text: string): Promise<RouteResult>
   /** every known agent with whether its binary is actually on this machine */
   listAgents(): Promise<AgentInfo[]>
   listSessions(): Promise<Session[]>
