@@ -117,6 +117,18 @@
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": [
+          "lane.mjs",
+          "lane-hook.mjs",
+          "test-app.mjs",
+          "release-notes.mjs"
+        ]
+      }
+    ],
     "publish": [
       {
         "provider": "github",
