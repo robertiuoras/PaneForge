@@ -68,13 +68,35 @@ export default function AgentLogo({ id, spec, size = 16, tile, muted }: Props): 
   )
 }
 
-/** PaneForge's own mark: stacked panes, drawn rather than shipped as an asset. */
+/**
+ * PaneForge's own mark: stacked panes, drawn rather than shipped as an asset.
+ *
+ * These are the icon's proportions, not an approximation of them. `scripts/make-icon.mjs`
+ * draws the taskbar icon from `split: 0.415` (the left pane's share of the width), a gap
+ * of 0.043 of the canvas and a pane radius of 0.032, inset 0.235 all round; take the inset
+ * away - there is no squircle plate at 18px, it would just be mud - and rescale the rest
+ * to fill the box, and those ratios land on the numbers below. The two marks were drawn
+ * independently before and did not match: the app's had a 9/9 split where the icon has
+ * roughly 9/13, so the thing in the sidebar was a different logo from the thing on the
+ * taskbar.
+ *
+ * The gradient is the icon's ember, top-lit, expressed in `currentColor` so it follows
+ * the theme - the sidebar sets `color: var(--accent)`. That is the whole of the rebrand:
+ * the default accent is the icon's own top ember pulled back off full orange, so the mark
+ * and the window it opens are recognisably one object without the window being orange.
+ */
 export function AppLogo({ size = 18 }: { size?: number }): JSX.Element {
   return (
     <svg className="app-logo" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="2" y="3" width="9" height="18" rx="2.5" fill="currentColor" opacity="0.95" />
-      <rect x="13" y="3" width="9" height="8" rx="2.5" fill="currentColor" opacity="0.6" />
-      <rect x="13" y="13" width="9" height="8" rx="2.5" fill="currentColor" opacity="0.35" />
+      <defs>
+        <linearGradient id="pf-mark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="currentColor" stopOpacity="1" />
+          <stop offset="1" stopColor="currentColor" stopOpacity="0.55" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="9.15" height="24" rx="1.45" fill="url(#pf-mark)" />
+      <rect x="11.1" y="0" width="12.9" height="11.02" rx="1.45" fill="url(#pf-mark)" />
+      <rect x="11.1" y="12.98" width="12.9" height="11.02" rx="1.45" fill="url(#pf-mark)" />
     </svg>
   )
 }
