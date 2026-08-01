@@ -39,6 +39,7 @@
     "test:rename": "node scripts/rename-repo-test.mjs",
     "test:rail": "node scripts/rail-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
+    "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
     "test:stashdrag": "node scripts/stash-drag-test.mjs",
     "postinstall": "electron-builder install-app-deps",

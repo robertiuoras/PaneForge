@@ -87,6 +87,12 @@ const DONE_GLOW_MS = 5200
  *  the noise of an ordinary mouse click. */
 const DRAG_SLOP = 9
 
+/** How long a press has to be HELD before the card shows the grab cursor. Purely the
+ *  cursor - the drag itself still starts on DRAG_SLOP of movement, so a fast grab is
+ *  never delayed. A click is a press of ~80-120ms, so anything under ~150ms would still
+ *  flash a hand on every selection; 220ms reads as "I am holding this". */
+const HOLD_CURSOR_MS = 220
+
 /** A pending question for the in-app confirm/prompt dialog. */
 interface AskState {
   title: string
@@ -429,6 +435,22 @@ export default function App(): JSX.Element {
     let dragging = false
     const startIds = idsRef.current
     let latest = startIds
+    // The grab cursor is armed by TIME, not by the press. `currentTarget` is read now:
+    // React nulls it the moment this handler returns, so the timer below would have
+    // nothing to paint. The class is dropped again by `disarm` on release and when a
+    // real drag starts - from there `body.dragging` owns the cursor for every element.
+    const row = e.currentTarget as HTMLElement
+    let armTimer: number | null = window.setTimeout(() => {
+      armTimer = null
+      row.classList.add('hold-arm')
+    }, HOLD_CURSOR_MS)
+    const disarm = (): void => {
+      if (armTimer !== null) {
+        clearTimeout(armTimer)
+        armTimer = null
+      }
+      row.classList.remove('hold-arm')
+    }
     // Captured on the list, which never moves, rather than on the row, which does: a
     // release outside the window has to end the drag too, or the list is left following
     // a mouse button nobody is holding.
@@ -450,6 +472,7 @@ export default function App(): JSX.Element {
       if (!dragging) {
         if (Math.abs(ev.clientY - startY) < DRAG_SLOP) return
         dragging = true
+        disarm()
         grabPointer()
         setDragId(id)
         document.body.classList.add('dragging')
@@ -484,6 +507,7 @@ export default function App(): JSX.Element {
       setOrder(next)
     }
     const up = (): void => {
+      disarm()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
