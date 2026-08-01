@@ -20,6 +20,7 @@ import type {
 
 const api: Api = {
   listProjects: () => ipcRenderer.invoke('projects:list'),
+  routeProjects: (text: string) => ipcRenderer.invoke('projects:route', text),
   listAgents: () => ipcRenderer.invoke('agents:list', true),
   listSessions: () => ipcRenderer.invoke('sessions:list'),
   startSession: (req: StartSessionRequest) => ipcRenderer.invoke('sessions:start', req),
