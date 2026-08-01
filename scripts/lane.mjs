@@ -26,7 +26,8 @@
 // CLI (all of it is called by hooks or by an agent, never by hand):
 //   node scripts/lane.mjs claim --session <id>     -> JSON lane for this session
 //   node scripts/lane.mjs guard --session <id> --path <file>
-//   node scripts/lane.mjs status
+//   node scripts/lane.mjs status                   the same facts as JSON, for the app
+//   node scripts/lane.mjs doctor                   ...and in sentences, for a person
 //   node scripts/lane.mjs resolve --session <id> [--lane b]   take over a stuck lane
 //   node scripts/lane.mjs ready --session <id>     mark this lane's branch shippable
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
@@ -133,6 +134,23 @@ const OWN = (() => {
  * branch and pushed, batched exactly the same way, and no version is ever cut. Opting a
  * repo into real releases is one line in its own `.lanes.json`.
  */
+/**
+ * The names of the lane checkouts, and there is only one set of them.
+ *
+ * `main` is the repository folder itself; every other lane is `<repo>-<letter>` on branch
+ * `lane-<letter>`, sitting beside it. PaneForge's own window creates exactly those folders
+ * when a second pane opens the same project (src/main/lanes.ts), which is the point: a pane
+ * sitting in `Toolstash-b` and a chat holding lane b are the SAME checkout, so the prompt
+ * hook can ask for "the lane matching the folder I am in" and be given it. While the two
+ * halves of this used different names - `<repo>-a` here, `<repo>-w2` there - that request
+ * asked for a lane called `w2`, and this file would have gone and made `lane-w2` on top of
+ * the `pf/w2` worktree that was already sitting at that path.
+ *
+ * Eight letters because that is how many the window offers. A repo that wants fewer, more,
+ * or different says so in its own `.lanes.json` `pool`.
+ */
+const DEFAULT_POOL = ['main', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
 function loadProfile() {
   let cfg = {}
   try {
@@ -158,7 +176,7 @@ function loadProfile() {
   return {
     branch,
     release,
-    pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : ['main', 'a', 'b', 'c'],
+    pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : DEFAULT_POOL,
     enabled: cfg.lanes !== false
   }
 }
@@ -281,6 +299,39 @@ function dropClaims(state, session) {
 }
 
 /**
+ * Rescue the finished work in a lane whose chat is not coming back.
+ *
+ * Committed, clean, and master does not have it yet: that is work somebody wrote and meant
+ * to ship, and the only thing missing is the sentence saying so. Anything else is left
+ * exactly where it is - uncommitted edits are half-finished by definition, a lane already
+ * marked ready needs nothing, and a lane that will not merge is recorded by name rather
+ * than marked ready and failing at release time with nobody around to read the failure.
+ *
+ * Called from the two places a lane stops having an owner without anyone declaring it
+ * done: a claim going stale (the chat was killed) and the unclaimed sweep in `retry` (the
+ * claim was dropped before this existed, or by an older version of this file). Returns the
+ * markReady result, or null when there was nothing to rescue.
+ */
+function drainLane(state, id) {
+  if (id === 'main') return null // master IS the release branch - its commits are already counted
+  if (state.ready[id] || state.conflicts[id]) return null
+  if (!existsSync(laneDir(id))) return null
+  const w = laneWork(id)
+  if (w.dirty || w.ahead === 0) return null
+  const caught = catchUp(id)
+  if (caught.conflicts.length) {
+    noteConflict(state.conflicts, id, caught.conflicts.join(', '))
+    return null
+  }
+  try {
+    return markReady(state, id)
+  } catch {
+    /* nothing mergeable after the catch-up - leave the branch alone */
+    return null
+  }
+}
+
+/**
  * Set by `reap` when it actually dropped something, so a read-only command can persist the
  * clean-up instead of doing it again on the next call.
  *
@@ -311,10 +362,21 @@ function reap(state) {
     }
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
-      // closed the `npm run try` window it left running either. Both go here.
+      // closed the `npm run try` window it left running either. Both go here - but its
+      // COMMITS do not. A session that ends properly marks finished work ready on the way
+      // out (releaseClaim); one that was killed, or that slept through a reboot, never
+      // reached that line, and dropping its claim silently is what left real commits
+      // sitting on a lane branch with nothing pointing at them. `shippable()` only counts
+      // lanes that are marked ready, so the work was invisible until some later chat
+      // happened to be handed that exact lane - days later, in the case this was found in.
+      // Draining uses releaseClaim's rule, because it is the same situation arriving by a
+      // worse road: committed and clean means it was meant to go out, uncommitted means
+      // nobody ever released half an edit.
+      drainLane(state, id)
       dropClaims(state, c.session)
       delete state.lanes[id]
       closeLaneApps(laneDir(id))
+      reaped = true
     }
   }
   if (state.release && now() - state.release.at > LOCK_MS) state.release = null
@@ -684,6 +746,13 @@ function claim(session, cwd, prefer, tentative = false) {
   // A lane with finished work waiting on a release is free to hand out, but it is the LAST
   // one to hand out: a new chat that lands there starts on top of somebody else's shipped-
   // but-unreleased commits, and its pane reads "done" before it has done anything.
+  // A preference for a lane this repo does not have is not a lane. The hook derives
+  // `prefer` from the folder suffix a chat is sitting in, so a chat in a leftover
+  // `<repo>-w2` asks for a lane called `w2` - and taking that at its word meant handing out
+  // a lane whose branch (`lane-w2`) is not the branch that folder is on (`pf/w2`), i.e. two
+  // different ideas of one checkout, which is the failure lanes exist to prevent. Ignoring
+  // it puts that chat in a real lane instead.
+  if (prefer && !POOL.includes(prefer)) prefer = null
   const spare = POOL.filter((id) => !state.lanes[id])
   let free =
     (prefer && !state.lanes[prefer] ? prefer : null) ??
@@ -1114,6 +1183,30 @@ function releaseClaim(session) {
   return { freed, marked, release: autoship('patch', session) }
 }
 
+/**
+ * Say the release still exists.
+ *
+ * LOCK_MS decides how long a release may go quiet before the next command assumes it
+ * crashed and clears the lock - and a release that is still running when that happens is
+ * the worst case this file has, because the chat that clears it goes on to cut a second
+ * version on top of the first. Twenty minutes was picked when GitHub Actions built the
+ * installers and `ship` was over in one; the account's Actions are disabled, so this
+ * machine now runs electron-vite and electron-builder itself and uploads the artifacts,
+ * which is comfortably longer than the lock. Rather than guess a bigger number - the build
+ * gets slower every time the app grows - the release says it is alive as it goes, and the
+ * lock keeps meaning what it says: nothing has happened here for twenty minutes.
+ */
+function beatRelease(session) {
+  try {
+    const s = read()
+    if (s.release?.session !== (session ?? 'unknown')) return
+    s.release.at = now()
+    write(s)
+  } catch {
+    /* a heartbeat that cannot be written must never take the release down with it */
+  }
+}
+
 function ship(kind, session) {
   if (!['patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
   const state = reap(read())
@@ -1238,7 +1331,7 @@ function ship(kind, session) {
       if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
         git(MAIN, 'push')
         git(MAIN, 'push', 'origin', `v${pkg.version}`)
-        const resumedBuilt = publishFallback(pkg.version)
+        const resumedBuilt = publishFallback(pkg.version, () => beatRelease(session))
         const s = read()
         s.conflicts = conflicts
         s.release = null
@@ -1260,7 +1353,7 @@ function ship(kind, session) {
     git(MAIN, 'tag', `v${next}`)
     git(MAIN, 'push')
     git(MAIN, 'push', 'origin', `v${next}`)
-    return finish(next, publishFallback(next))
+    return finish(next, publishFallback(next, () => beatRelease(session)))
   } catch (e) {
     const s = read()
     if (s.release?.session === (session ?? 'unknown')) {
@@ -1299,12 +1392,13 @@ function runSafe(cmd, args, opts = {}) {
 // here and publish it exactly the way .github/workflows/release.yml would have -
 // same assets, same fixed-name copies, same notes. When Actions comes back the run
 // shows up in the first poll and the fallback stands down by itself.
-function publishFallback(version) {
+function publishFallback(version, beat = () => {}) {
   // The throwaway repos the lane tests build have no publish config: nothing to do.
   const pub = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).build?.publish?.[0]
   if (!pub || pub.provider !== 'github') return { by: 'skipped' }
   const repo = `${pub.owner}/${pub.repo}`
   for (let i = 0; i < 3; i++) {
+    beat()
     sleep(15_000)
     const r = runSafe('gh', [
       'api',
@@ -1320,13 +1414,16 @@ function publishFallback(version) {
   const env = { ...process.env, GH_TOKEN: token.out, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
   const target = process.platform === 'darwin' ? '--mac' : '--win'
 
+  beat()
   const vite = runSafe('npx', ['electron-vite', 'build'], { env, timeout: 300_000 })
   if (!vite.ok) return { by: 'failed', reason: `electron-vite build failed: ${vite.out.slice(-200)}` }
+  beat()
   const eb = runSafe('npx', ['electron-builder', target, '--publish', 'always'], {
     env,
     timeout: 600_000
   })
   if (!eb.ok) return { by: 'failed', reason: `electron-builder failed: ${eb.out.slice(-200)}` }
+  beat()
 
   // Fixed-name copies (PaneForge-Setup.exe etc), so install.sh / install.ps1 keep
   // finding the newest build by name - same renaming the workflow does. Nothing in
@@ -1339,6 +1436,7 @@ function publishFallback(version) {
       .replace(/ /g, '-')
     const copy = join(dist, fixed)
     copyFileSync(join(dist, name), copy)
+    beat()
     runSafe('gh', ['release', 'upload', `v${version}`, copy, '--clobber'], { env, timeout: 300_000 })
   }
 
@@ -1451,6 +1549,116 @@ function status(session) {
   }
 }
 
+/**
+ * The whole state of this repo's lanes, in sentences, for a person.
+ *
+ * `status` answers the same questions as JSON for the app and the hooks. This is the one
+ * for whoever has just been handed the machine and wants to know what a lane is, where the
+ * work is, and why nothing has gone out - without reading this file.
+ *
+ * It also names the debris, which is the thing no other command does. Folders that LOOK
+ * like lanes and are not registered worktrees are what made this system confusing to read:
+ * `Toolstash-w2` sat beside `Toolstash-a` for days after git had stopped knowing about it,
+ * and nothing on the machine would ever have mentioned it.
+ */
+function doctor() {
+  const s = status(null)
+  const out = []
+  const say = (line = '') => out.push(line)
+
+  say(`${basename(MAIN)}  ${MAIN}`)
+  say(
+    RELEASE === 'version'
+      ? `Lanes branch off ${MB}. Finishing one cuts a version, tags it and publishes the installers.`
+      : RELEASE === 'merge'
+        ? `Lanes branch off ${MB}. Finishing one merges into ${MB} and pushes. No version is cut here.`
+        : `Lanes branch off ${MB}. Finishing one does nothing else - this repo neither tags nor pushes.`
+  )
+  say()
+
+  say('LANES')
+  const live = s.lanes.filter((l) => l.exists || l.heldBy || l.ready || l.conflicted || l.ahead > 0)
+  for (const l of live) {
+    const what = []
+    if (l.heldBy) what.push(l.tentative ? 'reserved by a chat that has not written here' : 'held by a chat')
+    if (l.dirty) what.push('uncommitted edits')
+    if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
+    if (l.ready) what.push('finished, waiting for the next release')
+    if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
+    say(`  ${l.lane.padEnd(5)} ${l.branch.padEnd(10)} ${what.length ? what.join('; ') : 'empty'}`)
+    say(`        ${l.dir}`)
+  }
+  const spare = s.lanes.length - live.length
+  if (spare > 0) say(`  ${spare} more lane${spare === 1 ? '' : 's'} free - their folders are only made when handed out.`)
+  say()
+
+  say('RELEASE')
+  if (s.release) say(`  A release started ${Math.round((now() - s.release.at) / 60000)}m ago and is still running.`)
+  else if (s.blockedBy.length) say(`  Waiting on chats still working in: ${s.blockedBy.join(', ')}`)
+  else if (!s.pending) say('  Nothing is waiting to go out.')
+  else {
+    const since = s.lastShip ? now() - s.lastShip.at : Infinity
+    if (since < COOLDOWN_MS)
+      say(`  Work is ready. It goes out in about ${Math.ceil((COOLDOWN_MS - since) / 60000)}m - releases batch, so one release carries all of it.`)
+    else say('  Work is ready and nothing is blocking it. The next lane command releases it.')
+  }
+  if (s.lastShip)
+    say(`  Last ${s.lastShip.version ? `release: v${s.lastShip.version}` : 'merge'}, ${Math.round((now() - s.lastShip.at) / 60000)}m ago.`)
+  say()
+
+  // ---- debris: folders and branches that look like lanes and are not
+  const registered = new Set(
+    gitSafe(MAIN, 'worktree', 'list', '--porcelain')
+      .out.split('\n')
+      .filter((l) => l.startsWith('worktree '))
+      .map((l) => resolve(l.slice(9).trim()).toLowerCase())
+  )
+  const pool = new Set(POOL.map((id) => resolve(laneDir(id)).toLowerCase()))
+  const strays = []
+  const legacy = []
+  try {
+    for (const name of readdirSync(dirname(MAIN))) {
+      if (!name.startsWith(`${basename(MAIN)}-`)) continue
+      const dir = join(dirname(MAIN), name)
+      if (!existsSync(dir)) continue
+      const key = resolve(dir).toLowerCase()
+      if (pool.has(key)) continue
+      // A worktree git still knows about, at a path this repo's lanes never use: a lane
+      // from the old `-w<N>` naming, which merges and sweeps normally but will never be
+      // handed to a chat again. Worth naming so it is not mistaken for a live lane.
+      if (registered.has(key)) legacy.push(dir)
+      else strays.push(dir)
+    }
+  } catch {
+    /* the parent folder is not readable - nothing to report rather than a crash */
+  }
+  const remotes = gitSafe(MAIN, 'branch', '-r', '--format=%(refname:short)')
+    .out.split('\n')
+    .map((b) => b.trim())
+    .filter((b) => /^origin\/(lane-|pf\/w)/.test(b))
+
+  if (strays.length || legacy.length || remotes.length) {
+    say('LEFTOVERS')
+    for (const dir of strays)
+      say(`  ${dir} looks like a lane but git does not know about it. Nothing merges it and nothing will clean it up - check what is in it, then delete it.`)
+    for (const dir of legacy) {
+      const branch = gitSafe(dir, 'rev-parse', '--abbrev-ref', 'HEAD').out || '?'
+      const ahead = gitSafe(MAIN, 'cherry', MB, branch).out.split('\n').filter((l) => l.startsWith('+')).length
+      say(
+        `  ${dir} is a lane from the old naming (${branch}). ` +
+          (ahead
+            ? `It still has ${ahead} commit${ahead === 1 ? '' : 's'} ${MB} does not have - merge it, and it is swept once it is empty.`
+            : `Everything in it is already in ${MB}: git worktree remove "${dir}" && git branch -d ${branch}`)
+      )
+    }
+    for (const b of remotes)
+      say(`  ${b} is a lane branch on the remote. Lanes are local scratch, so this only makes GitHub look like work is behind: git push origin --delete ${b.replace(/^origin\//, '')}`)
+    say()
+  }
+
+  return out.join('\n')
+}
+
 // ---------------------------------------------------------------- entry
 
 const argv = process.argv.slice(2)
@@ -1548,6 +1756,24 @@ try {
     // change it disagreed with had shipped. The app calls this on a timer instead. When
     // master has not moved and RETRY_MS has not passed this is one `rev-parse` per lane.
     const state = reap(read())
+    // Lanes nobody holds that are still carrying commits: the backstop for every way a
+    // claim can disappear without its work being declared done. `reap` drains the claim it
+    // is dropping right now, but a lane orphaned before that existed - or by a kill between
+    // the drop and the drain - has no claim left to hang the rescue off. This finds those
+    // by looking at the branches instead of at the bookkeeping. It is one `git cherry` per
+    // free lane and it runs on the same clock as everything else here.
+    const drained = []
+    for (const id of POOL) {
+      if (state.lanes[id]) continue
+      if (drainLane(state, id)) drained.push(id)
+    }
+    if (drained.length) {
+      write(state)
+      console.log(
+        `Lane${drained.length === 1 ? '' : 's'} ${drained.join(', ')} had finished work and no chat - marked done, ` +
+          `so it goes out with the next release.`
+      )
+    }
     const before = Object.keys(state.conflicts)
     if (retryConflicts(state)) write(state)
     const cleared = before.filter((id) => !state.conflicts[id])
@@ -1562,7 +1788,8 @@ try {
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)
-  } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
+  } else if (cmd === 'doctor') console.log(doctor())
+  else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)
     process.exit(1)

@@ -72,6 +72,12 @@ const RESET = '\x1bc'
  */
 const SLASH_TURN_MS = 30_000
 /**
+ * A gap between one turn ending and the next beginning that is too short to be two
+ * questions. Anything under this is one turn that got cut, and is written to the audit
+ * log so the next report of "the clock reset" comes with the frame that caused it.
+ */
+const TURN_SPLIT_MS = 60_000
+/**
  * How long a turn may print nothing at all before the pane says it is stuck. Set from
  * the config (`silenceAlertMin`), because the right number is a matter of what the
  * user runs: a repo whose test suite is silent for four minutes wants a bigger one.
@@ -154,6 +160,12 @@ interface Live {
    * that stalls once is told once - not once a second for as long as it lasts.
    */
   stallRaised: boolean
+  /**
+   * When the last turn's clock was stopped. Only ever read to notice a turn that was
+   * stopped and restarted seconds later, which is a turn boundary this app invented -
+   * see the `turn-split` audit in beginRun.
+   */
+  runEndedAt?: number
 }
 
 export class SessionManager extends EventEmitter {
@@ -506,6 +518,24 @@ export class SessionManager extends EventEmitter {
     live.turnPending = true
     live.footerEndedAt = 0
     if (live.meta.runSince) return this.anchorRun(live, clock)
+    // A turn that stopped and started again within a minute is a turn boundary this app
+    // invented: nobody asks two questions a few seconds apart and calls the first answer
+    // finished. Written down rather than guessed at, because "the clock reset mid-turn"
+    // has now been reported three times and each round of it was argued from memory of
+    // what the screen looked like. `clock` is the number the CLI itself is showing, so a
+    // line where it says 28m next to a run this app just ended at 4m names the bug
+    // outright - and one where the CLI also restarted says the turn really did end.
+    if (live.runEndedAt && Date.now() - live.runEndedAt < TURN_SPLIT_MS) {
+      audit('turn-split', {
+        title: live.meta.title,
+        agent: live.meta.agent,
+        endedMsAgo: Date.now() - live.runEndedAt,
+        lastRunMs: live.meta.lastRunMs ?? null,
+        agentSaysMs: clock?.ms ?? null,
+        quietMs: Date.now() - live.meta.lastOutput,
+        tail: plainTail(live.lastTail)
+      })
+    }
     // Start where the AGENT says the turn started, not where this app noticed it. A pane
     // that mounts onto a turn already in progress - a restored desk, a session opened in
     // a second window, a turn whose first frames this app read as idle - would otherwise
@@ -543,6 +573,7 @@ export class SessionManager extends EventEmitter {
     if (!live.meta.runSince) return false
     live.meta.lastRunMs = Date.now() - live.meta.runSince
     live.meta.runSince = undefined
+    live.runEndedAt = Date.now()
     // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
     // while the chime is announcing that its turn finished.
     live.stallRaised = false

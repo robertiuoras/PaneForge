@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.4.19",
+  "version": "0.4.20",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -17,11 +17,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke": "node scripts/smoke-pty.mjs",
     "test:updater": "node scripts/updater-test.mjs",
+    "test:updatehold": "node scripts/update-hold-test.mjs",
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
-    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs && node scripts/lane-holder-test.mjs && node scripts/lane-anyrepo-test.mjs && node scripts/lane-stack-test.mjs",
+    "test:lanes": "node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs && node scripts/lane-holder-test.mjs && node scripts/lane-anyrepo-test.mjs && node scripts/lane-stack-test.mjs && node scripts/lane-orphan-test.mjs && node scripts/lane-lock-test.mjs && node scripts/lane-naming-test.mjs",
     "test:lanestack": "node scripts/lane-stack-test.mjs",
     "test:laneowner": "node scripts/lane-owner-test.mjs",
     "test:lanework": "node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs",
@@ -86,7 +87,10 @@
     "capability:list": "node scripts/capability-lifecycle.mjs --list",
     "capability:sandbox": "node scripts/capability-sandbox.mjs",
     "capability:lifecycle": "node scripts/capability-lifecycle.mjs",
-    "capability:ingest": "node scripts/capability-ingest.mjs"
+    "capability:ingest": "node scripts/capability-ingest.mjs",
+    "test:laneorphan": "node scripts/lane-orphan-test.mjs",
+    "test:lanelock": "node scripts/lane-lock-test.mjs",
+    "test:lanenaming": "node scripts/lane-naming-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

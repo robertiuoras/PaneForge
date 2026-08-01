@@ -138,6 +138,7 @@ import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
+import { agentsMidTurn } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -1683,6 +1684,47 @@ function doInstall(): void {
   hardExit()
 }
 
+/**
+ * How often a held automatic restart looks again. A build that is downloaded and ready
+ * stays ready, so this waits rather than giving up on it.
+ */
+const AUTO_INSTALL_RECHECK_MS = 60_000
+let autoInstallTimer: NodeJS.Timeout | null = null
+
+/**
+ * The restart nobody asked for, held until it costs nothing.
+ *
+ * A restart is not a blink for the panes: `doInstall` tears down every pty, so an agent
+ * mid-turn is killed along with the answer it was writing, and what comes back is a
+ * fresh session whose run clock starts again from zero. That is the "why did the running
+ * time reset" this app has now been asked about three times, and it is also why the desk
+ * reopens over whatever was on screen.
+ *
+ * Measured 2026-08-02 in `updater.log`: an install that silently failed retried itself at
+ * 18:53:34Z, 18:54:18Z and 18:56:24Z - three full teardowns inside three minutes - with
+ * eight panes on the desk. Nothing on that path asked whether anything was running. The
+ * user-clicked path at least goes through the game hold.
+ *
+ * So a click still goes straight through, because the user chose the interruption. Only
+ * the automatic retry waits here, for a desk where no agent is mid-turn.
+ */
+function autoInstall(): void {
+  if (autoInstallTimer) {
+    clearTimeout(autoInstallTimer)
+    autoInstallTimer = null
+  }
+  // The build stopped being installable while we waited - superseded, or already going.
+  if (getUpdateState().phase !== 'ready') return
+  const running = agentsMidTurn(manager.list())
+  if (running > 0) {
+    updateLog('install', `auto-restart held: ${running} agent(s) mid-turn - looking again in 60s`)
+    autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
+    autoInstallTimer.unref?.()
+    return
+  }
+  whenClear('update-install', doInstall)
+}
+
 /** The update did not happen: put the window back, inactive, once the screen is free. */
 function restoreAfterFailedInstall(): void {
   if (!alive()) return
@@ -2249,7 +2291,7 @@ app.whenReady().then(() => {
     // A "Restart now" whose install never applied: the relaunch is the old version
     // with the same build downloaded and ready again. Finish the user's click instead
     // of showing them the same toast - once; updater.ts stops the loop at two tries.
-    if (s.phase === 'ready' && consumeInstallRetry(s.version)) doInstall()
+    if (s.phase === 'ready' && consumeInstallRetry(s.version)) autoInstall()
   }, cfg.autoUpdate)
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,

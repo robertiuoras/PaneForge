@@ -2120,20 +2120,20 @@ export default function App(): JSX.Element {
                       status` per pane for a word that says nothing. The pane header's
                       badge, which already polls, carries the branch. */}
                   {(() => {
-                    const place = describePlace({ cwd: s.cwd, copy: s.lane, pane: i + 1 })
-                    const copy = place.kind === 'copy'
+                    const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 })
+                    const inLane = place.kind === 'lane'
                     return (
                       <button
-                        className={'chip place' + (copy ? ' copy' : '')}
+                        className={'chip place' + (inLane ? ' lane-chip' : '')}
                         title={
                           place.full +
-                          (copy
+                          (inLane
                             ? '\n\nIts own checkout, so this pane cannot clash with the other one open on this project.\nClick to see what is in it, or to merge it back.'
                             : '')
                         }
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (copy) setLaneCwd(s.cwd)
+                          if (inLane) setLaneCwd(s.cwd)
                         }}
                       >
                         {place.short}

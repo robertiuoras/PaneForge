@@ -61,7 +61,7 @@ export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Elemen
   // Drawn before git answers, and drawn at all for a folder that is not a repository:
   // the project name is the part that was missing, and it does not come from git. Only
   // the counts wait for `info`.
-  const place = describePlace({ cwd, branch: info?.branch, copy: lane, pane })
+  const place = describePlace({ cwd, branch: info?.branch, lane, pane })
   // The branch earned a place on the label, so it earns one on the badge.
   const showBranch = !place.onTrunk && place.short.endsWith(place.branch)
   const tip = [
@@ -88,13 +88,9 @@ export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Elemen
         <path d="M4.5 5.3v5.4M6.3 7h3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       </svg>
       <span className="git-project">{place.project}</span>
-      {/* Lit, because "am I in the right one of these two copies" is the question this
+      {/* Lit, because "am I in the right one of these two checkouts" is the question this
           badge exists to answer without a click. */}
-      {place.slot && (
-        <span className="git-slot">
-          {place.kind === 'copy' ? `copy ${place.slot}` : `lane ${place.slot}`}
-        </span>
-      )}
+      {place.slot && <span className="git-slot">{place.role}</span>}
       {showBranch && <span className="git-branch">{place.branch}</span>}
       {!!info?.dirty && <span className="git-count">{info.dirty}</span>}
       {!!info?.ahead && <span className="git-count up">↑{info.ahead}</span>}

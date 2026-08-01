@@ -40,6 +40,11 @@ const repo = join(root, 'demo')
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
 writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
+// A four-lane pool, stated rather than inherited: every check below is about what happens
+// when the pool is FULL, so the test has to own how big it is. The shipped default is
+// larger (it matches the number of lanes the app's own window will open), and this test
+// silently stopped testing anything the day that number changed.
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c'] }, null, 2) + '\n')
 installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')

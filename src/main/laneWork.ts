@@ -1,7 +1,7 @@
-// The other half of a worktree lane: what happens to the work in it.
+// The other half of a lane: what happens to the work in it.
 //
-// lanes.ts makes the lane - a second session in one repo is moved into `<repo>-w2` on
-// branch `pf/w2` so two agents cannot clobber each other. Until now that was the whole
+// lanes.ts makes the lane - a second session in one repo is moved into `<repo>-a` on
+// branch `lane-a` so two agents cannot clobber each other. Until now that was the whole
 // story: the commits stayed on a branch nobody ever merged, the folder stayed on disk
 // forever, and a lane whose changes disagreed with main said so to nobody. Three days of
 // that and a project has four stale checkouts and work in branches its owner has
@@ -26,8 +26,19 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
 
-/** `<repo>-w2` - the folder shape lanes.ts creates, and the only shape swept here. */
-const LANE_DIR = /-w(\d)$/
+/**
+ * The lane folder shapes: `<repo>-a` (what lanes.ts and scripts/lane.mjs both create) and
+ * `<repo>-w2` (what this app made before the two naming schemes were merged).
+ *
+ * The old shape is still read, merged and swept - a lane that exists on someone's disk with
+ * real commits in it must not become invisible because the app renamed a convention. It is
+ * simply never created again, so old lanes drain away and the folder shape goes with them.
+ *
+ * A single letter is a legitimate ending for a real project name (`service-a`), so a folder
+ * only counts as a lane when it also sits beside its repo and is named after it - which is
+ * what laneLabel checks, and why this regex alone is never the answer.
+ */
+const LANE_DIR = /-(w\d+|[a-z])$/
 
 export type { LaneMergeResult, LaneWork }
 
@@ -165,14 +176,22 @@ async function conflictFiles(repo: string, base: string, branch: string): Promis
   return out
 }
 
-/** The lane label for a folder, or null when it is not a `<repo>-wN` lane of `repo`. */
+/** The lane label for a folder, or null when it is not a lane of `repo`. */
 function laneLabel(dir: string, repo: string): string | null {
   const m = LANE_DIR.exec(basename(resolve(dir)))
   if (!m) return null
-  // `<repo>-w2` must sit beside the repo and be named after it, or it is somebody
-  // else's folder that happens to end in -w2.
-  const expected = join(dirname(repo), `${basename(repo)}-w${m[1]}`)
-  return samePath(dir, expected) ? `w${m[1]}` : null
+  // `<repo>-a` must sit beside the repo and be named after it, or it is somebody else's
+  // folder that happens to end in -a.
+  const expected = join(dirname(repo), `${basename(repo)}-${m[1]}`)
+  return samePath(dir, expected) ? m[1] : null
+}
+
+/**
+ * The branch a lane with this label carries. `lane-a` now; `pf/w2` for the lanes made
+ * before the schemes were merged, which are still on disk until their work lands.
+ */
+function laneBranches(label: string): string[] {
+  return [`lane-${label}`, `pf/${label}`]
 }
 
 /**
@@ -385,11 +404,12 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     if (busy.some((b) => inside(b, dir))) continue
     const work = await laneWork(dir)
     if (!work || work.dirty > 0) continue
-    // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-w2`
-    // and be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel
-    // should describe one either way - but nothing is REMOVED unless lanes.ts made it,
-    // which is what the `pf/` branch says.
-    if (work.branch !== `pf/${work.lane}`) continue
+    // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-a` and
+    // be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel should
+    // describe one either way - but nothing is REMOVED unless this app or scripts/lane.mjs
+    // made it, which is what the branch name says: `lane-a` now, `pf/w2` for the lanes that
+    // predate the two schemes being merged.
+    if (!laneBranches(work.lane).includes(work.branch)) continue
     const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
     await exec(repo, ['worktree', 'remove', dir], 120_000)
@@ -415,7 +435,9 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
  * is no longer a worktree, so nothing was ever coming back for it. Verified in the app:
  * `lanedemo-w2` stayed on disk containing nothing at all.
  *
- * Only ever an EMPTY `<repo>-wN` folder beside the repo, so there is nothing to lose.
+ * Only ever an EMPTY lane-shaped folder beside the repo, so there is nothing to lose. That
+ * is also what clears the last of the old `-w<N>` folders off a machine: they stop being
+ * created, their work is merged by the normal path, and the shell goes here.
  */
 async function dropEmptyShells(repo: string): Promise<void> {
   const registered = await laneFolders(repo)
@@ -427,7 +449,7 @@ async function dropEmptyShells(repo: string): Promise<void> {
     return
   }
   for (const name of siblings) {
-    if (!name.startsWith(`${basename(repo)}-w`) || !LANE_DIR.test(name)) continue
+    if (!name.startsWith(`${basename(repo)}-`) || !LANE_DIR.test(name)) continue
     const dir = join(parent, name)
     if (registered.some((p) => samePath(p, dir))) continue
     try {

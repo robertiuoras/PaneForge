@@ -4,10 +4,10 @@ import type { LaneMergeResult, LaneWork } from '@shared/types'
 const api = window.api
 
 /**
- * What is in this pane's worktree lane, and the one button that ends it.
+ * What is in this pane's lane, and the one button that ends it.
  *
  * A lane is created without being asked (lanes.ts), and until now nothing ever ended
- * one: the commits stayed on `pf/w2` and the folder stayed on disk. The lane chip on the
+ * one: the commits stayed on `lane-a` and the folder stayed on disk. The lane chip on the
  * pane opens this, which answers the two questions that actually come up - "what is in
  * here?" and "how do I get it back into main?" - and refuses in plain words when the
  * merge is not safe, because the alternative is an agent being told to sort out a
