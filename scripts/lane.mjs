@@ -26,7 +26,8 @@
 // CLI (all of it is called by hooks or by an agent, never by hand):
 //   node scripts/lane.mjs claim --session <id>     -> JSON lane for this session
 //   node scripts/lane.mjs guard --session <id> --path <file>
-//   node scripts/lane.mjs status
+//   node scripts/lane.mjs status                   the same facts as JSON, for the app
+//   node scripts/lane.mjs doctor                   ...and in sentences, for a person
 //   node scripts/lane.mjs resolve --session <id> [--lane b]   take over a stuck lane
 //   node scripts/lane.mjs ready --session <id>     mark this lane's branch shippable
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
@@ -1541,6 +1542,116 @@ function status(session) {
   }
 }
 
+/**
+ * The whole state of this repo's lanes, in sentences, for a person.
+ *
+ * `status` answers the same questions as JSON for the app and the hooks. This is the one
+ * for whoever has just been handed the machine and wants to know what a lane is, where the
+ * work is, and why nothing has gone out - without reading this file.
+ *
+ * It also names the debris, which is the thing no other command does. Folders that LOOK
+ * like lanes and are not registered worktrees are what made this system confusing to read:
+ * `Toolstash-w2` sat beside `Toolstash-a` for days after git had stopped knowing about it,
+ * and nothing on the machine would ever have mentioned it.
+ */
+function doctor() {
+  const s = status(null)
+  const out = []
+  const say = (line = '') => out.push(line)
+
+  say(`${basename(MAIN)}  ${MAIN}`)
+  say(
+    RELEASE === 'version'
+      ? `Lanes branch off ${MB}. Finishing one cuts a version, tags it and publishes the installers.`
+      : RELEASE === 'merge'
+        ? `Lanes branch off ${MB}. Finishing one merges into ${MB} and pushes. No version is cut here.`
+        : `Lanes branch off ${MB}. Finishing one does nothing else - this repo neither tags nor pushes.`
+  )
+  say()
+
+  say('LANES')
+  const live = s.lanes.filter((l) => l.exists || l.heldBy || l.ready || l.conflicted || l.ahead > 0)
+  for (const l of live) {
+    const what = []
+    if (l.heldBy) what.push(l.tentative ? 'reserved by a chat that has not written here' : 'held by a chat')
+    if (l.dirty) what.push('uncommitted edits')
+    if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
+    if (l.ready) what.push('finished, waiting for the next release')
+    if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
+    say(`  ${l.lane.padEnd(5)} ${l.branch.padEnd(10)} ${what.length ? what.join('; ') : 'empty'}`)
+    say(`        ${l.dir}`)
+  }
+  const spare = s.lanes.length - live.length
+  if (spare > 0) say(`  ${spare} more lane${spare === 1 ? '' : 's'} free - their folders are only made when handed out.`)
+  say()
+
+  say('RELEASE')
+  if (s.release) say(`  A release started ${Math.round((now() - s.release.at) / 60000)}m ago and is still running.`)
+  else if (s.blockedBy.length) say(`  Waiting on chats still working in: ${s.blockedBy.join(', ')}`)
+  else if (!s.pending) say('  Nothing is waiting to go out.')
+  else {
+    const since = s.lastShip ? now() - s.lastShip.at : Infinity
+    if (since < COOLDOWN_MS)
+      say(`  Work is ready. It goes out in about ${Math.ceil((COOLDOWN_MS - since) / 60000)}m - releases batch, so one release carries all of it.`)
+    else say('  Work is ready and nothing is blocking it. The next lane command releases it.')
+  }
+  if (s.lastShip)
+    say(`  Last ${s.lastShip.version ? `release: v${s.lastShip.version}` : 'merge'}, ${Math.round((now() - s.lastShip.at) / 60000)}m ago.`)
+  say()
+
+  // ---- debris: folders and branches that look like lanes and are not
+  const registered = new Set(
+    gitSafe(MAIN, 'worktree', 'list', '--porcelain')
+      .out.split('\n')
+      .filter((l) => l.startsWith('worktree '))
+      .map((l) => resolve(l.slice(9).trim()).toLowerCase())
+  )
+  const pool = new Set(POOL.map((id) => resolve(laneDir(id)).toLowerCase()))
+  const strays = []
+  const legacy = []
+  try {
+    for (const name of readdirSync(dirname(MAIN))) {
+      if (!name.startsWith(`${basename(MAIN)}-`)) continue
+      const dir = join(dirname(MAIN), name)
+      if (!existsSync(dir)) continue
+      const key = resolve(dir).toLowerCase()
+      if (pool.has(key)) continue
+      // A worktree git still knows about, at a path this repo's lanes never use: a lane
+      // from the old `-w<N>` naming, which merges and sweeps normally but will never be
+      // handed to a chat again. Worth naming so it is not mistaken for a live lane.
+      if (registered.has(key)) legacy.push(dir)
+      else strays.push(dir)
+    }
+  } catch {
+    /* the parent folder is not readable - nothing to report rather than a crash */
+  }
+  const remotes = gitSafe(MAIN, 'branch', '-r', '--format=%(refname:short)')
+    .out.split('\n')
+    .map((b) => b.trim())
+    .filter((b) => /^origin\/(lane-|pf\/w)/.test(b))
+
+  if (strays.length || legacy.length || remotes.length) {
+    say('LEFTOVERS')
+    for (const dir of strays)
+      say(`  ${dir} looks like a lane but git does not know about it. Nothing merges it and nothing will clean it up - check what is in it, then delete it.`)
+    for (const dir of legacy) {
+      const branch = gitSafe(dir, 'rev-parse', '--abbrev-ref', 'HEAD').out || '?'
+      const ahead = gitSafe(MAIN, 'cherry', MB, branch).out.split('\n').filter((l) => l.startsWith('+')).length
+      say(
+        `  ${dir} is a lane from the old naming (${branch}). ` +
+          (ahead
+            ? `It still has ${ahead} commit${ahead === 1 ? '' : 's'} ${MB} does not have - merge it, and it is swept once it is empty.`
+            : `Everything in it is already in ${MB}: git worktree remove "${dir}" && git branch -d ${branch}`)
+      )
+    }
+    for (const b of remotes)
+      say(`  ${b} is a lane branch on the remote. Lanes are local scratch, so this only makes GitHub look like work is behind: git push origin --delete ${b.replace(/^origin\//, '')}`)
+    say()
+  }
+
+  return out.join('\n')
+}
+
 // ---------------------------------------------------------------- entry
 
 const argv = process.argv.slice(2)
@@ -1670,7 +1781,8 @@ try {
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)
-  } else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
+  } else if (cmd === 'doctor') console.log(doctor())
+  else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)
     process.exit(1)

@@ -193,6 +193,34 @@ function fixture(name) {
   ok('there is no second word for a lane', !JSON.stringify(a).includes('copy'), JSON.stringify(a))
 }
 
+// ------------------------------------------------- `doctor` says all of it in sentences
+
+{
+  const f = fixture('doctor')
+  const dir = JSON.parse(f.lane('claim', '--session', 'chat-1', '--prefer', 'a').out).dir
+  git(dir, 'config', 'user.email', 'test@example.com')
+  git(dir, 'config', 'user.name', 'test')
+  writeFileSync(join(dir, 'feature.js'), 'export const feature = 1\n')
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-qm', 'feat: something')
+
+  // Debris: a folder shaped exactly like a lane that git has never heard of. This is what
+  // sat beside real lanes for days with nothing on the machine willing to mention it.
+  const junk = `${f.repo}-w9`
+  mkdirSync(junk, { recursive: true })
+  writeFileSync(join(junk, 'left-behind.txt'), 'from some earlier experiment\n')
+
+  const said = f.lane('doctor').out
+  ok('doctor names the project and its folder', said.includes('doctor') && said.includes(f.repo), said.split('\n')[0])
+  ok('says what finishing a lane does here', /Finishing one (cuts a version|merges into)/.test(said), said.split('\n')[1])
+  ok('lists the lane and its branch', /a\s+lane-a/.test(said), said)
+  ok('and what is in it, in words', /1 commit master does not have/.test(said), said)
+  ok('says why nothing has gone out', /RELEASE/.test(said) && /waiting on|Work is ready|Nothing is waiting/i.test(said), said)
+  ok('and names the debris beside the repo', said.includes(junk), said)
+  ok('with what to do about it', /git does not know about it/.test(said), said)
+  ok('a free lane is not listed as a folder that exists', !said.includes(`${f.repo}-h`), said)
+}
+
 // ------------------------------------------------- the two halves cannot silently drift
 
 {
