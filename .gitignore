@@ -28,3 +28,6 @@ release/
 *.crt
 .npmrc
 .netrc
+
+# esbuild scratch from the pure-module tests; the scripts write and clean it themselves
+tmp/
