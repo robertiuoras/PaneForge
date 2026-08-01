@@ -22,6 +22,7 @@
 //
 //   node scripts/lane-holder-test.mjs
 
+import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -127,32 +128,25 @@ ok('every held lane can say where its chat came from', held.length > 0 && held.e
 // their own for exactly this reason.
 
 const out = join(root, 'build')
-execFileSync(
-  process.execPath,
-  [
-    join(here, '..', 'node_modules', 'typescript', 'bin', 'tsc'),
-    join('src', 'renderer', 'src', 'laneWords.ts'),
-    '--outDir',
-    out,
-    '--rootDir',
-    'src',
-    '--module',
-    'es2022',
-    '--target',
-    'es2022',
-    '--moduleResolution',
-    'bundler',
-    '--skipLibCheck',
-    // The project compiles strict. Without this flag the same files are compiled with
-    // strictNullChecks OFF, where an unrelated shared type stops being assignable and
-    // the test dies on a type error `npm run typecheck` does not have (three lane tests
-    // were red on master for exactly this, saying nothing about lanes).
-    '--strict'
-  ],
-  { cwd: join(here, '..'), stdio: 'pipe' }
-)
+// esbuild rather than `tsc` on the one file, which is what this used to do.
+//
+// `tsc --rootDir src` emits an import specifier unchanged - `from '../../shared/place'`,
+// with no extension - and Node's ESM loader refuses that, so the moment laneWords gained
+// a RUNTIME import (rather than only `import type`, which is erased) the test died on a
+// module-not-found naming a temp directory. Bundling has no specifiers left to resolve,
+// and it is the same buildSync the other pure-module tests use.
+buildSync({
+  absWorkingDir: join(here, '..'),
+  entryPoints: [join('src', 'renderer', 'src', 'laneWords.ts')],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: join(out, 'laneWords.mjs')
+})
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { holderName, laneState, laneTip } = await import(pathToFileURL(join(out, 'renderer', 'src', 'laneWords.js')).href)
+const { holderName, laneLabel, laneState, laneTip } = await import(
+  pathToFileURL(join(out, 'laneWords.mjs')).href
+)
 
 const NOW = 1_700_000_000_000
 const entry = (over) => ({
@@ -221,6 +215,59 @@ const tip = laneTip(fromTaskdriver)
 ok('the tooltip names the folder in full', tip.includes('Projects\\taskdriver'), tip)
 ok('the tooltip carries the whole session id', tip.includes('abc12345-dead-beef'), tip)
 ok('a free lane gets no holder tooltip', !laneTip(entry({ held: false })).includes('Held by'))
+
+// ---------------------------------------------------------------------------------------
+// Naming the lane, and naming the pane. Added 2026-08-01 after "lanes main master, I have
+// no idea which project that is" - which was a fair description of what the strip printed.
+
+// The row used to be `lane.branch`, so this row said `lane-a` and the one above it said
+// `master`, for two different repositories.
+ok(
+  'a lane row names the project before the lane',
+  laneLabel(entry({})) === 'PaneForge · lane a',
+  laneLabel(entry({}))
+)
+ok(
+  "the main lane is just the project's name - `main master` said neither",
+  laneLabel(entry({ lane: 'main', dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\PaneForge', branch: 'master' })) ===
+    'PaneForge',
+  laneLabel(entry({ lane: 'main', dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\PaneForge', branch: 'master' }))
+)
+// Lanes stopped being a PaneForge-only thing, so the label cannot be a PaneForge-only word.
+ok(
+  'another repository names itself, not PaneForge',
+  laneLabel(entry({ dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\taskdriver-b', lane: 'b', branch: 'lane-b' })) ===
+    'taskdriver · lane b'
+)
+
+// A pane number is on the card, and on the keyboard. Eight characters of a session id are
+// on neither, which is why they were never the answer to "who has it".
+ok(
+  'a holder that is a pane in this window is named by its Ctrl-N number',
+  laneState(fromTaskdriver, false, NOW + 60_000, 3) === 'pane 3 has it, busy now',
+  laneState(fromTaskdriver, false, NOW + 60_000, 3)
+)
+ok(
+  'and the number beats the folder it started in',
+  !laneState(fromTaskdriver, false, NOW + 60_000, 3).includes('taskdriver')
+)
+ok(
+  'with no pane, the folder is still the fallback it always was',
+  laneState(fromTaskdriver, false, NOW + 60_000).includes("taskdriver's chat")
+)
+ok('the tooltip uses the pane number too', laneTip(fromTaskdriver, 3).includes('Held by pane 3'))
+// The lane is PaneForge's; only the CHAT holding it came from taskdriver. So the tooltip
+// leads with the lane's own project and names the holder's folder further down - which is
+// the distinction the whole strip exists to make, and the easy one to get backwards.
+ok(
+  'the tooltip leads with the project the LANE is in',
+  laneTip(fromTaskdriver, 3).startsWith('PaneForge · lane a'),
+  laneTip(fromTaskdriver, 3)
+)
+ok(
+  "and still says where the holder's chat came from, lower down",
+  laneTip(fromTaskdriver, 3).includes('Started in') && laneTip(fromTaskdriver, 3).includes('taskdriver')
+)
 
 rmSync(root, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failed` : '\nall passed')

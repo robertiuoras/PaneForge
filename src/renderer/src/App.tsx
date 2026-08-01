@@ -37,6 +37,8 @@ import TerminalPane, {
 } from './components/TerminalPane'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
+import { describePlace } from '@shared/place'
+import { applyTheme, terminalTheme } from './theme'
 import './components/ImproveSheet.css'
 import { keyLabel, modKey } from './platform'
 import MicIcon from './components/MicIcon'
@@ -255,6 +257,15 @@ export default function App(): JSX.Element {
       document.removeEventListener('visibilitychange', sync)
     }
   }, [])
+
+  // The window's own colours. Ahead of the pane list on purpose: this writes CSS
+  // variables, so it costs one style recalculation and no React tree ever re-renders
+  // for it - which is what lets a slider in Settings drag the whole app's palette.
+  useEffect(() => applyTheme(config?.theme), [config?.theme])
+
+  // Memoised because it is an object identity xterm compares against: a fresh one every
+  // render would clear and repaint every pane's canvas on every keystroke.
+  const termColors = useMemo(() => terminalTheme(config?.theme), [config?.theme])
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -2099,20 +2110,36 @@ export default function App(): JSX.Element {
                     {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
                   </span>
                   {s.model ? <span className="chip">{s.model}</span> : null}
-                  {s.lane ? (
-                    // Clickable because a lane now has an end: what is in it, and merging
-                    // it back into the branch it came from.
-                    <button
-                      className="chip lane"
-                      title={`Worktree lane ${s.lane} - this pane has its own checkout of the project, so it cannot clash with the other pane open on it.\nClick to see what is in it, or to merge it back.\n${s.cwd}\nThe "?" beside Settings (F1) explains lanes in full.`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setLaneCwd(s.cwd)
-                      }}
-                    >
-                      {s.lane}
-                    </button>
-                  ) : null}
+                  {/* Which project this pane is in, which the card never said.
+                      The title is whatever the pane was named - `basename(cwd)` by
+                      default, which for a worktree copy is `PaneForge-w2`, and anything
+                      at all once somebody renames it. So the project is stated rather
+                      than inferred from the title, and a copy carries the number that
+                      switches to it. No branch here: the sidebar has no git poll of its
+                      own, and adding one per card to print `master` would be a `git
+                      status` per pane for a word that says nothing. The pane header's
+                      badge, which already polls, carries the branch. */}
+                  {(() => {
+                    const place = describePlace({ cwd: s.cwd, copy: s.lane, pane: i + 1 })
+                    const copy = place.kind === 'copy'
+                    return (
+                      <button
+                        className={'chip place' + (copy ? ' copy' : '')}
+                        title={
+                          place.full +
+                          (copy
+                            ? '\n\nIts own checkout, so this pane cannot clash with the other one open on this project.\nClick to see what is in it, or to merge it back.'
+                            : '')
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (copy) setLaneCwd(s.cwd)
+                        }}
+                      >
+                        {place.short}
+                      </button>
+                    )
+                  })()}
                   {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
                       sidebar used to repeat in a second list of the same sessions. */}
                   {laneOfSession(lanesByPane, s.id) ? (
@@ -2282,11 +2309,10 @@ export default function App(): JSX.Element {
                 </span>
               )}
               {s.role && <span className="chip role">{s.role}</span>}
-              {s.lane && (
-                <span className="chip lane" title="Own git worktree, so this pane cannot clash with the other session in this project">
-                  lane {s.lane}
-                </span>
-              )}
+              {/* The worktree chip used to live here, beside a git badge that printed
+                  `master`: two chips about one place, neither of which named the place.
+                  Both are the badge's job now - it is the thing that already knows the
+                  branch. */}
               {/* The sound has already gone; this is the part that is still there when
                   you come back to the room. Both clear themselves the moment you look
                   at the pane, which is what `clearAttention` already meant. */}
@@ -2329,7 +2355,14 @@ export default function App(): JSX.Element {
               {/* A mirrored folder is on the other machine, so there is no repo here
                   to read a branch off - the badge would either be blank or, worse,
                   show this machine's checkout of a path that happens to match. */}
-              {!s.remote && <GitBadge cwd={s.cwd} active={visibleIds.has(s.id)} />}
+              {!s.remote && (
+                <GitBadge
+                  cwd={s.cwd}
+                  active={visibleIds.has(s.id)}
+                  lane={s.lane}
+                  pane={sessions.findIndex((x) => x.id === s.id) + 1 || undefined}
+                />
+              )}
               {/* What tmux puts in the pane border: the branch (above), the model (the
                   picker, to the right) and how long this has been going. The sidebar has
                   said the last of those for months, and the sidebar is the thing you are
@@ -2435,6 +2468,7 @@ export default function App(): JSX.Element {
               copyOnSelect={config?.copyOnSelect ?? true}
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
+              termTheme={termColors}
               // A mirrored pane is drawn at the far machine's grid, not fitted to this
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
