@@ -57,6 +57,9 @@ function defaultVault() {
   return process.env.PF_VAULT || join(homedir(), 'Documents', 'Obsidian Vault')
 }
 
+// Same private-path default as capability-store.mjs, and absent is not an error: the
+// `sync` below is guarded by existsSync and the run reports `indexed: false`. Set
+// PF_INDEX_SCRIPT (or pass --index-script) to point it at your own index.
 function defaultIndexScript() {
   if (process.env.PF_INDEX_SCRIPT) return process.env.PF_INDEX_SCRIPT
   const projects =
