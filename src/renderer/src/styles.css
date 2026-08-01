@@ -1,6 +1,15 @@
 /* Design tokens. Surfaces step up as elements stack (app < sidebar < card < popup) and
    borders are white-alpha rather than fixed greys, so every layer keeps a visible edge
-   without hard-coding a colour per depth. */
+   without hard-coding a colour per depth.
+
+   These are FALLBACKS now, not the palette. The real values are computed from one accent
+   by `paletteFor` in shared/theme.ts and written onto this element as inline custom
+   properties, which beat this rule on specificity - so the app draws a derived palette
+   from the first frame that has a config, and this block is what is on screen for the
+   ~40ms before that. Which is why they are the numbers below rather than anything
+   simpler: an approximation here is a visible flash of a different-coloured window on
+   every launch. They are Forge at its defaults, and scripts/theme-test.mjs pins the
+   derived ladder to the same lightnesses. */
 :root {
   --bg: #0a0a0d;
   --surface: #101014;
@@ -10,14 +19,21 @@
   --line-strong: #ffffff1f;
   --text: #ececf1;
   --muted: #9797a6;
-  --accent: #8b9dff;
-  --accent-dim: #8b9dff26;
+  --accent: #f0a868;
+  --accent-text: #f0a868;
+  --accent-dim: #f0a86826;
+  --accent-soft: #f0a86817;
+  --accent-on: #0b0b0f;
   --warn: #f0b429;
   --danger: #ff8f8f;
   --ok: #35d07f;
   --r-sm: 6px;
   --r: 9px;
   --r-lg: 13px;
+  /* Row height and padding, so "compact" is one variable rather than a second stylesheet. */
+  --row-pad: 7px 9px;
+  --row-gap: 9px;
+  --set-gap: 15px;
   --shadow: 0 18px 44px #000000a8, 0 2px 8px #0000005c;
   --fast: 120ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
@@ -143,8 +159,10 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
+  /* Both from the theme, so Compact is one variable rather than a second stylesheet.
+     Their defaults are the 9px / 7px 9px this rule had hard-coded. */
+  gap: var(--row-gap);
+  padding: var(--row-pad);
   border-radius: var(--r);
   cursor: pointer;
   border: 1px solid transparent;
@@ -466,10 +484,25 @@ html.app-blurred .elapsed::after { animation: none; }
    button - a lane has an end now, and this is the way to it - so it also has to unlearn
    everything a button brings with it. */
 .chip.lane {
-  color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim);
+  color: var(--accent-text); border-color: var(--accent-dim); background: var(--accent-dim);
   font: inherit; font-size: 10px; line-height: inherit; cursor: pointer;
 }
 .chip.lane:hover { filter: brightness(1.35); }
+
+/* Which project a pane is in - the fact the card never carried. Deliberately quiet: it is
+   on every card, so it is orientation rather than an alert, and a sidebar of eight lit
+   chips is a sidebar with no lit chips. A COPY is the exception and is lit, because that
+   is the case where two cards otherwise look identical. */
+.chip.place {
+  font: inherit; font-size: 10px; line-height: inherit; cursor: default;
+  color: var(--muted); background: none; border-color: var(--line-strong);
+  max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip.place.copy {
+  cursor: pointer; color: var(--accent-text);
+  border-color: var(--accent-dim); background: var(--accent-dim);
+}
+.chip.place.copy:hover { filter: brightness(1.35); }
 
 /* The two alerts that are not "your turn finished". The bell is the pane's own voice,
    so it keeps the accent; a stalled turn is a warning about the clock next to it and
@@ -799,9 +832,19 @@ body.sizing * { user-select: none !important; }
   padding: 1px 8px 1px 6px; color: var(--muted); font-size: 10.5px; max-width: 220px;
 }
 .git-badge.dirty { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
-.git-branch { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The project leads the badge and is the part that must survive a narrow header, so it
+   keeps its own width and the branch after it is what gets clipped. */
+.git-project { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.git-branch { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+/* Which copy of the project this pane is in. Lit, because it is the one fact here that
+   two otherwise identical panes differ by, and reading it wrong means typing into the
+   wrong checkout. */
+.git-slot {
+  color: var(--accent-text); background: var(--accent-dim); border-radius: 4px;
+  padding: 0 4px; font-variant-numeric: tabular-nums; flex: none; font-weight: 600;
+}
 .git-count { font-variant-numeric: tabular-nums; opacity: 0.85; }
-.git-count.up { color: var(--accent); }
+.git-count.up { color: var(--accent-text); }
 
 .placeholder { display: grid; place-content: center; justify-items: center; height: 100%; color: var(--muted); text-align: center; gap: 4px; }
 .ph-logo { color: var(--accent); opacity: 0.9; }
@@ -1600,3 +1643,105 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   padding: 8px 9px 9px 42px; border-top: 1px solid var(--line); background: #00000026;
 }
 .dev-launch > *:first-child { flex: 1; min-width: 0; }
+
+/* ---- Settings: rail, swatches, live preview ----------------------------------------
+   The tab strip went vertical when an eighth tab arrived (Appearance). Horizontal, seven
+   already filled the dialog's width and the eighth wrapped onto a second row, which reads
+   as two groups of settings rather than one list of eight. A rail also has room for the
+   line of explanation under each name, so "Stash" and "Prompts" stop being nouns you have
+   to click to understand. */
+.settings-shell {
+  display: grid; grid-template-columns: 186px 1fr; gap: 14px;
+  min-height: 0; flex: 1 1 auto;
+}
+.settings-nav { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nav-find { margin-bottom: 6px; }
+.nav-item {
+  display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
+  background: none; border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: var(--row-pad); cursor: pointer; text-align: left; width: 100%;
+  color: var(--text); transition: background var(--fast), border-color var(--fast);
+}
+.nav-item:hover { background: var(--surface-3); }
+/* The selected rail entry is a filled block rather than a coloured word: with eight of
+   them stacked, a tinted label alone is not findable without reading all eight. */
+.nav-item.on { background: var(--accent-dim); border-color: var(--accent); }
+.nav-item.on .nav-label { color: var(--accent-text); }
+.nav-label { font-size: 12.5px; font-weight: 600; }
+.nav-note {
+  font-size: 10.5px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.nav-empty { padding: 6px 2px; }
+/* The body scrolls inside the shell now, so its own max-height would fight the grid. */
+.dialog.settings .tab-body {
+  max-height: min(62vh, 600px); min-width: 0; gap: var(--set-gap);
+}
+.dialog.settings { min-height: min(560px, 78vh); }
+
+.swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.swatch {
+  display: flex; flex-direction: column; gap: 5px; padding: 5px;
+  background: none; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  cursor: pointer; color: var(--muted);
+  transition: border-color var(--fast), color var(--fast), transform var(--fast);
+}
+.swatch:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+.swatch.on { border-color: var(--accent); color: var(--text); box-shadow: 0 0 0 1px var(--accent); }
+/* Three bars on the preset's own background: enough to show the window colour, a card,
+   the accent and the muted grey, which is every decision a preset makes. */
+.swatch-art {
+  display: flex; flex-direction: column; gap: 3px; justify-content: center;
+  padding: 7px 6px; border-radius: 4px; height: 46px; overflow: hidden;
+}
+.swatch-bar { height: 4px; border-radius: 2px; width: 78%; }
+.swatch-name { font-size: 10.5px; font-weight: 600; text-align: center; }
+
+.color-well {
+  width: 38px; height: 30px; padding: 2px; flex: none; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+}
+.color-well::-webkit-color-swatch-wrapper { padding: 0; }
+.color-well::-webkit-color-swatch { border: none; border-radius: 3px; }
+.search.mono { font-family: 'Cascadia Mono', Consolas, monospace; max-width: 130px; flex: none; }
+
+/* The preview draws itself with the theme BEING EDITED rather than the live one, which
+   is the whole point: the variables are set inline on this box, so every rule inside it
+   resolves against the candidate palette while the window around it does not move. */
+.theme-preview {
+  display: grid; grid-template-columns: 148px 1fr; gap: 0;
+  border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden;
+  background: var(--bg); color: var(--text); height: 132px;
+  font: 11px/1.4 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+}
+.tp-side {
+  background: linear-gradient(180deg, var(--surface-2), var(--surface) 120px);
+  border-right: 1px solid var(--line); padding: 8px 7px; display: flex;
+  flex-direction: column; gap: 4px;
+}
+.tp-brand { display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 11px; padding-bottom: 3px; }
+.tp-logo { width: 11px; height: 11px; border-radius: 3px; background: var(--accent); flex: none; }
+.tp-row {
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+  border-radius: var(--r-sm); border: 1px solid transparent; min-width: 0;
+}
+.tp-row.on { background: var(--accent-dim); border-color: var(--accent); }
+.tp-num {
+  min-width: 14px; text-align: center; font-size: 9px; border-radius: 4px; flex: none;
+  border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--muted);
+}
+.tp-text { display: flex; flex-direction: column; min-width: 0; }
+.tp-title { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-sub { font-size: 9px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-main { padding: 12px; display: flex; flex-direction: column; gap: 7px; background: var(--surface); }
+.tp-line { height: 6px; border-radius: 3px; background: var(--surface-3); }
+.tp-line.accent { background: var(--accent-text); }
+.tp-buttons { display: flex; gap: 6px; margin-top: auto; }
+.tp-btn {
+  font-size: 10px; padding: 4px 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); color: var(--muted);
+}
+.tp-btn.primary { background: var(--accent); color: var(--accent-on); border-color: transparent; font-weight: 600; }
+
+.contrast-note { font-size: 11px; color: var(--muted); }
+.contrast-note.bad { color: var(--warn); }

@@ -5,8 +5,9 @@ import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle } from './discordRpc'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
+import type { ThemeConfig } from './theme'
 
-export type { DiscordStyle }
+export type { DiscordStyle, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -862,6 +863,15 @@ export interface Config {
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
+  /**
+   * Colours, corners and row height. One accent plus four numbers; every other colour
+   * in the window is derived from them - see shared/theme.ts.
+   *
+   * Optional so a config written by an older build still loads: `getConfig` fills it
+   * with DEFAULT_THEME, which reproduces the palette that used to be hard-coded in
+   * styles.css. Nobody's window changes shape because they updated.
+   */
+  theme?: ThemeConfig
   /**
    * Panes to reopen on next launch, written just before an update restart.
    *

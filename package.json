@@ -34,6 +34,8 @@
     "test:pump": "node scripts/pump-test.mjs",
     "test:pipe": "node scripts/pipe-test.mjs",
     "test:silence": "node scripts/silence-test.mjs",
+    "test:theme": "node scripts/theme-test.mjs",
+    "test:place": "node scripts/place-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
