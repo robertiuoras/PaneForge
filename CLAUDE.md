@@ -176,6 +176,31 @@ foreground.
 - `second-instance` must not raise the window while `installStarted` is set: mid-update
   the installer's launch of the new exe arrives on that event.
 
+Holding the screen back is allowed to delay the window. It is not allowed to lose it, and
+for a while it did. `gameMode.ts` has an escape hatch for "a game that is RUNNING is not a
+game that is ON SCREEN" - `setFocusProbe`, which answers whether our own window is visible
+and focused. At the launch reveal that window is the one which has deliberately never been
+shown, so the probe is false by construction: a game merely left running held the reveal
+back, and the reveal was the only thing that could ever have made the probe true. With
+cs2.exe up for hours at a time on this machine, "until the game exits" was not a wait, it
+was a stop - a live app with no window and no taskbar button, which looks exactly like an
+update that failed to restart, and got reported as one twice.
+
+So the foreground window's process is now asked about directly, in the two places where
+the answer decides whether the app gets to exist on screen: the launch reveal, and work
+already sitting in the deferred queue. Alt-tabbing out of a game is enough; it no longer
+has to close. The query is a P/Invoke through PowerShell and costs ~600ms, which is why
+the 15s poller still uses `tasklist` and this is asked ONLY while something is being held.
+Every failure mode answers "not a game" on purpose.
+
+Two numbers to keep, both measured rather than assumed: main reaches `whenReady` in ~307ms,
+so a launch that appears slow is never boot - every boot line carries `+<ms>` since process
+start now, precisely so the next report of "it came back too slow" has a figure instead of
+a silence. And that ~600ms is why `test:quiet` waits for the reveal decision to appear in
+the log rather than sleeping a fixed 2.5s past it; with a game genuinely on screen it SKIPS
+out loud, because a file that cries wolf every time there is a game up is how a real
+regression here gets waved through.
+
 ## Two machines, one desk
 
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers -
@@ -464,6 +489,17 @@ digits do not say whose brand Discord is about to print. Settings now reads the 
 back from `/applications/<id>/rpc` (public, no token, `discord:appName` in main
 because the packaged renderer is a `file://` origin and Discord answers CORS for a
 real one only) and warns whenever the header is not PaneForge.
+
+That warning only reaches somebody who opens the tab, so `npm run test:discordbrand`
+says it to the repository instead: it reads the `discordClientId` literal out of
+`src/main/config.ts` - the value that actually ships, never a copy - asks Discord what
+that application is called, and FAILS while the answer is not PaneForge. It is failing
+right now, on purpose, and the only thing that will fix it is a person: New Application
+in the portal is a login and a captcha. No bot, no scopes, no OAuth and nothing to
+"connect" - rich presence talks to the local Discord client over a named pipe and the id
+is all it needs. Offline it SKIPS and prints the skip, because a check that quietly
+passes when it could not run is worse than no check when the thing it catches is a wrong
+answer that looks like no answer. Out of the default suite for needing the network.
 
 Everything BELOW that header is ours, and Settings → Discord owns it: two templates
 (`{running}`, `{total}`, `{idle}`, `{sessions}`, `{projects}`, `{project}`) plus
