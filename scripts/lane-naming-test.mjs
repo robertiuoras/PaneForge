@@ -170,6 +170,20 @@ function fixture(name) {
   // The app never makes another one: the next lane is a letter, beside the old folder.
   const next = await lanes.resolveLane(f.repo, [f.repo])
   ok('and the next lane made is a letter, not another w', same(next.cwd, `${f.repo}-a`), next.cwd)
+
+  // A chat sitting in the old folder asks for a lane called `w2` - the hook derives that
+  // from the folder suffix. Taking it at its word handed out a lane whose branch (lane-w2)
+  // is not the branch that folder is on (pf/w2): two ideas of one checkout, which is the
+  // exact failure lanes exist to prevent.
+  const got = JSON.parse(f.lane('claim', '--session', 'chat-in-old-folder', '--prefer', 'w2').out)
+  ok('a chat in an old lane folder is given a real lane, not "w2"', got.lane !== 'w2', JSON.stringify(got))
+  ok(
+    'and whatever lane it gets, the folder and the branch agree',
+    got.lane === 'main'
+      ? same(got.dir, f.repo) && got.branch === 'master'
+      : got.dir.endsWith(`-${got.lane}`) && got.branch === `lane-${got.lane}`,
+    JSON.stringify(got)
+  )
 }
 
 // ------------------------------------------------- one word for it in the interface, too

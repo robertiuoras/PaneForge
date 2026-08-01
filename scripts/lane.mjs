@@ -746,6 +746,13 @@ function claim(session, cwd, prefer, tentative = false) {
   // A lane with finished work waiting on a release is free to hand out, but it is the LAST
   // one to hand out: a new chat that lands there starts on top of somebody else's shipped-
   // but-unreleased commits, and its pane reads "done" before it has done anything.
+  // A preference for a lane this repo does not have is not a lane. The hook derives
+  // `prefer` from the folder suffix a chat is sitting in, so a chat in a leftover
+  // `<repo>-w2` asks for a lane called `w2` - and taking that at its word meant handing out
+  // a lane whose branch (`lane-w2`) is not the branch that folder is on (`pf/w2`), i.e. two
+  // different ideas of one checkout, which is the failure lanes exist to prevent. Ignoring
+  // it puts that chat in a real lane instead.
+  if (prefer && !POOL.includes(prefer)) prefer = null
   const spare = POOL.filter((id) => !state.lanes[id])
   let free =
     (prefer && !state.lanes[prefer] ? prefer : null) ??
