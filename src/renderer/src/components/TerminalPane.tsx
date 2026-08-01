@@ -1399,12 +1399,57 @@ export default function TerminalPane({
    */
   const thumb = Math.max(48, (rows / Math.max(rows, total)) * track.height)
   let floor = 0
-  const placed = marks.map((m) => {
+  const raw = marks.map((m) => {
     // -1 means xterm disposed it a frame before the state caught up.
     if (m.marker.line < 0) return null
     floor = Math.max(floor, m.marker.line)
     const frac = Math.min(1, Math.max(0, floor / Math.max(1, total - rows)))
     return { mark: m, top: frac * Math.max(0, track.height - thumb) }
+  })
+
+  /**
+   * Pull tags that landed on top of each other apart, and give each one only the
+   * height it actually owns.
+   *
+   * A conversation is ask, short answer, ask again, so consecutive prompts sit a
+   * few buffer lines apart and their tags land a couple of pixels apart on the
+   * rail. Measured on a probe pane (scripts/rail-click-test.mjs): five prompts in
+   * a row placed at gaps of 1.7, 1.6, 1.7, 1.7px while the hit box each tag grows
+   * is 18px tall - so four of six tags hit-tested to the NEWEST tag in the
+   * cluster, and pressing any of them jumped to that prompt instead. When the
+   * newest is where the pane already is, pressing does nothing at all, which is
+   * what "cannot click the tags" looks like from the desk.
+   *
+   * So: a forward pass claims at least SEP between neighbours, a backward pass
+   * pulls the run back inside the track when the forward pass ran off the end,
+   * and SEP itself shrinks on a crowded rail rather than pushing tags off it. The
+   * order is untouched - both passes only ever move a tag the way the rail
+   * already promises - and a tag is displaced at most a few pixels from the thumb
+   * it points at, which is the trade a table of contents should take.
+   */
+  const BAR = 5
+  const live = raw.filter(Boolean) as { mark: Mark; top: number }[]
+  const span = Math.max(0, track.height - thumb)
+  const SEP =
+    live.length > 1 ? Math.max(4, Math.min(12, span / (live.length - 1))) : 12
+  for (let i = 1; i < live.length; i++) {
+    live[i].top = Math.max(live[i].top, live[i - 1].top + SEP)
+  }
+  for (let i = live.length - 2; i >= 0; i--) {
+    live[i].top = Math.min(live[i].top, live[i + 1].top - SEP)
+  }
+  for (const p of live) p.top = Math.max(0, p.top)
+  // Half the space to each neighbour, so no tag can reach into another's, capped
+  // at the 6px that made an isolated tag a comfortable target in the first place.
+  const share = (gap: number): number => Math.max(0, Math.min(6, (gap - BAR) / 2))
+  const placed = raw.map((p) => {
+    if (!p) return null
+    const i = live.indexOf(p)
+    return {
+      ...p,
+      hitUp: i > 0 ? share(p.top - live[i - 1].top) : 6,
+      hitDown: i < live.length - 1 ? share(live[i + 1].top - p.top) : 6
+    }
   })
 
   /**
@@ -1558,7 +1603,7 @@ export default function TerminalPane({
         >
           {placed.map((p, i) => {
             if (!p) return null
-            const { mark: m, top } = p
+            const { mark: m, top, hitUp, hitDown } = p
             const label = markLabel(m)
             return (
               <button
@@ -1569,7 +1614,15 @@ export default function TerminalPane({
                   (i === marks.length - 1 ? ' newest' : '') +
                   (flash === m.id ? ' flash' : '')
                 }
-                style={{ top }}
+                style={
+                  {
+                    top,
+                    // The hit box the ::before draws, sized to the gap this tag has
+                    // rather than to a constant that reaches into its neighbours.
+                    '--hit-up': `${hitUp}px`,
+                    '--hit-down': `${hitDown}px`
+                  } as React.CSSProperties
+                }
                 title={label}
                 aria-label={label}
                 // Same reason as the pill: a mousedown inside the pane would take focus off

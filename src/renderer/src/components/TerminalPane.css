@@ -62,16 +62,21 @@
 
 /* The bar has to stay thin - eighty of them at 15px would be a wall down the pane, not a
    rail - but 14x5px is a target you aim at rather than click, and it sits a few pixels
-   from a scrollbar that grabs instead. This grows only the hit box: 17px tall and 30px
-   wide, which is a comfortable pointer target, while the drawn bar, the hover width and
-   the tip all stay exactly where they were.
+   from a scrollbar that grabs instead. This grows only the hit box: up to 17px tall and
+   30px wide, which is a comfortable pointer target, while the drawn bar, the hover width
+   and the tip all stay exactly where they were.
    It leans left because right is the scrollbar - overlapping that would trade one
-   mis-click for another. Marks are rendered oldest first, so where two hit boxes do
-   overlap the newer one is on top, which is the one being aimed at. */
+   mis-click for another.
+   The height is a variable rather than a constant because a fixed 6px each way was the
+   bug: consecutive prompts land ~1.7px apart on the rail, so every tag in a cluster was
+   covered by the newest one's hit box and pressing any of them jumped to that prompt
+   (measured, scripts/rail-click-test.mjs - 4 of 6 tags stolen). TerminalPane.tsx gives
+   each tag half the gap to each neighbour, so no tag can reach into another's, and an
+   isolated tag still gets the full 6. */
 .mark::before {
   content: '';
   position: absolute;
-  inset: -6px -3px -6px -13px;
+  inset: calc(-1 * var(--hit-up, 6px)) -3px calc(-1 * var(--hit-down, 6px)) -13px;
 }
 /* Brief confirmation that a click landed, since the jump itself can be subtle in a pane
    that was already near that part of the buffer. */
