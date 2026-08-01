@@ -1362,6 +1362,14 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .dc-name { color: var(--text); font-size: 13px; font-weight: 600; }
 .dc-line { color: #c9c9d6; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .dc-line.dim { color: var(--muted); }
+/* The presence button, drawn the way Discord draws it: full width of the card's text
+   column, not a pill. Not a real <a> - pressing it here would take the user to the page
+   they are configuring a link to, which is never what a preview should do. */
+.dc-button {
+  margin-top: 7px; padding: 5px 10px; text-align: center;
+  background: #4e5058; color: #fff; border-radius: 4px;
+  font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Two columns so the token and its meaning line up down the list; the token itself is
    what gets copied, so it keeps the monospace it is typed in. */
