@@ -236,6 +236,77 @@ derived from it (scrypt, then AES-256-GCM per direction). That is why rotating i
 every paired device off rather than just changing what to type next time. Hosting is off
 until switched on, and discovery is a UDP broadcast that carries no secret.
 
+## Every colour is derived, and every pane says which project it is in
+
+Two rules that touch nearly every file in the renderer, both added 2026-08-01.
+
+**There is no palette.** `src/shared/theme.ts` computes one from a single accent, and the
+window reads it as CSS variables written onto `:root` by `applyTheme`. The literals still
+at the top of `styles.css` are the ~40ms fallback before a config loads, not the source -
+change them and you change the flash, nothing else. Adding a colour means adding it to
+`paletteFor`, never to a component.
+
+The maths is Oklab, hue and chroma held while lightness sweeps, because per-channel RGB
+clamping does not desaturate - it HUE-SHIFTS, so a violet surface quietly becomes a blue
+one at the dark end of the ramp and nothing says why. `inGamut` binary-searches the chroma
+that fits instead.
+
+Nothing about the ladder was chosen; it was fitted. The palette that shipped measures
+L 0.1462 / 0.1749 / 0.2035 / 0.2391, so the steps are 0.0287, 0.0287, 0.0356 - which is
+where the `0, 1, 2, 3.24` multipliers come from, and where `depth ^ 1.93` comes from: that
+exponent is the one putting the shipped `depth: 0.3` exactly on 0.1462. Linear it landed
+at L 0.32, a mid grey, because a slider whose ends are black and white spends most of its
+travel in a range no dark UI uses. The consequence to remember is that **light themes live
+above ~0.9 on that slider**, which is why Paper is 0.98 - at 0.72 it rendered #6d6b68 and
+at 0.95 #d2d0cd, both measured in the real window and both dingy.
+
+`npm run test:theme` is 358 assertions and its load-bearing half is contrast: every preset,
+and every hue on the wheel at full tint, must clear 4.5:1 for body text and 3:1 for the
+grey second lines. That is the only failure this feature has and it is invisible to whoever
+picked the colour - they know what the text says. It also pins that a config nobody has
+touched still draws the app that shipped.
+
+The default accent `#f0a868` is the icon's own top ember pulled off full orange. The
+sidebar mark is the icon's geometry (`split: 0.415`, gap 0.043, radius 0.032 from
+`make-icon.mjs`, inset removed) in `currentColor`, so it follows the accent. Before this
+the two marks were drawn independently and had different splits - the sidebar was a
+different logo from the taskbar.
+
+**Every pane says which project it is in.** `src/shared/place.ts` is the only thing allowed
+to turn a folder, a branch, a worktree suffix and a lane id into words. It exists because
+the strip printed `lanes main master`, where `main` is a lane id and `master` is a branch
+and neither names anything you could go and look at - and once lanes worked in any repo,
+several rows said `master` at once for different repositories.
+
+The rules, and where each came from:
+
+- The project name is never omitted and never abbreviated. Everything else is added only
+  when it is not implied, so one pane in one repo on its trunk reads `PaneForge` and
+  nothing else - the common case, which is what you read past to reach the unusual one.
+- A trunk branch is dropped rather than printed. No editor does better (VS Code prints
+  `main` in the status bar like any other branch); the one shipped product that improves on
+  it is Vercel, which labels default-branch deploys "Production" - a ROLE where the name
+  would be. So `master` is answered ("main checkout"), not hidden.
+- A branch some tool generated to hold a copy is dropped too: `pf/w2`, `lane-a` and Claude
+  Code's `worktree-<slug>` all repeat the copy's own number.
+- Copies are numbered `#2` because Ctrl+2 switches to them - the label IS the keystroke.
+  Claude Code names worktrees `bright-running-fox` and Conductor uses city names; neither
+  can be typed. Same reason a lane holder is "pane 3" wherever that pane is in this window,
+  and eight characters of a session id only when it is not.
+- `-a` is stripped only when the caller already knows the folder is that lane, never
+  guessed: `service-a` is a real project name. Only `-w<digits>` comes off unasked.
+
+`npm run test:place` is 56 assertions on the strings themselves. One of them is a refusal
+that the real window found: the sidebar has no `git status` of its own on purpose (one per
+card, to print a word), so its tooltip claimed "not a git checkout" about a checkout with
+19 uncommitted files. An absent fact and a known-negative fact are not the same thing and
+only one is safe to assert.
+
+`laneWords.ts` is built by esbuild in `lane-holder-test.mjs` now, not `tsc` on the one
+file: `tsc --rootDir src` emits `from '../../shared/place'` with no extension, which Node's
+ESM loader refuses, so the moment that file gained a runtime import the test died on a
+module-not-found naming a temp directory.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
