@@ -289,10 +289,14 @@ The rules, and where each came from:
   would be. So `master` is answered ("main checkout"), not hidden.
 - A branch some tool generated to hold a copy is dropped too: `pf/w2`, `lane-a` and Claude
   Code's `worktree-<slug>` all repeat the copy's own number.
-- Copies are numbered `#2` because Ctrl+2 switches to them - the label IS the keystroke.
+- There are TWO numbers and they are worded apart on purpose. `copy 2` is the second
+  checkout of that project; `pane 3` is the third card in the sidebar and Ctrl+3 reaches
+  it. They are independent - the second copy of a repo is very often not the second pane
+  on screen - so a bare `#2` beside a `3` key was one number too many with no way to tell
+  which was which. Only the pane number is a keystroke, and only chats are named by it
+  ("pane 3 has it", against eight characters of a session id only when there is no pane).
   Claude Code names worktrees `bright-running-fox` and Conductor uses city names; neither
-  can be typed. Same reason a lane holder is "pane 3" wherever that pane is in this window,
-  and eight characters of a session id only when it is not.
+  can be typed, which is why numbers are worth keeping despite needing the disambiguation.
 - `-a` is stripped only when the caller already knows the folder is that lane, never
   guessed: `service-a` is a real project name. Only `-w<digits>` comes off unasked.
 
