@@ -233,11 +233,22 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       spellCheck={false}
                       onChange={(e) => onChange({ discordClientId: e.target.value.trim() })}
                     />
+                    <DiscordHeader id={config.discordClientId} />
                     <div className="hint">
-                      Discord prints this application's name as the activity header. To choose
-                      that name, create an application at discord.com/developers (New
-                      Application, no bot needed) and paste its id here - everything else works
-                      the same.
+                      Discord prints this application's name as the activity header. To make it
+                      say PaneForge, open the developer portal, press New Application, name it
+                      PaneForge (no bot needed) and paste its Application ID here - nothing else
+                      about the presence changes.
+                    </div>
+                    <div>
+                      <button
+                        className="ghost small"
+                        onClick={() =>
+                          api.openExternal('https://discord.com/developers/applications')
+                        }
+                      >
+                        Open the Discord developer portal
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1001,6 +1012,50 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Discord prints the APPLICATION's name as the header of the presence - the id below it
+ * is what picks the brand on the profile, and 19 digits do not say which brand that is.
+ * The default id is a borrowed application, so the header used to read as somebody else's
+ * product with no way to notice from in here. Now the name is read back live, so pasting
+ * an id is a change you can see the result of without a Discord open next to the window.
+ */
+function DiscordHeader({ id }: { id: string }): JSX.Element | null {
+  const [name, setName] = useState<string | null>(null)
+  const [checked, setChecked] = useState(false)
+  useEffect(() => {
+    let live = true
+    setChecked(false)
+    // An id is pasted, but it can also be typed - one lookup per keystroke is 19 requests
+    // at a rate limit that answers with nothing useful.
+    const t = window.setTimeout(() => {
+      void api.discordAppName(id).then((n) => {
+        if (!live) return
+        setName(n)
+        setChecked(true)
+      })
+    }, 400)
+    return () => {
+      live = false
+      window.clearTimeout(t)
+    }
+  }, [id])
+  if (!checked) return null
+  if (!name) {
+    return (
+      <div className="hint warn">
+        Discord has no application with that id, so it will show no presence at all.
+      </div>
+    )
+  }
+  const mine = /paneforge/i.test(name)
+  return (
+    <div className={mine ? 'hint' : 'hint warn'}>
+      Discord will head the presence <b>{name}</b>
+      {mine ? '.' : ' - not PaneForge. Create your own application to change it.'}
     </div>
   )
 }

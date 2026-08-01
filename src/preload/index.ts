@@ -44,6 +44,7 @@ const api: Api = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<Config>) => ipcRenderer.invoke('config:set', patch),
   pickRoot: () => ipcRenderer.invoke('config:pickRoot'),
+  discordAppName: (id) => ipcRenderer.invoke('discord:appName', id),
 
   reveal: (path) => ipcRenderer.send('shell:reveal', path),
   openInEditor: (path) => ipcRenderer.invoke('shell:editor', path),

@@ -153,10 +153,12 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 }
 .row:hover { background: #ffffff09; }
 .row.active { background: #ffffff0f; border-color: var(--line-strong); }
-/* A card is a handle as well as a button. The grab cursor appears on press rather than
-   on hover: hovering a card is what you do before clicking it, and a hand there says
-   "this is not clickable". */
-.row:active { cursor: grabbing; }
+/* A card is a handle as well as a button. The grab cursor appears neither on hover nor
+   on the press itself: hovering a card is what you do before clicking it, and a click is
+   a press too - a hand that flashes on every selection says the click was a drag, which
+   it was not. It appears once the press has been HELD (HOLD_CURSOR_MS in App.tsx), which
+   is the moment the hand is asking to move the card rather than to open it. */
+.row.hold-arm { cursor: grabbing; }
 .row.dragging {
   cursor: grabbing; background: #ffffff14; border-color: var(--accent);
   box-shadow: 0 10px 24px #00000073; z-index: 2;

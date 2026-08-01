@@ -973,6 +973,29 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   updateShelfConfig(stashConfig(next))
   return next
 })
+/**
+ * The name Discord will print as the presence header, for the id in the settings field.
+ * `/applications/<id>/rpc` is the public half of an application - no token, no scope -
+ * and it is the only way to know what the header says without a Discord open to look at.
+ * From main rather than the renderer: the packaged renderer is a `file://` origin, and
+ * Discord answers a CORS preflight for a real origin only.
+ */
+ipcMain.handle('discord:appName', async (_e, id: string) => {
+  if (!/^\d{5,25}$/.test(id.trim())) return null
+  try {
+    const res = await fetch(`https://discord.com/api/v10/applications/${id.trim()}/rpc`, {
+      signal: AbortSignal.timeout(5000)
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { name?: string }
+    return typeof body.name === 'string' ? body.name : null
+  } catch {
+    // Offline, rate limited, or an id nobody owns. The field keeps working either way;
+    // this line only ever adds confidence, it never gates the setting.
+    return null
+  }
+})
+
 ipcMain.handle('config:pickRoot', async () => {
   const r = await dialog.showOpenDialog({
     title: 'Choose the folder that holds your projects',
