@@ -87,37 +87,37 @@ writeFileSync(join(repo, 'backend', 'node_modules', 'dep', 'index.js'), '2\n')
 
 ok('a folder nobody else holds is left alone', (await resolveLane(repo, [])).cwd === repo)
 
-const w2 = join(root, 'demo-w2')
+const laneA = join(root, 'demo-a')
 const lane = (await resolveLane(repo, [repo]))
-ok('a second session in the same folder gets lane w2', lane.cwd === w2 && lane.lane === 'w2')
-ok('the lane is a checkout of the repo', existsSync(join(w2, 'app.js')))
-ok('.env is seeded', readFileSync(join(w2, '.env'), 'utf8') === 'SECRET=1\n')
-ok('.env.local is seeded', existsSync(join(w2, '.env.local')))
-ok('a subfolder .env is seeded', existsSync(join(w2, 'backend', '.env')))
-ok('local agent settings are seeded', existsSync(join(w2, '.claude', 'settings.local.json')))
+ok('a second session in the same folder gets lane a', lane.cwd === laneA && lane.lane === 'a')
+ok('the lane is a checkout of the repo', existsSync(join(laneA, 'app.js')))
+ok('.env is seeded', readFileSync(join(laneA, '.env'), 'utf8') === 'SECRET=1\n')
+ok('.env.local is seeded', existsSync(join(laneA, '.env.local')))
+ok('a subfolder .env is seeded', existsSync(join(laneA, 'backend', '.env')))
+ok('local agent settings are seeded', existsSync(join(laneA, '.claude', 'settings.local.json')))
 
-await waitFor(join(w2, 'node_modules'))
-await waitFor(join(w2, 'backend', 'node_modules'))
-ok('dependencies arrive in the lane', existsSync(join(w2, 'node_modules', 'left-pad', 'index.js')))
+await waitFor(join(laneA, 'node_modules'))
+await waitFor(join(laneA, 'backend', 'node_modules'))
+ok('dependencies arrive in the lane', existsSync(join(laneA, 'node_modules', 'left-pad', 'index.js')))
 ok(
   'dependencies are hardlinked, not a link to the original folder',
-  realpathSync(join(w2, 'node_modules')) !== realpathSync(join(repo, 'node_modules'))
+  realpathSync(join(laneA, 'node_modules')) !== realpathSync(join(repo, 'node_modules'))
 )
 ok(
   'a hardlinked file is the same bytes as the original',
-  statSync(join(w2, 'node_modules', 'left-pad', 'index.js')).ino ===
+  statSync(join(laneA, 'node_modules', 'left-pad', 'index.js')).ino ===
     statSync(join(repo, 'node_modules', 'left-pad', 'index.js')).ino
 )
-ok('subfolder dependencies arrive too', existsSync(join(w2, 'backend', 'node_modules', 'dep', 'index.js')))
-ok('no half-built temp folder is left behind', !existsSync(join(w2, 'node_modules.pf-tmp')))
+ok('subfolder dependencies arrive too', existsSync(join(laneA, 'backend', 'node_modules', 'dep', 'index.js')))
+ok('no half-built temp folder is left behind', !existsSync(join(laneA, 'node_modules.pf-tmp')))
 
-const w3 = join(root, 'demo-w3')
-const third = (await resolveLane(repo, [repo, w2]))
-ok('a third session gets its own lane', third.lane === 'w3' && third.cwd === w3)
-await waitFor(join(w3, 'node_modules'))
+const laneB = join(root, 'demo-b')
+const third = (await resolveLane(repo, [repo, laneA]))
+ok('a third session gets its own lane', third.lane === 'b' && third.cwd === laneB)
+await waitFor(join(laneB, 'node_modules'))
 
-ok('a lane nobody is in is reused rather than piling up folders', (await resolveLane(repo, [repo])).cwd === w2)
-ok('a lane asked for another lane still branches off the main repo', (await resolveLane(w2, [w2])).cwd.startsWith(join(root, 'demo-w')))
+ok('a lane nobody is in is reused rather than piling up folders', (await resolveLane(repo, [repo])).cwd === laneA)
+ok('a lane asked for another lane still branches off the main repo', (await resolveLane(laneA, [laneA])).cwd === join(root, 'demo-b'))
 
 const plain = join(root, 'plain')
 mkdirSync(plain, { recursive: true })
@@ -127,9 +127,9 @@ ok('a folder that is not a repo is shared with a warning', shared.cwd === plain 
 // The junction failure, in the two shapes that hit it.
 const realDep = join(repo, 'node_modules', 'left-pad', 'index.js')
 const subDep = join(repo, 'backend', 'node_modules', 'dep', 'index.js')
-git(repo, 'worktree', 'remove', '--force', w2)
+git(repo, 'worktree', 'remove', '--force', laneA)
 ok('git worktree remove leaves the original dependencies alone', existsSync(realDep))
-rmSync(w3, { recursive: true, force: true })
+rmSync(laneB, { recursive: true, force: true })
 ok('deleting a lane folder leaves the original dependencies alone', existsSync(realDep))
 ok('deleting a lane folder leaves subfolder dependencies alone', existsSync(subDep))
 

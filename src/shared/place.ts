@@ -21,12 +21,13 @@
 //   That is the trick used below: `master` is not hidden, it is answered. The main checkout
 //   says so, and a branch only appears when it is telling you something the project name
 //   is not.
-// - The numbers are ours, and there are TWO of them, which is why they are worded apart.
-//   `copy 2` is the second checkout of that project; `pane 3` is the third card in the
-//   sidebar, and Ctrl+3 switches to it. They are independent - the second copy of a repo
-//   is very often not the second pane on screen - so a bare `#2` on a card that already
-//   carries a `3` key was one number too many with no way to tell which was which. Only
-//   the pane number is ever a keystroke, and only chats are named by it.
+// - The labels are ours, and there are TWO of them, which is why they are worded apart.
+//   `lane b` is another checkout of that project; `pane 3` is the third card in the
+//   sidebar, and Ctrl+3 switches to it. They are independent - a project's second lane is
+//   very often not the second pane on screen - so a bare `#2` on a card that already
+//   carries a `3` key was one number too many with no way to tell which was which. Lanes
+//   are lettered and panes are numbered for the same reason: two different labels on one
+//   card should not both be digits. Only the pane number is ever a keystroke.
 //
 // Pure, so scripts/place-test.mjs can compile this one file and assert the sentences. What
 // this module produces is read at a glance in a sidebar; getting it wrong is invisible in
@@ -69,15 +70,24 @@ export function projectOf(dir: string, known?: string): string {
   return name
 }
 
-export type PlaceKind = 'main' | 'copy' | 'lane'
+/**
+ * A pane is either in a project's own checkout or in one of its lanes. There is no third
+ * kind any more: the app used to call the extra checkouts it made "copies" (`<repo>-w2` on
+ * `pf/w2`) while scripts/lane.mjs called its own "lanes" (`<repo>-a` on `lane-a`), and the
+ * two systems made the same thing under two names, two folder shapes and two branch
+ * prefixes. Anyone looking at a Projects folder saw `Toolstash-a` next to `Toolstash-w2`
+ * and could not tell what the difference was, because there was not one.
+ */
+export type PlaceKind = 'main' | 'lane'
 
 /**
- * A branch that some tool invented to hold a copy, rather than one a person made.
+ * A branch that some tool invented to hold a lane, rather than one a person made.
  *
- * `pf/w2` is this app's, `lane-a` is the lane script's, `worktree-<slug>` is Claude
- * Code's. None of them says anything the copy's own number has not already said, so they
- * come off the chip - while a real branch checked out INSIDE a copy stays, because that
- * is a person telling you what the copy is for.
+ * `lane-b` is what this app and the lane script both create now; `pf/w2` is the shape the
+ * app used before they were unified, still on disk wherever an old lane has not been
+ * merged yet; `worktree-<slug>` is Claude Code's. None of them says anything the lane's own
+ * label has not already said, so they come off the chip - while a real branch checked out
+ * INSIDE a lane stays, because that is a person telling you what the lane is for.
  */
 export function isGeneratedBranch(branch: string, slot: string): boolean {
   const b = branch.trim().toLowerCase()
@@ -85,7 +95,7 @@ export function isGeneratedBranch(branch: string, slot: string): boolean {
   if (/^worktree-/.test(b)) return true
   if (!slot) return false
   const s = slot.toLowerCase()
-  return b === `pf/w${s}` || b === `lane-${s}` || b === `w${s}` || b === s
+  return b === `lane-${s}` || b === `pf/${s}` || b === s
 }
 
 export interface PlaceInput {
@@ -93,9 +103,11 @@ export interface PlaceInput {
   cwd: string
   /** current branch, when a git badge has read one */
   branch?: string
-  /** the worktree copy the app made for this pane, e.g. "w2" */
-  copy?: string
-  /** a development lane id ("a"), for a repo that runs the lane system */
+  /**
+   * The lane this pane is in: "a", "b", ... or "main" for the project's own checkout.
+   * Legacy `w2`-style labels are still understood, for lanes made before the two naming
+   * schemes were merged.
+   */
   lane?: string
   /**
    * The pane's switch number, 1-9, when it has one. Ctrl+N focuses it, so this is the
@@ -107,7 +119,7 @@ export interface PlaceInput {
 export interface Place {
   project: string
   kind: PlaceKind
-  /** "2" for a copy, "a" for a lane, "" for the main checkout */
+  /** the lane's label ("a"), or "" for the project's own checkout */
   slot: string
   /** the branch, always - the short label decides whether to print it */
   branch: string
@@ -115,7 +127,7 @@ export interface Place {
   onTrunk: boolean
   /** the chip: at most three words, project first, always */
   short: string
-  /** what the copy IS, for a second line: "main checkout", "copy #2", "lane a" */
+  /** what this checkout IS, for a second line: "main checkout" or "lane a" */
   role: string
   /** the tooltip: every fact, spelled out */
   full: string
@@ -132,23 +144,21 @@ export interface Place {
 export function describePlace(input: PlaceInput): Place {
   const branch = (input.branch ?? '').trim()
   const onTrunk = branch === '' || isTrunk(branch)
-  const known = input.copy ?? input.lane
-  const project = projectOf(input.cwd, known)
+  const project = projectOf(input.cwd, input.lane)
 
-  const kind: PlaceKind = input.copy ? 'copy' : input.lane && input.lane !== 'main' ? 'lane' : 'main'
-  const slot = input.copy ? input.copy.replace(/^w/i, '') : kind === 'lane' ? (input.lane ?? '') : ''
+  const kind: PlaceKind = input.lane && input.lane !== 'main' ? 'lane' : 'main'
+  // The label as it is on disk, so the chip and the folder beside it read the same. A
+  // legacy `w2` lane therefore says "lane w2" rather than being renamed in the UI to
+  // something no folder is called.
+  const slot = kind === 'lane' ? (input.lane ?? '') : ''
 
-  const role =
-    kind === 'copy' ? `copy ${slot}` : kind === 'lane' ? `lane ${slot}` : 'main checkout'
+  const role = kind === 'lane' ? `lane ${slot}` : 'main checkout'
 
   // The branch earns its place on the chip by disagreeing with something. On the trunk it
   // does not, and "PaneForge · master" is two words to say one - the Vercel rule. Nor does
-  // the branch a tool generated to hold this copy, which repeats the copy's own number.
+  // the branch a tool generated to hold this lane, which repeats the lane's own label.
   const machinery = isGeneratedBranch(branch, slot)
-  const tail = [
-    kind === 'copy' ? `copy ${slot}` : kind === 'lane' ? `lane ${slot}` : '',
-    onTrunk || machinery ? '' : branch
-  ].filter(Boolean)
+  const tail = [kind === 'lane' ? `lane ${slot}` : '', onTrunk || machinery ? '' : branch].filter(Boolean)
   const short = [project, ...tail].join(' · ')
 
   // No branch line at all when there is no branch to state.
@@ -174,8 +184,8 @@ export function describePlace(input: PlaceInput): Place {
 /**
  * Two panes are "in the same place" when a change in one can land on top of the other.
  *
- * Same project and same checkout. Different copies of one project are deliberately NOT the
- * same place - that is the entire reason copies exist.
+ * Same project and same checkout. Two lanes of one project are deliberately NOT the same
+ * place - that is the entire reason lanes exist.
  */
 export function samePlace(a: Place, b: Place): boolean {
   return a.project === b.project && a.kind === b.kind && a.slot === b.slot

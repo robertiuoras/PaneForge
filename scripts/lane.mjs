@@ -133,6 +133,23 @@ const OWN = (() => {
  * branch and pushed, batched exactly the same way, and no version is ever cut. Opting a
  * repo into real releases is one line in its own `.lanes.json`.
  */
+/**
+ * The names of the lane checkouts, and there is only one set of them.
+ *
+ * `main` is the repository folder itself; every other lane is `<repo>-<letter>` on branch
+ * `lane-<letter>`, sitting beside it. PaneForge's own window creates exactly those folders
+ * when a second pane opens the same project (src/main/lanes.ts), which is the point: a pane
+ * sitting in `Toolstash-b` and a chat holding lane b are the SAME checkout, so the prompt
+ * hook can ask for "the lane matching the folder I am in" and be given it. While the two
+ * halves of this used different names - `<repo>-a` here, `<repo>-w2` there - that request
+ * asked for a lane called `w2`, and this file would have gone and made `lane-w2` on top of
+ * the `pf/w2` worktree that was already sitting at that path.
+ *
+ * Eight letters because that is how many the window offers. A repo that wants fewer, more,
+ * or different says so in its own `.lanes.json` `pool`.
+ */
+const DEFAULT_POOL = ['main', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
 function loadProfile() {
   let cfg = {}
   try {
@@ -158,7 +175,7 @@ function loadProfile() {
   return {
     branch,
     release,
-    pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : ['main', 'a', 'b', 'c'],
+    pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : DEFAULT_POOL,
     enabled: cfg.lanes !== false
   }
 }

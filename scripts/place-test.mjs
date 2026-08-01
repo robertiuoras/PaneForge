@@ -50,7 +50,7 @@ const U = '/home/rob/Projects'
 is(projectOf(`${W}\\PaneForge`), 'PaneForge', 'a plain checkout is its folder')
 is(projectOf(`${U}/PaneForge`), 'PaneForge', 'and separators do not matter')
 is(projectOf(`${U}/PaneForge/`), 'PaneForge', 'nor does a trailing slash')
-is(projectOf(`${W}\\PaneForge-w2`), 'PaneForge', 'the app-made copy suffix comes off unasked')
+is(projectOf(`${W}\\PaneForge-w2`), 'PaneForge', 'the app-made lane suffix comes off unasked')
 is(projectOf(`${W}\\PaneForge-w12`), 'PaneForge', 'including a two-digit one')
 is(projectOf(`${W}\\PaneForge-a`, 'a'), 'PaneForge', 'a lane suffix comes off when the lane is known')
 is(projectOf(`${W}\\PaneForge`, 'main'), 'PaneForge', 'the main lane has no suffix to remove')
@@ -59,7 +59,7 @@ is(projectOf(`${W}\\PaneForge`, 'main'), 'PaneForge', 'the main lane has no suff
 // ending, so it is only ever stripped when the caller already knows this folder is that
 // lane - never guessed. A person whose repo is `service-a` must not see `service`.
 is(projectOf(`${W}\\service-a`), 'service-a', 'a real project ending in -a is left alone')
-is(projectOf(`${W}\\my-w`), 'my-w', '-w with no number is not a copy suffix')
+is(projectOf(`${W}\\my-w`), 'my-w', '-w with no number is not a lane suffix')
 is(projectOf(`${W}\\alpha-b`, 'a'), 'alpha-b', 'the wrong lane id does not strip the wrong suffix')
 
 // Claude Code's own layout, so a pane a person opened in one reads as the project rather
@@ -89,7 +89,7 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 {
   const p = describePlace({ cwd: `${W}\\PaneForge`, branch: 'master', pane: 1 })
   is(p.short, 'PaneForge', 'the common case is the project name and nothing else')
-  is(p.role, 'main checkout', 'and the role says which copy this is')
+  is(p.role, 'main checkout', 'and the role says which checkout this is')
   is(p.kind, 'main', '')
   is(p.onTrunk, true, '')
   ok(p.full.includes('master'), 'the branch is never hidden - it moves to the tooltip')
@@ -104,17 +104,17 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 }
 
 {
-  const p = describePlace({ cwd: `${W}\\PaneForge-w2`, branch: 'pf/w2', copy: 'w2', pane: 3 })
-  // "copy 2", not "#2". There are two numbers on a card - the checkout's and the pane's
-  // Ctrl-N key - and they are independent: the second copy of a repository is very often
-  // not the second card in the sidebar. A bare `#2` beside a `3` key was one number too
-  // many with no way to tell which was which.
-  is(p.short, 'PaneForge · copy 2', 'a copy says what its number counts')
-  is(p.slot, '2', '')
-  is(p.role, 'copy 2', '')
+  // A lane made before the app and scripts/lane.mjs agreed on one naming scheme. It is
+  // still on disk wherever its work has not landed yet, so it still has to describe
+  // itself - as the folder it actually is, never renamed in the UI to something no
+  // folder is called.
+  const p = describePlace({ cwd: `${W}\\PaneForge-w2`, branch: 'pf/w2', lane: 'w2', pane: 3 })
+  is(p.short, 'PaneForge · lane w2', 'an old lane says which lane it is')
+  is(p.slot, 'w2', '')
+  is(p.role, 'lane w2', '')
   ok(!p.short.includes('#'), 'and never a bare # that could be read as a switch key')
-  is(p.project, 'PaneForge', 'a copy is still the same project - that was the whole complaint')
-  ok(!p.short.includes('pf/w2'), "a copy's own generated branch says nothing a person needs")
+  is(p.project, 'PaneForge', 'a lane is still the same project - that was the whole complaint')
+  ok(!p.short.includes('pf/w2'), "a lane's own generated branch says nothing a person needs")
 }
 
 {
@@ -127,7 +127,7 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 {
   const p = describePlace({ cwd: `${W}\\taskdriver`, branch: 'main', lane: 'main' })
   is(p.short, 'taskdriver', "the main lane of another repo is just that repo's name")
-  is(p.kind, 'main', 'lane "main" is not a copy of anything')
+  is(p.kind, 'main', 'lane "main" is the project folder itself, not a lane of it')
 }
 
 {
@@ -145,7 +145,7 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 // The chip is read in a 282px sidebar beside a status dot, an agent logo and a clock.
 for (const p of [
   describePlace({ cwd: `${W}\\PaneForge`, branch: 'master' }),
-  describePlace({ cwd: `${W}\\PaneForge-w2`, copy: 'w2', branch: 'pf/w2' }),
+  describePlace({ cwd: `${W}\\PaneForge-w2`, lane: 'w2', branch: 'pf/w2' }),
   describePlace({ cwd: `${W}\\PaneForge-a`, lane: 'a', branch: 'lane-a' })
 ])
   ok(p.short.split(' · ').length <= 3, `"${p.short}" stays within three parts`)
@@ -156,10 +156,10 @@ for (const p of [
 {
   const a = describePlace({ cwd: `${W}\\PaneForge`, branch: 'master' })
   const b = describePlace({ cwd: `${W}\\PaneForge`, branch: 'master' })
-  const copy = describePlace({ cwd: `${W}\\PaneForge-w2`, copy: 'w2' })
+  const lane = describePlace({ cwd: `${W}\\PaneForge-a`, lane: 'a' })
   const other = describePlace({ cwd: `${W}\\taskdriver`, branch: 'main' })
   is(samePlace(a, b), true, 'two panes in one checkout are in the same place')
-  is(samePlace(a, copy), false, 'a copy is a different place - that is what copies are for')
+  is(samePlace(a, lane), false, 'a lane is a different place - that is what lanes are for')
   is(samePlace(a, other), false, 'different projects are different places')
 }
 
