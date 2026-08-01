@@ -35,6 +35,7 @@
     "test:pipe": "node scripts/pipe-test.mjs",
     "test:silence": "node scripts/silence-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
+    "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
