@@ -482,7 +482,8 @@ manager.on('sessions', () => {
 const appStartedAt = Date.now()
 const presence = new DiscordPresence({
   clientId: getConfig().discordClientId,
-  enabled: getConfig().discordPresence
+  enabled: getConfig().discordPresence,
+  style: getConfig().discordStyle
 })
 function presenceCounts(): PresenceCounts {
   const live = manager.list().filter((s) => s.status !== 'exited')
@@ -948,8 +949,12 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
-  if (patch.discordPresence !== undefined || patch.discordClientId !== undefined) {
-    presence.configure(next.discordPresence, next.discordClientId)
+  if (
+    patch.discordPresence !== undefined ||
+    patch.discordClientId !== undefined ||
+    patch.discordStyle !== undefined
+  ) {
+    presence.configure(next.discordPresence, next.discordClientId, next.discordStyle)
     presence.update(presenceCounts())
   }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)

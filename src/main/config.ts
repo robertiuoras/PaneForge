@@ -8,6 +8,7 @@ import { homedir, hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
+import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
 import { newCode } from './remote/wire'
@@ -166,6 +167,7 @@ function defaults(): Config {
     bellAlert: true,
     discordPresence: true,
     discordClientId: '1494887437367771276',
+    discordStyle: { ...DEFAULT_DISCORD_STYLE },
     clipboardShelf: true,
     clipboardOverlay: true,
     stashPeekMs: 5000,
@@ -229,6 +231,9 @@ export function getConfig(): Config {
       // key missing entirely, and an upgrade must land on `mode: 'off'` rather than on
       // `undefined`, which every read below would then have to guard.
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
+      // Same reason: every config written before the Discord tab existed has no
+      // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
+      discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },
       // Merged rather than replaced so an upgrade keeps this device's identity and
       // its pairings while gaining any key added since the file was written.
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },
