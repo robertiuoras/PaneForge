@@ -23,11 +23,72 @@
 //
 //   node scripts/discord-brand-test.mjs
 
-import { readFileSync } from 'node:fs'
+import { buildSync } from 'esbuild'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+let failed = 0
+const ok = (c, n) => {
+  console.log((c ? 'PASS ' : 'FAIL ') + n)
+  if (!c) failed++
+}
+
+// --- what happens to the id ALREADY on disk -------------------------------
+//
+// Changing the default reaches nobody who has ever launched the app: getConfig() merges
+// the saved file over the defaults, so a saved id wins forever. Every user from the
+// borrowed-id months has those digits written into their config.json, and without the
+// migration below they would go on printing a stranger's brand no matter what ships.
+//
+// config.ts pulls `app` from electron for the userData path, so it is bundled and the
+// electron require is pointed at a stub - the same trick gamemode-test.mjs uses for
+// tasklist, and for the same reason: without it this would measure nothing.
+const work = join(tmpdir(), 'pf-discord-brand-test')
+rmSync(work, { recursive: true, force: true })
+mkdirSync(work, { recursive: true })
+writeFileSync(
+  join(work, 'electron-stub.cjs'),
+  `module.exports={app:{getPath:()=>${JSON.stringify(work)},getVersion:()=>'0.0.0'}}\n`
+)
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/config.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: join(work, 'config.bundle.cjs'),
+  external: ['electron']
+})
+const bundleFile = join(work, 'config.bundle.cjs')
+const bundleSrc = readFileSync(bundleFile, 'utf8')
+const patchedSrc = bundleSrc.replace(
+  /require\((["'])electron\1\)/g,
+  'require("./electron-stub.cjs")'
+)
+if (patchedSrc === bundleSrc) {
+  console.error('FAIL could not point config.ts at the electron stub')
+  failed++
+} else {
+  writeFileSync(bundleFile, patchedSrc)
+  const { migrateDiscordId } = createRequire(import.meta.url)(bundleFile)
+  const BORROWED = '1494887437367771276'
+  const NOW = 'the-shipped-default'
+  ok(
+    migrateDiscordId(BORROWED, NOW) === NOW,
+    'a config still holding the borrowed id is moved to the shipped one'
+  )
+  ok(
+    migrateDiscordId('999999999999999999', NOW) === '999999999999999999',
+    "somebody else's own application id is left exactly alone"
+  )
+  ok(migrateDiscordId(undefined, NOW) === NOW, 'a config written before the field existed gets the default')
+  ok(migrateDiscordId('', NOW) === NOW, 'and so does an empty one')
+}
+rmSync(work, { recursive: true, force: true })
 
 // Read the literal out of config.ts rather than importing it: this must track the value
 // that actually ships, and a copy of the id in the test is a second place to forget.
@@ -42,7 +103,7 @@ if (!m) {
   console.error('FAIL no discordClientId default found in src/main/config.ts')
   console.error('     The presence header comes from that literal; without it there is')
   console.error('     nothing to check and the shipped brand is unknown.')
-  process.exitCode = 1
+  failed++
 } else {
   const id = m[1]
   const res = await fetch(`https://discord.com/api/v10/applications/${id}/rpc`, {
@@ -72,6 +133,8 @@ if (!m) {
     console.error('     No bot, no scopes, no OAuth and no "connection" to link: rich presence')
     console.error('     talks to the local Discord client over a named pipe, and the id is the')
     console.error('     only thing it needs.')
-    process.exitCode = 1
+    failed++
   }
 }
+
+if (failed) process.exitCode = 1

@@ -166,7 +166,7 @@ function defaults(): Config {
     silenceAlertMin: 5,
     bellAlert: true,
     discordPresence: true,
-    discordClientId: '1494887437367771276',
+    discordClientId: '1533054088454082601',
     discordStyle: { ...DEFAULT_DISCORD_STYLE },
     clipboardShelf: true,
     clipboardOverlay: true,
@@ -239,7 +239,8 @@ export function getConfig(): Config {
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },
       // An empty roles array in an old config would leave the swarm dialog blank.
       swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles,
-      defaultModels: migrateModels(raw.defaultModels)
+      defaultModels: migrateModels(raw.defaultModels),
+      discordClientId: migrateDiscordId(raw.discordClientId, base.discordClientId)
     }
   } catch {
     cache = base
@@ -261,6 +262,26 @@ function migrateModels(saved?: Record<string, string>): Record<string, string> {
     if (model === 'claude-opus-5[1m]') out[agent] = 'claude-opus-5'
   }
   return out
+}
+
+/**
+ * The application whose NAME Discord prints above the presence.
+ *
+ * This shipped for months as a borrowed id - "Manic's Auction House", the author's own
+ * Discord bot - because creating an application needs a portal login and a captcha. Every
+ * user who ran PaneForge in that time has those 19 digits written into their config.json,
+ * so changing the default alone reaches nobody who has ever launched the app: the saved
+ * value wins the merge, forever, and they go on advertising a stranger's brand.
+ *
+ * Only the exact borrowed id is rewritten. Anyone who typed their own into Settings -
+ * including anyone who deliberately points at a different application - keeps it, because
+ * a saved value that is not the one we know to be wrong is a choice, not a leftover.
+ */
+const BORROWED_DISCORD_ID = '1494887437367771276'
+
+export function migrateDiscordId(saved: string | undefined, fallback: string): string {
+  if (!saved) return fallback
+  return saved === BORROWED_DISCORD_ID ? fallback : saved
 }
 
 export function setConfig(patch: Partial<Config>): Config {
