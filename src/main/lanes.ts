@@ -23,6 +23,7 @@ import {
 import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
+import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -194,6 +195,10 @@ function detectDevPort(repo: string): number | null {
     if (/\bng serve\b/.test(dev)) return 4200
     if (/\btauri\b/.test(dev)) return 1420
     if (/\bnuxt\b/.test(dev)) return 3000
+    if (/\bremix\b/.test(dev)) return 3000
+    if (/\bexpo\b/.test(dev)) return 8081
+    if (/\bstorybook\b/.test(dev)) return 6006
+    if (/\bvue-cli-service\b/.test(dev)) return 8080
     if (/\b(vite|astro)\b/.test(dev)) return 5173
   }
 
@@ -208,16 +213,99 @@ function detectDevPort(repo: string): number | null {
     'astro.config.mjs',
     'svelte.config.js',
     'src-tauri/tauri.conf.json',
+    'docker-compose.yml',
+    'docker-compose.yaml',
+    'compose.yaml',
     '.env',
     '.env.local'
   ]) {
     const text = readText(join(repo, rel))
     if (!text) continue
+    // A compose file states the port the host actually gets, on the left of the
+    // colon: `- "8080:80"`. Reading the right-hand side would hand the lane the
+    // container's port, which nothing on the machine is listening on.
+    if (/^(docker-)?compose\./.test(basename(rel))) {
+      const mapped = text.match(/^\s*-\s*"?(\d{3,5}):\d{2,5}/m)
+      const host = mapped && asPort(mapped[1])
+      if (host) return host
+      continue
+    }
     const m = text.match(/\bport"?\s*[:=]\s*"?(\d{3,5})|localhost:(\d{3,5})|^\s*PORT\s*=\s*(\d{3,5})/m)
     const found = m && asPort(m[1] ?? m[2] ?? m[3])
     if (found) return found
   }
+
+  // Nothing in the JS-shaped places, so this is one of the many repos that is not
+  // a JS project at all. Every one of these has a dev server on a well-known port,
+  // and handing them all the same 3000 fallback puts two Django lanes on the same
+  // port as each other and as whatever else on the machine wanted 3000.
+  const has = (rel: string): boolean => existsSync(join(repo, rel))
+  if (has('manage.py')) return 8000 // Django
+  if (has('artisan')) return 8000 // Laravel
+  if (has('config.ru') || has('Gemfile')) return 3000 // Rails / Rack
+  if (has('Cargo.toml')) return 8080 // axum/actix convention
+  if (has('go.mod')) return 8080
+  const py = `${readText(join(repo, 'pyproject.toml'))}\n${readText(join(repo, 'requirements.txt'))}`
+  if (/\bflask\b/i.test(py)) return 5000
+  if (/\b(fastapi|uvicorn|starlette)\b/i.test(py)) return 8000
+  if (py.trim()) return 8000
+  for (const rel of ['Properties/launchSettings.json', 'src/Properties/launchSettings.json']) {
+    const url = readText(join(repo, rel)).match(/https?:\/\/localhost:(\d{3,5})/)
+    const found = url && asPort(url[1])
+    if (found) return found
+  }
   return null
+}
+
+/**
+ * Is this port actually free right now?
+ *
+ * Both addresses are tried because they are not the same question: a dev server
+ * bound to 127.0.0.1 leaves 0.0.0.0 bindable on Windows, so testing only the
+ * wildcard reports a busy port as free and the lane is handed a collision.
+ */
+function portFree(port: number): Promise<boolean> {
+  const bind = (host: string): Promise<boolean> =>
+    new Promise((done) => {
+      const srv = createServer()
+      srv.once('error', () => done(false))
+      srv.once('listening', () => srv.close(() => done(true)))
+      try {
+        srv.listen(port, host)
+      } catch {
+        done(false)
+      }
+    })
+  return bind('127.0.0.1').then((ok) => (ok ? bind('0.0.0.0') : false))
+}
+
+/**
+ * The first free port at or after `from`.
+ *
+ * `base + laneIndex` alone is a guess, and it is wrong exactly when it matters:
+ * the second lane of a Next project asks for 3001, which is also what the first
+ * lane of every other Next project on the machine asked for. Two lanes then race
+ * for one port and the loser's dev server dies on startup with EADDRINUSE, which
+ * reads as "the lane is broken". Probing costs a few milliseconds once per lane.
+ */
+async function freePort(from: number): Promise<number> {
+  for (let p = from; p < Math.min(from + 40, 65000); p++) {
+    if (await portFree(p)) return p
+  }
+  return from
+}
+
+/**
+ * A compose project name for this lane: lowercase, and starting with a letter or
+ * digit, because compose rejects anything else and a repo called `.dotfiles` or
+ * `My_App` would take the whole `up` down with it.
+ */
+function composeProject(repo: string, label: string): string {
+  const cleaned = basename(repo)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+  return `${cleaned || 'project'}-${label}`
 }
 
 /** "w2" -> 2. Anything unparseable is treated as the first lane. */
@@ -294,6 +382,19 @@ function shareClaudeMemory(repo: string, lane: string): boolean {
   }
 }
 
+/**
+ * The folders a project installs into, which git never checks out.
+ *
+ * `node_modules` alone covered exactly one ecosystem: a Python, PHP or Ruby repo
+ * got a lane with no interpreter environment at all, so the first command the
+ * agent ran there failed on a missing module and the lane looked broken. These
+ * are the four that are both universally named and genuinely absent from a fresh
+ * worktree. Rust's `target` is deliberately not here - cargo stores absolute
+ * paths in its fingerprints, so a cloned target is rebuilt anyway, and the walk
+ * over a six-figure file count would cost more than the rebuild it saves.
+ */
+const DEP_DIRS = ['node_modules', '.venv', 'venv', 'vendor']
+
 /** Past this a tree is big enough that cloning it costs more than installing. */
 const MAX_DEP_FILES = 150_000
 /** Lanes whose dependency clone is still running, so a reuse cannot start a second. */
@@ -364,6 +465,59 @@ async function hardlinkTree(from: string, to: string, budget: { left: number }):
 }
 
 /**
+ * Point a cloned virtualenv at the lane it now lives in.
+ *
+ * A venv is the one dependency folder that knows its own absolute path: it is
+ * written into `pyvenv.cfg`, into `VIRTUAL_ENV` in every activate script, and
+ * into the shebang of every console script pip installed. Cloned untouched, the
+ * lane's `.venv/bin/pytest` runs the *original* folder's interpreter against the
+ * *original* folder's packages - the exact cross-checkout bleed lanes exist to
+ * prevent, and invisible while the two trees still match.
+ *
+ * The file must be deleted before it is rewritten. Every file in here is a
+ * hardlink at this point, so writing through it would edit the original venv as
+ * well and break the first session's environment - the same class of damage the
+ * junction approach caused, arriving by a different door.
+ */
+function repointVenv(from: string, to: string): void {
+  if (!/^\.?venv$/i.test(basename(to))) return
+  const forms: Array<[string, string]> = [
+    [resolve(from), resolve(to)],
+    [resolve(from).replace(/\\/g, '/'), resolve(to).replace(/\\/g, '/')]
+  ]
+
+  const rewrite = (file: string): void => {
+    try {
+      const stat = lstatSync(file)
+      if (!stat.isFile() || stat.size > 512 * 1024) return
+      const buf = readFileSync(file)
+      // A console script on Windows is an .exe with the path inside a zip
+      // trailer; there is no safe text edit for it, and `python -m` works.
+      if (buf.subarray(0, 4096).includes(0)) return
+      let text = buf.toString('utf8')
+      const before = text
+      for (const [a, b] of forms) if (text.includes(a)) text = text.split(a).join(b)
+      if (text === before) return
+      rmSync(file, { force: true })
+      writeFileSync(file, text, 'utf8')
+    } catch {
+      /* unreadable or locked - the venv still resolves, just to the original */
+    }
+  }
+
+  rewrite(join(to, 'pyvenv.cfg'))
+  for (const dir of ['bin', 'Scripts']) {
+    try {
+      for (const e of readdirSync(join(to, dir), { withFileTypes: true })) {
+        if (e.isFile()) rewrite(join(to, dir, e.name))
+      }
+    } catch {
+      /* the other platform's layout is simply not there */
+    }
+  }
+}
+
+/**
  * Give a lane the dependencies the repo already has, without blocking anything.
  *
  * A worktree is a clean checkout, so it has no `node_modules`: the first build,
@@ -375,13 +529,13 @@ async function hardlinkTree(from: string, to: string, budget: { left: number }):
  * than an absent one.
  */
 function cloneDeps(repo: string, lane: string): void {
-  const rels = ['node_modules']
+  const rels = [...DEP_DIRS]
   try {
-    // Monorepo layouts install per package (`backend/node_modules`); one level
-    // down is the same depth the .env seeding covers.
+    // Monorepo layouts install per package (`backend/node_modules`, `api/.venv`);
+    // one level down is the same depth the .env seeding covers.
     for (const e of readdirSync(repo, { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name === '.git' || e.name === 'node_modules') continue
-      rels.push(join(e.name, 'node_modules'))
+      if (!e.isDirectory() || e.name === '.git' || DEP_DIRS.includes(e.name)) continue
+      for (const dep of DEP_DIRS) rels.push(join(e.name, dep))
     }
   } catch {
     /* unreadable repo root - the root tree below is the one that matters */
@@ -403,7 +557,10 @@ function cloneDeps(repo: string, lane: string): void {
         await hardlinkTree(from, tmp, { left: MAX_DEP_FILES })
         // An install the agent kicked off in the meantime wins; drop ours.
         if (existsSync(to)) rmSync(tmp, { recursive: true, force: true })
-        else renameSync(tmp, to)
+        else {
+          renameSync(tmp, to)
+          repointVenv(from, to)
+        }
       } catch {
         // Different volume, no permission, or an oversized tree: leave the lane
         // without dependencies rather than with a partial set. An install there
@@ -487,6 +644,53 @@ function seedClaudeProjectSettings(repo: string, lane: string): void {
 }
 
 /**
+ * Carry the original folder's Codex approval onto the lane path.
+ *
+ * PaneForge runs thirteen CLIs, and until now exactly one of them - Claude Code -
+ * had its per-folder state carried into a lane. A Codex user got the feature's
+ * downside (a strange new folder) with none of its upside: Codex keys trust by
+ * absolute path in `~/.codex/config.toml`, so every lane opened on the approval
+ * prompt for a repo already approved one folder over.
+ *
+ * The file is TOML and this appends one section rather than parsing it, because a
+ * parse-and-reserialise would reformat a file the user owns and Codex writes
+ * concurrently. Nothing is granted that the original folder was not already
+ * granted, and a repo that was never trusted is left untrusted.
+ */
+function seedCodexTrust(repo: string, lane: string): void {
+  const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
+  const path = join(home, 'config.toml')
+  if (!existsSync(path)) return
+  // Codex writes these keys lowercased, and a path holding a quote cannot be
+  // expressed in this quoting style at all - both are left alone rather than
+  // guessed at.
+  const key = (p: string): string => resolve(p).toLowerCase()
+  if (key(lane).includes("'") || key(repo).includes("'")) return
+
+  try {
+    const text = readFileSync(path, 'utf8')
+    const header = (p: string): string => `[projects.'${key(p)}']`
+    if (text.includes(header(lane))) return
+    const at = text.indexOf(header(repo))
+    if (at < 0) return
+
+    // The section runs to the next header or the end of the file.
+    const rest = text.slice(at + header(repo).length)
+    const end = rest.search(/\r?\n\[/)
+    const body = (end < 0 ? rest : rest.slice(0, end)).replace(/\s+$/, '')
+    const next = `${text.replace(/\s+$/, '')}\n\n${header(lane)}${body}\n`
+
+    // Write-then-rename: this is Codex's own file and a torn write would cost the
+    // user every setting in it.
+    const tmp = `${path}.paneforge.tmp`
+    writeFileSync(tmp, next, 'utf8')
+    renameSync(tmp, path)
+  } catch {
+    /* unreadable, or Codex is writing it right now - the lane still works */
+  }
+}
+
+/**
  * What a lane needs beyond its folder: a dev-server port of its own, and the
  * original folder's agent memory.
  *
@@ -497,9 +701,14 @@ function seedClaudeProjectSettings(repo: string, lane: string): void {
 export async function laneExtras(laneCwd: string, label: string): Promise<LaneExtras> {
   const repo = (await mainRepo(laneCwd)) ?? laneCwd
   const base = detectDevPort(repo) ?? FALLBACK_PORT
-  const port = Math.min(base + laneIndex(label) - 1, 65000)
-  const sharedMemory = samePath(repo, laneCwd) ? false : shareClaudeMemory(repo, laneCwd)
+  const port = await freePort(Math.min(base + laneIndex(label) - 1, 65000))
+  const moved = !samePath(repo, laneCwd)
+  const sharedMemory = moved ? shareClaudeMemory(repo, laneCwd) : false
   if (sharedMemory) seedClaudeProjectSettings(repo, laneCwd)
+  // Not gated on the Claude share: a lane running Codex still opens on a trust
+  // prompt for a repo the user already approved, whether or not Claude is even
+  // installed on this machine.
+  if (moved) seedCodexTrust(repo, laneCwd)
   return {
     env: {
       // PORT is what most dev servers read on their own (Next, CRA, Nuxt, Nitro,
@@ -507,7 +716,15 @@ export async function laneExtras(laneCwd: string, label: string): Promise<LaneEx
       // the launch toast states the number so `--port $PORT` is one keystroke.
       PORT: String(port),
       PF_LANE: label,
-      PF_LANE_PORT: String(port)
+      PF_LANE_PORT: String(port),
+      // A port is not the only thing two lanes fight over. `docker compose`
+      // derives container, network and volume names from the folder name, and a
+      // worktree called `<repo>-w2` is close enough to `<repo>` in some layouts -
+      // and identical when compose is run from a subfolder both lanes share - that
+      // `compose up` in the second lane recreates the first lane's containers out
+      // from under it. Naming the project after the lane keeps the two stacks
+      // apart, and `compose down` in a lane stops only its own.
+      COMPOSE_PROJECT_NAME: composeProject(repo, label)
     },
     port,
     sharedMemory
@@ -520,7 +737,21 @@ export async function laneExtras(laneCwd: string, label: string): Promise<LaneEx
  * local settings files are copied; anything else is the checkout's business.
  */
 function seedLocalConfig(repo: string, lane: string): void {
-  for (const rel of [join('.claude', 'settings.local.json'), join('.vscode', 'settings.json')]) {
+  // One entry per agent that keeps per-repo settings outside git. A name that is
+  // wrong or that the user does not use costs nothing: the file is not there and
+  // the copy is skipped.
+  for (const rel of [
+    join('.claude', 'settings.local.json'),
+    join('.vscode', 'settings.json'),
+    join('.cursor', 'mcp.json'),
+    join('.gemini', 'settings.json'),
+    join('.qwen', 'settings.json'),
+    join('.opencode', 'opencode.json'),
+    join('.goose', 'config.yaml'),
+    '.crush.json',
+    '.aider.conf.yml',
+    '.mcp.json'
+  ]) {
     const from = join(repo, rel)
     const to = join(lane, rel)
     if (!existsSync(from) || existsSync(to)) continue
@@ -538,6 +769,14 @@ function seedLane(repo: string, lane: string): void {
   seedEnvFiles(repo, lane)
   seedLocalConfig(repo, lane)
   cloneDeps(repo, lane)
+  // `git worktree add` checks out the superproject and leaves every submodule as
+  // an empty folder, so a repo that keeps its SDK, theme or protobufs in one gets
+  // a lane that cannot build and does not say why. Not awaited - a submodule
+  // fetch is network-bound and the pane should already be open - and a no-op on
+  // the repos that have none, or on a lane that was seeded once before.
+  if (existsSync(join(lane, '.gitmodules'))) {
+    void git(lane, ['submodule', 'update', '--init', '--recursive'], 180000)
+  }
 }
 
 /**

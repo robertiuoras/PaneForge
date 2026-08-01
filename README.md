@@ -123,23 +123,35 @@ Re-run after any source change. Needs Node 20+.
 - **Worktree lanes** - open a second session in a project you already have open and
   it lands in its own git worktree (`<project>-w2`, branch `pf/w2`), carrying the
   things a fresh checkout cannot have: your `.env` files, your local editor and
-  agent settings, and the installed `node_modules`. Dependencies arrive as hardlinks
-  a few seconds after the pane opens, so they cost no disk and deleting a lane never
-  touches the original folder's copy. Two agents can build different features in one
+  agent settings, the submodules a bare `worktree add` leaves empty, and whatever
+  the project installed - `node_modules`, a `.venv`, a composer or bundler
+  `vendor`, at the root and one level down for monorepos. Dependencies arrive as
+  hardlinks a few seconds after the pane opens, so they cost no disk and deleting a
+  lane never touches the original folder's copy. A cloned virtualenv is repointed
+  at the lane (`pyvenv.cfg`, activate scripts, console shebangs), so it runs the
+  lane's packages and not the folder it came from. Two agents can build different
+  features in one
   repo at the same time without overwriting each other or racing the git index. The
   pane says which lane it is in. Off by one switch in Settings, and a folder that is
   not a repo is left shared with a warning. A lane also gets the two things a bare
   worktree does not:
-  - **its own dev server port** - `PORT` (and `PF_LANE_PORT`) is set to one past
-    whatever the project's own dev script asks for, so `npm run dev` in two lanes
-    does not collide. Servers that read `PORT` need nothing; a Vite/Astro project
-    that pins its port in config wants `--port $PORT`, and the launch toast states
-    the number.
-  - **the original folder's Claude memory** - Claude Code keys history and project
-    memory by folder path, so a lane would otherwise start with no transcripts, no
-    `/resume`, no memory and no granted permissions for a repo you are already deep
-    in. The lane's project folder is linked to the original's, and the original's
-    trust, allowed tools and recent prompts are copied onto the lane path.
+  - **its own dev server port** - `PORT` (and `PF_LANE_PORT`) is set past whatever
+    the project itself asks for, and then checked to be free before the pane opens,
+    so `npm run dev` in two lanes - or in two different projects - does not collide.
+    The port is read from wherever the project already states it: a dev script, a
+    Vite/Next/Nuxt/Tauri config, a compose file's host mapping, `launchSettings.json`,
+    a `PORT=` in `.env`, or the convention of the stack it is (Django and FastAPI
+    8000, Flask 5000, Rails 3000, Expo 8081, Storybook 6006, Go and Rust 8080).
+    Servers that read `PORT` need nothing; one that pins its port in config wants
+    `--port $PORT`, and the launch toast states the number.
+  - **the original folder's agent memory** - Claude Code and Codex both key a
+    project by its folder path, so a lane would otherwise start with no transcripts,
+    no `/resume`, no memory and no granted permissions for a repo you are already
+    deep in, and open on a "do you trust this folder?" prompt. The lane's Claude
+    project folder is linked to the original's, the original's trust, allowed tools
+    and recent prompts are copied onto the lane path, and the folder's Codex trust
+    level is carried across too. Nothing is granted that the original folder was not
+    already granted: a repo you never trusted stays untrusted in its lane.
   - **an end** - click the lane chip on the pane to see what is in the lane (commits
     it has that the branch it came from does not, uncommitted files, and the files it
     would conflict on) and to merge it back in one click. The merge refuses rather
