@@ -244,6 +244,14 @@ const counts = (running, total, names = ['PaneForge']) => ({
   const first = got[0]
   check('reconnect: frame is SET_ACTIVITY with our pid', first?.payload.cmd === 'SET_ACTIVITY' && first?.payload.args.pid === process.pid)
   check('reconnect: activity carried the pre-connect counts', first?.payload.args.activity?.details === '1/2 session running' || first?.payload.args.activity?.details === '1/2 sessions running', first?.payload.args.activity?.details)
+  // Not just built - actually written down the pipe. The button is the only part of
+  // the presence a person can press, and it is worth nothing if the client drops it
+  // between buildActivity and the frame.
+  check(
+    'reconnect: the frame Discord receives carries the link button',
+    first?.payload.args.activity?.buttons?.[0]?.url === DEFAULT_LINK_URL,
+    JSON.stringify(first?.payload.args.activity?.buttons)
+  )
 
   // Throttle: a burst is one trailing frame with the last state, not five frames.
   got.length = 0
