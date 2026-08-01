@@ -22,6 +22,8 @@ import {
   DEFAULT_DETAILS,
   DEFAULT_DISCORD_STYLE,
   DEFAULT_IDLE_DETAILS,
+  DEFAULT_LINK_LABEL,
+  DEFAULT_LINK_URL,
   DEFAULT_STATE,
   DISCORD_TOKENS,
   buildActivity,
@@ -1052,6 +1054,46 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   </div>
 
                   <div className="setting">
+                    <Switch
+                      checked={config.discordStyle.link}
+                      onChange={(v) => setDiscord({ link: v })}
+                      label="Put a clickable link under it"
+                      hint="Discord draws the two lines above as plain text, so a URL written into them is not a link. A button is the only clickable thing a rich presence has - and Discord shows it to everyone except you, so your own profile will not have it."
+                    />
+                  </div>
+
+                  {config.discordStyle.link && (
+                    <>
+                      <div className="setting">
+                        <label>Button text</label>
+                        <input
+                          className="search"
+                          value={config.discordStyle.linkLabel}
+                          placeholder={DEFAULT_LINK_LABEL}
+                          spellCheck={false}
+                          maxLength={32}
+                          onChange={(e) => setDiscord({ linkLabel: e.target.value })}
+                        />
+                      </div>
+                      <div className="setting">
+                        <label>Where it goes</label>
+                        <input
+                          className="search"
+                          value={config.discordStyle.linkUrl}
+                          placeholder={DEFAULT_LINK_URL}
+                          spellCheck={false}
+                          onChange={(e) => setDiscord({ linkUrl: e.target.value.trim() })}
+                        />
+                        <div className="hint">
+                          Must start with http:// or https:// - Discord throws the whole presence
+                          away over a malformed button, not just the button. Text is cut at 32
+                          characters.
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="setting">
                     <div className="hint">
                       An empty line means the greyed-out wording in it. Write whatever you like
                       around these, which stand in for the numbers:
@@ -1299,6 +1341,7 @@ function DiscordPreview({
     details?: string
     state?: string
     timestamps?: unknown
+    buttons?: { label: string; url: string }[]
   } | null
   const header = checked ? (name ?? 'No such application') : 'Checking...'
   return (
@@ -1313,6 +1356,11 @@ function DiscordPreview({
             {activity.details && <div className="dc-line">{activity.details}</div>}
             {activity.state && <div className="dc-line">{activity.state}</div>}
             {activity.timestamps && <div className="dc-line dim">12:34 elapsed</div>}
+            {activity.buttons?.map((b) => (
+              <div className="dc-button" key={b.url}>
+                {b.label}
+              </div>
+            ))}
           </>
         ) : (
           <div className="dc-line dim">Nothing at all - your profile shows no activity.</div>

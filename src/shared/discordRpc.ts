@@ -81,11 +81,23 @@ export interface DiscordStyle {
   elapsed: boolean
   /** say anything at all while no turn is running */
   whileIdle: boolean
+  /** show the link button under the presence at all */
+  link: boolean
+  /** what the button says; '' = `toolstash.xyz/paneforge` */
+  linkLabel: string
+  /** where it goes; '' = the PaneForge page */
+  linkUrl: string
 }
 
 export const DEFAULT_DETAILS = '{running}/{total} {sessions} running'
 export const DEFAULT_STATE = 'on {projects}'
 export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
+export const DEFAULT_LINK_LABEL = 'toolstash.xyz/paneforge'
+export const DEFAULT_LINK_URL = 'https://toolstash.xyz/paneforge'
+
+/** Discord's own limits on a presence button. Over either one it rejects the frame. */
+const LABEL_MAX = 32
+const URL_MAX = 512
 
 export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
   details: '',
@@ -93,7 +105,33 @@ export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
   idleDetails: '',
   projects: true,
   elapsed: true,
-  whileIdle: true
+  whileIdle: true,
+  link: true,
+  linkLabel: '',
+  linkUrl: ''
+}
+
+/**
+ * The link under the presence, as Discord will accept it - or null.
+ *
+ * A URL cannot be put in `details` or `state`: Discord renders those as plain
+ * text, markdown and all, so `[PaneForge](https://…)` shows up literally and a
+ * bare link shows up unclickable. `buttons` is the only clickable surface a rich
+ * presence has, and it is the one that carries a real href.
+ *
+ * Two things worth knowing before reading a profile and calling this broken:
+ * Discord does not show a presence button to the account it belongs to - only
+ * other people see it - and it drops the whole button if the URL is not http(s).
+ */
+export function buildButton(style: DiscordStyle): { label: string; url: string } | null {
+  if (!style.link) return null
+  // Trimmed BEFORE the fallback, not after: a field the user cleared can hold
+  // spaces, and `'  ' || default` keeps the spaces - which then trims to nothing
+  // and threw the button away instead of falling back like an empty field does.
+  const url = style.linkUrl.trim() || DEFAULT_LINK_URL
+  if (!/^https?:\/\//i.test(url) || url.length > URL_MAX) return null
+  const label = (style.linkLabel.trim() || DEFAULT_LINK_LABEL).slice(0, LABEL_MAX)
+  return { label, url }
 }
 
 /** The legend under the template fields, and the whole of what a template may say. */
@@ -166,5 +204,7 @@ export function buildActivity(
   if (style.elapsed) {
     activity.timestamps = { start: running ? (c.oldestRunSince ?? c.appStart) : c.appStart }
   }
+  const button = buildButton(style)
+  if (button) activity.buttons = [button]
   return activity
 }

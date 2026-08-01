@@ -40,7 +40,17 @@ buildSync({
   outfile: outMain
 })
 const req = createRequire(import.meta.url)
-const { FrameStream, encodeFrame, buildActivity, DEFAULT_DISCORD_STYLE, OP_HANDSHAKE, OP_FRAME } =
+const {
+  FrameStream,
+  encodeFrame,
+  buildActivity,
+  buildButton,
+  DEFAULT_DISCORD_STYLE,
+  DEFAULT_LINK_LABEL,
+  DEFAULT_LINK_URL,
+  OP_HANDSHAKE,
+  OP_FRAME
+} =
   req(outShared)
 const { DiscordPresence } = req(outMain)
 
@@ -134,6 +144,41 @@ function check(name, ok, extra = '') {
   const longLine = buildActivity(longNames, style({ state: 'working on {projects} right now' }))
   check('style: a custom line is capped too', longLine.state.length <= 128, String(longLine.state.length))
   check('style: capping keeps the tail of the template', / right now$/.test(longLine.state), longLine.state)
+
+  // ---------- the link ----------
+  // A URL in `details`/`state` is drawn as text, so the only clickable thing a
+  // rich presence has is `buttons`. These pin the shape Discord accepts, because
+  // a malformed button is not ignored - it costs the whole frame.
+  const linked = buildActivity(desk)
+  check(
+    'link: the default presence carries the toolstash button',
+    Array.isArray(linked.buttons) &&
+      linked.buttons.length === 1 &&
+      linked.buttons[0].label === DEFAULT_LINK_LABEL &&
+      linked.buttons[0].url === DEFAULT_LINK_URL,
+    JSON.stringify(linked.buttons)
+  )
+  check('link: the switch turns it off', buildActivity(desk, style({ link: false })).buttons === undefined)
+  const named = buildActivity(desk, style({ linkLabel: 'Get PaneForge', linkUrl: 'https://toolstash.xyz/x' }))
+  check(
+    'link: a custom label and url are used',
+    named.buttons[0].label === 'Get PaneForge' && named.buttons[0].url === 'https://toolstash.xyz/x',
+    JSON.stringify(named.buttons)
+  )
+  // Discord rejects the frame rather than the field, so anything it would refuse
+  // has to be dropped here.
+  check('link: a non-http url is dropped', buildButton(style({ linkUrl: 'javascript:alert(1)' })) === null)
+  check('link: a bare domain is dropped', buildButton(style({ linkUrl: 'toolstash.xyz/paneforge' })) === null)
+  check(
+    'link: a long label is cut to 32 characters',
+    buildButton(style({ linkLabel: 'x'.repeat(80) })).label.length === 32
+  )
+  check(
+    'link: a label of only spaces falls back to nothing rather than a blank button',
+    buildButton(style({ linkLabel: '   ' })).label === DEFAULT_LINK_LABEL
+  )
+  // An empty desk is still a clear: the button must not keep a dead presence alive.
+  check('link: no desk means no presence at all', buildActivity({ total: 0, running: 0, names: [], ...base }) === null)
 }
 
 // ---------- the client against a fake Discord on a real pipe ----------
@@ -199,6 +244,14 @@ const counts = (running, total, names = ['PaneForge']) => ({
   const first = got[0]
   check('reconnect: frame is SET_ACTIVITY with our pid', first?.payload.cmd === 'SET_ACTIVITY' && first?.payload.args.pid === process.pid)
   check('reconnect: activity carried the pre-connect counts', first?.payload.args.activity?.details === '1/2 session running' || first?.payload.args.activity?.details === '1/2 sessions running', first?.payload.args.activity?.details)
+  // Not just built - actually written down the pipe. The button is the only part of
+  // the presence a person can press, and it is worth nothing if the client drops it
+  // between buildActivity and the frame.
+  check(
+    'reconnect: the frame Discord receives carries the link button',
+    first?.payload.args.activity?.buttons?.[0]?.url === DEFAULT_LINK_URL,
+    JSON.stringify(first?.payload.args.activity?.buttons)
+  )
 
   // Throttle: a burst is one trailing frame with the last state, not five frames.
   got.length = 0
