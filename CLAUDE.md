@@ -581,6 +581,17 @@ writes it into the exe's FileDescription, which is the name Windows Task Manager
 and a tagline there read as a second app called "run every coding agent you own in one
 window". The tagline lives in the README instead.
 
+The icon is generated, not stored. `node scripts/make-icon.mjs` draws it from about a
+hundred lines of arithmetic and writes `icon.png` + `icon.svg` at the root and
+`build/icon.png`, which is electron-builder's default buildResources directory - so the
+Windows `.ico` and the Mac `.icns` come from that one file with no configuration at all.
+Do not replace it with a checked-in blob: there is no ImageMagick on this machine (the
+`convert` on PATH is Windows' filesystem tool) and no sharp, so a blob is a file nobody
+can resize when Discord wants a 512 or a store wants a 1024. `--size N --out path` renders
+any single size. The gap between panes is 0.043 of the canvas because that is what still
+reads as three panes after a downsample to 24px - 2px of background survives on both
+splits, which is the whole reason the mark is legible in a taskbar.
+
 `git status` for the pane badges must stay async (`execFile`, not `spawnSync`). Sync
 spawns block the main process, which owns the window message loop, and Windows answers a
 stalled message loop by swapping the pointer for the busy cursor.
