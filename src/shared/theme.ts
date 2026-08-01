@@ -363,9 +363,23 @@ export function paletteFor(theme: ThemeConfig): Vars {
     // Semantic colours are pulled to the accent's chroma but keep their own hue: a green
     // "ok" has to stay green, and an app whose warning colour changes with the theme is
     // an app whose warning colour means nothing.
-    '--warn': inGamut(light ? 0.62 : 0.78, 0.15, 78),
-    '--danger': inGamut(light ? 0.55 : 0.72, 0.16, 24),
-    '--ok': inGamut(light ? 0.6 : 0.78, 0.16, 152),
+    // The light number is one value for all four on purpose, and it is 0.54 because that is
+    // where the worst of them clears 3:1. Each was picked on its own against the dark
+    // window and then reused on Paper, where measuring them found green at 2.92:1 and amber
+    // at 2.97:1 - both under the floor for a UI edge, both shipped, and both invisible to
+    // whoever picked the colour, exactly like the accent contrast this file already guards.
+    // Green is the worst of the four (a light green is barely darker than white however
+    // much chroma it has), so it sets the number and the others sit with it.
+    '--warn': inGamut(light ? 0.54 : 0.78, 0.15, 78),
+    '--danger': inGamut(light ? 0.54 : 0.72, 0.16, 24),
+    '--ok': inGamut(light ? 0.54 : 0.78, 0.16, 152),
+    // Blue is "happening somewhere else, on its own". It exists because green was already
+    // spoken for twice - a working pane's dot and a lane whose work is FINISHED - and a
+    // release only cares about the difference between those two. It was a literal
+    // `#8b9dff` in one CSS rule until now, which is the Slate preset's accent and a weak
+    // wash on the Paper one; hue 272 keeps that colour where it was chosen and lets the
+    // light themes have a darker one.
+    '--info': inGamut(light ? 0.54 : 0.76, 0.14, 272),
     '--r-sm': `${Math.round(r * 0.7)}px`,
     '--r': `${Math.round(r)}px`,
     '--r-lg': `${Math.round(r * 1.45)}px`,

@@ -57,6 +57,25 @@ export function holderName(lane: LaneBoardEntry, pane?: number): string {
   return lane.session ? `chat ${lane.session.slice(0, 8)}` : 'a chat'
 }
 
+/** A hold is "now" for five minutes after the chat was last heard from. */
+const FRESH_MS = 5 * 60 * 1000
+
+/**
+ * Somebody is working in this lane at this moment.
+ *
+ * The words already said so ("busy now" against "quiet 14m"); the colour did not, and the
+ * colour is what is read from across the room. Held-and-quiet stays grey on purpose - a
+ * chat claims a lane the moment it starts, so colouring every hold would light up four
+ * lanes that have had nothing typed into them all day, which is the same lie the strip
+ * used to tell in words.
+ *
+ * Conflicted and ready outrank it: both are states somebody has to do something about, and
+ * a lane cannot be finished and mid-turn at once as far as a reader is concerned.
+ */
+export function laneBusy(lane: LaneBoardEntry, now = Date.now()): boolean {
+  return lane.held && !lane.conflicted && !lane.ready && now - lane.seen < FRESH_MS
+}
+
 /**
  * What the lane is doing, in the words a human would use.
  *
@@ -79,7 +98,7 @@ export function laneState(
   // starts, so four chats that had typed nothing all read as busy. What the lane file
   // actually knows is who holds it and when that chat was last heard from.
   const who = mine ? '' : `${holderName(lane, pane)} has it, `
-  return now - lane.seen < 5 * 60 * 1000 ? `${who}busy now` : `${who}quiet ${ago(lane.seen, now)}`
+  return now - lane.seen < FRESH_MS ? `${who}busy now` : `${who}quiet ${ago(lane.seen, now)}`
 }
 
 /** The holder, spelled out in full: the tooltip is where the whole path and id belong. */

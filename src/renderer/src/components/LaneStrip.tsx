@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
-import { laneLabel, laneState, laneTip } from '../laneWords'
+import { laneBusy, laneLabel, laneState, laneTip } from '../laneWords'
 
 const api = window.api
 
@@ -102,8 +102,10 @@ function fixPrompt(lane: LaneBoardEntry): string {
 /**
  * The lane a pane holds, on the pane's own card beside its agent and model.
  *
- * Colour carries the only state worth interrupting for: red means this pane's finished
- * work is being left out of every release.
+ * Colour carries the three states a release cares about, and nothing else: blue while a
+ * chat is working in that checkout right now, green once its work is finished and waiting
+ * for the next version, red when the work will not merge and is being left out of every
+ * release. A lane merely held, with nobody typing, stays grey.
  */
 export function LaneChip({
   lane,
@@ -127,7 +129,10 @@ export function LaneChip({
       : laneLabel(lane)
   return (
     <span
-      className={'chip pf-lane' + (lane.conflicted ? ' stuck' : lane.ready ? ' done' : '')}
+      className={
+        'chip pf-lane' +
+        (lane.conflicted ? ' stuck' : lane.ready ? ' done' : laneBusy(lane) ? ' busy' : '')
+      }
       role={onHelp ? 'button' : undefined}
       onClick={
         onHelp &&
@@ -237,13 +242,25 @@ function LaneRow({
   // string - `paneRef` prints whichever of the two it was given.
   const owner = laneOwner(lane, sessions)
   const holderPane = owner ? sessions.indexOf(owner) + 1 : undefined
+  // Every row here belongs to a chat that is NOT a pane in this window - that is what the
+  // strip is - so "somebody is working in it right now" is the one fact about it no card
+  // can carry, and it was the one fact drawn in the same grey as a lane nobody has touched
+  // since yesterday.
+  const busy = laneBusy(lane)
 
   return (
     <div
-      className={'row lane-row' + (lane.conflicted ? ' stuck' : '') + (lane.ready ? ' done' : '')}
+      className={
+        'row lane-row' +
+        (lane.conflicted ? ' stuck' : '') +
+        (lane.ready ? ' done' : '') +
+        (busy ? ' busy' : '')
+      }
       title={laneTip(lane, holderPane)}
     >
-      <span className={'lane-tag' + (lane.conflicted ? ' stuck' : '')}>{lane.lane}</span>
+      <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
+        {lane.lane}
+      </span>
       <div className="row-text">
         {/* Was `lane.branch`, which is the single word this whole change exists to stop
             printing: several rows saying `master`, for different repositories, with

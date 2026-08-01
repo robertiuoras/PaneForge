@@ -144,7 +144,7 @@ buildSync({
   outfile: join(out, 'laneWords.mjs')
 })
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { holderName, laneLabel, laneState, laneTip } = await import(
+const { holderName, laneBusy, laneLabel, laneState, laneTip } = await import(
   pathToFileURL(join(out, 'laneWords.mjs')).href
 )
 
@@ -195,6 +195,24 @@ ok('a hold with neither is still described', laneState(entry({}), false, NOW + 6
 
 // The pane's own chip is the one place naming the holder is noise: it is telling itself.
 ok('a pane is not told who it is', laneState(fromTaskdriver, true, NOW + 60_000) === 'busy now')
+
+// The COLOUR of the same fact. It is a separate function from the sentence because a
+// stylesheet cannot read a sentence, and the two disagreeing - a row saying "busy now" in
+// the grey of a lane nobody has touched since yesterday - is the entire bug this answers.
+ok('busy in words is busy in colour', laneBusy(fromTaskdriver, NOW + 60_000) === true)
+ok('quiet twenty minutes is not busy', laneBusy(fromTaskdriver, NOW + 20 * 60_000) === false)
+// Five minutes is the same threshold laneState prints from. Held either side of it, so a
+// second copy of the number cannot drift from the first without this failing.
+ok('the edge of the window is still busy', laneBusy(fromTaskdriver, NOW + 5 * 60_000 - 1) === true)
+ok('a moment past it is not', laneBusy(fromTaskdriver, NOW + 5 * 60_000) === false)
+// A lane nobody holds cannot be busy however recently it was seen - `seen` outlives the
+// hold, so this is the case that would light up every free lane in the pool.
+ok('a free lane is never busy', laneBusy(entry({ held: false }), NOW) === false)
+// Ready and conflicted own the chip: both are states somebody has to act on, and a chat
+// that has marked its lane done and kept typing must not read as work still in flight -
+// that is exactly the release-gate failure `scripts/release-gate-test.mjs` pins.
+ok('finished work is not in-flight work', laneBusy(entry({ ready: true }), NOW) === false)
+ok('a conflict is not in-flight work', laneBusy(entry({ conflicted: true }), NOW) === false)
 
 // A free lane says nothing about a holder, and a stuck one leads with the thing to act on.
 ok('a free lane is still just free', laneState(entry({ held: false }), false, NOW) === 'free')

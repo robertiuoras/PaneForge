@@ -141,6 +141,27 @@ for (const p of PRESETS) {
   // A filled accent button has to be readable too, and which of black/white wins depends
   // on the accent - hard-coding one is how a yellow button gets white text.
   ok(contrast(v['--accent'], v['--accent-on']) >= 4.5, `${p.name}: text on a filled accent button`)
+  // The three semantic colours are small text on a surface - a lane chip, a badge, a second
+  // line - so 3:1 is the floor they have to clear, on the light presets as much as the dark
+  // ones. They were literal hex before this, picked against a near-black window: `#8b9dff`
+  // on Paper is 1.9:1, a chip that says nothing at all.
+  for (const n of ['--ok', '--warn', '--danger', '--info']) {
+    ok(contrast(v[n], v['--surface']) >= 3, `${p.name}: ${n} is ${contrast(v[n], v['--surface']).toFixed(2)}:1 on a card`)
+  }
+  // And they have to be told APART. Blue means a lane is being worked in right now, green
+  // means its work is finished and waiting for a version: a release is the difference
+  // between those two, so a theme that renders them as one colour is a theme that hides it.
+  // Not compared against the ACCENT, deliberately. A semantic colour that moved to stay
+  // clear of the accent would be a warning colour that changes with the theme, which is a
+  // warning colour that means nothing - so Slate, whose accent is a blue, draws a busy lane
+  // in roughly its own colour, exactly as Mint already draws "done" and Coral "stuck".
+  for (const [a, b] of [
+    ['--info', '--ok'],
+    ['--warn', '--danger']
+  ]) {
+    const d = Math.abs(rgbToOklch(parseHex(v[a])).h - rgbToOklch(parseHex(v[b])).h)
+    ok(Math.min(d, 360 - d) > 25, `${p.name}: ${a} and ${b} are the same colour (dH ${d.toFixed(0)})`)
+  }
   // Layers have to be distinguishable or the whole surface ladder is decoration.
   for (const [lo, hi] of [
     ['--bg', '--surface'],
