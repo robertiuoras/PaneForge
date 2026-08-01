@@ -446,6 +446,20 @@ That is tmux's `monitor-silence` rule deliberately not copied - an idle pane is 
 all day, and eight of them would raise eight alerts about nothing every N minutes, which
 is how an alert gets switched off for good.
 
+`npm run test:discord` is the Discord Rich Presence ("3/6 sessions running" on the
+profile), without Discord: the whole client run against a fake Discord served over a
+real named pipe. The two things it pins are invisible in a unit test and both have
+bitten this repo before: a frame split across data events must not be decoded early
+(the device link's launch bug, relearned here), and a socket error nobody handles
+takes the main process down (the tee's lesson). It also pins the budget rules - a
+burst of session events collapses to one trailing SET_ACTIVITY, an unchanged desk
+sends nothing, an empty desk sends a clear rather than "0/0" - and that a Discord
+that is not running costs nothing, silently, forever. The header line of the
+presence is the Discord APPLICATION's name, which lives in `discordClientId` in the
+config: creating an application from a script is impossible (captcha), so the
+default id is an existing application and pointing the setting at a new one renames
+the header with no other change.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.

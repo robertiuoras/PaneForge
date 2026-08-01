@@ -220,6 +220,28 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
+                  checked={config.discordPresence}
+                  onChange={(v) => onChange({ discordPresence: v })}
+                  label="Show what the desk is doing on Discord"
+                  hint="Rich presence with the headline numbers - '3/6 sessions running' and which projects - refreshed as turns start and finish. Counts and folder names only, never what a pane says. Needs the Discord app running; off tells Discord nothing."
+                />
+                {config.discordPresence && (
+                  <div className="setting">
+                    <label>Discord application id</label>
+                    <input
+                      value={config.discordClientId}
+                      spellCheck={false}
+                      onChange={(e) => onChange({ discordClientId: e.target.value.trim() })}
+                    />
+                    <div className="hint">
+                      Discord prints this application's name as the activity header. To choose
+                      that name, create an application at discord.com/developers (New
+                      Application, no bot needed) and paste its id here - everything else works
+                      the same.
+                    </div>
+                  </div>
+                )}
+                <Switch
                   checked={config.bellAlert}
                   onChange={(v) => onChange({ bellAlert: v })}
                   label="Say something when a pane rings its bell"

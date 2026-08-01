@@ -1,0 +1,231 @@
+// Discord Rich Presence, without Discord.
+//
+// The pure half (frame codec, what the presence says) plus the whole client run
+// against a fake Discord served over a REAL named pipe, because the two bugs worth
+// pinning are invisible in a unit test of functions: a frame split across data
+// events being decoded early (the device link's own launch bug, relearned), and a
+// socket error nobody handles taking the main process down with it (the tee's).
+//
+//   node scripts/discord-presence-test.mjs
+
+import { buildSync } from 'esbuild'
+import { mkdirSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import net from 'node:net'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const work = join(tmpdir(), 'pf-discord-test')
+rmSync(work, { recursive: true, force: true })
+mkdirSync(work, { recursive: true })
+
+const outShared = join(work, 'rpc.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/discordRpc.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: outShared
+})
+const outMain = join(work, 'presence.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/discordPresence.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: outMain
+})
+const req = createRequire(import.meta.url)
+const { FrameStream, encodeFrame, buildActivity, OP_HANDSHAKE, OP_FRAME } = req(outShared)
+const { DiscordPresence } = req(outMain)
+
+let failed = 0
+function check(name, ok, extra = '') {
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok || !extra ? '' : ` — ${extra}`}`)
+  if (!ok) failed++
+}
+
+// ---------- frame codec: every split point must reassemble identically ----------
+{
+  const frames = [
+    encodeFrame(OP_HANDSHAKE, { v: 1, client_id: 'x' }),
+    encodeFrame(OP_FRAME, { cmd: 'SET_ACTIVITY', args: { pid: 1 } }),
+    encodeFrame(OP_FRAME, { evt: 'READY', data: { user: { username: 'u' } } })
+  ]
+  const whole = Buffer.concat(frames)
+  let allGood = true
+  for (let cut = 1; cut < whole.length; cut++) {
+    const s = new FrameStream()
+    const got = [...s.push(whole.subarray(0, cut)), ...s.push(whole.subarray(cut))]
+    if (got.length !== 3 || got[2].payload.evt !== 'READY' || got[0].op !== OP_HANDSHAKE) {
+      allGood = false
+      break
+    }
+  }
+  check('codec: reassembly identical at every split point', allGood)
+  const s = new FrameStream()
+  const byByte = []
+  for (const b of whole) byByte.push(...s.push(Buffer.from([b])))
+  check('codec: one byte at a time still yields 3 frames', byByte.length === 3)
+}
+
+// ---------- what the presence says ----------
+{
+  const base = { appStart: 1000 }
+  check('activity: empty desk is a clear, not "0/0"', buildActivity({ running: 0, total: 0, names: [], ...base }) === null)
+  const busy = buildActivity({ running: 3, total: 6, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base })
+  check('activity: 3/6 sessions running', busy.details === '3/6 sessions running', busy.details)
+  check('activity: names on the second line', busy.state === 'on PaneForge, Toolstash', busy.state)
+  check('activity: elapsed anchors on the oldest running turn', busy.timestamps.start === 500)
+  const idle = buildActivity({ running: 0, total: 2, names: [], ...base })
+  check('activity: idle desk says idle', idle.details === '2 sessions idle', idle.details)
+  check('activity: idle elapsed anchors on app start', idle.timestamps.start === 1000)
+  const one = buildActivity({ running: 1, total: 1, names: ['x'], ...base })
+  check('activity: singular noun', one.details === '1/1 session running', one.details)
+  const many = buildActivity({
+    running: 9,
+    total: 9,
+    names: [...Array(30)].map((_, i) => `some-quite-long-project-name-${i}`),
+    ...base
+  })
+  check('activity: name list capped under Discord\'s 128', many.state.length <= 128, String(many.state.length))
+  check('activity: capped list says how many were dropped', / \+\d+ more$/.test(many.state), many.state)
+}
+
+// ---------- the client against a fake Discord on a real pipe ----------
+const PIPE =
+  process.platform === 'win32'
+    ? `\\\\?\\pipe\\pf-discord-test-${process.pid}`
+    : join(work, `pf-discord-test-${process.pid}`)
+
+function fakeDiscord(onFrame) {
+  const socks = new Set()
+  const server = net.createServer((sock) => {
+    socks.add(sock)
+    const s = new FrameStream()
+    sock.on('data', (chunk) => {
+      for (const f of s.push(chunk)) {
+        if (f.op === OP_HANDSHAKE) {
+          sock.write(encodeFrame(OP_FRAME, { evt: 'READY', data: { v: 1 } }))
+        } else {
+          onFrame(f, sock)
+        }
+      }
+    })
+    sock.on('close', () => socks.delete(sock))
+    sock.on('error', () => {})
+  })
+  return new Promise((resolve) =>
+    server.listen(PIPE, () =>
+      resolve({
+        server,
+        // server.close alone waits for live connections, and the client under test
+        // holds one open on purpose - killing Discord means killing its sockets.
+        close: () =>
+          new Promise((r) => {
+            for (const s of socks) s.destroy()
+            server.close(r)
+          })
+      })
+    )
+  )
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const counts = (running, total, names = ['PaneForge']) => ({
+  running,
+  total,
+  names,
+  oldestRunSince: running ? 111 : undefined,
+  appStart: 222
+})
+
+{
+  // No pipe at all: construction and updates must cost nothing and kill nothing.
+  const p = new DiscordPresence({ clientId: 'c', enabled: true, pipePaths: [PIPE], retryMs: 50, throttleMs: 10 })
+  p.update(counts(1, 2))
+  await sleep(120)
+  check('no Discord: silence, no crash, retries armed', true)
+
+  // Fake Discord appears; the armed retry must find it and deliver the counts.
+  const got = []
+  const discord = await fakeDiscord((f) => got.push(f))
+  await sleep(150)
+  check('reconnect: retry finds a Discord that arrived late', got.length >= 1, String(got.length))
+  const first = got[0]
+  check('reconnect: frame is SET_ACTIVITY with our pid', first?.payload.cmd === 'SET_ACTIVITY' && first?.payload.args.pid === process.pid)
+  check('reconnect: activity carried the pre-connect counts', first?.payload.args.activity?.details === '1/2 session running' || first?.payload.args.activity?.details === '1/2 sessions running', first?.payload.args.activity?.details)
+
+  // Throttle: a burst is one trailing frame with the last state, not five frames.
+  got.length = 0
+  p.update(counts(2, 6))
+  p.update(counts(3, 6))
+  p.update(counts(4, 6))
+  p.update(counts(5, 6))
+  await sleep(120)
+  const details = got.map((f) => f.payload.args.activity?.details)
+  check('throttle: burst collapsed', got.length <= 2, JSON.stringify(details))
+  check('throttle: trailing state wins', details[details.length - 1] === '5/6 sessions running', JSON.stringify(details))
+
+  // Identical desk shape must not spend rate-limit budget.
+  got.length = 0
+  await sleep(30)
+  p.update(counts(5, 6))
+  p.update(counts(5, 6))
+  await sleep(60)
+  check('dedup: unchanged counts send nothing', got.length === 0, String(got.length))
+
+  // Empty desk clears: SET_ACTIVITY with no activity in args.
+  p.update(counts(0, 0, []))
+  await sleep(60)
+  const clear = got[got.length - 1]
+  check('clear: empty desk sends SET_ACTIVITY without activity', clear && clear.payload.cmd === 'SET_ACTIVITY' && !('activity' in clear.payload.args))
+
+  // Discord dies mid-session: the client survives and reconnects to the next one.
+  await discord.close()
+  await sleep(20)
+  p.update(counts(2, 3))
+  await sleep(100)
+  const got2 = []
+  const discord2 = await fakeDiscord((f) => got2.push(f))
+  await sleep(150)
+  check('drop: reconnected after Discord died', got2.length >= 1, String(got2.length))
+  check('drop: fresh READY re-sends current counts', got2[0]?.payload.args.activity?.details === '2/3 sessions running', got2[0]?.payload.args.activity?.details)
+
+  // The switch: off clears and disconnects; on comes back.
+  got2.length = 0
+  p.configure(false, 'c')
+  await sleep(60)
+  p.update(counts(1, 1))
+  await sleep(60)
+  check('off: no frames while disabled', got2.length === 0, String(got2.length))
+  p.configure(true, 'c')
+  p.update(counts(1, 1))
+  await sleep(150)
+  check('on: presence resumes after re-enable', got2.some((f) => f.payload.args.activity?.details === '1/1 session running'))
+
+  p.dispose()
+  await discord2.close()
+}
+
+// A server that speaks garbage must not take the process down (the tee's lesson).
+{
+  const server = net.createServer((sock) => {
+    sock.write(Buffer.from('this is not a frame and never will be'))
+    setTimeout(() => sock.destroy(), 20)
+  })
+  await new Promise((r) => server.listen(PIPE, r))
+  const p = new DiscordPresence({ clientId: 'c', enabled: true, pipePaths: [PIPE], retryMs: 30, throttleMs: 10 })
+  p.update(counts(1, 1))
+  await sleep(120)
+  check('hostile: non-protocol bytes survive without crashing', true)
+  p.dispose()
+  await new Promise((r) => server.close(r))
+}
+
+console.log(failed ? `\n${failed} FAILED` : '\nall good')
+process.exit(failed ? 1 : 0)

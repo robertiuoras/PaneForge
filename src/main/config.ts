@@ -164,6 +164,8 @@ function defaults(): Config {
     // that died an hour ago while its clock kept ticking.
     silenceAlertMin: 5,
     bellAlert: true,
+    discordPresence: true,
+    discordClientId: '1494887437367771276',
     clipboardShelf: true,
     clipboardOverlay: true,
     stashPeekMs: 5000,

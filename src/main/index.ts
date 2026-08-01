@@ -19,6 +19,8 @@ import {
 } from 'electron'
 import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
+import { DiscordPresence } from './discordPresence'
+import type { PresenceCounts } from '../shared/discordRpc'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
 import { Remote } from './remote'
@@ -465,7 +467,34 @@ manager.on('sessions', () => {
   // whole of "the desk changed". Debounced inside: a swarm launch is six of these
   // in a second and they are worth one write.
   noteDesk()
+  presence.update(presenceCounts())
 })
+
+// Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
+// turns start and finish. Local panes only - a mirrored pane is counted by the device
+// its agent actually runs on, which is already reading the same frame.
+const appStartedAt = Date.now()
+const presence = new DiscordPresence({
+  clientId: getConfig().discordClientId,
+  enabled: getConfig().discordPresence
+})
+function presenceCounts(): PresenceCounts {
+  const live = manager.list().filter((s) => s.status !== 'exited')
+  const running = live.filter((s) => s.status === 'working')
+  const names: string[] = []
+  for (const s of running) {
+    const name = basename(s.cwd)
+    if (name && !names.includes(name)) names.push(name)
+  }
+  const since = running.map((s) => s.runSince).filter((n): n is number => !!n)
+  return {
+    running: running.length,
+    total: live.length,
+    names,
+    oldestRunSince: since.length ? Math.min(...since) : undefined,
+    appStart: appStartedAt
+  }
+}
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
@@ -913,6 +942,10 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
+  if (patch.discordPresence !== undefined || patch.discordClientId !== undefined) {
+    presence.configure(next.discordPresence, next.discordClientId)
+    presence.update(presenceCounts())
+  }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
@@ -2181,6 +2214,8 @@ app.on('before-quit', () => {
 })
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  // Dropping the pipe is enough - Discord clears the presence when the client goes.
+  presence.dispose()
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.
   flushRecents()

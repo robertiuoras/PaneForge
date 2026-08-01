@@ -737,6 +737,21 @@ export interface Config {
    */
   bellAlert: boolean
   /**
+   * Show the desk's headline numbers as Discord activity - "3/6 sessions running"
+   * plus which projects - refreshed as turns start and finish. Counts and folder
+   * names only, never a byte of pane content. Off tells Discord nothing at all.
+   */
+  discordPresence: boolean
+  /**
+   * The Discord application id the presence reports under. Discord prints that
+   * application's NAME as the activity header, so pointing this at your own
+   * application (discord.com/developers → New Application, no bot needed) renames
+   * the header; everything else is identical. The default is an existing
+   * application so the feature works with nothing to create first - creating one
+   * from here is impossible, the endpoint demands a captcha.
+   */
+  discordClientId: string
+  /**
    * Keep the last things you copied on a shelf in the corner, so a screenshot or a
    * block of text is one click from the focused pane. Off stops the clipboard being
    * watched at all.
