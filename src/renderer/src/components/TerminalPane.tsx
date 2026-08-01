@@ -669,6 +669,13 @@ export default function TerminalPane({
       if (s) lastSelection.current = s
     })
 
+    // A CLI ringing the bell is the only way it has of asking for a person directly,
+    // and the app has been eating it: xterm draws nothing and makes no sound for one.
+    // It is reported from HERE rather than from the byte stream in main because 0x07
+    // is also the terminator of an OSC sequence - every window title a shell sets
+    // contains one - and this is the thing that already parses them apart.
+    t.onBell(() => api.paneBell(sessionId))
+
     // The last text this pane put on the clipboard from a *remembered* selection. Copying
     // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
     const copied = { current: '' }

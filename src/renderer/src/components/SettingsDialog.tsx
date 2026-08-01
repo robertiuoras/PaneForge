@@ -220,6 +220,32 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
                 />
                 <Switch
+                  checked={config.bellAlert}
+                  onChange={(v) => onChange({ bellAlert: v })}
+                  label="Say something when a pane rings its bell"
+                  hint="A CLI that rings the terminal bell is asking for a person - a prompt it needs answered, a build that failed. The pane marks itself and plays one short note. Its own switch because a chatty CLI must be mutable without muting the turn chime."
+                />
+                <div className="setting">
+                  <label>Warn me when a running turn goes silent</label>
+                  <Select
+                    value={String(config.silenceAlertMin)}
+                    onChange={(v) => onChange({ silenceAlertMin: Number(v) })}
+                    menuWidth={240}
+                    options={[
+                      { value: '2', label: 'after 2 minutes' },
+                      { value: '5', label: 'after 5 minutes' },
+                      { value: '10', label: 'after 10 minutes' },
+                      { value: '30', label: 'after 30 minutes' },
+                      { value: '0', label: 'never' }
+                    ]}
+                  />
+                  <div className="hint">
+                    Only ever about a pane whose clock is still running: the agent is supposed to be
+                    working and has printed nothing at all. A pane sitting at an idle prompt is
+                    silent all day and never counts.
+                  </div>
+                </div>
+                <Switch
                   checked={config.gameMode.enabled}
                   onChange={(v) => onChange({ gameMode: { ...config.gameMode, enabled: v } })}
                   label="Stay out of the way while a game is running"

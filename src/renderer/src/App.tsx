@@ -20,7 +20,7 @@ import ConfirmDialog from './components/ConfirmDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { Segmented } from './components/Controls'
-import Elapsed, { formatElapsed } from './components/Elapsed'
+import Elapsed, { formatElapsed, kb } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
@@ -55,7 +55,7 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
-import { playChime } from './useChime'
+import { playBell, playChime, playStall } from './useChime'
 import { useVoice } from './useVoice'
 import {
   drag as dragTrack,
@@ -344,6 +344,45 @@ export default function App(): JSX.Element {
       }),
     []
   )
+  // The two alerts that are not good news. Same glow, same "not for the pane you are
+  // already reading" rule, different sounds - falling for a stalled turn, one bright
+  // note for the bell - so which kind it was is answerable without looking up.
+  //
+  // The stall sound follows soundOnIdle for one reason: it is the same setting's
+  // subject ("tell me about panes out loud"), and a second toggle for it would be a
+  // preference nobody has an opinion about until it is wrong. The bell has its own,
+  // because a CLI that rings constantly is a real thing and muting it must not mute
+  // the turn chime as well.
+  const bellOn = useRef(true)
+  bellOn.current = config?.bellAlert ?? true
+  useEffect(() => {
+    const glow = (id: string): void => {
+      setJustDone((cur) => (cur.includes(id) ? cur : [...cur, id]))
+      window.clearTimeout(doneTimers.current.get(id))
+      doneTimers.current.set(
+        id,
+        window.setTimeout(() => {
+          doneTimers.current.delete(id)
+          setJustDone((cur) => cur.filter((x) => x !== id))
+        }, DONE_GLOW_MS)
+      )
+    }
+    const watching = (s: Session): boolean =>
+      s.id === activeIdRef.current && !document.hidden && document.hasFocus()
+    const offStalled = api.onStalled((s) => {
+      if (soundOn.current && !watching(s)) playStall()
+      if (!watching(s)) glow(s.id)
+    })
+    const offBell = api.onBell((s) => {
+      if (!bellOn.current) return
+      if (soundOn.current && !watching(s)) playBell()
+      if (!watching(s)) glow(s.id)
+    })
+    return () => {
+      offStalled()
+      offBell()
+    }
+  }, [])
   // Looking at the pane answers the question the glow was asking, however you got
   // there - the card, Ctrl-N or the palette.
   useEffect(() => {
@@ -1033,6 +1072,32 @@ export default function App(): JSX.Element {
   )
 
   /**
+   * Start or stop a live copy of a pane's output going into a file (tmux's pipe-pane).
+   *
+   * One toggle rather than a start and a stop item, because the state is visible on the
+   * pane header the whole time it is on - and because "start" on a pane that is already
+   * teed would silently retire a file something else is tailing.
+   *
+   * The path is asked for in main (a save dialog needs a window), which is also where a
+   * cancel turns into "nothing happened": a cancelled dialog and a stop both answer
+   * null, so the only thing to say here is what the answer was.
+   */
+  const togglePipe = useCallback(
+    async (s: Session | undefined, text: boolean) => {
+      if (!s) return flash('Nothing focused - open a pane first.')
+      if (s.remote)
+        return flash('That pane runs on the other machine - tee it from the window it lives in.')
+      if (s.piping) {
+        await api.pipePane(s.id, null)
+        return flash('Stopped writing that pane to a file.')
+      }
+      const info = await api.pipePane(s.id, { text })
+      if (info) flash(`Writing ${s.title} to ${info.path}`)
+    },
+    [flash]
+  )
+
+  /**
    * Move the focused pane one slot along the grid, by keyboard.
    *
    * Same order the drag writes and the same swap it performs (`moveInOrder`), so a pane
@@ -1356,6 +1421,22 @@ export default function App(): JSX.Element {
         hint: 'the grid and its sizes are left exactly as they are',
         keys: 'Ctrl Shift Z',
         run: () => toggleZoom()
+      },
+      {
+        id: 'pipe-pane',
+        group: 'This pane',
+        title: active?.piping ? 'Stop writing this pane to a file' : 'Write this pane to a file as it runs',
+        hint: active?.piping
+          ? `going to ${active.piping.path}`
+          : 'a live copy of the output, for tail -f, a log viewer, or another agent watching the run',
+        run: () => togglePipe(active, false)
+      },
+      {
+        id: 'pipe-pane-text',
+        group: 'This pane',
+        title: 'Write this pane to a file as plain text',
+        hint: 'the same, with the colour and cursor codes taken out - readable rather than exact',
+        run: () => togglePipe(active, true)
       },
       {
         id: 'move-pane-back',
@@ -2160,6 +2241,45 @@ export default function App(): JSX.Element {
                 <span className="chip lane" title="Own git worktree, so this pane cannot clash with the other session in this project">
                   lane {s.lane}
                 </span>
+              )}
+              {/* The sound has already gone; this is the part that is still there when
+                  you come back to the room. Both clear themselves the moment you look
+                  at the pane, which is what `clearAttention` already meant. */}
+              {s.bell && (
+                <span className="chip bell" title="This pane rang the terminal bell - the CLI is asking for you">
+                  🔔
+                </span>
+              )}
+              {s.stalledSince !== undefined && (
+                <span
+                  className="chip stalled"
+                  title="Still running, but it has printed nothing for a while - it may be stuck, or waiting for an answer"
+                >
+                  quiet <Elapsed since={s.stalledSince} />
+                </span>
+              )}
+              {/* A tee is invisible by design - the file is somewhere else and nothing
+                  about the pane changes - so the pane says it out loud, and the same
+                  chip stops it. `dropped` is only ever non-zero when the thing reading
+                  the file cannot keep up, which is worth knowing at a glance. */}
+              {s.piping && (
+                <button
+                  className={'chip piping' + (s.piping.dropped ? ' behind' : '')}
+                  title={
+                    `Writing this pane's output to ${s.piping.path}` +
+                    (s.piping.text ? ' (plain text)' : '') +
+                    (s.piping.dropped
+                      ? ` - ${kb(s.piping.dropped)} dropped: whatever is reading it cannot keep up`
+                      : '') +
+                    '. Click to stop.'
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void togglePipe(s, false)
+                  }}
+                >
+                  ⇥ {kb(s.piping.bytes)}
+                </button>
               )}
               {/* A mirrored folder is on the other machine, so there is no repo here
                   to read a branch off - the badge would either be blank or, worse,

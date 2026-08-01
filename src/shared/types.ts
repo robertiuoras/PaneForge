@@ -89,6 +89,30 @@ export interface Session {
     /** what that device calls itself, for the pane badge */
     name: string
   }
+  /** This pane's output is being teed to a file as it runs. See `main/pipe.ts`. */
+  piping?: PipeInfo
+  /**
+   * The turn is still running and the pane has printed nothing since this moment -
+   * long enough that something is wrong. Undefined the instant it speaks again.
+   */
+  stalledSince?: number
+  /** The terminal rang its bell and nobody has looked at the pane since. */
+  bell?: boolean
+}
+
+/**
+ * A live tee of one pane's output. Rides on the session list rather than an event of
+ * its own: the byte counter has to move on screen, and the sessions broadcast is
+ * already the thing that redraws a pane header.
+ */
+export interface PipeInfo {
+  path: string
+  /** escape sequences stripped on the way out, for a file something will READ */
+  text: boolean
+  startedAt: number
+  bytes: number
+  /** bytes thrown away because the consumer could not keep up - normally 0 */
+  dropped: number
 }
 
 export interface StartSessionRequest {
@@ -702,6 +726,17 @@ export interface Config {
   /** soft chime when a session finishes its turn or asks you something */
   soundOnIdle: boolean
   /**
+   * Minutes a RUNNING turn may print nothing before the pane says it is stuck. Silence
+   * at an idle prompt never counts - that is just a pane you are not using. 0 is off.
+   */
+  silenceAlertMin: number
+  /**
+   * Surface the terminal bell. A CLI that rings it is asking for a person directly,
+   * and until now the app swallowed it: xterm's own audible bell is off and nothing
+   * was drawn in its place.
+   */
+  bellAlert: boolean
+  /**
    * Keep the last things you copied on a shelf in the corner, so a screenshot or a
    * block of text is one click from the focused pane. Off stops the clipboard being
    * watched at all.
@@ -963,6 +998,15 @@ export interface Api {
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
+  /**
+   * Start teeing this pane's output to a file, or stop the one that is running.
+   *
+   * Starting with no path asks for one (a save dialog the user opened, which is the
+   * only kind this app is allowed to show). The answer is the pane's new state, so a
+   * cancelled dialog and a stopped tee are the same `null` and the caller needs no
+   * second round trip.
+   */
+  pipePane(id: string, opts: { path?: string; text?: boolean; append?: boolean } | null): Promise<PipeInfo | null>
   clearAttention(id: string): void
 
   getConfig(): Promise<Config>
@@ -1191,6 +1235,16 @@ export interface Api {
   onGameMode(cb: (s: GameModeStatus) => void): () => void
   /** a session just went quiet after doing something - drives the chime */
   onAttention(cb: (s: Session) => void): () => void
+  /**
+   * The opposite: a turn that is still running has printed nothing for minutes. Kept
+   * apart from `onAttention` all the way down because the two mean opposite things -
+   * one is "it finished", this one is "it should have said something by now".
+   */
+  onStalled(cb: (s: Session) => void): () => void
+  /** a pane's terminal rang its bell - a CLI asking for a human directly */
+  onBell(cb: (s: Session) => void): () => void
+  /** the pane's terminal rang its bell; reported from the renderer, which parses it */
+  paneBell(id: string): void
   /** hosting, pairing or discovery changed */
   onRemote(cb: (s: RemoteState) => void): () => void
   /**

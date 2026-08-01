@@ -14,13 +14,16 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart } from './history'
+import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
 import { anchoredStart } from '../shared/busy'
+import { silenceMs, stalledNow } from '../shared/alerts'
 import type {
   Agent,
+  PipeInfo,
   Session,
   SessionStatus,
   StartSessionRequest,
@@ -68,6 +71,17 @@ const RESET = '\x1bc'
  * hook flash (a second or two) and /help never get near it.
  */
 const SLASH_TURN_MS = 30_000
+/**
+ * How long a turn may print nothing at all before the pane says it is stuck. Set from
+ * the config (`silenceAlertMin`), because the right number is a matter of what the
+ * user runs: a repo whose test suite is silent for four minutes wants a bigger one.
+ * 0 turns it off.
+ */
+let stallAfterMs = silenceMs(5)
+
+export function setSilenceAlert(minutes: number | undefined): void {
+  stallAfterMs = silenceMs(minutes)
+}
 
 interface Live {
   meta: Session
@@ -134,6 +148,12 @@ interface Live {
   typed: string
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
+  /**
+   * The silence alert has already been raised for this quiet stretch. Cleared by the
+   * next byte out of the pane, so a turn that stalls twice is told twice and a turn
+   * that stalls once is told once - not once a second for as long as it lasts.
+   */
+  stallRaised: boolean
 }
 
 export class SessionManager extends EventEmitter {
@@ -229,7 +249,8 @@ export class SessionManager extends EventEmitter {
       sawFooter: false,
       lastTail: '',
       typed: '',
-      slashAt: 0
+      slashAt: 0,
+      stallRaised: false
     }
     this.sessions.set(id, live)
     this.attach(live)
@@ -307,6 +328,9 @@ export class SessionManager extends EventEmitter {
     live.meta.status = 'starting'
     live.meta.exitCode = undefined
     live.meta.attention = false
+    live.meta.bell = false
+    live.meta.stalledSince = undefined
+    live.stallRaised = false
     live.meta.engaged = Boolean(live.req.prompt)
     live.busyUntil = 0
     live.ackedAt = 0
@@ -519,6 +543,10 @@ export class SessionManager extends EventEmitter {
     if (!live.meta.runSince) return false
     live.meta.lastRunMs = Date.now() - live.meta.runSince
     live.meta.runSince = undefined
+    // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
+    // while the chime is announcing that its turn finished.
+    live.stallRaised = false
+    live.meta.stalledSince = undefined
     return true
   }
 
@@ -643,9 +671,40 @@ export class SessionManager extends EventEmitter {
     // past must not cancel the nudge for work that has not finished yet, which is the
     // whole point of the feature ("ask it, go and do something else").
     if (!s.meta.runSince && s.busyUntil < now) s.turnPending = false
-    if (!s.meta.attention) return
+    // A bell is a request for a person, and a person is now looking at the pane. The
+    // stall mark goes with it: you have seen the pane that was quiet, and the alert
+    // has nothing left to tell you. Neither re-arms until the pane earns it again.
+    const marked = s.meta.bell || s.meta.stalledSince !== undefined
+    if (marked) {
+      s.meta.bell = false
+      s.meta.stalledSince = undefined
+    }
+    if (!s.meta.attention && !marked) return
     s.meta.attention = false
     this.emitSessions()
+  }
+
+  /**
+   * Tee this pane's live output to a file, or stop the tee it has. `null` stops.
+   *
+   * The tee belongs to the PANE, not to the app: it dies with the session and is not
+   * remembered across a restart of PaneForge. A file that quietly started filling up
+   * again days later, because of a menu item clicked once, is the wrong surprise.
+   */
+  pipe(id: string, opts: PipeOptions | null): PipeInfo | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    if (!opts) {
+      stopPipe(id)
+      live.meta.piping = undefined
+      this.emitSessions()
+      return null
+    }
+    // Same object the tee mutates, so the byte counter on the pane header is current
+    // whenever anything else re-emits the session list - no timer of its own.
+    live.meta.piping = startPipe(id, opts)
+    this.emitSessions()
+    return live.meta.piping
   }
 
   kill(id: string): void {
@@ -656,6 +715,7 @@ export class SessionManager extends EventEmitter {
     } catch {
       /* already dead */
     }
+    stopPipe(id)
     recordEnd(id)
     forgetSession(id)
     this.sessions.delete(id)
@@ -688,6 +748,9 @@ export class SessionManager extends EventEmitter {
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
     this.sessions.clear()
+    // Before the early return: a pane that was teed and then closed by hand is gone
+    // from the map, but its stream is only closed here if anything went wrong above.
+    stopAllPipes()
     if (!live.length) return
     endAll(ids)
 
@@ -749,6 +812,16 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       live.buffer.push(data)
       recordData(id, data)
+      // Before the repaint gate below: a tee is a copy of what the pane printed, and a
+      // repaint is something the pane printed. Only the status machinery cares why.
+      feedPipe(id, data)
+      // The pane is talking again, so the silence that was reported is over. Also
+      // before the repaint gate: a repaint proves the process is alive, which is the
+      // one thing the stall alert is claiming it is not.
+      if (live.stallRaised) {
+        live.stallRaised = false
+        meta.stalledSince = undefined
+      }
       const now = Date.now()
       const wasIdle = meta.status !== 'working'
       // A repaint we asked for is not a turn: paint it, but do not touch the
@@ -778,6 +851,11 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       meta.status = 'exited'
       meta.exitCode = exitCode
+      // The pane has stopped talking for good: a tee left open would hold the file
+      // handle for as long as the dead card sits in the list, and on Windows that is
+      // enough to stop the watcher deleting or rotating it.
+      stopPipe(id)
+      meta.piping = undefined
       this.endRun(live)
       recordEnd(id)
       this.emitSessions()
@@ -876,8 +954,52 @@ export class SessionManager extends EventEmitter {
         this.emit('attention', meta)
         changed = true
       }
+
+      // The other half of the same question. Attention above is "the turn ended and
+      // you were not looking"; this is "the turn did NOT end and nothing has come out
+      // of it for minutes", which is the case the app was previously silent about -
+      // the run clock ticking away next to a pane whose agent is stuck on a lock, or
+      // waiting behind a prompt that has scrolled off, or gone entirely.
+      if (
+        stalledNow({
+          quiet,
+          runSince: meta.runSince,
+          engaged: meta.engaged,
+          raised: live.stallRaised,
+          silenceMs: stallAfterMs
+        })
+      ) {
+        live.stallRaised = true
+        meta.stalledSince = meta.lastOutput
+        audit('stalled', {
+          title: meta.title,
+          agent: meta.agent,
+          quietMs: quiet,
+          runMs: meta.runSince ? now - meta.runSince : 0,
+          busyOnScreen,
+          tail: plainTail(live.lastTail)
+        })
+        this.emit('stalled', meta)
+        changed = true
+      }
     }
     if (changed) this.emitSessions()
+  }
+
+  /**
+   * The pane's terminal rang its bell (`\x07`).
+   *
+   * It is reported by the renderer rather than sniffed out of the byte stream here,
+   * because 0x07 is also how an OSC sequence ends - every window title a CLI sets
+   * contains one, and treating those as bells would ring on every `cd`. xterm's
+   * parser already knows the difference, and it is the thing drawing the frame.
+   */
+  bell(id: string): void {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.bell) return
+    live.meta.bell = true
+    this.emit('bell', live.meta)
+    this.emitSessions()
   }
 
   private emitSessions(): void {

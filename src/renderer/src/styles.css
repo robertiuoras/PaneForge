@@ -469,6 +469,25 @@ html.app-blurred .elapsed::after { animation: none; }
 }
 .chip.lane:hover { filter: brightness(1.35); }
 
+/* The two alerts that are not "your turn finished". The bell is the pane's own voice,
+   so it keeps the accent; a stalled turn is a warning about the clock next to it and
+   borrows the same amber the run clock uses when it is late. */
+.chip.bell { border-color: var(--accent-dim); background: var(--accent-dim); }
+.chip.stalled {
+  color: var(--warn, #d9a441); border-color: var(--warn, #d9a441); background: transparent;
+}
+.chip.stalled .elapsed { color: inherit; }
+
+/* A live tee of this pane's output. Quiet - it is a state, not an alarm - until the
+   reader falls behind and output starts being dropped, which is the one thing about it
+   worth interrupting for. Same button-unlearning as the lane chip. */
+.chip.piping {
+  color: var(--muted); border-color: var(--line); background: transparent;
+  font: inherit; font-size: 10px; line-height: inherit; cursor: pointer;
+}
+.chip.piping:hover { color: var(--fg); border-color: var(--muted); }
+.chip.piping.behind { color: var(--danger); border-color: var(--danger); }
+
 /* The lane's own dialog: the state of the checkout, then why a merge will not run. */
 .lane-dialog-sub { margin-top: 6px; }
 .lane-dialog-warn { margin-top: 6px; color: var(--danger); }

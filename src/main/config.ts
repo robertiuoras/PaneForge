@@ -159,6 +159,11 @@ function defaults(): Config {
     autoFixUi: true,
     notifyOnIdle: true,
     soundOnIdle: true,
+    // Five minutes of a running turn printing NOTHING. Long enough that a slow test
+    // suite or a big model round trip never trips it, short enough to catch the run
+    // that died an hour ago while its clock kept ticking.
+    silenceAlertMin: 5,
+    bellAlert: true,
     clipboardShelf: true,
     clipboardOverlay: true,
     stashPeekMs: 5000,

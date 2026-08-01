@@ -57,6 +57,13 @@ export function formatElapsed(ms: number): string {
   return `${s}s`
 }
 
+/** 0 B / 74 KB / 3.2 MB - short enough to sit inside a chip on a pane header. */
+export function kb(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 interface Props {
   since: number
   /** freeze the clock (an exited session's runtime should stop counting) */

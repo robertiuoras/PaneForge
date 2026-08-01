@@ -30,6 +30,8 @@
     "test:grid": "node scripts/grid-layout-test.mjs",
     "test:buffer": "node scripts/outbuffer-test.mjs",
     "test:pump": "node scripts/pump-test.mjs",
+    "test:pipe": "node scripts/pipe-test.mjs",
+    "test:silence": "node scripts/silence-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",

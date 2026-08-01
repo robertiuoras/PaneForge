@@ -18,6 +18,10 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+// One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
+// time, and two copies of "what counts as an escape sequence" drift in exactly the way
+// nobody notices - a transcript and its tee disagreeing about the same run.
+import { stripAnsi as strip } from '../shared/ansi'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
 
 /** Stop one runaway pane filling the disk; the newest output is what matters. */
@@ -198,17 +202,3 @@ export function prune(days: number): void {
   for (const e of list()) if (e.startedAt < cutoff) remove(e.id)
 }
 
-/**
- * Terminal output is full of escape sequences and cursor moves. Searching raw
- * bytes would miss "npm install" when the CLI painted it in colour, so strip the
- * control codes for search and for the transcript viewer.
- */
-function strip(s: string): string {
-  return s
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (window titles)
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '') // CSI (colour, cursor)
-    .replace(/\x1b[()][0-9A-Za-z]/g, '')
-    .replace(/\x1b[=>c]/g, '')
-    .replace(/\r(?!\n)/g, '\n')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
-}

@@ -17,7 +17,7 @@ import {
   screen,
   shell
 } from 'electron'
-import { SessionManager } from './sessions'
+import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { listProjects } from './projects'
 import { getConfig, setConfig } from './config'
@@ -133,6 +133,7 @@ import type {
   ImproveResult,
   ImproveStatus,
   InstallOutcome,
+  PipeInfo,
   RemoteState,
   ResearchReport,
   RestoreAnswer,
@@ -466,6 +467,40 @@ manager.on('sessions', () => {
   noteDesk()
 })
 manager.on('attention', (s: Session) => raiseAttention(s))
+manager.on('stalled', (s: Session) => raiseStalled(s))
+manager.on('bell', (s: Session) => raiseBell(s))
+
+/**
+ * A running turn that has said nothing for minutes, and a terminal bell.
+ *
+ * Both go out on their own channel and neither reuses `raiseAttention`, because that
+ * function's notification says "finished or needs input" - which is the one thing
+ * these two know is NOT true. They share its manners: nothing while a game is on
+ * screen, no toast while the window is focused (the pane is on screen and says it
+ * itself), and the sound is left to the renderer.
+ */
+function raiseStalled(s: Session): void {
+  send('sessions:stalled', s)
+  if (!getConfig().notifyOnIdle || isGameActive()) return
+  if (!alive() || win!.isFocused()) return
+  win!.flashFrame(true)
+  if (!Notification.isSupported()) return
+  const mins = Math.round((Date.now() - (s.stalledSince ?? Date.now())) / 60_000)
+  new Notification({
+    title: `${s.title} has gone quiet`,
+    body: `Still running after ${mins || 1} min with nothing printed. It may be stuck or waiting.`,
+    silent: true
+  })
+    .on('click', () => focusWindow(true))
+    .show()
+}
+
+function raiseBell(s: Session): void {
+  send('sessions:bell', s)
+  if (!getConfig().bellAlert || isGameActive()) return
+  if (!alive() || win!.isFocused()) return
+  win!.flashFrame(true)
+}
 
 function raiseAttention(s: Session): void {
   // The chime is the renderer's job (Web Audio gives a far nicer sound than the
@@ -652,6 +687,48 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
 /**
+ * Tee a pane's output to a file while it runs (tmux's `pipe-pane`), or stop.
+ *
+ * The save dialog is only ever reached from a click, which is what makes it allowed
+ * here at all - nothing the app decided by itself may put a window on screen. A
+ * mirrored pane is refused rather than teed: its bytes are produced on the other
+ * machine and the file would be written on this one, half a frame behind, which is a
+ * transcript of a link rather than of a run.
+ */
+ipcMain.handle(
+  'sessions:pipe',
+  async (
+    e,
+    id: string,
+    opts: { path?: string; text?: boolean; append?: boolean } | null
+  ): Promise<PipeInfo | null> => {
+    if (remote.owns(id)) return null
+    if (!opts) return manager.pipe(id, null)
+    let path = opts.path
+    if (!path) {
+      const s = manager.list().find((x) => x.id === id)
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
+      const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+      const r = await dialog.showSaveDialog(win as BrowserWindow, {
+        title: 'Tee this pane to a file',
+        defaultPath: join(app.getPath('downloads'), `${safeName(s?.title ?? id)}-${stamp}.log`),
+        filters: [
+          { name: 'Log', extensions: ['log', 'txt'] },
+          { name: 'All files', extensions: ['*'] }
+        ]
+      })
+      if (r.canceled || !r.filePath) return null
+      path = r.filePath
+    }
+    return manager.pipe(id, { path, text: opts.text, append: opts.append })
+  }
+)
+
+/** A pane title is free text and ends up in a filename. */
+function safeName(s: string): string {
+  return s.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'pane'
+}
+/**
  * The sidebar was dragged into a new order. Only local panes can be moved here - a
  * mirrored pane belongs to the machine running it, and its place in that machine's
  * list is not this window's to change - so the ids are handed over as they come and
@@ -659,6 +736,7 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  * order (mirrors included) itself, so the drop looks the same either way.
  */
 ipcMain.on('sessions:reorder', (_e, ids: string[]) => manager.reorder(ids))
+ipcMain.on('sessions:bell', (_e, id: string) => manager.bell(id))
 ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
@@ -835,6 +913,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
+  if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
   if (patch.voice !== undefined) applyVoiceHotkey(next)
   if (patch.gameMode !== undefined) refreshGameWatch(next)
@@ -1980,6 +2059,7 @@ app.whenReady().then(() => {
   sweepOldConsoles(rememberAppPid())
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
+  setSilenceAlert(cfg.silenceAlertMin)
   // Before the window: everything that opens, floats or flashes below asks this first,
   // and a launch that happens to land mid-game should be quiet on the way in rather
   // than one poll later.

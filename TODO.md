@@ -175,17 +175,30 @@ This is where tmux is thirty years ahead and the items are small.
   being typed IN fans out, so two panes cannot echo each other round in a loop, and a
   mirrored keystroke feeds the receiving pane's draft as well as its pty, so the improve
   chip does not drift out of step with what is on its screen.
-- [ ] **D8. Idle and bell alerts** — M. tmux has `monitor-activity`, `monitor-silence`,
-  `monitor-bell` with per-window actions. We chime when a turn ends. Add: alert when a pane
-  has been **silent** for N minutes (the agent is stuck or waiting, and with eight panes you
-  will not notice), and surface the terminal bell.
+- [x] **D8. Idle and bell alerts** — M. **Done in v0.4.13.** Two alerts that are not "your
+  turn finished": a running turn that has printed nothing for N minutes (5 by default,
+  `silenceAlertMin`, `never` available), and the terminal bell, which the app had been
+  swallowing. Both mark the pane, both clear when you look at it, and both have their own
+  sound - falling for a stall, one bright note for a bell - so which one it was is
+  answerable without looking. The rule tmux's `monitor-silence` uses was deliberately NOT
+  copied: silence at an idle prompt is the normal state of a pane you are not using, and
+  alerting on it means eight alerts about nothing every N minutes. Only a pane whose turn
+  clock is still running counts. `npm run test:silence` pins the truth table.
 - [ ] **D9. A scriptable CLI** — M. `tmux send-keys` / `capture-pane` / `new-window` is why
   tmux is automatable. We have `--open <path>`. Build `paneforge <verb>` over a local socket
   to the running app: `open`, `send`, `capture`, `list`, `close`. **The point that neither
   competitor has noticed:** the agents themselves can then drive PaneForge — a Claude pane
   opening a second pane to run its own tests, and reading the output back.
-- [ ] **D10. Pipe a pane's output** — S. `pipe-pane` tees a pane live to a file or command.
-  We write transcripts at the end. Live tee lets a watcher (or another agent) follow a run.
+- [x] **D10. Pipe a pane's output** — S. **Done in v0.4.13.** "Write this pane to a file as
+  it runs" in the palette (plain-text variant beside it), a chip on the pane header
+  counting the bytes, and clicking the chip stops it. Straight through - one stream write
+  per chunk, no debounce - because the point is something ELSE following the run: a
+  `tail -f`, a log viewer, another agent. The transcript in `history.ts` already kept
+  every byte, but in the app's own profile folder, under a session id nobody typed, on a
+  1.5s timer. Text mode shares the transcript's stripper (`shared/ansi.ts`), which had to
+  learn to work a chunk at a time: an escape sequence split across two chunks used to
+  leave `1mb` in the file. A tee pointed at something slow drops output rather than
+  buffering it without limit, and says so on the chip. `npm run test:pipe`.
 - [x] **D11. Pinned Stash entries** — S. **Already done when this list was written**, which
   is worth more than the tick: the item was researched from tmux's side and never checked
   against ours. `pinRecent` in `src/main/recents.ts` holds an entry out of every cap, the
@@ -214,10 +227,10 @@ This is where tmux is thirty years ahead and the items are small.
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
    ~~**D6, D7, D15**~~ — shipped in v0.4.11: keyboard pane swap, synchronised typing, and
-   the turn clock on the pane border. D11 turned out to be built already. **D10, D3, D8**
-   are what is left of the cheap half — tee a pane's output, keyboard copy mode, and an
-   alert when a pane has been silent too long. tmux parity is still the cheapest quality
-   in this document.
+   the turn clock on the pane border. D11 turned out to be built already.
+   ~~**D10, D8, D3**~~ — shipped in v0.4.13: tee a pane's output to a file, the silence
+   and bell alerts, and keyboard copy mode. That is the whole of the cheap half; what is
+   left under D is the architectural end of it (D1 detach, D9 CLI, D12 hooks).
 2. **A1, A2, A3, A4** — diff + commit + PR. The one gap a user switching from T3 Code would
    name first, and the README already admits it.
 3. **C3, C5, C8, C1** — permission modes, project scripts, resource readout, rebindable keys.

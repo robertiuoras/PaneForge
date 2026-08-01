@@ -29,6 +29,7 @@ const api: Api = {
   renameSession: (id, title) => ipcRenderer.invoke('sessions:rename', id, title),
   killSession: (id) => ipcRenderer.invoke('sessions:kill', id),
   getBuffer: (id) => ipcRenderer.invoke('sessions:buffer', id),
+  pipePane: (id, opts) => ipcRenderer.invoke('sessions:pipe', id, opts),
   reorderSessions: (ids) => ipcRenderer.send('sessions:reorder', ids),
   clearAttention: (id) => ipcRenderer.send('sessions:attention-clear', id),
   write: (id, data) => ipcRenderer.send('pty:write', id, data),
@@ -182,6 +183,17 @@ const api: Api = {
     ipcRenderer.on('sessions:attention', h)
     return () => ipcRenderer.off('sessions:attention', h)
   },
+  onStalled: (cb) => {
+    const h = (_e: unknown, s: Session) => cb(s)
+    ipcRenderer.on('sessions:stalled', h)
+    return () => ipcRenderer.off('sessions:stalled', h)
+  },
+  onBell: (cb) => {
+    const h = (_e: unknown, s: Session) => cb(s)
+    ipcRenderer.on('sessions:bell', h)
+    return () => ipcRenderer.off('sessions:bell', h)
+  },
+  paneBell: (id) => ipcRenderer.send('sessions:bell', id),
   onRemote: (cb) => {
     const h = (_e: unknown, state: RemoteState) => cb(state)
     ipcRenderer.on('remote:changed', h)

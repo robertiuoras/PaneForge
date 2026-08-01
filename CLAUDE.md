@@ -407,6 +407,31 @@ where every click died on its own deadline and reported "produced no answer" - w
 reads as a broken feature rather than as a wrong constant. The dialog counts the seconds
 out loud so a slow plan looks slow rather than stuck.
 
+`npm run test:pipe` is the live tee of a pane's output, and the half of it worth pinning
+is not the file being written - it is the chunk boundary. The pty hands over whatever
+pieces it feels like, and an escape sequence does not respect them: `\x1b[3` in one chunk
+and `1mb` in the next is one colour change, and stripping the halves separately leaves
+`1mb` sitting in the file as text. `AnsiStream` in `shared/ansi.ts` holds an unfinished
+sequence - and a trailing `\r`, which is either a line ending or a cursor return
+depending on a byte that has not arrived - until the rest of it comes. The test asserts
+the streamed result is byte-identical to stripping the whole input at once, that raw
+mode changes nothing at all, that stopping flushes what was being held, and that a tee
+pointed at a file that cannot be opened costs the pane nothing: the stream's `error` is
+handled, or an unhandled one takes the whole main process down with it. That stripper is
+the transcript's too - one implementation, since a transcript and its tee disagreeing
+about the same run is a bug nobody would ever look for.
+
+`npm run test:silence` is the alert that says a running turn has gone quiet, and it
+exists because a rule about MINUTES cannot be checked by hand - nobody re-tests a five
+minute timer, so every mistake it can make ships, and every mistake it can make is the
+app crying wolf. The decision is a pure function in `shared/alerts.ts` for that reason:
+the sweep it runs inside owns a pty, and a test that has to spawn `claude` to find out
+whether a number is compared correctly is a test nobody runs. Its load-bearing assertion
+is a refusal: a pane with no turn running is NOT stalled however long it has been quiet.
+That is tmux's `monitor-silence` rule deliberately not copied - an idle pane is silent
+all day, and eight of them would raise eight alerts about nothing every N minutes, which
+is how an alert gets switched off for good.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
