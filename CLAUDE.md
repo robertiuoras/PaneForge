@@ -465,6 +465,24 @@ back from `/applications/<id>/rpc` (public, no token, `discord:appName` in main
 because the packaged renderer is a `file://` origin and Discord answers CORS for a
 real one only) and warns whenever the header is not PaneForge.
 
+Everything BELOW that header is ours, and Settings → Discord owns it: two templates
+(`{running}`, `{total}`, `{idle}`, `{sessions}`, `{projects}`, `{project}`) plus
+switches for the project line, the elapsed clock, and whether an idle desk says
+anything at all. It lives in `discordStyle`, and every template defaults to the EMPTY
+STRING rather than to its wording - the built-in text lives in `discordRpc.ts` as
+`DEFAULT_DETAILS`/`DEFAULT_STATE`/`DEFAULT_IDLE_DETAILS`, shown as the field's
+placeholder. That is what lets a config nobody has touched keep sending the exact
+bytes it sent before the tab existed (the test asserts it byte for byte) and lets a
+later reword reach people who never opened the tab. `buildActivity` takes the style
+as a second argument with a default, so the pure function stays callable from the
+preview in Settings - the panel is the real activity, not a mock of one. Two rules
+it enforces that a template can otherwise break: a line still gives up trailing
+project names for a "+2 more" before Discord's 128-char cut, and templates that
+render to nothing send a CLEAR rather than a blank badge on the profile. Restyling
+does not drop the pipe (that would be a reconnect per keystroke) but does clear the
+last-sent memo, or an edit landing on the same numbers would be read as "no change"
+and never leave the machine.
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.

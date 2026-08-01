@@ -2,8 +2,11 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { AgentInfo, AgentSpec } from './agents'
+import type { DiscordStyle } from './discordRpc'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
+
+export type { DiscordStyle }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -751,6 +754,12 @@ export interface Config {
    * from here is impossible, the endpoint demands a captcha.
    */
   discordClientId: string
+  /**
+   * What the presence actually says: the two lines as templates, and switches for the
+   * parts that are not text. Empty templates mean the built-in wording, so this is
+   * safe to leave alone forever and an upgrade changes nothing on anyone's profile.
+   */
+  discordStyle: DiscordStyle
   /**
    * Keep the last things you copied on a shelf in the corner, so a screenshot or a
    * block of text is one click from the focused pane. Off stops the clipboard being

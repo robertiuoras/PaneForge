@@ -15,11 +15,13 @@
 import net from 'node:net'
 import { join } from 'node:path'
 import {
+  DEFAULT_DISCORD_STYLE,
   FrameStream,
   OP_FRAME,
   OP_HANDSHAKE,
   buildActivity,
   encodeFrame,
+  type DiscordStyle,
   type PresenceCounts
 } from '../shared/discordRpc'
 
@@ -33,6 +35,8 @@ function defaultPipePaths(): string[] {
 export interface PresenceOptions {
   clientId: string
   enabled: boolean
+  /** what the lines say and which parts show; omitted means the built-in wording */
+  style?: DiscordStyle
   /** test seams - the real app never passes these */
   pipePaths?: string[]
   retryMs?: number
@@ -42,6 +46,7 @@ export interface PresenceOptions {
 export class DiscordPresence {
   private clientId: string
   private enabled: boolean
+  private style: DiscordStyle
   private readonly pipePaths?: string[]
   private readonly retryMs: number
   private readonly throttleMs: number
@@ -59,16 +64,25 @@ export class DiscordPresence {
   constructor(opts: PresenceOptions) {
     this.clientId = opts.clientId
     this.enabled = opts.enabled
+    this.style = opts.style ?? DEFAULT_DISCORD_STYLE
     this.pipePaths = opts.pipePaths
     this.retryMs = opts.retryMs ?? 60_000
     this.throttleMs = opts.throttleMs ?? 15_000
     if (this.enabled) this.connect()
   }
 
-  /** The settings switch and the client id field both land here. */
-  configure(enabled: boolean, clientId: string): void {
+  /** Every Discord setting lands here: the switch, the client id, the wording. */
+  configure(enabled: boolean, clientId: string, style?: DiscordStyle): void {
     const idChanged = clientId !== this.clientId
     this.clientId = clientId
+    if (style) {
+      // Rewording changes what the next frame says, not who is connected - dropping the
+      // pipe for it would cost a reconnect per keystroke in the template field. The
+      // last-sent memo has to go though, or an edit that lands on the same numbers is
+      // read as "nothing changed" and never reaches the profile.
+      if (JSON.stringify(style) !== JSON.stringify(this.style)) this.lastSentJson = ''
+      this.style = style
+    }
     if (!enabled || idChanged) this.teardown(enabled)
     this.enabled = enabled
     if (enabled && !this.sock && !this.retryTimer) this.connect()
@@ -181,7 +195,7 @@ export class DiscordPresence {
 
   private sendNow(): void {
     if (!this.ready || !this.sock || !this.counts) return
-    const activity = buildActivity(this.counts)
+    const activity = buildActivity(this.counts, this.style)
     const json = JSON.stringify(activity)
     // Renames and reorders fire the sessions event without changing the numbers;
     // an identical frame is rate-limit budget spent on nothing.

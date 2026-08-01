@@ -1352,6 +1352,24 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .tag.free { background: #35d07f26; color: var(--ok); }
 .hint.warn { color: var(--warn); }
 
+/* The Discord tab's preview. Deliberately shaped like the activity block on a Discord
+   profile - name in white above two smaller lines beside a square - because the whole
+   job of the panel is to answer "what will people actually see" without opening
+   Discord to find out. */
+.discord-card { display: flex; gap: 10px; align-items: center; margin-top: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; }
+.dc-art { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 8px; background: linear-gradient(140deg, #5865f2, #3b45b5); color: #fff; font-weight: 700; font-size: 18px; }
+.dc-lines { min-width: 0; }
+.dc-name { color: var(--text); font-size: 13px; font-weight: 600; }
+.dc-line { color: #c9c9d6; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.dc-line.dim { color: var(--muted); }
+
+/* Two columns so the token and its meaning line up down the list; the token itself is
+   what gets copied, so it keeps the monospace it is typed in. */
+.token-legend { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 6px 0 8px; font-size: 11.5px; }
+.token-legend > div { display: contents; }
+.token-legend code { color: var(--accent); font: 11.5px ui-monospace, Consolas, monospace; }
+.token-legend span { color: var(--muted); }
+
 .install-console { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; overflow: hidden; }
 .ic-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .ic-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }

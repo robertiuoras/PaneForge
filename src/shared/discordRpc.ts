@@ -60,35 +60,111 @@ export interface PresenceCounts {
 /** Discord rejects details/state over 128 chars, and a name list can be any length. */
 const TEXT_MAX = 128
 
-function capNames(names: string[]): string {
-  let text = `on ${names.join(', ')}`
+/**
+ * What the two lines say and which parts show at all.
+ *
+ * Every string is a template and every empty string means "the built-in wording",
+ * so a config that has never been touched produces the exact bytes it always did
+ * and the settings fields can show the defaults as placeholders rather than as
+ * saved values somebody now has to maintain.
+ */
+export interface DiscordStyle {
+  /** line one while a turn is running; '' = `{running}/{total} {sessions} running` */
+  details: string
+  /** line two while a turn is running; '' = `on {projects}` */
+  state: string
+  /** line one while nothing is running; '' = `{total} {sessions} idle` */
+  idleDetails: string
+  /** include the project-names line at all */
+  projects: boolean
+  /** show Discord's elapsed clock under the lines */
+  elapsed: boolean
+  /** say anything at all while no turn is running */
+  whileIdle: boolean
+}
+
+export const DEFAULT_DETAILS = '{running}/{total} {sessions} running'
+export const DEFAULT_STATE = 'on {projects}'
+export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
+
+export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
+  details: '',
+  state: '',
+  idleDetails: '',
+  projects: true,
+  elapsed: true,
+  whileIdle: true
+}
+
+/** The legend under the template fields, and the whole of what a template may say. */
+export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
+  ['{running}', 'panes with a turn running right now'],
+  ['{total}', 'panes on the desk'],
+  ['{idle}', 'panes not running anything'],
+  ['{sessions}', '"session" or "sessions", matching the total'],
+  ['{projects}', 'the project folders being worked in'],
+  ['{project}', 'the first of those folders']
+]
+
+function fill(tpl: string, c: PresenceCounts, names: string[], dropped: number): string {
+  const projects = names.join(', ') + (dropped ? ` +${dropped} more` : '')
+  return tpl
+    .replace(/\{running\}/g, String(c.running))
+    .replace(/\{total\}/g, String(c.total))
+    .replace(/\{idle\}/g, String(Math.max(0, c.total - c.running)))
+    .replace(/\{sessions\}/g, c.total === 1 ? 'session' : 'sessions')
+    .replace(/\{projects\}/g, projects)
+    .replace(/\{project\}/g, names[0] ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * A line, short enough for Discord to accept it. A name list is the only part that
+ * can be any length, so it gives ground first - dropping trailing projects for a
+ * "+2 more" beats truncating mid-word, and only a template with no names left in it
+ * falls back to the ellipsis.
+ */
+export function renderLine(tpl: string, c: PresenceCounts): string {
+  let names = [...c.names]
   let dropped = 0
-  while (text.length > TEXT_MAX && names.length > 1) {
+  let out = fill(tpl, c, names, dropped)
+  while (out.length > TEXT_MAX && names.length > 1) {
     names = names.slice(0, -1)
     dropped++
-    text = `on ${names.join(', ')} +${dropped} more`
+    out = fill(tpl, c, names, dropped)
   }
-  return text.length > TEXT_MAX ? text.slice(0, TEXT_MAX - 1) + '…' : text
+  return out.length > TEXT_MAX ? out.slice(0, TEXT_MAX - 1) + '…' : out
 }
 
 /**
  * The presence itself. An empty desk returns null - a profile advertising
  * "0/0 sessions" all day is worse than no presence at all - and the caller sends
- * that as a clear.
+ * that as a clear. So does an idle desk with the idle line switched off, and a
+ * pair of templates that render to nothing at all: an activity with no text is a
+ * blank badge on the profile, which reads as a bug rather than as a setting.
  */
-export function buildActivity(c: PresenceCounts): Record<string, unknown> | null {
+export function buildActivity(
+  c: PresenceCounts,
+  style: DiscordStyle = DEFAULT_DISCORD_STYLE
+): Record<string, unknown> | null {
   if (c.total <= 0) return null
-  const noun = c.total === 1 ? 'session' : 'sessions'
-  if (c.running > 0) {
-    const activity: Record<string, unknown> = {
-      details: `${c.running}/${c.total} ${noun} running`,
-      timestamps: { start: c.oldestRunSince ?? c.appStart }
-    }
-    if (c.names.length) activity.state = capNames([...c.names])
-    return activity
+  const running = c.running > 0
+  if (!running && !style.whileIdle) return null
+
+  const details = renderLine(
+    running ? style.details || DEFAULT_DETAILS : style.idleDetails || DEFAULT_IDLE_DETAILS,
+    c
+  )
+  const wantsState = running && style.projects && c.names.length > 0
+  const state = wantsState ? renderLine(style.state || DEFAULT_STATE, c) : ''
+  if (!details && !state) return null
+
+  const activity: Record<string, unknown> = {}
+  if (details) activity.details = details
+  if (state) activity.state = state
+  if (style.elapsed) {
+    activity.timestamps = { start: running ? (c.oldestRunSince ?? c.appStart) : c.appStart }
   }
-  return {
-    details: `${c.total} ${noun} idle`,
-    timestamps: { start: c.appStart }
-  }
+  return activity
 }

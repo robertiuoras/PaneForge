@@ -40,7 +40,8 @@ buildSync({
   outfile: outMain
 })
 const req = createRequire(import.meta.url)
-const { FrameStream, encodeFrame, buildActivity, OP_HANDSHAKE, OP_FRAME } = req(outShared)
+const { FrameStream, encodeFrame, buildActivity, DEFAULT_DISCORD_STYLE, OP_HANDSHAKE, OP_FRAME } =
+  req(outShared)
 const { DiscordPresence } = req(outMain)
 
 let failed = 0
@@ -94,6 +95,45 @@ function check(name, ok, extra = '') {
   })
   check('activity: name list capped under Discord\'s 128', many.state.length <= 128, String(many.state.length))
   check('activity: capped list says how many were dropped', / \+\d+ more$/.test(many.state), many.state)
+}
+
+// ---------- the Discord tab's knobs ----------
+{
+  const base = { appStart: 1000 }
+  const desk = { running: 2, total: 5, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base }
+  const style = (over) => ({ ...DEFAULT_DISCORD_STYLE, ...over })
+
+  // The whole point of empty-string defaults: an untouched config must send the same
+  // bytes the version before the tab existed sent.
+  const same = JSON.stringify(buildActivity(desk)) === JSON.stringify(buildActivity(desk, style({})))
+  check('style: an untouched style is byte-identical to no style at all', same)
+
+  const custom = buildActivity(desk, style({ details: 'forging on {project}', state: '{running} of {total} busy' }))
+  check('style: custom first line', custom.details === 'forging on PaneForge', custom.details)
+  check('style: custom second line', custom.state === '2 of 5 busy', custom.state)
+
+  const tokens = buildActivity(desk, style({ details: '{idle} {sessions} waiting, {projects}' }))
+  check('style: {idle} is total minus running', tokens.details === '3 sessions waiting, PaneForge, Toolstash', tokens.details)
+
+  const noProjects = buildActivity(desk, style({ projects: false }))
+  check('style: projects off drops the second line', noProjects.state === undefined && !!noProjects.details)
+
+  const noClock = buildActivity(desk, style({ elapsed: false }))
+  check('style: elapsed off sends no timestamps', noClock.timestamps === undefined)
+
+  const quiet = { running: 0, total: 3, names: [], ...base }
+  check('style: idle off is a clear, not a line', buildActivity(quiet, style({ whileIdle: false })) === null)
+  check('style: a running desk is unaffected by the idle switch', buildActivity(desk, style({ whileIdle: false })) !== null)
+  const idleText = buildActivity(quiet, style({ idleDetails: 'desk of {total} asleep' }))
+  check('style: custom idle line', idleText.details === 'desk of 3 asleep', idleText.details)
+
+  // A template that renders to nothing must not become a blank badge on the profile.
+  check('style: an all-blank presence is a clear', buildActivity(desk, style({ details: '   ', projects: false })) === null)
+
+  const longNames = { running: 9, total: 9, names: [...Array(30)].map((_, i) => `some-quite-long-project-name-${i}`), ...base }
+  const longLine = buildActivity(longNames, style({ state: 'working on {projects} right now' }))
+  check('style: a custom line is capped too', longLine.state.length <= 128, String(longLine.state.length))
+  check('style: capping keeps the tail of the template', / right now$/.test(longLine.state), longLine.state)
 }
 
 // ---------- the client against a fake Discord on a real pipe ----------
