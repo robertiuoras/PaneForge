@@ -49,11 +49,36 @@ export function reapScript(pids: number[], delayMs: number): string {
   return [
     `Start-Sleep -Milliseconds ${Math.max(0, Math.round(delayMs))}`,
     `$own = @(${pids.join(',')})`,
+    // The sweep itself now runs inside a `conhost --headless` we spawned (see
+    // spawnDetachedNoWindow), and on the way out that host matches every kill
+    // condition: our pid as parent, parent gone, --headless on the command line.
+    // Killing it drops this script's own console mid-sweep, so the host this
+    // PowerShell is sitting in - its direct parent - is exempt by pid.
+    '$me = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue).ParentProcessId',
     '$live = @((Get-Process -ErrorAction SilentlyContinue).Id)',
     "Get-CimInstance Win32_Process -Filter \"Name='conhost.exe'\" -ErrorAction SilentlyContinue |",
-    '  Where-Object { $own -contains $_.ParentProcessId -and $live -notcontains $_.ParentProcessId -and $_.CommandLine -like "*--headless*" } |',
+    '  Where-Object { $_.ProcessId -ne $me -and $own -contains $_.ParentProcessId -and $live -notcontains $_.ParentProcessId -and $_.CommandLine -like "*--headless*" } |',
     '  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
   ].join('\n')
+}
+
+/**
+ * A detached console child with no window at all.
+ *
+ * `windowsHide: true` is not enough once Windows Terminal is the default terminal:
+ * Windows 11 delegates a detached console app to a visible Terminal window regardless
+ * of CREATE_NO_WINDOW. Measured 2026-08-01 on this machine - the sweep below popped a
+ * "Terminal" window on every app open, and an identical spawn wrapped in
+ * `conhost --headless` popped nothing. conhost hosts the child with no window by
+ * construction; it is the same mechanism the panes' own ptys rely on.
+ */
+export function spawnDetachedNoWindow(bin: string, args: string[]): void {
+  const win = process.platform === 'win32'
+  spawn(win ? 'conhost.exe' : bin, win ? ['--headless', bin, ...args] : args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  }).unref()
 }
 
 function file(): string {
@@ -91,11 +116,7 @@ function reap(pids: number[], delayMs: number): void {
     // -EncodedCommand rather than -Command: the script contains quotes and braces, and
     // Windows argument escaping through a spawn() array is where that goes wrong.
     const encoded = Buffer.from(reapScript(pids, delayMs), 'utf16le').toString('base64')
-    spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref()
+    spawnDetachedNoWindow('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded])
   } catch {
     /* no PowerShell on PATH - the leak is a tidy-up, not a correctness problem */
   }

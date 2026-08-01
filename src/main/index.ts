@@ -63,7 +63,12 @@ import {
   titleSuffix
 } from './profile'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
-import { rememberAppPid, sweepOldConsoles, sweepOwnConsolesOnExit } from './consoles'
+import {
+  rememberAppPid,
+  spawnDetachedNoWindow,
+  sweepOldConsoles,
+  sweepOwnConsolesOnExit
+} from './consoles'
 import { lastPrompt, resumable, resumeIdFor } from './transcripts'
 import {
   clearDesk,
@@ -987,7 +992,9 @@ ipcMain.handle('shell:editor', (_e, path: string) => {
     const exe = which(bin)
     if (exe === bin) continue
     try {
-      spawn(exe, [path], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      // The code/cursor launcher is a console app: raw detached spawn = a visible
+      // Terminal window on Win11 (see spawnDetachedNoWindow).
+      spawnDetachedNoWindow(exe, [path])
       return null
     } catch {
       /* try the next one */
@@ -1405,15 +1412,11 @@ ipcMain.on('app:relaunchAsAdmin', () => {
       ? ` -ArgumentList ${args.map((a) => `'${a.replace(/'/g, "''")}'`).join(',')}`
       : ''
     try {
-      spawn(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          `Start-Process -Verb RunAs -FilePath '${process.execPath.replace(/'/g, "''")}'${list}`
-        ],
-        { detached: true, stdio: 'ignore', windowsHide: true }
-      ).unref()
+      spawnDetachedNoWindow('powershell', [
+        '-NoProfile',
+        '-Command',
+        `Start-Process -Verb RunAs -FilePath '${process.execPath.replace(/'/g, "''")}'${list}`
+      ])
     } catch {
       return // user declined UAC - stay as we are
     }

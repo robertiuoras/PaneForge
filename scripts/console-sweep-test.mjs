@@ -46,6 +46,11 @@ assert.equal(rolled.at(-2), 100)
 const script = reapScript([11, 22], 900)
 assert.match(script, /Start-Sleep -Milliseconds 900/)
 assert.match(script, /\$own = @\(11,22\)/)
+// The sweep runs inside a conhost --headless WE spawned (the windowless wrapper), and
+// on exit that host matches all three kill conditions. Killing it drops the sweep's own
+// console mid-run, so the script must exempt its own direct parent by pid.
+assert.match(script, /ProcessId=\$PID/)
+assert.match(script, /\$_\.ProcessId -ne \$me/)
 assert.match(script, /Name='conhost\.exe'/)
 assert.match(script, /\$own -contains \$_\.ParentProcessId/)
 assert.match(script, /\$live -notcontains \$_\.ParentProcessId/)
