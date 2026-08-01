@@ -147,17 +147,26 @@ function emit(next: GameState): void {
       /* a listener that throws must not stop the others or wedge the poller */
     }
   }
-  // Everything that was waiting for the screen goes now, and is cleared first so a
-  // callback that re-queues itself does not run twice.
-  if (!state.active && deferred.size) {
-    const due = [...deferred.values()]
-    deferred.clear()
-    for (const fn of due) {
-      try {
-        fn()
-      } catch {
-        /* one failed deferred action must not swallow the rest */
-      }
+  // Everything that was waiting for the screen goes now.
+  if (!state.active) releaseDeferred()
+}
+
+/**
+ * Run and clear everything that was waiting for the screen.
+ *
+ * Cleared before anything runs, so a callback that re-queues itself does not run twice.
+ * Separate from `emit` because the queue can come due without the state changing: a game
+ * that is running but is not the window you are looking at still holds nothing back.
+ */
+function releaseDeferred(): void {
+  if (!deferred.size) return
+  const due = [...deferred.values()]
+  deferred.clear()
+  for (const fn of due) {
+    try {
+      fn()
+    } catch {
+      /* one failed deferred action must not swallow the rest */
     }
   }
 }
@@ -215,6 +224,94 @@ function watchlist(): string[] {
 }
 
 /**
+ * The image name of whatever owns the foreground window right now, or null.
+ *
+ * This is the answer `weAreOnScreen()` cannot give during a launch, and the gap between
+ * the two is the whole "PaneForge did not come back after the update" bug. The focus
+ * probe asks whether OUR window is visible and focused - but at reveal time the window
+ * has deliberately never been shown, so it is false by construction. A game left running
+ * in the background therefore held the reveal back, the reveal was the only thing that
+ * could have made the probe true, and nothing but the game exiting could break the ring.
+ * Measured: a restart with cs2.exe idling behind the desktop produced a running app with
+ * no window and no taskbar button - indistinguishable from an update that never restarted.
+ *
+ * Asking Windows costs a PowerShell that compiles a P/Invoke, which is why the 15s poller
+ * still uses `tasklist` and this is reserved for the moments something is actually being
+ * held back. Anything that goes wrong answers null, and null never holds a window back.
+ */
+function foregroundProcess(): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null)
+    let out = ''
+    let done = false
+    const finish = (v: string | null): void => {
+      if (done) return
+      done = true
+      resolve(v)
+    }
+    const script = [
+      "Add-Type -Namespace PF -Name Fg -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern int GetWindowThreadProcessId(IntPtr h, out int p);'",
+      '$h=[PF.Fg]::GetForegroundWindow()',
+      '$p=0',
+      '[void][PF.Fg]::GetWindowThreadProcessId($h,[ref]$p)',
+      '$pr=Get-Process -Id $p -ErrorAction SilentlyContinue',
+      'if ($pr) { Write-Output "$($pr.ProcessName).exe" }'
+    ].join('; ')
+    try {
+      const p = spawn(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { windowsHide: true }
+      )
+      const kill = setTimeout(() => {
+        try {
+          p.kill()
+        } catch {
+          /* already gone */
+        }
+        finish(null)
+      }, 4000)
+      p.stdout.on('data', (d) => (out += d))
+      p.on('error', () => {
+        clearTimeout(kill)
+        finish(null)
+      })
+      p.on('close', () => {
+        clearTimeout(kill)
+        const name = out.trim().split('\n')[0]?.trim().toLowerCase()
+        finish(name || null)
+      })
+    } catch {
+      finish(null)
+    }
+  })
+}
+
+/**
+ * Is a game the window on screen right now - not merely a process that exists?
+ *
+ * The one question worth a P/Invoke, asked only where the answer decides whether the app
+ * is allowed to have a window at all. False on anything unexpected: a check that failed
+ * must never be the reason PaneForge stays invisible.
+ */
+export async function gameIsForeground(): Promise<boolean> {
+  const front = await (frontProbe ?? foregroundProcess)()
+  if (!front) return false
+  return watchlist().includes(front.toLowerCase())
+}
+
+/**
+ * Swap the foreground query out. Only the headless test uses this: it stubs
+ * `child_process` wholesale for `tasklist`, so without a seam the PowerShell above would
+ * be handed a process listing and "what is on screen" would be whatever the CSV happened
+ * to start with.
+ */
+let frontProbe: (() => Promise<string | null>) | null = null
+export function setForegroundProbe(fn: (() => Promise<string | null>) | null): void {
+  frontProbe = fn
+}
+
+/**
  * One detection pass. Exported so the moments that matter most - about to restart for
  * an update, about to open a window - can ask right now instead of trusting a reading
  * that could be 15 seconds old.
@@ -241,6 +338,14 @@ export async function checkNow(): Promise<GameState> {
   const running = await runningProcesses()
   const hit = watchlist().find((n) => running.has(n)) ?? null
   emit({ active: !!hit, game: hit, manual: false })
+  // Work already waiting is judged against the SCREEN rather than the process list, and
+  // only while there is work waiting - which is what keeps the P/Invoke off the ordinary
+  // poll. Without it the queue drained only when the game process exited: alt-tabbing out
+  // of a game you had left running was not enough, so an update restart and a window
+  // reveal could sit there for hours with the desktop plainly in view. The state itself
+  // is left alone on purpose - a game IS still running, and the next interruption can go
+  // on being held until the user's own focus settles it.
+  if (hit && deferred.size && !(await gameIsForeground())) releaseDeferred()
   return state
 }
 

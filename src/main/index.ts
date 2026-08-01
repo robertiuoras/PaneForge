@@ -47,6 +47,7 @@ import {
   deferredCount,
   gameState,
   isGameActive,
+  gameIsForeground,
   onGameState,
   setFocusProbe,
   refreshGameWatch,
@@ -126,7 +127,8 @@ import {
   initUpdater,
   installUpdate,
   setAutoCheck,
-  updateLog
+  updateLog,
+  bootMs
 } from './updater'
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
@@ -281,7 +283,7 @@ function createWindow(): void {
     // A person double-clicked the app. That is not an interruption and is never held
     // back, game or no game.
     if (mode === 'normal') {
-      updateLog('window', 'shown (normal launch)')
+      updateLog('window', 'shown (normal launch)', `+${bootMs()}ms`)
       return win?.show()
     }
     const plan = revealPlan(mode)
@@ -294,7 +296,7 @@ function createWindow(): void {
         updateLog('window', 'held off screen (minimized, darwin)')
         return
       }
-      updateLog('window', `shown (${mode})`)
+      updateLog('window', `shown (${mode})`, `+${bootMs()}ms`)
       // showInactive draws the window without pulling focus off the app you are typing
       // in. minimize() after it, rather than instead of it, because minimizing a window
       // that has never been shown leaves it in a state Windows will not restore from
@@ -317,9 +319,25 @@ function createWindow(): void {
     // anyway and a deferred one says so in the log.
     void checkGameNow()
       .catch(() => undefined)
-      .then(() => {
+      .then(async () => {
+        // The launch is the one moment the focus probe above is blind by construction: it
+        // answers "is our window visible and focused", and the window being asked about is
+        // the one that has not been shown yet. So a game merely left running held the
+        // reveal back, and the reveal was the only thing that could ever have made the
+        // probe true. Measured on this machine: a restart with cs2.exe idling in the
+        // background produced a live app with no window and no taskbar button, which is
+        // exactly what an update that failed to restart looks like. Ask Windows what is
+        // actually on the screen before choosing to have no window at all.
+        if (isGameActive() && !(await gameIsForeground())) {
+          updateLog('window', `game not on screen (${gameState().game ?? 'unknown'})`, `+${bootMs()}ms`)
+          return reveal()
+        }
         if (!whenClear('window-reveal', reveal)) {
-          updateLog('window', `held back until the game exits (${gameState().game ?? 'unknown'})`)
+          updateLog(
+            'window',
+            `held back until the game exits (${gameState().game ?? 'unknown'})`,
+            `+${bootMs()}ms`
+          )
         }
       })
   })
@@ -2118,7 +2136,7 @@ app.whenReady().then(() => {
   const cfg = getConfig()
   // First line of this process's story: the one that was missing when an update came
   // back and nobody could tell whether it had.
-  updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`)
+  updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`, `+${bootMs()}ms`)
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())

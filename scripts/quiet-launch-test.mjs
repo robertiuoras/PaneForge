@@ -191,30 +191,53 @@ let ev
 try {
   const main = await page((u) => /index\.html/.test(u) && !/shelf/.test(u))
   ev = await evaluator(main)
-  // The reveal happens on ready-to-show, which is after the renderer exists.
-  await sleep(2500)
-
-  const log = existsSync(profileLog()) ? readFileSync(profileLog(), 'utf8') : ''
-  if (process.platform === 'darwin') {
+  // The reveal happens on ready-to-show, which is after the renderer exists - and it is
+  // not instant: with a game running it first asks Windows what is actually on screen,
+  // which costs a PowerShell (~600ms measured). A fixed sleep here read the log before
+  // the decision had been written and then reported the MISSING line as a failure, which
+  // is the same false alarm whichever way the decision went. Wait for the line instead.
+  let log = ''
+  for (let i = 0; i < 40; i++) {
+    log = existsSync(profileLog()) ? readFileSync(profileLog(), 'utf8') : ''
+    if (/window (shown|held)/.test(log)) break
+    await sleep(250)
+  }
+  if (!/window (shown|held)/.test(log))
+    check('the launch reached a decision about its window', false, log.trim().split('\n').pop() ?? '')
+  // A game genuinely owning the screen makes this test unrunnable rather than failing:
+  // every assertion below is about a window appearing, and while a game is on screen the
+  // app is supposed to have no window at all (see gameMode.ts). Reported as a skip, out
+  // loud, because a check that cannot run must never look like a check that passed - and
+  // because the alternative is this file crying wolf every time there is a game up, which
+  // is how a real regression here would get waved through.
+  const heldByGame = /held back until the game exits/.test(log)
+  if (heldByGame) {
+    console.log('SKIP  a game owns the screen, so the launch correctly showed no window.')
+    console.log('      Close the game and re-run to check the quiet-launch behaviour.')
+  } else if (process.platform === 'darwin') {
     check('mac: the launch says it kept the window off screen', /held off screen/.test(log), log.trim().split('\n').pop() ?? '')
     check('mac: nothing was ever shown', !/window shown/.test(log))
   } else {
     check('windows: the window was shown and minimized', /window shown \(minimized\)/.test(log))
   }
+  // True either way - held back or merely minimized - so it is worth asserting even when
+  // the game made the rest unrunnable.
   check('the window is not on screen', (await ev.run('window.api.appVisibleNow()')) === false)
 
   // ... and it can still be got at. This is the half that stops "never shown" being
   // satisfied by a copy with no way back: the same call the Stash's button makes.
-  const shelf = await page((u) => /shelf/.test(u))
-  const shelfEv = await evaluator(shelf)
-  await shelfEv.run('window.shelf.focusApp()')
-  shelfEv.close()
-  let visible = false
-  for (let i = 0; i < 20 && !visible; i++) {
-    await sleep(250)
-    visible = (await ev.run('window.api.appVisibleNow()')) === true
+  if (!heldByGame) {
+    const shelf = await page((u) => /shelf/.test(u))
+    const shelfEv = await evaluator(shelf)
+    await shelfEv.run('window.shelf.focusApp()')
+    shelfEv.close()
+    let visible = false
+    for (let i = 0; i < 20 && !visible; i++) {
+      await sleep(250)
+      visible = (await ev.run('window.api.appVisibleNow()')) === true
+    }
+    check('asking for the app puts the window on screen', visible)
   }
-  check('asking for the app puts the window on screen', visible)
 } finally {
   ev?.close()
   closeTestApps(root)

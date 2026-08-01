@@ -61,6 +61,19 @@ export function updateLog(...parts: unknown[]): void {
   log(...parts)
 }
 
+/**
+ * Milliseconds since this process started, for the boot lines.
+ *
+ * "It came back too slow" had no number anywhere: the log said when the installer was
+ * handed over and when a window appeared, and the whole gap in between - process spawn,
+ * main boot, renderer first paint - was one silence you could only guess at. Every boot
+ * milestone carries this now, so a slow launch reads as a rising figure instead of as an
+ * app that did not restart.
+ */
+export function bootMs(): number {
+  return Math.round(process.uptime() * 1000)
+}
+
 function log(...parts: unknown[]): void {
   try {
     const file = LOG()

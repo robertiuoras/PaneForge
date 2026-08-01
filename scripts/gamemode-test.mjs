@@ -166,6 +166,45 @@ const cfg=(p)=>({gameMode:{enabled:true,processes:[],manual:false,...p}})
   await g.checkNow()
   ok(g.isGameActive()===true,'and so does no probe at all')
 
+  // --- held work is judged against the SCREEN, not the process list --------
+  // The "PaneForge did not come back after the update" bug, which is the focus-probe
+  // hole one layer down. The probe answers "is our window visible and focused", and at
+  // launch the window it is being asked about is the one that has not been shown yet -
+  // false by construction. So a game merely LEFT RUNNING held the reveal back, and the
+  // reveal was the only thing that could ever have made the probe true: a live app with
+  // no window and no taskbar button, indistinguishable from an update that never
+  // restarted. Alt-tabbing out of the game has to be enough; waiting for it to exit is
+  // not, because on this machine cs2.exe stays up for hours.
+  g.refreshGameWatch(cfg())
+  g.setFocusProbe(()=>false)
+  cp.__set(['explorer.exe','cs2.exe'])
+  let front='cs2.exe'
+  g.setForegroundProbe(async()=>front)
+  await g.checkNow()
+  let waiting=0
+  g.whenClear('window-reveal',()=>waiting++)
+  await g.checkNow()
+  ok(g.isGameActive()===true,'a game actually on screen still holds the window back')
+  ok(waiting===0,'and the window really does not appear')
+  front='explorer.exe'
+  await g.checkNow()
+  ok(waiting===1,'alt-tabbing out of a still-running game releases the held window')
+  ok(g.isGameActive()===true,'while the game itself is still reported as running')
+  ok(g.deferredCount()===0,'and the queue is empty')
+  // Cheapness is the reason the ordinary poll still uses tasklist: the screen is only
+  // ever queried while something is actually waiting on it.
+  const quiet=[]
+  g.setForegroundProbe(async()=>{quiet.push(1);return 'cs2.exe'})
+  await g.checkNow()
+  ok(quiet.length===0,'nothing waiting costs no foreground query at all')
+  // A query that fails must never be the reason the app stays invisible.
+  g.setForegroundProbe(async()=>null)
+  let failopen=0
+  g.whenClear('window-reveal',()=>failopen++)
+  await g.checkNow()
+  ok(failopen===1,'a foreground query that answers nothing shows the window anyway')
+  g.setForegroundProbe(null)
+
   // --- a custom watchlist --------------------------------------------------
   g.refreshGameWatch(cfg({processes:['someindiegame.exe']}))
   cp.__set(['cs2.exe'])
