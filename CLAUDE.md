@@ -457,8 +457,13 @@ sends nothing, an empty desk sends a clear rather than "0/0" - and that a Discor
 that is not running costs nothing, silently, forever. The header line of the
 presence is the Discord APPLICATION's name, which lives in `discordClientId` in the
 config: creating an application from a script is impossible (captcha), so the
-default id is an existing application and pointing the setting at a new one renames
-the header with no other change.
+default id is a BORROWED application - "Manic's Auction House", the author's Discord
+bot - and pointing the setting at a new one renames the header with no other change.
+That borrowed name is invisible from inside the app, which is how it survived: 19
+digits do not say whose brand Discord is about to print. Settings now reads the name
+back from `/applications/<id>/rpc` (public, no token, `discord:appName` in main
+because the packaged renderer is a `file://` origin and Discord answers CORS for a
+real one only) and warns whenever the header is not PaneForge.
 
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous

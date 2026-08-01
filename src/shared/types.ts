@@ -1027,6 +1027,8 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
+  /** the name Discord prints as the presence header for an application id; null if unknown */
+  discordAppName(id: string): Promise<string | null>
 
   reveal(path: string): void
   openInEditor(path: string): Promise<string | null>
