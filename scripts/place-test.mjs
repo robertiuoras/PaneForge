@@ -105,9 +105,14 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 
 {
   const p = describePlace({ cwd: `${W}\\PaneForge-w2`, branch: 'pf/w2', copy: 'w2', pane: 3 })
-  is(p.short, 'PaneForge · #2', 'a copy is numbered, and the number is the Ctrl key that reaches it')
+  // "copy 2", not "#2". There are two numbers on a card - the checkout's and the pane's
+  // Ctrl-N key - and they are independent: the second copy of a repository is very often
+  // not the second card in the sidebar. A bare `#2` beside a `3` key was one number too
+  // many with no way to tell which was which.
+  is(p.short, 'PaneForge · copy 2', 'a copy says what its number counts')
   is(p.slot, '2', '')
-  is(p.role, 'copy #2', '')
+  is(p.role, 'copy 2', '')
+  ok(!p.short.includes('#'), 'and never a bare # that could be read as a switch key')
   is(p.project, 'PaneForge', 'a copy is still the same project - that was the whole complaint')
   ok(!p.short.includes('pf/w2'), "a copy's own generated branch says nothing a person needs")
 }

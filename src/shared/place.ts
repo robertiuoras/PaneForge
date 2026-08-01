@@ -21,8 +21,12 @@
 //   That is the trick used below: `master` is not hidden, it is answered. The main checkout
 //   says so, and a branch only appears when it is telling you something the project name
 //   is not.
-// - The numbers are ours. A copy is `#2` because Ctrl+2 is what switches to it, so the
-//   label and the keystroke are the same character - which is worth more than a city name.
+// - The numbers are ours, and there are TWO of them, which is why they are worded apart.
+//   `copy 2` is the second checkout of that project; `pane 3` is the third card in the
+//   sidebar, and Ctrl+3 switches to it. They are independent - the second copy of a repo
+//   is very often not the second pane on screen - so a bare `#2` on a card that already
+//   carries a `3` key was one number too many with no way to tell which was which. Only
+//   the pane number is ever a keystroke, and only chats are named by it.
 //
 // Pure, so scripts/place-test.mjs can compile this one file and assert the sentences. What
 // this module produces is read at a glance in a sidebar; getting it wrong is invisible in
@@ -135,18 +139,14 @@ export function describePlace(input: PlaceInput): Place {
   const slot = input.copy ? input.copy.replace(/^w/i, '') : kind === 'lane' ? (input.lane ?? '') : ''
 
   const role =
-    kind === 'copy'
-      ? `copy #${slot}`
-      : kind === 'lane'
-        ? `lane ${slot}`
-        : 'main checkout'
+    kind === 'copy' ? `copy ${slot}` : kind === 'lane' ? `lane ${slot}` : 'main checkout'
 
   // The branch earns its place on the chip by disagreeing with something. On the trunk it
   // does not, and "PaneForge · master" is two words to say one - the Vercel rule. Nor does
   // the branch a tool generated to hold this copy, which repeats the copy's own number.
   const machinery = isGeneratedBranch(branch, slot)
   const tail = [
-    kind === 'copy' ? `#${slot}` : kind === 'lane' ? `lane ${slot}` : '',
+    kind === 'copy' ? `copy ${slot}` : kind === 'lane' ? `lane ${slot}` : '',
     onTrunk || machinery ? '' : branch
   ].filter(Boolean)
   const short = [project, ...tail].join(' · ')

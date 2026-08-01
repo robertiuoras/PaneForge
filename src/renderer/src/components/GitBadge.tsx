@@ -91,7 +91,9 @@ export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Elemen
       {/* Lit, because "am I in the right one of these two copies" is the question this
           badge exists to answer without a click. */}
       {place.slot && (
-        <span className="git-slot">{place.kind === 'copy' ? `#${place.slot}` : place.slot}</span>
+        <span className="git-slot">
+          {place.kind === 'copy' ? `copy ${place.slot}` : `lane ${place.slot}`}
+        </span>
       )}
       {showBranch && <span className="git-branch">{place.branch}</span>}
       {!!info?.dirty && <span className="git-count">{info.dirty}</span>}
