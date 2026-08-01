@@ -155,6 +155,18 @@ writeFileSync(join(dock, 'go.mod'), 'module x\n')
 commit(dock)
 const dockLane = await resolveLane(dock, [dock])
 ok('a compose file gives the HOST port, not the container port', dockLane.port >= 8086 && dockLane.port < 8126)
+ok('a lane gets its own compose project, so two lanes do not share containers', dockLane.env.COMPOSE_PROJECT_NAME === 'dock-w2')
+
+// compose refuses a project name that does not start with a letter or a digit.
+const odd = join(root, '.My_Odd Repo')
+mkdirSync(odd, { recursive: true })
+writeFileSync(join(odd, 'x.txt'), '1\n')
+commit(odd)
+const oddLane = await resolveLane(odd, [odd])
+ok(
+  'an awkward folder name still makes a legal compose project name',
+  /^[a-z0-9][a-z0-9_-]*$/.test(oddLane.env.COMPOSE_PROJECT_NAME)
+)
 
 // --------------------------------------------------------------- Codex, not Claude
 

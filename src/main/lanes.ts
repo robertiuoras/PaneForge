@@ -295,6 +295,19 @@ async function freePort(from: number): Promise<number> {
   return from
 }
 
+/**
+ * A compose project name for this lane: lowercase, and starting with a letter or
+ * digit, because compose rejects anything else and a repo called `.dotfiles` or
+ * `My_App` would take the whole `up` down with it.
+ */
+function composeProject(repo: string, label: string): string {
+  const cleaned = basename(repo)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+  return `${cleaned || 'project'}-${label}`
+}
+
 /** "w2" -> 2. Anything unparseable is treated as the first lane. */
 function laneIndex(label: string): number {
   const n = Number(label.replace(/^\D+/, ''))
@@ -703,7 +716,15 @@ export async function laneExtras(laneCwd: string, label: string): Promise<LaneEx
       // the launch toast states the number so `--port $PORT` is one keystroke.
       PORT: String(port),
       PF_LANE: label,
-      PF_LANE_PORT: String(port)
+      PF_LANE_PORT: String(port),
+      // A port is not the only thing two lanes fight over. `docker compose`
+      // derives container, network and volume names from the folder name, and a
+      // worktree called `<repo>-w2` is close enough to `<repo>` in some layouts -
+      // and identical when compose is run from a subfolder both lanes share - that
+      // `compose up` in the second lane recreates the first lane's containers out
+      // from under it. Naming the project after the lane keeps the two stacks
+      // apart, and `compose down` in a lane stops only its own.
+      COMPOSE_PROJECT_NAME: composeProject(repo, label)
     },
     port,
     sharedMemory
