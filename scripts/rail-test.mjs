@@ -129,6 +129,35 @@ async function clickAt(cdp, selector, nth = 0) {
   await sleep(120)
 }
 
+/**
+ * Leave the tail: scroll the pane back through its scrollback.
+ *
+ * This is the only way to put the "Newest" pill on screen - it renders on `scrolledUp` -
+ * so without it the pill case below could only ever report "not on screen in this run",
+ * which reads as a pass and proves nothing. The pill is half of what ecf3135 fixed.
+ *
+ * Not `Input.dispatchMouseEvent` with `mouseWheel`: this copy is MINIMIZED, and Chromium
+ * defers wheel and move events to a frame that never renders, so that call never ACKs and
+ * the test hangs. Driving the viewport from inside the page has no such problem. Both a
+ * synthetic WheelEvent and a scrollTop write are sent because xterm has used each of them
+ * as its scroll path across versions, and since 4073ba9 the pane decides it has left the
+ * tail from the BUFFER, so the viewport really has to move - faking the flag is no test.
+ */
+async function leaveTail(cdp) {
+  await evalIn(
+    cdp,
+    `(() => {
+      const vp = document.querySelector('.xterm-viewport')
+      if (!vp) return false
+      vp.dispatchEvent(new WheelEvent('wheel', { deltaY: -1200, bubbles: true, cancelable: true }))
+      vp.scrollTop = 0
+      vp.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return true
+    })()`
+  )
+  await sleep(600)
+}
+
 /** Real keypresses: the rail reads the pane's input stream, not the DOM. */
 async function type(cdp, text) {
   for (const ch of text) {
@@ -258,6 +287,10 @@ async function run(cdp) {
     'last tag in DOM order carries .newest'
   )
 
+  // Off the tail, so the "Newest" pill is on screen and can be hit-tested and pressed.
+  // Done before the reach measurement, not after, so one pass covers both.
+  await leaveTail(cdp)
+
   // A tag that is drawn and cannot be pressed is the bug this pins. `.xterm-wrap` is
   // `position: relative` with no z-index, so it is not a stacking context and xterm's own
   // layers compete with the rail rather than being contained by the terminal:
@@ -300,9 +333,31 @@ async function run(cdp) {
       : `${reach.marks} tags, each is the element at its own centre`
   )
   check(
-    'the "newest" pill is reachable too, when it is showing',
-    reach.pill !== false,
-    reach.pill === null ? 'not on screen in this run - nothing to check' : 'pill is the element at its own centre'
+    'the "newest" pill is on screen once the pane leaves the tail, and is reachable',
+    reach.pill === true,
+    reach.pill === null
+      ? 'no .jump-newest after scrolling back - either the pill regressed or leaveTail() no longer moves the buffer'
+      : reach.pill
+        ? 'pill is the element at its own centre'
+        : 'pill hit-tests to something else - drawn, unpressable, exactly the ecf3135 bug'
+  )
+
+  // Hit testing says the pointer would LAND on the pill. Only a real click says the pill
+  // does its job, so the last case presses it and watches the pane go back to the tail.
+  let returned = null
+  if (reach.pill !== null) {
+    await clickAt(cdp, '.jump-newest')
+    await sleep(600)
+    returned = await evalIn(cdp, "document.querySelector('.jump-newest') === null")
+  }
+  check(
+    'pressing the pill puts the pane back on the newest line',
+    returned === true,
+    returned === null
+      ? 'skipped - there was no pill to press'
+      : returned
+        ? 'the pill dismissed itself, so the pane is following again'
+        : 'clicked and the pane is still off the tail - the click did not reach the button'
   )
 }
 
