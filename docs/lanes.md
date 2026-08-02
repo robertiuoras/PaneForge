@@ -106,6 +106,24 @@ Typical answers and what they mean:
 | `conflicts with master` | The lane and the branch changed the same file. It is re-tried on every tick and usually resolves itself when the other side ships. |
 | `looks like a lane but git does not know about it` | Debris. Nothing merges it and nothing will clean it up - look at it, then delete it. |
 
+## Conflicts nobody is asked about
+
+Two lanes working the same feature collide in one place far more often than anywhere else:
+the import block. Each adds a line, git calls it a conflict, and there is no decision in it -
+both lines are wanted. That is what held lane c out of two releases on 2026-08-02.
+
+So an import-only conflict is unioned automatically, ours first, duplicates once, on both
+sides of the collision: when a lane merges the branch, and when the release merges the lane.
+The rule is deliberately narrow and all-or-nothing - one hunk containing anything that is not
+an import, or a diff3 base section, and the whole file is left conflicted for a person. A
+half-resolved file is worse than an unresolved one.
+
+Because rerere is on, resolving anything by hand in a lane also settles the mirror image of
+it at release time. Between the two, a conflict only reaches a human when it is a real
+disagreement about code.
+
+Tests: `npm run test:laneautomerge`.
+
 ## Rules worth knowing
 
 - **A lane is never deleted with anything in it.** One uncommitted character, one untracked
@@ -122,6 +140,7 @@ Typical answers and what they mean:
 | File | What it is |
 |---|---|
 | `scripts/lane.mjs` | The engine: claim, guard, ready, ship, retry, doctor. One copy, driving every project on the machine. |
+| `scripts/lane-merge.mjs` | The import-block union rule, separate so it can be tested without running the CLI. |
 | `scripts/lane-cron.mjs` | The 10-minute sweep over every project that uses lanes. No app, no AI, no window. |
 | `src/main/lanes.ts` | Makes the lane when a second pane opens a project, and seeds it (`.env` files, `node_modules`, dev port, agent history). |
 | `src/main/laneWork.ts` | What is in a lane, merging it back, and sweeping the empty ones. |
