@@ -91,7 +91,8 @@
     "test:laneorphan": "node scripts/lane-orphan-test.mjs",
     "test:lanelock": "node scripts/lane-lock-test.mjs",
     "test:lanenaming": "node scripts/lane-naming-test.mjs",
-    "test:laneautomerge": "node scripts/lane-automerge-test.mjs"
+    "test:laneautomerge": "node scripts/lane-automerge-test.mjs",
+    "probe:clear": "node scripts/clear-wipe-probe.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

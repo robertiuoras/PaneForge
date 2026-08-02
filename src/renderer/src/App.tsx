@@ -1012,7 +1012,22 @@ export default function App(): JSX.Element {
       // but leaves Claude Code's box alone, Ctrl-U empties Claude Code's box (offered
       // back on Ctrl-Y) but arrives at a PowerShell prompt as a literal character that
       // turns the command into one it cannot find. One key each, both measured.
-      const wipe = shell ? '\x1b' : '\x15'
+      //
+      // One Ctrl-U is not enough, though, and that was the bug: measured against a real
+      // Claude Code REPL, it empties a ONE-LINE box and leaves every earlier line of a
+      // shift+Enter draft exactly where it was. "/clear" then landed on the end of line
+      // one and the whole draft went to the model as a prompt - the run kept its context
+      // and burned a turn saying so. The wipe is a loop now: Ctrl-K takes whatever the
+      // cursor is sitting in front of, Ctrl-U the head behind it, Backspace joins the
+      // emptied line to the one above. One round per line walks a draft of any shape
+      // back to nothing, and a round that runs past the top is three no-ops on an empty
+      // box - so overshooting is free and undershooting is the bug.
+      const draft = paneDraft.get(s.id)
+      // A draft the reconstruction has lost track of gets the flat budget rather than a
+      // count derived from text already known to be wrong.
+      const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
+      const rounds = Math.min(24, Math.max(4, lines + 2))
+      const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
       api.write(s.id, wipe)
       // The gaps are measured too: at 40ms/120ms the Enter reached Claude Code before
       // its slash menu had drawn, and "/clear" sat in the box unsubmitted. It is a TUI
