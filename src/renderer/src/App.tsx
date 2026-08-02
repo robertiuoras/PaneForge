@@ -2477,6 +2477,7 @@ export default function App(): JSX.Element {
             </div>
             <TerminalPane
               sessionId={s.id}
+              cwd={s.cwd}
               visible={visibleIds.has(s.id)}
               active={s.id === activeId}
               fontSize={config?.fontSize ?? 13}

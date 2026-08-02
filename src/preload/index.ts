@@ -48,6 +48,7 @@ const api: Api = {
   discordAppName: (id) => ipcRenderer.invoke('discord:appName', id),
 
   reveal: (path) => ipcRenderer.send('shell:reveal', path),
+  pathKind: (cwd, token) => ipcRenderer.invoke('shell:pathKind', cwd, token),
   openInEditor: (path) => ipcRenderer.invoke('shell:editor', path),
   openExternal: (url) => ipcRenderer.send('shell:external', url),
   copyText: (text) => ipcRenderer.send('clipboard:write', text),

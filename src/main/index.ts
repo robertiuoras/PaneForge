@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -34,6 +34,7 @@ import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
+import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
 import { cancelImprove, improve, resolveEngine, runCli } from './improve'
 import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
@@ -1057,8 +1058,30 @@ ipcMain.handle('config:pickRoot', async () => {
 })
 
 ipcMain.on('shell:reveal', (_e, path: string) => {
-  shell.openPath(path)
+  // A folder opens. A FILE gets its folder opened with the file already selected, which is
+  // what "show me where this is" means for a path an agent just printed - openPath on a
+  // file would launch it in whatever app owns the extension instead, and a .pdf or a .ts
+  // suddenly opening in a viewer is not what the click asked for.
+  let file = false
+  try {
+    file = statSync(path).isFile()
+  } catch {
+    return /* gone: pointing Explorer at it would just raise an error dialog */
+  }
+  if (file) shell.showItemInFolder(path)
+  else shell.openPath(path)
 })
+
+/**
+ * Is this string, printed in a pane running in `cwd`, a real path on this machine?
+ *
+ * The renderer asks per token before it draws a link, so this is on the hover path and has
+ * to stay a single stat. Returns null for everything that is not there, which is most of
+ * what a loose text matcher hands it.
+ */
+ipcMain.handle('shell:pathKind', (_e, cwd: string, token: string) =>
+  resolveRevealTarget(cwd ?? '', token ?? '')
+)
 ipcMain.handle('shell:editor', (_e, path: string) => {
   // VS Code / Cursor ship a `code`-style launcher on PATH; without one, fall back to
   // Explorer so the button still does something useful.

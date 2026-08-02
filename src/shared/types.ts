@@ -5,10 +5,11 @@ import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle } from './discordRpc'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
+import type { RevealTarget } from './pathToken'
 import type { RouteMatch, RouteResult } from './projectRoute'
 import type { ThemeConfig } from './theme'
 
-export type { DiscordStyle, RouteMatch, RouteResult, ThemeConfig }
+export type { DiscordStyle, RevealTarget, RouteMatch, RouteResult, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -1055,7 +1056,15 @@ export interface Api {
   /** the name Discord prints as the presence header for an application id; null if unknown */
   discordAppName(id: string): Promise<string | null>
 
+  /** open a folder, or open a file's folder with the file selected */
   reveal(path: string): void
+  /**
+   * Resolve a path an agent printed, relative to the pane it was printed in.
+   *
+   * Null means "not a path on this machine", which is how the terminal decides whether a
+   * token is worth underlining at all.
+   */
+  pathKind(cwd: string, token: string): Promise<RevealTarget | null>
   openInEditor(path: string): Promise<string | null>
   openExternal(url: string): void
   /** write to the OS clipboard (renderer has no navigator.clipboard under file://) */

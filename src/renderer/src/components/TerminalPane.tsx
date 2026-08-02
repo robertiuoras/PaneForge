@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal, type IMarker } from '@xterm/xterm'
+import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -13,12 +13,21 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import { findPathTokens } from '../../../shared/pathToken'
+import type { RevealTarget } from '../../../shared/pathToken'
 import './TerminalPane.css'
 
 const api = window.api
 
 interface Props {
   sessionId: string
+  /**
+   * The folder this pane's pty is running in.
+   *
+   * Agents print repo-relative paths (`docs/proposals/x.pdf`), so without this a printed
+   * path cannot be turned into a place on disk.
+   */
+  cwd: string
   visible: boolean
   /**
    * This is the pane you are working in.
@@ -294,6 +303,7 @@ function quote(p: string): string {
  */
 export default function TerminalPane({
   sessionId,
+  cwd,
   visible,
   active,
   fontSize,
@@ -315,6 +325,10 @@ export default function TerminalPane({
   mouseSelectRef.current = mouseSelect
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  // A session can be moved into a lane worktree without the pane being rebuilt, and the
+  // link provider is attached once per session, so it reads the folder through a ref.
+  const cwdRef = useRef(cwd)
+  cwdRef.current = cwd
   // Read inside the terminal effect, which is built once per session: a device
   // reconnecting changes these numbers without the pane being rebuilt.
   const mirrorRef = useRef(mirror)
@@ -463,6 +477,58 @@ export default function TerminalPane({
     t.open(host.current)
     term.current = t
     fit.current = f
+
+    /**
+     * Paths an agent printed become links that reveal the file in Explorer or Finder.
+     *
+     * The pane is a pty, so there is no markup to hang a link off: the only thing to work
+     * with is the characters on the row under the mouse. Matching them is guesswork, so
+     * every candidate is checked against the disk before it is offered, and a token that
+     * is not really there is simply not a link. That check is what keeps the guessing
+     * honest - the matcher can stay cheap and slightly greedy because being wrong is
+     * invisible.
+     *
+     * xterm only asks for links on the row the mouse is over, so this runs on hover and
+     * nowhere else. One consequence worth knowing: a path long enough to wrap is only
+     * matched on the row it starts on, because a provider is handed one row at a time.
+     */
+    const KIND_TTL = 15_000
+    const kinds = new Map<string, { at: number; target: RevealTarget | null }>()
+    const kindOf = async (dir: string, token: string): Promise<RevealTarget | null> => {
+      const key = dir + ' ' + token
+      const hit = kinds.get(key)
+      if (hit && Date.now() - hit.at < KIND_TTL) return hit.target
+      const target = await api.pathKind(dir, token)
+      // Hovering a long output scrolls a lot of rows past; the cap stops a pane that has
+      // been open for a day from holding every path it ever drew.
+      if (kinds.size > 500) kinds.clear()
+      kinds.set(key, { at: Date.now(), target })
+      return target
+    }
+    t.registerLinkProvider({
+      provideLinks(row, done) {
+        const dir = cwdRef.current
+        const line = dir ? t.buffer.active.getLine(row - 1) : null
+        if (!line) return done(undefined)
+        const tokens = findPathTokens(line.translateToString(true))
+        if (!tokens.length) return done(undefined)
+        void Promise.all(
+          tokens.map(async (tok): Promise<ILink | null> => {
+            const target = await kindOf(dir, tok.text)
+            if (!target) return null
+            return {
+              // xterm columns are 1-based and its end is inclusive.
+              range: { start: { x: tok.start + 1, y: row }, end: { x: tok.end, y: row } },
+              text: tok.text,
+              activate: () => api.reveal(target.abs)
+            }
+          })
+        ).then((found) => {
+          const links = found.filter((l): l is ILink => l !== null)
+          done(links.length ? links : undefined)
+        })
+      }
+    })
 
     /**
      * Draw the terminal on the GPU instead of as DOM.
