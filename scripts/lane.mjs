@@ -40,7 +40,20 @@
 // stops having any: whoever finishes last cuts the version, for everyone.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
@@ -72,7 +85,90 @@ function gitSafe(cwd, ...args) {
   try {
     return { ok: true, out: git(cwd, ...args) }
   } catch (e) {
-    return { ok: false, out: String(e.stderr ?? e.stdout ?? e.message).trim() }
+    const out = errText(e)
+    // Git refusing to start is not an answer about the code. Clear the lock that stopped
+    // it when we can prove the lock is abandoned, and take the one retry - so the callers
+    // below never have to tell "these branches disagree" apart from "git was busy".
+    if (dropStaleLock(cwd, out, e)) {
+      try {
+        return { ok: true, out: git(cwd, ...args) }
+      } catch (again) {
+        const retried = errText(again)
+        return { ok: false, out: retried, locked: lockedOut(retried) }
+      }
+    }
+    return { ok: false, out, locked: lockedOut(out) }
+  }
+}
+
+const errText = (e) => String(e.stderr ?? e.stdout ?? e.message).trim()
+
+/**
+ * A lock is not a conflict.
+ *
+ * Git writes "another git process seems to be running" into the same channel it uses for
+ * real disagreements, so a merge that simply lost a race came back through the conflict
+ * path: the lane was recorded as CONFLICTED with `Unable to create index.lock: File
+ * exists` stored where the list of disagreeing files goes, and it stayed out of every
+ * release until a person deleted that file by hand. On this machine that went unnoticed
+ * for seven hours (2026-08-02). Nobody running this anywhere else can be asked to know
+ * that a file called index.lock exists, let alone that deleting it is safe.
+ */
+function lockedOut(out) {
+  return /Unable to create '.*\.lock': File exists/i.test(out) || /another git process seems to be running/i.test(out)
+}
+
+// How long a .lock has to have sat untouched before it is certainly abandoned. Every git
+// this file runs is dead within GIT_TIMEOUT_MS, and a real merge holds the index for
+// milliseconds, so five minutes is far past anything legitimate.
+const STALE_LOCK_MS = 5 * 60_000
+
+// dropStaleLock asks git where the locks live, and that ask goes through gitSafe. One
+// flag keeps a failing rev-parse from trying to heal the lock it is looking for.
+let clearingLock = false
+
+/**
+ * Delete a lock whose owner is provably gone, and say whether anything was freed.
+ *
+ * This file MAKES stale locks: git() kills anything running past GIT_TIMEOUT_MS, and a
+ * git killed mid-write leaves its .lock behind with nobody to clean it up. So the cases
+ * are two, with a different proof each:
+ *
+ *   we killed it   the lock existed for at least GIT_TIMEOUT_MS before the kill, so a
+ *                  lock younger than that belongs to some other, live git - not ours
+ *   it is old      nothing legitimate holds an index for STALE_LOCK_MS
+ *
+ * Both compare against the lock's own mtime, so a live git's fresh lock is never touched.
+ */
+function dropStaleLock(cwd, out, err) {
+  if (clearingLock) return false
+  const killed = Boolean(err?.killed) || err?.signal === 'SIGKILL'
+  if (!killed && !lockedOut(out)) return false
+  clearingLock = true
+  try {
+    const paths = new Set()
+    // The message names the exact file when there is a message; a killed git leaves none.
+    const named = /Unable to create '(.+?)': File exists/i.exec(out)?.[1]
+    if (named) paths.add(resolve(named))
+    for (const name of ['index.lock', 'HEAD.lock', 'MERGE_HEAD.lock']) {
+      const g = gitSafe(cwd, 'rev-parse', '--git-path', name)
+      if (g.ok && g.out) paths.add(resolve(cwd, g.out))
+    }
+    const minAge = killed ? GIT_TIMEOUT_MS : STALE_LOCK_MS
+    let dropped = false
+    for (const p of paths) {
+      try {
+        if (!existsSync(p)) continue
+        if (now() - statSync(p).mtimeMs < minAge) continue
+        unlinkSync(p)
+        dropped = true
+      } catch {
+        /* gone already, or genuinely held by something we cannot see - leave it */
+      }
+    }
+    return dropped
+  } finally {
+    clearingLock = false
   }
 }
 
@@ -497,6 +593,13 @@ function catchUp(id, { keepConflict = false } = {}) {
   enableRerere()
   const m = gitSafe(dir, 'merge', '--no-edit', MB)
   if (m.ok) return { moved: true, conflicts: [], dirty: false }
+  // A lock that outlived the retry in gitSafe is a live git somewhere else, not a
+  // disagreement: report "not now" so the caller leaves the lane alone and tries again,
+  // instead of recording a conflict that no amount of resolving would ever clear.
+  if (m.locked) {
+    gitSafe(dir, 'merge', '--abort')
+    return { moved: false, conflicts: [], dirty: false, blocked: 'another git is using this repository' }
+  }
   let conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
     .out.split('\n')
     .filter(Boolean)
@@ -533,6 +636,10 @@ function catchUp(id, { keepConflict = false } = {}) {
 function healLane(id) {
   const dir = laneDir(id)
   if (id === 'main' || !existsSync(dir)) return null
+  // Nothing below can be asked of a folder git will not answer about, and asking anyway
+  // is what made a broken lane look like one with uncommitted work in it. ensureWorktree
+  // owns that repair; every caller here has already been through it.
+  if (!isWorktree(dir)) return null
   const did = []
   if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) {
     gitSafe(dir, 'merge', '--abort')
@@ -688,17 +795,59 @@ function adoptable(state, id) {
 
 // ---------------------------------------------------------------- worktree setup
 
+/**
+ * Is this folder a checkout git will actually act on?
+ *
+ * `existsSync` used to be the whole test, and a lane folder can exist without being a
+ * worktree: git prunes the registration when a branch goes away, an interrupted `worktree
+ * add` leaves the folder, a crashed chat leaves the folder. What is left is an empty
+ * directory wearing a lane's name - and because a git failure's text comes back in `out`,
+ * every command in it reads as OUTPUT, which reads as uncommitted work. So the lane was
+ * permanently "dirty": never healed, never rebuilt, never released from, and still handed
+ * to the next chat as a working checkout, which then failed on its first git command.
+ * PaneForge-a sat in exactly that state, and `claim` answered `"fresh": true` about it
+ * (2026-08-02).
+ */
+function isWorktree(dir) {
+  return gitSafe(dir, 'rev-parse', '--is-inside-work-tree').out === 'true'
+}
+
 function ensureWorktree(id) {
   const dir = laneDir(id)
   if (id === 'main') return dir
-  if (!existsSync(dir)) {
+  if (!existsSync(dir) || !isWorktree(dir)) {
     const branch = laneBranch(id)
+    if (existsSync(dir)) {
+      // Two things block `worktree add` on a folder that is already there, and this file
+      // put both of them there itself: the node_modules junction below, and a stale
+      // registration pointing at a worktree that no longer has a .git. Clear ours, then
+      // ask git to forget what it is still holding.
+      dropModulesLink(dir)
+      gitSafe(MAIN, 'worktree', 'prune')
+      // Anything else in there was somebody's work. Never guess at deleting it - say what
+      // is in the way and which folder, which is the one thing a person can act on.
+      let left = []
+      try {
+        left = readdirSync(dir)
+      } catch {
+        /* unreadable is its own answer below */
+      }
+      if (left.length) {
+        throw new Error(
+          `lane ${id}'s folder is not a git worktree and is not empty (${left.slice(0, 5).join(', ')}). ` +
+            `Check what is in ${dir}, move it out, and it rebuilds itself.`
+        )
+      }
+    }
     const known = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).ok
     // A reused lane branch may be behind master; start it fresh from master when new.
     const add = known
       ? ['worktree', 'add', dir, branch]
       : ['worktree', 'add', '-b', branch, dir, MB]
-    const r = gitSafe(MAIN, ...add)
+    let r = gitSafe(MAIN, ...add)
+    // The branch still counts as checked out in a folder git has not been told is gone.
+    // Only reachable once the folder above was proven empty, so nothing can be lost here.
+    if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', dir, branch)
     if (!r.ok) throw new Error(`could not create lane ${id}: ${r.out}`)
   }
   const link = join(dir, 'node_modules')
@@ -714,6 +863,35 @@ function ensureWorktree(id) {
   }
   excludeModules(dir)
   return dir
+}
+
+/**
+ * Remove a lane's node_modules link WITHOUT following it.
+ *
+ * lstat, never stat, and never a recursive delete: a junction reports the shape of what
+ * it points at, and deleting through one is how a lane took the MAIN checkout's real
+ * node_modules with it and left a tree with no dependencies at all (2026-08-01). unlink
+ * is the POSIX answer for a symlink and rmdir is the Windows answer for a junction; try
+ * both and give up quietly rather than ever touching the target.
+ */
+function dropModulesLink(dir) {
+  const link = join(dir, 'node_modules')
+  let st
+  try {
+    st = lstatSync(link)
+  } catch {
+    return
+  }
+  if (!st.isSymbolicLink()) return
+  try {
+    unlinkSync(link)
+  } catch {
+    try {
+      rmdirSync(link)
+    } catch {
+      /* a link we cannot remove is reported by the caller as a folder in the way */
+    }
+  }
 }
 
 /**
@@ -756,6 +934,19 @@ function claim(session, cwd, prefer, tentative = false) {
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
       c.seen = now()
+      // A lane can stop being a checkout while its own chat is sitting in it - a pruned
+      // worktree, an interrupted install, a folder deleted from underneath, a node_modules
+      // link removed by a cleanup. The chat is then told, every prompt, to work in a folder
+      // that no longer functions. Everything needed to put it back is in ensureWorktree and
+      // all of it is idempotent, so a returning chat gets the same repair a new one does -
+      // this branch used to hand the broken path straight back unchanged.
+      if (id !== 'main') {
+        try {
+          ensureWorktree(id)
+        } catch {
+          /* reported by `doctor`; a claim that cannot rebuild still returns the lane */
+        }
+      }
       // A hold records the folder its chat came from once, on the claim that created it -
       // and a lane claimed by hand (`lane.mjs claim --session <id>`, which is what a chat
       // refused by the guard is told to run) records nothing at all. That lane then reads
@@ -983,6 +1174,11 @@ function aheadOf(branch) {
 function laneWork(id) {
   const dir = laneDir(id)
   if (!existsSync(dir)) return { dirty: false, ahead: 0 }
+  // A folder that is not a worktree answers every git command with an error, and the
+  // error text is text, so `dirty` was true forever - the lane looked like a chat was
+  // mid-edit in it and was left alone by everything that would have rebuilt it. It has no
+  // uncommitted work because it has no work: say so, and let ensureWorktree repair it.
+  if (id !== 'main' && !isWorktree(dir)) return { dirty: false, ahead: aheadOf(laneBranch(id)), broken: true }
   const dirty = Boolean(gitSafe(dir, 'status', '--porcelain').out)
   if (id === 'main') return { dirty, ahead: unreleasedOnMaster() }
   return { dirty, ahead: aheadOf(laneBranch(id)) }
@@ -1013,6 +1209,55 @@ function shippable(state) {
   return Object.keys(state.ready).some((id) => id !== 'main' && laneWork(id).ahead > 0)
 }
 
+/** The first line worth quoting out of a command that failed. */
+function firstLine(out) {
+  const line = out
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l && !/^npm (WARN|notice)/.test(l))
+  return (line ?? 'no output').slice(0, 160)
+}
+
+/** A command that never started, as opposed to one that ran and disagreed with the code. */
+function cannotRun(out) {
+  return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found/i.test(out)
+}
+
+/** Does this checkout declare dependencies it has not got? */
+function dependenciesMissing(pkg) {
+  if (!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length) return false
+  const mods = join(MAIN, 'node_modules')
+  try {
+    return !existsSync(mods) || readdirSync(mods).length === 0
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Put the dependencies back rather than blaming the code for their absence.
+ *
+ * A checkout with no node_modules fails `npm run typecheck` exactly the way broken code
+ * does, and the release said the broken-code sentence about a tree that compiles
+ * perfectly: "master does not typecheck, fix it and it goes out by itself". Nothing in
+ * that is actionable, and it never stops being true on its own, so every release after it
+ * was silently held. It is also self-inflicted - a lane once committed its node_modules
+ * junction and the merge replaced the real one (2026-08-01) - which is the strongest
+ * argument for healing it here: the tool broke it, and the repair is one command with
+ * only one right answer.
+ *
+ * Returns null when the dependencies are there afterwards, a sentence when they are not.
+ */
+function installDeps() {
+  const cmd = existsSync(join(MAIN, 'package-lock.json')) ? 'npm ci' : 'npm install'
+  const r = spawnSync(cmd, { cwd: MAIN, encoding: 'utf8', timeout: 900_000, shell: true })
+  if (r.status === 0) return null
+  return (
+    `${basename(MAIN)} has no dependencies installed and \`${cmd}\` could not install them, so nothing was ` +
+    `released - ${firstLine(`${r.stdout ?? ''}${r.stderr ?? ''}`)}. The code is not the problem; the checkout is.`
+  )
+}
+
 /** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
 function typecheckFailure() {
   let pkg
@@ -1022,6 +1267,10 @@ function typecheckFailure() {
     return null
   }
   if (!pkg.scripts?.typecheck) return null
+  if (dependenciesMissing(pkg)) {
+    const failed = installDeps()
+    if (failed) return failed
+  }
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
   const r = spawnSync('npm run --silent typecheck', {
     cwd: MAIN,
@@ -1030,11 +1279,21 @@ function typecheckFailure() {
     shell: true
   })
   if (r.status === 0) return null
-  const detail = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  const detail = all
     .split('\n')
     .filter((l) => /error TS/.test(l))
     .slice(0, 3)
     .join('; ')
+  // A typecheck that could not START is not a typecheck that failed. Both used to produce
+  // "master does not typecheck", which sends whoever reads it looking for a type error
+  // that does not exist - and hides the one thing that would fix it.
+  if (!detail && cannotRun(all)) {
+    return (
+      `${MB}'s typecheck could not run, so nothing was released - ${firstLine(all)}. ` +
+      `That is this checkout's tooling, not the code.`
+    )
+  }
   return `${MB} does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
 }
 
@@ -1298,12 +1557,25 @@ function ship(kind, session) {
 
     const merged = []
     const conflicts = {}
+    // Lanes that could not be merged because git was busy, which is not the same thing as
+    // a lane that cannot be merged. They keep their ready mark and nothing is recorded
+    // against them.
+    const blocked = []
     for (const [id, mark] of Object.entries(state.ready)) {
       if (id === 'main') continue
       const branch = laneBranch(id)
       const ahead = aheadOf(branch)
       if (!ahead) continue
       const m = gitSafe(MAIN, 'merge', '--no-ff', '-m', `merge lane ${id}`, branch)
+      if (!m.ok && m.locked) {
+        // Same rule as the lane side: git being busy says nothing about this branch. The
+        // lane keeps its ready mark (see `finish`) and goes out of the next release, which
+        // is minutes away - rather than being marked conflicted, which is hours away and
+        // needs a person. This is the seven-hour stall of 2026-08-02, from the other side.
+        gitSafe(MAIN, 'merge', '--abort')
+        blocked.push(id)
+        continue
+      }
       if (!m.ok) {
         // Same union rule as the lane side, for the release side of the same collision:
         // two lanes that each added an import cannot both have merged cleanly, and the
@@ -1350,14 +1622,18 @@ function ship(kind, session) {
 
       const fresh = read()
       // A lane that could not merge keeps its ready mark: its work still has to go out,
-      // in the next release, once someone has resolved it.
-      fresh.ready = Object.fromEntries(Object.entries(fresh.ready).filter(([id]) => conflicts[id]))
+      // in the next release, once someone has resolved it - or, for a lane that only lost
+      // a race with another git, as soon as the next release runs and nobody is asked
+      // anything at all.
+      fresh.ready = Object.fromEntries(
+        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.includes(id))
+      )
       fresh.conflicts = conflicts
       fresh.release = null
       fresh.lastShip = { version, at: now(), lanes: merged.map((m) => m.lane) }
       write(fresh)
 
-      return { shipped: true, version, merged, rebased, conflicts, built }
+      return { shipped: true, version, merged, rebased, conflicts, blocked, built }
     }
 
     // A repository that does not cut versions is finished at the merge. It still gets the
