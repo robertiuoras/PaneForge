@@ -180,6 +180,56 @@ const CHAT = '9f0a1c22-1b3e-4f77-9a41-2b6d5c8e0a13'
 }
 
 {
+  // The engine hands out main + a..h. The strip used to draw main + a..c, so a chat in
+  // lane d, and a CONFLICT in lane d, were shown by nothing and retried by nothing.
+  delete process.env.PANEFORGE_REPO
+  const mine = makeRepo('grocer')
+  const now = Date.now()
+  writeFileSync(
+    join(mine, '.git', 'paneforge-lanes.json'),
+    JSON.stringify({
+      lanes: { d: { session: CHAT, cwd: mine, claimed: now, seen: now } },
+      ready: {},
+      conflicts: { g: { at: now, since: now, detail: 'both changed src/x.ts' } },
+      release: null,
+      lastShip: null
+    })
+  )
+  const { laneBoard } = await load()
+  const board = laneBoard([{ id: 'pane1', cwd: mine, resumeId: CHAT }])
+  check('a lane past c is on the strip', board?.lanes.some((l) => l.lane === 'd' && l.held) === true,
+    JSON.stringify(board?.lanes.map((l) => l.lane)))
+  check('and so is a conflict past c, which is what the automatic retry keys on',
+    board?.lanes.some((l) => l.lane === 'g' && l.conflicted) === true,
+    JSON.stringify(board?.lanes.map((l) => l.lane)))
+}
+
+{
+  // A repo that sets its own pool gets that pool, the same field lane.mjs reads.
+  delete process.env.PANEFORGE_REPO
+  const mine = makeRepo('butcher')
+  const now = Date.now()
+  writeFileSync(join(mine, '.lanes.json'), JSON.stringify({ pool: ['main', 'x'] }))
+  writeFileSync(
+    join(mine, '.git', 'paneforge-lanes.json'),
+    JSON.stringify({
+      lanes: {
+        x: { session: CHAT, cwd: mine, claimed: now, seen: now },
+        a: { session: CHAT, cwd: mine, claimed: now, seen: now }
+      },
+      ready: {},
+      conflicts: {},
+      release: null,
+      lastShip: null
+    })
+  )
+  const { laneBoard } = await load()
+  const drawn = laneBoard([{ id: 'pane1', cwd: mine, resumeId: CHAT }])?.lanes.map((l) => l.lane)
+  check('.lanes.json names the pool when it says so', drawn?.includes('x') === true, JSON.stringify(drawn))
+  check('and a lane outside that pool is not drawn', drawn?.includes('a') === false, JSON.stringify(drawn))
+}
+
+{
   // The engine to run is the one on this machine, not one imagined inside the user's repo.
   const mine = makeRepo('florist')
   const { laneEngine } = await load()

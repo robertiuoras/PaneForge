@@ -19,8 +19,17 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
 
-/** Same order as the POOL in scripts/lane.mjs, so the strip reads like the lane list. */
-const POOL = ['main', 'a', 'b', 'c']
+/**
+ * Same order as DEFAULT_POOL in scripts/lane.mjs, so the strip reads like the lane list.
+ *
+ * It said `['main', 'a', 'b', 'c']` and the engine has handed out `main` through `h` for a
+ * long time, so lanes d-h were drawn by nothing: a chat held one, a conflict sat in one,
+ * and the strip - the only place either fact is ever said out loud - showed an empty slot.
+ * The automatic retry is worse, because it only fires when the BOARD has a conflict on it,
+ * so a conflict in lane d was never retried either. Empty lanes are skipped below, so the
+ * full pool costs nothing on screen; it only stops hiding the ones that are real.
+ */
+const DEFAULT_POOL = ['main', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
 /** Matches ADOPT_MS in scripts/lane.mjs: a conflict this stale is anyone's to fix. */
 const ADOPT_MS = 45 * 60 * 1000
 /** The state file changes at most a few times a minute; polling is cheap but not free. */
@@ -156,17 +165,41 @@ function mainCheckout(dir: string): string | null {
 }
 
 /**
+ * What the repo itself says about its lanes - the same `.lanes.json` lane.mjs reads, so
+ * the strip and the engine cannot disagree about a repo that has configured either one.
+ */
+function profile(main: string): { branch?: string; pool?: string[] } {
+  try {
+    const cfg = JSON.parse(readFileSync(join(main, '.lanes.json'), 'utf8')) as {
+      branch?: unknown
+      pool?: unknown
+    }
+    return {
+      branch: typeof cfg.branch === 'string' && cfg.branch ? cfg.branch : undefined,
+      pool:
+        Array.isArray(cfg.pool) && cfg.pool.length && cfg.pool.every((x) => typeof x === 'string')
+          ? (cfg.pool as string[])
+          : undefined
+    }
+  } catch {
+    // no .lanes.json, or not ours to read - the defaults are what the engine uses too
+    return {}
+  }
+}
+
+/** The lanes this repo can hand out, in the order they are drawn. */
+function lanePool(main: string): string[] {
+  return profile(main).pool ?? DEFAULT_POOL
+}
+
+/**
  * The branch lanes are cut from, the same way lane.mjs decides it: `.lanes.json` if the
  * repo says, else whatever HEAD is on. Hardcoding `master` printed the wrong branch on the
  * strip for every repo that uses `main`, which is most of them and all the new ones.
  */
 function mainBranch(main: string): string {
-  try {
-    const cfg = JSON.parse(readFileSync(join(main, '.lanes.json'), 'utf8')) as { branch?: string }
-    if (typeof cfg.branch === 'string' && cfg.branch) return cfg.branch
-  } catch {
-    // no .lanes.json, or not ours to read - HEAD still knows
-  }
+  const said = profile(main).branch
+  if (said) return said
   try {
     const head = /^ref:\s*refs\/heads\/(.+)$/m.exec(readFileSync(join(main, '.git', 'HEAD'), 'utf8'))
     if (head) return head[1].trim()
@@ -500,10 +533,11 @@ function read(panes: LanePane[] = []): LaneBoard | null {
   const state = readState(panes)
   if (!state) return null
   const mb = mainBranch(main)
+  const pool = lanePool(main)
 
   const lanes: LaneBoardEntry[] = []
   const now = Date.now()
-  for (const id of POOL) {
+  for (const id of pool) {
     const raw = state.lanes?.[id]
     const conflict = state.conflicts?.[id]
     const ready = Boolean(state.ready?.[id])
