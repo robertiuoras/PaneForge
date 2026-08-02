@@ -44,6 +44,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
+import { mergeImportConflicts } from './lane-merge.mjs'
 import { hasChanges, notes } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -432,6 +433,34 @@ function enableRerere() {
 }
 
 /**
+ * Settle the conflicts that are not disagreements, in a lane nobody is sitting in.
+ *
+ * All-or-nothing on purpose: every conflicted file is read and resolved in memory first,
+ * and one file it cannot take means nothing is written. Half a merge left in a worktree is
+ * the state that stalled a lane for a day the last time it happened.
+ *
+ * Nothing is lost either way - the merge is still open, `--abort` still puts the lane back,
+ * and rerere records what this did so the mirror-image conflict at release time replays it.
+ */
+function autoResolve(dir, files) {
+  const writes = []
+  for (const f of files) {
+    let text
+    try {
+      text = readFileSync(join(dir, f), 'utf8')
+    } catch {
+      return []
+    }
+    const merged = mergeImportConflicts(text)
+    if (merged === null) return []
+    writes.push([join(dir, f), merged])
+  }
+  if (!writes.length) return []
+  for (const [p, text] of writes) writeFileSync(p, text)
+  return files
+}
+
+/**
  * Bring one lane up to master.
  *
  * Conflicts are cheap here and expensive later: in the lane, the chat that wrote the code is
@@ -453,9 +482,23 @@ function catchUp(id, { keepConflict = false } = {}) {
   enableRerere()
   const m = gitSafe(dir, 'merge', '--no-edit', MB)
   if (m.ok) return { moved: true, conflicts: [], dirty: false }
-  const conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+  let conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
     .out.split('\n')
     .filter(Boolean)
+  // Import-block collisions are settled here rather than being handed to whoever reads the
+  // status next. They are the commonest conflict two lanes on one feature produce and the
+  // only one with a right answer that needs no context.
+  const healed = conflicts.length ? autoResolve(dir, conflicts) : []
+  if (healed.length) {
+    for (const f of healed) gitSafe(dir, 'add', '--', f)
+    const left = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+      .out.split('\n')
+      .filter(Boolean)
+    if (!left.length && gitSafe(dir, 'commit', '--no-edit').ok) {
+      return { moved: true, conflicts: [], dirty: false, healed }
+    }
+    conflicts = left
+  }
   // The half-merge is only left in the tree for the chat that asked to finish this lane
   // (`ready`), which is the one moment someone is there to resolve it. Every other caller
   // gets the lane back the way it found it - a conflicted checkout nobody owns is what
@@ -1247,12 +1290,26 @@ function ship(kind, session) {
       if (!ahead) continue
       const m = gitSafe(MAIN, 'merge', '--no-ff', '-m', `merge lane ${id}`, branch)
       if (!m.ok) {
-        // One lane that cannot merge used to stop everyone's release. It does not any
-        // more: the conflict is that lane's problem, it stays marked ready, and it is
-        // reported by name so the next chat in it fixes it. Everything else goes out.
-        gitSafe(MAIN, 'merge', '--abort')
-        noteConflict(conflicts, id, mergeFiles(m.out), state.conflicts)
-        continue
+        // Same union rule as the lane side, for the release side of the same collision:
+        // two lanes that each added an import cannot both have merged cleanly, and the
+        // second one to arrive here is not a decision anybody needs to make.
+        const open = gitSafe(MAIN, 'diff', '--name-only', '--diff-filter=U')
+          .out.split('\n')
+          .filter(Boolean)
+        const fixed = autoResolve(MAIN, open)
+        for (const f of fixed) gitSafe(MAIN, 'add', '--', f)
+        const stuck =
+          !fixed.length ||
+          gitSafe(MAIN, 'diff', '--name-only', '--diff-filter=U').out.trim() ||
+          !gitSafe(MAIN, 'commit', '--no-edit').ok
+        if (stuck) {
+          // One lane that cannot merge used to stop everyone's release. It does not any
+          // more: the conflict is that lane's problem, it stays marked ready, and it is
+          // reported by name so the next chat in it fixes it. Everything else goes out.
+          gitSafe(MAIN, 'merge', '--abort')
+          noteConflict(conflicts, id, mergeFiles(m.out), state.conflicts)
+          continue
+        }
       }
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
     }

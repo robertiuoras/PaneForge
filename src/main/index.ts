@@ -138,6 +138,7 @@ import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
+import { installLaneHooks } from './laneHooks'
 import { agentsMidTurn } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
@@ -2256,6 +2257,11 @@ app.whenReady().then(() => {
   // First line of this process's story: the one that was missing when an update came
   // back and nobody could tell whether it had.
   updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`, `+${bootMs()}ms`)
+  // Lanes only ever worked on the machine they were hand-wired on. Installing the hooks
+  // here is what makes several chats safe to run against one project for anybody else -
+  // and repoints them when an upgrade moves the app. It never throws and never overrides
+  // a registration somebody made themselves.
+  updateLog('lanes', installLaneHooks())
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())
