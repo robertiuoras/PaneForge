@@ -311,6 +311,52 @@ file: `tsc --rootDir src` emits `from '../../shared/place'` with no extension, w
 ESM loader refuses, so the moment that file gained a runtime import the test died on a
 module-not-found naming a temp directory.
 
+## What a pane leaves running
+
+Quitting kills each pty with `taskkill /F /T <pid>`, and that is a tree walk over live
+`ParentProcessId` links performed at the moment of the kill. Two ordinary things sit outside
+it, and `src/main/strays.ts` is both of them.
+
+The first was measured rather than assumed, and it is not the obvious one. Windows keeps the
+parent field after the parent dies - it is a number, not a link - so an orphan is still
+listed as its dead parent's child. What breaks is the WALK: with the middle process gone from
+the table there is no row joining the pty to the leaf, so `npm run dev` (npm exits, vite keeps
+going) leaves a dev server the pane's own kill can never reach. The second is the app dying
+without running `shutdown()` at all - a crash, the installer, a power cut. There the tree is
+intact but its root is gone, and `taskkill` refuses a pid that no longer exists, so there is
+nothing to walk from. Both are pinned as real processes in `npm run test:strays`.
+
+Neither link can be recovered afterwards, so the app writes it down while it is still true: a
+sampler walks each live pty's descendants every 30s and merges what it finds into
+`strays.json` under userData, keyed by the app run that owns it. Closing a pane, quitting and
+the next launch all kill from that ledger rather than from the process table.
+
+Three rules it must keep, all of them load-bearing:
+
+- **A pid is never enough.** Every record carries the process's creation time, and the check
+  is re-made by whatever does the killing rather than trusted from the file. A ledger written
+  before a reboot names pids that now belong to a browser.
+- **A run whose app is still alive is somebody else's.** That is another copy of PaneForge -
+  usually the `npm run try` one - and sweeping it would kill panes a person is typing in.
+- **Nothing here may block the main process.** Every process-table read is `execFile`, and
+  the two paths that cannot wait for a callback (a pane closing, the app exiting) do not read
+  the table at all - they hand the pids to a detached script that verifies them once we are
+  gone. A `spawnSync` here is the busy cursor the pane badges' `git status` is banned for.
+
+It never asks what the pane is RUNNING, which is the point: claude, codex, gemini, aider or a
+bare shell all leave descendants the same way, and a per-CLI hook would be written once per
+agent, out of date the day a new one ships, and silent in exactly the crash case above.
+
+POSIX needs almost none of it. node-pty's child is a session leader, so a pane's descendants
+share a process GROUP - inherited, not linked, so it survives an intermediate parent dying -
+and one `kill(-pid)` reaps the lot. The ledger stays there only for a run that died without
+killing anything.
+
+The test's own lesson is worth keeping: it stubbed `spawnDetachedNoWindow` with a plain
+`spawn(..., { detached: true })` and every kill silently did nothing, because that is the
+exact shape `consoles.ts` exists to avoid on this Windows build. It loads the real module now.
+A stub of the one line that is hard on this platform is a test that passes while the app leaks.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
@@ -318,6 +364,10 @@ module-not-found naming a temp directory.
 pane goes back into (never another pane's, never one older than the pane) and what the
 dialog says it was doing. `npm run test:consoles` pins the sweep that kills console hosts
 left behind - including the guard that stops it touching a console whose parent is alive.
+`npm run test:strays` is the same question one level out, for what a PANE left running, and
+it is the one test here that spawns real orphans: a child whose parent has exited, killed
+from what the sampler wrote down, and a bystander whose pid is in the ledger with the wrong
+creation time left untouched beside it. It takes ~25s for that reason.
 `npm run test:gitpoll` drives a fake clock over the badge's `git status` cache, so the
 thirty-second idle window is checked in milliseconds rather than by waiting.
 `npm run test:install` starts a real install pty that sits there and proves quitting
