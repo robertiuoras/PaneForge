@@ -37,6 +37,8 @@ const MARGIN = 12
 let shelf: BrowserWindow | null = null
 let expanded = false
 let tall = false
+/** When a pointer was last pressed on the overlay. See `shelfTouchedAt`. */
+let touchedAt = 0
 let getMain: (() => BrowserWindow | null) | null = null
 let cached: RecentItem[] = []
 let cachedConfig: StashConfig | null = null
@@ -326,6 +328,19 @@ export function shelfWindowOpen(): boolean {
   return alive()
 }
 
+/**
+ * When a pointer was last pressed on the overlay - 0 if it never has been.
+ *
+ * Read by the activation handlers in index.ts: on macOS a click anywhere in the app
+ * activates the app, and answering that by revealing the main window is the Stash dragging
+ * PaneForge over the thing you were about to paste into. Recorded from the main process's
+ * own input routing rather than from an IPC message the page sends, because the page's
+ * message is a round trip later and the activation is already being decided by then.
+ */
+export function shelfTouchedAt(): number {
+  return touchedAt
+}
+
 /** True while a game has the overlay put away. See setShelfHidden. */
 let hiddenForGame = false
 
@@ -472,6 +487,16 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
     skipTaskbar: true,
     // See the note at the top: clicking the overlay must never steal the keyboard.
     focusable: false,
+    // On macOS `focusable: false` is not enough, and the gap is the whole feature.
+    // It stops the WINDOW becoming key; it does not stop the click activating the
+    // APP, and PaneForge answers activation by revealing its main window (index.ts) -
+    // so clicking a row to copy, or grabbing the grip to move the overlay, pulled the
+    // whole app over whatever you were typing in, and took the focus that the Cmd-V
+    // was going to. A panel carries NSWindowStyleMaskNonactivatingPanel: clicks are
+    // delivered, the app is never activated, and the frontmost app stays frontmost.
+    // Windows has no such window class and needs none - it already delivers mouse
+    // events to a non-focusable window without activating it.
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
     title: 'PaneForge clipboard',
     webPreferences: {
       preload: join(__dirname, '../preload/shelf.js'),
@@ -487,6 +512,12 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
     shelf.setAlwaysOnTop(true, 'screen-saver')
     floatOnAllWorkspaces(shelf)
   }
+  // A pointer press on the overlay, timestamped where the input is routed rather than
+  // where the page reacts to it. Only presses: a pointer merely passing over the Stash
+  // must not suppress a Cmd-Tab a moment later. See shelfTouchedAt().
+  shelf.webContents.on('input-event', (_e, input) => {
+    if (input.type === 'mouseDown' || input.type === 'mouseUp') touchedAt = Date.now()
+  })
   shelf.once('ready-to-show', () => {
     if (!keptBack()) shelf?.showInactive()
     updateShelfItems(cached)

@@ -455,6 +455,27 @@ MID-gesture, not after: the overlay is moved by hand from screen coordinates, an
 the arithmetic was 105px out horizontally and 100px vertically because AppKit had quietly
 clamped the window it was computed from. It also pins the size of the grip's hit box,
 since a press that misses the handle opens the list instead of moving the window.
+
+`npm run test:activate` is the other half of that press, and it is about the app the Stash
+is NOT. `focusable: false` stops the overlay's window becoming key; on macOS it does not
+stop the click activating the APP, and PaneForge answers activation by revealing its main
+window - which is the only way back into a copy that launched hidden. So clicking a row to
+copy, or grabbing the grip to move the overlay, pulled the whole app over the thing being
+pasted into and took the focus the Cmd-V needed. The overlay is an NSPanel on darwin now
+(`type: 'panel'`, i.e. `NSWindowStyleMaskNonactivatingPanel`) so the activation never
+happens, and `shared/activation.ts` refuses any activation a press on the Stash explains.
+
+Its load-bearing assertion is an ordering one, and it is the one a guard written the way it
+reads gets backwards: the press and the activation are ONE gesture arriving by two routes -
+AppKit's notification and the browser routing the input - and on a real click the press is
+timestamped AFTER the activation. So the handler waits `ACTIVATION_SETTLE_MS` for the other
+half rather than answering on arrival, and the window is checked in both directions. The
+press itself is recorded from `webContents.on('input-event')` in main, never from an IPC
+message the page sends, which is a round trip later than the decision. The Electron half
+spawns a real Electron and pins that `input-event` still carries mouse events to a
+`focusable: false` transparent window - the one assumption an upgrade could take away
+silently, and it would take away silently: every click would simply raise the app again.
+
 `npm run test:view` is the grid and the find bar in a real window, and it needs one up
 (`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`). The
 arithmetic behind the five layouts is pinned without a window by `npm run test:grid`; what

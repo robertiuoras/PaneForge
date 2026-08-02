@@ -117,11 +117,13 @@ import {
   placeShelf,
   setShelfExpanded,
   setShelfTall,
+  shelfTouchedAt,
   shelfWindowOpen,
   toggleShelf,
   updateShelfConfig,
   updateShelfItems
 } from './shelfWindow'
+import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -2305,6 +2307,19 @@ app.whenReady().then(() => {
   // and starting a pane in it puts an agent in a process that is about to exit.
   if (app.hasSingleInstanceLock()) openRequest(launchRequest)
   if (process.env['PANEFORGE_OPEN']) openRequest({ open: process.env['PANEFORGE_OPEN'] as string })
+  // An activation is not acted on the moment it lands. It and the press that caused it
+  // reach main by different routes - AppKit's notification, and the browser routing the
+  // input to whichever window was clicked - and nothing promises which arrives first, so
+  // the decision waits one settle for the other half of the gesture. An eighth of a
+  // second before a window appears is not a wait; a window appearing when the Stash was
+  // clicked is the bug (see shared/activation.ts).
+  const onActivated = (reveal: () => void): void => {
+    const activatedAt = Date.now()
+    setTimeout(() => {
+      if (revealOnActivation({ activatedAt, quietUntil, shelfTouchedAt: shelfTouchedAt() }))
+        reveal()
+    }, ACTIVATION_SETTLE_MS)
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) return createWindow()
     // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a
@@ -2313,17 +2328,20 @@ app.whenReady().then(() => {
     //
     // Except at launch: macOS also emits `activate` for the launch itself, and a copy an
     // agent started must not answer that by showing itself. Anything this close to
-    // startup is the launch, not a click.
-    if (Date.now() < quietUntil) return
-    focusWindow(true)
+    // startup is the launch, not a click. And except when the Stash was what was
+    // clicked - the overlay is a window of this app too.
+    onActivated(() => focusWindow(true))
   })
   // Cmd-Tab into an app whose windows are all hidden does not always reach `activate`,
-  // and an app you switched to that shows you nothing looks broken. Same guard, so the
-  // activation that comes with the launch itself is still ignored.
+  // and an app you switched to that shows you nothing looks broken. Same guards: the
+  // activation that comes with the launch itself is still ignored, and so is the one a
+  // press on the Stash caused - which on macOS is every press on the Stash, because
+  // clicking any window of an app activates the app.
   if (process.platform === 'darwin')
     app.on('did-become-active', () => {
-      if (Date.now() < quietUntil) return
-      if (alive() && !win!.isVisible()) focusWindow(true)
+      onActivated(() => {
+        if (alive() && !win!.isVisible()) focusWindow(true)
+      })
     })
 })
 
