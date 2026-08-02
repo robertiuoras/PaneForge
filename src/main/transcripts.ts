@@ -126,6 +126,48 @@ function interactive(file: string): boolean {
 }
 
 /**
+ * How a conversation began, when the file says: `clear` for one started by `/clear` or
+ * `/compact` inside a pane nobody restarted, `startup` for a CLI somebody launched.
+ *
+ * The app watches for `/clear` being TYPED (sessions.ts, on submit) and re-notes the pane
+ * so it may move. That misses the way the command is usually run: picking it out of the
+ * CLI's completion menu submits a line whose letters the app never saw, so the pane stays
+ * pinned to a conversation that stopped existing. It is not cosmetic - lane holds are
+ * recorded against the CHAT id, so the pane went on publishing a dead id, the lane engine
+ * went on believing that chat was alive, and the pane's own new chat was handed a WORKTREE
+ * and told another chat was in the repo. It was itself, before the clear.
+ *
+ * A session with no SessionStart hook configured says nothing, which is `unknown` and
+ * deliberately not read as either: the decision goes back to the quiet-gap rule in
+ * `movedTo`, which is what every pane used before this existed. Only `startup` is a
+ * refusal, and only that is worth a false negative - it is a second CLI launched in the
+ * same folder, and adopting it would move a pane into somebody else's conversation.
+ */
+function opening(file: string): 'clear' | 'startup' | 'unknown' {
+  let fd = -1
+  try {
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(HEAD_BYTES)
+    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
+    for (const line of buf.toString('utf8', 0, n).split('\n')) {
+      const said = /"hookName":"SessionStart:(\w+)"/.exec(line)
+      // `resume` is a launch like any other: it is a process somebody started, and the
+      // pane that meant it passes its id through noteSession rather than being guessed at.
+      if (said) return said[1] === 'clear' || said[1] === 'compact' ? 'clear' : 'startup'
+      // Past the opening records, everything is the conversation's own text - and a chat
+      // that PRINTS a hook name (this file's tests do, and so does any chat about lanes)
+      // must not read as one. Attachments are hook output, so they are still opening.
+      if (/"type":"(user|assistant)"/.test(line) && !line.includes('"attachment"')) break
+    }
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+}
+
+/**
  * A pane started, restarted, or changed conversation: from here on it owns one.
  *
  * `resumeId` is the conversation it was started ON, and passing it settles the pane
@@ -177,8 +219,11 @@ export function transcriptFor(id: string): string | null {
   const mine = claimed.get(id)
   const taken = new Set([...claimed].filter(([k]) => k !== id).map(([, v]) => v))
   if (mine && existsSync(mine)) {
-    if (settled.has(id)) return mine
-    const next = movedTo(id, s, mine, taken)
+    // A settled pane is one that has been told nothing about moving, so it moves only on
+    // the new conversation's own word that it is a clear. Without that word it stays put:
+    // "newest unclaimed file in this folder" is any chat at all, which is the drift that
+    // made this sticky in the first place.
+    const next = movedTo(id, s, mine, taken, settled.has(id))
     if (!next) return mine
     // The old one is not handed to anybody: it is this pane's history, not a free chat.
     released.add(mine)
@@ -239,13 +284,23 @@ function mtime(file: string): number {
  * So a rival whose transcript went quiet in that gap, later than mine did, is the one that
  * moved and this pane stays where it is.
  */
-function movedTo(id: string, s: Started, mine: string, taken: Set<string>): string | null {
+function movedTo(
+  id: string,
+  s: Started,
+  mine: string,
+  taken: Set<string>,
+  said: boolean
+): string | null {
   const mineAt = mtime(mine)
   const cand = transcripts(projectDir(s.cwd)).find(
     (t) =>
       t.file !== mine &&
       !taken.has(t.file) &&
       !released.has(t.file) &&
+      // What the file says about how it began: proof for a pane that was never told it
+      // moved, and a veto for every pane - no conversation a person launched is a pane's
+      // continuation, however well the clocks line up.
+      (said ? opening(t.file) === 'clear' : opening(t.file) !== 'startup') &&
       // Born after this pane said it had moved, and after the last line was written to the
       // conversation it is leaving. Both, because "newer" alone is any live chat in the
       // folder, and a pane is not allowed to walk into one of those.
@@ -258,7 +313,10 @@ function movedTo(id: string, s: Started, mine: string, taken: Set<string>): stri
   // Two panes on one folder that both cleared are both looking at this file. It belongs
   // to whichever of them went quiet LAST before it was born.
   for (const [other, o] of started) {
-    if (other === id || o.cwd !== s.cwd || settled.has(other)) continue
+    // Settled rivals count too, now that being settled no longer means a pane can never
+    // have moved: the pane that went quiet in the gap is the one that cleared, whether or
+    // not anybody told either of them about it.
+    if (other === id || o.cwd !== s.cwd) continue
     const theirs = claimed.get(other)
     if (!theirs) continue
     const at = mtime(theirs)

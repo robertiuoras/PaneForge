@@ -196,6 +196,53 @@ try {
   assert.equal(T.lastPrompt(cwd, 'chat-a'), 'pane one prompt')
   assert.equal(T.lastPrompt(cwd, 'chat-c'), 'after the clear')
 
+  // A /clear the app never saw happen. The re-note above is driven by the LETTERS of the
+  // command arriving through the pty, and the usual way to run it is to pick it out of the
+  // CLI's completion menu - which submits a line the app never saw typed. The pane stayed
+  // settled on a conversation that had stopped existing, and went on publishing its id:
+  // the lane engine believed that dead chat was alive (it is in the app's own list of
+  // hosted chats), so it never gave the lane back, and the pane's NEW chat was handed a
+  // worktree and told another chat was working in the repo. It was itself, before the
+  // clear. Found on a real desk: `main` held by a chat last seen four hours earlier, the
+  // live chat in lane `a`, both the same pane.
+  const cwd3 = mkdtempSync(join(tmpdir(), 'pf-cleared-'))
+  const projects3 = join(homedir(), '.claude', 'projects', slug(cwd3))
+  mkdirSync(projects3, { recursive: true })
+  /** How a session that has SessionStart hooks records the way it began. */
+  const began = (source) =>
+    rec({
+      type: 'attachment',
+      parentUuid: null,
+      attachment: { type: 'hook_success', hookEvent: 'SessionStart', hookName: `SessionStart:${source}` }
+    })
+  const chat = (id, lines, ageMs = 0) => {
+    const file = join(projects3, `${id}.jsonl`)
+    writeFileSync(file, [mode, ...lines].join('\n'), 'utf8')
+    if (ageMs) {
+      const t = (Date.now() - ageMs) / 1000
+      utimesSync(file, t, t)
+    }
+  }
+
+  T.noteSession('pane6', cwd3, 'claude')
+  chat('chat-p', [began('startup'), user('before the clear')], 3000)
+  assert.equal(T.resumeIdFor('pane6'), 'chat-p')
+
+  // A second CLI launched in the same folder is never a pane's continuation, however well
+  // the clocks line up - this is the drift the sticky rule was there to stop, and it stays
+  // stopped by what the file says rather than by refusing to ever move.
+  chat('chat-q', [began('startup'), user('someone elses new session')], 2000)
+  assert.equal(T.resumeIdFor('pane6'), 'chat-p', 'adopted a session somebody else launched')
+
+  // The clear itself, in the new conversation's own words.
+  chat('chat-r', [began('clear'), user('after the menu clear')])
+  assert.equal(T.resumeIdFor('pane6'), 'chat-r', 'did not follow a /clear the app never saw')
+
+  // Only the OPENING records say how a conversation began. A chat that prints the marker
+  // - anything discussing hooks, this test included - is a chat, not a clear.
+  chat('chat-s', [user(`log line: "hookName":"SessionStart:clear" fired`)])
+  assert.equal(T.resumeIdFor('pane6'), 'chat-r', 'read a chat about a clear as a clear')
+
   // A conversation deleted since the desk was written cannot be resumed by name, and
   // must not be passed to the CLI as if it could.
   assert.equal(T.resumable(cwd, 'chat-a'), true)
