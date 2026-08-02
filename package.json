@@ -73,6 +73,7 @@
     "eval:prompts:report": "node scripts/prompt-eval.mjs --report",
     "test:restore": "node scripts/restore-context-test.mjs",
     "test:consoles": "node scripts/console-sweep-test.mjs",
+    "test:strays": "node scripts/stray-sweep-test.mjs",
     "test:gitpoll": "node scripts/git-poll-test.mjs",
     "test:install": "node scripts/install-stop-test.mjs",
     "test:prereq": "node scripts/install-prereq-test.mjs",

@@ -16,6 +16,7 @@ import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
+import { killPaneStrays, trackStrays } from './strays'
 import { isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
@@ -179,6 +180,13 @@ export class SessionManager extends EventEmitter {
     // Single timer for all sessions: flipping working -> idle per session with its
     // own timer would mean N timers doing the same 1s tick.
     setInterval(() => this.sweepIdle(), 1000).unref()
+    // Write down what the panes have started, while their parent links still say so.
+    // Asked for the pids each sample rather than handed them: see strays.ts.
+    trackStrays(() =>
+      [...this.sessions.entries()]
+        .map(([id, s]) => ({ id, pid: s.proc.pid }))
+        .filter((p) => typeof p.pid === 'number' && p.pid > 0)
+    )
   }
 
   list(): Session[] {
@@ -741,6 +749,9 @@ export class SessionManager extends EventEmitter {
   kill(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return
+    // Before the pty dies, while its pid still names a group and a tree. What the pane
+    // started detached is not reachable from either, which is what strays.ts is for.
+    killPaneStrays(id, s.proc.pid)
     try {
       s.proc.kill()
     } catch {

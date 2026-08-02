@@ -73,6 +73,7 @@ import {
   sweepOldConsoles,
   sweepOwnConsolesOnExit
 } from './consoles'
+import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, resumable, resumeIdFor } from './transcripts'
 import {
   clearDesk,
@@ -2258,6 +2259,9 @@ app.whenReady().then(() => {
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())
+  // And what those runs' PANES left running - a dev server whose npm is long dead is not
+  // reachable from any tree, so it is killed from what we wrote down. See strays.ts.
+  sweepOldStrays()
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
   setSilenceAlert(cfg.silenceAlertMin)
@@ -2372,6 +2376,9 @@ function hardExit(): void {
   // not the agents', so no taskkill of an agent tree names them. This runs after we are
   // gone and only touches consoles whose parent is gone with us. See consoles.ts.
   sweepOwnConsolesOnExit()
+  // The other thing shutdown()'s taskkill cannot reach: whatever the panes started that is
+  // no longer linked to them. Detached, so it runs once we are not here to be its parent.
+  sweepOwnStraysOnExit()
   process.exit(0)
 }
 
