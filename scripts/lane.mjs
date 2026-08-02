@@ -94,7 +94,22 @@ function argOf(name) {
   const i = a.indexOf(`--${name}`)
   return i >= 0 ? a[i + 1] : undefined
 }
-const asked = argOf('repo') ?? process.env.LANE_REPO ?? null
+
+// And when nobody says which repo, the answer is the one you are standing in - not the one
+// this file happens to ship inside. Both are "obvious"; only one of them is what a human
+// typing the command meant. Without this, `lane.mjs status` run from any other checkout
+// answered about PaneForge - PaneForge's lanes, PaneForge's branch, PaneForge's folders -
+// which reads exactly like a right answer and is not one. Every note that ever said "run
+// it from the repo" described THIS behaviour and never got it, because the flag was the
+// only thing that worked (2026-08-02). The flag still wins, then LANE_REPO, then the
+// checkout around cwd; only when cwd is in no repo at all does this file's own repo answer.
+function cwdRepo() {
+  const at = process.cwd()
+  const found = gitSafe(at, 'rev-parse', '--git-common-dir')
+  if (!found.ok) return null
+  return dirname(resolve(at, found.out))
+}
+const asked = argOf('repo') ?? process.env.LANE_REPO ?? cwdRepo()
 const own = resolve(join(here, '..'))
 const commonDir = resolve(asked ? resolve(asked) : own, git(asked ? resolve(asked) : own, 'rev-parse', '--git-common-dir'))
 const MAIN = dirname(commonDir)

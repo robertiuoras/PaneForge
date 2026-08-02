@@ -1093,7 +1093,10 @@ const lanePanes = (): LanePane[] =>
     .filter((s) => s.status !== 'exited')
     .map((s) => ({ id: s.id, cwd: s.cwd, resumeId: resumeIdFor(s.id) }))
 
-ipcMain.handle('lanes:board', () => attachLaneOwners(laneBoard(), lanePanes()))
+ipcMain.handle('lanes:board', () => {
+  const panes = lanePanes()
+  return attachLaneOwners(laneBoard(panes), panes)
+})
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
@@ -1136,7 +1139,7 @@ async function sweepEmptyLanes(): Promise<void> {
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
 setInterval(() => {
-  laneRetry()
+  laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
   laneReclaim(lanePanes())
