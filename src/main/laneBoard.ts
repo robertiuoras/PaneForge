@@ -470,34 +470,53 @@ let reclaiming = false
  */
 export function laneReclaim(panes: LanePane[]): void {
   if (reclaiming) return
-  const main = findRepo(panes)
-  if (!main) return
-  const board = attachLaneOwners(laneBoard(panes), panes)
+  // EVERY repo the panes are in, not the one the strip happens to be showing. Lanes stopped
+  // being one project's the day lane.mjs took `--repo`, but this did not: findRepo votes,
+  // and only the winner got a heartbeat and a reclaim. Measured on a real desk with panes
+  // in two projects - the loser's panes file was FOUR HOURS stale, written by a copy that
+  // had quit, so no chat in it counted as living, no dead hold was ever given back, and
+  // every chat that opened there was told another chat had the lane. For 12h, which is
+  // when staleness finally reaps it.
+  const chats = panes.map((p) => p.resumeId).filter((c): c is string => Boolean(c))
+  const groups = new Map<string, LanePane[]>()
+  for (const p of panes) {
+    const main = p.cwd && mainCheckout(p.cwd)
+    if (!main || !existsSync(join(main, '.git', 'paneforge-lanes.json'))) continue
+    groups.set(main, [...(groups.get(main) ?? []), p])
+  }
   // Our own panes are in this list too, so a chat is never judged dead by the window it
-  // is running in - only by every window agreeing it is nowhere.
-  const living = heartbeat(
-    main,
-    panes.map((p) => p.resumeId).filter((c): c is string => Boolean(c))
-  )
-  const gone = goneLanes(board, living)
-  if (!board || !gone.length) return
-  const engine = laneEngine(board.repo)
-  if (!engine) return
-  reclaiming = true
-  execFile(
-    process.execPath,
-    [engine, 'release', '--repo', board.repo, '--session', gone[0]],
-    {
-      cwd: board.repo,
-      windowsHide: true,
-      timeout: RETRY_TIMEOUT,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-    },
-    () => {
-      reclaiming = false
-      cache = { at: 0, board: null }
-    }
-  )
+  // is running in - only by every window agreeing it is nowhere. The list is the whole
+  // machine's and goes into every repo, so liveness is one answer rather than one per
+  // project: a chat is alive if any copy is hosting it, wherever that copy's panes are.
+  const living = new Set<string>()
+  for (const main of groups.keys()) for (const chat of heartbeat(main, chats)) living.add(chat)
+
+  for (const [main, own] of groups) {
+    const board = attachLaneOwners(read(own), own)
+    if (!board || board.repo !== main) continue
+    const gone = goneLanes(board, living)
+    if (!gone.length) continue
+    const engine = laneEngine(board.repo)
+    if (!engine) continue
+    reclaiming = true
+    execFile(
+      process.execPath,
+      [engine, 'release', '--repo', board.repo, '--session', gone[0]],
+      {
+        cwd: board.repo,
+        windowsHide: true,
+        timeout: RETRY_TIMEOUT,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      },
+      () => {
+        reclaiming = false
+        cache = { at: 0, board: null }
+      }
+    )
+    // One lane per tick: each release ends in an autoship, and the tick comes round every
+    // minute. The repo that did not get its turn gets the next one.
+    return
+  }
 }
 
 function readState(panes: LanePane[] = []): RawState | null {

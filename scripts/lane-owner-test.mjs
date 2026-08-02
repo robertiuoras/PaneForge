@@ -18,7 +18,7 @@
 //   node scripts/lane-owner-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -169,6 +169,64 @@ const twoDead = {
   const board = attachLaneOwners(laneBoard(), [])
   check('a hold minutes old is not reclaimed even with no panes at all',
     goneLanes(board, new Set(), now).length === 0)
+}
+
+{
+  // Two projects open on one desk, which is the normal case now that lanes are not this
+  // repo's alone. `findRepo` votes and one project wins, and the winner used to be the
+  // only one that got a heartbeat or a hand-back: every other repo's panes file went
+  // stale, so no chat in it counted as living, no dead hold was ever given back, and every
+  // chat that opened there was told another chat had the lane - for the full 12h staleness
+  // window. Measured on a real desk before this: the losing repo's file was four hours old
+  // and written by a copy that had quit.
+  delete process.env.PANEFORGE_REPO
+  const other = join(work, 'other-project')
+  mkdirSync(join(other, '.git'), { recursive: true })
+  const CHAT_C = 'f2c2a5f7-6c50-4f43-a2f2-6da1b6a2b8a1'
+  // The winner of the vote (two panes) has nothing to reclaim: its one hold is a pane.
+  state({ a: { session: CHAT_A, cwd: repo, claimed: now - 60_000, seen: now - 60_000 } })
+  writeFileSync(
+    join(other, '.git', 'paneforge-lanes.json'),
+    JSON.stringify({
+      lanes: { main: { session: CHAT_MAIN, cwd: other, claimed: now - 4 * 3600_000, seen: now - 3 * 3600_000 } },
+      ready: {},
+      conflicts: {},
+      release: null,
+      lastShip: null
+    })
+  )
+  // The engine is spawned, never imported, so the fake one only has to write down its argv.
+  const engine = join(work, 'fake-engine.mjs')
+  const calls = join(work, 'calls.json')
+  writeFileSync(engine, `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2)))`)
+  process.env.PANEFORGE_ENGINE = engine
+
+  const { laneReclaim } = await load()
+  laneReclaim([
+    { id: 'pane1', cwd: repo, resumeId: CHAT_A },
+    { id: 'pane2', cwd: repo, resumeId: CHAT_B },
+    { id: 'pane3', cwd: other, resumeId: CHAT_C }
+  ])
+
+  const beat = (main) => JSON.parse(readFileSync(join(main, '.git', 'paneforge-panes.json'), 'utf8'))
+  const chatsIn = (main) => Object.values(beat(main)).flatMap((b) => b.chats)
+  check('the repo that wins the vote is told what this copy hosts', chatsIn(repo).includes(CHAT_A))
+  check(
+    'and so is every other repo a pane is in, with the whole machine’s chats',
+    [CHAT_A, CHAT_B, CHAT_C].every((c) => chatsIn(other).includes(c)),
+    JSON.stringify(chatsIn(other))
+  )
+
+  // The spawn is async, and a hand-back that never happens looks exactly like one that has
+  // not happened yet - so this waits rather than asserting on the next line.
+  const until = Date.now() + 5000
+  while (!existsSync(calls) && Date.now() < until) await new Promise((r) => setTimeout(r, 50))
+  const argv = existsSync(calls) ? JSON.parse(readFileSync(calls, 'utf8')) : []
+  check('a dead hold in the repo that LOST the vote is still handed back',
+    argv[0] === 'release' && argv.includes(CHAT_MAIN), JSON.stringify(argv))
+  check('and handed back against that repo, not the one on the strip',
+    argv.includes(other), JSON.stringify(argv))
+  delete process.env.PANEFORGE_ENGINE
 }
 
 rmSync(work, { recursive: true, force: true })
