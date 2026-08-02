@@ -29,7 +29,19 @@
   --ink-dim: #9b9bab;
   --ink-faint: #74748a;
   --accent: 128, 192, 255;
-  --lift: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 12px 34px rgba(0, 0, 0, 0.5);
+  /* A drop shadow in a transparent window may not be wider than the window.
+     This one was `0 12px 34px`, which needs ~29px below the card and ~17px to each side
+     to reach zero, and the window gives it 3.8px - so it was CUT, not faded. Measured on
+     a real overlay 2026-08-02: the outermost pixel ring painted black at alpha 6-72/255
+     (28% at the bottom edge) and the pixel beside it, outside the window, painted 0. That
+     step is a hard-edged grey rectangle around the Stash, and on a white desktop it is
+     the most visible thing about it - the "you can see the whole box".
+     So the shadow is sized to the room it has: reach <= the 4px margin below, which
+     leaves the outer ring at alpha <= 3/255. Anything softer needs a bigger window, and
+     a bigger window is more dead transparent area around a 30px pill, which is the same
+     complaint from the other side. */
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 1px 2px rgba(0, 0, 0, 0.45),
+    0 1px 3px rgba(0, 0, 0, 0.22);
 }
 
 html,
@@ -622,7 +634,10 @@ button.mini.danger:hover {
     --ink-dim: #4a4a58;
     --ink-faint: #71717f;
     --accent: 40, 118, 214;
-    --lift: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 12px 30px rgba(0, 0, 0, 0.22);
+    /* Same rule as the dark one, and this is the desktop it was reported on: a grey
+       rectangle is invisible on a dark wallpaper and unmissable on a white one. */
+    --lift: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 2px rgba(0, 0, 0, 0.16),
+      0 2px 3px rgba(0, 0, 0, 0.1);
   }
 
   .head,
