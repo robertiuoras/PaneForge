@@ -73,6 +73,11 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   `rerere` is on, and the retry timer re-tries recorded conflicts every minute.
 - Release notes come from Conventional Commit subjects between version tags
   (`scripts/release-notes.mjs`, template `.github/release-notes.md`). `npm run test:notes`.
+- Actions and this machine can BOTH publish a release when the fallback's 45s poll misses
+  a run that was merely slow. The duplicate installers are harmless; `latest.yml` is not,
+  because the loser's feed names the winner's file. `reconcileFeed` on the retry timer
+  compares the feed to the asset it names and puts ours back. Never hand-fix a feed without
+  checking the asset's real size — v0.4.27 shipped 33 bytes out and looked perfect.
 
 **A release claims the thing is finished.** Never cut one while any next step for that
 issue is still open.

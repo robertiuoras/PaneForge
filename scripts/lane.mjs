@@ -1843,6 +1843,75 @@ function reconcileNotes(state) {
   return edit.ok ? last.version : null
 }
 
+/**
+ * Two publishers, one release.
+ *
+ * Actions builds the installers when the tag lands, and `publishFallback` builds them here
+ * when no run appears within its 45s window. When the poll is merely SLOW rather than right,
+ * BOTH publish - and the second binary cannot take a name the first already holds, so it
+ * lands beside it as `PaneForge.Setup.0.4.27.exe` next to `PaneForge-Setup-0.4.27.exe`.
+ * Those duplicates are harmless. `latest.yml` is not: it is overwritten rather than skipped,
+ * so whichever job finishes last publishes a feed naming the file the OTHER one uploaded.
+ *
+ * v0.4.27 went out exactly that way - a feed declaring sha512 and size for a build 33 bytes
+ * shorter than the asset it pointed at. Nothing looks wrong: the release page is complete,
+ * both jobs are green, the installer downloads and runs. Only electron-updater ever compares
+ * the two, silently, on somebody else's machine, and refuses the update. It is the one break
+ * with no reporter, because the people it happens to are the people whose app never changes.
+ *
+ * So the feed is checked against the asset it actually names, on the timer that already
+ * fixes the notes and for the same hour. Check-then-write, never one-shot: the job that
+ * overwrote it may still have been running when we looked. Our own `dist` feed is only
+ * put back when it agrees with what the release is really serving - a repair that cannot
+ * verify itself is worse than the mismatch, which at least fails closed.
+ */
+function reconcileFeed(state) {
+  const last = state.lastShip
+  if (RELEASE !== 'version') return null
+  if (!last?.version || !last.at || Date.now() - last.at > NOTES_MS) return null
+
+  const tag = `v${last.version}`
+  const name = process.platform === 'darwin' ? 'latest-mac.yml' : 'latest.yml'
+  const local = join(MAIN, 'dist', name)
+  if (!existsSync(local)) return null
+
+  // What the release is serving right now, not what we uploaded.
+  const served = runSafe('gh', ['release', 'download', tag, '-p', name, '-O', '-'], {
+    timeout: 60_000
+  })
+  if (!served.ok) return null
+  const declared = /^\s*-?\s*url:\s*(\S+)[\s\S]*?size:\s*(\d+)/m.exec(served.out)
+  if (!declared) return null
+  const [, file, size] = declared
+
+  // No `--jq` filter here, and the reason is not style. `runSafe` spawns with
+  // `shell: true` on Windows, so arguments are concatenated rather than escaped - a
+  // filter containing spaces and `|` is re-split by cmd, and what runs is a fragment
+  // piped into nonsense. It fails silently as `ok: false`, which this function reads
+  // as "cannot tell" and answers by doing nothing, so the repair simply never happens
+  // and nothing anywhere says why. The `--jq` calls that DO work in this file
+  // (`.body`, `[.workflow_runs[].head_branch]`) all happen to contain neither.
+  const listed = runSafe('gh', ['release', 'view', tag, '--json', 'assets'], { timeout: 30_000 })
+  if (!listed.ok) return null
+  let real
+  try {
+    real = JSON.parse(listed.out).assets?.find((a) => a.name === file)?.size
+  } catch {
+    return null
+  }
+  // An asset the feed names that does not exist is a different failure and not one a
+  // reupload of our own feed can fix - leave it and let `doctor` be the thing that says so.
+  if (real == null) return null
+  if (String(real) === size) return null
+
+  // Only our own feed, and only when it describes the bytes actually being served.
+  const mine = /^\s*-?\s*url:\s*(\S+)[\s\S]*?size:\s*(\d+)/m.exec(readFileSync(local, 'utf8'))
+  if (!mine || mine[1] !== file || mine[2] !== String(real)) return null
+
+  const up = runSafe('gh', ['release', 'upload', tag, local, '--clobber'], { timeout: 120_000 })
+  return up.ok ? { version: last.version, name, was: size, now: mine[2] } : null
+}
+
 function status(session) {
   const state = reap(read())
   // Asking is not writing, except when the asking found something to throw away: an
@@ -2025,7 +2094,12 @@ try {
   const session = arg('session')
   const sayBuilt = (b) =>
     b?.by === 'local'
-      ? 'GitHub Actions is disabled for the account, so this machine built and published the installer itself. Running copies update within 30 minutes.'
+      ? // Not "Actions is disabled" any more. It WAS, for two days in July, and the sentence
+        // outlived the outage by a week - printed on every release while Actions was green
+        // and building the very same installers. Say what was observed (no run appeared in
+        // time) rather than the reason we guessed for it, because when both publish the
+        // feed can end up describing the other build: see reconcileFeed.
+        'No GitHub Actions run appeared for this tag in time, so this machine built and published the installer itself. If Actions was merely slow it will publish too; the feed is checked and repaired on the retry timer. Running copies update within 30 minutes.'
       : b?.by === 'failed'
         ? `Tag is pushed but NO installers exist: ${b.reason}. Fix and run: node scripts/lane.mjs ship`
         : 'GitHub is building Windows and macOS. Running copies update within 30 minutes.'
@@ -2136,6 +2210,13 @@ try {
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)
+    const feed = reconcileFeed(reap(read()))
+    if (feed)
+      console.log(
+        `Put ${feed.name} back on the v${feed.version} release: it described a ${feed.was}-byte ` +
+          `build and the installer being served is ${feed.now} bytes, so every update would ` +
+          `have failed its hash check.`
+      )
   } else if (cmd === 'doctor') console.log(doctor())
   else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {
