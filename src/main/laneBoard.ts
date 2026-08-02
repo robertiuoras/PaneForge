@@ -62,6 +62,11 @@ interface RawState {
 const RETRY_EVERY = 2 * 60 * 1000
 /** A retry that clears a conflict ends in a release, and a release is not quick. */
 const RETRY_TIMEOUT = 10 * 60 * 1000
+/**
+ * How long after a release the timer keeps ticking with nothing else to do. Matches
+ * NOTES_MS in scripts/lane.mjs, which is the window its two reconcilers work in.
+ */
+const RECONCILE_AFTER_SHIP = 60 * 60 * 1000
 
 let repo: string | null | undefined
 /** Which set of open panes produced `repo`, so closing the last pane on a repo re-resolves. */
@@ -268,7 +273,16 @@ export function laneBoard(panes: LanePane[] = []): LaneBoard | null {
 export function laneRetry(panes: LanePane[] = []): void {
   const board = laneBoard(panes)
   if (!board || retrying) return
-  if (!board.lanes.some((l) => l.conflicted || l.ready)) return
+  // A release is not finished when it is cut. For an hour afterwards lane.mjs still has
+  // two things to fix from here - the notes, and a `latest.yml` overwritten by whichever
+  // publisher finished last (see reconcileFeed). Both need the timer, and the timer used
+  // to stop the moment no lane was ready or conflicted - which is precisely what a
+  // release makes true, at precisely the moment it creates the work. So the reconcilers
+  // could only ever run when some OTHER lane happened to be mid-flight, and v0.4.27's
+  // broken feed would have sat there being served until somebody noticed by hand.
+  const ship = lastShip()
+  const watching = !!ship && Date.now() - ship.at < RECONCILE_AFTER_SHIP
+  if (!watching && !board.lanes.some((l) => l.conflicted || l.ready)) return
   const engine = laneEngine(board.repo)
   if (!engine) return
   const now = Date.now()
