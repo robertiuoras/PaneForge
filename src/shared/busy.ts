@@ -124,28 +124,43 @@ export function readsElapsedMs(
  */
 function scanDuration(text: string): { ms: number; grain: number; footer: boolean } | null {
   let found: { ms: number; grain: number; footer: boolean } | null = null
+  let foundAt = -1
+  const keep = (at: number, value: string, footer: boolean): void => {
+    // A duration positively identified as footer chrome outranks a bare duration that
+    // happens to be lower in an answer. Within the same confidence, the lower screen
+    // candidate wins because the live footer is drawn at the bottom.
+    if (found && found.footer !== footer) {
+      if (found.footer) return
+    } else if (at < foundAt) return
+    const m = DURATION.exec(value.trim())
+    if (!m || (!m[1] && !m[2] && !m[3])) return
+    const h = Number(m[1] ?? 0)
+    const min = Number(m[2] ?? 0)
+    const sec = Number(m[3] ?? 0)
+    foundAt = at
+    found = {
+      ms: (h * 3600 + min * 60 + sec) * 1000,
+      grain: m[3] ? 1000 : m[2] ? 60_000 : 3_600_000,
+      footer
+    }
+  }
   // Every parenthesised run on the frame, last one wins: the footer is at the bottom.
   for (const paren of text.matchAll(/\(([^)\n]{1,80})\)/g)) {
     const parts = paren[1].split('·')
-    for (const part of parts) {
-      const s = part.trim()
-      if (!/^\d/.test(s)) continue
-      const m = DURATION.exec(s)
-      if (!m || (!m[1] && !m[2] && !m[3])) continue
-      const h = Number(m[1] ?? 0)
-      const min = Number(m[2] ?? 0)
-      const sec = Number(m[3] ?? 0)
-      found = {
-        ms: (h * 3600 + min * 60 + sec) * 1000,
-        // What the CLI rounded to. A reading of "24m" says nothing about the seconds,
-        // so a clock anchored to it must not be corrected by less than a minute.
-        grain: m[3] ? 1000 : m[2] ? 60_000 : 3_600_000,
-        // Sat beside something else in the same bracket, so this is a CLI footer
-        // rather than a duration that happens to be in brackets in an answer.
-        footer: parts.length > 1
-      }
-    }
+    for (const part of parts) if (/^\s*\d/.test(part)) keep(paren.index, part, parts.length > 1)
   }
+  // Codex prints the same live counter without parentheses:
+  //
+  //   Esc to interrupt · 12s
+  //
+  // `readsBusy` has always recognised that line, but leaving its counter unread meant
+  // a brief terminal repaint could end and restart PaneForge's clock at zero with no
+  // agent-owned time available to pull it back. Keep this deliberately tied to the
+  // interrupt footer so bare durations in answers and the statusline remain invisible.
+  for (const line of text.matchAll(
+    /(?:^|\n)[^\S\n]*esc to interrupt\s*·\s*([^\n]{1,20})[^\S\n]*(?=\n|$)/gi
+  ))
+    keep(line.index, line[1], true)
   return found
 }
 

@@ -98,6 +98,17 @@ const S = 1000
 const M = 60 * S
 const H = 60 * M
 const clocks = [
+  ['codex raw footer', 'Esc to interrupt · 12s\n' + CHROME, 12 * S],
+  [
+    'codex footer wins below a quoted duration',
+    'Previous step took (2m 14s)\nEsc to interrupt · 12s\n' + CHROME,
+    12 * S
+  ],
+  [
+    'codex footer wins above a quoted duration',
+    'Esc to interrupt · 12s\nQueued note (2m)\n' + CHROME,
+    12 * S
+  ],
   ['seconds only', '✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, 8 * S],
   ['minutes and seconds', '✢ Smooshing… (24m 3s · ↓ 282 tokens)\n' + CHROME, 24 * M + 3 * S],
   // The duration is not the first segment when a hook is running - read past it.
@@ -148,6 +159,12 @@ for (const [name, frame, want] of grains) {
 // which is what any missed turn boundary does, silently and for the rest of the turn.
 const NOW = 1_700_000_000_000
 const anchors = [
+  [
+    'a Codex clock restarted 5m late is pulled back to the agent',
+    NOW - 12 * S,
+    readsElapsedMs('Esc to interrupt · 5m 12s', true),
+    NOW - (5 * M + 12 * S)
+  ],
   [
     'a clock started 12m late is pulled back to the agent',
     NOW - 12 * M,
