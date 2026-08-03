@@ -218,19 +218,28 @@ async function run(cdp) {
 
   // A tag only moves once the buffer is taller than the screen, so the run starts with
   // enough output to give the rail a scale to place things on.
-  const filler = (n) => `for($i=1;$i -le ${n};$i++){ echo "filler $i" }`
+  const windowsShell = process.platform === 'win32'
+  const filler = (n) =>
+    windowsShell
+      ? `for($i=1;$i -le ${n};$i++){ echo "filler $i" }`
+      : `for i in {1..${n}}; do echo "filler $i"; done`
   // An agent's screen, drawn the way Claude Code and Codex draw one: a box rule near the
   // top, more output, a second box rule just above where the prompt is typed.
-  const screen =
-    `$e=[char]27; Write-Host "${'${e}'}[2J${'${e}'}[H" -NoNewline; ` +
-    `Write-Host ("$([char]0x2500)"*20); 1..9|%{ echo "text $_" }; ` +
-    `Write-Host ("$([char]0x2500)"*20); 1..3|%{ echo "line $_" }`
+  const rule = '─'.repeat(20)
+  const screen = windowsShell
+    ? `$e=[char]27; Write-Host "${'${e}'}[2J${'${e}'}[H" -NoNewline; ` +
+      `Write-Host ("$([char]0x2500)"*20); 1..9|%{ echo "text $_" }; ` +
+      `Write-Host ("$([char]0x2500)"*20); 1..3|%{ echo "line $_" }`
+    : `printf '\\033[2J\\033[H'; printf '%s\\n' '${rule}'; ` +
+      `for i in {1..9}; do echo "text $i"; done; printf '%s\\n' '${rule}'; ` +
+      `for i in {1..3}; do echo "line $i"; done`
   // The TUI redrawing over its own box: the near rule is overwritten in place - not
   // erased, so nothing is disposed - and the rule further up is the next one a scan
   // walking upwards will find.
-  const overwrite =
-    `$e=[char]27; Write-Host "${'${e}'}[11;1Hxxxxxxxxxxxxxxxxxxxx" -NoNewline; ` +
-    `Write-Host "${'${e}'}[18;1H" -NoNewline`
+  const overwrite = windowsShell
+    ? `$e=[char]27; Write-Host "${'${e}'}[11;1Hxxxxxxxxxxxxxxxxxxxx" -NoNewline; ` +
+      `Write-Host "${'${e}'}[18;1H" -NoNewline`
+    : `printf '\\033[11;1Hxxxxxxxxxxxxxxxxxxxx\\033[18;1H'`
 
   await type(cdp, filler(300))
   await enter(cdp)

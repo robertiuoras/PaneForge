@@ -226,7 +226,11 @@ async function run(cdp) {
   await sleep(2500)
 
   // Enough scrollback that a jump to the oldest tag is a big, unmistakable move.
-  const filler = (n) => `for($i=1;$i -le ${n};$i++){ echo "filler $i" }`
+  const windowsShell = process.platform === 'win32'
+  const filler = (n) =>
+    windowsShell
+      ? `for($i=1;$i -le ${n};$i++){ echo "filler $i" }`
+      : `for i in {1..${n}}; do echo "filler $i"; done`
   await type(cdp, filler(400))
   await enter(cdp)
   await sleep(5000)
@@ -378,7 +382,12 @@ async function run(cdp) {
   // shell does not - so the pane under test has been in a mode his never is.
   // `[char]27` rather than a literal ESC: the keystrokes go through xterm on the way
   // to the shell, and an ESC typed at a prompt is a keybinding, not a character.
-  await type(cdp, '$e=[char]27; [Console]::Out.Write($e + "[?1000h" + $e + "[?1006h")')
+  await type(
+    cdp,
+    windowsShell
+      ? '$e=[char]27; [Console]::Out.Write($e + "[?1000h" + $e + "[?1006h")'
+      : `printf '\\033[?1000h\\033[?1006h'`
+  )
   await enter(cdp)
   await sleep(2000)
   let termClass = await evalIn(
