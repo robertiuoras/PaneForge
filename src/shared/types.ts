@@ -2,7 +2,7 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { AgentInfo, AgentSpec } from './agents'
-import type { DiscordStyle } from './discordRpc'
+import type { DiscordStyle, PresenceStatus } from './discordRpc'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
@@ -749,15 +749,6 @@ export interface Config {
    */
   discordPresence: boolean
   /**
-   * The Discord application id the presence reports under. Discord prints that
-   * application's NAME as the activity header, so pointing this at your own
-   * application (discord.com/developers → New Application, no bot needed) renames
-   * the header; everything else is identical. The default is an existing
-   * application so the feature works with nothing to create first - creating one
-   * from here is impossible, the endpoint demands a captcha.
-   */
-  discordClientId: string
-  /**
    * What the presence actually says: the two lines as templates, and switches for the
    * parts that are not text. Empty templates mean the built-in wording, so this is
    * safe to leave alone forever and an upgrade changes nothing on anyone's profile.
@@ -1053,8 +1044,9 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
-  /** the name Discord prints as the presence header for an application id; null if unknown */
-  discordAppName(id: string): Promise<string | null>
+  /** what Discord itself last said about the presence - accepted, refused, or not running */
+  discordStatus(): Promise<PresenceStatus>
+  onDiscordStatus(cb: (status: PresenceStatus) => void): () => void
 
   /** open a folder, or open a file's folder with the file selected */
   reveal(path: string): void

@@ -17,6 +17,7 @@ import type {
   TaskItem,
   UpdateState
 } from '../shared/types'
+import type { PresenceStatus } from '../shared/discordRpc'
 
 const api: Api = {
   listProjects: () => ipcRenderer.invoke('projects:list'),
@@ -45,7 +46,12 @@ const api: Api = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<Config>) => ipcRenderer.invoke('config:set', patch),
   pickRoot: () => ipcRenderer.invoke('config:pickRoot'),
-  discordAppName: (id) => ipcRenderer.invoke('discord:appName', id),
+  discordStatus: () => ipcRenderer.invoke('discord:status'),
+  onDiscordStatus: (cb) => {
+    const h = (_e: unknown, status: PresenceStatus) => cb(status)
+    ipcRenderer.on('discord:status', h)
+    return () => ipcRenderer.off('discord:status', h)
+  },
 
   reveal: (path) => ipcRenderer.send('shell:reveal', path),
   pathKind: (cwd, token) => ipcRenderer.invoke('shell:pathKind', cwd, token),

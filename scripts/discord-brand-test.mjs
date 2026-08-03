@@ -2,8 +2,8 @@
 //
 // Discord heads a rich presence with the APPLICATION's name and nothing the app sends can
 // override it - not the details line, not the state line, not the image tooltip. So the
-// header is decided entirely by `discordClientId`, and the default in src/main/config.ts
-// is the one every user who never opens Settings will ship.
+// header is decided entirely by `DISCORD_APP_ID` in src/shared/discordRpc.ts, which is a
+// constant - so it is the header every user gets, with no setting able to change it.
 //
 // That default started life as a BORROWED application - "Manic's Auction House", the
 // author's own Discord bot - because creating one needs a portal login and a captcha and
@@ -37,12 +37,15 @@ const ok = (c, n) => {
   if (!c) failed++
 }
 
-// --- what happens to the id ALREADY on disk -------------------------------
+// --- what happens to an id ALREADY on disk --------------------------------
 //
-// Changing the default reaches nobody who has ever launched the app: getConfig() merges
-// the saved file over the defaults, so a saved id wins forever. Every user from the
-// borrowed-id months has those digits written into their config.json, and without the
-// migration below they would go on printing a stranger's brand no matter what ships.
+// The id was a settings field for a while, and getConfig() merges the saved file over the
+// defaults - so a saved value used to win forever. That is how the borrowed-application
+// months survived every later release, and how a cleared or mistyped field turned into a
+// presence Discord could not resolve and nobody was told about.
+//
+// It is a constant now, so the saved key must not merely lose - it must be GONE, or it
+// sits in config.json for years looking like a live setting.
 //
 // config.ts pulls `app` from electron for the userData path, so it is bundled and the
 // electron require is pointed at a stub - the same trick gamemode-test.mjs uses for
@@ -53,6 +56,11 @@ mkdirSync(work, { recursive: true })
 writeFileSync(
   join(work, 'electron-stub.cjs'),
   `module.exports={app:{getPath:()=>${JSON.stringify(work)},getVersion:()=>'0.0.0'}}\n`
+)
+// A config from the borrowed-id months, exactly as it sits on those users' disks.
+writeFileSync(
+  join(work, 'config.json'),
+  JSON.stringify({ discordPresence: true, discordClientId: '1494887437367771276' })
 )
 buildSync({
   absWorkingDir: root,
@@ -74,33 +82,29 @@ if (patchedSrc === bundleSrc) {
   failed++
 } else {
   writeFileSync(bundleFile, patchedSrc)
-  const { migrateDiscordId } = createRequire(import.meta.url)(bundleFile)
-  const BORROWED = '1494887437367771276'
-  const NOW = 'the-shipped-default'
+  const { getConfig, setConfig } = createRequire(import.meta.url)(bundleFile)
+  const cfg = getConfig()
+  ok(!('discordClientId' in cfg), 'a saved application id is dropped, not merged')
+  ok(cfg.discordPresence === true, 'the rest of that old config is untouched')
+  setConfig({ discordPresence: true })
   ok(
-    migrateDiscordId(BORROWED, NOW) === NOW,
-    'a config still holding the borrowed id is moved to the shipped one'
+    !('discordClientId' in JSON.parse(readFileSync(join(work, 'config.json'), 'utf8'))),
+    'and the next write leaves it out of config.json for good'
   )
-  ok(
-    migrateDiscordId('999999999999999999', NOW) === '999999999999999999',
-    "somebody else's own application id is left exactly alone"
-  )
-  ok(migrateDiscordId(undefined, NOW) === NOW, 'a config written before the field existed gets the default')
-  ok(migrateDiscordId('', NOW) === NOW, 'and so does an empty one')
 }
 rmSync(work, { recursive: true, force: true })
 
-// Read the literal out of config.ts rather than importing it: this must track the value
-// that actually ships, and a copy of the id in the test is a second place to forget.
-const cfg = readFileSync(join(root, 'src/main/config.ts'), 'utf8')
-const m = /discordClientId:\s*'(\d+)'/.exec(cfg)
+// Read the literal out of the shipped source rather than copying it here: this must track
+// the value that actually ships, and a second copy is a second place to forget.
+const cfg = readFileSync(join(root, 'src/shared/discordRpc.ts'), 'utf8')
+const m = /DISCORD_APP_ID\s*=\s*'(\d+)'/.exec(cfg)
 // process.exitCode rather than process.exit(): exiting while the fetch handle is still
 // closing aborts Node on Windows with a libuv assertion (`!(handle->flags &
 // UV_HANDLE_CLOSING)`), and an abort replaces the exit code with its own - so a FAIL that
 // says everything it should still came back as 127, which reads like "no such command"
 // rather than like a failed check.
 if (!m) {
-  console.error('FAIL no discordClientId default found in src/main/config.ts')
+  console.error('FAIL no DISCORD_APP_ID literal found in src/shared/discordRpc.ts')
   console.error('     The presence header comes from that literal; without it there is')
   console.error('     nothing to check and the shipped brand is unknown.')
   failed++
@@ -116,7 +120,7 @@ if (!m) {
     console.log('     Offline, rate limited, or the id belongs to nobody. Not a pass.')
   } else if (/paneforge/i.test(name)) {
     console.log(`PASS the shipped Discord application ${id} is called ${JSON.stringify(name)}`)
-    console.log('     Every user who never opens Settings gets that as their presence header.')
+    console.log('     Every user gets that header - it is a constant now, not a setting.')
   } else {
     console.error(`FAIL the shipped Discord application ${id} is called ${JSON.stringify(name)}.`)
     console.error('')
@@ -128,7 +132,7 @@ if (!m) {
     console.error('       1. https://discord.com/developers/applications')
     console.error('       2. New Application -> name it PaneForge -> Create')
     console.error('       3. copy the Application ID')
-    console.error(`       4. replace discordClientId in src/main/config.ts (currently ${id})`)
+    console.error(`       4. replace DISCORD_APP_ID in src/shared/discordRpc.ts (currently ${id})`)
     console.error('')
     console.error('     No bot, no scopes, no OAuth and no "connection" to link: rich presence')
     console.error('     talks to the local Discord client over a named pipe, and the id is the')

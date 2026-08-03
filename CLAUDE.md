@@ -211,7 +211,7 @@ Needing a real window up (`npm run build && npm run try -- --keep --show
 `test:activate`, `test:improveview`.
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,
-which asks Discord what the shipped `discordClientId` is called AND whether it still has
+which asks Discord what the shipped `DISCORD_APP_ID` is called AND whether it still has
 the art asset `PRESENCE_IMAGE` names — it passes now, and the two halves fail separately,
 because a correct name with no asset is a card with no logo on it; and
 `node scripts/mac-update-test.mjs --live <version>` (~120 MB).

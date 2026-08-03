@@ -167,7 +167,6 @@ function defaults(): Config {
     silenceAlertMin: 5,
     bellAlert: true,
     discordPresence: true,
-    discordClientId: '1533054088454082601',
     discordStyle: { ...DEFAULT_DISCORD_STYLE },
     clipboardShelf: true,
     clipboardOverlay: true,
@@ -222,6 +221,7 @@ export function getConfig(): Config {
   const base = defaults()
   try {
     const raw = JSON.parse(readFileSync(file(), 'utf8')) as Partial<Config>
+    dropSavedDiscordId(raw as Record<string, unknown>)
     // Shallow merge only: a config written by an older version is missing whole
     // keys, and a nested merge would resurrect stale window bounds anyway.
     cache = {
@@ -245,8 +245,7 @@ export function getConfig(): Config {
       // missing `accent` reaches `paletteFor` as `undefined.trim()`. Merged, not replaced,
       // so a theme saved before a knob was added still gains that knob's default.
       theme: { ...base.theme!, ...(raw.theme ?? {}) },
-      defaultModels: migrateModels(raw.defaultModels),
-      discordClientId: migrateDiscordId(raw.discordClientId, base.discordClientId)
+      defaultModels: migrateModels(raw.defaultModels)
     }
   } catch {
     cache = base
@@ -271,23 +270,19 @@ function migrateModels(saved?: Record<string, string>): Record<string, string> {
 }
 
 /**
- * The application whose NAME Discord prints above the presence.
+ * Forget any Discord application id a previous version wrote down.
  *
- * This shipped for months as a borrowed id - "Manic's Auction House", the author's own
- * Discord bot - because creating an application needs a portal login and a captcha. Every
- * user who ran PaneForge in that time has those 19 digits written into their config.json,
- * so changing the default alone reaches nobody who has ever launched the app: the saved
- * value wins the merge, forever, and they go on advertising a stranger's brand.
+ * The id was a settings field for a while, and a saved value wins the merge forever - so
+ * a config from the borrowed-application months ("Manic's Auction House", the author's
+ * own bot) went on printing a stranger's brand, and a config where somebody had cleared
+ * the field or fat-fingered a digit went on sending a presence Discord had nothing to
+ * resolve. Both are silent: the profile simply shows nothing and nobody is told.
  *
- * Only the exact borrowed id is rewritten. Anyone who typed their own into Settings -
- * including anyone who deliberately points at a different application - keeps it, because
- * a saved value that is not the one we know to be wrong is a choice, not a leftover.
+ * `DISCORD_APP_ID` is the identity now, so the saved key is not migrated, it is DELETED -
+ * left in place it would sit in config.json looking like a live setting for years.
  */
-const BORROWED_DISCORD_ID = '1494887437367771276'
-
-export function migrateDiscordId(saved: string | undefined, fallback: string): string {
-  if (!saved) return fallback
-  return saved === BORROWED_DISCORD_ID ? fallback : saved
+function dropSavedDiscordId(raw: Record<string, unknown>): void {
+  delete raw.discordClientId
 }
 
 export function setConfig(patch: Partial<Config>): Config {

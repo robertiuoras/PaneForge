@@ -635,18 +635,19 @@ bitten this repo before: a frame split across data events must not be decoded ea
 takes the main process down (the tee's lesson). It also pins the budget rules - a
 burst of session events collapses to one trailing SET_ACTIVITY, an unchanged desk
 sends nothing, an empty desk sends a clear rather than "0/0" - and that a Discord
-that is not running costs nothing, silently, forever. The header line of the
-presence is the Discord APPLICATION's name, which lives in `discordClientId` in the
-config: creating an application from a script is impossible (captcha), so the
-default id STARTED as a BORROWED application - "Manic's Auction House", the author's
-Discord bot - and pointing the setting at a new one renames the header with no other
-change. That borrowed name is invisible from inside the app, which is how it survived: 19
-digits do not say whose brand Discord is about to print. Settings now reads the name
-back from `/applications/<id>/rpc` (public, no token, `discord:appName` in main
-because the packaged renderer is a `file://` origin and Discord answers CORS for a
-real one only) and warns whenever the header is not PaneForge. The id ships as a real
-PaneForge application now, and `migrateDiscordId` moves a config still holding the
-borrowed one - while leaving an id somebody chose for themselves alone.
+that is not running costs nothing, silently, forever. The header line of the presence is
+the Discord APPLICATION's name, and that application is `DISCORD_APP_ID` in
+`shared/discordRpc.ts` - **a constant, not a setting**. It was a text field for a few
+releases and that was wrong in three directions at once: a user who cleared it or
+mistyped a digit got a presence Discord had no application to resolve, with the app
+reporting nothing amiss; anyone still on the earlier BORROWED id - "Manic's Auction
+House", the author's Discord bot, used because creating an application needs a portal
+login and a captcha a script cannot pass - kept a stranger's brand on their profile,
+which is invisible from inside the app because 19 digits do not say whose name Discord
+is about to print; and a field for it read as "you have to make your own application",
+which was never true. So the saved key is not migrated, it is DELETED on load
+(`dropSavedDiscordId`) and left out of the next write. What a user may still do is turn
+the presence off, or reword it.
 
 Owning the application is not the same as being ON it. An application's icon names the
 HEADER and is never the artwork: a presence that sends no `assets` is drawn as text with
@@ -657,9 +658,27 @@ names the art asset (`PRESENCE_IMAGE`, the name it was uploaded under in the por
 a URL and not the icon hash). Discord drops an image key it cannot resolve in silence,
 which is why the brand test checks the asset exists rather than trusting the send.
 
+The third thing that can be wrong is the one the app used to be silent about: **whether
+Discord accepted any of it**. Discord acknowledges every `SET_ACTIVITY` by echoing back
+the activity it STORED - the application name it resolved, the asset id the image name
+became, the lines it kept - or by answering `evt: 'ERROR'` with a reason. Every one of
+those frames was read only for `READY` and otherwise dropped, so a refused presence and
+an accepted one looked identical from inside the app, and the settings tab could only
+describe what was INTENDED. It now reports that ack (`PresenceStatus`, pushed on
+`discord:status`), which is the only honest answer to "is this actually on my profile":
+connected as whom, headed by what, accepted at when, or refused in Discord's own words.
+
+What the ack still cannot say is whether anyone ELSE can see the card, because Discord
+does not tell an application that and the switches that hide it are Discord's own:
+Activity Privacy ("Display current activity as a status message", "Share your detected
+activities with others") and Activity Status per server. A presence can be correct all
+the way to the ack and invisible to every friend, which is why the tab says so in
+words next to the status rather than leaving the app looking broken. Presence is
+desktop-only either way - the phone and browser clients never draw one.
+
 That warning only reaches somebody who opens the tab, so `npm run test:discordbrand`
-says it to the repository instead: it reads the `discordClientId` literal out of
-`src/main/config.ts` - the value that actually ships, never a copy - asks Discord what
+says it to the repository instead: it reads the `DISCORD_APP_ID` literal out of
+`src/shared/discordRpc.ts` - the value that actually ships, never a copy - asks Discord what
 that application is called, and FAILS while the answer is not PaneForge. Then it asks the
 same id for its art assets and FAILS while none is named `PRESENCE_IMAGE`. Both halves
 are checked because they broke in that order and a correct name with no asset is a card

@@ -16,13 +16,16 @@ import net from 'node:net'
 import { join } from 'node:path'
 import {
   DEFAULT_DISCORD_STYLE,
+  DISCORD_APP_ID,
   FrameStream,
+  NO_PRESENCE_STATUS,
   OP_FRAME,
   OP_HANDSHAKE,
   buildActivity,
   encodeFrame,
   type DiscordStyle,
-  type PresenceCounts
+  type PresenceCounts,
+  type PresenceStatus
 } from '../shared/discordRpc'
 
 function defaultPipePaths(): string[] {
@@ -33,23 +36,27 @@ function defaultPipePaths(): string[] {
 }
 
 export interface PresenceOptions {
-  clientId: string
   enabled: boolean
   /** what the lines say and which parts show; omitted means the built-in wording */
   style?: DiscordStyle
+  /** told every time Discord's own answer changes what the settings tab should say */
+  onStatus?: (status: PresenceStatus) => void
   /** test seams - the real app never passes these */
+  clientId?: string
   pipePaths?: string[]
   retryMs?: number
   throttleMs?: number
 }
 
 export class DiscordPresence {
-  private clientId: string
+  private readonly clientId: string
   private enabled: boolean
   private style: DiscordStyle
+  private readonly onStatus?: (status: PresenceStatus) => void
   private readonly pipePaths?: string[]
   private readonly retryMs: number
   private readonly throttleMs: number
+  private state: PresenceStatus = { ...NO_PRESENCE_STATUS }
 
   private sock: net.Socket | null = null
   private ready = false
@@ -62,19 +69,36 @@ export class DiscordPresence {
   private nonce = 0
 
   constructor(opts: PresenceOptions) {
-    this.clientId = opts.clientId
+    this.clientId = opts.clientId ?? DISCORD_APP_ID
     this.enabled = opts.enabled
     this.style = opts.style ?? DEFAULT_DISCORD_STYLE
+    this.onStatus = opts.onStatus
     this.pipePaths = opts.pipePaths
     this.retryMs = opts.retryMs ?? 60_000
     this.throttleMs = opts.throttleMs ?? 15_000
+    this.state.enabled = this.enabled
     if (this.enabled) this.connect()
   }
 
-  /** Every Discord setting lands here: the switch, the client id, the wording. */
-  configure(enabled: boolean, clientId: string, style?: DiscordStyle): void {
-    const idChanged = clientId !== this.clientId
-    this.clientId = clientId
+  /** What Discord itself last said. Safe to call before anything has connected. */
+  status(): PresenceStatus {
+    return { ...this.state, lines: [...this.state.lines] }
+  }
+
+  /**
+   * Fold in whatever changed and tell the renderer, but only when the answer is
+   * genuinely different: the presence reconnects on a timer forever while Discord is
+   * closed, and an unchanged status pushed once a minute is a re-render for nothing.
+   */
+  private note(patch: Partial<PresenceStatus>): void {
+    const next = { ...this.state, ...patch }
+    if (JSON.stringify(next) === JSON.stringify(this.state)) return
+    this.state = next
+    this.onStatus?.(this.status())
+  }
+
+  /** Every Discord setting lands here: the switch and the wording. */
+  configure(enabled: boolean, style?: DiscordStyle): void {
     if (style) {
       // Rewording changes what the next frame says, not who is connected - dropping the
       // pipe for it would cost a reconnect per keystroke in the template field. The
@@ -83,8 +107,16 @@ export class DiscordPresence {
       if (JSON.stringify(style) !== JSON.stringify(this.style)) this.lastSentJson = ''
       this.style = style
     }
-    if (!enabled || idChanged) this.teardown(enabled)
+    if (!enabled) this.teardown(false)
     this.enabled = enabled
+    this.note(
+      enabled
+        ? { enabled: true }
+        : // Switched off, so nothing Discord said a moment ago is true any more. Left
+          // standing, the tab would go on reporting an accepted presence with the switch
+          // visibly off beside it.
+          { ...NO_PRESENCE_STATUS }
+    )
     if (enabled && !this.sock && !this.retryTimer) this.connect()
   }
 
@@ -137,16 +169,50 @@ export class DiscordPresence {
         return
       }
       for (const f of parsed) {
-        if (f.op === OP_FRAME && f.payload.evt === 'READY') {
+        if (f.op !== OP_FRAME) continue
+        if (f.payload.evt === 'READY') {
           this.ready = true
           this.lastSentJson = ''
+          const data = f.payload.data as { user?: { global_name?: string; username?: string } }
+          this.note({
+            connected: true,
+            user: data?.user?.global_name || data?.user?.username || null,
+            error: null
+          })
           this.scheduleSend()
+        } else if (f.payload.cmd === 'SET_ACTIVITY') {
+          this.noteAck(f.payload)
         }
       }
     })
     sock.on('error', () => this.teardown(true))
     sock.on('close', () => this.teardown(true))
     sock.write(encodeFrame(OP_HANDSHAKE, { v: 1, client_id: this.clientId }))
+  }
+
+  /**
+   * Discord's answer to a `SET_ACTIVITY`, which is the only proof the card exists.
+   *
+   * On success `data` is the activity as Discord STORED it - the application name it
+   * resolved, the asset id the image name became, the lines it kept. On a clear it is
+   * null, which is a success too and has to read as one. `evt: 'ERROR'` is the case
+   * that used to be invisible: a refused frame left the profile showing whatever it
+   * showed before, with nothing anywhere saying why.
+   */
+  private noteAck(payload: Record<string, unknown>): void {
+    if (payload.evt === 'ERROR') {
+      const data = payload.data as { message?: string; code?: number } | undefined
+      this.note({ error: data?.message || `Discord refused the presence (code ${data?.code ?? '?'})` })
+      return
+    }
+    const a = payload.data as { name?: string; details?: string; state?: string } | null
+    this.note({
+      acceptedAt: Date.now(),
+      appName: a?.name ?? null,
+      lines: [a?.details, a?.state].filter((s): s is string => !!s),
+      cleared: !a,
+      error: null
+    })
   }
 
   private teardown(retry: boolean): void {
@@ -166,6 +232,9 @@ export class DiscordPresence {
       clearTimeout(this.retryTimer)
       this.retryTimer = null
     }
+    // The pipe is gone, so whatever Discord had stored went with it - it clears an
+    // application's presence the moment the socket closes.
+    this.note({ connected: false, user: null, acceptedAt: null, appName: null, lines: [], cleared: false })
     if (retry && !this.disposed) this.scheduleRetry()
   }
 

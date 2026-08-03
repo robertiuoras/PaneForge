@@ -11,6 +11,22 @@
 export const OP_HANDSHAKE = 0
 export const OP_FRAME = 1
 
+/**
+ * The Discord application every copy of PaneForge reports under. A constant, not a
+ * setting.
+ *
+ * Discord prints this application's NAME as the header of the card and resolves its
+ * uploaded art by name, so the id is not a preference - it is the app's identity, the
+ * same way the window title is. It was a text field for one release and that was a
+ * mistake in three separate directions: a user who cleared it or typed a digit wrong
+ * got a presence nobody could see and no error saying so; anyone on the old borrowed
+ * id kept a stranger's brand on their profile until a migration caught up with them;
+ * and it read as "you need to make your own application", which was never true.
+ *
+ * What a user may still do is turn the presence off, or reword it - see `DiscordStyle`.
+ */
+export const DISCORD_APP_ID = '1533054088454082601'
+
 export function encodeFrame(op: number, payload: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(payload))
   const out = Buffer.alloc(8 + body.length)
@@ -55,6 +71,50 @@ export interface PresenceCounts {
   oldestRunSince?: number
   /** epoch ms the app came up - the elapsed clock while everything is idle */
   appStart: number
+}
+
+/**
+ * What Discord itself last said about the presence - the only honest answer to "is this
+ * working", and the reason the settings tab can stop guessing.
+ *
+ * Discord acknowledges every `SET_ACTIVITY` by echoing back the activity it STORED,
+ * complete with the application name it resolved and the asset id the image name turned
+ * into, or by answering `evt: 'ERROR'` with a reason. Until now every one of those frames
+ * was dropped on the floor and a presence that Discord had refused looked exactly like
+ * one it had accepted.
+ *
+ * What it deliberately cannot say is whether anyone ELSE can see the card. Discord does
+ * not tell an application that, and the switches that hide it (Activity Privacy, and
+ * Activity Status per server) live in Discord's own settings.
+ */
+export interface PresenceStatus {
+  /** the app's own switch */
+  enabled: boolean
+  /** a Discord pipe answered and the handshake went through */
+  connected: boolean
+  /** the account Discord handed over at READY, by the name it shows */
+  user: string | null
+  /** epoch ms Discord last acknowledged a presence */
+  acceptedAt: number | null
+  /** the header Discord resolved from the application id - "PaneForge" when all is well */
+  appName: string | null
+  /** the two lines Discord actually stored, as it echoed them back */
+  lines: string[]
+  /** true when the last thing Discord stored was "no activity" - an empty desk */
+  cleared: boolean
+  /** Discord refused the last frame, in its own words */
+  error: string | null
+}
+
+export const NO_PRESENCE_STATUS: PresenceStatus = {
+  enabled: false,
+  connected: false,
+  user: null,
+  acceptedAt: null,
+  appName: null,
+  lines: [],
+  cleared: false,
+  error: null
 }
 
 /** Discord rejects details/state over 128 chars, and a name list can be any length. */

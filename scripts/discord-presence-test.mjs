@@ -48,6 +48,7 @@ const {
   DEFAULT_DISCORD_STYLE,
   DEFAULT_LINK_LABEL,
   DEFAULT_LINK_URL,
+  DISCORD_APP_ID,
   OP_HANDSHAKE,
   OP_FRAME
 } =
@@ -191,7 +192,7 @@ const PIPE =
     ? `\\\\?\\pipe\\pf-discord-test-${process.pid}`
     : join(work, `pf-discord-test-${process.pid}`)
 
-function fakeDiscord(onFrame) {
+function fakeDiscord(onFrame, onHandshake) {
   const socks = new Set()
   const server = net.createServer((sock) => {
     socks.add(sock)
@@ -199,7 +200,13 @@ function fakeDiscord(onFrame) {
     sock.on('data', (chunk) => {
       for (const f of s.push(chunk)) {
         if (f.op === OP_HANDSHAKE) {
-          sock.write(encodeFrame(OP_FRAME, { evt: 'READY', data: { v: 1 } }))
+          onHandshake?.(f)
+          sock.write(
+            encodeFrame(OP_FRAME, {
+              evt: 'READY',
+              data: { v: 1, user: { username: 'tester', global_name: 'Tester' } }
+            })
+          )
         } else {
           onFrame(f, sock)
         }
@@ -300,18 +307,108 @@ const counts = (running, total, names = ['PaneForge']) => ({
 
   // The switch: off clears and disconnects; on comes back.
   got2.length = 0
-  p.configure(false, 'c')
+  p.configure(false)
   await sleep(60)
   p.update(counts(1, 1))
   await sleep(60)
   check('off: no frames while disabled', got2.length === 0, String(got2.length))
-  p.configure(true, 'c')
+  p.configure(true)
   p.update(counts(1, 1))
   await sleep(150)
   check('on: presence resumes after re-enable', got2.some((f) => f.payload.args.activity?.details === '1/1 session running'))
 
   p.dispose()
   await discord2.close()
+}
+
+// ---------- what Discord SAYS BACK ----------
+//
+// The settings tab reports Discord's own answer rather than the app's intent, so the
+// frames coming the other way are now load-bearing and used to be dropped on the floor.
+// A refused presence and an accepted one looked identical from inside the app, which is
+// exactly how a card nobody could see went unnoticed.
+{
+  const seen = []
+  const shakes = []
+  // A Discord that acknowledges properly: the ack echoes back the activity it STORED,
+  // with the application name it resolved - which is where the header comes from.
+  const discord = await fakeDiscord(
+    (f, sock) => {
+      if (f.payload.cmd !== 'SET_ACTIVITY') return
+      const a = f.payload.args.activity
+      sock.write(
+        encodeFrame(OP_FRAME, {
+          cmd: 'SET_ACTIVITY',
+          nonce: f.payload.nonce,
+          evt: null,
+          data: a ? { ...a, name: 'PaneForge', application_id: '1' } : null
+        })
+      )
+    },
+    (f) => shakes.push(f)
+  )
+  const p = new DiscordPresence({
+    enabled: true,
+    pipePaths: [PIPE],
+    retryMs: 40,
+    throttleMs: 10,
+    onStatus: (s) => seen.push(s)
+  })
+  check('status: before anything connects it claims nothing', p.status().connected === false && p.status().acceptedAt === null)
+  p.update(counts(1, 2))
+  await sleep(200)
+  let s = p.status()
+  check('status: connected once the handshake lands', s.connected === true)
+  // The identity is a constant, not a setting: a build that shipped an empty or edited
+  // id would send a presence Discord has no application for and nobody would be told.
+  check(
+    'identity: the handshake carries the shipped application id with nothing passed in',
+    shakes[0]?.payload.client_id === DISCORD_APP_ID,
+    String(shakes[0]?.payload.client_id)
+  )
+  check('status: the account Discord handed over is named', s.user === 'Tester', String(s.user))
+  check('status: the header is what Discord resolved, not what we hoped', s.appName === 'PaneForge', String(s.appName))
+  check('status: the accepted time is real', typeof s.acceptedAt === 'number' && s.acceptedAt > 0)
+  check('status: the lines are the ones Discord stored', s.lines[0] === '1/2 sessions running', JSON.stringify(s.lines))
+  check('status: nothing refused', s.error === null, String(s.error))
+  check('status: the renderer was told', seen.length >= 1, String(seen.length))
+  // An empty desk is a CLEAR, and a clear is a success - it must not read as a failure
+  // or as a stale presence still standing.
+  p.update(counts(0, 0, []))
+  await sleep(80)
+  s = p.status()
+  check('status: an empty desk reads as cleared, not as broken', s.cleared === true && s.error === null && s.lines.length === 0)
+
+  // Discord goes away: nothing it said is true any more.
+  await discord.close()
+  await sleep(80)
+  check('status: a dead pipe is not still "accepted"', p.status().connected === false && p.status().acceptedAt === null)
+  p.dispose()
+}
+
+// A Discord that REFUSES the frame. Nothing about the app changes - the presence simply
+// never appears - so the reason has to survive to the settings tab or it is lost.
+{
+  const discord = await fakeDiscord((f, sock) => {
+    if (f.payload.cmd !== 'SET_ACTIVITY') return
+    sock.write(
+      encodeFrame(OP_FRAME, {
+        cmd: 'SET_ACTIVITY',
+        nonce: f.payload.nonce,
+        evt: 'ERROR',
+        data: { code: 4000, message: 'Invalid activity' }
+      })
+    )
+  })
+  const p = new DiscordPresence({ enabled: true, pipePaths: [PIPE], retryMs: 40, throttleMs: 10 })
+  p.update(counts(1, 2))
+  await sleep(200)
+  const s = p.status()
+  check('error: the refusal is kept in Discord\'s own words', s.error === 'Invalid activity', String(s.error))
+  check('error: a refused frame is not reported as accepted', s.acceptedAt === null, String(s.acceptedAt))
+  check('error: still connected - the pipe is fine, the presence is not', s.connected === true)
+  p.dispose()
+  await discord.close()
 }
 
 // A server that speaks garbage must not take the process down (the tee's lesson).

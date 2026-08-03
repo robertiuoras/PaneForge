@@ -26,8 +26,11 @@ import {
   DEFAULT_LINK_URL,
   DEFAULT_STATE,
   DISCORD_TOKENS,
+  NO_PRESENCE_STATUS,
+  PRESENCE_IMAGE_TEXT,
   buildActivity,
-  type PresenceCounts
+  type PresenceCounts,
+  type PresenceStatus
 } from '@shared/discordRpc'
 import { DEFAULT_THEME } from '@shared/theme'
 import AgentLogo from './AgentLogo'
@@ -951,32 +954,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
               {config.discordPresence && (
                 <>
-                  <div className="setting">
-                    <label>Discord application id</label>
-                    <div className="setting-row">
-                      <input
-                        className="search"
-                        value={config.discordClientId}
-                        spellCheck={false}
-                        onChange={(e) => onChange({ discordClientId: e.target.value.trim() })}
-                      />
-                      <button
-                        className="ghost"
-                        onClick={() =>
-                          api.openExternal('https://discord.com/developers/applications')
-                        }
-                      >
-                        Portal
-                      </button>
-                    </div>
-                    <DiscordHeader id={config.discordClientId} />
-                    <div className="hint">
-                      Discord heads the activity with this application's NAME, and nothing the
-                      app sends can override it. To make it say PaneForge: Portal → New
-                      Application → name it PaneForge (no bot, no scopes) → paste its
-                      Application ID here. Everything else about the presence stays the same.
-                    </div>
-                  </div>
+                  <DiscordStatus />
 
                   <div className="setting">
                     <div className="setting-row">
@@ -990,11 +968,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         ]}
                       />
                     </div>
-                    <DiscordPreview
-                      id={config.discordClientId}
-                      style={config.discordStyle}
-                      when={preview}
-                    />
+                    <DiscordPreview style={config.discordStyle} when={preview} />
                   </div>
 
                   <div className="switches">
@@ -1259,50 +1233,69 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 }
 
 /**
- * Discord prints the APPLICATION's name as the header of the presence - the id below it
- * is what picks the brand on the profile, and 19 digits do not say which brand that is.
- * The default id is a borrowed application, so the header used to read as somebody else's
- * product with no way to notice from in here. Now the name is read back live, so pasting
- * an id is a change you can see the result of without a Discord open next to the window.
+ * What Discord itself last said, rather than what the app meant to send.
+ *
+ * This tab used to show an application-id field and a name looked up from the public API,
+ * which described the INTENT and never the outcome - the one question it could not answer
+ * is the only one anyone ever asks, which is "is this actually on my profile". Discord
+ * acknowledges every presence by echoing back what it stored, so that ack is the answer,
+ * and a refused frame now says so instead of looking identical to an accepted one.
+ *
+ * The last line is the part that closes the real complaint: everything up to Discord can
+ * be right and other people can still see nothing, because hiding it is Discord's own
+ * switch and not something an application is allowed to read or set.
  */
-function useAppName(id: string): { name: string | null; checked: boolean } {
-  const [name, setName] = useState<string | null>(null)
-  const [checked, setChecked] = useState(false)
+function DiscordStatus(): JSX.Element {
+  const [status, setStatus] = useState<PresenceStatus>(NO_PRESENCE_STATUS)
   useEffect(() => {
-    let live = true
-    setChecked(false)
-    // An id is pasted, but it can also be typed - one lookup per keystroke is 19 requests
-    // at a rate limit that answers with nothing useful.
-    const t = window.setTimeout(() => {
-      void api.discordAppName(id).then((n) => {
-        if (!live) return
-        setName(n)
-        setChecked(true)
-      })
-    }, 400)
-    return () => {
-      live = false
-      window.clearTimeout(t)
-    }
-  }, [id])
-  return { name, checked }
-}
+    void api.discordStatus().then(setStatus)
+    return api.onDiscordStatus(setStatus)
+  }, [])
 
-function DiscordHeader({ id }: { id: string }): JSX.Element | null {
-  const { name, checked } = useAppName(id)
-  if (!checked) return null
-  if (!name) {
-    return (
-      <div className="hint warn">
-        Discord has no application with that id, so it will show no presence at all.
-      </div>
-    )
-  }
-  const mine = /paneforge/i.test(name)
+  const at =
+    status.acceptedAt !== null ? new Date(status.acceptedAt).toLocaleTimeString() : null
+  const named = status.appName ? /paneforge/i.test(status.appName) : false
+
   return (
-    <div className={mine ? 'hint' : 'hint warn'}>
-      Discord will head the presence <b>{name}</b>
-      {mine ? '.' : ' - not PaneForge. Create your own application to change it.'}
+    <div className="setting">
+      <label>Right now</label>
+      {!status.connected ? (
+        <div className="hint warn">
+          No Discord to talk to. PaneForge looks for it again every minute, so starting
+          Discord is enough - nothing here needs touching.
+        </div>
+      ) : status.error ? (
+        <div className="hint warn">Discord refused the last presence: {status.error}</div>
+      ) : status.cleared ? (
+        <div className="hint">
+          Connected{status.user ? <> as <b>{status.user}</b></> : null} - and told Discord to
+          show nothing, because no pane is open{at ? `, at ${at}` : ''}.
+        </div>
+      ) : at ? (
+        <div className={named ? 'hint' : 'hint warn'}>
+          Discord accepted this at <b>{at}</b>
+          {status.user ? (
+            <>
+              {' '}
+              for <b>{status.user}</b>
+            </>
+          ) : null}
+          , headed <b>{status.appName ?? 'nothing'}</b>
+          {named ? '' : ' - which is not PaneForge'}
+          {status.lines.length ? `: ${status.lines.join(' / ')}` : '.'}
+        </div>
+      ) : (
+        <div className="hint">Connected to Discord, waiting to send the first presence.</div>
+      )}
+      <div className="hint">
+        That is everything this app controls. If your friends still see nothing while the
+        line above says accepted, it is one of Discord's own switches, and no application
+        can read or change them: Discord → Settings → Activity Privacy, with both{' '}
+        <b>Display current activity as a status message</b> and{' '}
+        <b>Share your detected activities with others</b> on - and Activity Status on for
+        the server they are looking at you in. A presence is desktop-only either way; the
+        phone and browser apps never show one.
+      </div>
     </div>
   )
 }
@@ -1328,22 +1321,21 @@ const SAMPLE_IDLE: PresenceCounts = { running: 0, total: 5, names: [], appStart:
  * process calls, so a preview that looks right cannot be a presence that reads wrong.
  */
 function DiscordPreview({
-  id,
   style,
   when
 }: {
-  id: string
   style: DiscordStyle
   when: 'busy' | 'idle'
 }): JSX.Element {
-  const { name, checked } = useAppName(id)
   const activity = buildActivity(when === 'busy' ? SAMPLE_BUSY : SAMPLE_IDLE, style) as {
     details?: string
     state?: string
     timestamps?: unknown
     buttons?: { label: string; url: string }[]
   } | null
-  const header = checked ? (name ?? 'No such application') : 'Checking...'
+  // The header is the application's name and the application is now a constant, so this
+  // is not a lookup any more - it is the same literal the presence sends as its tooltip.
+  const header = PRESENCE_IMAGE_TEXT
   return (
     <div className="discord-card">
       <div className="dc-art" aria-hidden="true">

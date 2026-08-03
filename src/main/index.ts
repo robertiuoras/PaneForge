@@ -527,9 +527,11 @@ manager.on('sessions', () => {
 // its agent actually runs on, which is already reading the same frame.
 const appStartedAt = Date.now()
 const presence = new DiscordPresence({
-  clientId: getConfig().discordClientId,
   enabled: getConfig().discordPresence,
-  style: getConfig().discordStyle
+  style: getConfig().discordStyle,
+  // The Discord tab reports Discord's own answer rather than guessing from the switch,
+  // so every change of that answer has to reach an open Settings dialog by itself.
+  onStatus: (s) => send('discord:status', s)
 })
 function presenceCounts(): PresenceCounts {
   const live = manager.list().filter((s) => s.status !== 'exited')
@@ -996,12 +998,8 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
-  if (
-    patch.discordPresence !== undefined ||
-    patch.discordClientId !== undefined ||
-    patch.discordStyle !== undefined
-  ) {
-    presence.configure(next.discordPresence, next.discordClientId, next.discordStyle)
+  if (patch.discordPresence !== undefined || patch.discordStyle !== undefined) {
+    presence.configure(next.discordPresence, next.discordStyle)
     presence.update(presenceCounts())
   }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)
@@ -1026,27 +1024,13 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   return next
 })
 /**
- * The name Discord will print as the presence header, for the id in the settings field.
- * `/applications/<id>/rpc` is the public half of an application - no token, no scope -
- * and it is the only way to know what the header says without a Discord open to look at.
- * From main rather than the renderer: the packaged renderer is a `file://` origin, and
- * Discord answers a CORS preflight for a real origin only.
+ * What Discord itself last said about the presence.
+ *
+ * The settings tab used to describe what the app INTENDED to send, which is the one thing
+ * that was never in doubt. This is the other end: the application name Discord resolved,
+ * the lines it stored, or the reason it refused - all of it read back off the pipe.
  */
-ipcMain.handle('discord:appName', async (_e, id: string) => {
-  if (!/^\d{5,25}$/.test(id.trim())) return null
-  try {
-    const res = await fetch(`https://discord.com/api/v10/applications/${id.trim()}/rpc`, {
-      signal: AbortSignal.timeout(5000)
-    })
-    if (!res.ok) return null
-    const body = (await res.json()) as { name?: string }
-    return typeof body.name === 'string' ? body.name : null
-  } catch {
-    // Offline, rate limited, or an id nobody owns. The field keeps working either way;
-    // this line only ever adds confidence, it never gates the setting.
-    return null
-  }
-})
+ipcMain.handle('discord:status', () => presence.status())
 
 ipcMain.handle('config:pickRoot', async () => {
   const r = await dialog.showOpenDialog({
