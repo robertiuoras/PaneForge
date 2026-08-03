@@ -119,6 +119,7 @@ import {
   placeShelf,
   setShelfExpanded,
   setShelfTall,
+  noteShelfTouch,
   shelfTouchedAt,
   shelfWindowOpen,
   toggleShelf,
@@ -1309,6 +1310,7 @@ ipcMain.on('recents:toPane', (_e, id: string, focus = false) => {
   send('recents:toPane', id)
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
+ipcMain.on('shelf:touch', () => noteShelfTouch())
 ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
 ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
 // Dragged by its own header. The overlay cannot move its window itself, and a pointer

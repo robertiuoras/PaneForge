@@ -27,6 +27,11 @@ import './shelf.css'
 
 const shelf = window.shelf
 
+// AppKit may activate PaneForge for a click on the non-activating panel before Electron
+// routes its main-process input event. This reaches the same touch guard via a one-way IPC
+// during the activation settle, before the pill, card, or button handlers decide the click.
+window.addEventListener('pointerdown', () => shelf.touch(), { capture: true })
+
 type Filter = 'all' | 'text' | 'image' | 'file'
 
 /**

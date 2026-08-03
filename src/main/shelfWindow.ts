@@ -341,6 +341,15 @@ export function shelfTouchedAt(): number {
   return touchedAt
 }
 
+/**
+ * Fallback for physical presses that AppKit delivers to the non-activating panel without
+ * Electron also surfacing a webContents input event. The renderer reports it in capture
+ * phase, before any drag or button handler, and index.ts already settles activation for it.
+ */
+export function noteShelfTouch(): void {
+  touchedAt = Date.now()
+}
+
 /** True while a game has the overlay put away. See setShelfHidden. */
 let hiddenForGame = false
 
@@ -516,7 +525,7 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   // where the page reacts to it. Only presses: a pointer merely passing over the Stash
   // must not suppress a Cmd-Tab a moment later. See shelfTouchedAt().
   shelf.webContents.on('input-event', (_e, input) => {
-    if (input.type === 'mouseDown' || input.type === 'mouseUp') touchedAt = Date.now()
+    if (input.type === 'mouseDown' || input.type === 'mouseUp') noteShelfTouch()
   })
   shelf.once('ready-to-show', () => {
     if (!keptBack()) shelf?.showInactive()

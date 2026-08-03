@@ -124,6 +124,27 @@ ok(
   /webContents\.on\('input-event'[\s\S]{0,220}mouseDown/.test(shelfSrc)
 )
 
+// A non-activating macOS panel can deliver a physical press to AppKit without delivering
+// Electron's webContents input-event. The renderer's capture listener is the fallback for
+// that path; the activation decision already waits long enough for this one-way IPC.
+const preloadSrc = readFileSync(join(root, 'src/preload/shelf.ts'), 'utf8')
+const rendererSrc = readFileSync(join(root, 'src/renderer/src/shelf.tsx'), 'utf8')
+const mainSrc = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+ok(
+  'the overlay reports a physical press through the preload fallback',
+  /touch:\s*\(\)\s*=>\s*ipcRenderer\.send\('shelf:touch'\)/.test(preloadSrc)
+)
+ok(
+  'the renderer reports every pointer press before component handlers run',
+  /addEventListener\('pointerdown',\s*\(\)\s*=>\s*shelf\.touch\(\),\s*\{\s*capture:\s*true\s*\}\)/.test(
+    rendererSrc
+  )
+)
+ok(
+  'main records the preload fallback through the same Stash touch state',
+  /ipcMain\.on\('shelf:touch',\s*\(\)\s*=>\s*noteShelfTouch\(\)\)/.test(mainSrc)
+)
+
 // --- Electron still delivers what the recorder listens for -------------------
 // `input-event` carrying mouse events to a focusable:false window is the one assumption
 // here that an Electron upgrade could take away silently: the guard would then never fire

@@ -1362,6 +1362,8 @@ export interface ShelfApi {
    *  the keyboard where it was. */
   toPane(id: string, focus?: boolean): void
   focusApp(): void
+  /** record a physical Stash press without bringing the main window forward */
+  touch(): void
   /** open the folder the Stash's copies live in */
   reveal(): void
   /** the overlay grew or shrank: the main process resizes the window to match */
