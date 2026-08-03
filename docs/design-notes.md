@@ -638,24 +638,38 @@ sends nothing, an empty desk sends a clear rather than "0/0" - and that a Discor
 that is not running costs nothing, silently, forever. The header line of the
 presence is the Discord APPLICATION's name, which lives in `discordClientId` in the
 config: creating an application from a script is impossible (captcha), so the
-default id is a BORROWED application - "Manic's Auction House", the author's Discord
-bot - and pointing the setting at a new one renames the header with no other change.
-That borrowed name is invisible from inside the app, which is how it survived: 19
+default id STARTED as a BORROWED application - "Manic's Auction House", the author's
+Discord bot - and pointing the setting at a new one renames the header with no other
+change. That borrowed name is invisible from inside the app, which is how it survived: 19
 digits do not say whose brand Discord is about to print. Settings now reads the name
 back from `/applications/<id>/rpc` (public, no token, `discord:appName` in main
 because the packaged renderer is a `file://` origin and Discord answers CORS for a
-real one only) and warns whenever the header is not PaneForge.
+real one only) and warns whenever the header is not PaneForge. The id ships as a real
+PaneForge application now, and `migrateDiscordId` moves a config still holding the
+borrowed one - while leaving an id somebody chose for themselves alone.
+
+Owning the application is not the same as being ON it. An application's icon names the
+HEADER and is never the artwork: a presence that sends no `assets` is drawn as text with
+no image at all. So the mark stayed missing from every profile long after the name was
+right and the icon was uploaded, with nothing anywhere reporting it - the frame is valid,
+Discord accepts it, and the only tell is a card that looks a bit empty. `buildActivity`
+names the art asset (`PRESENCE_IMAGE`, the name it was uploaded under in the portal, not
+a URL and not the icon hash). Discord drops an image key it cannot resolve in silence,
+which is why the brand test checks the asset exists rather than trusting the send.
 
 That warning only reaches somebody who opens the tab, so `npm run test:discordbrand`
 says it to the repository instead: it reads the `discordClientId` literal out of
 `src/main/config.ts` - the value that actually ships, never a copy - asks Discord what
-that application is called, and FAILS while the answer is not PaneForge. It is failing
-right now, on purpose, and the only thing that will fix it is a person: New Application
-in the portal is a login and a captcha. No bot, no scopes, no OAuth and nothing to
-"connect" - rich presence talks to the local Discord client over a named pipe and the id
-is all it needs. Offline it SKIPS and prints the skip, because a check that quietly
-passes when it could not run is worse than no check when the thing it catches is a wrong
-answer that looks like no answer. Out of the default suite for needing the network.
+that application is called, and FAILS while the answer is not PaneForge. Then it asks the
+same id for its art assets and FAILS while none is named `PRESENCE_IMAGE`. Both halves
+are checked because they broke in that order and a correct name with no asset is a card
+with no logo on it; both are fixed now, so the test passes. Neither could be fixed by a
+script - New Application and Add Image are both a portal login and a captcha - but no
+bot, no scopes, no OAuth and nothing to "connect": rich presence talks to the local
+Discord client over a named pipe and the id is all it needs. Offline it SKIPS and prints
+the skip, because a check that quietly passes when it could not run is worse than no
+check when the thing it catches is a wrong answer that looks like no answer. Out of the
+default suite for needing the network.
 
 Everything BELOW that header is ours, and Settings → Discord owns it: two templates
 (`{running}`, `{total}`, `{idle}`, `{sessions}`, `{projects}`, `{project}`) plus

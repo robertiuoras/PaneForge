@@ -135,6 +135,43 @@ if (!m) {
     console.error('     only thing it needs.')
     failed++
   }
+
+  // The header is only half the brand. `buildActivity` names an art asset, and an id
+  // whose portal no longer has one under that name draws a card with no image at all -
+  // which is exactly how the mark went missing while the name was already correct.
+  const rpc = readFileSync(join(root, 'src/shared/discordRpc.ts'), 'utf8')
+  const key = /PRESENCE_IMAGE\s*=\s*'([^']+)'/.exec(rpc)?.[1] ?? null
+  if (!key) {
+    console.error('FAIL no PRESENCE_IMAGE constant found in src/shared/discordRpc.ts')
+    console.error('     Nothing names the artwork, so the card is text only.')
+    failed++
+  } else {
+    const res = await fetch(`https://discord.com/api/v9/oauth2/applications/${id}/assets`, {
+      signal: AbortSignal.timeout(8000)
+    }).catch(() => null)
+    const assets = res && res.ok ? await res.json().catch(() => null) : null
+
+    if (!Array.isArray(assets)) {
+      console.log(`SKIP could not reach Discord to list application ${id}'s art assets.`)
+      console.log('     Offline or rate limited. Not a pass.')
+    } else if (assets.some((a) => a?.name === key)) {
+      console.log(`PASS the art asset ${JSON.stringify(key)} exists, so the card draws the mark`)
+    } else {
+      const names = assets.map((a) => a?.name).filter(Boolean)
+      console.error(`FAIL application ${id} has no art asset named ${JSON.stringify(key)}.`)
+      console.error(`     It has: ${names.length ? names.join(', ') : '(none at all)'}`)
+      console.error('')
+      console.error('     Discord silently drops an image key it cannot resolve, so the presence')
+      console.error('     still sends and still reads PaneForge - with no logo on it, and nothing')
+      console.error('     anywhere saying why.')
+      console.error('')
+      console.error('     Uploading art is the other thing a script cannot do:')
+      console.error(`       1. https://discord.com/developers/applications/${id}/rich-presence/assets`)
+      console.error(`       2. Add Image -> upload icon.png -> name it exactly ${JSON.stringify(key)}`)
+      console.error('       3. it can take a few minutes to serve')
+      failed++
+    }
+  }
 }
 
 if (failed) process.exitCode = 1

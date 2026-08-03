@@ -95,6 +95,18 @@ export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
 export const DEFAULT_LINK_LABEL = 'toolstash.xyz/paneforge'
 export const DEFAULT_LINK_URL = 'https://toolstash.xyz/paneforge'
 
+/**
+ * The art asset the card draws, by the name it was uploaded under in the Discord
+ * portal - not a URL and not the application's icon hash.
+ *
+ * An application's icon names the header only; it is never the artwork. A presence
+ * that sends no `assets` is drawn as text with no image at all, which is why the
+ * mark was missing from every profile long after the application stopped being a
+ * borrowed one and got the icon uploaded. `large_text` is its hover tooltip.
+ */
+export const PRESENCE_IMAGE = 'icon'
+export const PRESENCE_IMAGE_TEXT = 'PaneForge'
+
 /** Discord's own limits on a presence button. Over either one it rejects the frame. */
 const LABEL_MAX = 32
 const URL_MAX = 512
@@ -201,6 +213,7 @@ export function buildActivity(
   const activity: Record<string, unknown> = {}
   if (details) activity.details = details
   if (state) activity.state = state
+  activity.assets = { large_image: PRESENCE_IMAGE, large_text: PRESENCE_IMAGE_TEXT }
   if (style.elapsed) {
     activity.timestamps = { start: running ? (c.oldestRunSince ?? c.appStart) : c.appStart }
   }

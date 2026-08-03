@@ -95,6 +95,10 @@ function check(name, ok, extra = '') {
   const idle = buildActivity({ running: 0, total: 2, names: [], ...base })
   check('activity: idle desk says idle', idle.details === '2 sessions idle', idle.details)
   check('activity: idle elapsed anchors on app start', idle.timestamps.start === 1000)
+  // The mark is the one part of the card that is not a preference: an application's
+  // icon names the header, so without `assets` Discord draws no artwork at all.
+  check('activity: the card carries the PaneForge mark', busy.assets?.large_image === 'icon', JSON.stringify(busy.assets))
+  check('activity: the mark is on the idle card too', idle.assets?.large_image === 'icon', JSON.stringify(idle.assets))
   const one = buildActivity({ running: 1, total: 1, names: ['x'], ...base })
   check('activity: singular noun', one.details === '1/1 session running', one.details)
   const many = buildActivity({
@@ -251,6 +255,11 @@ const counts = (running, total, names = ['PaneForge']) => ({
     'reconnect: the frame Discord receives carries the link button',
     first?.payload.args.activity?.buttons?.[0]?.url === DEFAULT_LINK_URL,
     JSON.stringify(first?.payload.args.activity?.buttons)
+  )
+  check(
+    'reconnect: the frame Discord receives carries the mark',
+    first?.payload.args.activity?.assets?.large_image === 'icon',
+    JSON.stringify(first?.payload.args.activity?.assets)
   )
 
   // Throttle: a burst is one trailing frame with the last state, not five frames.
