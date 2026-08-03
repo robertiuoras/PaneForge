@@ -295,6 +295,7 @@ export default function Select({
                           className="opt-action"
                           title={o.action.title}
                           onMouseDown={(e) => e.preventDefault()}
+                          onKeyDown={(e) => e.stopPropagation()}
                           onClick={(e) => {
                             e.stopPropagation()
                             setOpen(false)

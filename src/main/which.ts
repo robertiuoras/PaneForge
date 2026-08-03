@@ -2,7 +2,7 @@
 // PATH: spawning the bare name 'claude' fails with "File not found". So resolve the
 // executable to an absolute path here before spawning.
 
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 
 /**
@@ -44,7 +44,15 @@ export function hydrateUserPath(): string {
     const nvm = home && join(home, '.nvm', 'versions', 'node')
     if (nvm) {
       try {
-        for (const version of readdirSync(nvm)) add(join(nvm, version, 'bin'))
+        const versions = readdirSync(nvm).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+        try {
+          const preferred = readFileSync(join(home!, '.nvm', 'alias', 'default'), 'utf8').trim()
+          const i = versions.indexOf(preferred.startsWith('v') ? preferred : `v${preferred}`)
+          if (i > 0) versions.unshift(versions.splice(i, 1)[0])
+        } catch {
+          /* no explicit nvm default: the newest version is the best fallback */
+        }
+        for (const version of versions) add(join(nvm, version, 'bin'))
       } catch {
         /* nvm is optional or unreadable */
       }

@@ -1324,6 +1324,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
 }
 .opt-action { margin-left: auto; flex: none; padding: 2px 7px; font-size: 11px; }
+.install-dialog { width: min(560px, calc(100vw - 32px)); }
 
 /* ---- checkbox / switch / segmented ---- */
 .cb { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); }

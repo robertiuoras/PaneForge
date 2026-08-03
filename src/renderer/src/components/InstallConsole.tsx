@@ -27,6 +27,8 @@ export default function InstallConsole({ agentId, onDone, start }: Props): JSX.E
   // which would start the same install a second time.
   const kick = useRef(start)
   kick.current = start
+  const finish = useRef(onDone)
+  finish.current = onDone
 
   useEffect(() => {
     setText('')
@@ -36,12 +38,12 @@ export default function InstallConsole({ agentId, onDone, start }: Props): JSX.E
       if (e.chunk) setText((t) => (t + e.chunk).slice(-20_000))
       if (e.done) {
         setRunning(false)
-        onDone(Boolean(e.ok))
+        finish.current(Boolean(e.ok))
       }
     })
     kick.current?.(agentId)
     return off
-  }, [agentId, onDone])
+  }, [agentId])
 
   // Follow the tail, the way a terminal does.
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AgentInfo } from '@shared/agents'
 import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import AgentLogo from './AgentLogo'
@@ -84,14 +85,25 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
       )}
       </span>
       {installing && (
-        <InstallConsole
-          agentId={installing}
-          onDone={(ok) => {
-            setInstalling('')
-            if (ok) onInstalled?.()
-          }}
-          start={(id) => void api.installAgent(id)}
-        />
+        createPortal(
+          <div className="overlay">
+            <div className="dialog install-dialog">
+              <div className="dialog-head">
+                <strong>Install {agents.find((a) => a.id === installing)?.label ?? installing}</strong>
+                <span className="hint">This closes when the installer finishes.</span>
+              </div>
+              <InstallConsole
+                agentId={installing}
+                onDone={(ok) => {
+                  setInstalling('')
+                  if (ok) onInstalled?.()
+                }}
+                start={(id) => void api.installAgent(id)}
+              />
+            </div>
+          </div>,
+          document.body
+        )
       )}
     </>
   )
