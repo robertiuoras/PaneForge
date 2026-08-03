@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
+import { DEFAULT_SOUNDS } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
@@ -166,6 +167,8 @@ function defaults(): Config {
     // that died an hour ago while its clock kept ticking.
     silenceAlertMin: 5,
     bellAlert: true,
+    sounds: { ...DEFAULT_SOUNDS, custom: [] },
+    hiddenBlurbs: [],
     discordPresence: true,
     discordStyle: { ...DEFAULT_DISCORD_STYLE },
     clipboardShelf: true,
@@ -236,6 +239,10 @@ export function getConfig(): Config {
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },
+      // Merged so a config from before the sound picker existed lands on the three
+      // sounds the app has always made, rather than on `undefined` and silence. The
+      // uploads list is taken as-is: an empty one is a real answer, not a missing key.
+      sounds: { ...base.sounds, ...(raw.sounds ?? {}), custom: raw.sounds?.custom ?? [] },
       // Merged rather than replaced so an upgrade keeps this device's identity and
       // its pairings while gaining any key added since the file was written.
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },

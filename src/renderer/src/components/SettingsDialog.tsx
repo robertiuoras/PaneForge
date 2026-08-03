@@ -35,7 +35,9 @@ import {
 import { DEFAULT_THEME } from '@shared/theme'
 import AgentLogo from './AgentLogo'
 import AppearanceTab from './AppearanceTab'
+import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
+import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
 // Hints below name shortcuts; on a Mac those live on Cmd, so print them through this.
@@ -50,7 +52,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'appearance' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
+type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
 
 /**
  * The rail down the left of the dialog.
@@ -68,6 +70,7 @@ type Tab = 'general' | 'appearance' | 'agents' | 'stash' | 'voice' | 'prompts' |
 const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
   { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
+  { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
   { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex gemini copilot cursor install uninstall model custom cli path' },
   { id: 'stash', label: 'Stash', note: 'Clipboard history', find: 'clipboard copy paste history overlay pin float peek images files' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
@@ -237,6 +240,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               onChange={(theme) => onChange({ theme })}
             />
           )}
+          {tab === 'sounds' && <SoundsTab config={config} onChange={onChange} />}
           {tab === 'general' && (
             <>
               <div className="setting">
@@ -310,13 +314,13 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.soundOnIdle}
                   onChange={(v) => onChange({ soundOnIdle: v })}
                   label="Chime when a session finishes its turn"
-                  hint="A soft two-note bell, and it plays even while PaneForge is focused - a pane you are not reading can still finish."
+                  hint="Plays even while PaneForge is focused - a pane you are not reading can still finish. Which sound it makes, and the sound for the other two alerts, is on the Sounds tab."
                 />
                 <Switch
                   checked={config.bellAlert}
                   onChange={(v) => onChange({ bellAlert: v })}
                   label="Say something when a pane rings its bell"
-                  hint="A CLI that rings the terminal bell is asking for a person - a prompt it needs answered, a build that failed. The pane marks itself and plays one short note. Its own switch because a chatty CLI must be mutable without muting the turn chime."
+                  hint="A CLI that rings the terminal bell is asking for a person - a prompt it needs answered, a build that failed. The pane marks itself and plays its sound. Its own switch because a chatty CLI must be mutable without muting the turn chime."
                 />
                 <div className="setting">
                   <label>Warn me when a running turn goes silent</label>
@@ -336,6 +340,23 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     Only ever about a pane whose clock is still running: the agent is supposed to be
                     working and has printed nothing at all. A pane sitting at an idle prompt is
                     silent all day and never counts.
+                  </div>
+                </div>
+                <div className="setting">
+                  <label>Feature notes</label>
+                  <div className="setting-row">
+                    <span className="hint">
+                      {config.hiddenBlurbs?.length
+                        ? `${config.hiddenBlurbs.length} of ${BLURBS.length} hidden. Each one is the line at the top of a feature saying what it is.`
+                        : `All ${BLURBS.length} showing. Each is the line at the top of a feature saying what it is - close one with its × and it stays closed.`}
+                    </span>
+                    <button
+                      className="ghost small"
+                      disabled={!config.hiddenBlurbs?.length}
+                      onClick={() => onChange({ hiddenBlurbs: [] })}
+                    >
+                      Show them all again
+                    </button>
                   </div>
                 </div>
                 <Switch

@@ -3,6 +3,7 @@ import type { AgentInfo } from '@shared/agents'
 import { modelLabel, modelValue, supportsModel } from '@shared/agents'
 import type { Project, SplitPlan, SwarmRole } from '@shared/types'
 import AgentLogo from './AgentLogo'
+import Blurb from './Blurb'
 import { Segmented } from './Controls'
 import Select from './Select'
 
@@ -170,6 +171,7 @@ export default function SwarmDialog({
               : 'one task cut into workstreams, each in its own worktree'}
           </span>
         </div>
+        <Blurb id="swarm" />
 
         <div className="setting">
           <label>Project</label>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { Project, RemoteFound, RemoteState } from '@shared/types'
 import AgentLogo from './AgentLogo'
+import Blurb from './Blurb'
 import { Switch } from './Controls'
 import Select from './Select'
 
@@ -227,6 +228,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           <strong>Devices</strong>
           <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
         </div>
+        <Blurb id="devices" />
 
         {/* ------------------------------------------------------------- this device
             The hero card. It is the only thing on this screen that is about the

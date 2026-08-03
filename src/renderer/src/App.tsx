@@ -58,7 +58,8 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
-import { playBell, playChime, playStall } from './useChime'
+import { playEvent } from './useChime'
+import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
 import {
   drag as dragTrack,
@@ -329,6 +330,11 @@ export default function App(): JSX.Element {
   // resubscribe (and so the listener is attached exactly once).
   const soundOn = useRef(true)
   soundOn.current = config?.soundOnIdle ?? true
+  // Which sound each alert makes, read through a ref for the same reason: the listeners
+  // below are attached once, and a picker change must reach the NEXT alert without
+  // resubscribing to every session event.
+  const soundSet = useRef<Config['sounds'] | undefined>(undefined)
+  soundSet.current = config?.sounds
   // The pane already on screen is acknowledged the moment it raises its hand
   // (the effect above clears it), so chiming for it is noise about something you
   // are already watching.
@@ -348,7 +354,7 @@ export default function App(): JSX.Element {
         // window in the background there is no such pane, so the selected one is as
         // worth announcing as any other.
         const watching = s.id === activeIdRef.current && !document.hidden && document.hasFocus()
-        if (soundOn.current && !watching) playChime()
+        if (soundOn.current && !watching) playEvent('done', soundSet.current)
         if (watching) return
         setJustDone((cur) => (cur.includes(s.id) ? cur : [...cur, s.id]))
         window.clearTimeout(doneTimers.current.get(s.id))
@@ -388,12 +394,12 @@ export default function App(): JSX.Element {
     const watching = (s: Session): boolean =>
       s.id === activeIdRef.current && !document.hidden && document.hasFocus()
     const offStalled = api.onStalled((s) => {
-      if (soundOn.current && !watching(s)) playStall()
+      if (soundOn.current && !watching(s)) playEvent('stall', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
     const offBell = api.onBell((s) => {
       if (!bellOn.current) return
-      if (soundOn.current && !watching(s)) playBell()
+      if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
     return () => {
@@ -1903,7 +1909,22 @@ export default function App(): JSX.Element {
   // main process; that is a thing happening to your window, so it says so.
   useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
 
+  // The "what is this feature" notes, and the × that retires one. Held here rather than
+  // passed down because eight dialogs would otherwise each grow a config prop to draw
+  // one sentence - see components/Blurb.tsx.
+  const blurbs = useMemo<BlurbState>(
+    () => ({
+      hidden: config?.hiddenBlurbs ?? [],
+      hide: (id: string) =>
+        patchConfig({
+          hiddenBlurbs: [...new Set([...(config?.hiddenBlurbs ?? []), id])]
+        })
+    }),
+    [config?.hiddenBlurbs, patchConfig]
+  )
+
   return (
+    <BlurbContext.Provider value={blurbs}>
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
@@ -2745,5 +2766,6 @@ export default function App(): JSX.Element {
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       <UpdateToast />
     </div>
+    </BlurbContext.Provider>
   )
 }

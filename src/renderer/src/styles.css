@@ -1156,12 +1156,40 @@ button.primary.danger:hover { background: linear-gradient(180deg, #6d323d, #5127
 button.ghost.danger { border-color: #ff8f8f66; color: #ffd7d7; }
 button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
 
+/*
+ * The one-line "what this is" at the top of a feature.
+ *
+ * Deliberately not a .hint: a hint is a caption beside a control and disappears against
+ * the dialog, while this is the first thing to read in a window somebody has just opened
+ * for the first time. The accent rule down the left is the whole of the emphasis - a
+ * tinted card here reads as a warning, which is exactly the wrong tone for a note that
+ * says "here is what this does".
+ */
+.blurb {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px; margin: -2px 0 2px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+.blurb-text { flex: 1; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.blurb-x {
+  flex: none; margin: -2px -3px 0 0; padding: 0 4px;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 14px; line-height: 1.2; opacity: 0.55;
+  transition: opacity var(--fast), color var(--fast);
+}
+.blurb-x:hover { opacity: 1; color: var(--text); }
+
 .setting { display: flex; flex-direction: column; gap: 7px; }
 .setting > label {
   color: var(--muted); font-size: 10.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.7px;
 }
 .setting-row { display: flex; align-items: center; gap: 8px; }
+/* The sound picker takes the room; Play sits beside it rather than under it. */
+.sound-pick { flex: 1; }
+.sound-row { padding: 3px 0; }
+.sound-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setting-row .search { flex: 1; }
 .switches { display: flex; flex-direction: column; gap: 2px; }
 

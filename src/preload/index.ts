@@ -46,6 +46,10 @@ const api: Api = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<Config>) => ipcRenderer.invoke('config:set', patch),
   pickRoot: () => ipcRenderer.invoke('config:pickRoot'),
+  addSound: () => ipcRenderer.invoke('sounds:add'),
+  soundData: (id: string) => ipcRenderer.invoke('sounds:data', id),
+  removeSound: (id: string) => ipcRenderer.invoke('sounds:remove', id),
+  renameSound: (id: string, name: string) => ipcRenderer.invoke('sounds:rename', id, name),
   discordStatus: () => ipcRenderer.invoke('discord:status'),
   onDiscordStatus: (cb) => {
     const h = (_e: unknown, status: PresenceStatus) => cb(status)

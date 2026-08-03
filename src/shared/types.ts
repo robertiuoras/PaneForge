@@ -7,9 +7,10 @@ import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
 import type { RouteMatch, RouteResult } from './projectRoute'
+import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 
-export type { DiscordStyle, RevealTarget, RouteMatch, RouteResult, ThemeConfig }
+export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -743,6 +744,19 @@ export interface Config {
    */
   bellAlert: boolean
   /**
+   * Which sound each of the three alerts makes, how loud, and any files the user has
+   * added. The switches above decide WHETHER an alert happens; this decides what it
+   * sounds like, and they are separate because muting a chatty CLI and disliking the
+   * bell are different complaints.
+   */
+  sounds: SoundConfig
+  /**
+   * Feature notes the user has dismissed, by blurb id (`shared/blurbs.ts`). A one-line
+   * "what this is" at the top of Devices is worth reading once and noise by the fortieth
+   * time, so each one can be closed on its own and Settings brings them all back.
+   */
+  hiddenBlurbs: string[]
+  /**
    * Show the desk's headline numbers as Discord activity - "3/6 sessions running"
    * plus which projects - refreshed as turns start and finish. Counts and folder
    * names only, never a byte of pane content. Off tells Discord nothing at all.
@@ -1044,6 +1058,12 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
+  /** file dialog, then a copy into userData. `error` is a sentence to put on screen. */
+  addSound(): Promise<{ ok: boolean; sound?: CustomSound; error?: string }>
+  /** the bytes of an uploaded sound, for decodeAudioData. Null = gone or unreadable. */
+  soundData(id: string): Promise<Uint8Array | null>
+  removeSound(id: string): Promise<SoundConfig>
+  renameSound(id: string, name: string): Promise<SoundConfig>
   /** what Discord itself last said about the presence - accepted, refused, or not running */
   discordStatus(): Promise<PresenceStatus>
   onDiscordStatus(cb: (status: PresenceStatus) => void): () => void

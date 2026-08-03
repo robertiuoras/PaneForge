@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { diffWords, changeRatio } from '../../../shared/diffWords'
 import type { ImproveResult, ResearchReport } from '../../../shared/types'
 import type { ImproveQuestion } from '../../../shared/promptSchema'
+import Blurb from './Blurb'
 
 const api = window.api
 
@@ -290,6 +291,7 @@ export default function ImproveSheet({
           {ratio < 0.1 ? ' · already good' : ''}
         </span>
       </div>
+      <Blurb id="improve" />
 
       <div className="improve-diff" aria-label="what changed">
         {parts.map((p, i) => (

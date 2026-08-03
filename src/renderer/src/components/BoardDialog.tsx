@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProjectBoard, TaskItem, TaskStatus } from '@shared/types'
+import Blurb from './Blurb'
 
 const api = window.api
 
@@ -78,6 +79,7 @@ export default function BoardDialog({ cwd, onSend, onClose }: Props): JSX.Elemen
           <strong>Board</strong>
           <span className="hint">{cwd}</span>
         </div>
+        <Blurb id="board" />
 
         <div className="setting-row">
           <input

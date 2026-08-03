@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RestoreOffer } from '@shared/types'
 import AgentLogo from './AgentLogo'
+import Blurb from './Blurb'
 import { Checkbox } from './Controls'
 
 /**
@@ -54,6 +55,7 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
           <strong>Restore your last session?</strong>
           <span className="hint">{when(offer)}</span>
         </div>
+        <Blurb id="restore" />
 
         <div className="proj-list">
           {offer.panes.map((p) => (

@@ -26,6 +26,7 @@ import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { getConfig, setConfig } from './config'
+import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { invalidateAgents, listAgents, specFor } from './agents'
@@ -1039,6 +1040,21 @@ ipcMain.handle('config:pickRoot', async () => {
     properties: ['openDirectory']
   })
   return r.canceled ? null : r.filePaths[0]
+})
+
+// The sound picker's four jobs. Everything that touches the sounds folder is here, so
+// the renderer never learns where it is - it asks for bytes by id.
+ipcMain.handle('sounds:add', () => addSound(win))
+ipcMain.handle('sounds:data', (_e, id: string) => soundData(id))
+ipcMain.handle('sounds:remove', (_e, id: string) => {
+  const next = removeSound(id)
+  send('config:changed', getConfig())
+  return next
+})
+ipcMain.handle('sounds:rename', (_e, id: string, name: string) => {
+  const next = renameSound(id, name)
+  send('config:changed', getConfig())
+  return next
 })
 
 ipcMain.on('shell:reveal', (_e, path: string) => {
@@ -2282,6 +2298,10 @@ app.whenReady().then(() => {
   sweepOldStrays()
   history.setHistoryEnabled(cfg.saveHistory)
   history.prune(cfg.historyDays)
+  // An uploaded alert sound is a config line plus a file, and the two drift apart
+  // silently - a copied profile brings one and not the other. Reconciled once, here,
+  // because the alternative is finding out when an alert makes no sound.
+  pruneCustomSounds()
   setSilenceAlert(cfg.silenceAlertMin)
   // Before the window: everything that opens, floats or flashes below asks this first,
   // and a launch that happens to land mid-game should be quiet on the way in rather

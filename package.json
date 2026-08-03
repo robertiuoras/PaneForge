@@ -96,7 +96,9 @@
     "test:laneheal": "node scripts/lane-heal-test.mjs",
     "test:lanenaming": "node scripts/lane-naming-test.mjs",
     "test:laneautomerge": "node scripts/lane-automerge-test.mjs",
-    "probe:clear": "node scripts/clear-wipe-probe.mjs"
+    "probe:clear": "node scripts/clear-wipe-probe.mjs",
+    "test:sounds": "node scripts/sound-test.mjs",
+    "test:blurbs": "node scripts/blurb-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

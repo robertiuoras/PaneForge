@@ -9,6 +9,7 @@
 // nearest thing was a tooltip on a chip you had to already know to hover.
 
 import { useMemo, useState } from 'react'
+import Blurb from './Blurb'
 import { Segmented } from './Controls'
 import MicIcon from './MicIcon'
 // The rows below are written with Ctrl because that is what Windows and Linux use; on a
@@ -348,6 +349,7 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
           <strong>Help</strong>
           <span className="hint">Esc closes</span>
         </div>
+        <Blurb id="shortcuts" />
         <div className="key-row lead">
           <span className="kbd-box">{keyLabel(HELP_KEY[0])}</span>
           <span>{HELP_KEY[1]}</span>

@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { RecentItem } from '@shared/types'
+import Blurb from './Blurb'
 import { keyLabel } from '../platform'
 
 const api = window.api
@@ -246,6 +247,12 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
           ✕
         </button>
       </div>
+      {/*
+        Only while it is open because somebody asked for it. The five-second auto-peek is
+        a glance at what you just copied, and six lines of explanation arriving on top of
+        every copy is the opposite of that.
+      */}
+      {pinned && <Blurb id="stash" />}
       {!items.length && (
         <div className="shelf-empty">
           Nothing on the Stash yet. Copy text or a screenshot anywhere on the machine, or drop a

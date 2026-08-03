@@ -3,6 +3,7 @@ import type { AgentInfo } from '@shared/agents'
 import type { Agent, Project, RouteMatch, StartSessionRequest } from '@shared/types'
 import AgentPicker, { AgentInstallBar } from './AgentPicker'
 import AgentLogo from './AgentLogo'
+import Blurb from './Blurb'
 import { Checkbox } from './Controls'
 
 const api = window.api
@@ -187,6 +188,7 @@ export default function NewSessionDialog({
           <strong>New session</strong>
           <span className="hint">Space ticks a project, Enter starts everything ticked</span>
         </div>
+        <Blurb id="newSession" />
 
         <input
           ref={input}

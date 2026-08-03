@@ -192,6 +192,8 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
+| `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:grid` | layout arithmetic, no window needed |
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |

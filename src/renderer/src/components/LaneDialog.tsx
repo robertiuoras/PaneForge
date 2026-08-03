@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { LaneMergeResult, LaneWork } from '@shared/types'
+import Blurb from './Blurb'
 
 const api = window.api
 
@@ -81,6 +82,7 @@ export default function LaneDialog({ cwd, onClose, onHelp }: Props): JSX.Element
             what is this?
           </button>
         </div>
+        <Blurb id="lane" />
         {work === undefined && <div className="confirm-body">Reading the lane…</div>}
         {work === null && (
           <div className="confirm-body">This pane is not in a lane any more.</div>

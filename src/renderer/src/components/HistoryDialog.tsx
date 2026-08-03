@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import AgentLogo from './AgentLogo'
+import Blurb from './Blurb'
 
 const api = window.api
 
@@ -58,6 +59,7 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
           <strong>History</strong>
           <span className="hint">{entries.length} saved sessions on this machine</span>
         </div>
+        <Blurb id="history" />
 
         <input
           className="search"
