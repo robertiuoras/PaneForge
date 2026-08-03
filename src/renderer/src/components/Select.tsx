@@ -8,6 +8,8 @@ export interface SelectOption {
   hint?: string
   icon?: ReactNode
   disabled?: boolean
+  /** Secondary action that remains usable when this option itself is unavailable. */
+  action?: { label: string; title?: string; onClick: () => void }
   /** options sharing a group render under one heading, in first-seen order */
   group?: string
 }
@@ -287,6 +289,20 @@ export default function Select({
                       {o.icon}
                       <span className="opt-label">{o.label}</span>
                       {o.hint && <span className="opt-hint">{o.hint}</span>}
+                      {o.action && (
+                        <button
+                          type="button"
+                          className="opt-action"
+                          title={o.action.title}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            o.action?.onClick()
+                          }}
+                        >
+                          {o.action.label}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )

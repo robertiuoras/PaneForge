@@ -325,6 +325,7 @@ export default function NewSessionDialog({
               agents={agents}
               agent={agent}
               model={model}
+              onInstalled={reprobe}
               onChange={(a, m) => {
                 setAgent(a)
                 // Switching CLI carries its own remembered model, not the previous one's.

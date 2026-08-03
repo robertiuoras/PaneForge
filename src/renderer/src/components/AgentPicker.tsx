@@ -14,25 +14,31 @@ interface Props {
   onChange: (agent: string, model: string) => void
   /** compact styling for the pane header */
   small?: boolean
+  /** refresh the owning dialog's CLI probe after an in-menu install finishes */
+  onInstalled?: () => void
 }
 
 const CUSTOM = '__custom__'
 
 /**
  * The "which AI runs here" control: one dropdown for the CLI, one for its model.
- * Missing CLIs stay visible but disabled with their install command as the hint, so
- * the list doubles as a menu of what is worth installing. The model list is
+ * Missing CLIs stay visible with an Install action in their menu row, so the list
+ * doubles as a menu of what is worth installing. The model list is
  * suggestions only - "Other..." accepts any string.
  */
-export default function AgentPicker({ agents, agent, model, onChange, small }: Props): JSX.Element {
+export default function AgentPicker({ agents, agent, model, onChange, small, onInstalled }: Props): JSX.Element {
   const spec = agents.find((a) => a.id === agent)
   const models = spec?.models ?? []
+  const [installing, setInstalling] = useState('')
 
   const agentOptions: SelectOption[] = agents.map((a) => ({
     value: a.id,
     label: a.label,
-    hint: a.available ? a.note : installCommand(a) ? 'not installed - Install it below' : 'not on PATH',
+    hint: a.available ? a.note : installCommand(a) ? 'not installed - Install here' : 'not on PATH',
     disabled: !a.available,
+    action: !a.available && installCommand(a)
+      ? { label: 'Install', title: installCommand(a), onClick: () => setInstalling(a.id) }
+      : undefined,
     // Free CLIs get their own group: the point of the group is to make "I have no
     // subscription today" a one-glance answer rather than a research project.
     group: a.custom ? 'Custom' : a.available ? (a.free ? 'Free' : 'Installed') : 'Not installed',
@@ -55,7 +61,8 @@ export default function AgentPicker({ agents, agent, model, onChange, small }: P
   }
 
   return (
-    <span className={'agent-pick' + (small ? ' small' : '')}>
+    <>
+      <span className={'agent-pick' + (small ? ' small' : '')}>
       <Select
         size={small ? 'sm' : 'md'}
         value={agent}
@@ -75,7 +82,18 @@ export default function AgentPicker({ agents, agent, model, onChange, small }: P
           menuWidth={260}
         />
       )}
-    </span>
+      </span>
+      {installing && (
+        <InstallConsole
+          agentId={installing}
+          onDone={(ok) => {
+            setInstalling('')
+            if (ok) onInstalled?.()
+          }}
+          start={(id) => void api.installAgent(id)}
+        />
+      )}
+    </>
   )
 }
 

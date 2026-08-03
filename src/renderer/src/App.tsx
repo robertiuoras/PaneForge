@@ -2420,6 +2420,7 @@ export default function App(): JSX.Element {
                   agents={agents}
                   agent={s.agent}
                   model={s.model ?? ''}
+                  onInstalled={() => void api.listAgents().then(setAgents)}
                   onChange={(a, m) => switchAgent(s, a, m)}
                 />
                 {/* Clears the agent's context and keeps the run. Where the mic used to

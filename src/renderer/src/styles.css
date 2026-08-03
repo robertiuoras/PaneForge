@@ -1323,6 +1323,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   flex: 1; text-align: right; color: var(--muted); font-size: 10.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
 }
+.opt-action { margin-left: auto; flex: none; padding: 2px 7px; font-size: 11px; }
 
 /* ---- checkbox / switch / segmented ---- */
 .cb { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); }
