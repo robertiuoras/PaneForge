@@ -12,6 +12,9 @@ import { delimiter, isAbsolute, join } from 'node:path'
  */
 export function hydrateUserPath(): string {
   const current = process.env.PATH ?? ''
+  // Narrow test escape hatch: production PaneForge never sets this, but it lets the
+  // installer prerequisite test model a machine that genuinely has no Node anywhere.
+  if (process.env.PANEFORGE_NO_USER_PATHS === '1') return current
   const parts = current.split(delimiter).filter(Boolean)
   const seen = new Set(parts.map((p) => (process.platform === 'win32' ? p.toLowerCase() : p)))
   const add = (dir: string | undefined): void => {

@@ -122,18 +122,25 @@ console.log('\nreal shell, PATH with no npm')
 const { ensurePrereq } = await import(load('src/main/install.ts', 'install.mjs').url)
 
 const realPath = process.env.PATH
+const realHome = process.env.HOME
+const realNoUserPaths = process.env.PANEFORGE_NO_USER_PATHS
 // Keep the system dirs so a shell can still be found; drop everything that could hold
 // npm (nodejs, nvm, fnm, volta, the npm global prefix).
-const keep = (process.env.PATH ?? '')
-  .split(process.platform === 'win32' ? ';' : ':')
-  .filter((p) => p && !/node|npm|nvm|fnm|volta|bun/i.test(p))
-process.env.PATH = keep.join(process.platform === 'win32' ? ';' : ':')
+process.env.PATH = process.platform === 'win32' ? 'C:\\Windows\\System32' : '/usr/bin:/bin:/usr/sbin:/sbin'
+// `which()` also checks normal user install locations for GUI launches. Point HOME at
+// a folder with none of those locations so this still exercises the genuine no-Node
+// branch rather than accidentally finding this developer machine's nvm install.
+process.env.HOME = join(OUT, 'empty-home')
+process.env.PANEFORGE_NO_USER_PATHS = '1'
 
 let said = ''
 // Force the "cannot bootstrap" branch by claiming a platform with no scripted
 // bootstrap, so the test never actually installs Node onto the machine running it.
 const proceeded = await ensurePrereq('npm i -g @openai/codex', (c) => (said += c), 'linux')
 process.env.PATH = realPath
+process.env.HOME = realHome
+if (realNoUserPaths === undefined) delete process.env.PANEFORGE_NO_USER_PATHS
+else process.env.PANEFORGE_NO_USER_PATHS = realNoUserPaths
 
 ok(proceeded === false, 'a missing npm stops the install instead of running it')
 ok(/Node\.js/.test(said), 'the message names Node.js rather than printing a shell error')
