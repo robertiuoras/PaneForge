@@ -274,51 +274,86 @@ function offerMac(version: string): void {
 /** The version being downloaded for a Mac right now, so two checks cannot both fetch it. */
 let macStaging = ''
 
-function macFallback(message: string): void {
-  const done = (err?: string): void => {
-    if (!err) return
-    log('mac fallback failed', err.slice(0, 160))
-    set({ phase: 'error', error: message, percent: undefined })
-    schedule(3 * 60_000)
-  }
-  const req = get(
-    API_LATEST,
-    {
-      headers: {
-        'user-agent': `PaneForge/${app.getVersion()}`,
-        accept: 'application/vnd.github+json'
+function publicLatestMacRelease(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = get(
+      API_LATEST,
+      {
+        headers: {
+          'user-agent': `PaneForge/${app.getVersion()}`,
+          accept: 'application/vnd.github+json'
+        },
+        timeout: 15_000
       },
-      timeout: 15_000
-    },
-    (res) => {
-      if (res.statusCode !== 200) {
-        res.resume()
-        return done(`releases API ${res.statusCode}`)
-      }
-      let body = ''
-      res.setEncoding('utf8')
-      res.on('data', (c) => {
-        body += c
-      })
-      res.on('end', () => {
-        try {
-          const tag = String(JSON.parse(body)?.tag_name ?? '')
-          const version = tag.replace(/^v/, '')
-          if (!version) return done('no tag_name in the releases API response')
-          if (newer(version, have())) {
-            log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
-            offerMac(version)
-          } else {
-            set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
-          }
-        } catch (e) {
-          done((e as Error)?.message ?? String(e))
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume()
+          return reject(new Error(`releases API ${res.statusCode}`))
         }
-      })
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => {
+          body += c
+        })
+        res.on('end', () => {
+          try {
+            const tag = String(JSON.parse(body)?.tag_name ?? '')
+            const version = tag.replace(/^v/, '')
+            if (!version) return reject(new Error('no tag_name in the releases API response'))
+            resolve(version)
+          } catch (e) {
+            reject(e)
+          }
+        })
+      }
+    )
+    req.on('timeout', () => req.destroy(new Error('releases API timed out')))
+    req.on('error', reject)
+  })
+}
+
+function ghLatestMacRelease(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'gh',
+      ['api', 'repos/robertiuoras/PaneForge/releases/latest', '--jq', '.tag_name'],
+      { windowsHide: true, timeout: 15_000 },
+      (err, out) => {
+        const version = err ? '' : out.trim().replace(/^v/, '')
+        if (version) resolve(version)
+        else reject(err ?? new Error('no tag_name from the authenticated releases API'))
+      }
+    )
+  })
+}
+
+async function latestMacRelease(): Promise<string> {
+  try {
+    return await publicLatestMacRelease()
+  } catch (publicError) {
+    try {
+      return await ghLatestMacRelease()
+    } catch {
+      throw publicError
     }
-  )
-  req.on('timeout', () => req.destroy(new Error('releases API timed out')))
-  req.on('error', (e) => done(e?.message ?? String(e)))
+  }
+}
+
+function macFallback(message: string): void {
+  void latestMacRelease()
+    .then((version) => {
+      if (newer(version, have())) {
+        log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
+        offerMac(version)
+      } else {
+        set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
+      }
+    })
+    .catch((e: Error) => {
+      log('mac fallback failed', (e?.message ?? String(e)).slice(0, 160))
+      set({ phase: 'error', error: message, percent: undefined })
+      schedule(3 * 60_000)
+    })
 }
 
 // GitHub hid this whole account from anonymous requests on 2026-07-28 (anti-abuse
@@ -330,14 +365,18 @@ function macFallback(message: string): void {
 // an expired token must not replace a path that might have worked.
 let feedTokened = false
 let borrowing = false
+let borrowReady: (() => void) | null = null
 
-function borrowGhToken(u: Updater): void {
-  if (feedTokened || borrowing) return
+function borrowGhToken(u: Updater, onReady?: () => void): void {
+  if (feedTokened) return onReady?.()
+  if (onReady && !borrowReady) borrowReady = onReady
+  if (borrowing) return
   borrowing = true
   execFile('gh', ['auth', 'token'], { windowsHide: true, timeout: 10_000 }, (err, out) => {
     const token = err ? '' : out.trim()
     if (!token) {
       borrowing = false
+      borrowReady = null
       return
     }
     execFile(
@@ -346,11 +385,20 @@ function borrowGhToken(u: Updater): void {
       { windowsHide: true, timeout: 15_000 },
       (err2, out2) => {
         borrowing = false
-        if (err2 || !out2.trim().startsWith('v')) return
+        if (err2 || !out2.trim().startsWith('v')) {
+          borrowReady = null
+          return
+        }
         u.setFeedURL({ provider: 'github', owner: 'robertiuoras', repo: 'PaneForge', private: true, token })
         feedTokened = true
         log('feed', 'account hidden from anonymous requests - using the gh CLI token')
-        schedule(5_000)
+        const ready = borrowReady
+        borrowReady = null
+        // Authentication can finish from an immediate test stub before the rejected
+        // probe has unwound its `probing` guard. Retry on the next timer turn so the
+        // ready-state poll cannot be discarded as still in flight.
+        if (ready) setTimeout(ready, 0)
+        else schedule(5_000)
       }
     )
   })
@@ -514,7 +562,11 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       const message = e?.message ?? String(e)
       // A probe that fails changes nothing: the build already downloaded is still there
       // and still installable, and saying "update failed" over it would be a lie.
-      if (probing) return log('probe error', message.slice(0, 160))
+      if (probing) {
+        log('probe error', message.slice(0, 160))
+        if (/404/.test(message)) borrowGhToken(u, () => void pollOnce())
+        return
+      }
       // electron-updater fires this several times for one failed check (the feed, the
       // block map, the retry inside its own http executor). Eight identical events in
       // two seconds all reached the badge, and each one re-armed the retry, so a single
@@ -616,16 +668,27 @@ async function supersede(): Promise<void> {
     log('supersede', `${pending} -> ${found}`)
     probing = false
     u.autoDownload = restore
-    // The staged bundle is a folder, not a temp file electron-updater manages, so the old
-    // one is thrown away here before the newer one is fetched over the same path.
     if (process.platform === 'darwin') {
-      clearStaged()
       return offerMac(found)
     }
     set({ phase: 'downloading', version: found, percent: 0 })
     await u.downloadUpdate()
   } catch (e) {
-    log('supersede failed', (e as Error)?.message ?? String(e))
+    const message = (e as Error)?.message ?? String(e)
+    if (process.platform === 'darwin' && /\.yml|404/i.test(message)) {
+      try {
+        const found = await latestMacRelease()
+        if (!newer(found, pending)) return
+        log('supersede fallback', `${pending} -> ${found} (feed has no mac metadata)`)
+        probing = false
+        u.autoDownload = restore
+        return offerMac(found)
+      } catch (fallbackError) {
+        log('probe error', (fallbackError as Error)?.message ?? String(fallbackError))
+        return
+      }
+    }
+    log('supersede failed', message)
   } finally {
     probing = false
     u.autoDownload = restore

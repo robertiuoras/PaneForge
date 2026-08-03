@@ -54,6 +54,17 @@ function staging(): string {
   return join(app.getPath('userData'), 'mac-update')
 }
 
+/** Remove a staged bundle without Electron treating its app.asar file as a directory. */
+function removeTree(path: string): void {
+  const noAsar = process.noAsar
+  process.noAsar = true
+  try {
+    rmSync(path, { recursive: true, force: true })
+  } finally {
+    process.noAsar = noAsar
+  }
+}
+
 /**
  * The running app bundle, or '' when this is not one.
  *
@@ -255,7 +266,7 @@ function run(cmd: string, args: string[]): Promise<void> {
  */
 export async function stageFromZip(zip: string, version: string): Promise<string> {
   const dest = join(staging(), version)
-  rmSync(dest, { recursive: true, force: true })
+  removeTree(dest)
   mkdirSync(dest, { recursive: true })
   await run('/usr/bin/ditto', ['-x', '-k', zip, dest])
   const entry = readdirSync(dest).find((f) => f.endsWith('.app'))
@@ -263,7 +274,7 @@ export async function stageFromZip(zip: string, version: string): Promise<string
   const staged = join(dest, entry)
   const got = bundleVersion(staged)
   if (got !== version) {
-    rmSync(dest, { recursive: true, force: true })
+    removeTree(dest)
     throw new Error(`release zip contains ${got || 'no version'}, expected ${version}`)
   }
   // Belt and braces. Nothing here sets the quarantine flag, but a bundle that carries one
@@ -288,6 +299,7 @@ export function staged(): string {
  * error text and falls back to handing over the release page.
  */
 export async function stageMacUpdate(version: string, onPercent: (p: number) => void): Promise<void> {
+  const previous = stagedApp
   const zip = await download(version, onPercent)
   const want = await feedSha(version)
   if (want) {
@@ -304,6 +316,15 @@ export async function stageMacUpdate(version: string, onPercent: (p: number) => 
   rmSync(zip, { force: true })
   stagedApp = bundle
   stagedFor = version
+  if (previous && dirname(previous) !== dirname(bundle)) {
+    try {
+      removeTree(dirname(previous))
+    } catch (e) {
+      // The new build is valid and ready. A stale older folder is harmless and can be
+      // adopted or cleaned next launch, so cleanup must not turn success into failure.
+      log('old mac stage cleanup failed', (e as Error)?.message ?? String(e))
+    }
+  }
   log('mac update staged', version, bundle)
 }
 
@@ -400,7 +421,7 @@ export function adoptStaged(): string {
     })()
     const bundle = entry ? join(holder, entry) : ''
     if (!bundle || bundleVersion(bundle) !== name) {
-      rmSync(holder, { recursive: true, force: true })
+      removeTree(holder)
       continue
     }
     if (!best || ahead(name, best)) {
@@ -415,7 +436,7 @@ export function adoptStaged(): string {
 
 /** Throw away anything staged. Used when a newer release supersedes it. */
 export function clearStaged(): void {
-  if (stagedApp) rmSync(dirname(stagedApp), { recursive: true, force: true })
+  if (stagedApp) removeTree(dirname(stagedApp))
   stagedApp = ''
   stagedFor = ''
 }

@@ -37,12 +37,46 @@ module.exports={app:{isPackaged:true,getVersion:()=>'0.3.6',getPath:()=>dir},__d
 writeFileSync(
   join(work, 'updater-stub.cjs'),
   `const handlers={},calls=[]
-let feed=null
+let feed=null,tokenFeed=null
 module.exports={autoUpdater:{autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:false,logger:null,
-  checkForUpdates:async()=>{calls.push('check');return feed?{updateInfo:{version:feed}}:null},
+  checkForUpdates:async()=>{calls.push('check');if(feed instanceof Error){handlers.error?.(feed);throw feed}return feed?{updateInfo:{version:feed}}:null},
   downloadUpdate:async()=>{calls.push('download')},
   quitAndInstall:()=>calls.push('install'),
-  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls,__feed:(v)=>{feed=v}}
+  setFeedURL:()=>{feed=tokenFeed},
+  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls,__feed:(v)=>{feed=v},__tokenFeed:(v)=>{tokenFeed=v}}
+`
+)
+
+writeFileSync(
+  join(work, 'https-stub.cjs'),
+  `const {EventEmitter}=require('node:events')
+let latest='0.3.6',status=200
+module.exports={
+  __latest:(v)=>{latest=v},
+  __status:(v)=>{status=v},
+  get:(_url,_options,cb)=>{
+    const req=new EventEmitter()
+    req.destroy=(e)=>req.emit('error',e)
+    process.nextTick(()=>{
+      const res=new EventEmitter()
+      res.statusCode=status
+      res.setEncoding=()=>{}
+      res.resume=()=>{}
+      cb(res)
+      res.emit('data',JSON.stringify({tag_name:'v'+latest}))
+      res.emit('end')
+    })
+    return req
+  }
+}
+`
+)
+
+writeFileSync(
+  join(work, 'child-process-stub.cjs'),
+  `const real=require('node:child_process')
+let latest='0.3.12'
+module.exports={...real,__latest:(v)=>{latest=v},execFile:(_cmd,args,_options,cb)=>process.nextTick(()=>cb(null,args[1]==='token'?'test-token':'v'+latest))}
 `
 )
 
@@ -67,6 +101,11 @@ writeFileSync(
   drive,
   `const path=require('node:path'),fs=require('node:fs'),Module=require('node:module')
 const orig=Module._resolveFilename
+const load=Module._load
+Module._load=function(r,...a){
+  if(r==='node:https')return require('./https-stub.cjs')
+  if(r==='node:child_process')return require('./child-process-stub.cjs')
+  return load.call(this,r,...a)}
 Module._resolveFilename=function(r,...a){
   if(r==='electron')return path.join(__dirname,'electron-stub.cjs')
   if(r==='electron-updater')return path.join(__dirname,'updater-stub.cjs')
@@ -78,7 +117,7 @@ fs.mkdirSync(path.join(repo,'.git'),{recursive:true})
 process.env.PANEFORGE_REPO=repo
 const ship=(v)=>fs.writeFileSync(path.join(repo,'.git','paneforge-lanes.json'),JSON.stringify({lanes:{},ready:{},conflicts:{},release:null,lastShip:v}))
 ship(null)
-const stub=require('./updater-stub.cjs'),el=require('./electron-stub.cjs'),u=require('./updater.bundle.cjs')
+const stub=require('./updater-stub.cjs'),https=require('./https-stub.cjs'),child=require('./child-process-stub.cjs'),el=require('./electron-stub.cjs'),u=require('./updater.bundle.cjs')
 const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
 const logFile=path.join(el.__dir,'updater.log')
@@ -121,12 +160,40 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   if(mac) ok(u.getUpdateState().phase==='available','a Mac that cannot swap itself still gets the page')
   h['update-downloaded']({version:'0.3.10'}); ok(u.getUpdateState().phase==='ready','ready on the newer build')
 
+  // A release tag can appear before latest-mac.yml finishes uploading (or without that
+  // optional feed at all). A silent ready-state probe still uses the Releases API so it
+  // does not strand the older staged build behind a permanent feed error.
+  let held='0.3.10'
+  if(mac){
+    // The public releases API can share the feed's 404 when GitHub hides the account.
+    // The validated gh token path must wake the ready-state poll after authenticating.
+    https.__status(404)
+    stub.__tokenFeed('0.3.12')
+    stub.__feed(new Error('Cannot find latest-mac.yml in the latest release artifacts (404)'))
+    await u.pollOnce(); await new Promise((r)=>setTimeout(r,10))
+    ok(u.getUpdateState().version==='0.3.12','a hidden-account token retry supersedes the staged Mac build')
+    h['update-downloaded']({version:'0.3.12'}); held='0.3.12'
+
+    child.__latest('0.3.13')
+    stub.__feed(new Error('Cannot find latest-mac.yml in the latest release artifacts (404)'))
+    await u.pollOnce()
+    ok(u.getUpdateState().version==='0.3.13','an authenticated Mac falls back to gh when its feed and public API are missing')
+    h['update-downloaded']({version:'0.3.13'}); held='0.3.13'
+
+    https.__status(200); https.__latest('0.3.14')
+    stub.__feed(new Error('Cannot find latest-mac.yml in the latest release artifacts (404)'))
+    await u.pollOnce()
+    ok(u.getUpdateState().version==='0.3.14','a Mac supersedes from the releases API when its feed is missing')
+    stub.__feed('0.3.14')
+    h['update-downloaded']({version:'0.3.14'}); held='0.3.14'
+  }
+
   // Four minutes passed between v0.3.30's tag and its latest.yml finishing upload, and a
   // check inside that window reports "up to date". The lane file says a release exists,
   // so the poll closes up to a minute instead of waiting out the idle gap.
   ship({version:'0.4.0',at:Date.now()}); ok(u.pollDelay()===60_000,'chases a release the feed has not got yet')
   ship({version:'0.4.0',at:Date.now()-31*60_000}); ok(u.pollDelay()===600_000,'gives up on a release that never arrived')
-  ship({version:'0.3.10',at:Date.now()}); ok(u.pollDelay()===600_000,'no chase for a version already in hand')
+  ship({version:held,at:Date.now()}); ok(u.pollDelay()===600_000,'no chase for a version already in hand')
   ship(null); ok(u.pollDelay()===600_000,'no lane file, ordinary poll')
 
   const log=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8'):''

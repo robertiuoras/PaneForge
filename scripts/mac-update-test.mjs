@@ -14,7 +14,8 @@
 //   node scripts/mac-update-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -27,15 +28,19 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 
-const work = join(tmpdir(), 'pf-mac-update-test')
-rmSync(work, { recursive: true, force: true })
-mkdirSync(work, { recursive: true })
+const work = mkdtempSync(join(tmpdir(), 'pf-mac-update-test-'))
 
 // Stub electron: userData is a throwaway dir, and the app claims to be the packaged 1.0.0.
 writeFileSync(
   join(work, 'electron-stub.cjs'),
   `const p=require('node:path')
 module.exports={app:{isPackaged:true,getVersion:()=>'1.0.0',getPath:()=>p.join(__dirname,'userData')}}
+`
+)
+writeFileSync(
+  join(work, 'electron-clear-stub.cjs'),
+  `const p=require('node:path')
+module.exports={app:{isPackaged:true,getVersion:()=>'1.0.0',getPath:()=>p.join(__dirname,'clear-userData')}}
 `
 )
 
@@ -48,6 +53,79 @@ buildSync({
   outfile: join(work, 'macUpdate.bundle.cjs'),
   external: ['electron']
 })
+
+// Electron patches `fs` so an app.asar file can be read like a directory. Recursive
+// deletion must still remove a staged Electron bundle when a newer release supersedes
+// it. Run this case inside Electron itself: plain Node does not expose that filesystem
+// behaviour and let the live ENOTDIR regression pass unnoticed.
+const clearRelease = join(work, 'clear-release')
+const clearBundle = join(clearRelease, 'PaneForge.app')
+mkdirSync(join(clearBundle, 'Contents', 'Resources'), { recursive: true })
+writeFileSync(
+  join(clearBundle, 'Contents', 'Info.plist'),
+  '<plist><dict><key>CFBundleShortVersionString</key><string>2.0.0</string></dict></plist>'
+)
+const asarSource = join(work, 'asar-source')
+mkdirSync(asarSource)
+writeFileSync(join(asarSource, 'package.json'), '{}')
+execFileSync(process.execPath, [join(root, 'node_modules', '@electron', 'asar', 'bin', 'asar.js'), 'pack', asarSource,
+  join(clearBundle, 'Contents', 'Resources', 'app.asar')])
+const clearZip = join(work, 'clear-release.zip')
+execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', clearBundle, clearZip])
+const replacementRelease = join(work, 'replacement-release')
+const replacementBundle = join(replacementRelease, 'PaneForge.app')
+mkdirSync(replacementRelease)
+execFileSync('/usr/bin/ditto', [clearBundle, replacementBundle])
+writeFileSync(
+  join(replacementBundle, 'Contents', 'Info.plist'),
+  '<plist><dict><key>CFBundleShortVersionString</key><string>3.0.0</string></dict></plist>'
+)
+const replacementZip = join(work, 'replacement-release.zip')
+execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', replacementBundle, replacementZip])
+const clearDrive = join(work, 'clear-drive.cjs')
+writeFileSync(
+  clearDrive,
+  `const path=require('node:path'),fs=require('node:fs'),crypto=require('node:crypto'),Module=require('node:module')
+const {EventEmitter}=require('node:events'),{Readable}=require('node:stream')
+const orig=Module._resolveFilename
+const load=Module._load
+let badChecksum=false
+const zips={'2.0.0':${JSON.stringify(clearZip)},'3.0.0':${JSON.stringify(replacementZip)}}
+const https={
+  __bad:(v)=>{badChecksum=v},
+  get:(url,_options,cb)=>{
+    const req=new EventEmitter();req.destroy=(e)=>req.emit('error',e)
+    const version=String(url).split('/download/v')[1]?.split('/')[0]||''
+    const zip=zips[version],zipBody=zip?fs.readFileSync(zip):Buffer.alloc(0)
+    const body=url.endsWith('latest-mac.yml')
+      ?Buffer.from('files:\\n  - url: PaneForge-'+version+'-'+process.arch+'.zip\\n    sha512: '+(badChecksum?'wrong':crypto.createHash('sha512').update(zipBody).digest('base64'))+'\\n')
+      :zipBody
+    process.nextTick(()=>{const res=Readable.from([body]);res.statusCode=200;res.headers={'content-length':String(body.length)};cb(res)})
+    return req
+  }
+}
+Module._load=function(r,...a){if(r==='node:https')return https;return load.call(this,r,...a)}
+Module._resolveFilename=function(r,...a){
+  if(r==='electron')return path.join(__dirname,'electron-clear-stub.cjs')
+  return orig.call(this,r,...a)}
+const m=require('./macUpdate.bundle.cjs')
+m.setMacUpdateLog(()=>{})
+;(async()=>{
+  await m.stageMacUpdate('2.0.0',()=>{})
+  const old=path.join(__dirname,'clear-userData','mac-update','2.0.0')
+  https.__bad(true)
+  let failed=false
+  try{await m.stageMacUpdate('3.0.0',()=>{})}catch{failed=true}
+  const kept=failed&&m.staged()==='2.0.0'&&fs.existsSync(old)
+  console.log((kept?'PASS ':'FAIL ')+'a failed supersede preserves the validated older bundle')
+  https.__bad(false)
+  await m.stageMacUpdate('3.0.0',()=>{})
+  const replaced=m.staged()==='3.0.0'&&!fs.existsSync(old)&&fs.existsSync(path.join(__dirname,'clear-userData','mac-update','3.0.0'))
+  console.log((replaced?'PASS ':'FAIL ')+'a validated newer app.asar bundle replaces the older stage inside Electron')
+  process.exit(kept&&replaced?0:1)
+})().catch((e)=>{console.log('FAIL Electron staged replacement: '+(e.message||e));process.exit(1)})
+`
+)
 
 const drive = join(work, 'drive.cjs')
 writeFileSync(
@@ -212,10 +290,22 @@ m.stageMacUpdate(${JSON.stringify(version)},(p)=>{if(p%20===0&&p!==last){last=p;
 
 let out = ''
 try {
-  out = execFileSync(process.execPath, [drive], { cwd: root, encoding: 'utf8' })
+  const electronBin = createRequire(import.meta.url)('electron')
+  out += execFileSync(electronBin, [clearDrive], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+  })
 } catch (e) {
-  out = String(e.stdout ?? '') + String(e.stderr ?? '')
+  out += String(e.stdout ?? '') + String(e.stderr ?? '')
+}
+try {
+  out += execFileSync(process.execPath, [drive], { cwd: root, encoding: 'utf8' })
+} catch (e) {
+  out += String(e.stdout ?? '') + String(e.stderr ?? '')
 }
 process.stdout.write(out)
 rmSync(work, { recursive: true, force: true })
-if (!/all green/.test(out)) process.exit(1)
+if (!/all green/.test(out) ||
+    !/PASS a failed supersede preserves the validated older bundle/.test(out) ||
+    !/PASS a validated newer app\.asar bundle replaces the older stage inside Electron/.test(out)) process.exit(1)
