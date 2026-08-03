@@ -1718,11 +1718,37 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+/**
+ * Quote one argument so cmd.exe passes it through as text.
+ *
+ * `shell: true` concatenates the arguments into a single command line WITHOUT
+ * escaping them - Node says so itself (DEP0190). Every character cmd reads as
+ * syntax then cuts the command in half: a space, and `& | < > ^`. That is not
+ * theoretical. `?event=push&per_page=10` ran as `gh api ...?event=push` followed
+ * by a second command `per_page=10 --jq ...`, which is not a program; the first
+ * half answered without the `--jq`, the second half exited 1, and `spawnSync`
+ * reports the LAST status - so the call returned `ok: false` with a body that was
+ * actually fine. See `publishFallback`, which read that as "Actions never ran".
+ *
+ * Inside double quotes cmd treats all of those as ordinary characters, so wrapping
+ * is the whole fix. The backslash dance is for the callee's own parser: a run of
+ * backslashes is only special immediately before a quote, where each pair collapses
+ * to one, so those runs are doubled and an embedded quote is escaped.
+ *
+ * `%VAR%` still expands inside quotes and cannot be escaped there - no caller in
+ * this file passes a `%`, and one that needs to must not go through here.
+ */
+function cmdQuote(arg) {
+  const s = String(arg)
+  return `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+}
+
 function runSafe(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
+  const shell = process.platform === 'win32' // npx and gh are .cmd shims on Windows
+  const r = spawnSync(cmd, shell ? args.map(cmdQuote) : args, {
     cwd: MAIN,
     encoding: 'utf8',
-    shell: process.platform === 'win32', // npx and gh are .cmd shims on Windows
+    shell,
     windowsHide: true,
     timeout: opts.timeout ?? 30_000,
     killSignal: 'SIGKILL',
@@ -1884,13 +1910,13 @@ function reconcileFeed(state) {
   if (!declared) return null
   const [, file, size] = declared
 
-  // No `--jq` filter here, and the reason is not style. `runSafe` spawns with
-  // `shell: true` on Windows, so arguments are concatenated rather than escaped - a
-  // filter containing spaces and `|` is re-split by cmd, and what runs is a fragment
-  // piped into nonsense. It fails silently as `ok: false`, which this function reads
-  // as "cannot tell" and answers by doing nothing, so the repair simply never happens
-  // and nothing anywhere says why. The `--jq` calls that DO work in this file
-  // (`.body`, `[.workflow_runs[].head_branch]`) all happen to contain neither.
+  // Parsed here rather than filtered with `--jq`, which is now only a preference:
+  // `runSafe` quotes its arguments, so a filter carrying spaces or `|` survives cmd.
+  // It did not used to, and reading the earlier note here as "the calls with no
+  // spaces are fine" is what left the real one broken for a fortnight - the `&` in
+  // `?event=push&per_page=10` cuts a command just as cleanly as a pipe does, and the
+  // failure is silent `ok: false`, which this function reads as "cannot tell" and
+  // answers by doing nothing. Assume nothing about an argument; see `cmdQuote`.
   const listed = runSafe('gh', ['release', 'view', tag, '--json', 'assets'], { timeout: 30_000 })
   if (!listed.ok) return null
   let real

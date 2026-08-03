@@ -73,11 +73,16 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   `rerere` is on, and the retry timer re-tries recorded conflicts every minute.
 - Release notes come from Conventional Commit subjects between version tags
   (`scripts/release-notes.mjs`, template `.github/release-notes.md`). `npm run test:notes`.
-- Actions and this machine can BOTH publish a release when the fallback's 45s poll misses
-  a run that was merely slow. The duplicate installers are harmless; `latest.yml` is not,
-  because the loser's feed names the winner's file. `reconcileFeed` on the retry timer
-  compares the feed to the asset it names and puts ours back. Never hand-fix a feed without
-  checking the asset's real size — v0.4.27 shipped 33 bytes out and looked perfect.
+- Actions and this machine can BOTH publish a release. The duplicate installers are
+  harmless; `latest.yml` is not, because the loser's feed names the winner's file.
+  `reconcileFeed` on the retry timer compares the feed to the asset it names and puts ours
+  back. Never hand-fix a feed without checking the asset's real size — v0.4.27 shipped
+  33 bytes out and looked perfect. Until v0.4.32 it happened on EVERY release and the
+  stated cause — "the 45s poll missed a run that was merely slow" — was wrong: the poll
+  never worked at all. Its `?event=push&per_page=10` went through `shell: true`, where cmd
+  reads the `&` as a command separator, so it ran as two commands and reported the second
+  one's failure. `runSafe` quotes its arguments now (`cmdQuote`); `npm run test:laneargs`
+  round-trips them through a real cmd.exe. Assume nothing about an argument.
 
 **A release claims the thing is finished.** Never cut one while any next step for that
 issue is still open.
@@ -189,6 +194,7 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
 | `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |
 | `npm run test:install` | quitting takes the install pty's whole process tree |
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
+| `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
