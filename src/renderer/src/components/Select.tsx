@@ -297,6 +297,7 @@ export default function Select({
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={(e) => {
                             e.stopPropagation()
+                            setOpen(false)
                             o.action?.onClick()
                           }}
                         >
