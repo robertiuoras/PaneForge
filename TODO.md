@@ -258,12 +258,14 @@ an existing one it says so rather than duplicating it.
   every turn belongs to — we can answer "that refactor cost £6 and Codex would have been
   £0.40", which is the question, and none of the four can. This is also the single item on
   this page with the clearest payback for how Robert actually works.
-- [ ] **E2. Is the MCP wiring alive** — S. opcode ships an MCP management panel. We do not
-  show MCP at all, and the failure mode is real and silent: a `gh` token rotates, the GitHub
-  MCP starts 401-ing, and the only symptom is an agent that has quietly stopped being able to
-  read PRs. Build: Settings → MCP, one row per server per agent (parsed from `claude mcp
-  list` / Codex's config), connected / failed / last error, and a re-add button. Same shape
-  as Settings → Agents, which already exists and works.
+- [ ] **E2. Is the MCP wiring alive** — S. opcode ships an MCP management panel.
+  `claudeTrust.ts` already reads `mcpServers` out of `.claude.json` — to carry a pane's trust
+  into a lane checkout — and then shows the user none of it. The failure mode is real and
+  silent: a `gh` token rotates, the GitHub MCP starts 401-ing, and the only symptom is an
+  agent that has quietly stopped being able to read PRs. Build: Settings → MCP, one row per
+  server per agent (the keys `claudeTrust.ts` already parses, plus Codex's config),
+  connected / failed / last error, and a re-add button. Same shape as Settings → Agents,
+  which already exists and works.
 - [ ] **E3. Saved launch recipes** — M. opcode has "CC Agents" (a saved system prompt +
   behaviour), Claude Squad has `-p "<program>"`. We pick an agent and a model at open time
   and that is it. Build: a named recipe = agent + model + permission mode (C3) + cwd +
