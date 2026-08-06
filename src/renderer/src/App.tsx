@@ -2267,10 +2267,16 @@ export default function App(): JSX.Element {
                 (s.id === activeId ? ' active' : '') +
                 (s.attention ? ' attn' : '') +
                 (justDone.includes(s.id) ? ' just-done' : '') +
-                (dragId === s.id ? ' dragging' : '') +
-                // Holding a lane AND mid-turn: the one combination where this pane is
-                // changing a checkout that a release will pick up on its own.
-                (laneOfSession(lanesByPane, s.id) && s.status === 'working' ? ' lane-live' : '')
+                (dragId === s.id ? ' dragging' : '')
+                // There WAS a blue ring around the whole card here, for a pane that held a
+                // lane and was mid-turn. It was the third thing on one card saying one
+                // fact - the number key is already lit green while the agent runs, and the
+                // lane chip below already turns blue and breathes while that checkout is
+                // being typed into - and it was the only one of the three with no word or
+                // tooltip attached to it. The report was "why blue glow around taskdriver
+                // but not others, it's confusing", and the honest answer was that the glow
+                // meant nothing the card was not already saying twice. The chip keeps the
+                // colour, because the chip can be hovered and can say why.
               }
               onPointerDown={(e) => beginDrag(e, s.id)}
               onClick={() => {
@@ -2320,7 +2326,15 @@ export default function App(): JSX.Element {
                         </span>
                       </span>
                     )}
-                    <span className="row-name">{s.title}</span>
+                    {/* The whole place, on the name, so hiding the chip below (when it
+                        would only repeat this name) loses no fact - the folder, the
+                        branch and the pane number are all still one hover away. */}
+                    <span
+                      className="row-name"
+                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 }).full}
+                    >
+                      {s.title}
+                    </span>
                   </div>
                 )}
                 <div className="row-sub">
@@ -2345,6 +2359,20 @@ export default function App(): JSX.Element {
                   {(() => {
                     const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 })
                     const inLane = place.kind === 'lane'
+                    // A chip that repeats the line above it, and costs the line below it a
+                    // word. A pane is named `basename(cwd)` by default, so on an ordinary
+                    // card the title already IS the project - `taskdriver.ai` written
+                    // twice, once as the name and once as a chip. Measured at the real
+                    // 260px list width with the shipped stylesheet: that chip plus a lane
+                    // chip squeezed `.row-agent` to 0px, so the card said which project it
+                    // was in twice and which agent it was running not at all. Dropping it
+                    // gives the name 67.4px back, which is "Claude Code" in full.
+                    //
+                    // Kept whenever it is saying something new: a renamed pane, a lane
+                    // (whose label is not the folder name and whose chip is also the way
+                    // into the lane dialog), a copy. The full sentence is on the title
+                    // either way, so nothing is lost, only unrepeated.
+                    if (!inLane && place.short.trim() === s.title.trim()) return null
                     return (
                       <button
                         className={'chip place' + (inLane ? ' lane-chip' : '')}
@@ -2363,11 +2391,19 @@ export default function App(): JSX.Element {
                       </button>
                     )
                   })()}
-                  {/* The PaneForge dev lane this chat holds, if it holds one. Same fact the
-                      sidebar used to repeat in a second list of the same sessions. */}
+                  {/* The dev lane this chat holds, if it holds one. Same fact the sidebar
+                      used to repeat in a second list of the same sessions.
+
+                      `paneProject` is why the chip beside it does not say the project name
+                      a second time: the button above has just printed it, and two chips in
+                      a row reading `taskdriver.ai` then `taskdriver.ai · lane b` read as
+                      two facts about two things. It comes back the moment the lane is a
+                      copy of some OTHER project than the one this pane is open in, which
+                      happens: a chat opened in `assistant` can hold Toolstash's lane c. */}
                   {laneOfSession(lanesByPane, s.id) ? (
                     <LaneChip
                       lane={laneOfSession(lanesByPane, s.id)!}
+                      paneProject={describePlace({ cwd: s.cwd, lane: s.lane }).project}
                       onHelp={() => setLaneHelp(true)}
                     />
                   ) : null}

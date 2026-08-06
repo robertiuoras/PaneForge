@@ -37,6 +37,31 @@ export function laneLabel(lane: LaneBoardEntry): string {
   return describePlace({ cwd: lane.dir, branch: lane.branch, lane: lane.lane }).short
 }
 
+/** The project a lane is a copy of, on its own. */
+export function laneProject(lane: LaneBoardEntry): string {
+  return describePlace({ cwd: lane.dir, branch: lane.branch, lane: lane.lane }).project
+}
+
+/**
+ * The same lane, named for a card that has ALREADY said which project it is in.
+ *
+ * `laneLabel` names the project because the lane strip draws lanes belonging to chats that
+ * are not panes here, and nothing else on those rows says which repository they are. A
+ * session card is the opposite case: the chip beside this one is the pane's project, so
+ * the full label printed it twice in a row - `taskdriver-ai` then `taskdriver-ai · lane a`
+ * - which reads as two different facts and is one. Robert's report was exactly that:
+ * "why we have extra tag with project name".
+ *
+ * The project comes BACK the moment it disagrees, which is a real case and the whole
+ * reason the name was added: a chat opened in `assistant` can hold Toolstash's lane c, and
+ * a bare `lane c` on that card would be a lie by omission.
+ */
+export function laneChipLabel(lane: LaneBoardEntry, paneProject?: string): string {
+  const place = describePlace({ cwd: lane.dir, branch: lane.branch, lane: lane.lane })
+  if (paneProject && paneProject === place.project) return place.role
+  return place.short
+}
+
 /**
  * Who holds this lane, in the shortest form that names somebody.
  *

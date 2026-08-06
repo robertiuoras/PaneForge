@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
-import { laneBusy, laneLabel, laneState, laneTip } from '../laneWords'
+import { laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } from '../laneWords'
 
 const api = window.api
 
@@ -109,9 +109,17 @@ function fixPrompt(lane: LaneBoardEntry): string {
  */
 export function LaneChip({
   lane,
+  paneProject,
   onHelp
 }: {
   lane: LaneBoardEntry
+  /**
+   * The project the card beside this chip has already named. When the lane is a copy of
+   * that same project the chip drops the name and says only `lane a` - see
+   * `laneChipLabel`. Left out, the chip always names the project, which is what the lane
+   * strip's own rows want.
+   */
+  paneProject?: string
   onHelp?: () => void
 }): JSX.Element {
   // "lane a" beside a "w2" worktree chip read as two halves of one fact, and they are not
@@ -122,11 +130,8 @@ export function LaneChip({
   // only repository with lanes and became a lie the day any repo could have them: a chat
   // holding taskdriver's lane b had a chip on it reading "PF lane b". It is the project's
   // own name now, from the lane's folder.
-  const label = lane.conflicted
-    ? `${laneLabel(lane)} stuck`
-    : lane.ready
-      ? `${laneLabel(lane)} done`
-      : laneLabel(lane)
+  const base = laneChipLabel(lane, paneProject)
+  const label = lane.conflicted ? `${base} stuck` : lane.ready ? `${base} done` : base
   return (
     <span
       className={
@@ -142,7 +147,7 @@ export function LaneChip({
         })
       }
       title={
-        `This chat is also editing ${laneLabel(lane).split(' · ')[0]}, in its own copy of it ` +
+        `This chat is also editing ${laneProject(lane)}, in its own copy of it ` +
         `(lane ${lane.lane}) - ${laneState(lane, true)}.\n` +
         `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}` +
         (onHelp ? '\nClick: how lanes work.' : '')

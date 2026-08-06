@@ -144,7 +144,7 @@ buildSync({
   outfile: join(out, 'laneWords.mjs')
 })
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { holderName, laneBusy, laneLabel, laneState, laneTip } = await import(
+const { holderName, laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } = await import(
   pathToFileURL(join(out, 'laneWords.mjs')).href
 )
 
@@ -257,6 +257,36 @@ ok(
   laneLabel(entry({ dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\taskdriver-b', lane: 'b', branch: 'lane-b' })) ===
     'taskdriver · lane b'
 )
+
+// ---------------------------------------------------------------------------------------
+// The same lane, on a card that has already named the project. Added 2026-08-07 after
+// "why we have extra tag with project name": a taskdriver pane carried `taskdriver.ai`
+// and then `taskdriver.ai · lane b`, two chips in a row, and they read as two facts.
+const td = entry({ dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\taskdriver-b', lane: 'b', branch: 'lane-b' })
+ok(
+  'a chip beside its own project drops the name and says only the lane',
+  laneChipLabel(td, 'taskdriver') === 'lane b',
+  laneChipLabel(td, 'taskdriver')
+)
+// The one case the name exists for: a chat holding a lane of some other repository.
+ok(
+  'the project comes back when the lane is a copy of a DIFFERENT project',
+  laneChipLabel(td, 'assistant') === 'taskdriver · lane b',
+  laneChipLabel(td, 'assistant')
+)
+ok(
+  'with no pane project given, the chip is the full label - the strip still needs it',
+  laneChipLabel(td) === laneLabel(td)
+)
+// The main checkout has no lane letter, so `role` is the whole answer there.
+ok(
+  'the main lane on its own project says "main checkout", never a bare project name twice',
+  laneChipLabel(
+    entry({ lane: 'main', dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\PaneForge', branch: 'master' }),
+    'PaneForge'
+  ) === 'main checkout'
+)
+ok('the project is spelled out on its own for the tooltip', laneProject(td) === 'taskdriver')
 
 // A pane number is on the card, and on the keyboard. Eight characters of a session id are
 // on neither, which is why they were never the answer to "who has it".

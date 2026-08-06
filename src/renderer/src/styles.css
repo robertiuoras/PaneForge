@@ -593,33 +593,14 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-help .confirm-body p:last-child { margin-bottom: 0; }
 .lane-help .chip { pointer-events: none; }
 
-/* A pane that holds a lane AND is mid-turn: work is being done that a release will
-   collect by itself, in a checkout that is not the one on screen. The chip says which
-   lane; this says it is happening right now, from across the room.
-   Only `opacity` moves. The ring's blur is rasterised once and then breathed - the same
-   lesson as `.num-wrap`, where animating a box-shadow directly measured at 64% of a
-   core. `:not(.dragging)` so the drop frame stays the only thing around a dragged card. */
-.row:not(.dragging).lane-live::after {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: calc(var(--r) + 2px);
-  border: 1px solid color-mix(in srgb, var(--info) 46%, transparent);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--info) 8%, transparent),
-    0 0 14px color-mix(in srgb, var(--info) 24%, transparent);
-  pointer-events: none;
-  animation: laneRing 2.6s ease-in-out infinite;
-}
-@keyframes laneRing {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-/* Still a ring, nothing moving: reduced motion, a window nobody is looking at, and a
-   240 Hz display where every animated frame is a frame the compositor has to make. */
-@media (prefers-reduced-motion: reduce) { .row.lane-live::after { animation: none; opacity: 0.75; } }
-html.app-blurred .row:not(.dragging).lane-live::after,
-html.hi-refresh .row:not(.dragging).lane-live::after { animation: none; opacity: 0.75; }
+/* There was a `.lane-live` ring here: a breathing blue halo around the whole card of a
+   pane that held a lane and was mid-turn. It is gone, and nothing replaces it.
+   One card cannot carry three motions for one fact. That card already lights its number
+   key green while the agent runs (`.num.live`) and already breathes its lane chip blue
+   while that checkout is being typed into (`.chip.pf-lane.busy`), and the ring was the
+   only one of the three that named nothing and could not be hovered - so the question it
+   raised was "why is that one glowing", which is the opposite of what a status colour is
+   for. Colour on this card now belongs to something with a word beside it. */
 
 /* ---- PaneForge's own dev lanes (LaneStrip) ---- */
 /* A lane that cannot merge blocks its own work from every release, and used to say so
