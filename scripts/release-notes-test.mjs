@@ -76,7 +76,12 @@ const body = changeLog(repo, '0.3.10')
 check('feat lands under New', /### New\n\n- \*\*remote\*\* — type into a mirrored pane/.test(body), body)
 check('fix lands under Fixed', /### Fixed\n\n- \*\*lanes\*\* — a dead chat gives its lane back/.test(body), body)
 check('New comes before Fixed', body.indexOf('### New') < body.indexOf('### Fixed'), body)
-check('docs lands under Other changes', /### Other changes\n\n- say what the heartbeat rules out/.test(body), body)
+// A release page is read by somebody deciding whether to take the update; a `docs:`
+// subject is written for the next session in this repo. It stayed on the page for
+// months under an "Other changes" heading and that is what made the pages read like a
+// diary. There is no such heading now, and nothing may reintroduce one.
+check('docs never reaches the page', !body.includes('say what the heartbeat rules out'), body)
+check('no catch-all heading at all', !/### Other/.test(body), body)
 
 // 5. The version bump is not a change anybody wants to read about.
 check('the release commit is dropped', !body.includes('release: v0.3.10'), body)
@@ -84,10 +89,10 @@ check('the release commit is dropped', !body.includes('release: v0.3.10'), body)
 // 6. Nothing from the previous release leaks in.
 check('older work stays out', !body.includes('the very first thing'), body)
 
-// 7. A subject that is not conventional is still reported - dropping it would hide
-//    real work from whoever forgot the prefix.
+// 7. A subject with no conventional prefix is a defect in the commit, not a change
+//    worth publishing - and it is exactly the shape that used to fill "Other changes".
 const head = changeLog(repo, '0.3.11')
-check('unparseable subjects survive', head.includes('not a conventional subject at all'), head)
+check('unparseable subjects stay off the page', !head.includes('not a conventional subject at all'), head)
 check('perf lands under Faster', /### Faster\n\n- \*\*git\*\* — cache the status call/.test(head), head)
 
 // 8. parse() on the awkward shapes.
@@ -136,6 +141,18 @@ writeFileSync(join(repo, '.github', 'release-notes.md'), `Download v{{VERSION}}\
 const empty = notes(repo, '0.4.1')
 check('an empty release still links somewhere', empty.includes('commit history'), empty)
 check('and has no half-written heading', !empty.includes('## What changed'), empty)
+
+// 13b. A release carrying nothing but housekeeping is the same case: with the catch-all
+//      heading gone it has no changes at all, so it must fall back rather than publish a
+//      "What changed" section with an empty body under it.
+git('tag', 'v0.4.2')
+commit('docs: another note to the next session')
+commit('chore: bump a dev dependency')
+const chores = changeLog(repo, '0.4.3')
+check('a housekeeping-only release lists nothing', chores === '', chores)
+const choreBody = notes(repo, '0.4.3')
+check('and links to the history instead', choreBody.includes('commit history'), choreBody)
+check('and writes no heading over nothing', !choreBody.includes('## What changed'), choreBody)
 
 // 14. hasChanges is what stops the reconcile in lane.mjs rewriting a body every minute.
 check('hasChanges sees a written body', hasChanges(full))

@@ -25,14 +25,21 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 // Conventional-commit type -> the heading a reader cares about. Order is the order
-// they appear. Anything not listed lands under "Other changes"; `release:` and the
-// lane merges are dropped outright, being bookkeeping rather than change.
+// they appear. `release:` and the lane merges are dropped outright, being bookkeeping
+// rather than change.
+//
+// Anything NOT listed here is dropped too, and used to land under an "Other changes"
+// heading. That heading was the whole reason the release pages read like a diary: a
+// `docs:` subject is written for the next session in this repo - it names files, hooks
+// and measurements - and a release page is read by somebody deciding whether to take
+// the update. The three headings below are the only ones that answer that, and a
+// subject with no conventional prefix is a defect in the commit rather than a change
+// worth publishing. The work is still in `git log`, which is where that audience is.
 const HEADINGS = [
   ['feat', 'New'],
   ['fix', 'Fixed'],
   ['perf', 'Faster']
 ]
-const OTHER = 'Other changes'
 const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b/i
 
 function git(repo, args) {
@@ -170,7 +177,9 @@ export function changeLog(repo, version) {
   const seen = new Set()
   for (const s of subjects(repo, rangeFor(repo, version))) {
     const { type, scope, text } = parse(s)
-    const heading = HEADINGS.find(([t]) => t === type)?.[1] ?? OTHER
+    const heading = HEADINGS.find(([t]) => t === type)?.[1]
+    // Not a change a reader of the release page is deciding about - see HEADINGS.
+    if (!heading) continue
     const line = scope ? `**${scope}** — ${text}` : text
     const key = `${heading}\u0000${line}`
     if (seen.has(key)) continue
@@ -180,7 +189,7 @@ export function changeLog(repo, version) {
   }
   if (!groups.size) return ''
 
-  const order = [...HEADINGS.map(([, h]) => h), OTHER]
+  const order = HEADINGS.map(([, h]) => h)
   const parts = []
   for (const heading of order) {
     const lines = groups.get(heading)
