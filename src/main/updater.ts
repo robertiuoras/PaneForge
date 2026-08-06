@@ -244,6 +244,32 @@ const API_LATEST = 'https://api.github.com/repos/robertiuoras/PaneForge/releases
  * still running from the read-only .dmg, a dev build), and then the badge does what it did
  * before: names the version and opens the release page.
  */
+/**
+ * The outer stop on staging a mac build, in case something in there hangs anyway.
+ *
+ * `macUpdate.ts` now settles every download path by itself, and this is the belt to that
+ * pair of braces: the failure being ruled out is not a slow download, it is a promise that
+ * never settles at all. One of those costs far more than the build it loses - `macStaging`
+ * stays set so no later check re-offers the version, and `busy()` sees `downloading` and
+ * refuses every check after it, so the app stops updating for good with nothing written
+ * anywhere. That is what happened to v0.4.62 here on 2026-08-06. Anything reaching this
+ * timer is a bug, and it goes down the ordinary failure path: the badge offers the release
+ * page, and the next poll is free to try again.
+ *
+ * Generous on purpose - a real 95 MB zip on a bad connection must never trip it.
+ */
+const STAGE_DEADLINE_MS = 30 * 60_000
+
+function deadline(version: string): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`staging ${version} was still not finished after 30 minutes - giving up on it`)),
+      STAGE_DEADLINE_MS
+    )
+    t.unref?.()
+  })
+}
+
 function offerMac(version: string): void {
   const url = `${RELEASES_URL}/tag/v${version}`
   if (!canSwap()) {
@@ -254,9 +280,12 @@ function offerMac(version: string): void {
   if (macStaging === version) return
   macStaging = version
   set({ phase: 'downloading', version, percent: 0, error: undefined, url })
-  void stageMacUpdate(version, (p) => {
-    if (state.version === version && state.phase === 'downloading') set({ percent: p })
-  })
+  void Promise.race([
+    stageMacUpdate(version, (p) => {
+      if (state.version === version && state.phase === 'downloading') set({ percent: p })
+    }),
+    deadline(version)
+  ])
     .then(() => {
       macStaging = ''
       set({ phase: 'ready', version, percent: 100, error: undefined, url })

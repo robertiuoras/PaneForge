@@ -109,25 +109,83 @@ export function assetFor(version: string): string {
 
 // --- fetching ---------------------------------------------------------------
 
-function fetchTo(url: string, file: string, onPercent: (p: number) => void, redirects = 0): Promise<void> {
+/**
+ * How long the body may go without a single byte before the download is declared dead.
+ *
+ * Watched on BYTES, not on the socket. The socket timeout is what was here before and it
+ * is not the same question: it asks whether the connection is idle, and a half-open
+ * connection that will never send another byte can answer "no" for ever.
+ *
+ * `PF_DOWNLOAD_STALL_MS` exists so `npm run test:macdownload` can prove the watchdog
+ * fires without sitting there for a minute. Nothing sets it in a shipped app.
+ */
+const STALL_MS = Number(process.env.PF_DOWNLOAD_STALL_MS) || 60_000
+
+/**
+ * Fetch a URL to a file, or fail loudly. Never hang.
+ *
+ * v0.4.62 stopped at exactly 30 MiB of a 95.8 MB zip on this Mac (2026-08-06 23:43) and
+ * this promise never settled once, in either direction:
+ *
+ *   - `res` had no 'error' or 'aborted' handler, so a body that stopped arriving raised
+ *     nothing anybody was listening for;
+ *   - `out`'s 'finish' resolved on a TRUNCATED file, because nothing compared what was
+ *     written against Content-Length;
+ *   - the request's own timeout fired on a request that had already sent everything it
+ *     was going to send, and destroying it that late emits no 'error'.
+ *
+ * The cost of that is not one missed download. `offerMac` only clears `macStaging` in
+ * this promise's then/catch, and `busy()` refuses every check while the phase is
+ * `downloading` - so the badge sat on 33%, the ten-minute poll stopped, and updater.log
+ * had not one line in the fourteen hours that followed. Silence is the failure mode to
+ * design against here, which is why every path below ends in exactly one `settle`.
+ */
+export function fetchTo(url: string, file: string, onPercent: (p: number) => void, redirects = 0): Promise<void> {
   return new Promise((resolve, reject) => {
     if (redirects > 5) return reject(new Error('too many redirects'))
-    const req = get(url, { headers: { 'user-agent': `PaneForge/${app.getVersion()}` }, timeout: 30_000 }, (res) => {
+    let done = false
+    let stall: NodeJS.Timeout | null = null
+    const settle = (e?: Error): void => {
+      if (done) return
+      done = true
+      if (stall) clearTimeout(stall)
+      stall = null
+      if (e) reject(e)
+      else resolve()
+    }
+    // Twice the watchdog on purpose. The socket timeout only guards the gap BEFORE a
+    // response - once bytes are flowing, `armStall` is the one that should speak, because
+    // it names how far the download got and the socket timeout cannot.
+    const opts = { headers: { 'user-agent': `PaneForge/${app.getVersion()}` }, timeout: STALL_MS * 2 }
+    const req = get(url, opts, (res) => {
       const code = res.statusCode ?? 0
       if (code >= 300 && code < 400 && res.headers.location) {
         res.resume()
-        return fetchTo(res.headers.location, file, onPercent, redirects + 1).then(resolve, reject)
+        return fetchTo(res.headers.location, file, onPercent, redirects + 1).then(() => settle(), settle)
       }
       if (code !== 200) {
         res.resume()
-        return reject(new Error(`${code} for ${url.split('/').pop()}`))
+        return settle(new Error(`${code} for ${url.split('/').pop()}`))
       }
       const total = Number(res.headers['content-length'] ?? 0)
       let seen = 0
       let last = -1
+      const armStall = (): void => {
+        if (stall) clearTimeout(stall)
+        stall = setTimeout(() => {
+          // Settle BEFORE tearing the socket down. Destroying `res` makes it emit
+          // 'aborted' synchronously, and a settle after that one reports a dropped
+          // connection for what is really a stall - the same reading, wrong reason.
+          settle(new Error(`the download stalled at ${seen} of ${total || '?'} bytes`))
+          res.destroy()
+          req.destroy()
+        }, STALL_MS)
+        stall.unref?.()
+      }
       const out = createWriteStream(file)
       res.on('data', (c: Buffer) => {
         seen += c.length
+        armStall()
         if (!total) return
         const pct = Math.round((seen / total) * 100)
         if (pct !== last) {
@@ -135,12 +193,18 @@ function fetchTo(url: string, file: string, onPercent: (p: number) => void, redi
           onPercent(pct)
         }
       })
+      res.on('error', settle)
+      res.on('aborted', () => settle(new Error(`the connection dropped at ${seen} of ${total || '?'} bytes`)))
       res.pipe(out)
-      out.on('error', reject)
-      out.on('finish', () => resolve())
+      out.on('error', settle)
+      out.on('finish', () => {
+        if (total && seen !== total) return settle(new Error(`the download ended early: ${seen} of ${total} bytes`))
+        settle()
+      })
+      armStall()
     })
     req.on('timeout', () => req.destroy(new Error('download timed out')))
-    req.on('error', reject)
+    req.on('error', settle)
   })
 }
 
@@ -408,8 +472,20 @@ export function adoptStaged(): string {
   if (process.platform !== 'darwin' || !existsSync(dir)) return ''
   let best = ''
   for (const name of readdirSync(dir)) {
-    // Only the version folders this module creates. The zip mid-download, `swap.sh` and
-    // `swap.log` live here too and deleting those would be deleting the evidence.
+    // A zip is deleted the moment it has been expanded, so one still here at LAUNCH is
+    // the leftover of a download that died - 30 MB of a 95 MB v0.4.62 sat here for a day
+    // after the stall this module now guards against. Nothing can be downloading yet.
+    if (name.endsWith('.zip')) {
+      try {
+        rmSync(join(dir, name), { force: true })
+        log('cleared a part-downloaded zip from an earlier run', name)
+      } catch {
+        /* in use by something we cannot see - it is only disk */
+      }
+      continue
+    }
+    // Only the version folders this module creates. `swap.sh` and `swap.log` live here
+    // too and deleting those would be deleting the evidence.
     if (!/^\d+\.\d+\.\d+/.test(name)) continue
     const holder = join(dir, name)
     const entry = (() => {
