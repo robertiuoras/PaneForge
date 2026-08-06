@@ -9,6 +9,9 @@
 // AT the CLI, not a question asked OF the agent, so it must not arm the end-of-turn
 // chime (unless it turns out to run long - that promotion lives in sessions.ts).
 //
+// That promotion is itself wrong for a few of them, which is what `isQuietSlash` is for:
+// see its own note.
+//
 // `npm run test:slash` holds this against real keystroke shapes.
 //
 // The loop itself now lives in `shared/draft.ts` - one parser for the three things that
