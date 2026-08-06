@@ -495,6 +495,81 @@ matters ships its own.
 
 ---
 
+## H. The phone — scanned 2026-08-07
+
+Every runner in the category shipped a phone client in the last nine months, and they all
+shipped the **same** one: the desktop keeps the agent, the phone watches it and answers it.
+Orca's mobile app pairs with the desktop and explicitly "monitors and steers"; Cursor's iOS
+app (2026-06-29) is a control panel and says so; Codex on ChatGPT mobile (2026-05-14) is
+approvals and diff review with the terminal collapsed; Claude Code's own mobile reaches your
+machine by Remote Control. Nobody moved the pty. That is `remote/`'s first decision, arrived
+at independently by everyone who tried, and it is the reason the work below is a **view**,
+not a second product.
+
+**So B1 + B2 is the whole mobile app, and it stays that way.** T3 Code maintains iOS +
+Android + web + Electron; Orca maintains iOS + Android + Electron; we would serve the one
+renderer we already have over the encrypted socket we already have. The items here are what
+that renderer has to grow to be worth opening on a phone — because the finding that actually
+costs something is that **a phone is not a small desktop**, and a 200-column xterm on a
+5-inch screen is the version of this that gets installed once.
+
+**Transport: B4, and nothing more clever.** Orca has two open issues adding Tailscale and
+Tailscale SSH (#6754, #6184) — the biggest app in the category is, right now, arriving at
+the answer B4 already names. Omnara and Happy Coder relay through infrastructure they run;
+that is the thing we are not doing, and every one of them has a self-host page apologising
+for it. A tailnet costs us no server and no account.
+
+- [ ] **H1. Two notifications, not one bell** — M. Cursor's iOS app pushes *"agent needs
+  input"* and *"agent finished"* as separate classes, and that separation is the whole value:
+  one is an interrupt, the other is an FYI, and a single ping trains you to ignore both. We
+  already compute both states — `test:silence` pins the quiet-turn detector and D8's bell
+  alert shipped in v0.4.13 — so this is routing what the desk already knows to a phone, plus
+  the deep link that opens *that pane*. Web Push is the transport; on iOS it requires the
+  page be added to the home screen, which is a real limit to state in the UI rather than
+  discover.
+- [ ] **H2. The phone opens on the diff, not the terminal** — M. Codex mobile makes the diff
+  the primary surface and collapses the terminal under it; that is the correct default for a
+  screen you look at for eleven seconds. `DiffDialog.tsx` already reads a repo's changes and
+  `test:diff` pins the `-z` records and renames, so the mobile route is a narrow layout over
+  the same data, with the pty output one tap down.
+- [ ] **H3. Fleet view: who is working, who is stuck, what changed** — M. Conductor's single
+  screen answers those three without opening a pane, and it is the screen a phone actually
+  wants. This is not phone-only work: the sidebar answers it today only by reading eight
+  pane cards, and `place.ts` already produces the words. Same view, two widths.
+- [ ] **H4. What happened while you were away** — S. Jules ships an *audio* changelog of
+  recent commits; the listenable part is a gimmick, the digest is not. One card per pane:
+  turns taken, files touched, last question asked, since you last looked. Reads the same
+  transcripts F5 and E1 read.
+- [ ] **H5. Voice in** — M. Omnara's conversational voice mode and Cursor's voice input exist
+  because typing a paragraph into a phone to unblock an agent is worse than the interruption
+  was. Web Speech API in the browser client, straight into `shared/draft.ts` — which means it
+  passes through the prompt archive and Improve on the way, for free.
+- [ ] **H6. Per-session cost, not per-month cost** — S. Devin shows compute consumed *per
+  child session*. That is **E1** with the aggregation undone, and it is the more useful
+  reading: the number you want is "this pane has spent X on this ask", not "you spent Y in
+  July". Build E1 this way and H6 costs nothing.
+
+**Confirmations, not new items.** GitHub Agent HQ (GA 2026-02-04) fans one issue across
+Claude, Codex and Copilot and then shows the PRs **side by side** — that comparison surface
+is exactly what **G1** says is missing, shipped by GitHub, which settles the question of
+whether it is the valuable half. Happy Coder's headline is instant switching between several
+live agents from one mobile screen, which is **B2** and the sidebar. Orca's mobile pairing
+validates the pty-never-moves seam in `remote/`.
+
+**BridgeMind is not in this category.** BridgeSpace is a desktop ADE with multi-pane
+terminals, a Kanban and up to 16 panes — so the surface rhymes — but it is credit-metered
+(≈$16–100/mo in tiers, you pay them rather than bringing your own subscription), and it is
+desktop-only by their own admission, with no mobile client. It competes with Cursor and
+Replit, not with a local pty runner. The one thing worth a look is **BridgeSwarm**'s
+per-agent file-ownership gating, which is the same problem `test:split` refuses to fudge.
+
+**And the cautionary one:** Vibe Kanban's parent Bloop shut down in early 2026 — hosted
+services wound down and refunded, the Apache-2.0 repo left to the community. It is in
+`competitors.json` to confirm it stays dead. A runner whose value lives on someone's server
+dies with the server; ours is a file on a disk.
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
@@ -514,8 +589,11 @@ matters ships its own.
    to be worth saving), project scripts, resource readout, rebindable keys.
 5. **B1** — headless host. Unblocks B2, B7, D1 and C10, and is the single largest
    architectural step here.
-6. **B2, D1** — browser client and true detach. This is the point where PaneForge does the
-   thing T3 Code ships four codebases to do, with one renderer.
+6. **B2, D1, then H1–H3** — browser client and true detach. This is the point where
+   PaneForge does the thing T3 Code ships four codebases to do, with one renderer. B2 is
+   only half the phone: H1 (two notification classes), H2 (diff first) and H3 (fleet view)
+   are what make the served renderer worth opening on one. B3 and B4 belong here too — a QR
+   and a tailnet are how it is reached at all.
 7. **D9, D12, C7 (with E5), B4, B5** — CLI, hooks, preview + inspector, tailnet, Linux.
 8. **E6** — turn-level checkpoints. Last because it is the one item whose honesty depends on
    what the agent touched, and B1 changes where a pty's state lives.

@@ -26,6 +26,18 @@
       "why": "tmux-based TUI over several agents - the no-GUI version of our pitch."
     },
     {
+      "repo": "omnara-ai/omnara",
+      "why": "The phone client with a relay behind it, plus voice steering and a watch app. TODO H1/H5 came from it; watched for whether self-hosting stays real."
+    },
+    {
+      "repo": "slopus/happy",
+      "why": "Free mobile client over several live Claude Code sessions - B2 with an app store account. Watched for what its phone screen shows, not its star count."
+    },
+    {
+      "repo": "imbue-ai/sculptor",
+      "why": "A container per agent again, this time with the diff surface attached. Watched with container-use, for the same reason."
+    },
+    {
       "repo": "dagger/container-use",
       "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs."
     }

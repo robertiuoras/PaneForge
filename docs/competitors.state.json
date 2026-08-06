@@ -1,10 +1,10 @@
 {
   "stablyai/orca": {
     "why": "The same app, further along: Electron, real ptys, worktrees, all three platforms. TODO section G.",
-    "stars": 38741,
+    "stars": 38847,
     "description": "Orca is the ADE for working with a fleet of parallel agents. Run any coding agent with your own subscription. Available on desktop, mobile and VPS.",
     "archived": false,
-    "pushedAt": "2026-08-06T15:55:28Z",
+    "pushedAt": "2026-08-06T19:32:53Z",
     "movedTo": null,
     "release": "v1.4.175",
     "releasedAt": "2026-08-06T07:52:46Z",
@@ -12,10 +12,10 @@
   },
   "pingdotgg/t3code": {
     "why": "The structured-chat alternative to a terminal. TODO sections A-C came from it.",
-    "stars": 16945,
+    "stars": 16987,
     "description": null,
     "archived": false,
-    "pushedAt": "2026-08-06T14:52:20Z",
+    "pushedAt": "2026-08-06T18:08:36Z",
     "movedTo": null,
     "release": "v0.0.31",
     "releasedAt": "2026-07-29T20:55:19Z",
@@ -23,10 +23,10 @@
   },
   "tmux/tmux": {
     "why": "The terminal craft we are measured against. TODO section D.",
-    "stars": 48442,
+    "stars": 48450,
     "description": "tmux source code",
     "archived": false,
-    "pushedAt": "2026-08-06T15:22:57Z",
+    "pushedAt": "2026-08-06T18:09:28Z",
     "movedTo": null,
     "release": "3.7b",
     "releasedAt": "2026-07-01T18:58:22Z",
@@ -56,7 +56,7 @@
   },
   "smtg-ai/claude-squad": {
     "why": "tmux-based TUI over several agents - the no-GUI version of our pitch.",
-    "stars": 8239,
+    "stars": 8243,
     "description": "Manage multiple AI terminal agents like Claude Code, Codex, OpenCode, and Amp.",
     "archived": false,
     "pushedAt": "2026-07-30T16:45:40Z",
@@ -65,9 +65,42 @@
     "releasedAt": "2026-06-17T14:47:44Z",
     "readmeSha": "5c13a39a8e7e65ee05280feba5ac781d899b77a3"
   },
+  "omnara-ai/omnara": {
+    "why": "The phone client with a relay behind it, plus voice steering and a watch app. TODO H1/H5 came from it; watched for whether self-hosting stays real.",
+    "stars": 2709,
+    "description": "The API for production-grade agents",
+    "archived": false,
+    "pushedAt": "2026-08-06T18:05:08Z",
+    "movedTo": null,
+    "release": "cluster-v0.1.7",
+    "releasedAt": "2026-08-05T20:01:47Z",
+    "readmeSha": "b45c72040e62753fdc9b5ca81cd15132cc71bbcf"
+  },
+  "slopus/happy": {
+    "why": "Free mobile client over several live Claude Code sessions - B2 with an app store account. Watched for what its phone screen shows, not its star count.",
+    "stars": 23178,
+    "description": "Mobile and Web client for Codex and Claude Code, with realtime voice, encryption and fully featured",
+    "archived": false,
+    "pushedAt": "2026-08-06T13:37:42Z",
+    "movedTo": null,
+    "release": "cli-1.1.10",
+    "releasedAt": "2026-06-23T09:15:49Z",
+    "readmeSha": "9e49ce12115b75832db038c6aea6bf5908bff089"
+  },
+  "imbue-ai/sculptor": {
+    "why": "A container per agent again, this time with the diff surface attached. Watched with container-use, for the same reason.",
+    "stars": 213,
+    "description": "Build product with grounded, parallel coding agents.",
+    "archived": false,
+    "pushedAt": "2026-08-06T16:48:11Z",
+    "movedTo": null,
+    "release": "sculptor-v0.42.0",
+    "releasedAt": "2026-07-10T02:14:00Z",
+    "readmeSha": "7100e6bf88e03b1901fe08390a96a2da3d55b09f"
+  },
   "dagger/container-use": {
     "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs.",
-    "stars": 3991,
+    "stars": 3992,
     "description": "Development environments for coding agents. Enable multiple agents to work safely and independently with your preferred stack.",
     "archived": false,
     "pushedAt": "2026-06-12T21:35:51Z",
