@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react'
 import { useEffect, useState } from 'react'
 import type { GitInfo } from '@shared/types'
 import { describePlace } from '@shared/place'
@@ -13,6 +14,14 @@ interface Props {
   lane?: string
   /** this pane's Ctrl-N number, so the tooltip names it the way the sidebar does */
   pane?: number
+  /**
+   * Read what has changed in this folder.
+   *
+   * The badge has printed a count of changed files since it was written, and a count is
+   * the shortest possible way to raise the question it cannot answer. Clicking it now
+   * opens the changes themselves, which is where anyone reading "17" was going anyway.
+   */
+  onOpen?: () => void
 }
 
 /**
@@ -28,7 +37,7 @@ interface Props {
  * The separate `lane` chip that used to sit beside this is gone with it: "w2" next to
  * "master" was two chips about one place, and neither of them named the place.
  */
-export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Element | null {
+export default function GitBadge({ cwd, active, lane, pane, onOpen }: Props): JSX.Element | null {
   const [info, setInfo] = useState<GitInfo | null>(null)
 
   useEffect(() => {
@@ -79,8 +88,21 @@ export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Elemen
     .filter(Boolean)
     .join('\n')
 
+  const Tag = onOpen ? 'button' : 'span'
   return (
-    <span className={'git-badge' + (info?.dirty ? ' dirty' : '')} title={tip}>
+    <Tag
+      className={'git-badge' + (info?.dirty ? ' dirty' : '') + (onOpen ? ' pressable' : '')}
+      title={onOpen ? tip + '\n\nClick to read what has changed here.' : tip}
+      onClick={
+        onOpen
+          ? (e: MouseEvent) => {
+              // The badge sits in the pane header, which selects the pane when clicked.
+              e.stopPropagation()
+              onOpen()
+            }
+          : undefined
+      }
+    >
       <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
         <circle cx="4.5" cy="3.5" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
         <circle cx="4.5" cy="12.5" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
@@ -94,6 +116,6 @@ export default function GitBadge({ cwd, active, lane, pane }: Props): JSX.Elemen
       {showBranch && <span className="git-branch">{place.branch}</span>}
       {!!info?.dirty && <span className="git-count">{info.dirty}</span>}
       {!!info?.ahead && <span className="git-count up">↑{info.ahead}</span>}
-    </span>
+    </Tag>
   )
 }

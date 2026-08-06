@@ -180,6 +180,56 @@ export interface GitInfo {
 }
 
 /**
+ * Which changes to show.
+ *
+ * `working` is what is not committed yet - the answer to "what has this agent done since
+ * the last commit". `branch` is every commit this branch has that its base does not - the
+ * answer to "what is this whole piece of work". `all` is both at once, which is the one a
+ * lane wants: with four agents running, the question is "what has this one done to my
+ * repo", and whether it happened to commit halfway through is not part of it.
+ */
+export type DiffScope = 'working' | 'branch' | 'all'
+
+/** One changed path in a DiffSet. */
+export interface DiffFile {
+  path: string
+  /** where it came from, when git called it a rename */
+  oldPath: string | null
+  status: 'added' | 'modified' | 'deleted' | 'renamed'
+  added: number
+  removed: number
+  /** git would not diff it as text, so there are no counts and no patch */
+  binary: boolean
+  /** not in the index at all - the counts are the whole file */
+  untracked: boolean
+}
+
+export interface DiffSet {
+  scope: DiffScope
+  /** the branch this was compared against, null when the scope does not need one */
+  base: string | null
+  /** the branch the folder is on */
+  branch: string
+  files: DiffFile[]
+  /** more files changed than the list was allowed to carry */
+  truncated: boolean
+  /**
+   * Why there is nothing to show, when there is nothing to show. Null means the answer is
+   * simply "no changes" - a real, useful answer, and a different one from "this scope
+   * could not be worked out".
+   */
+  problem: string | null
+}
+
+/** One file's patch, read on demand: a diff set of 300 files is 300 of these unasked. */
+export interface DiffPatch {
+  path: string
+  text: string
+  /** git's output was longer than the cap and was cut */
+  truncated: boolean
+}
+
+/**
  * One PaneForge development lane (scripts/lane.mjs), as shown in the sidebar strip.
  * Only present on a machine that has a PaneForge checkout - see main/laneBoard.ts.
  */
@@ -1127,6 +1177,10 @@ export interface Api {
   readClipboard(): Promise<string>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
+  /** the changed files in a folder, for one scope. Cheap; no patches are read. */
+  diffFiles(cwd: string, scope: DiffScope): Promise<DiffSet>
+  /** one file's patch, read when that file is selected */
+  diffPatch(cwd: string, scope: DiffScope, path: string, untracked: boolean): Promise<DiffPatch>
   /** PaneForge's own dev lanes, or null on a machine without a PaneForge checkout */
   laneBoard(): Promise<LaneBoard | null>
   /** what is in a pane's worktree lane; null when the folder is not a lane */

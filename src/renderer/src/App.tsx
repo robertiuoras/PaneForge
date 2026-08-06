@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type {
   Config,
+  DiffScope,
   HistoryEntry,
   Preset,
   PriorPrompt,
@@ -18,6 +19,7 @@ import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
+import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { Segmented } from './components/Controls'
@@ -165,6 +167,8 @@ export default function App(): JSX.Element {
   const [settings, setSettings] = useState(false)
   const [help, setHelp] = useState(false)
   const [palette, setPalette] = useState(false)
+  /** the folder whose changes are being read, and how it was opened */
+  const [diff, setDiff] = useState<{ cwd: string; lane?: string; pane?: number; scope: DiffScope } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
@@ -258,6 +262,7 @@ export default function App(): JSX.Element {
     history ||
     devices ||
     board !== null ||
+    diff !== null ||
     ask !== null ||
     restore !== null ||
     renaming !== null
@@ -1314,6 +1319,7 @@ export default function App(): JSX.Element {
         setHistory(false)
         setDevices(false)
         setRenaming(null)
+        setDiff(null)
         return
       }
       if (e.key === 'F1') {
@@ -1529,6 +1535,16 @@ export default function App(): JSX.Element {
 
     out.push(
       { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
+      {
+        id: 'changes',
+        group: 'Actions',
+        title: 'Review changes in this pane',
+        hint: 'every line the agent in this folder has written',
+        run: () => {
+          const s = sessions.find((x) => x.id === activeRef.current)
+          if (s) setDiff({ cwd: s.cwd, lane: s.lane, scope: s.lane ? 'all' : 'working' })
+        }
+      },
       {
         id: 'grid',
         group: 'Actions',
@@ -2477,6 +2493,17 @@ export default function App(): JSX.Element {
                   active={visibleIds.has(s.id)}
                   lane={s.lane}
                   pane={sessions.findIndex((x) => x.id === s.id) + 1 || undefined}
+                  onOpen={() =>
+                    setDiff({
+                      cwd: s.cwd,
+                      lane: s.lane,
+                      pane: sessions.findIndex((x) => x.id === s.id) + 1 || undefined,
+                      // A lane is a whole piece of work and is read as one; a pane on the
+                      // main checkout is being asked the narrower question, "what has this
+                      // agent done that I have not committed".
+                      scope: s.lane ? 'all' : 'working'
+                    })
+                  }
                 />
               )}
               {/* What tmux puts in the pane border: the branch (above), the model (the
@@ -2813,6 +2840,19 @@ export default function App(): JSX.Element {
           cwd={laneCwd}
           onClose={() => setLaneCwd(null)}
           onHelp={() => setLaneHelp(true)}
+          onReview={() => {
+            const s = sessions.find((x) => x.cwd === laneCwd)
+            setDiff({ cwd: laneCwd, lane: s?.lane, scope: 'all' })
+          }}
+        />
+      )}
+      {diff && (
+        <DiffDialog
+          cwd={diff.cwd}
+          lane={diff.lane}
+          pane={diff.pane}
+          scope={diff.scope}
+          onClose={() => setDiff(null)}
         />
       )}
       {laneHelp && <LaneHelp onClose={() => setLaneHelp(false)} />}

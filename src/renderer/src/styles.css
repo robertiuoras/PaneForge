@@ -27,6 +27,10 @@
   --warn: #f0b429;
   --danger: #ff8f8f;
   --ok: #35d07f;
+  --diff-add: #4fd48b;
+  --diff-del: #ff9a8f;
+  --diff-add-bg: #35d07f26;
+  --diff-del-bg: #ff6f6f2b;
   --r-sm: 6px;
   --r: 9px;
   --r-lg: 13px;
@@ -1042,12 +1046,17 @@ body.sizing * { user-select: none !important; }
 .dialog > .transcript {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px;
 }
+/* The diff body is the same "one growing child" arrangement, except it scrolls in its
+   two halves rather than as a whole - a file list that scrolled with the patch would
+   leave nothing to click on halfway down a long file. */
+.dialog > .diff-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 /* With a dedicated body present the shell must not scroll too, or the head and the
    button row drift out of view while the body is being read. */
 .dialog:has(> .tab-body),
 .dialog:has(> .proj-list),
 .dialog:has(> .keys),
 .dialog:has(> .hist-list),
+.dialog:has(> .diff-body),
 .dialog:has(> .transcript) { overflow: hidden; }
 /* In the fallback case above the button row would scroll away with everything else;
    pinning it to the bottom of the scroll area keeps the actions on screen. The
@@ -1844,3 +1853,92 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 
 .contrast-note { font-size: 11px; color: var(--muted); }
 .contrast-note.bad { color: var(--warn); }
+
+/* ---- changes (diff review) ----
+   A patch is the one thing in this app that is genuinely two panes: a list you scan and a
+   body you read. Both scroll on their own, because a file list that scrolled away with
+   the patch is a list you cannot use halfway down a long file - which is exactly where
+   you want the next file. */
+.dialog.diff { width: min(1080px, 96vw); }
+.diff-scopes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.diff-scopes .ghost.on {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-dim);
+}
+.diff-totals { margin-left: auto; font-size: 11px; color: var(--muted); }
+.diff-problem {
+  font-size: 11.5px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  border-radius: var(--r-sm); padding: 6px 9px;
+}
+.diff-body {
+  display: grid; grid-template-columns: minmax(190px, 270px) 1fr; gap: 10px;
+  border-top: 1px solid var(--line); padding-top: 10px;
+}
+.diff-files {
+  overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 2px;
+  padding-right: 4px;
+}
+.diff-file {
+  display: flex; align-items: center; gap: 7px; min-width: 0; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: 4px 6px; color: var(--text); font-size: 11.5px; cursor: pointer;
+}
+.diff-file:hover { background: var(--surface-3); }
+.diff-file.on { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* One letter, not a word: the status is the least interesting thing in the row and the
+   filename is the most, so it gets a fixed 14px and the name gets everything else. */
+.diff-status {
+  flex: none; width: 14px; text-align: center; font-size: 9.5px; font-weight: 700;
+  border-radius: 3px; color: var(--muted); background: var(--surface-3);
+}
+.diff-status.added { color: var(--diff-add); }
+.diff-status.deleted { color: var(--diff-del); }
+.diff-status.renamed { color: var(--info); }
+/* The filename ellipsises from the LEFT, so `.../components/DiffDialog.tsx` keeps the
+   part that identifies it rather than the part every sibling shares. */
+.diff-name {
+  min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+}
+.diff-dir { color: var(--muted); }
+.diff-counts { flex: none; font-size: 10.5px; display: flex; gap: 5px; }
+.diff-plus { color: var(--diff-add); }
+.diff-minus { color: var(--diff-del); }
+.diff-patch {
+  overflow: auto; overscroll-behavior: contain;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  font-family: var(--mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11.5px; line-height: 1.45;
+}
+.diff-hunk + .diff-hunk { border-top: 1px solid var(--line); }
+.diff-hunk-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-2); color: var(--muted); font-size: 10.5px;
+  padding: 3px 8px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.diff-hunk-fn { color: var(--accent-text); }
+/* Every line is one grid row: two gutters, the marker, the text. A table would wrap the
+   long lines; this scrolls them, which is what a diff is read with. */
+.diff-line { display: grid; grid-template-columns: 42px 42px 12px 1fr; align-items: start; }
+.diff-line.add { background: var(--diff-add-bg); }
+.diff-line.del { background: var(--diff-del-bg); }
+.diff-line.meta { color: var(--muted); font-style: italic; }
+.diff-no {
+  color: var(--muted); opacity: 0.7; text-align: right; padding-right: 7px;
+  user-select: none; font-size: 10.5px;
+}
+.diff-mark { user-select: none; text-align: center; }
+.diff-line.add .diff-mark { color: var(--diff-add); }
+.diff-line.del .diff-mark { color: var(--diff-del); }
+/* pre-wrap, not pre: a 400-character generated line must not push the horizontal scroll
+   of the whole patch out to 400 characters for every other line in the file. */
+.diff-text { white-space: pre-wrap; word-break: break-word; padding-right: 8px; }
+/* The badge is a button when there is something to open. A button element brings its own
+   font and background with it, so both are put back rather than a second class carrying
+   the whole badge's look. */
+button.git-badge { font: inherit; font-size: 10.5px; cursor: pointer; }
+button.git-badge.pressable:hover { border-color: var(--line-strong); color: var(--text); }
+button.git-badge.pressable.dirty:hover { color: var(--warn); }

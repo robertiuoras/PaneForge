@@ -380,6 +380,17 @@ export function paletteFor(theme: ThemeConfig): Vars {
     // wash on the Paper one; hue 272 keeps that colour where it was chosen and lets the
     // light themes have a darker one.
     '--info': inGamut(light ? 0.54 : 0.76, 0.14, 272),
+    // A diff's two colours are the same green and red as --ok/--danger and deliberately
+    // NOT those variables. A diff needs each of them twice: once as a wash behind a whole
+    // line, where a colour bright enough to be a status dot makes the code on top of it
+    // unreadable, and once in the gutter, where it must still read at 3:1. So the wash is
+    // the hue at low chroma with an alpha - alpha rather than a solid colour because the
+    // row sits on --surface in one place and --surface-2 in another, and a solid tint
+    // would be visibly wrong in one of them on every light theme.
+    '--diff-add': inGamut(light ? 0.5 : 0.78, 0.15, 152),
+    '--diff-del': inGamut(light ? 0.5 : 0.72, 0.15, 24),
+    '--diff-add-bg': inGamut(light ? 0.62 : 0.55, 0.13, 152) + (light ? '2b' : '26'),
+    '--diff-del-bg': inGamut(light ? 0.62 : 0.5, 0.13, 24) + (light ? '2b' : '2b'),
     '--r-sm': `${Math.round(r * 0.7)}px`,
     '--r': `${Math.round(r)}px`,
     '--r-lg': `${Math.round(r * 1.45)}px`,

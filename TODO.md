@@ -40,13 +40,16 @@ We have `src/main/git.ts` → `gitInfo()`, which is branch + dirty count for the
 and `LaneDialog.tsx`, which merges a worktree lane back. That is the whole of it. T3 Code
 ships a full source-control surface: clone, publish, commit, push, PR, review.
 
-- [ ] **A1. Diff review before merge** — L. *(README already lists this as "not built yet")*
-  T3 Code shows an inline diff and a one-click PR. We show a file **count** in the lane chip
-  and ask you to trust it. Build: a diff view (`git diff --numstat` for the file list,
-  `git diff -- <file>` per file, rendered with a JS differ — no new native dep) reachable
-  from the lane chip and from a new pane action. **Better than theirs:** open it against the
-  *lane* as well as the branch, so the question it answers is "what has this agent done to
-  my repo in the last hour", which is the actual question with four agents running.
+- [x] **A1. Diff review before merge** — DONE. `src/main/diff.ts` + `src/shared/patch.ts`
+  + `DiffDialog.tsx`. The pane's git badge is now a button and the lane dialog has "See the
+  changes" beside its merge button. Three scopes — uncommitted, this branch, both — because
+  with four agents running the useful question depends on whether the pane is in a lane;
+  `all` is the lane's answer and the one the merge button is really asking. No JS differ:
+  git writes the patch and `shared/patch.ts` only numbers its lines, which is the part the
+  patch text does not state. Read-only by design (an untracked file's patch is synthesised
+  from its bytes rather than staged with `git add -N`, which would write an index an agent
+  is using). `npm run test:diff`, 64 assertions. **Still open:** committing and staging from
+  the dialog is A2, deliberately not built here.
 - [ ] **A2. Commit + push from the pane** — M. Toolbar on the pane: stage all, commit with a
   message, push. Today the agent has to be told to do it, or you leave the app. **Better:**
   offer the commit message from the diff via the pane's own agent (it already has the
@@ -67,7 +70,8 @@ ships a full source-control surface: clone, publish, commit, push, PR, review.
 - [ ] **A7. Source-control status page** — S. Settings → Source Control: is `gh` installed,
   is it authenticated, which account. Same shape as Settings → Agents, which already exists
   and works. GitHub only to start; GitLab/Bitbucket/Azure are T3 Code chasing teams.
-- [ ] **A8. Ship a stack, not one 2000-line PR** — L, needs **A1** and **A3** first.
+- [ ] **A8. Ship a stack, not one 2000-line PR** — L. **A1 is now done**, so the one thing
+  left in front of this is **A3** (create a PR).
   GitHub put stacked pull requests into public preview on 2026-07-30: a chain of PRs where
   each one's base is the branch below it, a stack map in the PR UI, server-side base
   retargeting when a middle PR merges, `gh stack` as a CLI extension, and a REST API plus a

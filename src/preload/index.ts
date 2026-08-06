@@ -64,6 +64,9 @@ const api: Api = {
   copyText: (text) => ipcRenderer.send('clipboard:write', text),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   gitInfo: (path) => ipcRenderer.invoke('git:info', path),
+  diffFiles: (cwd, scope) => ipcRenderer.invoke('git:diffFiles', cwd, scope),
+  diffPatch: (cwd, scope, path, untracked) =>
+    ipcRenderer.invoke('git:diffPatch', cwd, scope, path, untracked),
   laneBoard: () => ipcRenderer.invoke('lanes:board'),
   laneWork: (cwd) => ipcRenderer.invoke('lanes:work', cwd),
   mergeLane: (cwd) => ipcRenderer.invoke('lanes:merge', cwd),

@@ -227,6 +227,7 @@ ones that do not exist yet.
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:grid` | layout arithmetic, no window needed |
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body |

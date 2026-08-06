@@ -22,6 +22,14 @@ interface Props {
   onClose: () => void
   /** open the "How lanes work" card */
   onHelp: () => void
+  /**
+   * Read the lane's changes line by line.
+   *
+   * This dialog used to answer "what is in here?" with two numbers and then offer a merge
+   * button beside them, which is asking for a piece of an hour's agent work to be taken on
+   * trust. The counts are still the summary; this is the answer.
+   */
+  onReview: () => void
 }
 
 function summary(w: LaneWork): string {
@@ -42,7 +50,7 @@ function blocker(w: LaneWork): string | null {
   return null
 }
 
-export default function LaneDialog({ cwd, onClose, onHelp }: Props): JSX.Element {
+export default function LaneDialog({ cwd, onClose, onHelp, onReview }: Props): JSX.Element {
   const [work, setWork] = useState<LaneWork | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
@@ -105,6 +113,11 @@ export default function LaneDialog({ cwd, onClose, onHelp }: Props): JSX.Element
         <div className="dialog-row">
           <button className="ghost" onClick={onClose}>
             Close
+          </button>
+          {/* Beside the merge button, not behind it: the point of reading the changes is
+              to decide whether to press the other one. */}
+          <button className="ghost" onClick={onReview} disabled={!work}>
+            See the changes
           </button>
           <button
             className="primary"

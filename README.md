@@ -305,8 +305,13 @@ and so on) and taking the first that exists and has folders in it. If none do, t
 picker says which folder it looked in and offers to change it, rather than showing an
 empty list.
 
-Not built yet: diff/merge review, reattaching to sessions after an app restart
-(see `PLAN.md`).
+Reviewing what an agent changed is built: the git badge on a pane opens **Changes** -
+the files, the lines, and the choice of what is uncommitted, what the whole branch
+holds, or both. It reads and never writes: staging, committing and discarding stay with
+the pane's own agent.
+
+Not built yet: committing or opening a pull request from the app, and reattaching to
+sessions after an app restart (see `PLAN.md`).
 
 ## Platform notes
 

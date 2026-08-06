@@ -31,6 +31,8 @@ import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
+import { diffFiles, diffPatch } from './diff'
+import type { DiffScope } from '../shared/types'
 import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
@@ -1128,6 +1130,15 @@ ipcMain.handle('lanes:board', () => {
   const panes = lanePanes()
   return attachLaneOwners(laneBoard(panes), panes)
 })
+
+// What the agent in a folder has actually changed. Read-only, and the file list and the
+// patches are separate calls on purpose - a 300-file diff is 300 patches nobody opened.
+ipcMain.handle('git:diffFiles', (_e, cwd: string, scope: DiffScope) => diffFiles(cwd, scope))
+ipcMain.handle(
+  'git:diffPatch',
+  (_e, cwd: string, scope: DiffScope, path: string, untracked: boolean) =>
+    diffPatch(cwd, scope, path, untracked)
+)
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))

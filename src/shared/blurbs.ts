@@ -74,6 +74,11 @@ export const BLURBS: Blurb[] = [
     text: 'Every key this app answers to, and what each pane’s marks and colours mean. Nothing here changes anything - it is the map.'
   },
   {
+    id: 'changes',
+    title: 'Changes',
+    text: 'Every line the agent in this pane has written, read here instead of in its terminal. Switch between what is uncommitted, what the whole branch holds, or both at once before merging a lane back. Nothing here stages, commits or discards anything.'
+  },
+  {
     id: 'restore',
     title: 'Restore',
     text: 'The panes that were open when PaneForge last closed. Reopening puts each agent back in its folder and, where the CLI supports it, back into the conversation it was in.'
