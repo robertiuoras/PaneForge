@@ -150,3 +150,34 @@ jobs:
           node scripts/release-notes.mjs "$version" > "$RUNNER_TEMP/release-notes.md"
           cat "$RUNNER_TEMP/release-notes.md"
           gh release edit "v$version" --notes-file "$RUNNER_TEMP/release-notes.md"
+
+      # `fail-fast: false` means one leg can ship alone, and that failure is SILENT in
+      # the only place it matters: the update feed. A release carrying latest-mac.yml and
+      # no latest.yml looks finished on the releases page while every Windows copy checks
+      # for an update, finds no feed on the newest release, and sits on the old version
+      # saying nothing. That is exactly how v0.7.2 went out Windows-only and v0.8.0 went
+      # out Mac-only within fifteen minutes of each other. Neither run was red for it.
+      #
+      # So the feeds are the assertion, not the installers: an installer nobody's updater
+      # can find is not shipped. Missing one names the platform that is now stuck.
+      - name: Both update feeds must be on the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if ! gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::No release v$version at all - both builds failed. Nothing shipped."
+            exit 1
+          fi
+          assets=$(gh release view "v$version" --json assets -q '.assets[].name')
+          missing=0
+          grep -qx 'latest.yml'     <<<"$assets" || { echo "::error::no latest.yml on v$version - every WINDOWS copy is stuck on the previous version and will not say so"; missing=1; }
+          grep -qx 'latest-mac.yml' <<<"$assets" || { echo "::error::no latest-mac.yml on v$version - every MAC copy is stuck on the previous version and will not say so"; missing=1; }
+          if [ "$missing" = 1 ]; then
+            echo "Re-run the failed leg, or build it locally and upload. Assets present:"
+            printf '%s\n' "$assets"
+            exit 1
+          fi
+          echo "both feeds present on v$version"
