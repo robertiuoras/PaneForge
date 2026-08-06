@@ -459,7 +459,11 @@ underpriced.
   ranking rules already live (bench number → lines changed → files touched). The version
   better than Orca's is that one: Orca compares by eye, and a repo with a test command can
   rank the candidates before a human looks at any of them.
-- [ ] **G2. Scrollback that survives a restart** — M. Orca advertises it by name. Ours is
+- [x] **G2. Scrollback that survives a restart** — shipped 2026-08-07, and it was an S in the
+  end rather than the M below: `history.ts` already held every pane's raw output on disk, so
+  the build was `tail()` plus one field (`scrollbackId`) carried through the desk, and the
+  renderer needed no change at all. `npm run test:scrollback`. Original note kept:
+  Orca advertises it by name. Ours is
   `scrollback: 20000` in `TerminalPane.tsx` and lives only in the renderer's memory: quit,
   update, or crash, and the pane comes back blank. `test:restore` covers a different thing
   and is easy to mistake for this one — it puts a reopened pane back into the same

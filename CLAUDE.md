@@ -61,12 +61,16 @@ dirty, then releases once **no chat is mid-work** — one version bump for every
 finishes last. If another chat is still editing it says so and does nothing; wait rather
 than shipping again. Edit or commit after marking and the mark is dropped, by name.
 
-- An automatic release **reads its own bump off the commit subjects** since the last tag
-  (`bumpFor` in `scripts/release-notes.mjs`, the same source the notes come from): a `feat:`
-  in the range makes it a minor, anything else a patch. A `!` asks for a major and gets a
-  minor while the version starts with 0 — cutting 1.0.0 is a claim about the product, so
-  only `node scripts/lane.mjs ship major`, typed on purpose, does it. A bump named on the
-  command line is always obeyed as given.
+- **Below 1.0 an automatic release only ever moves the patch.** It still reads its own bump
+  off the commit subjects since the last tag (`bumpFor` in `scripts/release-notes.mjs`, the
+  same source the notes come from), but `nextVersion` in that file demotes it: a `feat:` is
+  a patch like everything else, `feat!:` is the one bump a commit may still ask for and it
+  gets a minor, and a minor or a major otherwise has to be typed — `node scripts/lane.mjs
+  ship minor` / `ship major`. Reading `feat:` as a minor is right for a released product and
+  wrong here: below 1.0 nearly every commit adds something, so the minor stopped meaning "a
+  batch of work landed" and started meaning "a session happened" (v0.4.62 → v0.8.0 in one
+  day over six releases carrying seven commits). At 1.0 the ordinary semver reading comes
+  back on its own. A bump named on the command line is always obeyed as given.
 - Releases batch: one per 30 minutes (`COOLDOWN_MS`). Inside that window the work sits on
   master for the next `ready`. Do not "fix" that with `npm run ship`.
 - `npm version`, `git tag vX` and pushing a version tag by hand are **blocked**.
@@ -184,6 +188,25 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
   `spawnDetachedNoWindow`; stubbing it with a plain detached `spawn` makes every kill
   silently do nothing.
 
+## A reopened pane comes back with what was on its screen
+
+The terminal's own scrollback is renderer memory, so before this every pane reopened blank —
+most often right after the app updated itself, which is the restart nobody asked for.
+`test:restore` is a different promise: it hands the agent its `--resume`, which brings back
+the conversation and not one line of the screen.
+
+- **Nothing new is stored.** `history.ts` has appended every pane's raw output to
+  `userData/history/<id>.log` all along; `tail()` reads the last `BUFFER_LIMIT` of it, and
+  the cap and the pruning are that file's, already pinned by `test:history`.
+- The missing part was the **id**. A restored pane is a new session, so the desk carries
+  `scrollbackId` (`snapshot()` in `sessions.ts`) and `start()` seeds the pane's buffer from
+  it. Save the new id there and it restores nothing, silently, forever.
+- `tail` must not strip ANSI (`read` does, for search) and must cut on a line boundary — a
+  cut inside an escape sequence prints its tail as literal text across the first line.
+- One dim line says where the old output ends, and it resets attributes first: the tail is
+  cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
+  after it. `npm run test:scrollback`.
+
 ## The app remembers what has been asked
 
 `src/main/promptArchive.ts` answers one question — has this ask been made before — and it is
@@ -218,6 +241,7 @@ ones that do not exist yet.
 |---|---|
 | `npm run smoke` | the pty layer |
 | `npm run test:restore` | which conversation a reopened pane goes back into |
+| `npm run test:scrollback` | and what is on its screen when it gets there |
 | `npm run test:consoles` | sweeping console hosts left behind |
 | `npm run test:strays` | what a PANE left running (real orphans, ~25s) |
 | `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |

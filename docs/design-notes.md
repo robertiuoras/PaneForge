@@ -134,6 +134,26 @@ named on the command line is obeyed as given: `ship major` still cuts 1.0.0, `sh
 still forces a patch over a range full of features. `auto` is what the unattended paths
 (`ready`, the session-end mark, the retry timer) pass.
 
+**And then the rule above was too loud, so below 1.0 it now stops at the patch**
+(`nextVersion`, same file, 2026-08-07). Read the argument two paragraphs up again with the
+0.x part in mind: it is right that `v0.4.60` does not say whether it carried a feature, and
+wrong that `feat:` is the thing that would say so, because below 1.0 nearly every commit
+adds something. What the fix produced was not a meaningful minor, it was a faster build
+counter with a shorter tail. In one day - 2026-08-06 into 08-07 - **v0.4.62 became v0.8.0
+over six releases carrying seven commits between them, two of them `feat:`**, and four of
+those six carried nothing at all (that half was the tag-drift bug, fixed separately in
+v0.8.0). Robert's complaint is the measurement: he could no longer tell a week of work from
+a one-line fix by looking at the number, and 0.4.x had been fine.
+
+So below 1.0 the ladder is one rung shorter and every rung above the patch has to be typed:
+a plain `feat:` or `fix:` moves the patch, `feat!:` is the only bump a commit may still ask
+for and it gets a minor, and `ship minor` / `ship major` do exactly what they say because a
+person said so. At 1.0 and above nothing is demoted and ordinary semver resumes - the
+demotion asks the current version, not a flag, so there is nothing to switch off later.
+`bumpFor` was left alone: it still reads the subjects honestly, and what a release may DO
+with that reading is one function with the version in front of it. `npm run test:notes`
+pins both halves.
+
 `ship minor` by hand keeps its old caveat: the release page will say only what changed
 since the last tag, so a feature list from further back needs putting on by hand
 (`gh release edit`), AFTER the workflow's `notes` job has run, since that job rewrites the
@@ -385,6 +405,53 @@ The test's own lesson is worth keeping: it stubbed `spawnDetachedNoWindow` with 
 `spawn(..., { detached: true })` and every kill silently did nothing, because that is the
 exact shape `consoles.ts` exists to avoid on this Windows build. It loads the real module now.
 A stub of the one line that is hard on this platform is a test that passes while the app leaks.
+
+## A reopened pane comes back with what was on its screen
+
+Built 2026-08-07, and the reason it is written down is that it looked expensive and was not.
+
+The complaint is ordinary: the app updates itself, every pane reopens, and every one of them
+is blank. `scrollback: 20000` in `TerminalPane.tsx` is xterm's own buffer and it lives in the
+renderer's memory, so it dies with the window. The pane is not empty in any interesting
+sense - the agent is right where it was, mid-conversation, because `resumeId` put it back
+there - it just has nothing to show for it, which is worse than empty: the one thing on
+screen is a fresh prompt under a title claiming a conversation you cannot read.
+
+`test:restore` is the test that sounds like this one and is not. It pins which conversation
+a reopened pane goes back into, which is the agent's memory. Nothing there is about pixels.
+
+The obvious build is a new store: tee each pane to a capped ring under userData, prune it,
+cap it, test it. That work is already done and has been for months - `history.ts` appends
+every pane's RAW output to `userData/history/<id>.log` for the transcript search, capped at
+8 MB per pane and pruned by `test:history`'s age and size rules. So the feature is a read.
+`tail(id, bytes)` gives back the end of that file and `start()` writes it into the new
+pane's `OutBuffer`, which is the same buffer a re-mounted pane already redraws from - the
+renderer needed no change at all.
+
+What was genuinely missing is one field. A restored pane is a NEW session with a new id, so
+nothing joins it to the log the old one wrote; `snapshot()` now writes `scrollbackId` (the
+LIVE id, the one the log is named after) into the desk, and `start()` reads it. Save the
+wrong id there and the feature does nothing, for ever, without an error - which is why the
+test asserts the saved id is the live session's, not just that the field is a string.
+
+Three details that are each a visible bug when got wrong:
+
+- **The tail is raw.** `read()` strips ANSI because it answers "what was said" for search;
+  this answers "what was on screen", and the colour, the box drawing and the cursor moves
+  ARE what was on screen. A stripped replay looks like a log file, not a terminal.
+- **The cut is on a line boundary.** Slicing raw terminal bytes at an arbitrary offset lands
+  inside an escape sequence often enough to matter, and the terminal then prints the tail of
+  that sequence as literal text across the first line - `31mred text...`. Dropping up to the
+  first newline costs one partial line and removes the whole class.
+- **The mark resets first.** The caption that says where the old output ends is written
+  straight after a tail cut mid-run, so whatever attribute was in force at the cut would
+  bleed into the caption and then into everything the new process writes.
+
+The cap is the buffer's 400 KB, not the log's 8 MB: what comes back is what a pane already
+keeps in memory, not the whole day. That is deliberate - the promise is "the screen you
+left", and a pane that replays twenty times its own scrollback on every launch is a
+different, slower feature nobody asked for. `npm run test:scrollback` drives the real
+`SessionManager` with the pty stubbed, and pins both halves plus the 2 MB case.
 
 ## The app remembers what has been asked
 
