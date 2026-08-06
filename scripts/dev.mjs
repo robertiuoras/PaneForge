@@ -15,21 +15,17 @@
 // PANEFORGE_PROFILE=x npm run dev still works.
 
 import { spawn } from 'node:child_process'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { devProfile } from './dev-profile.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const show = args.includes('--show')
 
-function defaultProfile() {
-  const suffix = basename(root).replace(/^(claude-orchestrator|paneforge)-?/i, '')
-  return suffix ? `dev-${suffix}` : 'dev'
-}
-
 const env = {
   ...process.env,
-  PANEFORGE_PROFILE: process.env.PANEFORGE_PROFILE || defaultProfile(),
+  PANEFORGE_PROFILE: process.env.PANEFORGE_PROFILE || devProfile(root),
   PANEFORGE_START: process.env.PANEFORGE_START || (show ? 'inactive' : 'minimized')
 }
 

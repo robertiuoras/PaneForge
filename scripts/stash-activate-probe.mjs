@@ -30,9 +30,10 @@
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { devProfile, profileConfig, profileData } from './dev-profile.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
@@ -43,10 +44,15 @@ const runs = Number(process.env.PF_RUNS ?? 3)
 const work = join(tmpdir(), 'pf-activate-probe')
 mkdirSync(work, { recursive: true })
 
-const APP_SUPPORT = join(homedir(), 'Library', 'Application Support')
-const devData = join(APP_SUPPORT, 'claude-orchestrator-dev')
-const devConfig = join(devData, 'config.json')
-const liveConfig = join(APP_SUPPORT, 'claude-orchestrator', 'config.json')
+// The copy this run actually launches, which is NOT always `dev`: every checkout gets its
+// own profile, so from the lane `PaneForge-a` npm run try opens `dev-a`. Hardcoding `dev`
+// here parked the Stash in a profile nothing was going to read, and the copy that did
+// start had no saved position - so it cornered itself on top of the live app's Stash and
+// every run aborted on the safety check before measuring a thing.
+const profile = devProfile(root)
+const devData = profileData(profile)
+const devConfig = profileConfig(profile)
+const liveConfig = profileConfig('')
 const probeLogPath = join(devData, 'activation.log')
 
 // The pill's size, from shelfWindow.ts COLLAPSED. Only used to keep away from the LIVE
@@ -109,7 +115,7 @@ const liveRect = liveStash
   cfg.stashPos = { x: PARK.x, y: PARK.y }
   mkdirSync(devData, { recursive: true })
   writeFileSync(devConfig, JSON.stringify(cfg, null, 2))
-  console.log(`== parked the test copy's Stash at ${JSON.stringify(cfg.stashPos)}`)
+  console.log(`== parked the ${profile} copy's Stash at ${JSON.stringify(cfg.stashPos)}`)
   if (liveRect) console.log(`   live app's Stash occupies ${JSON.stringify(liveRect)} - kept clear`)
 }
 
