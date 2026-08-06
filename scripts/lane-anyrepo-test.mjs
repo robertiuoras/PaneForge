@@ -119,13 +119,30 @@ function project(name, { lanes, version } = {}) {
   git(second.dir, 'add', '-A')
   git(second.dir, 'commit', '-qm', 'feat: a thing')
 
+  // `feat:` - so the release reads a MINOR off its own range. The bump is not a default
+  // any more; it is what the commits about to ship say they are.
   const done = lane(repo, 'ready', '--session', 'ship-2')
-  ok('a repo that asked for versions cuts one', git(repo, 'tag') === 'v0.1.1', `${git(repo, 'tag')} / ${done.out}`)
+  ok('a repo that asked for versions cuts one', git(repo, 'tag') === 'v0.2.0', `${git(repo, 'tag')} / ${done.out}`)
   ok(
     'and the bump is in package.json',
-    JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version === '0.1.1'
+    JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version === '0.2.0'
   )
-  ok('the release commit is on main', git(repo, 'log', '-1', '--pretty=%s') === 'release: v0.1.1')
+  ok('the release commit is on main', git(repo, 'log', '-1', '--pretty=%s') === 'release: v0.2.0')
+}
+
+// ------------------------------------------------- and the same repo, carrying only fixes
+
+{
+  const { repo } = project('patcher', { lanes: { release: 'version' }, version: '0.1.0' })
+
+  JSON.parse(lane(repo, 'claim', '--session', 'pat-1', '--cwd', repo).out)
+  const second = JSON.parse(lane(repo, 'claim', '--session', 'pat-2', '--cwd', repo).out)
+  writeFileSync(join(second.dir, 'bug.js'), 'export const x = 1\n')
+  git(second.dir, 'add', '-A')
+  git(second.dir, 'commit', '-qm', 'fix: a thing')
+
+  const done = lane(repo, 'ready', '--session', 'pat-2')
+  ok('a release carrying only fixes stays a patch', git(repo, 'tag') === 'v0.1.1', `${git(repo, 'tag')} / ${done.out}`)
 }
 
 // ---------------------------------------------------------------- one that opted out

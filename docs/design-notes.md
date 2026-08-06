@@ -111,14 +111,33 @@ sitting in a conflicted merge: it is the one state no other chat is allowed to t
 `npm version`, `git tag vX`, and pushing a version tag by hand are blocked. `npm run ship`
 still exists for a release you want right now, but nothing should need it.
 
-Every automatic release is a **patch** bump - `ready`, the session-end mark and the retry
-timer all call `autoship('patch')`. A minor or major has to be asked for by name
-(`node scripts/lane.mjs ship minor`), and it is the one thing `ready` cannot express: work
-finished while a chat was still testing has gone out as a patch minutes before the chat
-got round to asking for the minor. That is not a problem - `ship minor` from there cuts
-the version you wanted - but the release page will say only what changed since the patch,
-so the feature list needs putting back on it by hand (`gh release edit`), AFTER the
-workflow's `notes` job has run, since that job rewrites the body from its own range.
+Every automatic release used to be a **patch** bump, and the reasoning was sound as far as
+it went: `ready` cannot express "this one is a minor", and a release batches several chats'
+work, so no single chat is entitled to decide for the others. The conclusion drawn from
+that - default to patch, ask for anything else by name - was the part that did not hold.
+It made the version a build counter. Fifty-nine patches into 0.4 nobody could tell from
+`v0.4.60` whether it carried a feature or a typo, and the `ship minor` that would have said
+so was never typed, because typing it is a thing a person has to remember and no chat is
+in a position to remember it.
+
+The information was already in the repo. The subjects are Conventional Commits - it is what
+the release notes above are built from - so the release can read its own bump off the range
+it is about to ship (`bumpFor`, in scripts/release-notes.mjs): a `feat:` anywhere in it
+makes the release a minor, everything else leaves it a patch. That decides per RELEASE
+rather than per chat, which is exactly the objection that forced the patch default, and it
+needs nobody to remember anything.
+
+Two limits, both deliberate. A `!` (or a BREAKING CHANGE trailer) asks for a major and gets
+a **minor** while the version still starts with 0 - the usual 0.x reading, and 1.0.0 is a
+claim about the product that no commit subject is allowed to make on its own. And a bump
+named on the command line is obeyed as given: `ship major` still cuts 1.0.0, `ship patch`
+still forces a patch over a range full of features. `auto` is what the unattended paths
+(`ready`, the session-end mark, the retry timer) pass.
+
+`ship minor` by hand keeps its old caveat: the release page will say only what changed
+since the last tag, so a feature list from further back needs putting on by hand
+(`gh release edit`), AFTER the workflow's `notes` job has run, since that job rewrites the
+body from its own range.
 
 Automatic releases batch: one every thirty minutes at most (`COOLDOWN_MS` in
 `scripts/lane.mjs`). Inside that window `ready` says so and leaves the work on master,

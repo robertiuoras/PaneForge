@@ -61,9 +61,12 @@ dirty, then releases once **no chat is mid-work** — one version bump for every
 finishes last. If another chat is still editing it says so and does nothing; wait rather
 than shipping again. Edit or commit after marking and the mark is dropped, by name.
 
-- Every automatic release is a **patch**. A minor/major must be asked for:
-  `node scripts/lane.mjs ship minor` — then put the feature list back on the release page
-  by hand (`gh release edit`) AFTER the workflow's `notes` job has run.
+- An automatic release **reads its own bump off the commit subjects** since the last tag
+  (`bumpFor` in `scripts/release-notes.mjs`, the same source the notes come from): a `feat:`
+  in the range makes it a minor, anything else a patch. A `!` asks for a major and gets a
+  minor while the version starts with 0 — cutting 1.0.0 is a claim about the product, so
+  only `node scripts/lane.mjs ship major`, typed on purpose, does it. A bump named on the
+  command line is always obeyed as given.
 - Releases batch: one per 30 minutes (`COOLDOWN_MS`). Inside that window the work sits on
   master for the next `ready`. Do not "fix" that with `npm run ship`.
 - `npm version`, `git tag vX` and pushing a version tag by hand are **blocked**.
