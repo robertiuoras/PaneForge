@@ -1214,6 +1214,40 @@ function busyLanes(state) {
   })
 }
 
+/**
+ * The tags origin has, before anything local reads them to decide a release.
+ *
+ * Every release decision in this file is made from LOCAL tags - `bumpFor` reads the newest
+ * one to find the commits about to ship, and `commitsSinceVersion` asks whether the current
+ * version's tag exists at all. Neither is true of a checkout that has the commits but not
+ * the tags, which is the normal state of the second machine: `git pull` brings a release
+ * commit across without necessarily bringing its tag, and nothing here ever fetched one.
+ *
+ * That is not theoretical either. Between v0.4.62 and v0.7.1, on 2026-08-07, FOUR of six
+ * releases carried no work at all, and two of them moved the MINOR:
+ *
+ *   v0.5.0  cut with the newest local tag at v0.4.61, so the range still held
+ *           `feat(release): read the version bump off the commits` - already shipped in
+ *           v0.4.62 an hour earlier. Read as a feature, bumped the minor, released nothing.
+ *   v0.7.0  the same shape one tag later, re-reading `feat: cap what transcripts cost`.
+ *
+ * `commitsSinceVersion` could not catch either: with the version's own tag missing locally
+ * it falls back to counting the WHOLE history, which is never zero. So the guard that
+ * exists precisely to say "nothing new since vX" was answering about a tag it could not
+ * see. One fetch ahead of the decision makes every one of those reads true.
+ *
+ * It never fails a release: offline, no origin, or a repo that has none at all just leaves
+ * the local tags as they were, which is exactly today's behaviour.
+ */
+let tagsSyncedAt = 0
+function syncTags() {
+  // The retry timer calls autoship every minute for as long as the process lives; the
+  // answer cannot change faster than a release, so once a minute is already generous.
+  if (now() - tagsSyncedAt < 60_000) return
+  tagsSyncedAt = now()
+  gitSafe(MAIN, 'fetch', '--tags', 'origin')
+}
+
 /** Anything a release would actually put out. */
 function shippable(state) {
   if (unreleasedOnMaster() > 0) return true
@@ -1314,6 +1348,9 @@ function typecheckFailure() {
  * silently does nothing while any chat is still mid-edit.
  */
 function autoship(kind = 'auto', session = 'auto') {
+  // Before `shippable` asks whether anything is unreleased - that question is answered
+  // against local tags, and a stale one turns "already released" into "release it again".
+  syncTags()
   const state = reap(read())
   // A conflict that has quietly stopped being a conflict should not keep work out of
   // this release: try them all again before deciding what is shippable.
@@ -1537,6 +1574,9 @@ function beatRelease(session) {
 
 function ship(kind, session) {
   if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
+  // `ship` is also reachable without going through autoship (`npm run ship`, `ship major`),
+  // and it reads the same local tags to pick the bump. Same fetch, same reason.
+  syncTags()
   const state = reap(read())
 
   if (state.release && state.release.session !== session) {
