@@ -28,7 +28,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { agentsMidTurn } = await import(pathToFileURL(outfile).href)
+const { agentsMidTurn, decideInstall } = await import(pathToFileURL(outfile).href)
 
 let failures = 0
 function ok(cond, what) {
@@ -56,6 +56,44 @@ ok(agentsMidTurn([working]) === 1, 'one agent mid-turn holds the restart')
 ok(agentsMidTurn([waiting, working, working]) === 2, 'every working pane is counted, not just the first')
 ok(agentsMidTurn([deadMidTurn]) === 0, 'an exited pane with a stale runSince does not hold forever')
 ok(agentsMidTurn([deadMidTurn, working]) === 1, 'a stale exited pane does not inflate the live count')
+
+// What the button itself decides. Tested here because it cannot be reached in dev at
+// all: `npm run dev` has no update metadata, so `phase` never says 'ready' and the
+// running app returns 'nothing-to-install' before this rule is consulted. Without these
+// the branch would first run on a user's machine.
+console.log('\nthe click')
+const ready = { phase: 'ready', installStarted: false }
+ok(decideInstall({ ...ready, sessions: [] }).act === 'install', 'an empty desk restarts on the click')
+ok(
+  decideInstall({ ...ready, sessions: [waiting, waiting] }).act === 'install',
+  'panes waiting for you restart on the click'
+)
+ok(decideInstall({ ...ready, sessions: [working] }).act === 'wait', 'a working pane holds the click')
+ok(
+  decideInstall({ ...ready, sessions: [working, working, waiting] }).busy === 2,
+  'the hold carries the count, so the card can name it'
+)
+ok(
+  decideInstall({ ...ready, sessions: [deadMidTurn] }).act === 'install',
+  'an exited pane with a stale runSince does not hold the click either'
+)
+// Nothing to install: the same click on a card whose build was superseded.
+ok(
+  decideInstall({ phase: 'idle', installStarted: false, sessions: [] }).act === 'nothing',
+  'no build ready means nothing to do'
+)
+ok(
+  decideInstall({ phase: 'downloading', installStarted: false, sessions: [working] }).act ===
+    'nothing',
+  'a build still downloading is not a restart being held'
+)
+// A second click while the teardown is already running must not be read as a new hold -
+// the panes are already dying, and answering 'wait' would put the card back on screen
+// saying it was queued.
+ok(
+  decideInstall({ phase: 'ready', installStarted: true, sessions: [working] }).act === 'install',
+  'a second click during the teardown is still the one restart'
+)
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')
 process.exit(failures ? 1 : 0)

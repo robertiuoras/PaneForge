@@ -150,7 +150,7 @@ import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
-import { agentsMidTurn } from '../shared/updateHold'
+import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -1673,6 +1673,10 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   // Asked fresh rather than read off the poller: a game started ten seconds ago is
   // exactly the case where this must not go ahead.
   await checkGameNow()
+  // Decided in shared/updateHold.ts, not here: this branch cannot be reached in dev at
+  // all (no update metadata, so `phase` never says ready), and a rule that only runs in
+  // production is a rule that ships untested. `npm run test:updatehold` holds it.
+  //
   // The click used to go straight through, on the reasoning that the user chose the
   // interruption. They chose the restart; they did not choose to lose the answer a pane
   // was part-way through writing, and there is no way to tell the two apart from a
@@ -1683,13 +1687,17 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   // Held here rather than inside `whenClear` because the two holds are about different
   // things: the game hold protects the SCREEN, and is released by the game closing;
   // this one protects WORK, and is released by the panes going quiet.
-  const busy = agentsMidTurn(manager.list())
-  if (busy > 0) {
+  const decision = decideInstall({
+    phase: getUpdateState().phase,
+    installStarted,
+    sessions: manager.list()
+  })
+  if (decision.act === 'wait') {
     installWhenIdle = true
     watchForIdlePanes(true)
-    updateLog('install', `restart clicked, held: ${busy} agent(s) mid-turn`)
+    updateLog('install', `restart clicked, held: ${decision.busy} agent(s) mid-turn`)
     const g = gameState()
-    return { status: 'held', busy, game: g.game, manual: g.manual }
+    return { status: 'held', busy: decision.busy, game: g.game, manual: g.manual }
   }
   if (whenClear('update-install', doInstall)) return { status: 'installing' }
   // Queued, not done. Say which, and what is holding it: the card is about to swap its
