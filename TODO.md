@@ -6,7 +6,9 @@ were written 2026-07-31 against v0.3.59 from T3 Code (`t3.codes`, `pingdotgg/t3c
 against v0.4.54 from four more: opcode (`winfunc/opcode`, 22k, Tauri GUI for Claude Code),
 Vibe Kanban (`BloopAI/vibe-kanban`, 27k, **sunsetting**), Claude Squad
 (`smtg-ai/claude-squad`, 8k, tmux-based TUI) and Container Use (`dagger/container-use`,
-3.9k, MCP + containers).
+3.9k, MCP + containers). Section G was added 2026-08-07 against v0.7.1 from Orca
+(`stablyai/orca`, 38.7k, MIT, TypeScript + Electron), which is the closest thing to
+PaneForge that exists and the largest of the lot by a factor of two.
 
 Each item says what they do, what we have today, what to build, where it lands, and — where
 there is one — the version that is better than theirs rather than a copy. Effort is
@@ -417,6 +419,68 @@ construction, and one that has no hook API at all is covered too.
 
 ---
 
+## G. Orca — the same app, further along (`stablyai/orca`)
+
+Orca is not an adjacent tool the way T3 Code or opcode are. It is an Electron desktop app
+that runs any CLI agent in a real terminal across git worktrees, on Windows, macOS and
+Linux, MIT-licensed, at 38.7k stars. That is PaneForge's sentence. So this section is
+mostly a **confirmation**: the items already on this page are the right ones, and the
+biggest app in the category shipped them. Only G1–G3 are new.
+
+**Already listed, and Orca shipping it is the argument for moving it up:** AI diff
+annotation is **E4**; the scriptable CLI is **D9** (Orca's also has browser verbs — `click`,
+`fill` — which is D9 crossed with G3); usage tracking and the account switcher are **E1**;
+remote execution is **B7**; a mobile client is **B2 + B3**; Linux and Homebrew are
+**B5 + B6**; opening a worktree straight from an issue is **E7** with a tracker behind it.
+None of those need re-arguing. E4, E1 and D9 are the three the comparison makes look
+underpriced.
+
+- [ ] **G1. Fan one prompt across N agents and pick the winner** — L. Orca's headline, and
+  the one idea on this page we do not have a version of: send the same ask to five agents,
+  each in its own worktree, then compare the five diffs and merge one. We have the two ends
+  and not the middle — `SwarmDialog.tsx` splits work *apart* by file ownership (`test:split`
+  refuses overlapping claims, which is the exact opposite of what this needs: here every
+  agent claims every file, in isolation), synchronised typing already types one thing into
+  many panes, `lane.mjs` already gives each pane an isolated worktree, and `DiffDialog.tsx`
+  already reads a repo's changes. What is missing is the comparison surface and the
+  discard: N worktrees created from one commit, one prompt, then a side-by-side of the
+  diffs with "merge this one, delete the rest". Robert's personal `race` skill is this
+  workflow done by hand through `claude-memory/claude-config/race.mjs`, which is where the
+  ranking rules already live (bench number → lines changed → files touched). The version
+  better than Orca's is that one: Orca compares by eye, and a repo with a test command can
+  rank the candidates before a human looks at any of them.
+- [ ] **G2. Scrollback that survives a restart** — M. Orca advertises it by name. Ours is
+  `scrollback: 20000` in `TerminalPane.tsx` and lives only in the renderer's memory: quit,
+  update, or crash, and the pane comes back blank. `test:restore` covers a different thing
+  and is easy to mistake for this one — it puts a reopened pane back into the same
+  *conversation* by handing the agent its `--resume`, which restores the agent's memory and
+  not one line of what was on screen. This is the cheap half of
+  `project_pty_survives_restart_decision`: keeping the **pty** alive across a restart was
+  measured and rejected (a pty cannot be handed to another process after it exists), but
+  keeping the **bytes** is a file. The tee in `src/main/pipe.ts` already writes a pane's
+  output to disk with the ANSI handling done and `test:pipe` around it, so this is: always
+  tee to a capped ring under userData, replay the tail into xterm on restore, and put it
+  under the same age/size cutoff `test:history` pins for transcripts. It lands the day
+  after an update, which is exactly when a restart is not the user's idea.
+- [ ] **G3. Design Mode — click the UI, and the agent gets the element** — L. Orca embeds
+  Chromium and lets you click a rendered element to send its HTML, its computed CSS and a
+  screenshot into the prompt. This is **C7 (preview pane)** and **E5 (inspector)** finished
+  rather than a fourth item, and it is worth naming separately because it changes what they
+  are for: C7 as written is a viewport, and the value is not looking at the page, it is
+  turning a click into prompt text. We have the harder half already — `npm run probe`
+  drives a real renderer over CDP and evaluates an expression against it, which is the same
+  mechanism pointed at our own window instead of the project's dev server. The screenshot
+  discipline in `CLAUDE.md` applies to what gets sent: an element's outerHTML plus its
+  computed style is a few hundred tokens, a full-page PNG is ten thousand.
+
+**Not copying from Orca:** the 30+ agent list as a headline number is **E8** and stays a
+number, not a promise — we already spawn whatever binary the user names, and a curated list
+that works beats a long list that mostly does not. Computer Use as a first-class pane is
+the same trade as containers: it buys a demo and a permission surface, and every agent that
+matters ships its own.
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
@@ -442,6 +506,12 @@ construction, and one that has no hook API at all is covered too.
 8. **E6** — turn-level checkpoints. Last because it is the one item whose honesty depends on
    what the agent touched, and B1 changes where a pty's state lives.
 9. **B6** — package managers, whenever signing is paid for.
+
+**G2 belongs at step 2, ahead of everything else in G.** It is an M that removes a blank
+screen the user sees every time the app updates itself, and the update path is the part of
+this app that has had the most bugs. G1 belongs with step 6 — it needs nothing new, but its
+value is the comparison surface, and that is a real UI. G3 is step 7, where C7 and E5
+already are; it is the reason to build them rather than a separate job.
 
 **F sits across this order rather than at the end of it.** F1 and F3 are small and pay for
 themselves the first time two lanes touch one file, so they belong beside step 2. F5 belongs
