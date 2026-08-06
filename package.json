@@ -98,6 +98,7 @@
     "test:competitors": "node scripts/competitors-test.mjs",
     "test:split": "node scripts/split-test.mjs",
     "test:agentic": "node scripts/agentic-test.mjs",
+    "test:goals": "node scripts/goals-test.mjs",
     "capability:list": "node scripts/capability-lifecycle.mjs --list",
     "capability:sandbox": "node scripts/capability-sandbox.mjs",
     "capability:lifecycle": "node scripts/capability-lifecycle.mjs",

@@ -52,6 +52,18 @@ import {
   stopAllDrives,
   stopDrive
 } from './supervisor'
+import {
+  addGoal,
+  cancelGoal,
+  clearFinishedGoals,
+  configureGoals,
+  listGoals,
+  noteDriveChange,
+  onGoalsChange,
+  removeGoal,
+  retryGoal
+} from './goals'
+import type { Goal } from '../shared/goals'
 import type { DriveRequest, DriveRun } from '../shared/types'
 import { buildContextPack } from './contextPack'
 import { stage } from '../shared/capability'
@@ -1043,7 +1055,13 @@ const claimForDrive =
     return lane.cwd === repo ? null : { cwd: lane.cwd, branch: lane.branch ?? '' }
   }
 
-onDriveChange((run) => send('drive:changed', run))
+// One listener, and it feeds two readers: the board, which wants every change, and the
+// goal queue, which only cares that a run it started has ended. The supervisor takes a
+// single listener on purpose, so the fan-out is here rather than a second registration.
+onDriveChange((run) => {
+  send('drive:changed', run)
+  noteDriveChange(run)
+})
 
 ipcMain.handle('drive:start', (_e, req: DriveRequest): DriveRun => {
   return startDrive(
@@ -1062,6 +1080,30 @@ ipcMain.handle('drive:stop', (_e, id: string) => stopDrive(id))
 ipcMain.handle('drive:stopAll', () => stopAllDrives())
 ipcMain.handle('drive:list', () => listDrives())
 ipcMain.handle('drive:clear', () => clearFinishedDrives())
+
+// --- the goal queue (I4) ----------------------------------------------------------------
+// A goal outlives this window: it is on disk, it starts by itself when the one in front of
+// it finishes, and it says what it turned into. `configureGoals` also does the startup
+// recovery - anything left `running` by a kill becomes `interrupted` - so it runs at wiring
+// time and not on the first press.
+onGoalsChange((list) => send('goals:changed', list))
+configureGoals(claimForDrive)
+
+ipcMain.handle('goal:add', (_e, req: DriveRequest): Goal => {
+  return addGoal({
+    cwd: req.cwd,
+    mission: req.mission,
+    plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
+    agent: req.agent ?? 'claude',
+    model: req.model,
+    skipReview: req.skipReview
+  })
+})
+ipcMain.handle('goal:list', () => listGoals())
+ipcMain.handle('goal:cancel', (_e, id: string) => cancelGoal(id))
+ipcMain.handle('goal:retry', (_e, id: string) => retryGoal(id))
+ipcMain.handle('goal:remove', (_e, id: string) => removeGoal(id))
+ipcMain.handle('goal:clear', () => clearFinishedGoals())
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {

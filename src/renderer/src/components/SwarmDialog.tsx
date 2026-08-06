@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { modelLabel, modelValue, supportsModel } from '@shared/agents'
-import type { DriveRun, Project, SplitPlan, SwarmRole } from '@shared/types'
+import type { Project, SplitPlan, SwarmRole } from '@shared/types'
+import type { Goal } from '@shared/goals'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Segmented } from './Controls'
@@ -33,8 +34,8 @@ interface Props {
   onSaveRoles: (roles: SwarmRole[]) => void
   onClose: () => void
   onLaunched: (count: number) => void
-  /** The same plan handed to the app instead of to panes. See `docs/agentic.md`. */
-  onDriven: (run: DriveRun) => void
+  /** The same plan handed to the app's queue instead of to panes. See `docs/agentic.md`. */
+  onDriven: (goal: Goal) => void
 }
 
 /**
@@ -148,8 +149,12 @@ export default function SwarmDialog({
     if (!plan || !lanes.length || busy) return
     setBusy(true)
     try {
+      // The QUEUE, not `startDrive`. Same plan and same loop; what the queue adds is that
+      // this survives a restart, that pressing it twice lines the second one up rather
+      // than letting two runs fight over one worktree pool, and that when it ends it
+      // records what it turned into. There is no reason left to start one un-queued.
       onDriven(
-        await api.startDrive({
+        await api.addGoal({
           cwd,
           mission,
           plan,

@@ -2,6 +2,9 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { DriveRun } from './agentic'
+// Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
+// `Goal` from there, which is a cycle at the type level only and no import at runtime.
+import type { Goal } from './goals'
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
 import type { Improvement } from './promptSchema'
@@ -1287,6 +1290,24 @@ export interface Api {
   /** Forget the finished ones. Memory only. */
   clearDrives(): Promise<number>
 
+  /**
+   * The queue a driven plan goes into rather than starting on the spot (I4).
+   *
+   * The difference from `startDrive` is everything that happens when nobody is watching:
+   * a goal is on disk, so it survives a restart; a second one waits rather than fighting
+   * the first for worktrees; and when it ends it says what it turned into. Prefer this to
+   * `startDrive` for anything a person is not about to sit and watch.
+   */
+  addGoal(req: DriveRequest): Promise<Goal>
+  listGoals(): Promise<Goal[]>
+  /** Stop it, whether it is running or still in the line. */
+  cancelGoal(id: string): Promise<boolean>
+  /** Put a finished, cancelled or interrupted goal back in the line, keeping its attempts. */
+  retryGoal(id: string): Promise<boolean>
+  /** Drop one finished goal from the file. */
+  removeGoal(id: string): Promise<boolean>
+  clearGoals(): Promise<number>
+
   listHistory(): Promise<HistoryEntry[]>
   searchHistory(query: string): Promise<HistoryHit[]>
   readHistory(id: string): Promise<string>
@@ -1425,6 +1446,7 @@ export interface Api {
   onSessions(cb: (sessions: Session[]) => void): () => void
   /** A driven run moved: a lane changed state, or its progress line changed. */
   onDrive(cb: (run: DriveRun) => void): () => void
+  onGoals(cb: (goals: Goal[]) => void): () => void
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void

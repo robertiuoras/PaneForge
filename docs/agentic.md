@@ -5,10 +5,11 @@ that can handle my development". This is the plan and the reasoning behind it. `
 section I is the same work as checkable items; this file is why each one is shaped the way
 it is.
 
-**I1, I2 and I3 landed on 2026-08-07** — one awaited headless turn, the supervisor that
-drives a split plan with no panes, and the gate that refuses to call a lane finished
-unheard. What they turned out to cost, and the four traps found building them, are in
-`docs/design-notes.md` under *The app can run a lane itself*. I4–I7 below are still plans.
+**I1–I4 landed on 2026-08-07** — one awaited headless turn, the supervisor that drives a
+split plan with no panes, the gate that refuses to call a lane finished unheard, and the
+queue that lets a goal outlive the window it was asked in. What they turned out to cost,
+and the traps found building them, are in `docs/design-notes.md` under *The app can run a
+lane itself*. I5–I7 below are still plans.
 
 ## What the word has to mean here
 
@@ -120,10 +121,17 @@ reviewer agent over the diff. Pass → mark ready. Fail → hand the failure bac
 lane, at most twice. Fail again → the lane says so on the board and stops. S–M on top of
 I1, and this is the phase that makes unattended running defensible.
 
-**I4 — the goal queue.** A goal outlives a session: it is written down, it survives a
-restart, and it carries its lanes, its attempts and its outcomes. This is also where
-`promptArchive`'s null `outcome` finally gets a value, because the app now knows what an
-ask turned into. M.
+**I4 — the goal queue. BUILT.** A goal outlives a session: it is written down, it survives
+a restart, and it carries its lanes, its attempts and its outcomes. This is also where
+`promptArchive`'s null `outcome` finally got a value, because the app now knows what an ask
+turned into. `main/goals.ts` + `shared/goals.ts`, `npm run test:goals`.
+
+The decision that was not in the plan and turned out to matter: **a goal the app was
+running when it died is a fourth outcome, not a failure and not something to re-run.** The
+agents are gone either way, but the branch is not — it holds whatever had been written by
+then. Marking that `done` would put unreviewed work on a board that says "ready to review",
+and re-queueing it by itself would set a second agent going in a worktree nobody has
+looked at. So it says `interrupted` and waits for a press.
 
 **I5 — the budget scheduler.** Lanes start when there is worktree AND token headroom.
 Reads the 5-hour window, spends the cheap model on the cheap phases (planning and review

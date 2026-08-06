@@ -284,7 +284,7 @@ download, and the only one that sends audio off the device).
 
 ## The app can run a lane itself
 
-`docs/agentic.md` is the plan; I1–I3 of it are built. A lane the app drives is a **headless
+`docs/agentic.md` is the plan; I1–I4 of it are built. A lane the app drives is a **headless
 CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 `readsBusy()`. Panes stay ptys. It produces a branch and a diff and **merges nothing** —
 `lane.mjs ready` is still a person's word.
@@ -309,8 +309,26 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
   They are detached, in their own process group, and are not ptys — `strays.ts` has never
   heard of them, so without that line the app leaves an agent editing a worktree with
   nothing left to stop it.
+- **A goal outlives the window** (I4, `main/goals.ts` + `shared/goals.ts`). Drive it queues
+  one rather than starting it on the spot: it is in `goals.json` under userData, written
+  through a temp file and a rename, and **one runs at a time** — a second press lines up
+  behind the first instead of handing two runs the same worktree pool.
+  - **A goal caught running by a restart is `interrupted`, never `done` and never re-run
+    by itself.** Its agents died with the process, so the branch holds whatever had been
+    written by then; calling that a pass puts unread work on a board saying "ready to
+    review", and re-queueing it starts a second agent over a worktree nobody has looked at.
+    Retry is a press.
+  - **The queue is what finally fills `promptArchive`'s `outcome`.** `recordOutcome` stamps
+    the row an ask already has — `<repo> <branch@sha> verified, N files` — and never
+    creates one, because that archive is fed from bytes on their way to a pty and a mission
+    typed into a dialog is not one of those.
+  - One lane throwing may not take the run with it: `driveLane` is wrapped, and before that
+    a malformed plan reached `void drive(...)` as an unhandled rejection that killed every
+    other lane and left them reading `working` for ever.
 - `npm run test:agentic` spawns real stubs into real repositories, including one that hangs
   and must be killed and one that fails its own gate and then fixes it. No CLI needed.
+  `npm run test:goals` does the same for the queue: a goal read back after a simulated
+  kill, and a second goal that starts because the first one ended.
 
 ## Checks
 
@@ -337,6 +355,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 | `npm run test:grid` | layout arithmetic, no window needed |
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
+| `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
 | `npm run test:copymode` | keyboard copy mode arithmetic |

@@ -316,6 +316,34 @@ export function recordPrompt(
   if (lines > MAX_ENTRIES * 1.5) compact(byHash)
 }
 
+/**
+ * Say what an ask turned into.
+ *
+ * `out` has been null for every row this app has ever written, because until the goal
+ * queue (I4, `main/goals.ts`) nothing in the app knew what an ask became - the outcomes
+ * that did appear all came from an external archive that stamps its own. A finished goal
+ * knows: it has the repo, the branches its lanes produced, and what the gate made of them.
+ *
+ * It does not create a row. An ask this archive has never seen is a miss, not a new entry:
+ * `recordPrompt` is fed from the bytes on their way to a pty, and inventing an entry here
+ * would mean a mission typed into a dialog quietly became something the recall chip could
+ * warn about later.
+ */
+export function recordOutcome(text: string, outcome: string): boolean {
+  const tokens = promptTokens(text)
+  if (tokens.length < MIN_PROMPT_TOKENS) return false
+
+  const hash = promptHash(text)
+  const byHash = load()
+  const prev = byHash.get(hash)
+  if (!prev) return false
+
+  const entry: Entry = { ...prev, out: outcome.slice(0, TEXT_CAP), l: new Date().toISOString() }
+  byHash.set(hash, entry)
+  append(entry)
+  return true
+}
+
 /** Drop the in-memory copy. Only for the tests, which point `userData` somewhere else. */
 export function resetPromptArchive(): void {
   cache = null

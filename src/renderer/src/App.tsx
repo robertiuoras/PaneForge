@@ -2932,13 +2932,21 @@ export default function App(): JSX.Element {
             patchConfig({ grid: true })
             flash(`${n} agents started on the mission.`)
           }}
-          onDriven={(run) => {
+          onDriven={(goal) => {
             setSwarmStart(null)
             setSwarm(false)
             // Straight to Fleet: a driven run has no panes, so closing the dialog with
             // only a toast would leave the work with nowhere on screen to be.
             setFleet(true)
-            flash(`Driving ${run.lanes.length} lanes. Nothing merges by itself.`)
+            const lanes = goal.plan.lanes.filter((l) => l.enabled !== false).length
+            // Two different sentences on purpose. "Queued" that reads like "started" is
+            // how somebody comes back in an hour to a goal that has not moved and thinks
+            // the feature is broken, when it was politely waiting its turn.
+            flash(
+              goal.state === 'running'
+                ? `Driving ${lanes} lanes. Nothing merges by itself.`
+                : `Queued ${lanes} lanes. It starts when the goal in front of it finishes.`
+            )
           }}
         />
       )}

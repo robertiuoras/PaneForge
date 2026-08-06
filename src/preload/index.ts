@@ -19,6 +19,7 @@ import type {
   TaskItem,
   UpdateState
 } from '../shared/types'
+import type { Goal } from '../shared/goals'
 import type { PresenceStatus } from '../shared/discordRpc'
 
 const api: Api = {
@@ -48,6 +49,12 @@ const api: Api = {
   stopAllDrives: () => ipcRenderer.invoke('drive:stopAll'),
   listDrives: () => ipcRenderer.invoke('drive:list'),
   clearDrives: () => ipcRenderer.invoke('drive:clear'),
+  addGoal: (req: DriveRequest) => ipcRenderer.invoke('goal:add', req),
+  listGoals: () => ipcRenderer.invoke('goal:list'),
+  cancelGoal: (id: string) => ipcRenderer.invoke('goal:cancel', id),
+  retryGoal: (id: string) => ipcRenderer.invoke('goal:retry', id),
+  removeGoal: (id: string) => ipcRenderer.invoke('goal:remove', id),
+  clearGoals: () => ipcRenderer.invoke('goal:clear'),
   startSplit: (req: SplitRequest) => ipcRenderer.invoke('sessions:split', req),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -184,6 +191,11 @@ const api: Api = {
     const h = (_e: unknown, run: DriveRun) => cb(run)
     ipcRenderer.on('drive:changed', h)
     return () => ipcRenderer.off('drive:changed', h)
+  },
+  onGoals: (cb) => {
+    const h = (_e: unknown, goals: Goal[]) => cb(goals)
+    ipcRenderer.on('goals:changed', h)
+    return () => ipcRenderer.off('goals:changed', h)
   },
   onConfig: (cb) => {
     const h = (_e: unknown, config: Config) => cb(config)

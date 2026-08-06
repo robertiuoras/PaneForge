@@ -686,8 +686,41 @@ app leaves an agent editing a worktree with nothing left that can stop it. It is
 from `before-quit` and again from `hardExit`, because the second path does not go through
 the first.
 
-Not built: the goal queue, the budget scheduler, hotspot locks and unattended mode (I4-I7).
-And by decision, never: this merges nothing. `lane.mjs ready` stays a person's word.
+**A goal outlives the window (I4).** Everything up to I3 lived in a Map: the ask, the plan,
+which lanes passed, which branch was sitting there reviewed and unmerged. That is fine for a
+loop somebody is watching and useless for one that is meant to run while nobody is. So Drive
+it queues a goal instead of starting a run - `goals.json` under userData, written to a temp
+file and renamed, because the read happens once at startup and a half-written file at that
+moment is the whole queue gone.
+
+Four things it took to be honest rather than merely persistent:
+
+- **One goal at a time.** Not a token decision - `MAX_PARALLEL` already caps the lanes
+  inside a run at three, and a second goal starting beside it quietly makes that six against
+  one five-hour window and one worktree pool. I5 is what turns the constant into a reading
+  of the real budget.
+- **A goal the process died holding is `interrupted`.** A fourth outcome, deliberately: its
+  agents are gone, but the branch is not, and it holds whatever had been written when they
+  were killed. `done` would put unread work under a heading that says ready to review;
+  automatically re-queueing it would start a second agent in a worktree nobody has looked
+  at, which is the one thing lanes exist to prevent. Retry is a press.
+- **`recordOutcome` stamps, it never creates.** The prompt archive is fed from the bytes on
+  their way to a pty; an ask it has never seen is a miss, not a new row. Inventing one would
+  mean a mission typed into a dialog quietly became something the recall chip warns about
+  later.
+- **The debounce may not eat a state change.** Lane notes move on every tool call, so the
+  file is written on a 500ms timer - but every transition calls `flushGoals()` first, and
+  the recovery pass writes back immediately rather than returning a corrected list nobody
+  persisted.
+
+Found by building the test rather than by reading the code: a lane that throws - a malformed
+plan was enough - escaped `driveLane` through `Promise.all` into the `void drive(...)` in
+`startDrive`, as an unhandled rejection. The whole run died, the other lanes stopped
+mid-work, and the board went on showing them as `working` for ever because nothing was left
+to move them. `driveLane` is wrapped now and the lane fails alone.
+
+Not built: the budget scheduler, hotspot locks and unattended mode (I5-I7). And by decision,
+never: this merges nothing. `lane.mjs ready` stays a person's word.
 
 ## Checks
 

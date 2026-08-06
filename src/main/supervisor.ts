@@ -209,7 +209,23 @@ async function drive(run: DriveRun, input: DriveInput, claim: ClaimLane): Promis
       if (run.stopping) return
       const i = next++
       if (i >= queue.length) return
-      await driveLane(run, run.lanes[i], input, claim, claimed)
+      const lane = run.lanes[i]
+      try {
+        await driveLane(run, lane, input, claim, claimed)
+      } catch (e) {
+        // One lane throwing must not take the run with it. Everything inside `driveLane`
+        // that talks to a process already handles its own failure, so what reaches here
+        // is a programming error - a malformed plan, a claim that threw - and before this
+        // it escaped through `Promise.all` into the `void drive(...)` in `startDrive` as
+        // an unhandled rejection: the whole run died, the other lanes stopped mid-work,
+        // and the board kept showing them as `working` for ever because nothing was left
+        // to move them. Found by `test:goals` handing the supervisor a plan whose lanes
+        // had no `owns`.
+        lane.state = 'failed'
+        lane.note = e instanceof Error ? e.message : String(e)
+        lane.endedAt = Date.now()
+        changed(run)
+      }
     }
   }
 

@@ -638,8 +638,15 @@ pull request and so does this; the win is that nothing needs typing in the middl
       All three are covered by `npm run test:agentic`: 66 assertions, ~4s, real child
       processes into real git repositories, no coding CLI needed or startable.
 
-- [ ] **I4. The goal queue.** A goal survives a restart and carries its lanes, attempts and
-      outcomes. Also where `promptArchive`'s null `outcome` finally gets a value. **M**
+- [x] **I4. The goal queue.** SHIPPED 2026-08-07. `shared/goals.ts` (the arithmetic:
+      one-at-a-time, the restart recovery, the outcome string, pruning) and `main/goals.ts`
+      (`goals.json` written through a temp file and a rename, the pump, the stamp). Drive it
+      queues rather than starts; a goal caught running by a restart is `interrupted` and
+      waits for a press; `promptArchive.outcome` is no longer null. `npm run test:goals` —
+      48 assertions including two real stub agents driven into real git repositories, where
+      the second goal is started by the first one ending. Also fixed while proving it: one
+      lane throwing reached `void drive(...)` as an unhandled rejection and killed the whole
+      run.
 - [ ] **I5. Budget-aware scheduling.** Lanes start on worktree AND token headroom against
       the 5-hour window; cheap phases on cheap models; refuse rather than degrade. **S**
 - [ ] **I6. Hotspot ownership.** Worktrees stop two agents editing one file; they do not
