@@ -305,6 +305,10 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
   every tool call overwrites it.
 - The budget timer is armed before the first await, not in a `finally`. Two retries then
   stop. Three lanes at a time, 900ms apart.
+- **Quitting kills the driven agents** (`stopAllDrives`, on `before-quit` AND `hardExit`).
+  They are detached, in their own process group, and are not ptys — `strays.ts` has never
+  heard of them, so without that line the app leaves an agent editing a worktree with
+  nothing left to stop it.
 - `npm run test:agentic` spawns real stubs into real repositories, including one that hangs
   and must be killed and one that fails its own gate and then fixes it. No CLI needed.
 

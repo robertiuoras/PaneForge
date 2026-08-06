@@ -2637,6 +2637,9 @@ function installStagedMacUpdateOnQuit(): void {
 function hardExit(): void {
   updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
   installStagedMacUpdateOnQuit()
+  // The exit that does NOT go through before-quit, so it needs its own line: a driven
+  // agent is detached and in its own process group, and nothing below reaches it.
+  stopAllDrives()
   // The one thing shutdown() cannot reach: the ConPTY console hosts are OUR children,
   // not the agents', so no taskkill of an agent tree names them. This runs after we are
   // gone and only touches consoles whose parent is gone with us. See consoles.ts.
@@ -2658,6 +2661,12 @@ app.on('before-quit', () => {
   // the work between them.
   manager.shutdown()
   stopInstalls()
+  // A driven lane's agent is a detached process in its own group - nothing joins it to
+  // this one once we are gone, and `strays.ts` has never heard of it because it is not a
+  // pty. Leaving one behind means an agent editing a worktree with nobody watching it and
+  // no way left to stop it. `stopAllDrives` kills the tree, and it is cheap when there is
+  // nothing to kill.
+  stopAllDrives()
   installStagedMacUpdateOnQuit()
 })
 app.on('will-quit', () => {

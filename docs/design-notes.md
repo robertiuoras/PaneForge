@@ -678,6 +678,14 @@ concurrency cap, it has a five-hour token window, and 3-5 sustained agents is wh
 window carries - staggered 900ms apart because N `git worktree add` on one repository is a
 fight over one index lock.
 
+**What a driven lane leaves running is our problem too.** A driven agent is spawned
+detached, in its own process group - which is what makes the tree kill work and what makes
+it survive us. It is not a pty, so `strays.ts` has never heard of it and the quit-time
+`taskkill` walk does not name it. Without `stopAllDrives()` on the way out, quitting the
+app leaves an agent editing a worktree with nothing left that can stop it. It is called
+from `before-quit` and again from `hardExit`, because the second path does not go through
+the first.
+
 Not built: the goal queue, the budget scheduler, hotspot locks and unattended mode (I4-I7).
 And by decision, never: this merges nothing. `lane.mjs ready` stays a person's word.
 
