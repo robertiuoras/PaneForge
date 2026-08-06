@@ -724,7 +724,33 @@ never: this merges nothing. `lane.mjs ready` stays a person's word.
 
 ## Checks
 
-`npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
+`npm run typecheck` before committing, and `npm test`.
+
+`npm test` is `scripts/test-all.mjs`: the 34 checks that need no window, no network, no
+real agent CLI and no minute of wall clock, run cheapest-first, 30.1s for the lot on the
+Mac. It is not a new set of tests - every one of them was already in `package.json` under
+its own `test:*` name and had been for weeks. What was missing was a script called
+exactly `test`, and that name is load-bearing: `gateCommands` in `src/main/agentGate.ts`
+resolves its suite step with `pick(cfg.gate?.suite, 'test', 'no test script in this
+repo')`, so on the repo with sixty tests on it the gate that judges a lane **the app
+drove itself** ran diffstat, typecheck, *skipped*, reviewer. The gate reported that
+honestly - `skipped` is printed by name and never reads as a pass - and nobody read it.
+That is the part worth remembering: a pipeline can be scrupulous about naming a step it
+did not run and still be a pipeline nobody is running that step in. Check what the steps
+resolved to against the real repo, not that the reporting is correct.
+
+Which tests belong in it is a cost question, not a taste one. A driven lane waits on this
+before a reviewer ever sees the diff, so the entry price is that a test catches its
+regression by ARITHMETIC rather than by somebody looking at a pane. The slow ones
+(`test:strays` spawns real orphans, `test:lanes`, `test:agentic`, `test:goals`,
+`test:remote`), the ones that need a real window (`test:view`, `test:stashdrag`,
+`test:activate`, `test:improveview`) and the ones that need the network
+(`test:discordbrand`, `mac-update-test --live`) stay out, and the header of
+`test-all.mjs` names each with where to run it instead. A failure prints that test's
+whole output rather than a summary, because the reader is as often the agent being told
+its lane failed as it is a person.
+
+`npm run smoke` exercises the pty layer.
 `npm run test:restore` covers what a reopened desk is made of: which conversation each
 pane goes back into (never another pane's, never one older than the pane) and what the
 dialog says it was doing. `npm run test:consoles` pins the sweep that kills console hosts

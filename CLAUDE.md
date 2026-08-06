@@ -80,6 +80,12 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   `rerere` is on, and the retry timer re-tries recorded conflicts every minute.
 - Release notes come from Conventional Commit subjects between version tags
   (`scripts/release-notes.mjs`, template `.github/release-notes.md`). `npm run test:notes`.
+  **Only `feat:`, `fix:` and `perf:` reach the page** — the release body is public and is
+  read by somebody deciding whether to take the update, while a `docs:` subject here is
+  written for the next session in this repo. Everything else, and every subject with no
+  conventional prefix, is dropped; a release carrying only those falls back to the
+  commit-history link rather than heading an empty section. There is no catch-all
+  heading, and adding one back is what made the pages read like a diary.
 - Actions and this machine can BOTH publish a release. The duplicate installers are
   harmless; `latest.yml` is not, because the loser's feed names the winner's file.
   `reconcileFeed` on the retry timer compares the feed to the asset it names and puts ours
