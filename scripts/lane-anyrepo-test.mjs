@@ -119,15 +119,35 @@ function project(name, { lanes, version } = {}) {
   git(second.dir, 'add', '-A')
   git(second.dir, 'commit', '-qm', 'feat: a thing')
 
-  // `feat:` - so the release reads a MINOR off its own range. The bump is not a default
-  // any more; it is what the commits about to ship say they are.
+  // `feat:`, and below 1.0 that is a PATCH: the release still reads its bump off its own
+  // range, and `nextVersion` refuses to spend a minor on it while the major is 0.
   const done = lane(repo, 'ready', '--session', 'ship-2')
-  ok('a repo that asked for versions cuts one', git(repo, 'tag') === 'v0.2.0', `${git(repo, 'tag')} / ${done.out}`)
+  ok('a repo that asked for versions cuts one', git(repo, 'tag') === 'v0.1.1', `${git(repo, 'tag')} / ${done.out}`)
   ok(
     'and the bump is in package.json',
-    JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version === '0.2.0'
+    JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version === '0.1.1'
   )
-  ok('the release commit is on main', git(repo, 'log', '-1', '--pretty=%s') === 'release: v0.2.0')
+  ok('the release commit is on main', git(repo, 'log', '-1', '--pretty=%s') === 'release: v0.1.1')
+}
+
+// ------------------------------------------- the one bump a commit may still ask for below 1.0
+
+{
+  const { repo } = project('breaker', { lanes: { release: 'version' }, version: '0.1.0' })
+
+  JSON.parse(lane(repo, 'claim', '--session', 'brk-1', '--cwd', repo).out)
+  const second = JSON.parse(lane(repo, 'claim', '--session', 'brk-2', '--cwd', repo).out)
+  writeFileSync(join(second.dir, 'feature.js'), 'export const x = 1\n')
+  git(second.dir, 'add', '-A')
+  git(second.dir, 'commit', '-qm', 'feat!: a thing that breaks the old one')
+
+  const done = lane(repo, 'ready', '--session', 'brk-2')
+  ok('a breaking change still moves the minor', git(repo, 'tag') === 'v0.2.0', `${git(repo, 'tag')} / ${done.out}`)
+  ok(
+    'and it stops there - no 1.0.0 off a commit subject',
+    !git(repo, 'tag').includes('v1.0.0'),
+    git(repo, 'tag')
+  )
 }
 
 // ------------------------------------------------- and the same repo, carrying only fixes

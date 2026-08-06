@@ -58,7 +58,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
 import { mergeImportConflicts } from './lane-merge.mjs'
-import { bumpFor, hasChanges, notes } from './release-notes.mjs'
+import { bumpFor, hasChanges, nextVersion, notes } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -1711,20 +1711,11 @@ function ship(kind, session) {
 
     const pkgPath = join(MAIN, 'package.json')
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
-    const [maj, min, pat] = pkg.version.split('.').map(Number)
     // "auto" is what every unattended release asks for: the commits about to go out say
     // what they are, so the bump is read off them rather than defaulted to patch. A bump
-    // named on the command line is always obeyed as given.
-    let bump = kind === 'auto' ? bumpFor(MAIN) : kind
-    // Below 1.0, a breaking change is a minor. Cutting 1.0.0 is a claim about the product
-    // and only `ship major`, typed on purpose, is allowed to make it.
-    if (bump === 'major' && maj === 0 && kind === 'auto') bump = 'minor'
-    const next =
-      bump === 'major'
-        ? `${maj + 1}.0.0`
-        : bump === 'minor'
-          ? `${maj}.${min + 1}.0`
-          : `${maj}.${min}.${pat + 1}`
+    // named on the command line is always obeyed as given - and below 1.0 an automatic one
+    // only ever moves the patch, which is `nextVersion`'s rule and documented there.
+    const next = nextVersion(pkg.version, kind === 'auto' ? bumpFor(MAIN) : kind, kind !== 'auto')
 
     const unreleased = commitsSinceVersion(pkg.version)
     if (unreleased === 0) {

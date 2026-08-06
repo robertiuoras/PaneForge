@@ -89,7 +89,9 @@ identify(beta)
   const second = JSON.parse(lane(alpha, 'claim', '--session', 'a-2', '--cwd', alpha).out)
   writeFileSync(join(second.dir, 'feature.js'), 'export const x = 1\n')
   git(second.dir, 'add', '-A')
-  git(second.dir, 'commit', '-qm', 'feat: a thing worth a minor')
+  // `!`, because below 1.0 a plain `feat:` is a patch (see nextVersion) and this test needs
+  // a real minor to have happened before it can prove B does not repeat it.
+  git(second.dir, 'commit', '-qm', 'feat!: a thing worth a minor')
   const done = lane(alpha, 'ready', '--session', 'a-2')
   ok('machine A cuts the release its commits asked for', git(alpha, 'tag') === 'v0.2.0', `${git(alpha, 'tag')} / ${done.out}`)
 }

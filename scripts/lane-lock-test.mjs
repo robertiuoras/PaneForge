@@ -138,8 +138,9 @@ git(claimed.dir, 'add', '-A')
 git(claimed.dir, 'commit', '-qm', 'feat: something to release')
 
 const r = lane('ready', '--session', 'builder')
-// `feat:`, so the bump the release reads off its own range is a minor - see bumpFor().
-ok('the release went out', /Released v0\.1\.0/.test(r.out), `${r.out}\n${r.err ?? ''}`)
+// A patch, not a minor: below 1.0 an automatic release only moves the patch, whatever the
+// subjects say - see nextVersion() in release-notes.mjs.
+ok('the release went out', /Released v0\.0\.2/.test(r.out), `${r.out}\n${r.err ?? ''}`)
 
 const beats = readFileSync(beatsPath, 'utf8').trim().split('\n').filter(Boolean).map(Number)
 ok('the build asked GitHub more than once', beats.length >= 2, JSON.stringify(beats))

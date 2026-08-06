@@ -14,9 +14,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const { bumpFor, changeLog, hasChanges, notes, rangeFor, versionTags, parse } = await import(
-  './release-notes.mjs'
-)
+const { bumpFor, changeLog, hasChanges, nextVersion, notes, rangeFor, versionTags, parse } =
+  await import('./release-notes.mjs')
 
 let failures = 0
 function check(name, cond, detail = '') {
@@ -155,6 +154,20 @@ commit('fix(theme): contrast on Paper')
 check('a later fix does not undo it', bumpFor(repo) === 'minor', bumpFor(repo))
 commit('feat(remote)!: rename every session id')
 check('a bang asks for a major', bumpFor(repo) === 'major', bumpFor(repo))
+
+// 16. What a release is allowed to DO with that bump. Below 1.0 an automatic one only ever
+// moves the patch - the rule that stops v0.4.62 becoming v0.8.0 in a day (2026-08-07).
+check('below 1.0 an automatic feat: is a patch', nextVersion('0.4.62', 'minor') === '0.4.63')
+check('and a run of fixes is the same patch step', nextVersion('0.4.62', 'patch') === '0.4.63')
+check('a breaking change is the ONE bump a commit may still ask for', nextVersion('0.4.62', 'major') === '0.5.0')
+check('...and it stops at minor, it does not fall through', nextVersion('0.4.62', 'major') !== '0.4.63')
+check('a typed minor is obeyed as given', nextVersion('0.4.62', 'minor', true) === '0.5.0')
+check('a typed major cuts 1.0.0, which nothing else may', nextVersion('0.4.62', 'major', true) === '1.0.0')
+check('the patch resets on a minor', nextVersion('0.8.0', 'minor', true) === '0.9.0')
+// At 1.0 the ordinary semver reading comes back with no demotion at all.
+check('at 1.0 a feat: is a minor again', nextVersion('1.2.3', 'minor') === '1.3.0')
+check('and a breaking change is a major again', nextVersion('1.2.3', 'major') === '2.0.0')
+check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4')
 
 rmSync(root, { recursive: true, force: true })
 
