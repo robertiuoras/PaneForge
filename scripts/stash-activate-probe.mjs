@@ -47,7 +47,7 @@ const APP_SUPPORT = join(homedir(), 'Library', 'Application Support')
 const devData = join(APP_SUPPORT, 'claude-orchestrator-dev')
 const devConfig = join(devData, 'config.json')
 const liveConfig = join(APP_SUPPORT, 'claude-orchestrator', 'config.json')
-const probeLogPath = join(devData, 'activation-probe.log')
+const probeLogPath = join(devData, 'activation.log')
 
 // The pill's size, from shelfWindow.ts COLLAPSED. Only used to keep away from the LIVE
 // app's overlay - the target itself is measured, never assumed.

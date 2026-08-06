@@ -121,6 +121,8 @@ import {
   setShelfExpanded,
   setShelfTall,
   noteShelfTouch,
+  shelfDraggedAt,
+  shelfDragging,
   shelfTouchedAt,
   shelfWindowOpen,
   toggleShelf,
@@ -128,7 +130,7 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { probeLog } from './probeLog'
+import { logActivation } from './activationLog'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -491,11 +493,6 @@ function rememberBounds(): void {
  * kind of interruption.
  */
 function focusWindow(asked = false): void {
-  probeLog('focusWindow', {
-    asked,
-    visible: !!win && !win.isDestroyed() && win.isVisible(),
-    stack: new Error().stack?.split('\n').slice(1, 8).join(' | ')
-  })
   if (!asked && isGameActive()) return
   if (!alive()) return createWindow()
   const w = win!
@@ -1317,7 +1314,7 @@ ipcMain.on('recents:toPane', (_e, id: string, focus = false) => {
   send('recents:toPane', id)
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
-ipcMain.on('shelf:touch', () => noteShelfTouch('ipc:shelf:touch'))
+ipcMain.on('shelf:touch', () => noteShelfTouch())
 ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
 ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
 // Dragged by its own header. The overlay cannot move its window itself, and a pointer
@@ -2388,20 +2385,29 @@ app.whenReady().then(() => {
     const activatedAt = Date.now()
     setTimeout(() => {
       const touched = shelfTouchedAt()
-      const result = revealOnActivation({ activatedAt, quietUntil, shelfTouchedAt: touched })
-      probeLog('onActivated.decision', {
-        from,
+      const dragged = shelfDraggedAt()
+      const dragging = shelfDragging()
+      const result = revealOnActivation({
         activatedAt,
         quietUntil,
         shelfTouchedAt: touched,
-        delta: touched > 0 ? activatedAt - touched : null,
-        result
+        shelfDraggedAt: dragged,
+        shelfDragging: dragging
+      })
+      // The deltas, not just the verdict: they are the only thing that distinguished a
+      // click from a drag when this was finally measured, and they are what the next
+      // report of it should be read against. See main/activationLog.ts.
+      logActivation({
+        from,
+        result,
+        sinceTouch: touched > 0 ? activatedAt - touched : null,
+        sinceDrag: dragged > 0 ? activatedAt - dragged : null,
+        dragging
       })
       if (result) reveal()
     }, ACTIVATION_SETTLE_MS)
   }
   app.on('activate', () => {
-    probeLog('app.activate', { windows: BrowserWindow.getAllWindows().length })
     if (BrowserWindow.getAllWindows().length === 0) return createWindow()
     // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a
     // taskbar button, and it is the only way back into a copy that launched hidden -
@@ -2420,9 +2426,6 @@ app.whenReady().then(() => {
   // clicking any window of an app activates the app.
   if (process.platform === 'darwin')
     app.on('did-become-active', () => {
-      probeLog('app.did-become-active', {
-        visible: !!win && !win.isDestroyed() && win.isVisible()
-      })
       onActivated(() => {
         if (alive() && !win!.isVisible()) focusWindow(true)
       }, 'did-become-active')

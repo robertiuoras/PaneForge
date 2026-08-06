@@ -37,7 +37,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { revealOnActivation, SHELF_TOUCH_MS, ACTIVATION_SETTLE_MS } = createRequire(
+const { revealOnActivation, SHELF_TOUCH_MS, SHELF_DRAG_MS, ACTIVATION_SETTLE_MS } = createRequire(
   import.meta.url
 )(out)
 
@@ -95,6 +95,98 @@ ok(
 ok(
   'a press one millisecond older than the window does not',
   revealOnActivation({ activatedAt: T, quietUntil: 0, shelfTouchedAt: T - SHELF_TOUCH_MS - 1 })
+)
+
+// --- dragging the overlay, which is the case the touch window cannot reach ----
+//
+// These four numbers are not invented. They come off a real Mac, from
+// `scripts/stash-activate-probe.mjs` posting CGEvents at the HID tap so the window sees
+// hardware-identical input, with the decision logged on the other side:
+//
+//   click  mouseDown → mouseUp 32ms later → activation  107ms after the press
+//   drag   mouseDown → 1.6s of movement  → activation 2882ms after the drop
+//
+// That gap is the whole bug. It was reported three times and fixed twice, both times by
+// reasoning about AppKit rather than timing it, and both times the fix covered the click and
+// left the drag exactly as it was. So the measured numbers are the assertions.
+
+const MEASURED_CLICK_LAG = 107
+const MEASURED_DRAG_LAG = 2882
+
+ok(
+  'the measured CLICK lag is suppressed by the touch window alone',
+  !revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: T - MEASURED_CLICK_LAG,
+    shelfDraggedAt: 0
+  })
+)
+ok(
+  'the measured DRAG lag is NOT covered by the touch window - this is the bug',
+  MEASURED_DRAG_LAG > SHELF_TOUCH_MS
+)
+ok(
+  'the measured DRAG lag IS suppressed once the drag is known about',
+  !revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: T - MEASURED_DRAG_LAG,
+    shelfDraggedAt: T - MEASURED_DRAG_LAG
+  })
+)
+ok(
+  'the drag window has headroom over what was measured',
+  SHELF_DRAG_MS > MEASURED_DRAG_LAG
+)
+
+// A drag still in flight explains an activation however long it is held. Without this a
+// slow, careful drag outlives any fixed window there could be.
+ok(
+  'an activation during a drag never reveals, however long the drag has run',
+  !revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: T - 60_000,
+    shelfDraggedAt: T - 60_000,
+    shelfDragging: true
+  })
+)
+
+// The ordering case again, for the drag: the drop can be stamped after the activation.
+ok(
+  'a drop stamped after the activation still suppresses it',
+  !revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: 0,
+    shelfDraggedAt: T + 40
+  })
+)
+
+// And the reveal that must survive all of it: long enough after a drag, a deliberate
+// Cmd-Tab still brings the window. A suppression window that never lets go is a window
+// nobody can get back to.
+ok(
+  'a deliberate activation well after a drag still reveals',
+  revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: T - SHELF_DRAG_MS - 1,
+    shelfDraggedAt: T - SHELF_DRAG_MS - 1
+  })
+)
+
+// A press that never travelled must not borrow the drag's much longer window - that is what
+// would start swallowing the Cmd-Tabs the short window exists to protect.
+ok(
+  'a plain click is still judged on the short window',
+  revealOnActivation({
+    activatedAt: T,
+    quietUntil: 0,
+    shelfTouchedAt: T - SHELF_TOUCH_MS - 1,
+    shelfDraggedAt: T - SHELF_DRAG_MS - 1
+  })
 )
 // A Stash that has never been pressed must not read as "pressed at the epoch" and, worse,
 // must not read as a press 1970ms ago on a machine whose clock says something odd.
