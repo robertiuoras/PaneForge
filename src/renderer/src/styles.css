@@ -113,7 +113,20 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 }
 .brand-name { display: inline-flex; align-items: center; gap: 8px; }
 .app-logo { color: var(--accent); flex: none; }
-.icons { display: flex; gap: 2px; }
+.icons { display: flex; gap: 4px; }
+/* The two brand-row buttons are the only chrome in the app with no word beside them and
+   no row of siblings to widen the target - and at the shared `.icon` size they measured
+   27x21, under WCAG 2.2 AA's 24x24 minimum (2.5.8) on the short axis. A square box, sized
+   one step above Linear's dense-chrome button (--button-height 24px, --button-icon-size
+   12px, measured in the design vault), because this row is reached with a mouse from
+   anywhere in the window rather than from an adjacent control.
+   Scoped to `.brand` on purpose: `.icon` is also every pane-header button, where the
+   siblings and the header height set the size and 30px would stand the strip up. */
+.brand .icon {
+  min-width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
 .icon {
   background: none; border: none; color: var(--muted); cursor: pointer;
   padding: 4px 7px; border-radius: var(--r-sm); font-size: 13px; line-height: 1;
@@ -1254,7 +1267,9 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 /* The way in for anyone who never presses F1: the only accented button in the brand row. */
 .icon.help {
   color: var(--accent); background: var(--accent-dim);
-  border: 1px solid #8b9dff3d; font-weight: 700; min-width: 24px;
+  /* Equal specificity to `.brand .icon` and later in the file, so its own min-width would
+     otherwise win and leave the two brand buttons different sizes. */
+  border: 1px solid #8b9dff3d; font-weight: 700; min-width: 30px;
 }
 .icon.help:hover { background: #8b9dff2e; color: var(--text); }
 
