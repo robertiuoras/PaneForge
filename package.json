@@ -86,6 +86,7 @@
     "test:macupdate": "node scripts/mac-update-test.mjs",
     "test:macdownload": "node scripts/mac-download-test.mjs",
     "test:history": "node scripts/history-prune-test.mjs",
+    "test:scrollback": "node scripts/scrollback-test.mjs",
     "test:macsign": "node scripts/mac-sign-test.mjs",
     "cert:mac": "node scripts/mac-cert.mjs",
     "test:view": "node scripts/view-test.mjs",

@@ -13,7 +13,7 @@ import { ensureTrusted } from './claudeTrust'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { endAll, recordData, recordEnd, recordStart } from './history'
+import { endAll, recordData, recordEnd, recordStart, tail } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { killPaneStrays, trackStrays } from './strays'
@@ -66,6 +66,34 @@ const REPAINT_GRACE_MS = 1200
 const BUFFER_LIMIT = 400_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
 const RESET = '\x1bc'
+/**
+ * Where the old pane's output ends and this one's begins. Dim, one line, no colour of its
+ * own: it is a caption on somebody else's output, not an event.
+ *
+ * `\x1b[0m` first because the tail is cut mid-run: whatever attribute was in force at the
+ * cut would otherwise bleed into the caption and into everything the new process writes.
+ */
+const RESTORE_MARK = '\x1b[0m\r\n\x1b[2m—— above: this pane before the restart ——\x1b[0m\r\n'
+
+/**
+ * What a restored pane replays, or '' when there is nothing honest to put back.
+ *
+ * The bytes are already on disk - `history.ts` has appended every pane's raw output to
+ * `userData/history/<id>.log` since long before this - so restoring what was on screen is
+ * a read, not a new store, and it inherits that file's cap and its pruning. What was
+ * missing was only the id: a restored pane is a NEW session, so without `scrollbackId`
+ * written into the desk there is nothing joining it to the log it used to write.
+ *
+ * Two things this deliberately does not do. It does not replay into a pane that is not
+ * coming back from a desk (a fresh pane in the same folder is a fresh pane). And it does
+ * not try to be the live terminal's own scrollback: the cap is the buffer's, so what
+ * comes back is the same amount a pane already keeps in memory, not the whole day.
+ */
+function restoredTail(scrollbackId: string | undefined): string {
+  if (!scrollbackId) return ''
+  const back = tail(scrollbackId, BUFFER_LIMIT)
+  return back ? back + RESTORE_MARK : ''
+}
 /**
  * A slash command that is still running after this long is real work, not
  * housekeeping - a user-invoked skill earns the bell, /clear's hook flash (a second or
@@ -242,6 +270,10 @@ export class SessionManager extends EventEmitter {
         // The conversation this pane is actually in, so restoring reopens THAT one
         // rather than whatever happens to be newest in the folder by then.
         resumeId: resumeIdFor(s.meta.id),
+        // ...and what was on screen in it. `resumeId` restores the AGENT's memory and
+        // not one line of the terminal, which is why a pane comes back blank after an
+        // update even though it picks the conversation up mid-sentence.
+        scrollbackId: s.meta.id,
         // The port the pane's dev server was told to use, kept across the restart
         // so a server started before an update comes back on the same one.
         laneEnv: s.req.laneEnv
@@ -293,6 +325,10 @@ export class SessionManager extends EventEmitter {
       slashQuietUntil: 0,
       stallRaised: false
     }
+    // What this pane had on screen last time, put back before the new process says
+    // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
+    const back = restoredTail(req.scrollbackId)
+    if (back) live.buffer.set(back)
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)

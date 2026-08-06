@@ -185,6 +185,31 @@ export function read(id: string): string {
   }
 }
 
+/**
+ * The last `bytes` of a session's output, ANSI and all - what a restored pane replays so
+ * it does not come back blank. `read` above strips, because it answers "what was said";
+ * this one must not, because it answers "what was on screen", and the colours, the box
+ * drawing and the cursor moves ARE what was on screen.
+ *
+ * Cut on a line boundary. Slicing raw terminal bytes at an arbitrary offset lands inside
+ * an escape sequence often enough to matter, and the terminal draws the tail of it as
+ * literal text across the first line - so drop up to the first newline and start clean.
+ * Nothing is cut when the whole log is under the cap, since then there is no partial
+ * sequence to land in.
+ */
+export function tail(id: string, bytes: number): string {
+  flush()
+  try {
+    const raw = readFileSync(logFile(id), 'utf8')
+    if (raw.length <= bytes) return raw
+    const cut = raw.slice(-bytes)
+    const nl = cut.indexOf('\n')
+    return nl === -1 ? cut : cut.slice(nl + 1)
+  } catch {
+    return ''
+  }
+}
+
 export function remove(id: string): void {
   for (const f of [logFile(id), metaFile(id)]) {
     try {

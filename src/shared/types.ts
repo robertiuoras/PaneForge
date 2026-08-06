@@ -141,6 +141,12 @@ export interface StartSessionRequest {
   promptDelay?: number
   /** swarm role label, carried onto the session for the pane header */
   role?: string
+  /**
+   * The pane this one is coming back as. Written into the desk so a restart can replay
+   * what was on screen: the transcript is stored under the OLD session's id, and a
+   * restored pane is issued a new one. Only the desk sets it.
+   */
+  scrollbackId?: string
   /** filled in by the main process when the launch was moved into a worktree lane */
   lane?: string
   /** one-line explanation of the lane decision, shown as a toast after launch */
