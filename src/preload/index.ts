@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   Api,
   Config,
+  DriveRequest,
+  DriveRun,
   GameModeStatus,
   InstallEvent,
   RecentItem,
@@ -41,6 +43,11 @@ const api: Api = {
   startSwarm: (req: SwarmRequest) => ipcRenderer.invoke('sessions:swarm', req),
   planSplit: (req: { cwd: string; mission: string; agent?: string }) =>
     ipcRenderer.invoke('sessions:planSplit', req),
+  startDrive: (req: DriveRequest) => ipcRenderer.invoke('drive:start', req),
+  stopDrive: (id: string) => ipcRenderer.invoke('drive:stop', id),
+  stopAllDrives: () => ipcRenderer.invoke('drive:stopAll'),
+  listDrives: () => ipcRenderer.invoke('drive:list'),
+  clearDrives: () => ipcRenderer.invoke('drive:clear'),
   startSplit: (req: SplitRequest) => ipcRenderer.invoke('sessions:split', req),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -172,6 +179,11 @@ const api: Api = {
     const h = (_e: unknown, sessions: Session[]) => cb(sessions)
     ipcRenderer.on('sessions:changed', h)
     return () => ipcRenderer.off('sessions:changed', h)
+  },
+  onDrive: (cb) => {
+    const h = (_e: unknown, run: DriveRun) => cb(run)
+    ipcRenderer.on('drive:changed', h)
+    return () => ipcRenderer.off('drive:changed', h)
   },
   onConfig: (cb) => {
     const h = (_e: unknown, config: Config) => cb(config)

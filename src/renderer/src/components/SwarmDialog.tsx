@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { modelLabel, modelValue, supportsModel } from '@shared/agents'
-import type { Project, SplitPlan, SwarmRole } from '@shared/types'
+import type { DriveRun, Project, SplitPlan, SwarmRole } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Segmented } from './Controls'
@@ -33,6 +33,8 @@ interface Props {
   onSaveRoles: (roles: SwarmRole[]) => void
   onClose: () => void
   onLaunched: (count: number) => void
+  /** The same plan handed to the app instead of to panes. See `docs/agentic.md`. */
+  onDriven: (run: DriveRun) => void
 }
 
 /**
@@ -58,7 +60,8 @@ export default function SwarmDialog({
   initial,
   onSaveRoles,
   onClose,
-  onLaunched
+  onLaunched,
+  onDriven
 }: Props): JSX.Element {
   const [cwd, setCwd] = useState(initial?.cwd ?? projects[0]?.path ?? '')
   const [mission, setMission] = useState(initial?.mission ?? '')
@@ -127,6 +130,33 @@ export default function SwarmDialog({
         model: defaultModels[worker || usable[0]?.id || ''] || undefined
       })
       onLaunched(started.length)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * The same plan, run by the app.
+   *
+   * Deliberately the second button rather than a mode of its own: the plan, the lanes,
+   * the briefs and the contracts are identical, and the only thing being chosen here is
+   * whether a person watches four terminals or the app does. It returns the moment the
+   * run exists - the work is measured in tens of minutes and the progress is on the
+   * Fleet board, not in a dialog somebody has to keep open.
+   */
+  const driveSplit = async (): Promise<void> => {
+    if (!plan || !lanes.length || busy) return
+    setBusy(true)
+    try {
+      onDriven(
+        await api.startDrive({
+          cwd,
+          mission,
+          plan,
+          agent: (worker || usable[0]?.id) as never,
+          model: defaultModels[worker || usable[0]?.id || ''] || undefined
+        })
+      )
     } finally {
       setBusy(false)
     }
@@ -383,7 +413,7 @@ export default function SwarmDialog({
                 <code>.paneforge/MEMORY.md</code> first.
               </>
             ) : (
-              'Each lane opens in its own worktree on its own branch. Merge them from the lane strip when they are done.'
+              'Launch opens a pane per lane. Drive runs them with no panes - each lane verified before it is called done. Neither ever merges.'
             )}
           </span>
           <button className="ghost" onClick={onClose}>
@@ -394,9 +424,19 @@ export default function SwarmDialog({
               {busy ? 'Starting...' : `Launch ${chosen.length} agents`}
             </button>
           ) : (
-            <button className="primary" disabled={!lanes.length || busy} onClick={launchSplit}>
-              {busy ? 'Starting...' : `Launch ${lanes.length} lanes`}
-            </button>
+            <>
+              <button
+                className="ghost"
+                disabled={!lanes.length || busy}
+                title="No panes. The app runs each lane, verifies it, and leaves you a branch to review."
+                onClick={driveSplit}
+              >
+                {busy ? 'Starting...' : 'Drive it'}
+              </button>
+              <button className="primary" disabled={!lanes.length || busy} onClick={launchSplit}>
+                {busy ? 'Starting...' : `Launch ${lanes.length} lanes`}
+              </button>
+            </>
           )}
         </div>
       </div>

@@ -620,17 +620,24 @@ and is missing the four things that turn those into a loop — an awaited headle
 supervisor, a verification gate, and a budget. Every product in the category stops at a
 pull request and so does this; the win is that nothing needs typing in the middle.
 
-- [ ] **I1. One headless turn, awaited.** `agentRun.ts`: spawn a CLI headless in a cwd with
-      a prompt, parse `--output-format stream-json`, resolve
-      `{ text, toolCalls, tokens, exit, diffstat }`. Hard wall-clock budget and a kill. **M**
-      — the foundation for everything below, and on its own it is the first thing in this
-      app that can run an agent without a pane.
-- [ ] **I2. The supervisor.** Drive the plan `split.ts` already produces: claim a lane per
-      brief, run I1 in each, poll, surface the result on Fleet. **M** — the app finishes
-      what Swarm today only starts.
-- [ ] **I3. The gate.** Per lane: typecheck → suite → reviewer agent over the diff → mark
-      ready. Two retries with the failure handed back, then stop and say so. **S–M** — this
-      is what makes running unattended defensible rather than optimistic.
+- [x] **I1. One headless turn, awaited.** Shipped 2026-08-07. `shared/agentic.ts` reads
+      the stream, `main/agentRun.ts` spawns it and resolves
+      `{ text, toolCalls, tokens, exit, diffstat }` however the turn ended - including
+      `budget` (we killed it) and `silent` (exited 0 having said nothing). The first thing
+      in this app that can run an agent with no pane.
+- [x] **I2. The supervisor.** Shipped 2026-08-07. `main/supervisor.ts` drives the plan
+      `split.ts` already produces: a worktree per brief, three lanes at a time, progress on
+      the Fleet board, one stop switch. Started by **Drive it**, beside Launch in Swarm's
+      Split tab.
+- [x] **I3. The gate.** Shipped 2026-08-07. `main/agentGate.ts`: diffstat → typecheck →
+      the repo's own suite → a reviewer agent over the patch, two retries with the failure
+      handed back, then stop and say so. It fails CLOSED - a reviewer that timed out or
+      answered prose has not passed the lane - and a missing check reads as *skipped*,
+      never as a pass.
+
+      All three are covered by `npm run test:agentic`: 52 assertions, ~4s, real child
+      processes into real git repositories, no coding CLI needed or startable.
+
 - [ ] **I4. The goal queue.** A goal survives a restart and carries its lanes, attempts and
       outcomes. Also where `promptArchive`'s null `outcome` finally gets a value. **M**
 - [ ] **I5. Budget-aware scheduling.** Lanes start on worktree AND token headroom against

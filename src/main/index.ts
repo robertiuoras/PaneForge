@@ -42,6 +42,16 @@ import { which } from './which'
 import { cancelImprove, improve, resolveEngine, runCli } from './improve'
 import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
 import { cancelResearch, research } from './researchRun'
+import type { ClaimLane } from './supervisor'
+import {
+  clearFinishedDrives,
+  listDrives,
+  onDriveChange,
+  startDrive,
+  stopAllDrives,
+  stopDrive
+} from './supervisor'
+import type { DriveRequest, DriveRun } from '../shared/types'
 import { buildContextPack } from './contextPack'
 import { stage } from '../shared/capability'
 import { firstExistingVault, loadCapabilities } from './knowledge'
@@ -999,6 +1009,55 @@ ipcMain.handle('sessions:split', async (_e, req: SplitRequest): Promise<Session[
   }
   return out
 })
+
+// --- the app drives the plan itself ----------------------------------------
+//
+// Split spawns panes and never looks again. This runs the same plan with no panes: one
+// headless agent per lane, verified before it is called finished, and never merged.
+// `docs/agentic.md` is the reasoning; `main/supervisor.ts` is the loop.
+//
+// The claim is passed IN rather than imported by the supervisor, because the list of
+// worktrees already in use is the session list, which lives here. A driven lane is taken
+// out of the same pool a pane would have used - two agents cannot both hold `-a`,
+// whether or not either of them has a window.
+// Built per run rather than once, so two drives in two repositories cannot end up
+// claiming out of each other's pool - the repo is captured, never a module-level latch.
+const claimForDrive =
+  (repo: string): ClaimLane =>
+  async (_name, taken) => {
+    const busy = [
+      ...manager
+        .list()
+        .filter((s) => s.status !== 'exited')
+        .map((s) => s.cwd),
+      ...taken
+    ]
+    const lane = await resolveLane(repo, busy)
+    // `resolveLane` hands back the folder it was given when the pool is full. A driven
+    // lane sharing the main checkout with whoever is sitting in it is the one thing
+    // lanes exist to prevent, so that is a refusal, not a fallback.
+    return lane.cwd === repo ? null : { cwd: lane.cwd, branch: lane.branch ?? '' }
+  }
+
+onDriveChange((run) => send('drive:changed', run))
+
+ipcMain.handle('drive:start', (_e, req: DriveRequest): DriveRun => {
+  return startDrive(
+    {
+      cwd: req.cwd,
+      mission: req.mission,
+      plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
+      agent: req.agent ?? 'claude',
+      model: req.model,
+      skipReview: req.skipReview
+    },
+    claimForDrive(req.cwd)
+  )
+})
+ipcMain.handle('drive:stop', (_e, id: string) => stopDrive(id))
+ipcMain.handle('drive:stopAll', () => stopAllDrives())
+ipcMain.handle('drive:list', () => listDrives())
+ipcMain.handle('drive:clear', () => clearFinishedDrives())
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {

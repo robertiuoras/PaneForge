@@ -3,8 +3,12 @@
 Written 2026-08-07, from the question "how can I eventually make PaneForge an agentic app
 that can handle my development". This is the plan and the reasoning behind it. `TODO.md`
 section I is the same work as checkable items; this file is why each one is shaped the way
-it is. Nothing here is built yet — the day a phase lands, its section moves into
-`docs/design-notes.md` with the measurements it produced.
+it is.
+
+**I1, I2 and I3 landed on 2026-08-07** — one awaited headless turn, the supervisor that
+drives a split plan with no panes, and the gate that refuses to call a lane finished
+unheard. What they turned out to cost, and the four traps found building them, are in
+`docs/design-notes.md` under *The app can run a lane itself*. I4–I7 below are still plans.
 
 ## What the word has to mean here
 

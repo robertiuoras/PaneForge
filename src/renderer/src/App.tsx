@@ -2932,6 +2932,14 @@ export default function App(): JSX.Element {
             patchConfig({ grid: true })
             flash(`${n} agents started on the mission.`)
           }}
+          onDriven={(run) => {
+            setSwarmStart(null)
+            setSwarm(false)
+            // Straight to Fleet: a driven run has no panes, so closing the dialog with
+            // only a toast would leave the work with nowhere on screen to be.
+            setFleet(true)
+            flash(`Driving ${run.lanes.length} lanes. Nothing merges by itself.`)
+          }}
         />
       )}
       {board && (

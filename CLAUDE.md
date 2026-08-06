@@ -282,6 +282,32 @@ download, and the only one that sends audio off the device).
   hearing shows it by not moving. It also appears while the model downloads.
 - `npm run test:voice`.
 
+## The app can run a lane itself
+
+`docs/agentic.md` is the plan; I1–I3 of it are built. A lane the app drives is a **headless
+CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
+`readsBusy()`. Panes stay ptys. It produces a branch and a diff and **merges nothing** —
+`lane.mjs ready` is still a person's word.
+
+- **A run that changed nothing is a failure**, not a pass. The gate's first step is the
+  diffstat and `noOp` calls two lines or fewer nothing. Same rule for a CLI that exits 0
+  having printed nothing: that is `silent`, not `done`.
+- **`diffSince` runs `git add -A --intent-to-add` first.** Without it `git diff` cannot see
+  a file the agent created and never added, and a lane whose deliverable is one new file
+  reports itself as idle.
+- **The gate is diffstat → typecheck → suite → reviewer**, cheapest first. A missing step
+  says *skipped*; it never reads as a pass. `parseVerdict` fails closed — a reviewer that
+  crashed or answered prose has not passed the lane.
+- **The reviewer runs in an empty directory**, not the lane: it is started with the same
+  permissions as the agent it judges and would otherwise be able to edit the branch to
+  agree with itself.
+- **The retry prompt is a local, never the lane's `note`** — `note` is the board's line and
+  every tool call overwrites it.
+- The budget timer is armed before the first await, not in a `finally`. Two retries then
+  stop. Three lanes at a time, 900ms apart.
+- `npm run test:agentic` spawns real stubs into real repositories, including one that hangs
+  and must be killed and one that fails its own gate and then fixes it. No CLI needed.
+
 ## Checks
 
 `npm run typecheck` before committing.
@@ -306,6 +332,7 @@ download, and the only one that sends audio off the device).
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:grid` | layout arithmetic, no window needed |
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
+| `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
 | `npm run test:copymode` | keyboard copy mode arithmetic |

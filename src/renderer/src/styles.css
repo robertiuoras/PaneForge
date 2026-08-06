@@ -1993,6 +1993,31 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
 
+/* A run the app is driving itself. Grouped under its mission rather than mixed into the
+   pane rows, because these have no pane number, no Ctrl+N and nothing to focus - the only
+   click they answer is "show me the diff". Colour says the same three things it says
+   everywhere else on this screen: green is going, amber wants watching, accent is done
+   and waiting on you. */
+.fleet-drive {
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 6px; margin-top: 6px; background: var(--surface-2);
+}
+.fleet-drive-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 6px 6px; font-size: 12px; min-width: 0;
+}
+.fleet-drive-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-drive-head .muted { margin-left: auto; white-space: nowrap; }
+/* One column fewer than a pane row: no agent logo, no diff bar. */
+.fleet-row.is-drive { grid-template-columns: 10px 12px minmax(0, 1fr) 152px; }
+.fleet-row.drive-working .fleet-dot,
+.fleet-row.drive-verifying .fleet-dot { background: var(--ok); animation: pulse 2s ease-in-out infinite; }
+.fleet-row.drive-retrying .fleet-dot { background: var(--warn); animation: pulse 2s ease-in-out infinite; }
+.fleet-row.drive-queued .fleet-dot { background: #6d6d7c; }
+.fleet-row.drive-passed .fleet-dot { background: var(--accent); animation: callRing 2.4s ease-out infinite; }
+.fleet-row.drive-failed .fleet-dot { background: var(--bad, #e05252); }
+.fleet-row.drive-stopped .fleet-dot { background: #55555f; }
+
 .fleet-num {
   color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums;
   text-align: right;

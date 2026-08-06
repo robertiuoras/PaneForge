@@ -1,6 +1,7 @@
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
+import type { DriveRun } from './agentic'
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
 import type { Improvement } from './promptSchema'
@@ -10,7 +11,7 @@ import type { RouteMatch, RouteResult } from './projectRoute'
 import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 
-export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
+export type { CustomSound, DiscordStyle, DriveRun, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -481,6 +482,12 @@ export interface SplitRequest {
   plan: SplitPlan
   agent?: Agent
   model?: string
+}
+
+/** The same plan, driven by the app. See `docs/agentic.md` and `main/supervisor.ts`. */
+export interface DriveRequest extends SplitRequest {
+  /** Skip the reviewer agent. The diff and command steps of the gate still run. */
+  skipReview?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1266,6 +1273,20 @@ export interface Api {
   /** One pane per lane, each moved into its own git worktree before it starts. */
   startSplit(req: SplitRequest): Promise<Session[]>
 
+  /**
+   * The same plan, driven by the app instead of by a person: no panes, one headless
+   * agent per lane, each verified before it is called finished. Never merges - see
+   * `docs/agentic.md`. Returns as soon as the run exists, not when it finishes.
+   */
+  startDrive(req: DriveRequest): Promise<DriveRun>
+  /** Stop one run now, mid-command if need be. */
+  stopDrive(id: string): Promise<boolean>
+  /** Stop every live run. The one switch. */
+  stopAllDrives(): Promise<number>
+  listDrives(): Promise<DriveRun[]>
+  /** Forget the finished ones. Memory only. */
+  clearDrives(): Promise<number>
+
   listHistory(): Promise<HistoryEntry[]>
   searchHistory(query: string): Promise<HistoryHit[]>
   readHistory(id: string): Promise<string>
@@ -1402,6 +1423,8 @@ export interface Api {
 
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
+  /** A driven run moved: a lane changed state, or its progress line changed. */
+  onDrive(cb: (run: DriveRun) => void): () => void
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void

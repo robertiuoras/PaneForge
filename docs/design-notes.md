@@ -623,6 +623,64 @@ by the OS voice pushed through the shipped worker (2.6s of audio, ~1.8s to trans
 with `tiny`), plus the overlay measured at 390x844 and asserted absent at 1400x900.
 It skips out loud without a window or without macOS `say`.
 
+## The app can run a lane itself, and refuses to call it done unheard
+
+Shipped 2026-08-07 as phases I1, I2 and I3 of `docs/agentic.md`. That file is still the
+reasoning and the survey; this section is what landed and what it cost to get right.
+
+**The control channel is headless, not the pty.** `claude -p --output-format stream-json
+--verbose` prints one JSON object per line carrying turn boundaries, tool calls, token
+counts and an explicit end. `readsBusy()` infers one of those from terminal glyphs and has
+to be re-taught every time a CLI redraws its footer. Panes keep the pty - that is the
+product - and `shared/agentic.ts` parses the stream for anything the app drives itself.
+An agent whose structured flag we do not know still runs, as `plain`: text, no tool count,
+no token count. A worse answer, not a missing feature.
+
+**Three things a driven turn must survive, and all three are spawned for real in
+`npm run test:agentic`** - 52 assertions, ~4s, six real child processes and seven real git
+repositories, no CLI installed and none startable (the `bin`/`argsPrefix` seam runs a stub
+under `node`):
+
+- **A turn that never ends.** The budget timer is armed BEFORE the first await, not in a
+  `finally`, for the same reason `POLL_WATCHDOG_MS` is: a recovery that lives inside the
+  thing that can hang is not a recovery. The stub ignores `SIGTERM`, so only the tree kill
+  ends it, and the test asserts it died on time rather than eventually.
+- **A turn that ends having done nothing.** The dangerous outcome is not a crash - a crash
+  is loud - it is twenty minutes of tokens producing a comment. So the gate's FIRST step is
+  the diffstat, and `noOp` calls two lines or fewer nothing. A CLI that exits 0 having
+  printed nothing is `silent`, not `done`.
+- **A new file that was never `git add`ed.** `git diff` cannot see one, so a lane whose
+  whole deliverable is one new file would report itself as having changed nothing - and
+  that is the signal everything above trusts. `diffSince` runs `git add -A --intent-to-add`
+  first: the paths without their content, into the lane's own index.
+
+**The gate's order is the design.** diffstat → typecheck → the repo's own suite → a
+reviewer agent over the patch. Cheapest first, and the reviewer last because a diff that
+does not compile has nothing worth an opinion about. Two things it will not do: a missing
+step is reported as *skipped*, never as passed ("the suite passed" and "there is no suite"
+are different sentences), and `parseVerdict` fails closed - a reviewer that timed out,
+crashed or answered prose has NOT passed the lane. Defaulting that the other way is the
+one change that would make the whole gate decorative.
+
+**The reviewer runs in an empty directory.** It is started with the same
+`bypassPermissions` posture as the lane it is judging, so inside the lane it could edit the
+branch to agree with itself. Its whole input is the patch already in its prompt.
+
+**The retry prompt is a local, not the lane's `note`.** `note` is the line the board shows
+and every tool call overwrites it; parking the retry brief there means the second attempt
+is started with whatever the first one was doing when it stopped - which fails again,
+identically, and looks like the agent being stubborn. The test proves the second attempt is
+a different attempt: the stub only fixes its file when it can see the failure text.
+
+Two retries then stop (`MAX_ATTEMPTS` 3). An agent that has failed one gate three times is
+not one retry away from passing it. Lanes run three at a time - a Max plan has no
+concurrency cap, it has a five-hour token window, and 3-5 sustained agents is what that
+window carries - staggered 900ms apart because N `git worktree add` on one repository is a
+fight over one index lock.
+
+Not built: the goal queue, the budget scheduler, hotspot locks and unattended mode (I4-I7).
+And by decision, never: this merges nothing. `lane.mjs ready` stays a person's word.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.
