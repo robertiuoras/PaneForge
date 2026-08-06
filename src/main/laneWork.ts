@@ -21,7 +21,7 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
@@ -386,6 +386,56 @@ async function absorbed(repo: string, work: LaneWork): Promise<'patch' | null> {
 }
 
 /**
+ * A lane is held for as long as scripts/lane.mjs would still honour its claim.
+ *
+ * Matches IDLE_EMPTY_MS there on purpose: a claim lane.mjs would refuse to hand to
+ * anyone else is one this file must not delete, and a claim it would hand away is fair
+ * game. Two windows that disagree is how a lane gets deleted and re-created forever.
+ */
+const CLAIM_HELD_MS = 60 * 60 * 1000
+
+/**
+ * Which lanes somebody holds without SITTING in them.
+ *
+ * `busy` - the folder each live pane is in - is the whole story when this app put an
+ * agent in a lane itself. It is not the story when scripts/lane.mjs hands a lane to a CLI
+ * session: the hook tells that chat to work in `<repo>-a` while its pane stays in the main
+ * checkout, so between the claim and the chat's first write the folder is empty, clean and
+ * looks abandoned. It was then deleted out from under a chat that had been told to use it,
+ * on every sweep, which reads as the worktree "vanishing" seconds after `lane claim`
+ * returned its path.
+ *
+ * A lane waiting on a release counts as held too. `ready` and `conflicts` are work that
+ * finished and has nowhere to go yet, not work nobody wants.
+ */
+async function heldLanes(repo: string): Promise<Set<string>> {
+  const held = new Set<string>()
+  // Worktrees share one ledger, and in a worktree `.git` is a file - ask git rather than
+  // joining a path that only happens to be right in the main checkout.
+  const common = await gitOut(repo, ['rev-parse', '--git-common-dir'])
+  if (!common.ok) return held
+  const file = resolve(repo, common.out.trim(), 'paneforge-lanes.json')
+  let state: {
+    lanes?: Record<string, { seen?: number; claimed?: number }>
+    ready?: Record<string, unknown>
+    conflicts?: Record<string, unknown>
+  }
+  try {
+    // lane.mjs writes then renames, so a half-written file is impossible: a parse failure
+    // means something else owns that name, and `busy` is then the only answer available.
+    state = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return held
+  }
+  const now = Date.now()
+  for (const [id, claim] of Object.entries(state.lanes ?? {}))
+    if (now - (claim?.seen ?? claim?.claimed ?? 0) < CLAIM_HELD_MS) held.add(id)
+  for (const id of Object.keys(state.ready ?? {})) held.add(id)
+  for (const id of Object.keys(state.conflicts ?? {})) held.add(id)
+  return held
+}
+
+/**
  * Delete every lane of this repo that holds nothing and has no session in it.
  *
  * "Holds nothing" is deliberately strict - no commits of its own, no uncommitted file,
@@ -398,12 +448,15 @@ async function absorbed(repo: string, work: LaneWork): Promise<'patch' | null> {
  */
 export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
   const removed: string[] = []
+  const held = await heldLanes(repo)
   for (const dir of await laneFolders(repo)) {
     // A pane that cd'd into a subfolder of the lane reports that subfolder, and it is
     // just as much "somebody is in there" as the lane root is.
     if (busy.some((b) => inside(b, dir))) continue
     const work = await laneWork(dir)
     if (!work || work.dirty > 0) continue
+    // Claimed by a chat that is not in the folder yet. See heldLanes().
+    if (held.has(work.lane)) continue
     // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-a` and
     // be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel should
     // describe one either way - but nothing is REMOVED unless this app or scripts/lane.mjs

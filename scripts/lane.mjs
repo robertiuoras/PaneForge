@@ -58,7 +58,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
 import { mergeImportConflicts } from './lane-merge.mjs'
-import { hasChanges, notes } from './release-notes.mjs'
+import { bumpFor, hasChanges, notes } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -1302,7 +1302,7 @@ function typecheckFailure() {
  * the version goes out the moment the last chat with unfinished work finishes it - and
  * silently does nothing while any chat is still mid-edit.
  */
-function autoship(kind = 'patch', session = 'auto') {
+function autoship(kind = 'auto', session = 'auto') {
   const state = reap(read())
   // A conflict that has quietly stopped being a conflict should not keep work out of
   // this release: try them all again before deciding what is shippable.
@@ -1403,7 +1403,7 @@ function resolveConflict(session, wanted) {
       /* the lane had nothing master lacks */
     }
     write(state)
-    return { lane: id, dir, resolved: true, marked, release: autoship('patch', session) }
+    return { lane: id, dir, resolved: true, marked, release: autoship('auto', session) }
   }
 
   state.conflicts[id] = {
@@ -1458,7 +1458,7 @@ function ready(session, wanted) {
   closeLaneApps(laneDir(id))
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
-  return { ...marked, release: autoship('patch', session) }
+  return { ...marked, release: autoship('auto', session) }
 }
 
 function releaseClaim(session) {
@@ -1497,7 +1497,7 @@ function releaseClaim(session) {
   }
   if (state.release?.session === session) state.release = null
   write(state)
-  return { freed, marked, release: autoship('patch', session) }
+  return { freed, marked, release: autoship('auto', session) }
 }
 
 /**
@@ -1525,7 +1525,7 @@ function beatRelease(session) {
 }
 
 function ship(kind, session) {
-  if (!['patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
+  if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
   const state = reap(read())
 
   if (state.release && state.release.session !== session) {
@@ -1661,10 +1661,17 @@ function ship(kind, session) {
     const pkgPath = join(MAIN, 'package.json')
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
     const [maj, min, pat] = pkg.version.split('.').map(Number)
+    // "auto" is what every unattended release asks for: the commits about to go out say
+    // what they are, so the bump is read off them rather than defaulted to patch. A bump
+    // named on the command line is always obeyed as given.
+    let bump = kind === 'auto' ? bumpFor(MAIN) : kind
+    // Below 1.0, a breaking change is a minor. Cutting 1.0.0 is a claim about the product
+    // and only `ship major`, typed on purpose, is allowed to make it.
+    if (bump === 'major' && maj === 0 && kind === 'auto') bump = 'minor'
     const next =
-      kind === 'major'
+      bump === 'major'
         ? `${maj + 1}.0.0`
-        : kind === 'minor'
+        : bump === 'minor'
           ? `${maj}.${min + 1}.0`
           : `${maj}.${min}.${pat + 1}`
 
@@ -2187,9 +2194,9 @@ try {
     const r = releaseClaim(session)
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
-  } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'patch').toLowerCase(), session ?? 'auto'))
+  } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {
-    const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'patch').toLowerCase(), session)
+    const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session)
     if (r.shipped) {
       console.log(r.version ? `Shipped v${r.version}.` : `Merged into ${MB}${RELEASE === 'merge' ? ' and pushed' : ''}.`)
       if (r.merged.length) console.log(`Included lanes: ${r.merged.map((m) => m.lane).join(', ')}`)
@@ -2232,7 +2239,7 @@ try {
     // window sat on master until somebody typed, which on a quiet evening is the morning.
     // The clock is what was missing. autoship is a no-op unless there is something to put
     // out, nobody is mid-edit and the cooldown has passed.
-    sayRelease(autoship('patch', session ?? 'auto'))
+    sayRelease(autoship('auto', session ?? 'auto'))
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)

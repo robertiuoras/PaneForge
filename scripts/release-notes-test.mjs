@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const { changeLog, hasChanges, notes, rangeFor, versionTags, parse } = await import(
+const { bumpFor, changeLog, hasChanges, notes, rangeFor, versionTags, parse } = await import(
   './release-notes.mjs'
 )
 
@@ -141,6 +141,20 @@ check('and has no half-written heading', !empty.includes('## What changed'), emp
 // 14. hasChanges is what stops the reconcile in lane.mjs rewriting a body every minute.
 check('hasChanges sees a written body', hasChanges(full))
 check('hasChanges rejects the plain template', !hasChanges(empty))
+
+// 15. The bump the commits ask for. Everything since the newest tag, never the range the
+// last release already covered - reading package.json's own tag would bump on old news.
+check(
+  'a feat since the last tag asks for a minor',
+  bumpFor(repo) === 'patch',
+  `${bumpFor(repo)} (perf + a bare subject, so patch)`
+)
+commit('feat(stash): pin a snippet')
+check('...and now a minor', bumpFor(repo) === 'minor', bumpFor(repo))
+commit('fix(theme): contrast on Paper')
+check('a later fix does not undo it', bumpFor(repo) === 'minor', bumpFor(repo))
+commit('feat(remote)!: rename every session id')
+check('a bang asks for a major', bumpFor(repo) === 'major', bumpFor(repo))
 
 rmSync(root, { recursive: true, force: true })
 

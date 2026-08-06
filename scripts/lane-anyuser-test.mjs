@@ -21,13 +21,16 @@
 //   node scripts/lane-anyuser-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const repoRoot = resolve(import.meta.dirname, '..')
-const work = mkdtempSync(join(tmpdir(), 'pf-anyuser-'))
+// realpath: macOS hands out /var/folders/... for a temp dir that git spells
+// /private/var/folders/..., so every path assertion below would compare the two spellings
+// of one folder and fail on a Mac only.
+const work = realpathSync(mkdtempSync(join(tmpdir(), 'pf-anyuser-')))
 let failures = 0
 let loads = 0
 

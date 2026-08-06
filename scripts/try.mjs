@@ -23,8 +23,9 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { devProfile } from './dev-profile.mjs'
 import { closeTestApps, waitTestAppsGone } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -50,11 +51,9 @@ if (close) {
 // renamed to match by scripts/rename-repo.mjs - which waits for a moment when no chat is
 // sitting in any of the four directories, because Windows will not rename a folder that
 // a running process has as its working directory.
-function defaultProfile() {
-  const suffix = basename(root).replace(/^(claude-orchestrator|paneforge)-?/i, '')
-  return suffix ? `dev-${suffix}` : 'dev'
-}
-const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? defaultProfile()).trim()
+// The naming itself is in scripts/dev-profile.mjs, so the probes that have to FIND this
+// copy's settings folder cannot drift from the script that launches it.
+const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? devProfile(root)).trim()
 
 // Anything this script does not use is Electron's. The one that matters is
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays

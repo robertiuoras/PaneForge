@@ -343,6 +343,80 @@ migration path.
 
 ---
 
+## F. Agents that know about each other (Buzz)
+
+Read 2026-08-06 against v0.4.60. Buzz (Block, Jack Dorsey, launched 2026-07-21, open
+source) is a Slack-shaped workspace where AI agents are channel members: they are
+@-mentioned, hand work to each other, open patches, and — the part that matters here —
+**work in parallel git worktrees rather than the local checkout**, with one frontier agent
+driving a swarm of cheaper ones that research, build, test and review at the same time.
+Block reports the agents inventing coordination nobody scripted: recruiting each other,
+splitting work into side channels, handing tasks across contexts.
+
+**The verdict: the coordination is worth building, the chatroom is not.** PaneForge already
+has the expensive half — it hosts the ptys, it owns the lane ledger, and `split` already
+refuses overlapping file claims. What it does not have is any channel between panes, so
+three lanes editing one repo each believe they are alone. That is the actual gap, and it is
+ours to close more cheaply than Buzz can: Buzz has to run a relay and re-host git to get
+agents in one room; we have them in one process already.
+
+**Not copying** (belongs with the four at the top of this file):
+
+- **Chat as the primary surface, on a relay.** Buzz stores chat and code as one kind of
+  signed event so everything is searchable and auditable. That is a good design for a team
+  product and the wrong one here: it costs the real TTY (the same objection as T3 Code),
+  and a Slack-shaped window is a second inbox for one person at one desk. Our surface is
+  the grid; the bus below is plumbing, not a room.
+- **Agents as accounts.** Named identities, avatars and permissions are how a team of people
+  keeps track. A pane already has a name, a project, a lane and a number.
+
+Everything under F must work **across models** — Claude Code, Codex, and the eleven others
+on the list. That rules out any per-CLI hook, for the same reason `promptArchive.ts` reads
+the bytes on the way to the pty instead: an agent that ships next month is covered by
+construction, and one that has no hook API at all is covered too.
+
+- [ ] **F1. The shared board — who is holding what** — M. Extends `test:split`'s file claims
+  from a one-shot check into standing state: each pane declares the files and the intent it
+  is working on, written where every pane can read it (`.paneforge/`, beside `tasks.json`,
+  since a lane worktree already shares the repo). Every other item under F needs this and
+  nothing else does anything useful without it. **Better than theirs:** Buzz infers overlap
+  from patches after the fact; we know the claim before the edit, because `split` already
+  refuses to hand out overlapping ones.
+- [ ] **F2. Cross-pane messages, over the pty** — M. One pane addresses another; the message
+  arrives as typed text in the target's prompt, exactly the way `shared/draft.ts` already
+  feeds one. Model-agnostic by construction. Three hard rules, all of which are the feature
+  rather than caveats on it: it is delivered only when the target is **idle** (the silence
+  detector in `test:silence` already knows), it is **rate-limited per pane per turn**, and it
+  is **never delivered mid-turn** — an interruption that lands in the middle of a tool call
+  is worse than no message. A bus that can type into a terminal can loop; the budget is the
+  first thing built, not the last.
+- [ ] **F3. Told when somebody moves your ground** — S, needs F1+F2. A lane that touches a
+  file another lane claimed produces a message to that lane, not a conflict discovered at
+  merge. This is the single failure this section exists to prevent, and it is the cheapest
+  item once F1 and F2 are in.
+- [ ] **F4. An orchestrator pane** — L, needs F1–F3. One pane that can open and close others,
+  hand each a lane and a brief, read their summaries, and answer for the set. This is the
+  "full workforce from my laptop" ask, and it is deliberately last: an orchestrator on top of
+  panes that cannot see each other just fans out the same blindness faster. **Better than
+  theirs:** Buzz's frontier agent coordinates by writing messages and hoping. Ours can read
+  the lane ledger, the file claims and each pane's real git state, so "is lane b done" is a
+  fact rather than a question it has to ask.
+- [ ] **F5. Prompts that know what worked** — M. The pieces exist and do not meet: `Improve`
+  rewrites a prompt, `promptArchive.ts` records that an ask was made, and `prompt-eval.mjs`
+  scores a golden set (classification 62 → 77%). What is missing is the join — `outcome` is
+  null for everything this app records, because nothing watches the pane's repo for the
+  commit an ask turned into. Close that and the archive stops being a duplicate-detector and
+  becomes the evidence for which phrasings actually land, per agent and per model. That is
+  the honest version of "prompt engineering at the top level": measured, not asserted.
+- [ ] **F6. Research that reaches the prompts** — M, needs F5. `scripts/capability-ingest.mjs`
+  and the research pipeline already bring in new techniques and drop them in a catalogue
+  nothing reads back. Wire the catalogue into F5's library so a technique that measurably
+  improves the golden set is promoted, and one that does not is dropped. Until F5 exists this
+  is a suggestion engine with no scoreboard, which is the state it is in now.
+  **`RESEARCH-POLICY.md` still governs: `capability-ingest.mjs` is the only door in.**
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
@@ -368,3 +442,11 @@ migration path.
 8. **E6** — turn-level checkpoints. Last because it is the one item whose honesty depends on
    what the agent touched, and B1 changes where a pty's state lives.
 9. **B6** — package managers, whenever signing is paid for.
+
+**F sits across this order rather than at the end of it.** F1 and F3 are small and pay for
+themselves the first time two lanes touch one file, so they belong beside step 2. F5 belongs
+wherever E1 lands — both are "the app finally shows you what its agents actually did", and
+they read the same transcripts. F2 waits for a reason: it is the item that can type into a
+terminal, so it goes in after the budget and the idle check exist, never beside them. F4 is
+genuinely last under F and is the only L on the page whose value is zero until the three
+before it are in.
