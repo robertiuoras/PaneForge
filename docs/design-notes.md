@@ -637,7 +637,7 @@ An agent whose structured flag we do not know still runs, as `plain`: text, no t
 no token count. A worse answer, not a missing feature.
 
 **Three things a driven turn must survive, and all three are spawned for real in
-`npm run test:agentic`** - 52 assertions, ~4s, six real child processes and seven real git
+`npm run test:agentic`** - 66 assertions, ~4s, six real child processes and seven real git
 repositories, no CLI installed and none startable (the `bin`/`argsPrefix` seam runs a stub
 under `node`):
 

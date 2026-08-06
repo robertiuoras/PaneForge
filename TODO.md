@@ -635,7 +635,7 @@ pull request and so does this; the win is that nothing needs typing in the middl
       answered prose has not passed the lane - and a missing check reads as *skipped*,
       never as a pass.
 
-      All three are covered by `npm run test:agentic`: 52 assertions, ~4s, real child
+      All three are covered by `npm run test:agentic`: 66 assertions, ~4s, real child
       processes into real git repositories, no coding CLI needed or startable.
 
 - [ ] **I4. The goal queue.** A goal survives a restart and carries its lanes, attempts and
