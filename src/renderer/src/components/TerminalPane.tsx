@@ -495,7 +495,7 @@ export default function TerminalPane({
     const KIND_TTL = 15_000
     const kinds = new Map<string, { at: number; target: RevealTarget | null }>()
     const kindOf = async (dir: string, token: string): Promise<RevealTarget | null> => {
-      const key = dir + ' ' + token
+      const key = dir + '\u0000' + token
       const hit = kinds.get(key)
       if (hit && Date.now() - hit.at < KIND_TTL) return hit.target
       const target = await api.pathKind(dir, token)

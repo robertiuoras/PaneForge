@@ -227,7 +227,7 @@ function cacheKey(i: ImproveInput, envelopedDraft: string, contextHash: string):
         // asking for a change did nothing at all.
         (i.exclude ?? []).join(','),
         i.tweak ?? ''
-      ].join(' '))
+      ].join('\u0000'))
     .digest('hex')
 }
 
