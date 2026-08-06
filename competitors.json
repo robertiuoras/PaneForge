@@ -1,0 +1,33 @@
+{
+  "$comment": "The repos scripts/competitors.mjs watches. Hand-edited; add a repo the day you first argue with it in TODO.md, not the day you get around to it. `why` is printed beside every change, so it should say what this repo is FOR us - the thing we would want to know had moved.",
+  "repos": [
+    {
+      "repo": "stablyai/orca",
+      "why": "The same app, further along: Electron, real ptys, worktrees, all three platforms. TODO section G."
+    },
+    {
+      "repo": "pingdotgg/t3code",
+      "why": "The structured-chat alternative to a terminal. TODO sections A-C came from it."
+    },
+    {
+      "repo": "tmux/tmux",
+      "why": "The terminal craft we are measured against. TODO section D."
+    },
+    {
+      "repo": "winfunc/opcode",
+      "why": "Tauri GUI for Claude Code; usage/cost dashboard is its headline. TODO E1-E3, E6."
+    },
+    {
+      "repo": "BloopAI/vibe-kanban",
+      "why": "Kanban-first runner, sunsetting. Watched to confirm it stays dead rather than to copy it."
+    },
+    {
+      "repo": "smtg-ai/claude-squad",
+      "why": "tmux-based TUI over several agents - the no-GUI version of our pitch."
+    },
+    {
+      "repo": "dagger/container-use",
+      "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs."
+    }
+  ]
+}

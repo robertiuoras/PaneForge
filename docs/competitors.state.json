@@ -1,0 +1,79 @@
+{
+  "stablyai/orca": {
+    "why": "The same app, further along: Electron, real ptys, worktrees, all three platforms. TODO section G.",
+    "stars": 38741,
+    "description": "Orca is the ADE for working with a fleet of parallel agents. Run any coding agent with your own subscription. Available on desktop, mobile and VPS.",
+    "archived": false,
+    "pushedAt": "2026-08-06T15:55:28Z",
+    "movedTo": null,
+    "release": "v1.4.175",
+    "releasedAt": "2026-08-06T07:52:46Z",
+    "readmeSha": "670b54e2835361c444f33a6ec469a00dd7d08ffa"
+  },
+  "pingdotgg/t3code": {
+    "why": "The structured-chat alternative to a terminal. TODO sections A-C came from it.",
+    "stars": 16945,
+    "description": null,
+    "archived": false,
+    "pushedAt": "2026-08-06T14:52:20Z",
+    "movedTo": null,
+    "release": "v0.0.31",
+    "releasedAt": "2026-07-29T20:55:19Z",
+    "readmeSha": "1e9b0517945360e739f606d234530db942abe5ec"
+  },
+  "tmux/tmux": {
+    "why": "The terminal craft we are measured against. TODO section D.",
+    "stars": 48442,
+    "description": "tmux source code",
+    "archived": false,
+    "pushedAt": "2026-08-06T15:22:57Z",
+    "movedTo": null,
+    "release": "3.7b",
+    "releasedAt": "2026-07-01T18:58:22Z",
+    "readmeSha": "38a296fc8c1ab4731c2aa58dad81d0677ece8edb"
+  },
+  "winfunc/opcode": {
+    "why": "Tauri GUI for Claude Code; usage/cost dashboard is its headline. TODO E1-E3, E6.",
+    "stars": 22359,
+    "description": "A powerful GUI app and Toolkit for Claude Code - Create custom agents, manage interactive Claude Code sessions, run secure background agents, and more.",
+    "archived": false,
+    "pushedAt": "2025-10-16T12:05:56Z",
+    "movedTo": null,
+    "release": "v0.2.0",
+    "releasedAt": "2025-08-31T15:13:14Z",
+    "readmeSha": "cb9ca51f550dd5169d0ff413e3aad2a48438bf05"
+  },
+  "BloopAI/vibe-kanban": {
+    "why": "Kanban-first runner, sunsetting. Watched to confirm it stays dead rather than to copy it.",
+    "stars": 27688,
+    "description": "Get 10X more out of Claude Code, Codex or any coding agent",
+    "archived": false,
+    "pushedAt": "2026-04-24T09:17:34Z",
+    "movedTo": null,
+    "release": "v0.1.44-20260424091429",
+    "releasedAt": "2026-04-24T09:46:55Z",
+    "readmeSha": "32c6ed4ccd4649a9c78058a694dbbc1297c421a8"
+  },
+  "smtg-ai/claude-squad": {
+    "why": "tmux-based TUI over several agents - the no-GUI version of our pitch.",
+    "stars": 8239,
+    "description": "Manage multiple AI terminal agents like Claude Code, Codex, OpenCode, and Amp.",
+    "archived": false,
+    "pushedAt": "2026-07-30T16:45:40Z",
+    "movedTo": null,
+    "release": "v1.0.19",
+    "releasedAt": "2026-06-17T14:47:44Z",
+    "readmeSha": "5c13a39a8e7e65ee05280feba5ac781d899b77a3"
+  },
+  "dagger/container-use": {
+    "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs.",
+    "stars": 3991,
+    "description": "Development environments for coding agents. Enable multiple agents to work safely and independently with your preferred stack.",
+    "archived": false,
+    "pushedAt": "2026-06-12T21:35:51Z",
+    "movedTo": null,
+    "release": "v0.4.2",
+    "releasedAt": "2025-08-19T22:31:40Z",
+    "readmeSha": "4be94a33a0cd5cba8d8a3710daab7893e1f1cf37"
+  }
+}

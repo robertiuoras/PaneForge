@@ -90,6 +90,8 @@
     "cert:mac": "node scripts/mac-cert.mjs",
     "test:view": "node scripts/view-test.mjs",
     "test:research": "node scripts/research-test.mjs",
+    "competitors": "node scripts/competitors.mjs",
+    "test:competitors": "node scripts/competitors-test.mjs",
     "test:split": "node scripts/split-test.mjs",
     "capability:list": "node scripts/capability-lifecycle.mjs --list",
     "capability:sandbox": "node scripts/capability-sandbox.mjs",

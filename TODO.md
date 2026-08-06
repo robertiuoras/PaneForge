@@ -14,6 +14,16 @@ Each item says what they do, what we have today, what to build, where it lands, 
 there is one — the version that is better than theirs rather than a copy. Effort is
 S (< half a day) / M (a day) / L (multi-day).
 
+**This page is refreshed by `npm run competitors`, not by remembering.** Three dates in the
+paragraph above is three occasions of somebody reading seven READMEs by hand, which is why
+Orca reached 38.7k stars before it appeared here at all. `scripts/competitors.mjs` reads the
+watchlist in `competitors.json`, asks GitHub for each repo's stars, latest release, README
+hash and archived flag, and prints only what moved — star drift under 5% is deliberately
+silent, because a report that is mostly noise stops being read. The snapshot in
+`docs/competitors.state.json` is checked in, so `git diff` after a run *is* the report and it
+survives both machines. **A "README changed" line is the trigger to re-read that project's
+feature list into a section here.** `npm run test:competitors` covers the quiet half.
+
 **Two things we are deliberately not copying**, so nobody re-opens them:
 
 - **T3 Code renders a structured chat, not a terminal.** It parses each provider's JSON

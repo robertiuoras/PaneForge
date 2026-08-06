@@ -259,7 +259,11 @@ because a correct name with no asset is a card with no logo on it; and
 
 The research pipeline's gate is `npm run test:research`, and
 `scripts/capability-ingest.mjs` is the ONLY door into the catalogue — see
-`RESEARCH-POLICY.md`.
+`RESEARCH-POLICY.md`. That pipeline researches *techniques*; the other agent-runners are
+watched separately by `npm run competitors` (`npm run test:competitors`), which diffs the
+repos in `competitors.json` against the checked-in `docs/competitors.state.json` and prints
+only what moved. It is deliberately quiet: sub-5% star drift says nothing, and a changed
+README is the one line that means go re-read a feature list into `TODO.md`.
 
 ## Gotchas that look like mistakes
 
