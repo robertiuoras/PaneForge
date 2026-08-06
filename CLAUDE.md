@@ -352,6 +352,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
+| `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |

@@ -14,6 +14,7 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { findPathTokens } from '../../../shared/pathToken'
+import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import './TerminalPane.css'
 
@@ -1526,36 +1527,20 @@ export default function TerminalPane({
    * newest is where the pane already is, pressing does nothing at all, which is
    * what "cannot click the tags" looks like from the desk.
    *
-   * So: a forward pass claims at least SEP between neighbours, a backward pass
-   * pulls the run back inside the track when the forward pass ran off the end,
-   * and SEP itself shrinks on a crowded rail rather than pushing tags off it. The
-   * order is untouched - both passes only ever move a tag the way the rail
-   * already promises - and a tag is displaced at most a few pixels from the thumb
-   * it points at, which is the trade a table of contents should take.
+   * The arithmetic is `shared/rail.ts` and is pinned by `npm run test:railplace`,
+   * because the greedy version of it that lived here drew tags off the end of the
+   * rail and moved others most of the rail's height away from the thumb they point
+   * at. Read the numbers in that file before changing this.
    */
-  const BAR = 5
   const live = raw.filter(Boolean) as { mark: Mark; top: number }[]
   const span = Math.max(0, track.height - thumb)
-  const SEP =
-    live.length > 1 ? Math.max(4, Math.min(12, span / (live.length - 1))) : 12
-  for (let i = 1; i < live.length; i++) {
-    live[i].top = Math.max(live[i].top, live[i - 1].top + SEP)
-  }
-  for (let i = live.length - 2; i >= 0; i--) {
-    live[i].top = Math.min(live[i].top, live[i + 1].top - SEP)
-  }
-  for (const p of live) p.top = Math.max(0, p.top)
-  // Half the space to each neighbour, so no tag can reach into another's, capped
-  // at the 6px that made an isolated tag a comfortable target in the first place.
-  const share = (gap: number): number => Math.max(0, Math.min(6, (gap - BAR) / 2))
+  const tags = placeRail(
+    live.map((p) => p.top),
+    span
+  )
   const placed = raw.map((p) => {
     if (!p) return null
-    const i = live.indexOf(p)
-    return {
-      ...p,
-      hitUp: i > 0 ? share(p.top - live[i - 1].top) : 6,
-      hitDown: i < live.length - 1 ? share(live[i + 1].top - p.top) : 6
-    }
+    return { ...p, ...tags[live.indexOf(p)] }
   })
 
   /**
