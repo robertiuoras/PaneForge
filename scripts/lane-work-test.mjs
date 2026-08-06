@@ -211,6 +211,32 @@ const commit = (cwd, file, text, msg) => {
   check('a lane with a session in it is left alone', existsSync(w5))
   await lw.sweepLanes(repo, [])
   check('...and swept once that session is gone', !existsSync(w5))
+
+  // A lane scripts/lane.mjs handed to a CLI chat: the claim is in the ledger, but the
+  // chat's pane is still in the main checkout, so `busy` says nothing about it. The
+  // folder is brand new, clean and empty - the exact shape the sweep deletes - and
+  // deleting it took the checkout out from under a chat that had been told to use it.
+  const ledger = join(repo, '.git', 'paneforge-lanes.json')
+  const w6 = `${repo}-w6`
+  const claim = (seen) =>
+    writeFileSync(ledger, JSON.stringify({ lanes: { w6: { session: 'chat', seen } }, ready: {}, conflicts: {} }))
+  git(repo, ['worktree', 'add', '-b', 'pf/w6', w6])
+  claim(Date.now())
+  await lw.sweepLanes(repo, [])
+  check('a lane claimed by a chat that is not in it yet is left alone', existsSync(w6))
+  // ...and the claim is not forever: once lane.mjs would hand that lane to somebody else,
+  // this may delete it. Two windows that disagree is a lane deleted and re-made all day.
+  claim(Date.now() - 2 * 60 * 60 * 1000)
+  await lw.sweepLanes(repo, [])
+  check('...and swept once the claim has gone stale', !existsSync(w6))
+
+  // Finished work waiting on a release is held, not abandoned.
+  const w7 = `${repo}-w7`
+  git(repo, ['worktree', 'add', '-b', 'pf/w7', w7])
+  writeFileSync(ledger, JSON.stringify({ lanes: {}, ready: { w7: { at: 1 } }, conflicts: {} }))
+  await lw.sweepLanes(repo, [])
+  check('a lane waiting on a release is left alone', existsSync(w7))
+  rmSync(ledger, { force: true })
 }
 
 // ------------------------------------------- a folder Windows will not let go of
