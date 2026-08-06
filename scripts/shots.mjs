@@ -195,8 +195,22 @@ function plan() {
   const projects = resolve(flag('--projects', join(homedir(), 'Projects')))
   // Override with --dirs a,b,c,d when these are not the four you want in frame.
   const dirs = flag('--dirs', 'toolstash,PaneForge,assistant,taskdriver.ai').split(',')
-  const agents = ['claude', 'codex', 'gemini', 'cursor']
-  const bins = { claude: 'claude', codex: 'codex', gemini: 'gemini', cursor: 'cursor-agent' }
+  // Only CLIs that are signed in AND have already been trusted in these folders
+  // belong in a picture. An agent seeing a folder for the first time photographs
+  // as "do you trust the files in this folder?", and one that is signed out
+  // photographs as a login URL with a live challenge token in it - which is not
+  // something to commit to a public README. Override with --agents a,b,c,d once
+  // you have run the others by hand at least once.
+  const agents = flag('--agents', 'claude,codex,shell,shell').split(',')
+  const bins = {
+    claude: 'claude',
+    codex: 'codex',
+    gemini: 'gemini',
+    qwen: 'qwen',
+    cursor: 'cursor-agent'
+  }
+  // What a shell pane runs. Real commands, real output, nothing personal.
+  const shellCmds = ['git log --oneline -12', 'git status -sb && git log --oneline -8']
 
   const out = []
   for (let i = 0; i < dirs.length && out.length < 4; i++) {
@@ -205,12 +219,18 @@ function plan() {
       console.log(`   skipping ${dirs[i].trim()} - no such folder`)
       continue
     }
-    const agent = agents[out.length]
+    const agent = (agents[out.length] ?? 'shell').trim()
+    const shells = out.filter((s) => s.agent === 'shell').length
     out.push(
-      have(bins[agent])
+      agent !== 'shell' && have(bins[agent])
         ? // Long delay: the prompt is typed into the CLI, so it has to be up first.
           { cwd, agent, prompt: '/help', promptDelay: 6000 }
-        : { cwd, agent: 'shell', prompt: 'git log --oneline -8', promptDelay: 900 }
+        : {
+            cwd,
+            agent: 'shell',
+            prompt: shellCmds[shells % shellCmds.length],
+            promptDelay: 900
+          }
     )
   }
   return out
@@ -279,8 +299,11 @@ async function main() {
     // Agent CLIs paint their startup screen over a couple of seconds. There is no
     // "ready" event to wait on that means "and it has drawn something", so this is
     // a wait. Long enough for a cold `claude`, short enough to not be annoying.
-    console.log('== Letting the agents paint (12s)')
-    await sleep(12_000)
+    // Long enough for a cold `claude`, plus its 6s prompt delay, plus the output
+    // of /help to actually arrive and scroll the CLI's own startup warnings off
+    // the top of the pane - which is where account and quota lines live.
+    console.log('== Letting the agents paint (24s)')
+    await sleep(24_000)
 
     console.log('== Capturing')
     await evalIn(cdp, `window.api.setConfig({ grid: false })`)
