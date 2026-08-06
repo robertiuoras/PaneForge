@@ -32,7 +32,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { typeLine, isSlashCommand } = createRequire(import.meta.url)(out)
+const { typeLine, isSlashCommand, isQuietSlash } = createRequire(import.meta.url)(out)
 
 /** Feed a sequence of write() chunks and say whether Enter would read as a command. */
 function submits(chunks) {
@@ -78,6 +78,36 @@ for (const c of cases) {
   }
 }
 
+// Which commands end with nothing to read, and so are never promoted to a bell however
+// long they run. The 30-second promotion is what rang over a /clear whose SessionStart
+// hooks were slow - "it pings when I clear the session".
+const quiet = [
+  { line: '/clear', quiet: true },
+  { line: '/compact', quiet: true },
+  { line: '/resume', quiet: true },
+  { line: ' /clear', quiet: true, name: 'leading space' },
+  { line: '/clear ', quiet: true, name: 'trailing space' },
+  { line: '/compact keep the test plan', quiet: true, name: 'with an argument' },
+  // A longer command that merely STARTS with one of the words is a different command,
+  // and one of them is real work: \b is what keeps them apart.
+  { line: '/clearance', quiet: false },
+  { line: '/resumes-the-thing', quiet: false },
+  // Everything else keeps the existing behaviour - denied for 30s, then promoted.
+  { line: '/help', quiet: false },
+  { line: '/model opus', quiet: false },
+  { line: '/forge build the thing', quiet: false },
+  // Not a command at all.
+  { line: 'clear the failing test', quiet: false },
+  { line: 'read src/main.ts', quiet: false }
+]
+for (const c of quiet) {
+  const got = isQuietSlash(c.line)
+  if (got !== c.quiet) {
+    failed++
+    console.error(`FAIL quiet ${c.name ?? c.line}: expected ${c.quiet}, got ${got}`)
+  }
+}
+
 // The cap: a pasted-then-typed monster line cannot grow without bound.
 {
   let typed = ''
@@ -93,4 +123,4 @@ if (failed) {
   console.error(`${failed} case(s) failed`)
   process.exit(1)
 }
-console.log(`slash-test: all ${cases.length + 1} cases pass`)
+console.log(`slash-test: all ${cases.length + quiet.length + 1} cases pass`)

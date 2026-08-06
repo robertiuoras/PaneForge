@@ -17,7 +17,7 @@ import { endAll, recordData, recordEnd, recordStart } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { killPaneStrays, trackStrays } from './strays'
-import { isSlashCommand, typeLine } from '../shared/slashTurn'
+import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
 import { anchoredStart } from '../shared/busy'
@@ -68,10 +68,21 @@ const BUFFER_LIMIT = 400_000
 const RESET = '\x1bc'
 /**
  * A slash command that is still running after this long is real work, not
- * housekeeping - /compact and a user-invoked skill both earn the bell, /clear's
- * hook flash (a second or two) and /help never get near it.
+ * housekeeping - a user-invoked skill earns the bell, /clear's hook flash (a second or
+ * two) and /help never get near it.
  */
 const SLASH_TURN_MS = 30_000
+/**
+ * How long a pane stays un-bellable after a command that ends with nothing to read
+ * (`isQuietSlash`: /clear, /compact, /resume).
+ *
+ * Longer than SLASH_TURN_MS on purpose - the whole point is that the 30-second
+ * promotion must not reach these - and long enough to cover a slow SessionStart hook
+ * run plus the busy/quiet flapping that follows it. It costs nothing to be generous:
+ * the next real prompt typed into the pane clears it outright, so the only thing this
+ * window can silence is the settling of the command itself.
+ */
+const QUIET_SLASH_MS = 90_000
 /**
  * A gap between one turn ending and the next beginning that is too short to be two
  * questions. Anything under this is one turn that got cut, and is written to the audit
@@ -155,6 +166,15 @@ interface Live {
   typed: string
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
+  /**
+   * A slash command that finishes with nothing to read is still settling until this
+   * moment; 0 outside one. `slashAt`'s 30-second window is a suspicion that a long run
+   * became real work, and for `/clear`, `/compact` and `/resume` that suspicion is
+   * simply wrong however long they take - see `isQuietSlash`. Kept as its own deadline
+   * rather than folded into `slashAt` because it has to outlive the promotion, and
+   * outlive the footer flapping busy/quiet several times while hooks run.
+   */
+  slashQuietUntil: number
   /**
    * The silence alert has already been raised for this quiet stretch. Cleared by the
    * next byte out of the pane, so a turn that stalls twice is told twice and a turn
@@ -270,6 +290,7 @@ export class SessionManager extends EventEmitter {
       lastTail: '',
       typed: '',
       slashAt: 0,
+      slashQuietUntil: 0,
       stallRaised: false
     }
     this.sessions.set(id, live)
@@ -496,12 +517,17 @@ export class SessionManager extends EventEmitter {
       if (slash && /^\s*\/(clear|resume)\b/.test(live.typed)) {
         noteSession(id, live.meta.cwd, live.meta.agent)
       }
+      const quiet = slash && isQuietSlash(live.typed)
       live.typed = ''
       this.beginRun(live)
       // A slash command still gets the run clock (the readout should say how long
       // /compact took) but not the bell: turnPending stays down unless the run turns
       // out to be real work - see SLASH_TURN_MS where the footer ends.
       live.slashAt = slash ? Date.now() : 0
+      // ...except for the ones that finish with nothing to read, which are never
+      // promoted however long they run. A real prompt sets this back to 0, so typing a
+      // question straight after a /clear arms the bell again immediately.
+      live.slashQuietUntil = quiet ? Date.now() + QUIET_SLASH_MS : 0
       if (slash) live.turnPending = false
     }
     // Typing into a pane is both "I have asked it something" (so its next quiet
@@ -665,6 +691,10 @@ export class SessionManager extends EventEmitter {
         if (now - s.slashAt >= SLASH_TURN_MS) s.slashAt = 0
         else s.turnPending = false
       }
+      // A quiet command outranks that promotion and outlives it: the hooks after a
+      // /clear flap the footer busy several times, and each flap comes back through
+      // beginRun with the bell re-armed.
+      if (now < s.slashQuietUntil) s.turnPending = false
       // A silent tool call produces no output for minutes, and the idle sweep used to
       // grey the dot out in the middle of it - the pane read as finished while the
       // agent was demonstrably still working. On-screen busy outranks the quiet clock.
@@ -682,6 +712,8 @@ export class SessionManager extends EventEmitter {
       if (now - s.slashAt >= SLASH_TURN_MS) s.turnPending = true
       s.slashAt = 0
     }
+    // Nothing to read at the end of a /clear, /compact or /resume, however long it took.
+    if (now < s.slashQuietUntil) s.turnPending = false
     let changed = this.endRun(s)
     // The footer going away is the turn ending, so the dot says so now instead of a
     // minute later. The quiet clock used to own this transition, which left a pane that

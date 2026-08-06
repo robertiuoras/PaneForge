@@ -36,3 +36,27 @@ export function typeLine(typed: string, data: string): string {
 export function isSlashCommand(typed: string): boolean {
   return typed.trimStart().startsWith('/')
 }
+
+/**
+ * Commands that leave NOTHING to read when they finish.
+ *
+ * Every other slash command is denied the bell for 30 seconds and then promoted if it
+ * ran longer than that (SLASH_TURN_MS in sessions.ts), on the reasoning that a long run
+ * must have turned into real work. These three break that reasoning: `/clear` and
+ * `/resume` swap which conversation the pane is in and `/compact` rewrites the one it is
+ * already in, so however long they take, what is on screen at the end is a fresh empty
+ * prompt - there is no answer waiting to be read, and the chime sends you to look at
+ * one that does not exist. Reported as "it pings when I clear the session; it acts like
+ * the turn ended but it just cleared".
+ *
+ * Duration is exactly what makes this misfire on this machine: `/clear` runs the
+ * SessionStart hooks (memory symlinks, lane assignment, handoff injection), which is
+ * seconds of visible spinner, and any of them being slow pushed the run past 30s and
+ * rang the bell.
+ *
+ * The next prompt typed into the pane is a real submit and re-arms everything, so this
+ * silences the clear itself, never the work after it.
+ */
+export function isQuietSlash(typed: string): boolean {
+  return /^\s*\/(clear|compact|resume)\b/.test(typed.trimStart())
+}
