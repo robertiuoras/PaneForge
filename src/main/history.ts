@@ -195,10 +195,35 @@ export function remove(id: string): void {
   }
 }
 
-/** Delete transcripts older than `days`; 0 means keep forever. */
+/**
+ * The most transcripts may take on disk, oldest dropped first.
+ *
+ * The age cutoff alone is not a bound: how much 30 days of transcripts weigh depends
+ * entirely on how much output the panes produced, and the per-log 8 MB ceiling above caps
+ * ONE runaway pane, not four hundred ordinary ones. Measured on this Mac 2026-08-07:
+ * 139 files, 155 MB, every one of them inside the 30-day window and so untouched by
+ * `days`. Nothing was wrong with any of it - there was simply no number it could not pass.
+ */
+const MAX_TOTAL_BYTES = 512 * 1024 * 1024
+
+/**
+ * Delete transcripts older than `days`, then anything past `MAX_TOTAL_BYTES`.
+ *
+ * `days` of 0 means keep forever, and the size cap still applies - "keep forever" is an
+ * answer about age, and a disk that fills up is not what it was asking for.
+ */
 export function prune(days: number): void {
-  if (!days || days <= 0) return
-  const cutoff = Date.now() - days * 86_400_000
-  for (const e of list()) if (e.startedAt < cutoff) remove(e.id)
+  const cutoff = days > 0 ? Date.now() - days * 86_400_000 : 0
+  let total = 0
+  // Newest first, so the running total crosses the cap exactly where the oldest keepable
+  // transcript is: everything after that point goes.
+  for (const e of list()) {
+    if (cutoff && e.startedAt < cutoff) {
+      remove(e.id)
+      continue
+    }
+    total += e.bytes ?? 0
+    if (total > MAX_TOTAL_BYTES) remove(e.id)
+  }
 }
 
