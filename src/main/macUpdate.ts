@@ -295,6 +295,12 @@ function text(url: string, redirects = 0): Promise<string> {
       res.on('data', (c) => {
         body += c
       })
+      // Same trap as `fetchTo`: with no handler here, a connection that dies mid-body
+      // raises an 'error' nobody is listening for and this promise never settles. It is
+      // awaited from inside `stageMacUpdate`, so that is the whole updater wedged over a
+      // 500-byte checksum file.
+      res.on('error', reject)
+      res.on('aborted', () => reject(new Error('the connection dropped while reading the feed')))
       res.on('end', () => resolve(body))
     })
     req.on('timeout', () => req.destroy(new Error('timed out')))
