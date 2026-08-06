@@ -563,10 +563,14 @@ for it. A tailnet costs us no server and no account.
   recent commits; the listenable part is a gimmick, the digest is not. One card per pane:
   turns taken, files touched, last question asked, since you last looked. Reads the same
   transcripts F5 and E1 read.
-- [ ] **H5. Voice in** — M. Omnara's conversational voice mode and Cursor's voice input exist
-  because typing a paragraph into a phone to unblock an agent is worse than the interruption
-  was. Web Speech API in the browser client, straight into `shared/draft.ts` — which means it
-  passes through the prompt archive and Improve on the way, for free.
+- [ ] **H5. Voice in** — S, and smaller than it looks: **the desktop already dictates**
+  (`useVoice.ts`, the mic on each pane, Ctrl/Cmd Shift Space into the focused pane). Omnara's
+  conversational voice mode and Cursor's voice input exist because typing a paragraph into a
+  phone to unblock an agent is worse than the interruption was — so what is actually missing
+  is that the same hook runs in the served renderer of **B2**, not a new feature. Check the
+  Web Speech API's availability there before assuming it carries over; everything else about
+  it (into `shared/draft.ts`, so it passes the prompt archive and Improve on the way) is
+  already true.
 - [ ] **H6. Per-session cost, not per-month cost** — S. Devin shows compute consumed *per
   child session*. That is **E1** with the aggregation undone, and it is the more useful
   reading: the number you want is "this pane has spent X on this ask", not "you spent Y in
