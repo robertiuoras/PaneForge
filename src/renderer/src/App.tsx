@@ -26,7 +26,17 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import { BoardIcon, HistoryIcon, LinkIcon, RemoteIcon, SwarmIcon, TrashIcon } from './components/Icons'
+import FleetDialog from './components/FleetDialog'
+import { fleetWaiting } from '@shared/fleet'
+import {
+  BoardIcon,
+  FleetIcon,
+  HistoryIcon,
+  LinkIcon,
+  RemoteIcon,
+  SwarmIcon,
+  TrashIcon
+} from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import TerminalPane, {
   onPaneDraft,
@@ -175,6 +185,7 @@ export default function App(): JSX.Element {
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
+  const [fleet, setFleet] = useState(false)
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
@@ -261,6 +272,7 @@ export default function App(): JSX.Element {
     swarm ||
     history ||
     devices ||
+    fleet ||
     board !== null ||
     diff !== null ||
     ask !== null ||
@@ -1311,6 +1323,12 @@ export default function App(): JSX.Element {
           setShelfPinned(false)
           return
         }
+        // Changes opened FROM the fleet list sit on top of it, so Escape closes the diff
+        // and leaves you in the list you picked that pane out of.
+        if (diff) {
+          setDiff(null)
+          return
+        }
         setPicking(false)
         setSettings(false)
         setHelp(false)
@@ -1318,8 +1336,8 @@ export default function App(): JSX.Element {
         setBoard(null)
         setHistory(false)
         setDevices(false)
+        setFleet(false)
         setRenaming(null)
-        setDiff(null)
         return
       }
       if (e.key === 'F1') {
@@ -1424,6 +1442,11 @@ export default function App(): JSX.Element {
         // which walks the focus and leaves the grid alone.
         e.preventDefault()
         movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
+      } else if (k === 'f' && e.shiftKey) {
+        // Shift for the whole Fleet, plain for find inside one pane: same letter, and the
+        // difference between them is the difference between one pane and all of them.
+        e.preventDefault()
+        setFleet((f) => !f)
       } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
@@ -1468,6 +1491,9 @@ export default function App(): JSX.Element {
     palette,
     flash,
     ask,
+    // Escape now has to know whether a diff is open on top of the fleet list, so the
+    // handler reads it and must be rebuilt when it changes.
+    diff,
     fixUi,
     shelfPinned,
     shelfInWindow,
@@ -1535,6 +1561,14 @@ export default function App(): JSX.Element {
 
     out.push(
       { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
+      {
+        id: 'fleet',
+        group: 'Actions',
+        title: 'Fleet: every pane on one screen',
+        hint: 'sorted by who needs a person first',
+        keys: 'Ctrl Shift F',
+        run: () => setFleet(true)
+      },
       {
         id: 'changes',
         group: 'Actions',
@@ -1994,6 +2028,11 @@ export default function App(): JSX.Element {
   // in the last four seconds", so it stays honest through a long silent tool call and
   // does not claim a pane sitting at an empty prompt is busy.
   const working = sessions.filter((s) => s.status === 'working').length
+  // The other half of that number, and the more useful one: how many panes are waiting on
+  // a PERSON. `working` is the app being busy, which nobody has to do anything about, and
+  // `waiting` above is narrower than this - it clears the moment you LOOK at the pane,
+  // where this keeps counting until the pane is actually answered.
+  const needsYou = fleetWaiting(sessions)
   // PaneForge's own dev lanes, on a machine that develops PaneForge. Null everywhere else,
   // and then nothing below draws anything.
   const laneBoard = useLaneBoard()
@@ -2057,6 +2096,22 @@ export default function App(): JSX.Element {
             fourth would not have fitted at all; a fixed-width row has room to grow and
             reads faster once you know it. Every one keeps its full sentence on hover. */}
         <div className="quick">
+          {/* First in the row because it is the one that can be UNREAD: the others open
+              something you went looking for, this one tells you something arrived. */}
+          <button
+            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
+            title={
+              needsYou
+                ? keyLabel(
+                    `Fleet: ${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you (Ctrl Shift F)`
+                  )
+                : keyLabel('Fleet: every pane on one screen, whoever needs you first (Ctrl Shift F)')
+            }
+            onClick={() => setFleet(true)}
+          >
+            <FleetIcon />
+            {needsYou > 0 && <span className="quick-dot" />}
+          </button>
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
@@ -2844,6 +2899,19 @@ export default function App(): JSX.Element {
             const s = sessions.find((x) => x.cwd === laneCwd)
             setDiff({ cwd: laneCwd, lane: s?.lane, scope: 'all' })
           }}
+        />
+      )}
+      {/* Drawn BEFORE the diff on purpose: both are `.overlay`, so the later one in the
+          tree is the one on top, and reading a pane's changes has to open OVER the list
+          you picked it from rather than under it. */}
+      {fleet && (
+        <FleetDialog
+          sessions={sessions}
+          agents={agents}
+          activeId={activeId}
+          onFocus={setActiveId}
+          onDiff={(cwd, lane, pane, scope) => setDiff({ cwd, lane, pane, scope })}
+          onClose={() => setFleet(false)}
         />
       )}
       {diff && (

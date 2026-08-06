@@ -92,6 +92,7 @@ const KEYS: Key[] = [
   ['Drag a pane by its title', 'In the grid: moves it, and the gap it will drop into lights up'],
   ['Drag the edge between panes', 'In the grid: makes one bigger and its neighbour smaller'],
   ['Double-click that edge', 'Puts that row or column back to the layout’s own shares'],
+  ['Ctrl Shift F', 'Fleet: every pane on one screen, whoever needs you at the top'],
   ['Ctrl Shift S', 'Swarm: one mission, one pane per role'],
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],

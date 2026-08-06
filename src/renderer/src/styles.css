@@ -414,10 +414,27 @@ html.hi-refresh .num.live::after { animation: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.starting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
 .dot.working { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; animation: pulse 2s ease-in-out infinite; }
-.dot.idle { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
-/* Quiet but never asked anything: "ready", not "waiting on you". */
-.dot.idle.ready { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
+/* A finished turn is the one state in this list that wants a PERSON, so it is the one
+   given a motion of its own: a ring that spreads and fades, rather than the breath the
+   working dot uses. Two motions, meaning different things - the app is busy, or the app
+   is waiting on you - and everything terminal is perfectly still, so a movement stopping
+   is itself the event. `shared/fleet.ts` owns the same rule in words. */
+.dot.idle {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  animation: callRing 2.4s ease-out infinite;
+}
+/* Quiet but never asked anything: "ready", not "waiting on you". Still, therefore. */
+.dot.idle.ready { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; animation: none; }
 .dot.exited { background: #55555f; }
+@keyframes callRing {
+  0% { box-shadow: 0 0 0 2px var(--accent-dim); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.idle { animation: none; box-shadow: 0 0 0 3px var(--accent-dim); }
+}
 
 /* Length of the turn a session is running, ticking once a second. Tabular
    figures so the row does not jitter as the digits change. */
@@ -1942,3 +1959,120 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 button.git-badge { font: inherit; font-size: 10.5px; cursor: pointer; }
 button.git-badge.pressable:hover { border-color: var(--line-strong); color: var(--text); }
 button.git-badge.pressable.dirty:hover { color: var(--warn); }
+
+/* ---------------------------------------------------------------------------
+   Fleet: every pane on one screen, sorted by who needs a person.
+
+   The row is a grid rather than a flex line so eight rows agree on where each
+   column starts - the whole value of the screen is scanning DOWN one column
+   (every clock, every bar) rather than reading each row left to right.
+
+   Borders are hairlines in the palette's own line colour and there are no
+   shadows: this sits inside a dialog that already has one, and a second
+   elevation inside the first is what makes a dense list look muddy.
+   ------------------------------------------------------------------------- */
+.dialog.fleet { gap: 10px; }
+.fleet-list {
+  display: flex; flex-direction: column; gap: 2px;
+  overflow: auto; min-height: 0; max-height: min(60vh, 520px);
+  margin: 0 -4px; padding: 0 4px;
+}
+.fleet-row {
+  display: grid;
+  grid-template-columns: 10px 12px 15px minmax(0, 1fr) 152px 168px;
+  align-items: center; gap: 10px;
+  padding: 8px 9px; border-radius: var(--r);
+  border: 1px solid transparent;
+  cursor: pointer;
+  /* Two durations for the whole screen, the way the reference dark dashboards do it:
+     120ms for anything the pointer causes, and the long ones above for status. */
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.fleet-row.hi { background: var(--surface-2); border-color: var(--line); }
+.fleet-row.current { border-color: var(--accent-dim); }
+.fleet-row.current.hi { border-color: var(--line-strong); }
+
+/* The dot carries the same contract as the sidebar's, said in CSS: `pulse` is the app
+   working, `call` is the app waiting on you, `still` is a state nobody has to act on. */
+.fleet-dot { width: 9px; height: 9px; border-radius: 50%; justify-self: center; }
+.fleet-row.is-working .fleet-dot { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
+.fleet-row.is-starting .fleet-dot { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
+.fleet-row.is-needsYou .fleet-dot { background: var(--accent); }
+.fleet-row.is-stalled .fleet-dot { background: var(--warn); }
+.fleet-row.is-ready .fleet-dot { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
+.fleet-row.is-exited .fleet-dot { background: #55555f; }
+.fleet-dot.m-pulse { animation: pulse 2s ease-in-out infinite; }
+.fleet-dot.m-call { animation: callRing 2.4s ease-out infinite; }
+/* Same ring, taking its colour from the row rather than the accent, so a stall is
+   amber all the way through instead of amber wearing an orange halo. */
+.fleet-row.is-stalled .fleet-dot.m-call { animation: callRingWarn 2.4s ease-out infinite; }
+@keyframes callRingWarn {
+  0% { box-shadow: 0 0 0 2px #f0b42933; }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+.fleet-num {
+  color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.fleet-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fleet-title {
+  font-size: 12.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-place {
+  font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-remote { color: var(--info); }
+
+.fleet-state { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.fleet-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fleet-row.is-needsYou .fleet-label { color: var(--accent-text); }
+.fleet-row.is-stalled .fleet-label { color: var(--warn); }
+.fleet-clock {
+  font-size: 10.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* The diff bar. A button, because it opens the lines it is drawing - so it has to put
+   back the font and background a button brings with it. */
+.fleet-diff {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  font: inherit; background: none; border: 1px solid transparent;
+  border-radius: var(--r-sm); padding: 4px 6px; margin: -4px -6px;
+  text-align: left; cursor: default; min-width: 0;
+}
+.fleet-diff.has { cursor: pointer; }
+.fleet-diff.has:hover { background: var(--surface-3); border-color: var(--line); }
+.fleet-bar {
+  display: flex; height: 4px; width: 0; min-width: 0; border-radius: 2px; overflow: hidden;
+  background: var(--line);
+  /* The width IS the amount of work, so it is the one thing here allowed to move when
+     the number behind it moves. */
+  transition: width 240ms ease;
+}
+.fleet-bar .add { background: var(--diff-add); }
+.fleet-bar .del { background: var(--diff-del); }
+.fleet-diff:not(.has) .fleet-bar { width: 100% !important; opacity: 0.35; }
+.fleet-git {
+  font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.dialog.fleet .dialog-foot { display: flex; align-items: center; gap: 12px; }
+.dialog.fleet .dialog-foot .primary { margin-left: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fleet-dot { animation: none !important; }
+  .fleet-row.is-needsYou .fleet-dot { box-shadow: 0 0 0 3px var(--accent-dim); }
+  .fleet-row.is-stalled .fleet-dot { box-shadow: 0 0 0 3px #f0b42933; }
+  .fleet-bar { transition: none; }
+}
+
+/* Narrow window: the state column and the diff column are the two that can afford to
+   go, in that order - the row still says which pane it is and what colour it is. */
+@media (max-width: 720px) {
+  .fleet-row { grid-template-columns: 10px 12px 15px minmax(0, 1fr) 118px; }
+  .fleet-diff { display: none; }
+}

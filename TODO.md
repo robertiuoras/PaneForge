@@ -519,23 +519,46 @@ the answer B4 already names. Omnara and Happy Coder relay through infrastructure
 that is the thing we are not doing, and every one of them has a self-host page apologising
 for it. A tailnet costs us no server and no account.
 
-- [ ] **H1. Two notifications, not one bell** — M. Cursor's iOS app pushes *"agent needs
-  input"* and *"agent finished"* as separate classes, and that separation is the whole value:
-  one is an interrupt, the other is an FYI, and a single ping trains you to ignore both. We
-  already compute both states — `test:silence` pins the quiet-turn detector and D8's bell
-  alert shipped in v0.4.13 — so this is routing what the desk already knows to a phone, plus
-  the deep link that opens *that pane*. Web Push is the transport; on iOS it requires the
-  page be added to the home screen, which is a real limit to state in the UI rather than
-  discover.
+- [ ] **H1. Two notifications, not one bell** — M, and **half of it shipped 2026-08-07**.
+  Cursor's iOS app pushes *"agent needs input"* and *"agent finished"* as separate classes,
+  and that separation is the whole value: one is an interrupt, the other is an FYI, and a
+  single ping trains you to ignore both. The **in-app** half is done with H3 below — the
+  distinction now exists on screen as motion (`shared/fleet.ts`: a breath is the app
+  working, a spreading ring is the app waiting on you, a terminal state is perfectly still)
+  and as a count on the Fleet button, which is the first thing in this app to say how many
+  panes want a PERSON rather than how many are busy. What is left is the transport: routing
+  the same distinction to a phone, plus the deep link that opens *that pane*. Web Push is
+  the mechanism; on iOS it needs the page added to the home screen, which is a limit to
+  state in the UI rather than let somebody discover.
 - [ ] **H2. The phone opens on the diff, not the terminal** — M. Codex mobile makes the diff
   the primary surface and collapses the terminal under it; that is the correct default for a
   screen you look at for eleven seconds. `DiffDialog.tsx` already reads a repo's changes and
   `test:diff` pins the `-z` records and renames, so the mobile route is a narrow layout over
   the same data, with the pty output one tap down.
-- [ ] **H3. Fleet view: who is working, who is stuck, what changed** — M. Conductor's single
-  screen answers those three without opening a pane, and it is the screen a phone actually
-  wants. This is not phone-only work: the sidebar answers it today only by reading eight
-  pane cards, and `place.ts` already produces the words. Same view, two widths.
+- [x] **H3. Fleet view: who is working, who is stuck, what changed** — shipped 2026-08-07,
+  Ctrl/Cmd Shift F. Conductor's single screen answers those three without opening a pane,
+  and it turned out not to be phone-only work at all: the sidebar answered them only by
+  reading eight cards, in the order the panes were opened, which is the one order that is
+  never the order you care about. Three things it settled that the note below did not
+  anticipate:
+  - **The sort IS the feature.** `shared/fleet.ts` ranks needs-you above a stall above
+    working, and inside one state puts the oldest first, because a pane that has been
+    waiting eleven minutes is more interesting than one that finished four seconds ago.
+    A pane's `SessionStatus` could not do this: two panes both reading `idle` are a
+    finished turn and a CLI nobody has typed into, and those are not the same row.
+  - **Motion is the status**, which is H1's in-app half and the one design idea worth
+    taking from the whole category. Everyone else draws a spinner per row; here there are
+    two motions meaning different things and terminal states are still, so the movement
+    *stopping* is the event. `prefers-reduced-motion` turns both off and the words carry it.
+  - **The diff bar** — log-scaled, so 40 lines beside a 3,000-line refactor is still
+    visible rather than 1.3% of the bar — is the one thing on the page research found
+    nowhere else shipped. One `git status` + one `git diff` per distinct FOLDER per tick,
+    so four panes in one repo cost what one does.
+
+  `npm run test:fleet` (42 assertions, no window). Verified in a real window against three
+  live panes: the typed-into pane sorted to the top as `needsYou` with `callRing 2.4s`, the
+  two untouched ones static, a non-repo folder drawing no bar, the changes opening *over*
+  the list and Escape returning to it.
 - [ ] **H4. What happened while you were away** — S. Jules ships an *audio* changelog of
   recent commits; the listenable part is a gimmick, the digest is not. One card per pane:
   turns taken, files touched, last question asked, since you last looked. Reads the same

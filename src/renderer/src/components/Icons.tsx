@@ -43,6 +43,21 @@ export function SwarmIcon(p: IconProps): JSX.Element {
   )
 }
 
+/**
+ * Every pane at once: a stack of rows with the top one lit.
+ *
+ * The lit row is the point of the icon, not decoration - the screen it opens is sorted so
+ * the row that needs a person is the first one.
+ */
+export function FleetIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+      <circle cx="2.5" cy="4" r="0.9" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
 /** Tasks and shared memory: a checklist. */
 export function BoardIcon(p: IconProps): JSX.Element {
   return (
