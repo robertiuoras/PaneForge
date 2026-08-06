@@ -495,6 +495,47 @@ export interface GameModeStatus {
  * rather than precede it, and the union being ready is what keeps that a one-line change
  * rather than a refactor.
  */
+/**
+ * "You have asked this before" — see main/promptArchive.ts.
+ *
+ * On by default, which the improve feature deliberately is not: this one spends no tokens,
+ * starts no process and touches no network, so the case for making people find it first is
+ * weak and the thing it saves is exactly the thing nobody notices they are paying for.
+ */
+export interface PromptRecallConfig {
+  /** Match a draft against earlier asks and offer the chip. Off also stops recording. */
+  enabled: boolean
+  /**
+   * Archives written by something else, merged in read-only — a prompt typed into a bare
+   * terminal, or into a CLI before this app was installed. Absent files are ignored, so a
+   * path that only exists on one machine is safe to keep in a synced config.
+   */
+  extraArchives: string[]
+}
+
+/** An earlier ask this draft repeats. Everything the chip shows and nothing else. */
+export interface PriorPrompt {
+  /** 0..1, how much of the shorter ask the other one covers */
+  score: number
+  /** the earlier prompt, already collapsed to one line and capped */
+  text: string
+  /** the project folder it was typed in, if known */
+  project: string | null
+  /** which agent it was typed at, if known */
+  agent: string | null
+  /** ISO of the most recent time it was asked */
+  at: string | null
+  /** how many times it has been asked */
+  uses: number
+  /**
+   * What it produced — `<repo> <sha> <subject>`. Null for every entry this app records
+   * today: nothing yet watches a pane's repo for the commit an ask turned into, so the only
+   * outcomes that appear come from an external archive that already stamps them. The field
+   * is here rather than added later so those rows survive a merge unchanged.
+   */
+  outcome: string | null
+}
+
 export interface PromptImproveConfig {
   mode: 'off' | 'suggest' | 'auto'
   /** Which CLI runs the improver. '' = the same agent as the pane. */
@@ -858,6 +899,8 @@ export interface Config {
   voice: VoiceConfig
   /** improve a draft prompt before it is sent - see PromptImproveConfig. Off by default. */
   promptImprove: PromptImproveConfig
+  /** say so when a draft repeats an ask already made - see PromptRecallConfig. On. */
+  promptRecall: PromptRecallConfig
   /** stay out of the way while a game is running - see GameModeConfig */
   gameMode: GameModeConfig
   /**
@@ -1243,6 +1286,10 @@ export interface Api {
   startRemote(device: string, req: StartSessionRequest): Promise<Session>
 
   /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
+  /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
+  priorPrompt(draft: string): Promise<PriorPrompt | null>
+  /** Record that a draft was actually sent. Fire-and-forget. */
+  promptUsed(draft: string, meta: { cwd?: string; agent?: string }): void
   improveStatus(): Promise<ImproveStatus>
   /**
    * Improve a draft. Never submits anything and never writes to the pane: the result is

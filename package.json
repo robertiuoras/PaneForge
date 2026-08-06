@@ -64,6 +64,7 @@
     "probe": "node scripts/probe.mjs",
     "test:trust": "node scripts/trust-test.mjs",
     "test:slash": "node scripts/slash-test.mjs",
+    "test:recall": "node scripts/prompt-recall-test.mjs",
     "test:draft": "node scripts/prompt-draft-test.mjs",
     "test:redact": "node scripts/prompt-redact-test.mjs",
     "test:insert": "node scripts/prompt-insert-test.mjs",

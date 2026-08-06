@@ -67,6 +67,37 @@ ships a full source-control surface: clone, publish, commit, push, PR, review.
 - [ ] **A7. Source-control status page** — S. Settings → Source Control: is `gh` installed,
   is it authenticated, which account. Same shape as Settings → Agents, which already exists
   and works. GitHub only to start; GitLab/Bitbucket/Azure are T3 Code chasing teams.
+- [ ] **A8. Ship a stack, not one 2000-line PR** — L, needs **A1** and **A3** first.
+  GitHub put stacked pull requests into public preview on 2026-07-30: a chain of PRs where
+  each one's base is the branch below it, a stack map in the PR UI, server-side base
+  retargeting when a middle PR merges, `gh stack` as a CLI extension, and a REST API plus a
+  `stack` field on the GraphQL PR type — so it is drivable by us, not just clickable. Their
+  own launch material (2026-08-04, "turn one giant AI-generated pull request into a
+  reviewable stack") says out loud what the feature is for, and it is the exact thing this
+  app produces: one agent runs for an hour and hands back a diff nobody can review.
+  Build: in the diff view (A1), let the change be cut into ordered layers — by commit, or by
+  a selection of files — and push each layer as a PR based on the one below via `gh stack`.
+  **Better than theirs:** GitHub can only split what is already committed, so a human has to
+  work out the seams afterwards. We watched the work happen — `split.ts` already reasons
+  about file ownership, and the pane's own agent has the reasoning loaded — so we can propose
+  the layer boundaries at the moment the work finishes, which is the only moment anyone knows
+  what they were.
+  **Caveats before starting:** public preview, so the API surface can still move — pin
+  behaviour behind one adapter module and do not sprinkle `gh stack` calls through the UI.
+  And keep the fallback honest: on a repo without the preview, a stack has to degrade to
+  plain chained branches with base pointers set by hand (`gh pr create --base`), which is
+  what git-spice (free, GPL-3.0, `--json` output) does entirely client-side and is the better
+  thing to shell out to if we ever want this off GitHub.
+
+**Stacking is not lanes, and neither replaces the other.** Lanes are for work that is
+*independent and parallel* — several agents, several features, partitioned by file ownership
+so they never touch the same lines, each merged back to master whenever it happens to finish.
+There is no chain, so there is nothing to cascade. Stacking is for work that is *sequential
+and dependent* — one feature whose changes build on each other, which you nonetheless want
+reviewed as separate readable layers, merged in order. The two compose: a single lane's
+output is exactly the thing worth stacking, and lanes remain how several stacks get built at
+once. So A8 is a lane's exit path, not a competitor to `lane.mjs`, and nothing in the lane
+engine changes for it.
 
 ## B. Reach — remote, mobile, headless (T3 Code)
 

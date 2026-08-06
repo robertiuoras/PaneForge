@@ -285,6 +285,50 @@
   transform: translateY(0);
 }
 
+/* The third offer, and the quietest of them on purpose: this ask has been made before.
+ *
+ * Improve and Split both propose doing something. This one only says a thing you may
+ * already know, it can be wrong about a draft that merely resembles an old one, and it is
+ * the only chip that can appear while you are still mid-sentence. So it borrows no accent
+ * and adds no colour of its own - the whole style is the existing foreground mixed back
+ * towards the surface, which reads as a note rather than a button competing for the click.
+ *
+ * No new custom property: every colour in this window is derived from one accent in
+ * shared/theme.ts, and a chip is not a reason to add a colour to that. */
+.prior-chip-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  background: var(--bg-raised, #1b1d22);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform var(--fast), box-shadow var(--fast), background var(--fast);
+}
+
+/* A pseudo-element rather than an emoji in the markup, for the same reason the sparkle is:
+ * the label stays a plain string for the tests and for anything reading it out loud. */
+.prior-chip-offer::before {
+  content: '↺';
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.prior-chip-offer:hover {
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+
+.prior-chip-offer:active {
+  transform: translateY(0);
+}
+
 /* The other offer a draft can earn: this ask is several jobs, and they can have a pane
  * each. Deliberately quieter than Improve - it is the rarer answer, and two chips
  * competing for the same glance is two chips nobody reads. */

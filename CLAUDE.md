@@ -181,6 +181,32 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
   `spawnDetachedNoWindow`; stubbing it with a plain detached `spawn` makes every kill
   silently do nothing.
 
+## The app remembers what has been asked
+
+`src/main/promptArchive.ts` answers one question — has this ask been made before — and it is
+fed from `shared/draft.ts`, on the way to the pty, **not** from any CLI's hook. That is the
+whole reason it works: Claude Code can already warn itself, Codex cannot, and neither can the
+next agent on the list of thirteen. Reading the bytes means every agent is covered, including
+ones that do not exist yet.
+
+- **It never blocks, never types, never cancels.** A repeat is often deliberate. All that
+  happens by itself is a chip in the pane's corner, on the same contract as Improve beside
+  it, and being wrong therefore costs a glance.
+- The quiet window (`QUIET_MS`, 6h) is load-bearing, not the score: a reworded re-send two
+  minutes later is the SAME work — a retry, a follow-up — and warning there is what would
+  make somebody switch the feature off.
+- Only submitted lines are archived, never drafts, and only a capped preview plus the token
+  set — never the full text.
+- **`src/shared/promptKey.ts` is a MIRROR of an algorithm that lives in three places outside
+  this repo** (Robert's `claude-memory` hook, the TaskDriver archive server, the Discord
+  bot), which share one archive. Editing one copy splits that archive in silence — no error,
+  just a lookup that quietly stops finding things. `npm run test:recall` recomputes the
+  canonical file's answers and asserts ours agree, and **skips out loud** when that file is
+  not on the machine.
+- Not built yet, and the UI does not pretend otherwise: nothing watches a pane's repo for the
+  commit an ask turned into, so `outcome` is null for everything this app records. The
+  outcomes that do appear come from an external archive that already stamps them.
+
 ## Checks
 
 `npm run typecheck` before committing.
@@ -209,6 +235,7 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
 | `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
 | `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
 | `npm run test:improve` | prompt improvement, model-free (incl. the exact typed byte stream) |
+| `npm run test:recall` | "you have asked this before" — and PARITY with the canonical fingerprint |
 | `npm run test:rename` | the folder rename, on a throwaway repo |
 | `npm run test:dock` | the macOS Dock icon (no `visibleOnFullScreen` without the skip) |
 | `npm run test:macupdate` | the app replacing its own bundle |

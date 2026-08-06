@@ -43,6 +43,7 @@ import { cancelResearch, research } from './researchRun'
 import { buildContextPack } from './contextPack'
 import { stage } from '../shared/capability'
 import { firstExistingVault, loadCapabilities } from './knowledge'
+import { priorPrompt, recordPrompt } from './promptArchive'
 import { recordImprovement } from './promptAudit'
 import { insertSequence } from '../shared/promptSchema'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
@@ -127,6 +128,7 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
+import { probeLog } from './probeLog'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -489,6 +491,11 @@ function rememberBounds(): void {
  * kind of interruption.
  */
 function focusWindow(asked = false): void {
+  probeLog('focusWindow', {
+    asked,
+    visible: !!win && !win.isDestroyed() && win.isVisible(),
+    stack: new Error().stack?.split('\n').slice(1, 8).join(' | ')
+  })
   if (!asked && isGameActive()) return
   if (!alive()) return createWindow()
   const w = win!
@@ -1310,7 +1317,7 @@ ipcMain.on('recents:toPane', (_e, id: string, focus = false) => {
   send('recents:toPane', id)
 })
 ipcMain.on('shelf:focusApp', () => focusWindow())
-ipcMain.on('shelf:touch', () => noteShelfTouch())
+ipcMain.on('shelf:touch', () => noteShelfTouch('ipc:shelf:touch'))
 ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
 ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
 // Dragged by its own header. The overlay cannot move its window itself, and a pointer
@@ -1903,6 +1910,41 @@ async function runImprove(
   }
 }
 
+/**
+ * "Has this been asked before?" — see main/promptArchive.ts.
+ *
+ * A lookup, not a search: it scores the draft against an archive already in memory, so the
+ * renderer may ask on every idle pause without this costing anything. It answers null far
+ * more often than not, and null is the answer that must stay cheap.
+ */
+ipcMain.handle('prompt:prior', (_e, draft: string) => {
+  const cfg = getConfig().promptRecall
+  if (!cfg.enabled) return null
+  try {
+    return priorPrompt(draft, { extraArchives: cfg.extraArchives })
+  } catch {
+    // A feature that says "you asked this before" must never be the reason a pane stops
+    // working. Nothing was found is the right failure.
+    return null
+  }
+})
+
+/**
+ * A pane's draft was submitted. Fire-and-forget: the renderer is mid-keystroke and has
+ * nothing to do with the answer.
+ */
+ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: string }) => {
+  if (!getConfig().promptRecall.enabled) return
+  try {
+    // The folder is turned into a project name here rather than in the renderer, because
+    // splitting a path is a platform question and this side already knows the answer.
+    const project = meta.cwd ? basename(meta.cwd) : null
+    recordPrompt(draft, { project, agent: meta.agent ?? null })
+  } catch {
+    /* see above */
+  }
+})
+
 ipcMain.handle('improve:run', (_e, id: string, draft: string, options?: ImproveOptions) =>
   runImprove(id, draft, undefined, options)
 )
@@ -2342,14 +2384,24 @@ app.whenReady().then(() => {
   // the decision waits one settle for the other half of the gesture. An eighth of a
   // second before a window appears is not a wait; a window appearing when the Stash was
   // clicked is the bug (see shared/activation.ts).
-  const onActivated = (reveal: () => void): void => {
+  const onActivated = (reveal: () => void, from = '?'): void => {
     const activatedAt = Date.now()
     setTimeout(() => {
-      if (revealOnActivation({ activatedAt, quietUntil, shelfTouchedAt: shelfTouchedAt() }))
-        reveal()
+      const touched = shelfTouchedAt()
+      const result = revealOnActivation({ activatedAt, quietUntil, shelfTouchedAt: touched })
+      probeLog('onActivated.decision', {
+        from,
+        activatedAt,
+        quietUntil,
+        shelfTouchedAt: touched,
+        delta: touched > 0 ? activatedAt - touched : null,
+        result
+      })
+      if (result) reveal()
     }, ACTIVATION_SETTLE_MS)
   }
   app.on('activate', () => {
+    probeLog('app.activate', { windows: BrowserWindow.getAllWindows().length })
     if (BrowserWindow.getAllWindows().length === 0) return createWindow()
     // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a
     // taskbar button, and it is the only way back into a copy that launched hidden -
@@ -2359,7 +2411,7 @@ app.whenReady().then(() => {
     // agent started must not answer that by showing itself. Anything this close to
     // startup is the launch, not a click. And except when the Stash was what was
     // clicked - the overlay is a window of this app too.
-    onActivated(() => focusWindow(true))
+    onActivated(() => focusWindow(true), 'activate')
   })
   // Cmd-Tab into an app whose windows are all hidden does not always reach `activate`,
   // and an app you switched to that shows you nothing looks broken. Same guards: the
@@ -2368,9 +2420,12 @@ app.whenReady().then(() => {
   // clicking any window of an app activates the app.
   if (process.platform === 'darwin')
     app.on('did-become-active', () => {
+      probeLog('app.did-become-active', {
+        visible: !!win && !win.isDestroyed() && win.isVisible()
+      })
       onActivated(() => {
         if (alive() && !win!.isVisible()) focusWindow(true)
-      })
+      }, 'did-become-active')
     })
 })
 

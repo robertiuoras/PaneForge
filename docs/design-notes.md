@@ -367,6 +367,61 @@ The test's own lesson is worth keeping: it stubbed `spawnDetachedNoWindow` with 
 exact shape `consoles.ts` exists to avoid on this Windows build. It loads the real module now.
 A stub of the one line that is hard on this platform is a test that passes while the app leaks.
 
+## The app remembers what has been asked
+
+The expensive part of a repeated ask is never the typing. It is the agent re-reading the
+repo, re-searching GitHub and re-deriving an answer that already exists, at full token price,
+because nothing in the loop remembers the question was settled in March. Robert asked for a
+safeguard that stops that early, across every CLI he uses.
+
+**Why it is not a CLI hook, which is the obvious build.** Claude Code has
+`UserPromptSubmit`, and Robert's `claude-memory/claude-config/prompt-dejavu.mjs` already uses
+it — that hook is where this idea comes from and it works well. It also covers exactly one
+agent. Codex has no equivalent, and `shared/agents.ts` lists thirteen. A hook-based version
+is therefore a feature that silently does nothing for twelve of them and needs rewriting
+whenever a fourteenth ships.
+
+PaneForge hosts the pty, and `shared/draft.ts` already reconstructs what is being typed from
+the raw bytes — that is how the Improve chip knows there is a draft at all. Reading the
+archive from there means the agent's identity stops mattering: it sees what a person typed,
+not what any particular CLI does with it. That is the whole argument for building it here.
+
+**What it deliberately does not do.** It never blocks, never types into the pane, never
+cancels a run. A repeat is frequently intentional — the same deploy check every morning, a
+retry of something that failed — so an interruption that has to be dismissed would be wrong
+more often than a chip that can be ignored. Being wrong costs a glance, which is the right
+budget for a heuristic running on somebody's half-typed sentence.
+
+**The quiet window is the load-bearing part, not the score.** `QUIET_MS` is six hours, and
+without it the feature fires hardest exactly when it is least wanted: a prompt reworded and
+re-sent two minutes after the first attempt failed is the same piece of work, and being told
+"you have asked this before" at that moment is both true and useless. Every threshold in
+`promptKey.ts` could be tuned and the feature would survive; drop the quiet window and it
+gets switched off in a day.
+
+**Only submitted lines are recorded**, never drafts. An archive of half-written sentences
+would match badly, and it would also be a record of things somebody decided not to say. What
+is stored is the token set plus a 300-character preview — enough to match on and to show,
+never the full text.
+
+**`src/shared/promptKey.ts` is a fourth copy, on purpose, and that is a real hazard.** The
+same algorithm lives in Robert's `claude-memory` hook, the TaskDriver archive server and the
+Discord bot, and those three share one archive keyed by a hash of the sorted token set. Any
+drift between copies splits that archive into archives that never see each other's entries —
+with no error and no symptom, just a lookup that quietly stops finding things. It is a copy
+rather than an import because the app ships to people who have none of that and the feature
+has to work on its own local history alone. `npm run test:recall` recomputes the canonical
+file's answers over a shared corpus and asserts ours agree; when that file is absent it
+**skips out loud**, because a silent skip is precisely how the copies would drift unobserved.
+
+**What is honestly missing.** Nothing yet watches a pane's repo for the commit an ask turned
+into, so `outcome` is null for every row this app records, and the tooltip says so in those
+words rather than implying a lookup happened and found nothing. The outcomes that do appear
+come from an external archive that already stamps them — which is how Robert's own history,
+including prompts posted in Discord, reaches the chip: `promptRecall.extraArchives` merges
+other JSONL files read-only. Writing into a file another tool owns would mean agreeing with
+it about a format forever, and the two already disagree.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.

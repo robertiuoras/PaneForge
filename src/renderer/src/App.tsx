@@ -4,6 +4,7 @@ import type {
   Config,
   HistoryEntry,
   Preset,
+  PriorPrompt,
   Project,
   RecentItem,
   RemoteState,
@@ -37,6 +38,7 @@ import TerminalPane, {
 } from './components/TerminalPane'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
+import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
 import './components/ImproveSheet.css'
@@ -95,6 +97,38 @@ const DRAG_SLOP = 9
  *  never delayed. A click is a press of ~80-120ms, so anything under ~150ms would still
  *  flash a hand on every selection; 220ms reads as "I am holding this". */
 const HOLD_CURSOR_MS = 220
+
+/**
+ * Quiet before a draft is checked against earlier asks.
+ *
+ * Shorter than the improve chip's 1200ms because the two are not the same kind of thing: the
+ * improver's delay protects a twenty-second CLI run from being started on a half-typed line,
+ * and this one only stops an IPC round trip per keystroke. It also has to land while there
+ * is still a reason to read it — a warning that arrives after Enter has been pressed is a
+ * receipt, not a warning.
+ */
+const PRIOR_IDLE_MS = 450
+
+/**
+ * What the "asked before" chip says when you hover it.
+ *
+ * The whole value of the feature is in this string, so it says the three things that decide
+ * whether to carry on typing — when, where, and what came of it — and then what to do about
+ * it. Without the outcome line it can only tell you the question was asked, which is the
+ * half that makes someone go and look anyway.
+ */
+function priorTitle(p: PriorPrompt): string {
+  const when = p.at ? new Date(p.at).toLocaleDateString() : 'previously'
+  const where = p.project ? ` in ${p.project}` : ''
+  const times = p.uses > 1 ? `, ${p.uses}x` : ''
+  return (
+    `You asked this ${when}${where}${times}:\n\n"${p.text}"\n\n` +
+    (p.outcome
+      ? `It produced: ${p.outcome}\n\nCheck that first - only redo what is genuinely still missing.`
+      : 'Nothing is recorded about what it produced, so check the repo before starting a fresh search.') +
+    '\n\nClick to dismiss. Nothing is stopped or changed either way.'
+  )
+}
 
 /** A pending question for the in-app confirm/prompt dialog. */
 interface AskState {
@@ -903,6 +937,52 @@ export default function App(): JSX.Element {
       window.clearTimeout(timer)
     }
   }, [improveMode, improveIdleMs])
+
+  /**
+   * "You have asked this before."
+   *
+   * Same contract as the two chips beside it — a heuristic on the draft, a chip in the
+   * pane's corner, nothing that moves or takes the keyboard — but a different cost, and the
+   * difference is why this one is not gated on the improve setting and does not wait for the
+   * pane to go idle for as long. Improving a prompt spends twenty seconds of a CLI's time;
+   * this scores a token set against an archive already in memory, so asking is close to
+   * free and the answer is usually null.
+   *
+   * Deliberately not tied to `looksFinished()`: the point is to say something BEFORE the
+   * work is sent, and an ask that repeats an earlier one is worth flagging whether or not it
+   * reads as a finished sentence.
+   */
+  const [priorOffer, setPriorOffer] = useState<{ id: string; prior: PriorPrompt } | null>(null)
+  const priorEnabled = config?.promptRecall.enabled ?? true
+
+  useEffect(() => {
+    if (!priorEnabled) {
+      setPriorOffer(null)
+      return
+    }
+    let timer: number | undefined
+    // Every lookup is answered, but only the newest one is allowed to set state: the
+    // renderer keeps typing while an answer is in the air, and a late reply about older
+    // words would put a chip up about a draft that no longer exists.
+    let generation = 0
+    const stop = onPaneDraft((id, state) => {
+      setPriorOffer(null)
+      window.clearTimeout(timer)
+      const mine = ++generation
+      const text = state.text.trim()
+      if (!state.certain || text.length < 12) return
+      timer = window.setTimeout(() => {
+        void api.priorPrompt(text).then((prior) => {
+          if (!prior || mine !== generation) return
+          setPriorOffer({ id, prior })
+        })
+      }, PRIOR_IDLE_MS)
+    })
+    return () => {
+      stop()
+      window.clearTimeout(timer)
+    }
+  }, [priorEnabled])
 
   /**
    * Offering to cut one ask into several panes.
@@ -2548,8 +2628,21 @@ export default function App(): JSX.Element {
                 about - not a popup, not a toast, nothing that moves and nothing that
                 takes the keyboard. It appears only when the draft has gone quiet, reads
                 as finished, and the agent is not mid-turn. */}
-            {(improveOffer === s.id || splitOffer === s.id) && !sheet && (
+            {(improveOffer === s.id || splitOffer === s.id || priorOffer?.id === s.id) &&
+              !sheet && (
               <div className="pane-offers">
+                {priorOffer?.id === s.id && (
+                  <button
+                    className="prior-chip-offer"
+                    title={priorTitle(priorOffer.prior)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPriorOffer(null)
+                    }}
+                  >
+                    {priorOffer.prior.score >= STRONG_MATCH ? 'Asked before' : 'Asked something like this'}
+                  </button>
+                )}
                 {splitOffer === s.id && (
                   <button
                     className="split-chip-offer"

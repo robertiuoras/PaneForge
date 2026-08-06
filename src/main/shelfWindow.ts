@@ -23,6 +23,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, screen } from 'electron'
 import { getConfig, setConfig } from './config'
+import { probeLog } from './probeLog'
 import type { RecentItem, ShelfLift, StashConfig } from '../shared/types'
 
 /** The resting size: a pill with the count on it. */
@@ -159,6 +160,7 @@ export function setShelfTall(next: boolean): void {
 // the page reports the pointer in screen coordinates, and the window is moved to match.
 
 export function beginShelfDrag(): void {
+  probeLog('beginShelfDrag', { alive: alive(), ghost: !!ghost })
   if (!alive() || ghost) return
   drag = { orig: shelf!.getBounds(), moved: false }
 }
@@ -213,6 +215,7 @@ function desktopBounds(): Electron.Rectangle {
 }
 
 export function liftShelfDrag(): ShelfLift {
+  probeLog('liftShelfDrag', { alive: alive(), drag: !!drag, ghost: !!ghost, live: LIVE_DRAG })
   if (!alive() || !drag || ghost) return null
   drag.moved = true
   // Where moving the window is cheap, that is the whole implementation: the renderer
@@ -240,7 +243,9 @@ export function liftShelfDrag(): ShelfLift {
 }
 
 /** A pointer move during a live drag: the window goes where the pointer took it. */
+let moveN = 0
 export function moveShelfDrag(dx: number, dy: number): void {
+  if (moveN++ % 10 === 0) probeLog('moveShelfDrag', { n: moveN - 1, dx, dy })
   if (!alive() || !drag || ghost) return
   drag.moved = true
   const { orig } = drag
@@ -281,6 +286,8 @@ export function shownShelfDrag(): void {
 
 /** Shrink back to content size where it was let go, and remember the spot. */
 export function dropShelfDrag(dx: number, dy: number): void {
+  probeLog('dropShelfDrag', { dx, dy, drag: !!drag, ghost: !!ghost })
+  moveN = 0
   const live = drag && !ghost ? drag : null
   drag = null
   if (live) {
@@ -318,6 +325,8 @@ export function dropShelfDrag(dx: number, dy: number): void {
 
 /** A press that never turned into a drag: a click on the header, nothing to move. */
 export function endShelfDrag(): void {
+  probeLog('endShelfDrag', { drag: !!drag, ghost: !!ghost })
+  moveN = 0
   drag = null
   // The click path never lifted, but belt-and-braces: a stray end after a lift must
   // not strand the expanded window.
@@ -346,8 +355,9 @@ export function shelfTouchedAt(): number {
  * Electron also surfacing a webContents input event. The renderer reports it in capture
  * phase, before any drag or button handler, and index.ts already settles activation for it.
  */
-export function noteShelfTouch(): void {
+export function noteShelfTouch(route = 'unknown'): void {
   touchedAt = Date.now()
+  probeLog('noteShelfTouch', { route, touchedAt })
 }
 
 /** True while a game has the overlay put away. See setShelfHidden. */
@@ -525,7 +535,8 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
   // where the page reacts to it. Only presses: a pointer merely passing over the Stash
   // must not suppress a Cmd-Tab a moment later. See shelfTouchedAt().
   shelf.webContents.on('input-event', (_e, input) => {
-    if (input.type === 'mouseDown' || input.type === 'mouseUp') noteShelfTouch()
+    if (input.type === 'mouseDown' || input.type === 'mouseUp')
+      noteShelfTouch(`input-event:${input.type}`)
   })
   shelf.once('ready-to-show', () => {
     if (!keptBack()) shelf?.showInactive()

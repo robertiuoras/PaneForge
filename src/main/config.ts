@@ -209,6 +209,10 @@ function defaults(): Config {
       telemetry: false,
       telemetryText: false
     },
+    // On, unlike promptImprove: this one spends nothing and starts nothing. No archive is
+    // configured by default - the app's own history is what it runs on, and a second one is
+    // only worth naming if the person already has prompts written down somewhere else.
+    promptRecall: { enabled: true, extraArchives: [] },
     // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
@@ -236,6 +240,7 @@ export function getConfig(): Config {
       // key missing entirely, and an upgrade must land on `mode: 'off'` rather than on
       // `undefined`, which every read below would then have to guard.
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
+      promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },

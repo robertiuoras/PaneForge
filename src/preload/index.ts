@@ -141,6 +141,10 @@ const api: Api = {
   remoteAgents: (device) => ipcRenderer.invoke('remote:agents', device),
   startRemote: (device, req: StartSessionRequest) => ipcRenderer.invoke('remote:start', device, req),
 
+  priorPrompt: (draft: string) => ipcRenderer.invoke('prompt:prior', draft),
+  promptUsed: (draft: string, meta: { cwd?: string; agent?: string }) =>
+    ipcRenderer.send('prompt:used', draft, meta),
+
   improveStatus: () => ipcRenderer.invoke('improve:status'),
   improvePrompt: (id, draft, options) => ipcRenderer.invoke('improve:run', id, draft, options),
   answerImprove: (id, draft, answers, options) =>

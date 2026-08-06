@@ -732,6 +732,12 @@ export default function TerminalPane({
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.
         if (text.length > 1) addMark(text)
+        // The archive is fed here, on the way to the pty, which is why it works the same
+        // for every agent: this sees what was typed, not what any particular CLI does with
+        // it. `line` rather than `text` - the flattened version is a rail label, and
+        // matching wants the words that were actually sent. Anything too short to be an ask
+        // is dropped on the other side (MIN_PROMPT_TOKENS), not here.
+        if (text.length > 1) api.promptUsed(line, { cwd: cwdRef.current })
       }
     }
 
