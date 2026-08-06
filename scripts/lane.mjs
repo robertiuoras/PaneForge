@@ -1018,6 +1018,33 @@ function claim(session, cwd, prefer, tentative = false) {
     (prefer && !state.lanes[prefer] ? prefer : null) ??
     spare.find((id) => !state.ready[id] && !state.conflicts[id]) ??
     spare[0]
+  // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
+  // chat alone in a repository should not pay it. `main` is the repository itself, so the
+  // lane a solo chat belongs in is the one lane whose holder sitting on it costs somebody
+  // else something; every other lane is interchangeable, which is why this is not a sweep.
+  // A `main` held by a chat that has said nothing for an hour and left nothing behind is
+  // handed to the chat that is about to be sent to a letter instead. Nothing can be lost:
+  // one uncommitted character and it is left alone, and master's own commits are not the
+  // holder's work - they are already everyone's, exactly as `busyLanes` reads them.
+  // (2026-08-07: a chat in another project ran one command inside taskdriver.ai, held its
+  // `main` for the six hours after its last word, and every taskdriver chat after it opened
+  // in `lane-a` for no reason at all. The 12h stale sweep is for chats that DIED, and the
+  // idle sweep below only runs when the pool is full - which it never is at two chats.)
+  if (free && free !== 'main' && !prefer && POOL.includes('main')) {
+    const held = state.lanes.main
+    if (
+      held &&
+      held.session !== session &&
+      !state.ready.main &&
+      !state.conflicts.main &&
+      now() - (held.seen ?? held.claimed ?? 0) > IDLE_EMPTY_MS &&
+      !laneWork('main').dirty
+    ) {
+      delete state.lanes.main
+      closeLaneApps(MAIN)
+      free = 'main'
+    }
+  }
   // Nothing free: before refusing, look for a lane that is being held and not used. The
   // oldest one goes, so a chat that has at least been seen recently keeps its checkout.
   if (!free) {
