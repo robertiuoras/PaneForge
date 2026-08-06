@@ -1,11 +1,46 @@
+<div align="center">
+
+<img src="icon.png" alt="" width="112" />
+
 # PaneForge
 
-One window for every coding agent you own. Claude Code, Codex, Gemini CLI, Qwen,
-Ollama, Copilot, Cursor Agent, opencode, Crush, Goose, Amp, Aider, a plain shell,
-or any other CLI you point it at. Each project gets a real terminal pane, and you
-choose which AI and which model runs in it.
+### One window for every coding agent you own.
 
-Windows and Apple Silicon macOS. Free, no accounts, no server.
+Claude Code, Codex, Gemini CLI, Qwen, Ollama, Copilot, Cursor Agent, opencode, Crush,
+Goose, Amp, Aider, a plain shell, or any other CLI you point it at.<br />
+Each project gets a **real terminal pane**, and you choose which AI and which model runs in it.
+
+**Windows and Apple Silicon macOS. Free, no accounts, no server, nothing to configure first.**
+
+[![Latest release](https://img.shields.io/github/v/release/robertiuoras/PaneForge?style=flat-square&color=6366f1&label=release)](https://github.com/robertiuoras/PaneForge/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/robertiuoras/PaneForge/total?style=flat-square&color=8b5cf6&label=downloads)](https://github.com/robertiuoras/PaneForge/releases)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20arm64-475569?style=flat-square)](#download)
+[![License](https://img.shields.io/github/license/robertiuoras/PaneForge?style=flat-square&color=475569)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/robertiuoras/PaneForge?style=flat-square&color=475569)](https://github.com/robertiuoras/PaneForge/commits)
+
+[**⬇ Download**](https://github.com/robertiuoras/PaneForge/releases/latest) &nbsp;·&nbsp;
+[**▶ See it running**](https://toolstash.xyz/paneforge) &nbsp;·&nbsp;
+[**What it does**](#what-it-does) &nbsp;·&nbsp;
+[**Changelog**](https://toolstash.xyz/paneforge/releases)
+
+</div>
+
+---
+
+### The short version
+
+|  | |
+|---|---|
+| **Every agent, one window** | Pick the CLI and pin the exact model per pane. **Ctrl Shift A** flips a stuck pane to the next agent without leaving the folder. |
+| **Real terminals** | Each pane is a true pty running that CLI in that folder. Same colours, same keys, same Ctrl-C. Nothing is proxied or re-rendered. |
+| **Worktree lanes** | A second session in a repo you already have open gets its own git worktree, your `.env` files, hardlinked `node_modules`, its own dev-server port, and a one-click merge back. |
+| **Swarm** | One mission, one pane per role - Planner, Builder, Reviewer, Tester - each told what it owns so they stop editing the same file. |
+| **Stash** | Anything you copy anywhere on the machine lands bottom-left and stays. Click a screenshot and PaneForge saves the PNG and types *its path* at the prompt, which is the only form of an image a CLI agent can read. |
+| **Voice, offline** | Hold **Ctrl Shift Space** and talk. Transcribed by a Whisper model on your own machine: free, offline, nothing uploaded. |
+| **Free agents** | Gemini CLI, Qwen, opencode, Crush, Goose, Aider and Ollama need no account at all. Ollama runs entirely offline. |
+
+There is a live, playable version of the interface - both layouts, all the agents - on the
+[product page](https://toolstash.xyz/paneforge).
 
 ## Download
 
@@ -281,6 +316,31 @@ without taking focus.
 `npm run try` deliberately launches `node_modules/electron`, not a packaged exe:
 Windows Smart App Control blocks freshly built unsigned binaries, that Electron is
 already trusted, and skipping electron-builder makes it start in seconds.
+
+### Screenshots of the real app
+
+```
+npm run shots                                   focus.png + grid.png
+npm run shots -- --keep                         skip the build
+npm run shots -- --dirs a,b,c,d                 which projects are in frame
+npm run shots -- --agents claude,codex,shell,shell
+npm run shots -- --out <dir>                    default: ../toolstash/public/paneforge
+```
+
+Electron can photograph its own window through CDP, which needs no Screen Recording
+permission from the OS and no screen recorder. `npm run shots` launches a capture copy on
+its own `shots` profile, starts four panes in real folders, types `/help` into the agent
+ones (answered locally, so a screenshot costs no tokens), and writes `focus.png` and
+`grid.png`. Drop those two into `toolstash/public/paneforge/` and the product page swaps
+its drawn preview for them with no other change.
+
+**Read every line in the frame before publishing one.** These are photographs of your
+machine, and the first three runs of this produced, entirely truthfully: a home folder in
+the path bar, a statusline with plan and usage percentages, "less than 25% of your weekly
+limit left", a signed-out CLI showing a login URL with a live challenge token, a "do you
+trust the files in this folder?" box, and the commit subjects of a private repo. Point it
+at folders whose contents you are happy to show, using agents that are signed in and have
+already been run there.
 
 Agents live in one place: `src/shared/agents.ts`. A new CLI is one entry - binary,
 launch args, resume args, model flag, install command, colour - and it appears in
