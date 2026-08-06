@@ -243,6 +243,8 @@ ones that do not exist yet.
 | `npm run test:rename` | the folder rename, on a throwaway repo |
 | `npm run test:dock` | the macOS Dock icon (no `visibleOnFullScreen` without the skip) |
 | `npm run test:macupdate` | the app replacing its own bundle |
+| `npm run test:macdownload` | every way a mac download can end — none of them a hang |
+| `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
