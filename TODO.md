@@ -611,6 +611,40 @@ services wound down and refunded, the Apache-2.0 repo left to the community. It 
 `competitors.json` to confirm it stays dead. A runner whose value lives on someone's server
 dies with the server; ours is a file on a disk.
 
+## I. The app drives the work — scanned 2026-08-07
+
+The reasoning, the survey it came from and the seven decisions are in
+**`docs/agentic.md`**; these are the checkable items. The short version: this repo already
+owns the isolation (lanes), the planner (`split.ts`), the launcher (Swarm) and the release,
+and is missing the four things that turn those into a loop — an awaited headless turn, a
+supervisor, a verification gate, and a budget. Every product in the category stops at a
+pull request and so does this; the win is that nothing needs typing in the middle.
+
+- [ ] **I1. One headless turn, awaited.** `agentRun.ts`: spawn a CLI headless in a cwd with
+      a prompt, parse `--output-format stream-json`, resolve
+      `{ text, toolCalls, tokens, exit, diffstat }`. Hard wall-clock budget and a kill. **M**
+      — the foundation for everything below, and on its own it is the first thing in this
+      app that can run an agent without a pane.
+- [ ] **I2. The supervisor.** Drive the plan `split.ts` already produces: claim a lane per
+      brief, run I1 in each, poll, surface the result on Fleet. **M** — the app finishes
+      what Swarm today only starts.
+- [ ] **I3. The gate.** Per lane: typecheck → suite → reviewer agent over the diff → mark
+      ready. Two retries with the failure handed back, then stop and say so. **S–M** — this
+      is what makes running unattended defensible rather than optimistic.
+- [ ] **I4. The goal queue.** A goal survives a restart and carries its lanes, attempts and
+      outcomes. Also where `promptArchive`'s null `outcome` finally gets a value. **M**
+- [ ] **I5. Budget-aware scheduling.** Lanes start on worktree AND token headroom against
+      the 5-hour window; cheap phases on cheap models; refuse rather than degrade. **S**
+- [ ] **I6. Hotspot ownership.** Worktrees stop two agents editing one file; they do not
+      stop two agents both deciding to edit the router. Extend the split plan's file claims
+      to a lock across live lanes, and merge those in a deliberate order. **S**
+- [ ] **I7. Unattended mode.** Total token budget, max retries, max wall clock, one stop
+      switch. Overnight: a goal off the queue, branches with diffs and gate results in the
+      morning. **S** once I1–I6 are in, and dangerous before them.
+
+Order: I1 → I2 → I3, then I5 beside I4, then I6, then I7. I3 before I4 deliberately — a
+queue of goals that lands unverified work is worse than no queue.
+
 ---
 
 ## Order to build in
@@ -642,11 +676,11 @@ dies with the server; ours is a file on a disk.
    what the agent touched, and B1 changes where a pty's state lives.
 9. **B6** — package managers, whenever signing is paid for.
 
-**G2 belongs at step 2, ahead of everything else in G.** It is an M that removes a blank
-screen the user sees every time the app updates itself, and the update path is the part of
-this app that has had the most bugs. G1 belongs with step 6 — it needs nothing new, but its
-value is the comparison surface, and that is a real UI. G3 is step 7, where C7 and E5
-already are; it is the reason to build them rather than a separate job.
+~~**G2 belongs at step 2, ahead of everything else in G.**~~ Shipped 2026-08-07 (`npm run
+test:scrollback`), and it turned out an S rather than an M. G1 belongs with step 6 — it
+needs nothing new, but its value is the comparison surface, and that is a real UI. G3 is
+step 7, where C7 and E5 already are; it is the reason to build them rather than a separate
+job.
 
 **F sits across this order rather than at the end of it.** F1 and F3 are small and pay for
 themselves the first time two lanes touch one file, so they belong beside step 2. F5 belongs
