@@ -29,6 +29,14 @@
 // that is on screen, so a minimized copy can photograph as an empty grey rectangle.
 // `--minimized` is there if you would rather risk that than have a window appear;
 // the capture is checked for size either way and the script says so if it looks blank.
+//
+// LOOK AT THE PNGs BEFORE YOU PUBLISH THEM. They are photographs of your machine.
+// The first run of this produced, entirely truthfully: your home folder in the path
+// bar, your Claude statusline with its plan and usage percentages, a Codex line
+// saying how much of the weekly limit was left, your MCP server names, and a Gemini
+// "do you trust this folder?" box. All real, none of it something to put on a
+// marketing page. Start the panes in folders each CLI has already been run in, give
+// them a moment of real work to show, and read every line in the frame.
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync, statSync } from 'node:fs'
@@ -174,26 +182,34 @@ function have(bin) {
 /**
  * Four panes, best available agent first.
  *
- * No `prompt` is set anywhere: a prompt would spend real tokens on a screenshot,
- * and each CLI's own startup screen is the honest picture of "this is that agent
- * running here" anyway. The shell fallbacks do run one command, because a bare
- * shell prompt photographs as an empty box.
+ * Each pane is given something to DO, because the first version of this script
+ * left them idle and photographed four boxes containing a splash screen and
+ * nothing else - true, and useless as a picture of the app.
+ *
+ * What they are given is `/help`, and that is deliberate: it is a real command
+ * typed into a real pty that fills the pane with the CLI's own output, and it is
+ * answered locally, so a screenshot costs no tokens and reveals no conversation.
+ * Shell panes get `git log` for the same reason.
  */
 function plan() {
-  const projects = join(homedir(), 'Projects')
-  const wanted = [
-    { dir: 'toolstash', agent: 'claude', bin: 'claude' },
-    { dir: 'PaneForge', agent: 'codex', bin: 'codex' },
-    { dir: 'assistant', agent: 'gemini', bin: 'gemini' },
-    { dir: 'taskdriver-ai', agent: 'cursor', bin: 'cursor-agent' }
-  ]
+  const projects = resolve(flag('--projects', join(homedir(), 'Projects')))
+  // Override with --dirs a,b,c,d when these are not the four you want in frame.
+  const dirs = flag('--dirs', 'toolstash,PaneForge,assistant,taskdriver.ai').split(',')
+  const agents = ['claude', 'codex', 'gemini', 'cursor']
+  const bins = { claude: 'claude', codex: 'codex', gemini: 'gemini', cursor: 'cursor-agent' }
+
   const out = []
-  for (const w of wanted) {
-    const cwd = join(projects, w.dir)
-    if (!existsSync(cwd)) continue
+  for (let i = 0; i < dirs.length && out.length < 4; i++) {
+    const cwd = join(projects, dirs[i].trim())
+    if (!existsSync(cwd)) {
+      console.log(`   skipping ${dirs[i].trim()} - no such folder`)
+      continue
+    }
+    const agent = agents[out.length]
     out.push(
-      have(w.bin)
-        ? { cwd, agent: w.agent }
+      have(bins[agent])
+        ? // Long delay: the prompt is typed into the CLI, so it has to be up first.
+          { cwd, agent, prompt: '/help', promptDelay: 6000 }
         : { cwd, agent: 'shell', prompt: 'git log --oneline -8', promptDelay: 900 }
     )
   }
