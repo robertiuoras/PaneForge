@@ -101,7 +101,8 @@
     "probe:clear": "node scripts/clear-wipe-probe.mjs",
     "test:sounds": "node scripts/sound-test.mjs",
     "test:blurbs": "node scripts/blurb-test.mjs",
-    "test:laneargs": "node scripts/lane-args-test.mjs"
+    "test:laneargs": "node scripts/lane-args-test.mjs",
+    "shots": "node scripts/shots.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
