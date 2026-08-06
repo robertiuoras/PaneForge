@@ -199,6 +199,65 @@ deleted; `Projects/.autosync/paneforge-rename.mjs` is its harmless leftover copy
 and single-instance lock. That is a migration, not a rename, and it buys nothing anyone
 can see.
 
+## An update may never need a person
+
+The promise is the one every installed app makes: install once, update from the app, for
+ever. Measured against it, this app has failed three times, and every failure was the same
+shape wearing a different coat.
+
+**2026-08-06.** The Mac sat on 0.4.45 from Aug 3 with the badge frozen at 33%. Cause was
+`fetchTo` in `macUpdate.ts` never settling when the v0.4.62 body stopped arriving at exactly
+30 MiB of 95.8 MB - no `'error'` handler, no `'aborted'` handler, a truncated body reaching
+`'finish'` and resolving. v0.6.0 settled every path in that file, added a watchdog on BYTES
+rather than on the socket, and raced staging against a 30-minute deadline.
+
+**2026-08-07, the next morning.** Same Mac, same 33%, still 0.4.45. Nothing had regressed:
+**v0.6.0 fixed the updater in the release, and the updater is what delivers releases.** A
+machine whose updater is the wedged component never receives its own fix. Quitting installed
+nothing either, because the quit swap asked `phase === 'ready'` and the phase said
+`downloading`. The only way back was replacing `/Applications/PaneForge.app` by hand.
+
+Three lessons, and only the third is structural.
+
+1. **A fix to the update path needs an out-of-band install for the machines already stuck,
+   and that is part of shipping it, not a follow-up.** Here that is a detached watcher
+   holding the app's own `swap.sh` open, waiting on the running pid.
+2. **A phase is a live flag; a staged bundle is a fact on disk.** When the two disagree the
+   fact wins. `stagedInstallable()` reads memory only (set at launch by `adoptStaged()`),
+   because it is called on the way out and must not scan or delete anything. Installing a
+   build older than the one that failed to download is right: it is still newer than what is
+   running, and the next launch looks again.
+3. **The recovery may not live inside the thing that can hang.** This is the whole of it.
+   Settling our own downloads fixes one promise and leaves the shape intact, and
+   `electron-updater`'s check and download are not ours to settle at all. So:
+   - `set()` stamps `phaseAt` on a phase CHANGE (a percent tick must not restamp it, or a
+     download that stalls at 33% looks fresh for ever). `busy()` drops a transient phase
+     past its budget and logs `wedged`. Budgets are generous - hotel wifi must never trip
+     one - and every one is env-overridable so the test takes 150ms instead of 45 minutes.
+   - `probing` is the same flag one size down: `supersede()` sets it, discards every update
+     event while it is set, and unwinds it in a `finally` a hung check never reaches. Same
+     treatment, `PROBE_BUDGET_MS`.
+   - **The poll is armed before the await as well as after it.** `arm()` lived only in
+     `pollOnce`'s `finally`, and `finally` is not reached while an await hangs - so one
+     unsettled promise did not merely wedge the phase, it ended the background poll for the
+     life of the process, leaving nothing to notice the wedge or undo it. A healthy turn's
+     `finally` re-arms at the ordinary cadence and replaces the watchdog, so nothing polls
+     faster than before; only a turn that never returns is affected.
+
+`update-health.json` is the fourth piece and the cheapest: `lastGood`, a count of recovered
+wedges, and the last one's name. A recovered wedge otherwise leaves no trace once the phase
+resets, and the thing worth knowing is never any single one - it is "this machine has not
+had a good look at the feed in four days". Silence is what made the last one cost a day: an
+empty log reads exactly like nothing to do. Three days logs `health STALE`.
+
+`npm run test:wedge` (also the second half of `npm run test:updater`) hangs the stub on
+purpose - a promise with no ending at all, not a slow one - and asserts each of the four
+recovers unattended, including the reported symptom itself: `download-progress` at 33%,
+which is the exact number this Mac sat on. The staged-bundle half runs for real on macOS and
+skips out loud elsewhere. Writing it caught one thing worth keeping: the first attempt never
+reached the hang, because the phase was still `checking` from the previous case and `busy()`
+correctly refused - a test of a recovery path has to reach the failure first.
+
 ## Never take the screen
 
 The app hosts the chat and runs all day beside real work, so nothing it does on its own

@@ -27,6 +27,7 @@ import {
   clearStaged,
   setMacUpdateLog,
   stageMacUpdate,
+  staged,
   swapAndRelaunch
 } from './macUpdate'
 
@@ -43,6 +44,25 @@ let retry: NodeJS.Timeout | null = null
 let auto = false
 /** A silent look at the feed while a build waits. Its events must not touch the badge. */
 let probing = false
+/** When that probe started, so one that never comes back cannot silence the badge for ever. */
+let probingAt = 0
+
+/**
+ * Is a probe genuinely in flight?
+ *
+ * `probing` is the same trap as `busy()` in miniature: `supersede()` sets it, awaits
+ * electron-updater, and unwinds it in `finally`. A check that never settles leaves it true
+ * for the life of the process, and from then on every update event is discarded as "just
+ * the probe" - the badge stops moving while the app looks perfectly healthy.
+ */
+function isProbing(): boolean {
+  if (!probing) return false
+  if (Date.now() - probingAt <= PROBE_BUDGET_MS) return true
+  log('wedged', `a feed probe never came back after ${Math.round((Date.now() - probingAt) / 1000)}s - dropping it`)
+  noteWedge('probe')
+  probing = false
+  return false
+}
 
 // electron-updater's own log line, kept next to the app's data. Without it an update
 // failure is invisible after the fact: the message lives only in a renderer tooltip,
@@ -116,15 +136,111 @@ function load(): Updater | null {
 function set(patch: Partial<UpdateState>): void {
   const before = state.phase
   state = { ...state, ...patch, current: app.getVersion() }
+  if (state.phase !== before) phaseAt = Date.now()
   if (state.phase !== before || patch.error) {
     log('state', state.phase, state.version ?? '', state.error ?? '')
   }
   emit(state)
 }
 
+// --- nothing may be busy for ever -------------------------------------------
+//
+// Every wedge this app has had is the same shape: a promise that never settles, behind a
+// flag that says "already working on it". v0.6.0 settled every path in `macUpdate.ts`,
+// which fixed the one promise known to hang and left the SHAPE intact - because the
+// recovery lived inside the thing that can hang. electron-updater's own check and
+// download are not ours to settle at all, and a wedge there ends exactly the same way:
+// `busy()` true for ever, no poll, no error, nothing in the log, and the only way back is
+// reinstalling the app by hand. Which is the one thing a user must never have to do.
+//
+// So the recovery lives OUTSIDE the promise. A transient phase carries the time it
+// started, and nothing may sit in one past its budget - enforced in `busy()`, because
+// `busy()` is what every path asks before starting over, whatever wedged it.
+//
+// Budgets are deliberately generous: a real 95 MB zip on hotel wifi must never trip this.
+const CHECK_BUDGET_MS = Number(process.env.PF_CHECK_BUDGET_MS) || 2 * 60_000
+const DOWNLOAD_BUDGET_MS = Number(process.env.PF_DOWNLOAD_BUDGET_MS) || 45 * 60_000
+const PROBE_BUDGET_MS = Number(process.env.PF_PROBE_BUDGET_MS) || 5 * 60_000
+
+/** When the current phase began. Only a CHANGE restamps it - a percent tick must not. */
+let phaseAt = Date.now()
+
+function budgetFor(phase: UpdateState['phase']): number {
+  if (phase === 'checking') return CHECK_BUDGET_MS
+  if (phase === 'downloading') return DOWNLOAD_BUDGET_MS
+  return 0
+}
+
+/** Drop a transient phase nothing ever finished, and let the next check start clean. */
+function unwedge(): void {
+  const held = `${state.phase} ${state.version ?? ''}`.trim()
+  const secs = Math.round((Date.now() - phaseAt) / 1000)
+  log('wedged', `${held} never finished after ${secs}s - dropping it and looking again`)
+  noteWedge(held)
+  macStaging = ''
+  // Not 'error': nothing the user asked for failed, and the next check is one tick away.
+  // 'error' would put a red badge in the corner for a fault that has already been undone.
+  set({ phase: 'idle', version: undefined, percent: undefined, error: undefined })
+}
+
 /** A check or a download is already running - starting a second one is what breaks it. */
 function busy(): boolean {
-  return state.phase === 'checking' || state.phase === 'downloading'
+  const budget = budgetFor(state.phase)
+  if (!budget) return false
+  if (Date.now() - phaseAt <= budget) return true
+  unwedge()
+  return false
+}
+
+// --- is this machine still being reached at all? ----------------------------
+//
+// A wedge that is recovered leaves no trace once the phase is reset, and the thing worth
+// knowing is not any single one - it is "this Mac has not had a good look at the feed in
+// four days". Silence is what made the last one cost a day: an empty log reads exactly
+// like nothing to do. One small file survives the restart and turns that into a number.
+const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
+
+type Health = { lastGood: number; wedges: number; lastWedge?: string }
+
+function readHealth(): Health {
+  try {
+    const raw = JSON.parse(readFileSync(HEALTH(), 'utf8')) as Partial<Health>
+    return { lastGood: Number(raw.lastGood) || 0, wedges: Number(raw.wedges) || 0, lastWedge: raw.lastWedge }
+  } catch {
+    return { lastGood: 0, wedges: 0 }
+  }
+}
+
+function writeHealth(h: Health): void {
+  try {
+    writeFileSync(HEALTH(), JSON.stringify(h), 'utf8')
+  } catch {
+    /* best-effort: this file is evidence, never a dependency */
+  }
+}
+
+/** The feed answered. Whatever it said, the update path is reaching GitHub. */
+function noteGood(): void {
+  const h = readHealth()
+  // Once a minute at most: the poll is every 10 minutes but a burst of events is not.
+  if (Date.now() - h.lastGood < 60_000) return
+  writeHealth({ ...h, lastGood: Date.now() })
+}
+
+function noteWedge(what: string): void {
+  const h = readHealth()
+  writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
+}
+
+/** At launch, say how long it has been since the feed last answered this machine. */
+function logHealth(): void {
+  const h = readHealth()
+  if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered)`)
+  const hours = Math.round((Date.now() - h.lastGood) / 3_600_000)
+  const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}`
+  // Three days without the feed answering is not a slow week - something is wrong that no
+  // single failure reported, and this is the line to search for when it is noticed later.
+  log(hours >= 72 ? 'health STALE' : 'health', line)
 }
 
 // --- did the last install actually happen? ---------------------------------
@@ -371,6 +487,7 @@ async function latestMacRelease(): Promise<string> {
 function macFallback(message: string): void {
   void latestMacRelease()
     .then((version) => {
+      noteGood()
       if (newer(version, have())) {
         log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
         offerMac(version)
@@ -528,6 +645,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     wired = true
     checkLastAttempt()
     setMacUpdateLog(log)
+    logHealth()
     // macOS refuses to swap in an unsigned update THROUGH SQUIRREL: it validates the code
     // signature, and this app ships unsigned. So electron-updater never downloads on a
     // Mac - `macUpdate.ts` fetches the release zip and swaps the bundle on exit instead.
@@ -558,13 +676,14 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       } else if (found) clearStaged()
     }
     u.on('checking-for-update', () => {
-      if (probing) return
+      if (isProbing()) return
       set({ phase: 'checking', error: undefined })
     })
     u.on('update-available', (info: { version: string }) => {
-      if (probing) return
+      if (isProbing()) return
       publishRetries = 0
       lastError = ''
+      noteGood()
       // electron-updater is not downloading this one on a Mac (autoDownload is off there),
       // so the mac path takes the version and fetches the zip itself.
       if (process.platform === 'darwin') return offerMac(String(info?.version ?? ''))
@@ -576,9 +695,10 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       })
     })
     u.on('update-not-available', () => {
-      if (probing) return
+      if (isProbing()) return
       publishRetries = 0
       lastError = ''
+      noteGood()
       set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
     })
     u.on('download-progress', (p: { percent: number }) =>
@@ -591,7 +711,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       const message = e?.message ?? String(e)
       // A probe that fails changes nothing: the build already downloaded is still there
       // and still installable, and saying "update failed" over it would be a lie.
-      if (probing) {
+      if (isProbing()) {
         log('probe error', message.slice(0, 160))
         if (/404/.test(message)) borrowGhToken(u, () => void pollOnce())
         return
@@ -660,8 +780,21 @@ function arm(ms: number): void {
   timer.unref?.()
 }
 
+/**
+ * The poll must survive a turn that never ends.
+ *
+ * `arm()` is called from pollOnce's `finally` - and `finally` is not reached while an
+ * await hangs. So one unsettled promise did not merely wedge the phase, it ended the
+ * background poll for the life of the process: no timer, no further check, nothing to
+ * notice the wedge and undo it. The next turn is therefore armed BEFORE the await as well.
+ * A healthy turn's `finally` re-arms at the ordinary cadence and replaces this one, so
+ * nothing polls faster than it did; only a turn that never returns is affected.
+ */
+const POLL_WATCHDOG_MS = Number(process.env.PF_POLL_WATCHDOG_MS) || 6 * 60_000
+
 /** One turn of the background poll. Exported so the test can drive it without timers. */
 export async function pollOnce(): Promise<void> {
+  if (auto) arm(POLL_WATCHDOG_MS)
   try {
     // A build already downloaded used to end the story: no further check ever ran, so a
     // newer release that went out in the meantime was only found AFTER restarting into
@@ -686,9 +819,10 @@ export async function pollOnce(): Promise<void> {
 async function supersede(): Promise<void> {
   const u = load()
   const pending = state.version
-  if (!u || probing || state.phase !== 'ready' || !pending) return
+  if (!u || isProbing() || state.phase !== 'ready' || !pending) return
   const restore = u.autoDownload
   probing = true
+  probingAt = Date.now()
   try {
     u.autoDownload = false
     const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
@@ -746,6 +880,26 @@ export async function checkForUpdates(): Promise<UpdateState> {
     set({ phase: 'error', error: (e as Error)?.message ?? String(e) })
   }
   return state
+}
+
+/**
+ * A complete staged bundle newer than what is running - whatever the badge says.
+ *
+ * The quit swap used to be gated on `phase === 'ready'`, and a phase is a live flag while
+ * a staged bundle is a fact on disk. On 2026-08-07 this Mac held a fully expanded bundle
+ * while the phase was stuck on `downloading` for a NEWER version that never arrived, so
+ * every quit installed nothing, silently, and the only way out was replacing the app by
+ * hand. The two facts are independent and the one on disk is the one that can be acted on.
+ *
+ * Reads memory only (`staged()` is set at launch by `adoptStaged()` and by a finished
+ * stage), because this is called on the way out and must not scan or delete anything.
+ * Installing a build that is older than the one that failed to download is right: it is
+ * still newer than what is running, and the next launch looks again.
+ */
+export function stagedInstallable(): string {
+  if (process.platform !== 'darwin') return ''
+  const version = staged()
+  return version && newer(version, app.getVersion()) ? version : ''
 }
 
 /** True once the installer has actually been launched, so the caller may exit. */

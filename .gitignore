@@ -31,3 +31,9 @@ release/
 
 # esbuild scratch from the pure-module tests; the scripts write and clean it themselves
 tmp/
+
+# A known-good installer kept beside the checkout to recover a machine whose updater
+# wedged. 190 MB of it, and `git add -A` swept it into a release commit on 2026-08-07 -
+# it reached origin before the push was even reported. Build artefacts are what the
+# releases page is for.
+stable/

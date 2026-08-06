@@ -94,6 +94,31 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
 **A release claims the thing is finished.** Never cut one while any next step for that
 issue is still open.
 
+## An update may never need a person
+
+Install once, update from the app, for ever. **A user reinstalling PaneForge by hand is a
+defect**, and the only bug class that has ever caused it here is one shape: a promise that
+never settles behind a flag saying "already working on it".
+
+- **The recovery may not live inside the thing that can hang.** Settling every path in our
+  own download code fixes one promise and leaves the shape; `electron-updater`'s check and
+  download are not ours to settle at all. So a transient phase carries `phaseAt`, and
+  `busy()` — which every path asks before starting over — drops one that has outlived its
+  budget, whatever wedged it. `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min,
+  `PROBE_BUDGET_MS` 5min, all overridable by env so the test takes 150ms.
+- **The poll is armed BEFORE the await as well as after it.** `arm()` from `finally` alone
+  meant one hung turn ended the background poll for the life of the process — nothing was
+  left to notice the wedge or undo it. `POLL_WATCHDOG_MS` 6min; a healthy turn's `finally`
+  replaces it, so nothing polls faster than it did.
+- **On the way out, the disk beats the badge.** The quit swap is gated on a staged bundle
+  existing and being newer (`stagedInstallable()`), never on `phase === 'ready'`. A phase is
+  a live flag a stalled download can hold for ever; a staged bundle is a fact.
+- `update-health.json` holds the last time the feed answered and every recovered wedge.
+  An empty `updater.log` is evidence, not an absence of it — three days without a good
+  check logs `health STALE`.
+- `npm run test:updater` (its second half is `npm run test:wedge`) hangs the stub on
+  purpose and proves each of those recovers unattended.
+
 ## Never take the screen
 
 The app runs all day beside real work. Nothing it does on its own may take focus, raise a
@@ -268,6 +293,7 @@ ones that do not exist yet.
 | `npm run test:dock` | the macOS Dock icon (no `visibleOnFullScreen` without the skip) |
 | `npm run test:macupdate` | the app replacing its own bundle |
 | `npm run test:macdownload` | every way a mac download can end — none of them a hang |
+| `npm run test:wedge` | that no hung promise can leave the updater needing a person |
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 

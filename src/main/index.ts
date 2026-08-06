@@ -142,6 +142,7 @@ import {
   initUpdater,
   installUpdate,
   setAutoCheck,
+  stagedInstallable,
   updateLog,
   bootMs
 } from './updater'
@@ -2566,7 +2567,10 @@ app.on('window-all-closed', () => {
 let quitSwapDone = false
 function installStagedMacUpdateOnQuit(): void {
   if (process.platform !== 'darwin' || quitSwapDone || installStarted) return
-  if (getUpdateState().phase !== 'ready') return
+  // Deliberately NOT `phase === 'ready'`. See stagedInstallable(): the phase is a live flag
+  // that a stalled download can hold for ever, and a staged bundle is a fact on disk. When
+  // they disagree the fact wins, or quitting installs nothing and says nothing.
+  if (!stagedInstallable()) return
   quitSwapDone = true
   if (swapAndRelaunch(false)) updateLog('exit', 'installing the staged mac update on quit')
 }
