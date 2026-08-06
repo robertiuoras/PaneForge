@@ -1,8 +1,12 @@
 # PaneForge — competitive backlog
 
-What T3 Code (`t3.codes`, `pingdotgg/t3code`, 15.8k stars, MIT, TypeScript) and tmux
-(`tmux/tmux`) do that PaneForge does not, as things to build. Written 2026-07-31 against
-PaneForge v0.3.59.
+What the other agent-runners do that PaneForge does not, as things to build. Sections A–D
+were written 2026-07-31 against v0.3.59 from T3 Code (`t3.codes`, `pingdotgg/t3code`,
+15.8k stars, MIT, TypeScript) and tmux (`tmux/tmux`). Section E was added 2026-08-06
+against v0.4.54 from four more: opcode (`winfunc/opcode`, 22k, Tauri GUI for Claude Code),
+Vibe Kanban (`BloopAI/vibe-kanban`, 27k, **sunsetting**), Claude Squad
+(`smtg-ai/claude-squad`, 8k, tmux-based TUI) and Container Use (`dagger/container-use`,
+3.9k, MCP + containers).
 
 Each item says what they do, what we have today, what to build, where it lands, and — where
 there is one — the version that is better than theirs rather than a copy. Effort is
@@ -19,6 +23,14 @@ S (< half a day) / M (a day) / L (multi-day).
   top of the pty, never a replacement for it.
 - **tmux's session/window/pane hierarchy.** Our workspaces + grid already cover it. Adopting
   windows-inside-sessions would be a data-model migration that buys a second layer of tabs.
+- **A container per agent** (Container Use). It buys isolation we already get from worktrees
+  plus a hard Docker dependency, a cold-start per pane, and an agent that can no longer see
+  the machine's real toolchain — which for Robert's repos (node-pty prebuilds, gh auth,
+  local Supabase, an Electron app that must render) is the whole job. The honest version of
+  what containers are for here is **C3 permission modes**, which is already on the list.
+- **A kanban board as the primary surface** (Vibe Kanban). It is sunsetting, and the reason
+  is instructive: planning UI is not where the value is once the agent is good. Our
+  `.paneforge/tasks.json` board is the right size. E7 is the one piece worth taking.
 
 ---
 
@@ -230,6 +242,70 @@ This is where tmux is thirty years ahead and the items are small.
 
 ---
 
+## E. What the newer runners have (opcode, Vibe Kanban, Claude Squad)
+
+Read 2026-08-06 off the 114 GitHub links Robert has saved in Toolstash. Everything here is
+either absent from A–D or a sharper version of an item already in it. Where an item extends
+an existing one it says so rather than duplicating it.
+
+- [ ] **E1. What this is costing** — M. opcode's headline feature is a usage dashboard: tokens
+  and dollars broken down by model, project and time, read from `~/.claude/projects/*.jsonl`.
+  We have **nothing** — `src/main/transcripts.ts` and `history.ts` already read those files
+  for other reasons and throw the usage fields away. Build: a live token counter in the pane
+  footer beside the turn clock, and a Usage tab totalling by project, model and day.
+  **Better than theirs:** opcode reads Claude Code's logs and can only attribute cost to a
+  folder. We *host* the agent, so we know which pane, which lane, which task and which agent
+  every turn belongs to — we can answer "that refactor cost £6 and Codex would have been
+  £0.40", which is the question, and none of the four can. This is also the single item on
+  this page with the clearest payback for how Robert actually works.
+- [ ] **E2. Is the MCP wiring alive** — S. opcode ships an MCP management panel. We do not
+  show MCP at all, and the failure mode is real and silent: a `gh` token rotates, the GitHub
+  MCP starts 401-ing, and the only symptom is an agent that has quietly stopped being able to
+  read PRs. Build: Settings → MCP, one row per server per agent (parsed from `claude mcp
+  list` / Codex's config), connected / failed / last error, and a re-add button. Same shape
+  as Settings → Agents, which already exists and works.
+- [ ] **E3. Saved launch recipes** — M. opcode has "CC Agents" (a saved system prompt +
+  behaviour), Claude Squad has `-p "<program>"`. We pick an agent and a model at open time
+  and that is it. Build: a named recipe = agent + model + permission mode (C3) + cwd +
+  opening prompt, launchable from the palette or a hotkey, stored per project. This is what
+  turns "open four panes and paste the same brief" into one keystroke, and it is the piece
+  `SwarmDialog`/`split.ts` is missing to be usable outside a split.
+- [ ] **E4. Comment on a diff line, and the agent gets it** — M, extends **A1**. Vibe Kanban's
+  best idea: review the diff, leave an inline comment, it goes straight to the agent without
+  leaving the UI. For us the comment is typed into that pane's pty as `path:line — <comment>`.
+  **Better:** their comment goes to a scheduler that starts a new run; ours goes to the pane
+  that already has the file, the branch and the reasoning loaded. Build A1 with this in mind
+  rather than bolting it on after.
+- [ ] **E5. Preview with an inspector** — M, extends **C7**. Vibe Kanban's preview has
+  devtools, an inspect mode and device emulation. We already drive CDP against our own
+  renderer for tests (`npm run probe`, `--remote-debugging-port`), so the machinery exists.
+  The one interaction worth having beyond a plain preview: click an element in inspect mode
+  and the pane receives the component's file path — the same trick as C4's file picker, from
+  the direction people actually notice a bug.
+- [ ] **E6. Turn-level checkpoints** — L. opcode snapshots session state so a run can be
+  rewound or forked. `src/main/restore.ts` restores the *desk* (which panes, where, in which
+  conversation); it does not let you undo one agent turn. Build: at each turn boundary record
+  the transcript position plus a `git stash create` object id, and offer "back to before this
+  turn" and "fork a new pane from here". **Caveat before starting:** the git half is only
+  honest for tracked files, and an agent that ran a migration or wrote outside the repo
+  cannot be rewound — say that in the UI or the feature lies.
+- [ ] **E7. A task and a pane are the same thing** — S. `board.ts` gives each project a
+  `.paneforge/tasks.json` with an `agent` hint per task, but `TaskItem` has no session id, so
+  a task and the pane doing it are unrelated objects. Add the link both ways: open a pane
+  from a task (recipe from E3, task title as the opening prompt, status → `doing`), and show
+  the task on the pane. That is 90% of what Vibe Kanban was for, at 1% of its surface.
+- [ ] **E8. The agent list is a competitive number** — S. Vibe Kanban advertised "10+ coding
+  agents"; `src/shared/agents.ts` already has 13. Missing from ours and present on their
+  lists: Droid, CCR (claude-code-router), Grok CLI, Cline/Continue. Each is a table entry plus
+  a launch test. Cheap, and it is the number a comparison page gets judged on.
+
+**Not a build item, but the reason to hurry:** Vibe Kanban (27k stars) announced it is
+shutting down. Its users are people who already accepted "several agents, isolated branches,
+review the diff, ship" — which is exactly PaneForge minus a hosted backend. A/E4/E7 is the
+migration path.
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
@@ -238,12 +314,20 @@ This is where tmux is thirty years ahead and the items are small.
    ~~**D10, D8, D3**~~ — shipped in v0.4.13: tee a pane's output to a file, the silence
    and bell alerts, and keyboard copy mode. That is the whole of the cheap half; what is
    left under D is the architectural end of it (D1 detach, D9 CLI, D12 hooks).
-2. **A1, A2, A3, A4** — diff + commit + PR. The one gap a user switching from T3 Code would
-   name first, and the README already admits it.
-3. **C3, C5, C8, C1** — permission modes, project scripts, resource readout, rebindable keys.
-4. **B1** — headless host. Unblocks B2, B7, D1 and C10, and is the single largest
+2. **E1, E2, E7** — the usage/cost readout, the MCP health panel and task↔pane. All three
+   are small-to-medium, none needs an architectural change, and E1 is the item on this page
+   that pays Robert back fastest: token spend is the thing he measures and the one number
+   the app cannot currently show him.
+3. **A1 (built with E4), A2, A3, A4** — diff + inline comment + commit + PR. The one gap a
+   user switching from T3 Code or Vibe Kanban would name first, and the README already
+   admits it.
+4. **C3, E3, C5, C8, C1** — permission modes then saved launch recipes (E3 needs C3's mode
+   to be worth saving), project scripts, resource readout, rebindable keys.
+5. **B1** — headless host. Unblocks B2, B7, D1 and C10, and is the single largest
    architectural step here.
-5. **B2, D1** — browser client and true detach. This is the point where PaneForge does the
+6. **B2, D1** — browser client and true detach. This is the point where PaneForge does the
    thing T3 Code ships four codebases to do, with one renderer.
-6. **D9, D12, C7, B4, B5** — CLI, hooks, preview, tailnet, Linux.
-7. **B6** — package managers, whenever signing is paid for.
+7. **D9, D12, C7 (with E5), B4, B5** — CLI, hooks, preview + inspector, tailnet, Linux.
+8. **E6** — turn-level checkpoints. Last because it is the one item whose honesty depends on
+   what the agent touched, and B1 changes where a pty's state lives.
+9. **B6** — package managers, whenever signing is paid for.
