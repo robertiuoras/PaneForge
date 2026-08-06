@@ -1673,6 +1673,24 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   // Asked fresh rather than read off the poller: a game started ten seconds ago is
   // exactly the case where this must not go ahead.
   await checkGameNow()
+  // The click used to go straight through, on the reasoning that the user chose the
+  // interruption. They chose the restart; they did not choose to lose the answer a pane
+  // was part-way through writing, and there is no way to tell the two apart from a
+  // button that only says "Restart now". So the click now means "as soon as it is not
+  // expensive", and the panes are the expensive part - `doInstall` hard-kills every pty,
+  // and what comes back is a fresh session with the answer gone and its clock at zero.
+  //
+  // Held here rather than inside `whenClear` because the two holds are about different
+  // things: the game hold protects the SCREEN, and is released by the game closing;
+  // this one protects WORK, and is released by the panes going quiet.
+  const busy = agentsMidTurn(manager.list())
+  if (busy > 0) {
+    installWhenIdle = true
+    watchForIdlePanes(true)
+    updateLog('install', `restart clicked, held: ${busy} agent(s) mid-turn`)
+    const g = gameState()
+    return { status: 'held', busy, game: g.game, manual: g.manual }
+  }
   if (whenClear('update-install', doInstall)) return { status: 'installing' }
   // Queued, not done. Say which, and what is holding it: the card is about to swap its
   // button for "Restart anyway", and a card that cannot name the reason reads as broken.
@@ -1751,8 +1769,9 @@ let autoInstallTimer: NodeJS.Timeout | null = null
  * eight panes on the desk. Nothing on that path asked whether anything was running. The
  * user-clicked path at least goes through the game hold.
  *
- * So a click still goes straight through, because the user chose the interruption. Only
- * the automatic retry waits here, for a desk where no agent is mid-turn.
+ * A click waits too, in `installWhenIdle` below - on the same rule, released the same
+ * way. This path is the one nobody asked for, so it also keeps the 60s recheck rather
+ * than reacting to every pane event.
  */
 function autoInstall(): void {
   if (autoInstallTimer) {
@@ -1770,6 +1789,50 @@ function autoInstall(): void {
   }
   whenClear('update-install', doInstall)
 }
+
+/**
+ * A restart the user clicked while a pane was mid-turn, waiting for the panes to finish.
+ *
+ * The wait ends on the pane list changing, which is what a turn ending emits, so the
+ * restart follows the last answer landing by a moment rather than by up to a minute.
+ * The interval behind it is a backstop for the ending that changes nothing the list can
+ * see, and costs one array filter while - and only while - a restart is queued.
+ */
+let installWhenIdle = false
+let idlePaneTimer: NodeJS.Timeout | null = null
+const IDLE_PANE_RECHECK_MS = 5_000
+
+function watchForIdlePanes(on: boolean): void {
+  if (on === Boolean(idlePaneTimer)) return
+  if (on) {
+    idlePaneTimer = setInterval(installOncePanesIdle, IDLE_PANE_RECHECK_MS)
+    idlePaneTimer.unref?.()
+    return
+  }
+  clearInterval(idlePaneTimer as NodeJS.Timeout)
+  idlePaneTimer = null
+}
+
+function installOncePanesIdle(): void {
+  if (!installWhenIdle || installStarted) return
+  // Superseded, or the download went away underneath us. Stop waiting for a restart
+  // that has nothing left to install.
+  if (getUpdateState().phase !== 'ready') {
+    installWhenIdle = false
+    watchForIdlePanes(false)
+    return
+  }
+  const busy = agentsMidTurn(manager.list())
+  if (busy > 0) return
+  installWhenIdle = false
+  watchForIdlePanes(false)
+  updateLog('install', 'panes idle - running the restart that was clicked')
+  // Through the game hold, not around it: the panes being finished says nothing about
+  // whether something is fullscreen on the screen right now.
+  whenClear('update-install', doInstall)
+}
+
+manager.on('sessions', installOncePanesIdle)
 
 /** The update did not happen: put the window back, inactive, once the screen is free. */
 function restoreAfterFailedInstall(): void {
@@ -1797,8 +1860,14 @@ ipcMain.handle('game:manual', (_e, on: boolean) => {
   send('config:changed', next)
   return gameStatus()
 })
-/** "Restart now anyway" - the one way past a held update without ending the game. */
+/**
+ * "Restart now anyway" - the one way past a held update without ending the game or
+ * waiting for the panes. Both holds are dropped: whichever one the card was naming,
+ * this is the user overriding it having been told the cost.
+ */
 ipcMain.on('game:installAnyway', () => {
+  installWhenIdle = false
+  watchForIdlePanes(false)
   cancelDeferred('update-install')
   doInstall()
 })

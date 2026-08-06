@@ -390,6 +390,12 @@ export interface InstallOutcome {
   game?: string | null
   /** true when the hold is the manual do-not-disturb switch rather than a game */
   manual?: boolean
+  /**
+   * How many panes have an agent mid-turn, when that is what is holding it back.
+   * Outranks the other two in the card's wording: a game costs you a dropped round,
+   * this costs you the answer a pane was writing.
+   */
+  busy?: number
 }
 
 // ---------------------------------------------------------------------------

@@ -58,9 +58,11 @@ export default function UpdateToast(): JSX.Element | null {
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
           {held
-            ? held.manual
-              ? 'Do not disturb is on, so the restart is queued rather than taking the screen. It happens the moment you turn it off - or restart now anyway.'
-              : `${held.game ?? 'A game'} is running, so the restart is queued rather than pulling it off the screen. It happens by itself when that closes - or restart now anyway.`
+            ? held.busy
+              ? `${held.busy === 1 ? 'A pane has an agent' : `${held.busy} panes have agents`} mid-turn, so the restart is queued rather than killing the answer being written. It happens by itself the moment ${held.busy === 1 ? 'it finishes' : 'they finish'} - or restart now anyway.`
+              : held.manual
+                ? 'Do not disturb is on, so the restart is queued rather than taking the screen. It happens the moment you turn it off - or restart now anyway.'
+                : `${held.game ?? 'A game'} is running, so the restart is queued rather than pulling it off the screen. It happens by itself when that closes - or restart now anyway.`
             : ready
               ? `You are on ${state.current}. It installs silently and reopens your panes where they were - or on Later, the next time you quit.`
               : `You are on ${state.current}. Download it and drag it over the old app.`}
