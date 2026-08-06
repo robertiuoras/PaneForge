@@ -567,6 +567,62 @@ including prompts posted in Discord, reaches the chip: `promptRecall.extraArchiv
 other JSONL files read-only. Writing into a file another tool owns would mean agreeing with
 it about a format forever, and the two already disagree.
 
+## Dictation needs nothing installed
+
+The mic on every pane, and Ctrl/Cmd Shift Space into the focused one. It used to
+require `pip install whisper-ctranslate2`, which is the version of a feature that
+exists in Settings and is never switched on. `src/shared/voicePick.ts` picks between
+three transcribers and `useVoice.ts` falls down them when one fails at run time.
+
+- **`system`** - a whisper CLI on PATH, run by the main process. Fastest, fully
+  offline, and now *preferred when it happens to be there* rather than demanded.
+- **`inapp`** - Whisper in a worker in this window (`voiceWorker.ts`), ONNX Runtime's
+  wasm build. Nothing to install. This is the default and the reason the feature works
+  on a machine with no Python.
+- **`browser`** - the browser's own recogniser. It streams words as you say them and
+  costs no download, which is why it wins on a phone, and it is the one that sends
+  audio off the device, so it is never chosen while a local engine exists.
+
+Four things here are measurements, not opinions, and each one is a line somebody will
+otherwise "simplify":
+
+- **Feature-detecting `webkitSpeechRecognition` is not enough.** Inside Electron the
+  constructor is present and every session ends `error: "network"` - Chromium's speech
+  endpoint wants a Google key Electron does not ship. So `browser` is gated on *not*
+  being Electron, judged by the user agent.
+- **Every 8-bit build of these Whisper repos downloads and then refuses to run**:
+  `qdq_actions.cc:137 TransposeDQWeightsForMatMulNBits / Missing required scale:
+  model.decoder.embed_tokens.weight_merged_0_scale`. `q8`, `int8` and `uint8` all fail;
+  `fp32` works at 151 MB for `tiny`; `bnb4` works and is the smallest that does, so it
+  ships. The sizes in `shared/voiceModels.ts` move with that choice.
+- **The wasm is ours, not a CDN's.** transformers.js defaults `wasmPaths` to jsdelivr;
+  an engine that needs the network on every launch is not the offline promise the
+  feature is sold on. `electron.vite.config.ts` copies the pair into `out/renderer/ort/`
+  - and DELETES the 23.5 MB asyncify binary vite emits from onnxruntime's own
+  `new URL(..., import.meta.url)`, which the worker never asks for. Without that the
+  build carries 36 MB for a 12.9 MB job.
+- **Nothing on the page may import the worker's module.** `MODEL_MB` used to live
+  beside it; importing that one constant took the main renderer chunk from 1.01 MB to
+  2.23 MB, because it dragged transformers.js and onnxruntime in with it. The constants
+  live in `shared/voiceModels.ts`, which imports nothing.
+
+The model is downloaded once from Hugging Face and cached, which is the only network
+this feature does and why `index.html`'s CSP names `huggingface.co` (plus
+`wasm-unsafe-eval`, without which WebAssembly cannot compile at all).
+
+**A phone is not a small desktop.** On a touch screen or a window under 720px the act
+of dictating takes the whole screen (`VoiceOverlay.tsx`) - the one overlay in this app
+allowed to, because a finger asked for it. A 32px target beside a terminal is right on
+a monitor and unusable at arm's length. The ring around the mic *is* the input level
+off the analyser, so a mic that is not being heard shows it by not moving, which is
+worth more than a label saying "listening". The overlay also appears on a desktop while
+the model downloads: a once-ever wait belongs somewhere it cannot be read as a hang.
+
+`npm run test:voice` is both halves - the ladder as arithmetic, and a sentence spoken
+by the OS voice pushed through the shipped worker (2.6s of audio, ~1.8s to transcribe
+with `tiny`), plus the overlay measured at 390x844 and asserted absent at 1400x900.
+It skips out loud without a window or without macOS `say`.
+
 ## Checks
 
 `npm run typecheck` before committing. `npm run smoke` exercises the pty layer.

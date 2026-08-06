@@ -192,7 +192,7 @@ function defaults(): Config {
     saveHistory: true,
     historyDays: 30,
     autoLane: true,
-    voice: { enabled: true, model: 'base', language: 'auto' },
+    voice: { enabled: true, model: 'base', language: 'auto', engine: 'auto' },
     // Off, and every other default chosen so that turning it on once changes as little as
     // possible: the pane's own agent, one question at most, balanced budget, no telemetry,
     // and no knowledge source configured until the user points at one.

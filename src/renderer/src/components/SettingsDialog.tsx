@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { pickVoiceEngine } from '@shared/voicePick'
+import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import {
   installCommand,
@@ -16,7 +18,8 @@ import type {
   ImproveStatus,
   RestoreMode,
   UpdateState,
-  VoiceStatus
+  VoiceStatus,
+  VoiceConfig
 } from '@shared/types'
 import {
   DEFAULT_DETAILS,
@@ -134,7 +137,18 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const [find, setFind] = useState('')
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
-  const [voice, setVoice] = useState<VoiceStatus | null>(null)
+  const [voiceStatus, setVoice] = useState<VoiceStatus | null>(null)
+  // The same pure ladder the hook runs, so Settings states the engine that will
+  // actually be used rather than a second opinion about it.
+  const voiceChoice = pickVoiceEngine({
+    hasSystem: !!voiceStatus?.available,
+    isElectron: /electron/i.test(navigator.userAgent),
+    hasSpeechRecognition:
+      'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
+    hasWasm: typeof WebAssembly !== 'undefined',
+    touch: matchMedia('(pointer: coarse)').matches,
+    prefer: config?.voice.engine ?? 'auto'
+  })
   const [improve, setImprove] = useState<ImproveStatus | null>(null)
   // Which agent the console below is for, and whether it is being put on or taken off.
   const [installing, setInstalling] = useState('')
@@ -720,20 +734,49 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <span className="hint">
                   Click the mic in any pane's header and talk - it goes into that pane, whichever agent is
                   running there. {keyLabel('Ctrl+Shift+Space')} does the same for the focused pane, from
-                  anywhere. Audio is
-                  transcribed by a Whisper model running on this machine - nothing is uploaded, and it costs
-                  nothing.
+                  anywhere. On a phone, or any narrow window, the mic takes the whole screen instead: a
+                  32-pixel target beside a terminal is not a thing you can hit at arm's length.
                 </span>
+              </div>
+
+              <div className="setting">
+                <label>Transcriber</label>
+                <Select
+                  value={config.voice.engine}
+                  onChange={(v) =>
+                    onChange({ voice: { ...config.voice, engine: v as VoiceConfig['engine'] } })
+                  }
+                  menuWidth={320}
+                  options={[
+                    { value: 'auto', label: 'Pick for me', hint: 'the ladder below' },
+                    {
+                      value: 'inapp',
+                      label: 'Whisper in this window',
+                      hint: `nothing to install; ${MODEL_MB[config.voice.model] ?? MODEL_MB.base} MB downloaded once`
+                    },
+                    {
+                      value: 'system',
+                      label: 'Whisper on this machine',
+                      hint: voiceStatus?.available ? `found: ${voiceStatus.engine}` : 'needs an install'
+                    },
+                    {
+                      value: 'browser',
+                      label: "The browser's speech service",
+                      hint: 'instant; sends audio off the device'
+                    }
+                  ]}
+                />
+                <span className="hint">{voiceChoice.why}</span>
               </div>
 
               <div className="setting">
                 <div className="setting-row">
                   <span className="hint">
-                    {voice?.available
-                      ? `Using ${voice.engine} (${voice.path})`
-                      : 'No local speech engine found yet.'}
+                    {voiceStatus?.available
+                      ? `A whisper CLI is on PATH (${voiceStatus.engine}), so dictation uses it - it is faster than the in-window model and needs no download.`
+                      : 'No whisper CLI on PATH. Dictation runs Whisper in this window instead, which needs nothing installed. Installing one is optional and makes it faster.'}
                   </span>
-                  {!voice?.available && (
+                  {!voiceStatus?.available && (
                     <button
                       className="ghost"
                       onClick={() => {
@@ -741,7 +784,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         api.installVoice()
                       }}
                     >
-                      Install it
+                      Install one anyway
                     </button>
                   )}
                 </div>
@@ -758,14 +801,17 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Select
                   value={config.voice.model}
                   onChange={(v) => onChange({ voice: { ...config.voice, model: v } })}
-                  menuWidth={280}
+                  menuWidth={300}
                   options={[
-                    { value: 'tiny', label: 'tiny', hint: 'fastest, roughest' },
-                    { value: 'base', label: 'base', hint: 'good default' },
-                    { value: 'small', label: 'small', hint: 'slower, better' },
-                    { value: 'medium', label: 'medium', hint: 'slow, accurate' }
+                    { value: 'tiny', label: 'tiny', hint: `fastest, roughest - ${MODEL_MB.tiny} MB` },
+                    { value: 'base', label: 'base', hint: `good default - ${MODEL_MB.base} MB` },
+                    { value: 'small', label: 'small', hint: `slower, better - ${MODEL_MB.small} MB` }
                   ]}
                 />
+                <span className="hint">
+                  The size is the download the in-window transcriber makes the first time you use it, and
+                  never again. A whisper CLI on PATH ignores it and uses its own weights.
+                </span>
               </div>
 
               <div className="setting">

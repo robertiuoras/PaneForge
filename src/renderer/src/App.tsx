@@ -75,6 +75,7 @@ import VersionBadge from './components/VersionBadge'
 import { playEvent } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
+import { VoiceOverlay } from './components/VoiceOverlay'
 import {
   drag as dragTrack,
   dividerPx,
@@ -723,12 +724,47 @@ export default function App(): JSX.Element {
         else api.write(id, text)
       },
       [flash]
-    )
+    ),
+    {
+      model: config?.voice.model ?? 'base',
+      language: config?.voice.language ?? 'auto',
+      engine: config?.voice.engine ?? 'auto'
+    }
   )
+
+  // The same hook the terminal panes use for probes: dictation cannot be driven by a
+  // keystroke from outside the window, so this is how scripts/voice-test.mjs starts a
+  // clip with a fake microphone and reads back what came out of the real path.
+  useEffect(() => {
+    const dbg = window as unknown as { __pfVoice?: unknown }
+    dbg.__pfVoice = voice
+  }, [voice])
 
   useEffect(() => {
     if (voice.error) flash(voice.error)
   }, [voice.error, flash])
+
+  // A phone is not a small desktop. `pointer: coarse` catches a real touch screen and
+  // the width catches a narrow window, which is also the only way to see this on a
+  // desktop before the served renderer (B2) exists.
+  const [smallScreen, setSmallScreen] = useState(
+    () => matchMedia('(pointer: coarse), (max-width: 720px)').matches
+  )
+  useEffect(() => {
+    const mq = matchMedia('(pointer: coarse), (max-width: 720px)')
+    const on = (): void => setSmallScreen(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  const bigVoice = voice.phase !== 'idle' && (smallScreen || voice.progress >= 0)
+
+  const voiceWhere = useMemo(() => {
+    const id = voice.target || activeId
+    const i = sessions.findIndex((s) => s.id === id)
+    if (i < 0) return 'Dictating'
+    const s = sessions[i]
+    return `Into ${describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 }).full}`
+  }, [voice.target, activeId, sessions])
 
   const start = useCallback(
     async (reqs: StartSessionRequest[]) => {
@@ -2964,6 +3000,11 @@ export default function App(): JSX.Element {
           onDismiss={() => setRestore(null)}
         />
       )}
+      {/* Dictation takes the whole screen on a touch or narrow window, and on any
+          window while the model is downloading - a once-ever wait belongs somewhere
+          it cannot be read as a hang. On a wide desktop with the model already there,
+          the pane's own mic button is the whole UI, exactly as before. */}
+      {config?.voice.enabled && bigVoice && <VoiceOverlay voice={voice} where={voiceWhere} />}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       <UpdateToast />

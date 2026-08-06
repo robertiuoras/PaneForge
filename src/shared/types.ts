@@ -516,6 +516,12 @@ export interface VoiceConfig {
   model: string
   /** ISO language code, 'auto' to let the model decide */
   language: string
+  /**
+   * Which transcriber to use. 'auto' runs the ladder in shared/voicePick.ts, which
+   * prefers a whisper CLI when one happens to be on PATH and otherwise runs Whisper
+   * in the window - so the feature needs no install. Naming one pins it.
+   */
+  engine: 'auto' | 'system' | 'inapp' | 'browser'
 }
 
 /**

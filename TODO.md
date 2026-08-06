@@ -563,14 +563,30 @@ for it. A tailnet costs us no server and no account.
   recent commits; the listenable part is a gimmick, the digest is not. One card per pane:
   turns taken, files touched, last question asked, since you last looked. Reads the same
   transcripts F5 and E1 read.
-- [ ] **H5. Voice in** — S, and smaller than it looks: **the desktop already dictates**
-  (`useVoice.ts`, the mic on each pane, Ctrl/Cmd Shift Space into the focused pane). Omnara's
-  conversational voice mode and Cursor's voice input exist because typing a paragraph into a
-  phone to unblock an agent is worse than the interruption was — so what is actually missing
-  is that the same hook runs in the served renderer of **B2**, not a new feature. Check the
-  Web Speech API's availability there before assuming it carries over; everything else about
-  it (into `shared/draft.ts`, so it passes the prompt archive and Improve on the way) is
-  already true.
+- [x] **H5. Voice in** - shipped 2026-08-07, and it was the opposite of "smaller than it
+  looks". The note below was right that the desktop already dictated and wrong about why
+  that did not count: dictation needed `pip install whisper-ctranslate2` first, which is
+  the version of a feature that exists in Settings and never gets switched on. So the work
+  was removing the install, not porting the hook.
+  - **Three transcribers, one ladder** (`shared/voicePick.ts`): a whisper CLI on PATH when
+    there is one, otherwise Whisper in a worker in this window, and on a phone the
+    browser's own recogniser - which streams words as you say them, costs no download and
+    is the one that sends audio off the device, so it is never picked while a local engine
+    exists.
+  - **The Web Speech API does NOT carry over, and the check the note asked for is the
+    reason.** In Electron the constructor exists and every session ends `error: "network"`:
+    Chromium's speech endpoint wants a Google key Electron does not ship. It is real only
+    in a served browser, which is exactly the **B2** client - so H5 now gives B2 a feature
+    rather than waiting on it.
+  - **A phone is not a small desktop**, again. Touch or under 720px and dictating takes the
+    whole screen (`VoiceOverlay.tsx`), with the input level drawn as the ring around the mic
+    so a mic nobody is hearing shows it by not moving. Verified at 390x844.
+  - Everything else in the note stayed true: it goes through `shared/draft.ts`, so the
+    prompt archive and Improve still see it, and it stops short of pressing Enter.
+
+  `npm run test:voice` (22 assertions incl. a sentence spoken by the OS voice through the
+  shipped worker). What is NOT done: the browser engine has no surface to run in until B2
+  exists, so on the desktop today the ladder is CLI-then-in-window.
 - [ ] **H6. Per-session cost, not per-month cost** — S. Devin shows compute consumed *per
   child session*. That is **E1** with the aggregation undone, and it is the more useful
   reading: the number you want is "this pane has spent X on this ask", not "you spent Y in

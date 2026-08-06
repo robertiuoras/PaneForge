@@ -258,6 +258,30 @@ ones that do not exist yet.
   commit an ask turned into, so `outcome` is null for everything this app records. The
   outcomes that do appear come from an external archive that already stamps them.
 
+## Dictation needs nothing installed
+
+The mic on every pane, and Ctrl/Cmd Shift Space into the focused one. `shared/voicePick.ts`
+picks between three transcribers and `useVoice.ts` falls down them when one fails:
+a **whisper CLI on PATH** when there happens to be one (fastest, offline, never demanded),
+otherwise **Whisper in a worker in this window** (`voiceWorker.ts`, ONNX Runtime wasm,
+nothing to install), and on a phone **the browser's own recogniser** (instant, no
+download, and the only one that sends audio off the device).
+
+- **Feature-detecting `webkitSpeechRecognition` is not enough.** In Electron the
+  constructor is there and every session ends `error: "network"` - no Google key in an
+  Electron build. `browser` is gated on not being Electron.
+- **The 8-bit weights do not run.** `q8`/`int8`/`uint8` download and then fail with
+  `TransposeDQWeightsForMatMulNBits / Missing required scale`. `bnb4` is the smallest
+  that works and is what ships; `shared/voiceModels.ts` carries the sizes.
+- **The wasm ships with us**, copied by `electron.vite.config.ts`, which also deletes
+  the 23.5 MB asyncify binary vite emits and the worker never asks for.
+- **Nothing on the page may import the worker's module** - one constant took the main
+  chunk from 1.01 MB to 2.23 MB. Constants live in `shared/voiceModels.ts`.
+- **A phone is not a small desktop.** Touch, or under 720px, and dictating takes the
+  whole screen (`VoiceOverlay.tsx`); the ring IS the input level, so a mic nobody is
+  hearing shows it by not moving. It also appears while the model downloads.
+- `npm run test:voice`.
+
 ## Checks
 
 `npm run typecheck` before committing.
@@ -288,6 +312,7 @@ ones that do not exist yet.
 | `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
 | `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
 | `npm run test:improve` | prompt improvement, model-free (incl. the exact typed byte stream) |
+| `npm run test:voice` | dictation: which transcriber, and a spoken clip through it |
 | `npm run test:recall` | "you have asked this before" — and PARITY with the canonical fingerprint |
 | `npm run test:rename` | the folder rename, on a throwaway repo |
 | `npm run test:dock` | the macOS Dock icon (no `visibleOnFullScreen` without the skip) |
