@@ -15,6 +15,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node scripts/test-all.mjs",
     "smoke": "node scripts/smoke-pty.mjs",
     "test:updater": "node scripts/updater-test.mjs && node scripts/updater-wedge-test.mjs",
     "test:wedge": "node scripts/updater-wedge-test.mjs",

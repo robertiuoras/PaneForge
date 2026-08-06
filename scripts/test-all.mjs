@@ -1,0 +1,107 @@
+// The suite. `npm test`, and the third step of the gate the app runs over a lane it
+// drove itself (`src/main/agentGate.ts` looks for a script called exactly `test`).
+//
+// Until this existed there was no such script, so every lane the app drove reported its
+// suite step as *skipped* - a gate with typecheck and a reviewer and nothing in between.
+// The 30-odd checks below were all sitting in package.json already; nothing was written
+// for this, they were only never collected.
+//
+// What belongs here: a test that needs no window, no network, no real agent CLI and no
+// minute of wall clock. That is the whole point - a gate a driven lane waits on has to
+// be cheap, and these are the tests that catch a regression by ARITHMETIC rather than by
+// somebody looking at a pane. Measured on this Mac, the lot runs in ~35s.
+//
+// What stays out, and where to run it instead:
+//   test:strays (~25s of real orphan processes), test:lanes, test:agentic, test:goals,
+//   test:remote, test:updater   - slow, or they spawn real processes and repositories
+//   test:view, test:stashdrag, test:activate, test:improveview  - need a real window
+//   test:discordbrand, mac-update-test --live                   - need the network
+//
+//   node scripts/test-all.mjs             every test below
+//   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
+
+import { spawnSync } from 'node:child_process'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+// name -> the script file, in the order they run. Cheapest first is deliberate: a broken
+// build should say so in a second rather than after the slow ones.
+const TESTS = [
+  ['grid', 'grid-layout-test.mjs'],
+  ['railplace', 'rail-place-test.mjs'],
+  ['theme', 'theme-test.mjs'],
+  ['place', 'place-test.mjs'],
+  ['split', 'split-test.mjs'],
+  ['copymode', 'copymode-test.mjs'],
+  ['silence', 'silence-test.mjs'],
+  ['blurbs', 'blurb-test.mjs'],
+  ['sounds', 'sound-test.mjs'],
+  ['voice', 'voice-test.mjs'],
+  ['busy', 'busy-test.mjs'],
+  ['fleet', 'fleet-test.mjs'],
+  ['route', 'project-route-test.mjs'],
+  ['laneargs', 'lane-args-test.mjs'],
+  ['trust', 'trust-test.mjs'],
+  ['slash', 'slash-test.mjs'],
+  ['reveal', 'reveal-test.mjs'],
+  ['gamemode', 'gamemode-test.mjs'],
+  ['updatehold', 'update-hold-test.mjs'],
+  ['gitpoll', 'git-poll-test.mjs'],
+  ['recall', 'prompt-recall-test.mjs'],
+  ['draft', 'prompt-draft-test.mjs'],
+  ['redact', 'prompt-redact-test.mjs'],
+  ['insert', 'prompt-insert-test.mjs'],
+  ['improve', 'prompt-improve-test.mjs'],
+  ['pump', 'pump-test.mjs'],
+  ['pipe', 'pipe-test.mjs'],
+  ['diff', 'diff-test.mjs'],
+  ['history', 'history-prune-test.mjs'],
+  ['buffer', 'outbuffer-test.mjs'],
+  ['notes', 'release-notes-test.mjs'],
+  ['stash', 'stash-test.mjs'],
+  ['gate', 'release-gate-test.mjs'],
+  ['conflict', 'conflict-test.mjs']
+]
+
+const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))
+const run = only.length
+  ? TESTS.filter(([name]) => only.some((o) => name.includes(o)))
+  : TESTS
+
+if (!run.length) {
+  console.error(`no test matches ${only.join(', ')}`)
+  process.exit(2)
+}
+
+const failed = []
+const started = Date.now()
+
+for (const [name, file] of run) {
+  const at = Date.now()
+  const r = spawnSync(process.execPath, [join(root, 'scripts', file)], {
+    cwd: root,
+    encoding: 'utf8',
+    // Captured rather than inherited: 34 passing tests printing their own output is a
+    // wall nobody reads, and the gate keeps only the tail. A failure prints in full.
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const secs = ((Date.now() - at) / 1000).toFixed(1)
+  const ok = r.status === 0
+  console.log(`${ok ? 'ok  ' : 'FAIL'}  ${name.padEnd(12)} ${secs.padStart(5)}s`)
+  if (!ok) {
+    failed.push(name)
+    // The evidence, not a summary of it. Whatever reads this - a person or the agent
+    // being told its lane failed - needs the assertion that fired.
+    const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd()
+    console.log(out ? `\n${out}\n` : `\n  (no output; exit ${r.status})\n`)
+  }
+}
+
+const total = ((Date.now() - started) / 1000).toFixed(1)
+if (failed.length) {
+  console.log(`\n${failed.length} of ${run.length} failed in ${total}s: ${failed.join(', ')}`)
+  process.exit(1)
+}
+console.log(`\n${run.length} tests passed in ${total}s`)

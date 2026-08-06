@@ -332,7 +332,11 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 
 ## Checks
 
-`npm run typecheck` before committing.
+`npm run typecheck` before committing, and `npm test` — 34 checks in ~30s, everything
+below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
+It is also the gate's third step: `agentGate.ts` looks for a script called exactly
+`test`, and while there wasn't one every lane the app drove reported its suite step as
+*skipped*. A new cheap test goes in that list or it never runs by itself.
 
 | Command | Covers |
 |---|---|
