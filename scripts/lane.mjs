@@ -115,7 +115,18 @@ const errText = (e) => String(e.stderr ?? e.stdout ?? e.message).trim()
  * that a file called index.lock exists, let alone that deleting it is safe.
  */
 function lockedOut(out) {
-  return /Unable to create '.*\.lock': File exists/i.test(out) || /another git process seems to be running/i.test(out)
+  return (
+    /Unable to create '.*\.lock': File exists/i.test(out) ||
+    /another git process seems to be running/i.test(out) ||
+    // Newer git says only this. Measured 2026-08-07 on git 2.50.1 (Apple Git-155): with an
+    // index.lock present, `git merge` prints `fatal: Unable to write index.` and nothing
+    // else - no path, no "File exists", no advice line. The message the two patterns above
+    // match is what OLD git said, so on a modern machine every locked merge came back
+    // through the conflict path with that sentence stored where the disagreeing files go,
+    // and the lane stayed out of every release. Matching it here is safe because clearing
+    // is still gated on the lock's own mtime: with no abandoned lock, nothing is deleted.
+    /Unable to write (?:new )?index(?: file)?\./i.test(out)
+  )
 }
 
 // How long a .lock has to have sat untouched before it is certainly abandoned. Every git
