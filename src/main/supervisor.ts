@@ -104,6 +104,26 @@ export function getDrive(id: string): DriveRun | undefined {
 }
 
 /**
+ * Every worktree a live run is holding.
+ *
+ * A driven lane has no pane, so the session list - which is what a launch asks before
+ * claiming - cannot see it. Without this, a second drive started while the first is still
+ * working reads the pool as empty and hands out a worktree that already has an agent
+ * writing in it: two agents in one checkout, which is the single thing lanes exist to make
+ * impossible. Only live runs count; a finished lane's branch is nobody's.
+ */
+export function driveCwds(): string[] {
+  const out: string[] = []
+  for (const run of runs.values()) {
+    if (runDone(run)) continue
+    for (const lane of run.lanes)
+      if (lane.cwd && lane.state !== 'passed' && lane.state !== 'failed' && lane.state !== 'stopped')
+        out.push(lane.cwd)
+  }
+  return out
+}
+
+/**
  * Stop everything this run is doing, now.
  *
  * The flag first and the kills second: a lane between two awaits is stopped by the flag

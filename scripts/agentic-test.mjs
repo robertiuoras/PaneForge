@@ -38,7 +38,7 @@ buildSync({
     contents: [
       "export { runAgentTurn, cancelAgentRun, diffSince, headSha } from './src/main/agentRun'",
       "export { runGate, gateCommands, gateLine } from './src/main/agentGate'",
-      "export { startDrive, stopDrive, listDrives, clearFinishedDrives, onDriveChange } from './src/main/supervisor'",
+      "export { startDrive, stopDrive, listDrives, clearFinishedDrives, onDriveChange, driveCwds } from './src/main/supervisor'",
       "export { parseEvent, foldEvents, parseDiffstat, noOp, parseVerdict, retryBrief,",
       "  headlessArgs, driveLine, runDone, MAX_ATTEMPTS, TRIVIAL_LINES } from './src/shared/agentic'"
     ].join('\n'),
@@ -542,6 +542,38 @@ m.stopDrive(stoppable.id)
 const stopped = await waitFor(() => m.runDone(stoppable), 20_000)
 check('stop ends a run that would otherwise never end', stopped, JSON.stringify(stoppable.lanes[0]?.state))
 check('a stopped lane says stopped', stoppable.lanes[0]?.state === 'stopped', stoppable.lanes[0]?.state)
+// A second drive must not be handed a worktree the first one is still writing in - the
+// session list cannot see a driven lane, because it has no pane.
+check(
+  'a live run declares the worktrees it holds',
+  (() => {
+    const held = m.driveCwds()
+    return held.length === 0
+  })(),
+  JSON.stringify(m.driveCwds())
+)
+const holding = m.startDrive(
+  {
+    cwd: driven,
+    mission: 'hold a lane',
+    plan: { contracts: '', lanes: [{ name: 'holder', brief: 'hang', owns: ['a.txt'] }] },
+    agent: 'claude',
+    bin: node,
+    argsPrefix: [hang],
+    skipReview: true
+  },
+  async () => ({ cwd: stopDirs[0], branch: 'lane-hold' })
+)
+await waitFor(() => holding.lanes[0].cwd !== '', 20_000)
+check(
+  'a lane being written in is declared held, so a second drive cannot claim it',
+  m.driveCwds().includes(stopDirs[0]),
+  JSON.stringify(m.driveCwds())
+)
+m.stopDrive(holding.id)
+await waitFor(() => m.runDone(holding), 20_000)
+check('and it is released the moment the run is over', m.driveCwds().length === 0, JSON.stringify(m.driveCwds()))
+
 check('finished runs can be forgotten', m.clearFinishedDrives() >= 2 && m.listDrives().length === 0)
 
 // ---------------------------------------------------------------------------

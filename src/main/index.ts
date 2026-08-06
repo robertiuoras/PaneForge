@@ -45,6 +45,7 @@ import { cancelResearch, research } from './researchRun'
 import type { ClaimLane } from './supervisor'
 import {
   clearFinishedDrives,
+  driveCwds,
   listDrives,
   onDriveChange,
   startDrive,
@@ -1030,6 +1031,9 @@ const claimForDrive =
         .list()
         .filter((s) => s.status !== 'exited')
         .map((s) => s.cwd),
+      // Lanes other DRIVEN runs are holding. They have no pane, so the list above cannot
+      // see them - see driveCwds().
+      ...driveCwds(),
       ...taken
     ]
     const lane = await resolveLane(repo, busy)
