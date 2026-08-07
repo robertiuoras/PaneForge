@@ -186,7 +186,20 @@ async function lagDuring(fn) {
   for (const file of ['laneWork.ts', 'lanes.ts', 'git.ts']) {
     const src = readFileSync(join(repoRoot, 'src', 'main', file), 'utf8')
     // Comments explain why it is gone; only real code counts.
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+      // A blanket ban has no way to say yes, and this one had to: `ensureLaneFolder`
+      // rebuilds a swept lane from inside `start()`, before a pty is spawned into a folder
+      // that is not there, and there is nothing to yield to yet. It landed in 6a948b9 with
+      // a paragraph explaining itself and turned this guard red, which is the worst
+      // outcome - a red suite that is correct to be red teaches everyone to skim past it,
+      // and it would have masked any REAL freeze reintroduced afterwards.
+      //
+      // So the exception is spelled, once, per call: a line tagged `sync-on-purpose` is
+      // the author saying this one does not run on a poll or a sweep. Anything untagged
+      // still fails, which is the whole point of the rule.
+      .replace(/^.*sync-on-purpose.*$/gm, '')
     check(`${file} runs no synchronous child process`, !/spawnSync|execFileSync|execSync/.test(code))
   }
 }

@@ -33,7 +33,7 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process' // sync-on-purpose: ensureLaneFolder only
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -891,7 +891,10 @@ export function ensureLaneFolder(cwd: string): void {
   const branch = `lane-${label}`
   const run = (args: string[]): boolean => {
     try {
-      execFileSync('git', args, { cwd: repo, windowsHide: true, timeout: 60000, stdio: 'ignore' })
+      // One local git call inside start(), never on a poll or a sweep - see above. The
+      // trailing tag is what lane-lag-test.mjs reads; it has to be on the call's own line,
+      // because the guard strips whole comment lines before it looks for the exception.
+      execFileSync('git', args, { cwd: repo, windowsHide: true, timeout: 60000, stdio: 'ignore' }) // sync-on-purpose
       return true
     } catch {
       return false
