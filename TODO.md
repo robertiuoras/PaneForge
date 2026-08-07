@@ -661,6 +661,72 @@ queue of goals that lands unverified work is worse than no queue.
 
 ---
 
+## J. The Stash against the tools people already pay for — scanned 2026-08-07
+
+Surveyed: **Maccy** (MIT, Swift, 21.0k), **CopyQ** (GPL-3.0, C++/Qt, 12.1k), **Ditto**
+(GPL-3.0, 6.9k, on Windows since 2003), **Paste** ($2.49/mo, $29.99/yr, iCloud sync),
+**Raycast** (free tier; retention behind Pro at $8/mo), **PowerToys Advanced Paste** (MIT,
+Win+Shift+V), and the paid macOS shelf apps **Dropover / Yoink / Dropzone** — whose one
+open-source clone, DropPoint, is discontinued.
+
+**The licence is the first thing, because the ask was to reuse code.** This repo is MIT.
+CopyQ and Ditto are GPL-3.0: read them, never paste from them. Maccy is MIT but Swift and
+AppKit, so it is a source of *technique*, not of lines. The single drop-in is
+`sudhakar3697/node-clipboard-event` (MIT) under J2.
+
+**What none of the six do, and we already do:** click a screenshot and the PNG is written
+to disk and its *path* typed at the agent's prompt. Every product above stops at "the image
+is now on your clipboard", which is worth nothing to a CLI agent. That stays the headline;
+J1–J9 are the ordinary parts we are missing beneath it.
+
+- [ ] **J1. Search, and a keyboard-only picker** — S. All six search; we have four kind
+      tabs and a mouse, and `shelf.tsx` line 18 says so deliberately. At the 200-item cap
+      the tabs stop being enough. The catch is `focusable: false` — the overlay may never
+      take the keyboard, which is the whole reason clicking a row works — so the typing has
+      to happen either in the main window's shelf or in a focusable picker the global hotkey
+      opens and which hands focus back on Escape. Decide which before writing any of it.
+      This is the half of D11 that was left open.
+- [ ] **J2. Stop polling the clipboard** — S. `TICK_MS = 1200` in `recents.ts`, plus a 10s
+      image re-read, runs all day whether or not anything was copied, and two copies inside
+      one tick collapse into one. Maccy polls at 500ms only because AppKit offers it nothing
+      better; Windows has had `AddClipboardFormatListener` since Vista and macOS has
+      `NSPasteboard.changeCount`. `node-clipboard-event` (MIT) wraps both and Linux. Keep
+      the poll as the fallback for a listener that dies, at a much longer interval.
+- [ ] **J3. Nothing is excluded, and that is a defect** — S. A password copied out of
+      1Password lands in `history.json` as plaintext on disk and sits there for 200 items.
+      Maccy honours `org.nspasteboard.ConcealedType` plus a default deny-list of bundle ids;
+      Windows apps set `ExcludeClipboardContentFromMonitorProcessing`. We already read
+      `clipboard.availableFormats()` (`recents.ts:569`) — the concealed marker is in that
+      list and we throw it away. Honour it, add a per-app deny-list in Settings > Stash, and
+      never write an excluded item to disk at all.
+- [ ] **J4. Paste transforms** — M. PowerToys' entire surface: plain text, JSON, Markdown,
+      image→text by local OCR, paste as .txt/.png/.html. Three of those earn their place in
+      an agent host: paste as plain text; paste a long clip as a **file path** (a 4,000-line
+      log belongs in a file the agent reads, not typed into a pty); and OCR on a screenshot
+      for the agents that cannot read images at all. The AI half, which PowerToys makes you
+      bring an API key for, is Improve and is already built.
+- [ ] **J5. Named shelves** — M. CopyQ has tabs, Paste has pinboards; we have one list with
+      pins. The version worth having here is per-project: the prompts, ids and paths for
+      THIS repo, following the pane's folder. It wants `promptArchive` beside it rather than
+      a second store of its own.
+- [ ] **J6. Edit an item before it is pasted** — S. CopyQ opens a clip in an editor. One
+      click, a textarea, save — and it is what you actually want the moment a copied path
+      names the wrong branch.
+- [ ] **J7. The Stash across the device link** — M. Paste charges $2.49/mo for this and
+      routes it through iCloud; `src/main/remote/` is already an authenticated, encrypted
+      peer link between two machines on the desk. Copy on the laptop, paste on the desktop.
+      Text and small files only, capped, off until switched on.
+- [ ] **J8. Pick the shelf up where the cursor is** — M. Dropover's shake-to-spawn is the
+      one interaction the paid shelf apps are actually sold on; ours is nailed to the
+      bottom-left of whichever display the main window is on.
+- [ ] **J9. A command on clipboard change** — S. CopyQ's automation, and the same machinery
+      as D12; only the trigger is new.
+
+Order: **J3 first** — it is a privacy defect, not a feature — then J2, J1, J6, then J4, J5,
+J7, J9, and J8 last.
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.

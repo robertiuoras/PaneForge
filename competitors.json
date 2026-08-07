@@ -40,6 +40,14 @@
     {
       "repo": "dagger/container-use",
       "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs."
+    },
+    {
+      "repo": "p0deje/Maccy",
+      "why": "The Stash's closest relative that is MIT: exclusion rules, the keyboard picker, paste-to-the-app-you-came-from. TODO section J. Swift, so technique rather than code."
+    },
+    {
+      "repo": "hluk/CopyQ",
+      "why": "The most featured clipboard manager there is - tabs, editing a clip, scripting on a copy. TODO J5/J6/J9. GPL-3.0: read it, never paste from it."
     }
   ]
 }
