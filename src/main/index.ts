@@ -147,6 +147,7 @@ import {
   setShelfQuiet,
   placeShelf,
   setShelfExpanded,
+  setStashInWindow,
   setShelfTall,
   noteShelfTouch,
   shelfDraggedAt,
@@ -1436,11 +1437,17 @@ ipcMain.on('recents:edit', (_e, id: string, text: string) => editRecent(id, Stri
 // the window that CAN take a keyboard. `asked` is true because a click on that button is
 // a person asking for the app, which is the one thing allowed to take the screen.
 ipcMain.on('recents:openSearch', () => {
+  // And it puts the overlay away as it goes. Without this there are two Stashes on the
+  // screen at once - the overlay sits at the screen-saver level, one step above a normal
+  // topmost window, so the list it is still showing covers the searchable one it just
+  // asked the main window to open. One Stash, wherever it is being read from.
+  setShelfExpanded(false)
   focusWindow(true)
   send('recents:openSearch')
 })
 ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
 ipcMain.on('recents:clear', () => clearRecents())
+ipcMain.on('recents:inWindow', (_e, open: boolean) => setStashInWindow(!!open))
 ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
 ipcMain.on('recents:pin', (_e, id: string, on: boolean) => pinRecent(id, !!on))
 // The overlay floats over other apps and has no idea which pane is focused, so "send it

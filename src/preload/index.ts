@@ -138,6 +138,7 @@ const api: Api = {
   dragRecent: (id) => ipcRenderer.send('recents:drag', id),
   removeRecent: (id) => ipcRenderer.send('recents:remove', id),
   clearRecents: () => ipcRenderer.send('recents:clear'),
+  stashInWindow: (open) => ipcRenderer.send('recents:inWindow', open),
   addStashFiles: (paths) => ipcRenderer.invoke('stash:add', paths),
   pickStashFiles: () => ipcRenderer.invoke('stash:pick'),
   revealStash: () => ipcRenderer.send('stash:reveal'),

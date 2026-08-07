@@ -60,6 +60,7 @@
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
+    "test:onestash": "node scripts/one-stash-test.mjs",
     "test:stashdrag": "node scripts/stash-drag-test.mjs",
     "test:activate": "node scripts/stash-activate-test.mjs",
     "postinstall": "electron-builder install-app-deps",

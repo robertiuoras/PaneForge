@@ -665,6 +665,20 @@ export default function App(): JSX.Element {
   }, [config?.clipboardShelf, peekMs, shelfInWindow])
 
   /**
+   * The other half of "one Stash": the overlay floats above this window, so while a list
+   * is open HERE the overlay has to stay a pill. Main is told rather than asked, because
+   * the overlay is a second BrowserWindow and cannot see this one's state.
+   *
+   * The peek is deliberately not counted - it is a strip that shows itself for a few
+   * seconds and puts itself away, and gagging the overlay every time something is copied
+   * would be the opposite of the point.
+   */
+  const stashOpenHere = shelfPinned || shelfSearching
+  useEffect(() => {
+    api.stashInWindow(stashOpenHere)
+  }, [stashOpenHere])
+
+  /**
    * Put a shelf item into the focused pane. Text goes in as text; an image goes in as the
    * path of the PNG the app saved, because a path is the only form of an image a CLI agent
    * can read. Nothing is sent - it lands at the prompt so it can be described first.

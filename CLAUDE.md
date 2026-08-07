@@ -387,6 +387,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
 | `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
 | `npm run test:cursorclick` | Alt-click placing the CLI's cursor: the keys it sends, and the clicks it refuses to answer |
+| `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |

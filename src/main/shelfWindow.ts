@@ -479,9 +479,28 @@ export function updateShelfConfig(config: StashConfig): void {
   if (alive()) shelf!.webContents.send('shelf:config', config)
 }
 
+/**
+ * Whether the main window is currently showing the Stash itself.
+ *
+ * There is one Stash. The overlay is at the 'screen-saver' always-on-top level, one step
+ * above a normal topmost window, so an expanded overlay covers the main window's list
+ * rather than sitting beside it - two lists of the same clips, the readable one hidden
+ * behind the one that cannot be typed into. While the window has it, the overlay is a
+ * pill.
+ */
+let windowStash = false
+
+/** Told by the renderer when its own Stash opens or closes. */
+export function setStashInWindow(open: boolean): void {
+  windowStash = open
+  if (open) setShelfExpanded(false)
+}
+
 /** Open (or close) the list. Used by the hotkey and by the overlay's own header. */
 export function setShelfExpanded(next: boolean): void {
   if (!alive()) return
+  // Never a second list. Closing is always allowed - this only refuses to open one.
+  if (next && windowStash) return
   // A window being dragged does not change size. The renderer holds this off too, but it
   // is the renderer's own hover timer that asks, and a timer that fires one millisecond
   // after the press is exactly the case that made a drag turn into an expand. Main owns

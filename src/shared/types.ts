@@ -1388,6 +1388,12 @@ export interface Api {
   /** forget one item - the clipboard is where a password lands by accident */
   removeRecent(id: string): void
   clearRecents(): void
+  /**
+   * The main window's Stash just opened, or closed. There is one Stash, so while this is
+   * true the floating overlay stays a pill: it draws above every window, including the
+   * one holding the list that can actually be typed into.
+   */
+  stashInWindow(open: boolean): void
 
   /** hosting, pairings, discovered devices and who is connected right now */
   remoteState(): Promise<RemoteState>

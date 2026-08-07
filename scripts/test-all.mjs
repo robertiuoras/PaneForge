@@ -66,6 +66,7 @@ const TESTS = [
   ['buffer', 'outbuffer-test.mjs'],
   ['notes', 'release-notes-test.mjs'],
   ['stash', 'stash-test.mjs'],
+  ['onestash', 'one-stash-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]
