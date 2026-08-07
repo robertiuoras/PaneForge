@@ -33,7 +33,7 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -858,4 +858,48 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
   }
 
   return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }
+}
+
+/**
+ * Put a lane checkout back on disk before a session is spawned into it.
+ *
+ * sweepLanes() deletes a lane that is merged, empty and unheld, and that is right: an
+ * empty lane is tens of thousands of node_modules hardlinks holding no work. What the
+ * sweep cannot know is that a chat will be LAUNCHED into that folder afterwards - a pane
+ * restored after the app was closed, or a terminal opened there by hand.
+ *
+ * That launch used to fail in a way nothing could report. Claude Code spawns every hook
+ * with the session's own cwd, so a cwd that is not there fails all of them at once with
+ * `posix_spawn '/bin/sh'` ENOENT - the lane hook included, which is the thing whose job is
+ * to put the folder back. Its heal runs on UserPromptSubmit, so it only lands once a human
+ * has already typed into a session whose SessionStart hooks all died. 2026-08-07: eight of
+ * them died that way in taskdriver.ai-a, and the folder reappeared 33 seconds into the
+ * session when the prompt hook finally claimed the lane.
+ *
+ * Synchronous on purpose - start() spawns its pty inline and this is one local git call -
+ * and silent on every failure, because a lane that cannot be rebuilt is the caller's
+ * existing "that folder is gone" path and not a new kind of problem.
+ */
+export function ensureLaneFolder(cwd: string): void {
+  if (existsSync(cwd)) return
+  const m = new RegExp(`^(.+)-(${LANE_LABELS.join('|')})$`).exec(cwd)
+  if (!m) return
+  const [, repo, label] = m
+  // Only ever rebuild a lane OF a real repo. Any other folder ending in `-a` is somebody's
+  // project and must not have a worktree dropped on top of it.
+  if (!existsSync(join(repo, '.git'))) return
+  const branch = `lane-${label}`
+  const run = (args: string[]): boolean => {
+    try {
+      execFileSync('git', args, { cwd: repo, windowsHide: true, timeout: 60000, stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  }
+  // git still holds a registration pointing at the folder the sweep removed; until that is
+  // pruned every `worktree add` for this branch is refused as already checked out.
+  run(['worktree', 'prune'])
+  if (!run(['worktree', 'add', cwd, branch]) && !run(['worktree', 'add', '-b', branch, cwd])) return
+  seedLane(repo, cwd)
 }

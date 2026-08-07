@@ -10,6 +10,7 @@ import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
 import { ensureTrusted } from './claudeTrust'
+import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
@@ -283,6 +284,10 @@ export class SessionManager extends EventEmitter {
   start(req: StartSessionRequest): Session {
     if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
     const agent: Agent = req.agent ?? 'claude'
+    // Before anything reads the folder: a lane the sweep reclaimed while this pane was
+    // closed is still the pane's remembered cwd, and a CLI spawned into a folder that is
+    // not there loses every hook to `posix_spawn '/bin/sh'` ENOENT. See ensureLaneFolder.
+    ensureLaneFolder(req.cwd)
     // Before the CLI is spawned, not after: it reads .claude.json at startup and would
     // already be sitting on the trust prompt by the time anything here could help.
     if (agent === 'claude') ensureTrusted(req.cwd)

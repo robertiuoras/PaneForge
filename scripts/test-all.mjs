@@ -44,6 +44,7 @@ const TESTS = [
   ['fleet', 'fleet-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
+  ['laneensure', 'lane-ensure-test.mjs'],
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
