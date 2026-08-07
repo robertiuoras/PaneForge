@@ -791,14 +791,34 @@ panel beside the terminal — which is this page's section A and is already the 
       Ctrl+Shift+U then `[`/`]` jumps to the previous or next turn instead of scrolling for
       it. No shell integration, no new state, and it is the thing a block is actually used
       for. Shell panes could have the real version later; agent panes never will.
+      **How Warp really does it, read 2026-08-07** (`warp.dev/blog/how-warp-works`,
+      `/blog/block-model-behind-warps-agentic-development-environment`): not OSC 133 as
+      its own channel. Warp's bootstrap scripts register `preexec`/`precmd` hooks (zsh
+      `add-zsh-hook _warp_preexec`/`_warp_precmd`, fish's natives, bash needing a
+      bash-preexec shim) and those hooks emit a **DCS carrying encoded JSON** —
+      `{"hook":"Preexec","value":{"command":…}}` plus cwd, git state and exit code — which
+      its ANSI parser turns into typed hook events. It also reads plain `OSC 133;A` for
+      compatibility (issue #6718), but the rich channel is its own. Two findings that
+      settle the argument above rather than merely supporting it: **Warp's own block model
+      excludes the alternate screen** — `\e[?1049h` switches it to a separate `AltScreen`
+      grid with no scrollback, replaced wholesale on exit, and Warp says outright that it
+      "doesn't map onto a command and its output". Every agent CLI we host lives there, so
+      Warp running our workload has no blocks either. And where the hooks do not fire — a
+      complex prompt, anything inside tmux — Warp degrades to **prompt-regex heuristics**,
+      which is the thing this app should never ship. Our marks are not a heuristic: they
+      are the bytes we relayed, already carrying an xterm `registerMarker` line
+      (`Mark` in `TerminalPane.tsx`, `jumpTo` already scrolls to one). So K1 is
+      `applyKey` in `shared/copyMode.ts` gaining two keys that move the cursor to the
+      nearest mark line either side of it, and nothing else.
 - [ ] **K2. Whether the pane's branch has a pull request** — S, and it belongs to **A**,
       not here. Warp's vertical tabs carry the git branch, the worktree and the PR. We
       already say project, checkout and lane (`place.ts`) and the badge already polls
       `git status`; the PR is the one fact missing, and it should arrive with A's git work
       rather than as a second poller. Recorded here only so the scan is complete.
 - [ ] **K3. A prompt library — the one Warp idea worth taking whole** — M. Warp Drive holds
-      four object types: workflows (YAML command sequences), notebooks (markdown runbooks),
-      environment variables, and **prompts**. Three of those are wrong for this app —
+      six object types as of 2026-08: workflows (YAML command sequences), notebooks
+      (markdown runbooks), environment variables, **prompts**, plans and rules. Four of
+      those are wrong for this app —
       a shell-command library is not what an agent host is for, and a shared drive of
       environment variables is the secret-management footgun J3 was just spent avoiding —
       but *prompts* is a real hole. We have two halves of it and neither is the thing: the
@@ -811,6 +831,22 @@ panel beside the terminal — which is this page's section A and is already the 
       rather than only the two with hooks). Filling the blanks is the same dialog shape as
       Improve. Per-project scoping is J5 and wants the same store, so build the two
       together or the app ends up with two lists of saved text.
+      **The shape to copy, read 2026-08-07.** The half of Warp Drive that is open source is
+      the workflow YAML (`github.com/warpdotdev/workflows`, `FORMAT.md`), and it is a
+      four-field object worth taking as-is: `name`, `command` with `{{arg}}` tokens,
+      optional `description`/`tags`, and `arguments[]` of `{ name, description,
+      default_value }`. Their **prompts** are a different, newer object and the docs do
+      **not** say it takes arguments at all — so the thing we would build is the workflow's
+      substitution over the prompt's payload, which is a merge Warp itself has not made.
+      Three mechanics to take with it: a filled workflow is **inserted into the input for
+      review, never executed** (Ctrl-Shift-R searches, Enter drops it in the block), which
+      is exactly `draft.ts`' door and the Improve contract; **Shift-Tab cycles the blanks**,
+      and an argument with a preset list opens a suggestion menu rather than a text field;
+      and storage is split — Drive proper is cloud/DB-backed (issue #7212 is a standing
+      request to make it files), while file-based workflows are read from
+      `~/.warp/workflows/*.yaml` **and from `.warp/workflows/` in the repo you are
+      standing in**. That last one is J5's per-project scoping for free, and it is the
+      right default here: a prompt library that needs an account is not one we would ship.
 - [ ] **K4. Say what a driven lane is allowed to do** — S, and it is closer to a defect
       than a feature. Warp sells granular agent permissions; ours are a constant. Every
       lane the app drives is started with the permission prompt turned OFF —
@@ -821,6 +857,19 @@ panel beside the terminal — which is this page's section A and is already the 
       mode is that, and the goal dialog should say it once before the first run. This is
       not asking for Warp's permission engine: the CLIs own that. It is refusing to keep
       the fact quiet.
+      **What Warp's engine actually is, read 2026-08-07** (`docs.warp.dev/agents/autonomy`,
+      `/agents/using-agents/agent-profiles-permissions`): a matrix, not a switch — seven
+      action categories (apply code diffs, read files, create plans, execute commands,
+      interact with a running command, ask clarifying questions, call an MCP server) each
+      set to one of *Agent Decides* / *Always Ask* / *Always Allow* / *Never*, plus
+      **regex allow and deny lists** for command execution where a deny beats even Always
+      Allow. Saved as **Agent Profiles** (the shipped examples are named "Safe & cautious",
+      "Prod mode" and "YOLO mode"), switched from an icon in the input area. The part worth
+      knowing is what the docs do **not** describe: any indicator of the active mode while
+      a run is in flight, or what a fresh install defaults to. So K4 is not catching up
+      with Warp — the card that says what this run may do is a thing Warp does not
+      document having, and it is one line of text over a fact we already hold in
+      `HEADLESS`.
 
 Deliberately **not** taken, with the reason, so the next scan does not re-litigate them:
 Warp's cloud agents and the Oz platform (section I is the local version of this, and a
