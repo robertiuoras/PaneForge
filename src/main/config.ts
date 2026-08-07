@@ -158,6 +158,7 @@ function defaults(): Config {
     customAgents: [],
     fontSize: 13,
     copyOnSelect: true,
+    clickMovesCursor: true,
     mouseSelect: true,
     autoFixUi: true,
     notifyOnIdle: true,

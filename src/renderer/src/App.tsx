@@ -2758,6 +2758,7 @@ export default function App(): JSX.Element {
               active={s.id === activeId}
               fontSize={config?.fontSize ?? 13}
               copyOnSelect={config?.copyOnSelect ?? true}
+              clickMovesCursor={config?.clickMovesCursor ?? true}
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
               termTheme={termColors}

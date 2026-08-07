@@ -840,6 +840,12 @@ export interface Config {
   /** a mouse selection in a pane goes straight to the clipboard */
   copyOnSelect: boolean
   /**
+   * Alt/Option-click in a pane moves the CLI's cursor to where you clicked, by sending
+   * the arrow keys that would have got there. Behind a modifier on purpose: in a plain
+   * shell an up-arrow is the previous command rather than a movement.
+   */
+  clickMovesCursor: boolean
+  /**
    * Drag-select text even while the agent has mouse reporting on. Claude Code and
    * Codex both grab the mouse, which is what makes a plain drag select nothing.
    * Selection only: the wheel scrolls the pane's own scrollback regardless.

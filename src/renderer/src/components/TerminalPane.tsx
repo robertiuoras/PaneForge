@@ -13,6 +13,7 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import { cellAt, keysForClick } from '../../../shared/cursorMove'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -41,6 +42,7 @@ interface Props {
   fontSize: number
   /** put a mouse selection straight on the clipboard, the way most terminals do */
   copyOnSelect: boolean
+  clickMovesCursor: boolean
   /** let a plain drag select text even while the agent has mouse reporting on (the wheel
    *  always scrolls this pane - that is not a setting) */
   mouseSelect: boolean
@@ -310,6 +312,7 @@ export default function TerminalPane({
   fontSize,
   copyOnSelect,
   mouseSelect,
+  clickMovesCursor,
   autoFixUi,
   mirror = null,
   termTheme
@@ -324,6 +327,8 @@ export default function TerminalPane({
   copyOnSelectRef.current = copyOnSelect
   const mouseSelectRef = useRef(mouseSelect)
   mouseSelectRef.current = mouseSelect
+  const clickCursorRef = useRef(clickMovesCursor)
+  clickCursorRef.current = clickMovesCursor
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
@@ -889,6 +894,44 @@ export default function TerminalPane({
      */
     const mouseGrabbed = (): boolean => t.element?.classList.contains('enable-mouse-events') ?? false
 
+    /**
+     * Alt/Option-click puts the cursor where you clicked.
+     *
+     * A prompt box is drawn text and the pty takes keystrokes, so a click cannot place a
+     * caret - it can only be turned into the arrow keys that would have got there. That
+     * is what every terminal offering this does, and it is why it is behind a modifier:
+     * in a plain shell an up-arrow is the previous command, not a movement, so this may
+     * never be what a bare click does. `cursorMove.ts` refuses a click more than a few
+     * rows away for the same reason.
+     *
+     * It runs in the capture phase and swallows the event, otherwise a CLI with mouse
+     * reporting on also receives the click and acts on it.
+     */
+    const placeCursor = (e: MouseEvent): void => {
+      if (!clickCursorRef.current) return
+      if (e.button !== 0 || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+      // The alternate screen is vim, less, a menu - things where an arrow is navigation
+      // and there is no line being edited to move along.
+      if (t.buffer.active.type === 'alternate') return
+      const screen = el.querySelector('.xterm-screen') as HTMLElement | null
+      if (!screen) return
+      const r = screen.getBoundingClientRect()
+      if (!r.width || !r.height) return
+      const at = cellAt(e.clientX, e.clientY, r, t.cols, t.rows)
+      const b = t.buffer.active
+      const keys = keysForClick({
+        cursorRow: b.baseY + b.cursorY,
+        cursorCol: b.cursorX,
+        clickRow: b.viewportY + at.row,
+        clickCol: at.col
+      })
+      e.preventDefault()
+      e.stopPropagation()
+      // preventDefault on mousedown costs the focus the click would have given it.
+      t.focus()
+      if (keys) api.write(sessionId, keys)
+    }
+
     const forceSelectable = (e: MouseEvent): void => {
       if (!mouseSelectRef.current || !mouseGrabbed()) return
       if (e.button !== 0 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
@@ -1011,6 +1054,7 @@ export default function TerminalPane({
     vpEl?.addEventListener('scroll', onViewportScroll, { passive: true })
 
     el.addEventListener('keydown', onKeyClearsSelection, true)
+    el.addEventListener('mousedown', placeCursor, true)
     el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mousedown', onMouseDown, true)
     el.addEventListener('mouseup', onMouseUp)
@@ -1379,6 +1423,7 @@ export default function TerminalPane({
       offResults.dispose()
       search.current = null
       el.removeEventListener('keydown', onKeyClearsSelection, true)
+      el.removeEventListener('mousedown', placeCursor, true)
       el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)
       el.removeEventListener('mouseup', onMouseUp)

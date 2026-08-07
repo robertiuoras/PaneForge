@@ -44,7 +44,7 @@ import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
 // Hints below name shortcuts; on a Mac those live on Cmd, so print them through this.
-import { keyLabel } from '../platform'
+import { isMac, keyLabel } from '../platform'
 
 const api = window.api
 
@@ -309,6 +309,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   onChange={(v) => onChange({ mouseSelect: v })}
                   label="A drag always selects text"
                   hint="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing. Turn this off to give them the drag back. The wheel scrolls this pane either way."
+                />
+                <Switch
+                  checked={config.clickMovesCursor}
+                  onChange={(v) => onChange({ clickMovesCursor: v })}
+                  label={isMac ? 'Option-click moves the cursor' : 'Alt-click moves the cursor'}
+                  hint="A CLI's prompt is drawn text, so a click cannot place a caret there - it is sent as the arrow keys that would have reached the same spot. Held behind Alt because in a plain shell an up-arrow recalls the last command instead of moving, so a click more than a few lines away is ignored rather than guessed at."
                 />
                 <Switch
                   checked={config.autoFixUi}

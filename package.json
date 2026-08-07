@@ -56,6 +56,7 @@
     "test:rail": "node scripts/rail-test.mjs",
     "test:railclick": "node scripts/rail-click-test.mjs",
     "test:railplace": "node scripts/rail-place-test.mjs",
+    "test:cursorclick": "node scripts/cursor-click-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
