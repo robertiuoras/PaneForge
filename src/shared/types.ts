@@ -805,10 +805,45 @@ export interface RemoteState {
     error?: string
     /** this machine's LAN addresses, for typing into the other device */
     addresses: string[]
+    /** a device on this network may raise an Approve card here instead of typing the code */
+    pairByAsking: boolean
   }
   peers: RemotePeerState[]
   found: RemoteFound[]
   guests: RemoteGuest[]
+  /** a device asking THIS one to let it in, waiting on Approve or Deny here */
+  asking?: RemoteAsk
+  /** a request THIS device sent, waiting to be approved over there */
+  waiting?: RemoteWaiting
+}
+
+/**
+ * A device asking to pair without a code, and the six digits that stand in for having
+ * typed one.
+ *
+ * The digits are the authentication, not the button: they are derived from a key exchange
+ * that binds both ends, so a machine sitting in the middle cannot make them agree. See
+ * `main/remote/wire.ts`. Which is why the UI shows them on both screens and says to
+ * compare them - a card that only said "Gamer-PC wants to pair" would be trusting a name
+ * anybody on the network can choose.
+ */
+export interface RemoteAsk {
+  id: string
+  name: string
+  platform: string
+  address: string
+  /** six digits, shown on both screens; they must match */
+  sas: string
+  at: number
+}
+
+/** The same request, seen from the device that sent it. */
+export interface RemoteWaiting {
+  name: string
+  address: string
+  platform: string
+  sas: string
+  at: number
 }
 
 /**
@@ -852,6 +887,15 @@ export interface RemoteConfig {
   id: string
   /** announce on the LAN so the other device finds this one without an IP */
   discoverable: boolean
+  /**
+   * Let a device on this network ask to pair, and approve it here by comparing six digits
+   * instead of typing the code over there.
+   *
+   * Optional so a config written by an older build still loads, and defaulted ON: what it
+   * grants is the right to put a card on this screen, and the card is refused by default.
+   * Switch it off and the listener answers such a request by name rather than silently.
+   */
+  pairByAsking?: boolean
   peers: RemotePeer[]
 }
 
@@ -1490,6 +1534,24 @@ export interface Api {
   }>
   /** An invite already sitting on this machine's clipboard, so pairing is one click. */
   clipboardInvite(): Promise<{ name: string; expires: number } | null>
+  /**
+   * Ask a device on this network to let this one in, with no code typed anywhere.
+   *
+   * Resolves only once somebody has answered over there, which can be a minute or two -
+   * the six digits to compare arrive long before that, on `RemoteState.waiting`, because
+   * comparing them is what the person does while this is still pending.
+   */
+  askToPair(peer: { address: string; port: number; name?: string }): Promise<{
+    ok: boolean
+    error?: string
+    state: RemoteState
+  }>
+  /** Answer the request on THIS device's screen. Anything but true is a refusal. */
+  answerPair(ok: boolean): Promise<RemoteState>
+  /** Stop waiting on a request this device sent. */
+  cancelAsk(): Promise<RemoteState>
+  /** whether this device will put a pairing request on screen at all */
+  setPairByAsking(on: boolean): Promise<RemoteState>
   forgetRemote(id: string): Promise<RemoteState>
   /** connect to or disconnect from a device already paired */
   connectRemote(id: string, on: boolean): Promise<RemoteState>

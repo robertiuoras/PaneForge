@@ -344,6 +344,60 @@ derived from it (scrypt, then AES-256-GCM per direction). That is why rotating i
 every paired device off rather than just changing what to type next time. Hosting is off
 until switched on, and discovery is a UDP broadcast that carries no secret.
 
+### Pairing two desktops with no code typed, and what actually authorises it
+
+A phone can scan. A desktop cannot, and the invite blob only replaces typing when the two
+machines share a clipboard — a Mac and a Windows PC do not. So the seamless path for two
+desktops is the other shape: **tap the device you found, it asks, somebody approves over
+there.**
+
+The thing to be careful about is what that button proves, which on its own is *nothing*.
+The pairing code proved the person had been at the other screen. A card saying "Gamer-PC
+wants to pair" proves only that something on the network sent a name it chose. So the
+authentication is moved into a number:
+
+- The two ends agree a secret over X25519. That defeats an eavesdropper and does **not**
+  defeat a machine in the middle, which simply agrees one secret with each side.
+- Six digits are derived from the shared secret **and both public keys**. A relay
+  necessarily holds two different secrets, so the number it can show the joiner is not the
+  number the host computes. The human comparing two screens is the check; this is Bluetooth
+  numeric comparison, and it is why the card leads with the digits rather than the name, and
+  why the same block is drawn on the waiting side too.
+- Six rather than four: an attacker gets one guess at a mismatch passing unnoticed, and six
+  makes that one in a million.
+
+`scripts/pair-ask-test.mjs` stands up a **real relay** — a server that faces the joiner as a
+host and asks the real desk at the same time — and asserts the two numbers disagree. That
+case is the reason the file exists; everything else in the flow could have been checked by
+using it.
+
+Two decisions that keep the blast radius small:
+
+- **Approval hands over the ordinary pairing code**, sealed to the agreed secret
+  (AES-256-GCM), and the joiner then reconnects through the existing code path. Stored
+  peers, reconnects, and `New code` cutting everyone off all keep working unchanged, and the
+  new crypto exists only for the length of one pairing.
+- **The ask socket is never armed and never becomes a guest.** It carries no session, which
+  is why `host.list()` stays empty across the whole exchange.
+
+`PROTOCOL` stays 1. `askpair` is a third message type in the second slot of the same
+handshake, and a build that predates it fails to recognise it and refuses — which is the
+right answer, because it has no way to show anybody a card. Bumping would have broken every
+already-paired device to announce a path neither end would ever take with the other.
+
+The wait is a person, so it gets its own budget (`APPROVE_MS`, two minutes) rather than the
+handshake's ten seconds. That budget exposed a real gap the tests caught: `server.close()`
+does not touch a socket that is already open, so switching hosting off left the far end
+watching "waiting for approval" until its own timeout, with nothing left here that could
+ever answer. `RemoteHost` now tracks sockets that are connected but not yet guests and drops
+them in `stop()`.
+
+The Approve card is rendered from `App`, not from the Devices dialog: the request arrives
+while somebody is standing at the *other* machine, so a card only that dialog could show is
+a request nobody would ever answer. It obeys "never take the screen" — corner, not modal, no
+focus stolen, no window raised; the focus it does take is within the window, so Enter is
+Deny.
+
 ## The phone is this window, served
 
 There is no second app and there will not be one. Every runner in the category shipped a

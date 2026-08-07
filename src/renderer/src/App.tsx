@@ -38,6 +38,7 @@ import {
   TrashIcon
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
+import { PairAsk } from './components/PairAsk'
 import TerminalPane, {
   onPaneDraft,
   paneCopyMode,
@@ -3124,6 +3125,10 @@ export default function App(): JSX.Element {
       {config?.voice.enabled && bigVoice && <VoiceOverlay voice={voice} where={voiceWhere} />}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      {/* A device asking to pair arrives while somebody is at the OTHER machine, so this
+          is here rather than inside the Devices dialog - that dialog is almost never the
+          thing on screen when the request lands. */}
+      {remote?.asking && <PairAsk ask={remote.asking} />}
       <UpdateToast />
     </div>
     </BlurbContext.Provider>

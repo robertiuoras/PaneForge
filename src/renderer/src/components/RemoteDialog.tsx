@@ -348,13 +348,29 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
     }
   }
 
-  /** Pair with something the LAN broadcast already told us the address of. */
+  /**
+   * Pair with something the LAN broadcast already told us the address of.
+   *
+   * Tapping it ASKS rather than demanding a code: the other device raises a card with six
+   * digits, this one shows the same six, and somebody over there presses Approve. Typing a
+   * code still works and still wins when one has been typed - a device that has the code on
+   * screen in front of it should not be made to walk to the other machine.
+   */
   const pairFound = (f: RemoteFound): void => {
-    if (!code.trim()) {
-      setError(`Type ${f.name}'s pairing code below first - it is on that device, under Devices.`)
+    if (code.trim()) {
+      void pair({ address: f.address, port: f.port, code, name: f.name })
       return
     }
-    void pair({ address: f.address, port: f.port, code, name: f.name })
+    setError('')
+    setPairing(true)
+    void api
+      .askToPair({ address: f.address, port: f.port, name: f.name })
+      .then((res) => {
+        onState(res.state)
+        if (!res.ok) setError(res.error ?? 'That device did not let this one in.')
+        else flash(`Paired with ${f.name}.`)
+      })
+      .finally(() => setPairing(false))
   }
 
   return (
@@ -399,6 +415,18 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             label="Let my other devices connect"
             hint="They can watch and type into every pane open here. The agents keep running on this machine."
           />
+
+          {/* Under the hosting switch because it is only ever about an open listener: what
+              it grants is the right to put a card on THIS screen, and the card is a refusal
+              until somebody compares two numbers and presses Approve. */}
+          {self.hosting && (
+            <Switch
+              checked={self.pairByAsking}
+              onChange={(on) => void api.setPairByAsking(on).then(onState)}
+              label="Let a device on this network ask to pair"
+              hint="It puts a card on this screen with six digits. Approve it only when the same six are on the other device — that match is what proves nothing is relaying the connection. Off, and pairing needs the code typed."
+            />
+          )}
 
           {self.error && <div className="dev-error">{self.error}</div>}
 
@@ -655,6 +683,26 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             {pairing && <span className="hint">Pairing...</span>}
           </div>
 
+          {/* A request this device sent, while somebody walks to the other machine. The
+              six digits are here so they can be compared with the card over there - that
+              comparison IS the pairing, so they are the biggest thing in the panel. */}
+          {state.waiting && (
+            <div className="pair-wait">
+              <div>
+                Waiting for <strong>{state.waiting.name}</strong> to approve
+              </div>
+              <div className="pair-ask-sas">
+                {state.waiting.sas.slice(0, 3)} <span>{state.waiting.sas.slice(3)}</span>
+              </div>
+              <p className="hint">
+                Approve it over there, and only if that screen shows this same number.
+              </p>
+              <button className="ghost small" onClick={() => void api.cancelAsk().then(onState)}>
+                Stop waiting
+              </button>
+            </div>
+          )}
+
           {state.found.length > 0 && (
             <div className="dev-found">
               <span className="dev-key">On this network</span>
@@ -662,8 +710,12 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                 <button
                   key={f.id}
                   className="dev-chip"
-                  disabled={pairing}
-                  title={`Pair with ${f.name} at ${f.address}`}
+                  disabled={pairing || !!state.waiting}
+                  title={
+                    code.trim()
+                      ? `Pair with ${f.name} at ${f.address} using the code you typed`
+                      : `Ask ${f.name} to let this device in - approve it over there, no code to type`
+                  }
                   onClick={() => pairFound(f)}
                 >
                   <span className="dot connecting" />
@@ -671,6 +723,10 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                   <span className="hint">{f.address}</span>
                 </button>
               ))}
+              <p className="hint dev-found-say">
+                Tap one and it asks to be let in: six digits appear here and on that screen,
+                and somebody presses Approve over there. Nothing to type.
+              </p>
             </div>
           )}
 

@@ -10,13 +10,16 @@
 
 import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
+import { connect as netConnect } from 'node:net'
 import { app } from 'electron'
 import type {
   Project,
+  RemoteAsk,
   RemoteConfig,
   RemoteFound,
   RemotePeer,
   RemoteState,
+  RemoteWaiting,
   Session,
   StartSessionRequest
 } from '../../shared/types'
@@ -26,9 +29,14 @@ import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
 import { makeInvite, readInvite } from './invite'
-import { deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
+import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 
 export { joinId, splitId }
+
+/** The card's own fields, without the resolver the UI has no business seeing. */
+function pickAsk(a: RemoteAsk & { answer(ok: boolean): void }): RemoteAsk {
+  return { id: a.id, name: a.name, platform: a.platform, address: a.address, sas: a.sas, at: a.at }
+}
 
 /** What came of a pasted invite. `code` is set when the paste was a bare pairing code. */
 export interface PairFromText {
@@ -43,6 +51,16 @@ export class Remote extends EventEmitter {
   private host: RemoteHost
   private clients = new Map<string, RemoteClient>()
   private started = false
+  /**
+   * A device asking THIS one to let it in, and the answer it is waiting for.
+   *
+   * One at a time on purpose. Two cards on screen at once is a person approving whichever
+   * is on top, and the whole safety of this path is that the six digits get compared - so
+   * a second request while one is open is refused rather than stacked.
+   */
+  private asking: (RemoteAsk & { answer(ok: boolean): void }) | null = null
+  /** A request THIS device sent, while it waits to be approved over there. */
+  private waiting: RemoteWaiting | null = null
 
   constructor(backend: HostBackend) {
     super()
@@ -52,6 +70,7 @@ export class Remote extends EventEmitter {
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
+    this.host.onAsk = (peer, sas, address) => this.onAsked(peer, sas, address)
     this.discovery = new Discovery({ ...this.me(), port: getConfig().remote.port, hosting: false })
     this.discovery.on('found', () => this.changed())
   }
@@ -159,7 +178,8 @@ export class Remote extends EventEmitter {
         port: c.port,
         hosting: this.host.listening,
         error: this.host.error || undefined,
-        addresses: localAddresses()
+        addresses: localAddresses(),
+        pairByAsking: c.pairByAsking !== false
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
@@ -173,8 +193,119 @@ export class Remote extends EventEmitter {
         }
       }),
       found,
-      guests: this.host.list()
+      guests: this.host.list(),
+      asking: this.asking ? { ...pickAsk(this.asking) } : undefined,
+      waiting: this.waiting ?? undefined
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pairing by asking, rather than by typing what is on the other screen
+  //
+  // See `wire.ts` for why the six digits are the authentication and the button is not.
+
+  /**
+   * A device on the network wants in. Put it on screen and wait for a person.
+   *
+   * Refused outright while this device is not hosting or not discoverable: a listener that
+   * is off is off, and one that has been asked to stay off the broadcast has been asked not
+   * to invite strangers either.
+   */
+  private onAsked(peer: PeerIdentity, sas: string, address: string): Promise<boolean> {
+    const c = getConfig().remote
+    if (!c.host || !c.pairByAsking) return Promise.resolve(false)
+    if (this.asking) return Promise.resolve(false)
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const answer = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (this.asking?.answer === answer) this.asking = null
+        this.changed()
+        resolve(ok)
+      }
+      // The card cannot outlive the socket's own budget, or it sits on screen offering to
+      // approve something that has already given up.
+      const timer = setTimeout(() => answer(false), APPROVE_MS - 5_000)
+      timer.unref?.()
+      this.asking = {
+        id: peer.id,
+        name: peer.name,
+        platform: peer.platform,
+        address,
+        sas,
+        at: Date.now(),
+        answer
+      }
+      this.changed()
+    })
+  }
+
+  /** Approve or refuse the request on screen. Anything else is a refusal. */
+  answerPair(ok: boolean): void {
+    this.asking?.answer(ok)
+  }
+
+  /**
+   * Ask a device found on the network to let this one in.
+   *
+   * Returns '' when the pair went through. The six digits reach the UI through `waiting`
+   * as soon as they are known - long before this resolves - because comparing them with
+   * the other screen is what the person does WHILE this is waiting.
+   */
+  async askToPair(input: { address: string; port: number; name?: string }): Promise<string> {
+    if (this.waiting) return 'Already waiting on a pairing request. Cancel it first.'
+    const address = input.address.trim()
+    if (!address) return 'Enter the other device’s address.'
+    const port = Math.floor(input.port) || DEFAULT_REMOTE_PORT
+    let code = ''
+    try {
+      code = await this.requestCode(address, port, input.name)
+    } catch (err) {
+      this.waiting = null
+      this.changed()
+      return (err as Error).message || 'That device did not answer.'
+    }
+    this.waiting = null
+    this.changed()
+    // From here it is an ordinary pairing with a code, which is what keeps every stored
+    // peer, every reconnect and `New code` behaving exactly as before.
+    return await this.pair({ address, port, code, name: input.name })
+  }
+
+  /** Stop waiting on a request this device sent. The socket's own timeout does the rest. */
+  cancelAsk(): void {
+    this.waiting = null
+    this.changed()
+  }
+
+  private requestCode(address: string, port: number, name?: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const socket = netConnect({ host: address, port })
+      const conn = new Conn(socket, this.me())
+      socket.setTimeout(APPROVE_MS)
+      socket.on('timeout', () => conn.close())
+      conn
+        .askPair((sas, peer) => {
+          this.waiting = {
+            name: peer.name || name || address,
+            address,
+            platform: peer.platform,
+            sas,
+            at: Date.now()
+          }
+          this.changed()
+        })
+        .then((code) => {
+          conn.close()
+          resolve(code)
+        })
+        .catch((err: Error) => {
+          conn.close()
+          reject(err)
+        })
+    })
   }
 
   setHosting(on: boolean): void {
@@ -190,6 +321,14 @@ export class Remote extends EventEmitter {
     const c = this.patch({ port: clamped })
     if (c.host) this.host.start(clamped)
     this.discovery.update({ port: clamped })
+    this.changed()
+  }
+
+  setPairByAsking(on: boolean): void {
+    this.patch({ pairByAsking: on })
+    // A request already on screen was allowed under the old setting; switching this off is
+    // an answer to it, and the honest answer is no.
+    if (!on) this.answerPair(false)
     this.changed()
   }
 

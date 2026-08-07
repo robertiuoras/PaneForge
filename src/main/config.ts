@@ -145,6 +145,9 @@ export function defaultRemote(): RemoteConfig {
     name: deviceName(),
     id: randomBytes(8).toString('hex'),
     discoverable: true,
+    // On, and what it grants is only the right to put a card on this screen: a request is
+    // refused until somebody presses Approve, and approving means comparing six digits.
+    pairByAsking: true,
     peers: []
   }
 }

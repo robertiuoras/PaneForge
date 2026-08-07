@@ -1452,6 +1452,29 @@ ipcMain.handle('remote:clipboardInvite', () => {
   if (read.kind !== 'invite') return null
   return { name: read.invite.name, expires: read.invite.expires }
 })
+// Pairing by asking, which is the path with no code typed anywhere. The six digits reach
+// the window through `remote:changed`, not through this call's answer: they are known long
+// before somebody presses Approve, and the whole point is to compare them while waiting.
+ipcMain.handle('remote:ask', async (_e, peer: { address: string; port: number; name?: string }) => {
+  const error = await remote.askToPair({
+    address: String(peer?.address ?? ''),
+    port: Number(peer?.port ?? 0),
+    name: peer?.name ? String(peer.name) : undefined
+  })
+  return { ok: !error, error: error || undefined, state: remote.state() }
+})
+ipcMain.handle('remote:answer', (_e, ok: boolean) => {
+  remote.answerPair(ok === true)
+  return remote.state()
+})
+ipcMain.handle('remote:cancelAsk', () => {
+  remote.cancelAsk()
+  return remote.state()
+})
+ipcMain.handle('remote:pairByAsking', (_e, on: boolean) => {
+  remote.setPairByAsking(on === true)
+  return remote.state()
+})
 ipcMain.handle('remote:forget', (_e, id: string) => {
   remote.forget(String(id))
   return remote.state()

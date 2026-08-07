@@ -60,10 +60,29 @@ class GuestConn {
 export class RemoteHost extends EventEmitter {
   private server: Server | null = null
   private guests = new Set<GuestConn>()
+  /**
+   * Sockets that have connected but are not guests yet - mid-handshake, or sitting on an
+   * Approve card waiting for a person.
+   *
+   * Tracked because `server.close()` does not touch a socket that is already open, and a
+   * pairing request can legitimately be open for two minutes. Without this, switching
+   * hosting off left the device at the other end staring at "waiting for approval" until
+   * its own budget ran out, with nothing left here that could ever answer it.
+   */
+  private pending = new Set<Conn>()
   private unhook: (() => void)[] = []
   /** Why the listener is not up, when it should be. Surfaced in the dialog. */
   error = ''
   port = 0
+
+  /**
+   * Asked whether a device with no code may have one. Set by `Remote`, which puts the
+   * request and its six digits on screen and resolves when somebody answers.
+   *
+   * Left null the listener still answers pairing requests - it refuses them by name,
+   * which is the honest reply for a window that cannot show anybody a card.
+   */
+  onAsk: ((peer: PeerIdentity, sas: string, address: string) => Promise<boolean>) | null = null
 
   constructor(
     private readonly backend: HostBackend,
@@ -116,6 +135,8 @@ export class RemoteHost extends EventEmitter {
     for (const off of this.unhook.splice(0)) off()
     for (const g of this.guests) g.conn.close()
     this.guests.clear()
+    for (const c of this.pending) c.close()
+    this.pending.clear()
     const server = this.server
     this.server = null
     if (server) {
@@ -152,17 +173,34 @@ export class RemoteHost extends EventEmitter {
   private async greet(socket: Socket): Promise<void> {
     const conn = new Conn(socket, this.me())
     const guest = new GuestConn(conn)
+    this.pending.add(conn)
     conn.on('gone', () => {
+      this.pending.delete(conn)
       if (this.guests.delete(guest)) this.emit('changed')
     })
     try {
-      await conn.accept(await deriveKey(this.code()))
+      const how = await conn.accept(
+        await deriveKey(this.code()),
+        this.onAsk ? (peer, sas) => this.onAsk!(peer, sas, conn.address) : undefined,
+        this.code()
+      )
+      // A pairing request is not a session: the joiner has the code now and comes back
+      // through the ordinary path. Leaving this socket open would put a guest in the list
+      // that has proved nothing.
+      if (how === 'asked') {
+        this.pending.delete(conn)
+        conn.close()
+        return
+      }
     } catch {
-      // Wrong code, wrong version, or a port scanner. Nothing to report to the UI:
-      // an open port on a LAN gets knocked on, and a toast per knock is noise.
+      // Wrong code, wrong version, a refused pairing request, or a port scanner. Nothing
+      // to report to the UI: an open port on a LAN gets knocked on, and a toast per knock
+      // is noise.
+      this.pending.delete(conn)
       conn.close()
       return
     }
+    this.pending.delete(conn)
     this.guests.add(guest)
     conn.on('msg', (m: Msg) => this.handle(guest, m))
     conn.send({ t: 'sessions', list: this.backend.list() })

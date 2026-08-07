@@ -69,6 +69,7 @@ const TESTS = [
   ['onestash', 'one-stash-test.mjs'],
   ['phone', 'phone-test.mjs'],
   ['qr', 'qr-test.mjs'],
+  ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]

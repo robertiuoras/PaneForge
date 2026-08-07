@@ -167,6 +167,18 @@ The pairing code is never sent, only proved; traffic keys derive from it (scrypt
 AES-256-GCM per direction), so rotating it cuts every paired device off. Hosting is off
 until switched on; discovery is a UDP broadcast carrying no secret. `npm run test:remote`.
 
+**Pairing can also be a button, and then the six digits are the authentication.** Tap a
+discovered device and it asks; the other machine raises a card and both screens show six
+digits derived from an X25519 exchange that binds BOTH public keys — so a machine relaying
+the exchange holds two secrets and cannot make the numbers agree. The person compares them;
+the button on its own proves nothing, which is why the card leads with the number and not
+with the device name (anybody on the network picks their own name). On Approve the host
+seals the ordinary pairing code to that secret and the joiner reconnects through the normal
+path, so stored peers, reconnects and `New code` are untouched. `PROTOCOL` stays 1: an
+older build does not recognise `askpair` and refuses, which is correct — it has no card to
+show. `npm run test:pairask`, whose load-bearing case is a real relay proving the two
+numbers differ.
+
 ## The phone is this window, served
 
 There is no second app. The renderer imports nothing from Electron and nothing from Node -
@@ -391,7 +403,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 
 ## Checks
 
-`npm run typecheck` before committing, and `npm test` — 42 checks in ~65s, everything
+`npm run typecheck` before committing, and `npm test` — 43 checks in ~50s, everything
 below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
 It is also the gate's third step: `agentGate.ts` looks for a script called exactly
 `test`, and while there wasn't one every lane the app drove reported its suite step as
@@ -410,6 +422,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
+| `npm run test:pairask` | pairing with no code typed: the six digits agree between the two ends, and — the case the whole design exists for — a real relay in the middle makes them DISAGREE |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
 | `npm run test:stashtheme` | that the floating Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |

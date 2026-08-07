@@ -122,6 +122,7 @@
     "shots": "node scripts/shots.mjs",
     "test:phone": "node scripts/phone-test.mjs",
     "test:qr": "node scripts/qr-test.mjs",
+    "test:pairask": "node scripts/pair-ask-test.mjs",
     "test:phoneview": "node scripts/phone-view-test.mjs"
   },
   "dependencies": {

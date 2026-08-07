@@ -1773,6 +1773,34 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 }
 .dev-addr.muted { color: var(--muted); }
 .dev-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+/* ---- pairing by asking ----
+   The six digits are the authentication, so they are drawn like the thing being read out
+   loud: big, monospaced, split 3+3 the way anybody reads a number off a screen. Both the
+   incoming card and the outgoing wait use the same block, because the whole point is that
+   the two look identical side by side. */
+.pair-ask-sas {
+  font: 600 30px/1.1 ui-monospace, Consolas, monospace;
+  letter-spacing: 5px; color: var(--text); margin: 6px 0 2px;
+}
+.pair-ask-sas span { margin-left: 8px; }
+/* Not modal, not centred, never focused into: a device asking to pair is somebody else's
+   action and must not take this screen. Corner, above the panes, out of the way. */
+.pair-ask {
+  position: fixed; right: 14px; bottom: 14px; z-index: 60; width: min(340px, calc(100vw - 28px));
+  padding: 12px 14px 11px; border-radius: var(--r);
+  border: 1px solid var(--line-strong); background: var(--surface-2);
+  box-shadow: 0 12px 34px #0009;
+}
+.pair-ask-who { font-size: 13px; color: var(--text); }
+.pair-ask-say { margin: 2px 0 10px; }
+.pair-ask-acts { display: flex; gap: 8px; }
+.pair-ask-acts button { flex: 1; padding: 8px 10px; font-size: 12.5px; }
+.pair-wait {
+  padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: #00000030; font-size: 12.5px;
+}
+.pair-wait .hint { margin: 2px 0 8px; }
+.dev-found-say { flex-basis: 100%; margin: 4px 0 0; }
 /* The QR sits beside its own words rather than in the label column: it is the thing to
    look at, and 78px of `.dev-key` in front of it would push it out of the panel. */
 .pair-scan { align-items: center; gap: 12px; flex-wrap: nowrap; }
