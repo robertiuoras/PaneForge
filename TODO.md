@@ -847,7 +847,17 @@ panel beside the terminal — which is this page's section A and is already the 
       `~/.warp/workflows/*.yaml` **and from `.warp/workflows/` in the repo you are
       standing in**. That last one is J5's per-project scoping for free, and it is the
       right default here: a prompt library that needs an account is not one we would ship.
-- [ ] **K4. Say what a driven lane is allowed to do** — S, and it is closer to a defect
+- [x] **K4. Say what a driven lane is allowed to do** — SHIPPED 2026-08-07. `unattended()`
+      in `shared/agentic.ts` reads the posture back out of the arguments `HEADLESS` really
+      passes, so nothing on screen can drift from the process: the Fleet board's run head
+      carries an `unattended` chip whose tooltip names the flag, the Swarm dialog says it
+      in one line above **Drive it** (and never above Launch — a pane is a person
+      watching), and `driveUnattended` in Settings refuses the whole thing at both doors,
+      `drive:start` and `goal:add`, with a sentence that names the flag it refused. Made
+      stricter later, every one of those falls silent rather than keeping the claim.
+      `npm run test:unattended` — 35 assertions, and the load-bearing one is that EVERY
+      agent in `HEADLESS` has a nameable flag, proved red against an undisclosed new CLI.
+      Original note, kept: S, and it is closer to a defect
       than a feature. Warp sells granular agent permissions; ours are a constant. Every
       lane the app drives is started with the permission prompt turned OFF —
       `--permission-mode bypassPermissions` for Claude, `--full-auto` for Codex, `--yolo`
@@ -919,9 +929,9 @@ step 7, where C7 and E5 already are; it is the reason to build them rather than 
 job.
 
 **J and K are both mostly closed, and what is left of them slots in rather than queueing.**
-J3, J1 and J6 shipped 2026-08-07 (the concealed clipboard, search, editing an entry). Of
-what remains, **K4 goes at step 1** — it is a fact the app currently keeps quiet about
-what it lets an unattended agent do, which makes it nearer a defect than a feature. **K3
+J3, J1 and J6 shipped 2026-08-07 (the concealed clipboard, search, editing an entry), and
+so did ~~**K4**~~ later the same day — the app no longer keeps quiet about what it lets an
+unattended agent do, which is why it went first: it was nearer a defect than a feature. **K3
 with J5** is the next real feature under either heading and belongs at step 4, beside the
 saved launch recipes it is the prompt-shaped half of. J2, J4, J7–J9 and K1 are step 7
 material: none of them is wrong, none of them is what somebody notices missing. **K2 is

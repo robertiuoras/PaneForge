@@ -3,6 +3,7 @@ import type { AgentInfo } from '@shared/agents'
 import { modelLabel, modelValue, supportsModel } from '@shared/agents'
 import type { Project, SplitPlan, SwarmRole } from '@shared/types'
 import type { Goal } from '@shared/goals'
+import { driveRefusal, unattendedLine } from '@shared/agentic'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Segmented } from './Controls'
@@ -84,6 +85,19 @@ export default function SwarmDialog({
   const chosen = local.filter((r) => r.enabled)
   const lanes = plan?.lanes.filter((l) => l.enabled !== false) ?? []
 
+  // K4. Drive starts a CLI with its permission prompt turned off, and this dialog is the
+  // last place a person sees before that happens - so it says which flag, by name, rather
+  // than leaving the fact in a source comment. Read from config once: it changes in
+  // Settings, not while this is open.
+  const [allowUnattended, setAllowUnattended] = useState(true)
+  const [refused, setRefused] = useState('')
+  useEffect(() => {
+    void api.getConfig().then((c) => setAllowUnattended(c.driveUnattended !== false))
+  }, [])
+  const driveAgent = worker || usable[0]?.id || ''
+  const permLine = unattendedLine(driveAgent)
+  const permRefusal = driveRefusal(driveAgent, allowUnattended)
+
   useEffect(() => {
     if (!planning) return
     const started = Date.now()
@@ -148,6 +162,7 @@ export default function SwarmDialog({
   const driveSplit = async (): Promise<void> => {
     if (!plan || !lanes.length || busy) return
     setBusy(true)
+    setRefused('')
     try {
       // The QUEUE, not `startDrive`. Same plan and same loop; what the queue adds is that
       // this survives a restart, that pressing it twice lines the second one up rather
@@ -162,6 +177,11 @@ export default function SwarmDialog({
           model: defaultModels[worker || usable[0]?.id || ''] || undefined
         })
       )
+    } catch (e) {
+      // Main refuses an unattended drive when Settings says so, and the refusal names the
+      // flag. A disabled button already covers the ordinary case; this covers the config
+      // changing while the dialog is open, and it says why rather than doing nothing.
+      setRefused(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']*':\s*Error:\s*/, '') : String(e))
     } finally {
       setBusy(false)
     }
@@ -410,6 +430,15 @@ export default function SwarmDialog({
           </div>
         )}
 
+        {/* K4: what Drive is about to allow, said once, before the press rather than in a
+            source comment. Absent for Launch - a pane is a person watching. */}
+        {mode === 'split' && (permLine || permRefusal) && (
+          <div className={'perm-note' + (permRefusal ? ' refused' : '')}>
+            {permRefusal || `Drive: ${permLine} Launch opens panes instead, and those ask.`}
+          </div>
+        )}
+        {refused && <div className="perm-note refused">{refused}</div>}
+
         <div className="dialog-row">
           <span className="hint">
             {mode === 'roles' ? (
@@ -432,8 +461,11 @@ export default function SwarmDialog({
             <>
               <button
                 className="ghost"
-                disabled={!lanes.length || busy}
-                title="No panes. The app runs each lane, verifies it, and leaves you a branch to review."
+                disabled={!lanes.length || busy || Boolean(permRefusal)}
+                title={
+                  permRefusal ||
+                  `No panes. The app runs each lane, verifies it, and leaves you a branch to review.${permLine ? `\n${permLine}` : ''}`
+                }
                 onClick={driveSplit}
               >
                 {busy ? 'Starting...' : 'Drive it'}

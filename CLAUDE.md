@@ -320,6 +320,14 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
   every tool call overwrites it.
 - The budget timer is armed before the first await, not in a `finally`. Two retries then
   stop. Three lanes at a time, 900ms apart.
+- **The app says what a driven lane may do, and the words are derived from the arguments
+  it passes.** Every entry in `HEADLESS` starts its CLI with the permission prompt off, and
+  that is deliberate — an agent that stops to ask is one that hangs until its budget kills
+  it. `unattended()` finds the flag in the args we really send, so the chip on the board,
+  the line above Drive and the refusal all name the same string the process carries; make a
+  posture stricter and every one of them falls silent rather than claiming otherwise.
+  `driveUnattended` in config may refuse the whole thing, by name, at both doors
+  (`drive:start` and `goal:add`). `npm run test:unattended`.
 - **Quitting kills the driven agents** (`stopAllDrives`, on `before-quit` AND `hardExit`).
   They are detached, in their own process group, and are not ptys — `strays.ts` has never
   heard of them, so without that line the app leaves an agent editing a worktree with
@@ -377,6 +385,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
 | `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
+| `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |

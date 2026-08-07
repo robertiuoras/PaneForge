@@ -26,6 +26,7 @@ import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { getConfig, setConfig } from './config'
+import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -1065,7 +1066,16 @@ onDriveChange((run) => {
   noteDriveChange(run)
 })
 
+// Both doors into a driven run ask the same question first (K4). A refusal throws, so the
+// renderer's invoke rejects with the sentence naming the flag - a button that silently
+// does nothing is the failure mode this is meant to avoid, not a second one to add.
+function refuseUnattended(agent: string): void {
+  const why = driveRefusal(agent, getConfig().driveUnattended !== false)
+  if (why) throw new Error(why)
+}
+
 ipcMain.handle('drive:start', (_e, req: DriveRequest): DriveRun => {
+  refuseUnattended(req.agent ?? 'claude')
   return startDrive(
     {
       cwd: req.cwd,
@@ -1092,6 +1102,7 @@ onGoalsChange((list) => send('goals:changed', list))
 configureGoals(claimForDrive)
 
 ipcMain.handle('goal:add', (_e, req: DriveRequest): Goal => {
+  refuseUnattended(req.agent ?? 'claude')
   return addGoal({
     cwd: req.cwd,
     mission: req.mission,

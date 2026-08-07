@@ -117,6 +117,62 @@ export function drivable(agentId: string): boolean {
   return Boolean(HEADLESS[agentId])
 }
 
+/**
+ * What a driven lane is allowed to do, in the words of the flag that allows it.
+ *
+ * K4. Every entry in `HEADLESS` above starts its CLI with the permission prompt turned
+ * off, for the reason written over that table - an agent that stops to ask is an agent
+ * that hangs until its budget kills it. That decision is defensible and the app said it
+ * nowhere: the goal dialog offered "Drive it", the board showed lanes working, and the one
+ * fact a person would want before either was in a source comment.
+ *
+ * It is DERIVED from the arguments we actually pass rather than restated beside them, so a
+ * posture that is made stricter later cannot leave a card claiming otherwise: change the
+ * flag and this returns null, and every reader of it falls silent instead of lying.
+ */
+export interface Unattended {
+  /** the exact argument the run carries, so the words can never drift from the process */
+  flag: string
+  /** what that flag lets the agent do, fit to print */
+  says: string
+}
+
+const POSTURE: readonly Unattended[] = [
+  { flag: '--permission-mode bypassPermissions', says: 'every tool call is allowed without asking' },
+  { flag: '--dangerously-skip-permissions', says: 'every tool call is allowed without asking' },
+  // Codex's own sandbox still applies - it is workspace-write, which is the lane's worktree.
+  { flag: '--full-auto', says: 'edits files and runs commands in the worktree without asking' },
+  { flag: '--yolo', says: 'every tool call is allowed without asking' }
+]
+
+export function unattended(agentId: string): Unattended | null {
+  const mode = HEADLESS[agentId]
+  if (!mode) return null
+  const line = mode.args.join(' ')
+  return POSTURE.find((p) => line.includes(p.flag)) ?? null
+}
+
+/** One sentence for a card or a dialog. Empty when there is nothing to disclose. */
+export function unattendedLine(agentId: string): string {
+  const u = unattended(agentId)
+  return u ? `Driven with ${u.flag} - ${u.says}.` : ''
+}
+
+/**
+ * Why this agent may not be driven, or '' when it may.
+ *
+ * The refusal is a setting rather than a judgement of our own: the blast radius really is
+ * one unmerged branch in a worktree the app made, so refusing by default would turn off a
+ * working feature to make a point. What was wrong was not the posture, it was that nobody
+ * could see it or say no to it.
+ */
+export function driveRefusal(agentId: string, allowUnattended: boolean): string {
+  if (allowUnattended) return ''
+  const u = unattended(agentId)
+  if (!u) return ''
+  return `${agentId} can only be driven with ${u.flag} (${u.says}), and Settings refuses that. Turn "Let a driven lane run unattended" back on, or pick an agent that stops to ask.`
+}
+
 export function headlessArgs(agentId: string, model = ''): string[] | null {
   const mode = HEADLESS[agentId]
   if (!mode) return null

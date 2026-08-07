@@ -218,6 +218,9 @@ function defaults(): Config {
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
     swarmRoles: DEFAULT_ROLES,
+    // On: every agent the app can drive only runs headlessly with its prompt off, so off
+    // by default would ship the feature dead. What K4 adds is that it is now sayable.
+    driveUnattended: true,
     remote: defaultRemote(),
     theme: { ...DEFAULT_THEME },
     window: { width: 1500, height: 940, maximized: false }

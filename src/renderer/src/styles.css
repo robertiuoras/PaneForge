@@ -2046,6 +2046,20 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 }
 .fleet-drive-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fleet-drive-head .muted { margin-left: auto; white-space: nowrap; }
+/* K4. What this run's agents are allowed to do. A statement of fact, not an alarm, so it
+   is the warn hue at low weight rather than danger: the posture is deliberate and the
+   only defect was that nobody could see it. Colours come from the derived palette. */
+.perm-chip {
+  flex: none; padding: 1px 6px; border-radius: 999px; font-size: 10px; letter-spacing: 0.02em;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+}
+.perm-note {
+  margin: 0 0 8px; padding: 7px 9px; border-radius: 7px; font-size: 11.5px; line-height: 1.45;
+  color: var(--muted); background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.perm-note.refused { color: var(--danger); background: #ff8f8f14; border-color: #ff8f8f2b; }
 /* One column fewer than a pane row: no agent logo, no diff bar. */
 .fleet-row.is-drive { grid-template-columns: 10px 12px minmax(0, 1fr) 152px; }
 .fleet-row.drive-working .fleet-dot,

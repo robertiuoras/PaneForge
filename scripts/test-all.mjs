@@ -43,6 +43,7 @@ const TESTS = [
   ['voice', 'voice-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
+  ['unattended', 'unattended-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],

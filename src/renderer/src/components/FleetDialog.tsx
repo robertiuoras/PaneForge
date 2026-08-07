@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DiffScope, DriveRun, GitInfo, Session } from '@shared/types'
 import type { AgentInfo } from '@shared/agents'
 import { describePlace } from '@shared/place'
-import { driveLine, runDone } from '@shared/agentic'
+import { driveLine, runDone, unattended, unattendedLine } from '@shared/agentic'
 import type { Goal } from '@shared/goals'
 import { goalLine, queuePosition } from '@shared/goals'
 import { density, fleetOrder, fleetRow, gitLine } from '@shared/fleet'
@@ -292,6 +292,14 @@ export default function FleetDialog({
             <div key={run.id} className="fleet-drive">
               <div className="fleet-drive-head">
                 <strong>{run.mission.slice(0, 90)}</strong>
+                {/* K4. This run's agents were started with their permission prompt off,
+                    which is the one thing about a driven lane a person cannot see by
+                    looking at it. Derived from the arguments the run actually carries. */}
+                {unattended(run.agent) && (
+                  <span className="perm-chip" title={unattendedLine(run.agent)}>
+                    unattended
+                  </span>
+                )}
                 <span className="muted">
                   {run.lanes.length} lane{run.lanes.length === 1 ? '' : 's'}
                   {run.tokens.output ? ` · ${Math.round(run.tokens.output / 1000)}k out` : ''}

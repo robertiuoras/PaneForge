@@ -999,6 +999,14 @@ export interface Config {
   autoLane: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
+  /**
+   * May the app drive a lane with an agent whose only headless posture is "no prompts"?
+   *
+   * On, because that is every agent the app can drive (see `HEADLESS` in shared/agentic.ts)
+   * and the blast radius is one unmerged branch in a worktree the app made. Off refuses to
+   * start a drive or queue a goal at all, and says which flag it refused - K4.
+   */
+  driveUnattended: boolean
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
   /**

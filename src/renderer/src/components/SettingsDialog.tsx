@@ -392,6 +392,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="Two agents in one folder overwrite each other's edits, race git and fight over the dev server port. The second session in a repo opens in a lane instead - <project>-a on branch lane-a, then -b, then -c - carrying your .env files, your local settings, and the installed node_modules (hardlinked a few seconds after the pane opens, so it costs no disk and deleting the lane never touches the original). It also gets its own PORT (one past whatever the project's dev script uses, also in PF_LANE_PORT) and the original folder's Claude history, memory and permissions instead of a blank slate. Click the lane chip on the pane to see what is in it and merge it back when the work is done."
                 />
                 <Switch
+                  checked={config.driveUnattended !== false}
+                  onChange={(v) => onChange({ driveUnattended: v })}
+                  label="Let a driven lane run unattended"
+                  hint="Drive starts a coding CLI with its permission prompt turned off - Claude with --permission-mode bypassPermissions, Codex with --full-auto, Gemini and Qwen with --yolo - because an agent that stops to ask nobody is an agent that hangs until its budget kills it. What it may touch is a worktree the app made, on a branch nothing merges by itself. Off refuses to start or queue a driven run at all, and says which flag it refused; panes you launch yourself are unaffected and still ask."
+                />
+                <Switch
                   checked={config.confirmClose}
                   onChange={(v) => onChange({ confirmClose: v })}
                   label="Ask before closing a running session"
