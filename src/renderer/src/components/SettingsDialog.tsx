@@ -573,6 +573,27 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               </div>
 
               <div className="setting">
+                <label>Never remember</label>
+                {/* One rule per LINE, not comma-separated: `{2,3}` is a quantifier and
+                    `[a,b]` is a class, so a comma is a character a rule may contain and
+                    can never be the separator. */}
+                <textarea
+                  rows={3}
+                  defaultValue={config.stashDeny}
+                  placeholder={'one rule per line\nstaging.example.com\n/^ghp_[A-Za-z0-9]{20,}$/'}
+                  // On blur rather than per keystroke: every write recompiles the rules,
+                  // and half a pattern typed so far is a rule that means something else.
+                  onBlur={(e) => onChange({ stashDeny: e.currentTarget.value })}
+                />
+                <span className="hint">
+                  A clip matching any of these is never written to disk at all. Plain words match
+                  anywhere, any case; a line wrapped in slashes is a regular expression. A password
+                  copied out of 1Password, Bitwarden or KeePassXC is already excluded without
+                  this - they mark it, and the Stash honours the mark.
+                </span>
+              </div>
+
+              <div className="setting">
                 <div className="setting-row">
                   <button
                     className="ghost"

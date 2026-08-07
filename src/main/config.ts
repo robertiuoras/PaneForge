@@ -179,6 +179,7 @@ function defaults(): Config {
     stashMaxImages: 24,
     stashFileHours: 24,
     stashMaxFileMb: 512,
+    stashDeny: '',
     stashPos: null,
     grid: false,
     gridSizes: {},

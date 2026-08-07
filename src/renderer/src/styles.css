@@ -63,6 +63,9 @@ button, input { font: inherit; }
    `rgb(255,255,255)`. Wrapped in `:where()` so this costs zero specificity and any
    component that dresses its own field still wins. Checkboxes and radios are hidden
    by their own rules and the range slider is styled below, so all three stay out. */
+/* A textarea is in the same list for the same reason: left alone it renders as a native
+   white field on a dark dialog, which is the exact defect the note above describes. */
+textarea,
 input:where(:not([type='checkbox'], [type='radio'], [type='range'])) {
   background: var(--bg);
   color: var(--text);
@@ -73,17 +76,24 @@ input:where(:not([type='checkbox'], [type='radio'], [type='range'])) {
   outline: none;
   transition: border-color var(--fast), background var(--fast);
 }
+textarea:hover:not(:disabled),
 input:where(:not([type='checkbox'], [type='radio'], [type='range'])):hover:not(:disabled) {
   border-color: #ffffff33;
 }
+textarea:focus,
 input:where(:not([type='checkbox'], [type='radio'], [type='range'])):focus {
   border-color: var(--accent);
   background: var(--surface);
 }
+textarea:disabled,
 input:where(:not([type='checkbox'], [type='radio'], [type='range'])):disabled {
   opacity: 0.5;
 }
-input::placeholder { color: #6f6f7d; }
+textarea {
+  font: inherit;
+  resize: vertical;
+}
+input::placeholder, textarea::placeholder { color: #6f6f7d; }
 button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

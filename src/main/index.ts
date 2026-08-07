@@ -1128,7 +1128,8 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
     patch.stashMaxItems !== undefined ||
     patch.stashMaxImages !== undefined ||
     patch.stashFileHours !== undefined ||
-    patch.stashMaxFileMb !== undefined
+    patch.stashMaxFileMb !== undefined ||
+    patch.stashDeny !== undefined
   ) {
     applyStashCaps(next)
   }
@@ -1453,6 +1454,7 @@ function stashConfig(cfg: Config): StashConfig {
     stashMaxImages: cfg.stashMaxImages,
     stashFileHours: cfg.stashFileHours,
     stashMaxFileMb: cfg.stashMaxFileMb,
+    stashDeny: cfg.stashDeny,
     clipboardOverlay: cfg.clipboardOverlay,
     // The overlay derives its own colours from this, the same way every other surface
     // does. It arrives on the same push as the knobs, so moving the accent slider
@@ -1548,7 +1550,8 @@ function applyStashCaps(cfg: Config): void {
     maxItems: Math.max(1, cfg.stashMaxItems),
     maxImages: Math.max(0, cfg.stashMaxImages),
     fileHours: Math.max(0, cfg.stashFileHours),
-    maxFileMb: Math.max(0, cfg.stashMaxFileMb)
+    maxFileMb: Math.max(0, cfg.stashMaxFileMb),
+    deny: cfg.stashDeny ?? ''
   })
 }
 

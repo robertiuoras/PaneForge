@@ -40,6 +40,7 @@
     "test:silence": "node scripts/silence-test.mjs",
     "test:theme": "node scripts/theme-test.mjs",
     "test:stashtheme": "node scripts/stash-theme-test.mjs",
+    "test:conceal": "node scripts/conceal-test.mjs",
     "test:voice": "node scripts/voice-test.mjs",
     "test:place": "node scripts/place-test.mjs",
     "test:fleet": "node scripts/fleet-test.mjs",

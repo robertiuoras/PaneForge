@@ -926,6 +926,16 @@ export interface Config {
   /** biggest single file the Stash accepts, MB. Bigger ones are refused, not truncated. */
   stashMaxFileMb: number
   /**
+   * Clips the Stash must never remember, one rule per line: a case-insensitive substring,
+   * or `/regex/` for the real thing. Empty by default and deliberately so - the built-in
+   * protection is the copying app's own concealed marker (`shared/conceal.ts`), which is
+   * always honoured and is not a guess about the content. Guessing is what this field is
+   * for, and it is the user's guess: copying an API key to paste it AT an agent is an
+   * everyday move here, so an app that swallowed one by itself would read as broken.
+   * A matching clip is never written to disk at all, not written and hidden.
+   */
+  stashDeny: string
+  /**
    * Where the floating Stash was last dragged to, as its bottom-left corner in screen
    * coordinates. Null means the default corner, and it goes back to null if that point is
    * no longer on any display (a monitor unplugged, a resolution changed).
@@ -1109,6 +1119,7 @@ export type StashConfig = Pick<
   | 'stashMaxImages'
   | 'stashFileHours'
   | 'stashMaxFileMb'
+  | 'stashDeny'
   | 'clipboardOverlay'
   // Read-only here, and deliberately absent from STASH_CONFIG_KEYS below: the overlay
   // draws the app's colours and may not change them. Without this the floating Stash was
@@ -1126,6 +1137,10 @@ export const STASH_CONFIG_KEYS = [
   'stashMaxImages',
   'stashFileHours',
   'stashMaxFileMb',
+  // `stashDeny` is deliberately NOT here even though the overlay is sent it: the overlay
+  // is `focusable: false`, so there is no way to TYPE a rule into it. It is read-only
+  // there for the same reason `theme` is - the panel can say what the rules are, and
+  // Settings in the main window is where they are changed.
   'clipboardOverlay'
 ] as const
 

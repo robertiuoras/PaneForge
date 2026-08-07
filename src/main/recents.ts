@@ -33,6 +33,7 @@ import {
 import { basename, extname, join } from 'node:path'
 import { app, clipboard, nativeImage } from 'electron'
 import type { RecentItem } from '../shared/types'
+import { compileDeny, concealedBy, deniedBy } from '../shared/conceal'
 
 /** How often the clipboard is looked at. Text only, unless the rules below allow more. */
 const TICK_MS = 1200
@@ -57,7 +58,14 @@ const SAVE_DEBOUNCE_MS = 800
 const SWEEP_MS = 60_000
 
 /** What Settings currently says. Replaced wholesale by configureRecents(). */
-let caps = { maxItems: MAX_ITEMS, maxImages: MAX_IMAGES, fileHours: 24, maxFileMb: 512 }
+let caps = { maxItems: MAX_ITEMS, maxImages: MAX_IMAGES, fileHours: 24, maxFileMb: 512, deny: '' }
+
+/**
+ * The deny list compiled once per change rather than once per clipboard tick - this runs
+ * all day, and `new RegExp` on every rule every 1.2s to answer "no" is the shape of thing
+ * that shows up as a percent of a CPU on somebody's battery.
+ */
+let denyRules = compileDeny('')
 
 let items: RecentItem[] = []
 let timer: NodeJS.Timeout | null = null
@@ -80,6 +88,7 @@ export function configureRecents(next: Partial<typeof caps>): void {
   const before = JSON.stringify(caps)
   caps = { ...caps, ...next }
   if (JSON.stringify(caps) === before) return
+  denyRules = compileDeny(caps.deny)
   load()
   // A shorter file life has to move the clocks already ticking, not just new arrivals.
   items = items.map((i) =>
@@ -491,7 +500,7 @@ function sweepExpired(): void {
   onChange?.(lean(items))
 }
 
-function readText(): void {
+function readText(concealed: string | null): void {
   let text = ''
   try {
     text = clipboard.readText()
@@ -499,9 +508,14 @@ function readText(): void {
     return
   }
   if (text === lastText) return
+  // Set BEFORE the exclusion checks, not after. Otherwise a refused clip is re-read and
+  // re-refused on every tick for as long as it sits on the clipboard, and worse, the next
+  // clip that happens to equal the last ALLOWED one is dropped as a duplicate of it.
   lastText = text
   const trimmed = text.trim()
   if (trimmed.length < MIN_TEXT) return
+  if (concealed) return
+  if (deniedBy(text, denyRules)) return
   push({
     id: `t${++seq}`,
     key: textKey(text),
@@ -563,17 +577,22 @@ function readImage(): void {
 }
 
 function tick(force = false): void {
-  readText()
-  let formats = ''
+  // The formats are read FIRST because they carry the copying app's "do not remember
+  // this" marker, and that answer is needed before either reader runs - a concealed
+  // screenshot must not be decoded, let alone written to disk as a PNG.
+  let list: string[] = []
   try {
-    formats = clipboard.availableFormats().join(',')
+    list = clipboard.availableFormats()
   } catch {
     return
   }
+  const formats = list.join(',')
+  const concealed = concealedBy(list)
+  readText(concealed)
   const hasImage = /image\//.test(formats)
   const changed = formats !== lastFormats
   lastFormats = formats
-  if (!hasImage) {
+  if (!hasImage || concealed) {
     lastImageKey = ''
     return
   }
