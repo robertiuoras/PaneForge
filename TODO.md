@@ -142,9 +142,17 @@ environments.
   under "The phone is this window, served". **Better than theirs, as predicted:** they
   maintain iOS + Android + web + Electron, we gained a phone, a tablet and a second-machine
   client from one renderer.
-- [ ] **B3. QR / link pairing** — S. Today you type six characters. Print a QR of the address
-  in the Devices phone panel (the code stays the secret; the QR only carries the URL). Needs
-  a QR encoder with no dependency — ~200 lines, or a tiny checked-in one.
+- [x] **B3. QR / link pairing** — SHIPPED. The Devices phone panel draws `<address>/#<code>`
+  as a QR and the pairing page posts a code it finds in the fragment, so pairing is a camera
+  and one tap with nothing typed. Encoder is `src/shared/qr.ts`, no dependency: byte mode,
+  error level M, versions 1-6, which is all a `http://255.255.255.255:65535/#ZZZZZZ` can
+  ever need. The plan above said "the QR only carries the URL" and that turned out to be the
+  wrong shape — a QR that lands on a form to type into is not pairing, it is a shortcut to
+  typing. The **fragment** is what makes carrying the code safe: a browser never sends one
+  to the server, so it is in no access log and no `Referer`. `npm run test:qr` decodes what
+  the encoder draws (syndromes, payload, every version at every mask) and `test:phoneview`
+  proves a scanned link pairs a real browser with nothing typed. OAuth and email were asked
+  for and refused — see `docs/design-notes.md`.
 - [ ] **B4. Reach beyond the LAN** — M. UDP broadcast dies at the subnet. Add a manual
   endpoint field, and detect Tailscale (`tailscale ip -4`, MagicDNS name) the way T3 Code
   does — a tailnet is the honest answer to remote access and costs us no server.

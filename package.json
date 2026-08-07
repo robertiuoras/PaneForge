@@ -121,6 +121,7 @@
     "test:laneargs": "node scripts/lane-args-test.mjs",
     "shots": "node scripts/shots.mjs",
     "test:phone": "node scripts/phone-test.mjs",
+    "test:qr": "node scripts/qr-test.mjs",
     "test:phoneview": "node scripts/phone-view-test.mjs"
   },
   "dependencies": {

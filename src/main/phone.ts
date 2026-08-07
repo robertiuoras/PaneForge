@@ -416,6 +416,14 @@ async function readBody(req: IncomingMessage): Promise<string> {
  * The only thing an unpaired browser is given. Deliberately one file with no assets: it
  * is what the open internet would see if this port were ever exposed, so it holds no
  * hint of what is behind it and nothing that has to be kept in step with the app.
+ *
+ * **The code may arrive in the URL fragment**, which is what the QR in Settings encodes -
+ * `http://<address>:<port>/#<code>` - so a camera does the pairing and nothing is typed.
+ * A fragment rather than a query on purpose: a browser never sends it to the server, so
+ * the code stays out of the access log, out of any proxy in front of this, and out of the
+ * `Referer` of anything the app later loads. The page posts it exactly as a person would,
+ * which means the same lockout counts it, and drops it out of the address bar afterwards.
+ * A wrong or stale one just falls through to the form rather than dead-ending.
  */
 const PAIR_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -433,15 +441,26 @@ input:focus{outline:2px solid #f0a868;outline-offset:1px}
 button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:12px;background:#f0a868;
 color:#211a10;font:600 16px/1 inherit}
 .bad{margin-top:14px;color:#f08a7a;font-size:14px;min-height:20px}
+.busy form{visibility:hidden}
+.busy #w{display:block}
+#w{display:none;position:fixed;inset:0;display:none;place-items:center;font-size:14px;opacity:.7}
+.busy #w{display:grid}
 </style></head><body><form id=f>
 <h1>PaneForge</h1><p>Type the code from Settings &rarr; Phone</p>
 <input id=c autocomplete=off autocapitalize=characters spellcheck=false inputmode=text maxlength=8>
-<button>Connect</button><div class=bad id=e></div></form><script>
+<button>Connect</button><div class=bad id=e></div></form><div id=w>Connecting&hellip;</div><script>
 var f=document.getElementById('f'),c=document.getElementById('c'),e=document.getElementById('e')
-c.focus()
+function pair(code){return fetch('/pf/pair',{method:'POST',body:JSON.stringify({code:code})})}
+function fail(r){e.textContent=r&&r.status===429?'Too many tries. Wait a minute.':'That code is not right.'
+c.value='';c.focus()}
 f.onsubmit=function(ev){ev.preventDefault();e.textContent=''
-fetch('/pf/pair',{method:'POST',body:JSON.stringify({code:c.value})}).then(function(r){
-if(r.ok){location.reload();return}
-e.textContent=r.status===429?'Too many tries. Wait a minute.':'That code is not right.'
-c.value='';c.focus()}).catch(function(){e.textContent='No answer from the desk.'})}
+pair(c.value).then(function(r){if(r.ok){location.reload();return}fail(r)})
+.catch(function(){e.textContent='No answer from the desk.'})}
+var scanned=(location.hash||'').replace(/^#/,'').replace(/[^A-Za-z0-9]/g,'')
+if(scanned){document.documentElement.className='busy'
+pair(scanned).then(function(r){
+if(r.ok){location.replace(location.pathname);return}
+document.documentElement.className='';fail(r);c.focus()})
+.catch(function(){document.documentElement.className=''
+e.textContent='No answer from the desk.'})}else{c.focus()}
 </script></body></html>`

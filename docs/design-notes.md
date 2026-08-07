@@ -415,9 +415,62 @@ xterm draws to a canvas, so the text is in `window.__pf[id].term.buffer`, and a 
 in the DOM fails against a perfectly live pane.
 
 Not built, and the UI does not pretend otherwise: there is no headless host (the app has to
-be running - TODO B1), no QR (you type six characters - B3) and no phone-first diff view
-(H2). Reaching it from outside the network is a tailnet address, which is why `phoneUrls`
-sorts 100.64/10 first.
+be running - TODO B1) and no phone-first diff view (H2). Reaching it from outside the
+network is a tailnet address, which is why `phoneUrls` sorts 100.64/10 first.
+
+### Pairing is a camera, not a keyboard - and not an account
+
+Six characters is small, and it was still the only typing left in the product, done in the
+worst place there is to type: an on-screen keyboard, phone in one hand, copying off a screen
+a metre away. So Settings draws the address and the code together as a QR, the camera app
+opens it, and pairing is one tap.
+
+**OAuth and email were asked for and refused, and the reason is not effort.** Both are
+identity services, and identity is not the question this link asks. What is behind the code
+is a pane, which is a shell on this machine, on this network - and every part of that
+sentence is local. An OAuth flow would need a provider, an internet round trip and a public
+HTTPS redirect target, which `http://192.168.1.23:7312` categorically is not (Google, Apple
+and GitHub all refuse a private-IP redirect URI); that means a cloud service PaneForge does
+not have and should not want, and it means the desk cannot be paired to on a network with no
+way out. Email is worse in the way that matters: a magic link is a bearer token for a shell,
+sent through a third party, sitting in a mailbox for ever, and it is *slower* than typing six
+characters. Both trade a secret that never leaves the room for a secret that leaves it, to
+save six keystrokes.
+
+The QR keeps the secret in the room, and the shape of the link is the careful part:
+
+- **The code rides in the fragment**, `<address>/#<code>`, not the path and not a query. A
+  browser never sends a fragment to the server, so the code is in no access log, no proxy in
+  front of this, and no `Referer` of anything the app loads afterwards. The pairing page
+  reads it and POSTs it exactly as a person would - same endpoint, same lockout counting it -
+  and then drops it out of the address bar with `location.replace`.
+- **A wrong or stale scan falls through to the form.** The page is the same page; scanning
+  only fills it in.
+- `src/shared/qr.ts` is the encoder, no dependency and nothing downloaded. Byte mode, error
+  level M, versions 1 to 6 - the longest address this app can produce is
+  `http://255.255.255.255:65535/#ZZZZZZ` at 36 bytes and version 5 holds 84. Stopping below
+  version 7 is what keeps it under 300 lines: 7 is where a symbol starts carrying a second
+  version block with its own table and BCH code. It **throws rather than truncates**, because
+  a QR that encodes half an address still scans, and sends the phone somewhere wrong.
+
+**The test decodes; it does not compare.** The first version of that file built the generator
+polynomial in reverse - `next[j] ^= mul(poly[j], EXP[i])` where it needed `next[j] ^= poly[j]`
+- so every error-correction codeword was wrong. The symbols had the right version, the right
+size, the right finders, timing patterns and alignment patterns, and the right data modules;
+they differed from a reference encoder's output no more than a different mask choice would;
+and not one of them could be read by any scanner. `npm run test:qr` therefore reads the drawn
+symbol back the way a scanner does - format bits for the mask, the zig-zag walk,
+de-interleave, every Reed-Solomon syndrome must be zero, then the payload out - for every
+version at every mask, plus one fixture of error-correction codewords taken off a symbol an
+independent encoder produced. Nothing weaker catches this class of bug. (Encoders differ
+harmlessly on how much zero padding follows the terminator, which is why that fixture pins
+the arithmetic directly instead of comparing finished symbols.)
+
+`test:phoneview` covers the other half: a real headless Chrome opening the scanned link and
+landing in the app with nothing typed. Each case gets its own target, because a URL that
+differs only in its fragment is a same-document navigation - assigning `location.href` does
+not reload the page, the inline script never re-runs, and the result reads exactly like a
+broken feature.
 
 ## Every colour is derived, and every pane says which project it is in
 

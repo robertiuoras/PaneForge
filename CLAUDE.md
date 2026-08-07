@@ -186,6 +186,13 @@ channel of its own.
   commands on this machine. Unpaired gets the pairing page and not one asset; five wrong
   codes locks that address for a minute. The cookie is `hmac(deviceId, code)` - derived,
   never stored - so rotating the code signs every phone out.
+- **Pairing is a camera, not a keyboard.** Settings draws `<address>/#<code>` as a QR
+  (`shared/qr.ts`, no dependency, byte mode / level M / versions 1-6) and the pairing page
+  posts a code it finds in the fragment. A **fragment** because a browser never sends one
+  to the server: the code stays out of the access log and out of every `Referer`. The
+  typed field is still there for a phone with no camera. OAuth and email were considered
+  and refused - both move the secret through a third party and off this network to save
+  six keystrokes on a link that is otherwise entirely local.
 - **A phone is not a small desktop.** Under 720px the list and the panes take turns
   (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
   the display. `display: none`, never a 0px xterm.
@@ -194,8 +201,7 @@ channel of its own.
   needs a running copy: `npm run build && npm run try -- --keep --show`, then
   `node scripts/phone-view-test.mjs --port <port> --code <code>`. A pane's text is in
   `window.__pf[id].term.buffer`, never in the DOM - xterm draws to a canvas.
-- Not built: headless host (B1 - the app must be running), QR pairing (B3), phone-first
-  diff (H2).
+- Not built: headless host (B1 - the app must be running), phone-first diff (H2).
 
 ## Every colour is derived, and every pane says which project it is in
 
@@ -385,7 +391,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 
 ## Checks
 
-`npm run typecheck` before committing, and `npm test` — 35 checks in ~50s, everything
+`npm run typecheck` before committing, and `npm test` — 42 checks in ~65s, everything
 below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
 It is also the gate's third step: `agentGate.ts` looks for a script called exactly
 `test`, and while there wasn't one every lane the app drove reported its suite step as
@@ -419,6 +425,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:cursorclick` | Alt-click placing the CLI's cursor: the keys it sends, and the clicks it refuses to answer |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
+| `npm run test:qr` | the pairing QR, by DECODING it: format bits, zig-zag, de-interleave, every Reed-Solomon syndrome zero, payload back out — every version at every mask. Nothing less catches a symbol that is drawn perfectly and reads nowhere |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |

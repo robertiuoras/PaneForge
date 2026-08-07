@@ -138,6 +138,60 @@ try {
   await send('Runtime.enable', {}, sessionId)
   await sleep(700)
 
+  // ---- 0. scanning the QR pairs with nothing typed -----------------------------
+  // The whole point of the QR: a camera opens `<address>/#<code>` and the phone is in.
+  //
+  // Each case gets its OWN target rather than assigning `location.href`, because a URL that
+  // differs from the current one only in its fragment is a same-document navigation - the
+  // page does not reload and the inline script never runs again. That reads exactly like a
+  // broken feature: the form is still up and the hash is still in the bar.
+  {
+    const scan = async (url, want) => {
+      const t = await send('Target.createTarget', { url })
+      const s = (await send('Target.attachToTarget', { targetId: t.targetId, flatten: true }))
+        .sessionId
+      await send('Runtime.enable', {}, s)
+      const look = async () => {
+        const res = await send(
+          'Runtime.evaluate',
+          {
+            expression: `({
+              app: !!document.querySelector('#root'),
+              form: !!document.querySelector('#c'),
+              busy: document.documentElement.className,
+              said: document.querySelector('#e')?.textContent ?? '',
+              hash: location.hash
+            })`,
+            returnByValue: true,
+            awaitPromise: true
+          },
+          s
+        ).catch(() => null)
+        return res?.result?.value ?? null
+      }
+      let seen = null
+      for (let i = 0; i < 40; i++) {
+        await sleep(250)
+        seen = await look()
+        if (seen && want(seen)) break
+      }
+      await send('Target.closeTarget', { targetId: t.targetId }).catch(() => {})
+      return seen
+    }
+
+    const landed = await scan(base + '/#' + code, (s) => s.app)
+    ok(!!landed?.app, 'a scanned link pairs with nothing typed', JSON.stringify(landed))
+    ok(landed?.hash === '', 'and the code is dropped out of the address bar', String(landed?.hash))
+
+    // A wrong or stale one falls through to the form rather than dead-ending.
+    await send('Network.enable', {}, sessionId)
+    await send('Network.clearBrowserCookies', {}, sessionId)
+    const refused = await scan(base + '/#ZZZZZZ', (s) => !!s.said)
+    ok(!!refused?.form, 'a wrong scanned code leaves the form to type into', JSON.stringify(refused))
+    ok(refused?.busy !== 'busy', 'and does not sit on Connecting for ever', String(refused?.busy))
+    await send('Network.clearBrowserCookies', {}, sessionId)
+  }
+
   // ---- 1. an unpaired browser gets the pairing page, and only that -------------
   const first = await evaluate(`({
     title: document.title,

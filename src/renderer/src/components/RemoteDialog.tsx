@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
+import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Switch } from './Controls'
@@ -83,6 +84,18 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
       {state.error && <div className="dev-error">{state.error}</div>}
       {state.on && (
         <div className="dev-self">
+          {/* Scanning is the path this expects to be used: the address and the code below
+              are what is left for a phone with no camera, or a second address to try. */}
+          <div className="dev-field pair-scan">
+            <PairQr url={url} code={state.code} />
+            <div className="pair-scan-say">
+              <span className="dev-key">Scan this</span>
+              <p className="hint">
+                Point the phone&apos;s camera at it and open the link. Nothing to type: the
+                code travels in the part of the address a browser never sends anywhere.
+              </p>
+            </div>
+          </div>
           <div className="dev-field">
             <span className="dev-key">Open on the phone</span>
             <div className="dev-addrs">
