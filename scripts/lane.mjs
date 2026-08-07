@@ -348,6 +348,26 @@ const IDLE_EMPTY_MS = 60 * 60 * 1000
 // the app and to every other chat, it never delays a release, and it disappears on its own
 // after this long unless the chat actually writes in the lane (`guard` promotes it).
 const TENTATIVE_MS = 20 * 60 * 1000
+// How long a lane may hold everyone else's finished work out of a release.
+//
+// `busyLanes` waits for a lane with unfinished work in it, which is right, and it had no
+// bound at all, which is not: the wait ended when the holding chat committed, marked ready
+// or died, and a chat that does none of those three waits for ever. `idle-main-test.mjs`
+// fixed the CLAIM half of exactly this squat on 2026-08-07 - taskdriver.ai's `main` held
+// from a chat in another project - and left the RELEASE half open, which is the half that
+// costs something: one stray uncommitted file in `main` and every other lane's verified,
+// pushed work sits unmerged behind it. Measured that same day: lane a's three commits were
+// reported to Robert as "queued behind another active chat" with no timer that would ever
+// clear it short of the 12h stale sweep, and the chat in front was not typing.
+//
+// Liveness is the wrong question here. That squatter's heartbeat was 4 minutes old - a
+// window being open is not a person editing - so this is measured off the WORK instead:
+// the newest mtime among the uncommitted files, and the newest commit the release does not
+// have. Untouched for this long means nobody is mid-anything, whatever the ledger says.
+//
+// Nothing can be lost by not waiting. An ignored lane's work stays on its own branch and
+// merges with the next release the moment its chat marks it ready.
+const HOLD_BUSY_MS = 60 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -1208,18 +1228,57 @@ function aheadOf(branch) {
   return r.out.split('\n').filter((l) => l.startsWith('+')).length
 }
 
+/**
+ * When the work in a lane last moved, in wall-clock ms - 0 when there is no work.
+ *
+ * The ledger's `seen` answers a different question: whether a chat still has a window
+ * open. That is not what a release needs to know. It needs to know whether anyone is
+ * mid-edit, and the honest evidence for that is the files and the commits themselves -
+ * the newest mtime among the uncommitted paths, and the newest commit the release does
+ * not have. See HOLD_BUSY_MS for what this is measured against, and why.
+ *
+ * Reads only; a lane is polled while agents are typing in it.
+ */
+function lastTouched(dir, porcelain, branch) {
+  let t = 0
+  // Bounded: a lane with 10k untracked files (a stray build output) is not worth 10k
+  // stat calls on a poll, and the newest of the first 200 is already newer than any
+  // threshold this feeds.
+  for (const line of porcelain.split('\n').slice(0, 200)) {
+    // `XY path` or `XY old -> new` for a rename; git quotes a path with odd bytes in it.
+    let rel = line.slice(3).trim()
+    if (!rel) continue
+    if (rel.includes(' -> ')) rel = rel.split(' -> ').pop()
+    if (rel.startsWith('"') && rel.endsWith('"')) rel = rel.slice(1, -1)
+    try {
+      t = Math.max(t, lstatSync(join(dir, rel)).mtimeMs)
+    } catch {
+      /* deleted, or a path this platform cannot spell - it tells us nothing either way */
+    }
+  }
+  if (branch) {
+    const r = gitSafe(dir, 'log', '-1', '--format=%ct', branch)
+    const secs = Number(r.ok ? r.out.trim() : '')
+    if (Number.isFinite(secs) && secs > 0) t = Math.max(t, secs * 1000)
+  }
+  return t
+}
+
 /** Work sitting in a lane: uncommitted files, and commits the release does not have. */
 function laneWork(id) {
   const dir = laneDir(id)
-  if (!existsSync(dir)) return { dirty: false, ahead: 0 }
+  if (!existsSync(dir)) return { dirty: false, ahead: 0, touchedAt: 0 }
   // A folder that is not a worktree answers every git command with an error, and the
   // error text is text, so `dirty` was true forever - the lane looked like a chat was
   // mid-edit in it and was left alone by everything that would have rebuilt it. It has no
   // uncommitted work because it has no work: say so, and let ensureWorktree repair it.
-  if (id !== 'main' && !isWorktree(dir)) return { dirty: false, ahead: aheadOf(laneBranch(id)), broken: true }
-  const dirty = Boolean(gitSafe(dir, 'status', '--porcelain').out)
-  if (id === 'main') return { dirty, ahead: unreleasedOnMaster() }
-  return { dirty, ahead: aheadOf(laneBranch(id)) }
+  if (id !== 'main' && !isWorktree(dir))
+    return { dirty: false, ahead: aheadOf(laneBranch(id)), broken: true, touchedAt: 0 }
+  const porcelain = gitSafe(dir, 'status', '--porcelain').out
+  const dirty = Boolean(porcelain)
+  const branch = id === 'main' ? MB : laneBranch(id)
+  const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null) }
 }
 
 /**
@@ -1230,15 +1289,33 @@ function laneWork(id) {
 function busyLanes(state) {
   return Object.keys(state.lanes).filter((id) => {
     if (state.ready[id]) return false
+    // A claim made on the word "PaneForge" reserves a checkout and nothing else. That it
+    // "never delays a release" is written into TENTATIVE_MS as the contract and was
+    // enforced nowhere: a tentative holder with one stray file in its lane gated everyone.
+    if (state.lanes[id]?.tentative) return false
     const w = laneWork(id)
     // `main` is master, which is the release branch: a commit there is not work in
     // progress, it is work that is already in the next release, and counting it as
     // half-finished held every other lane's work behind whichever chat happened to hold
     // main until that chat closed its window. It waits while master is DIRTY - an edit
     // nobody has committed - and not a moment longer.
-    if (id === 'main') return w.dirty
-    return w.dirty || w.ahead > 0
+    const unfinished = id === 'main' ? w.dirty : w.dirty || w.ahead > 0
+    if (!unfinished) return false
+    // ...and not longer than HOLD_BUSY_MS either. Work nobody has touched in an hour is
+    // not work in progress. A lane whose age cannot be read is given the benefit of the
+    // doubt, because the failure that matters here is releasing over somebody's edit.
+    return !w.touchedAt || now() - w.touchedAt < HOLD_BUSY_MS
   })
+}
+
+/** One busy lane, said the way a person needs to hear it: what is in it, and how stale. */
+function busyDetail(id) {
+  const w = laneWork(id)
+  const what = []
+  if (w.dirty) what.push('uncommitted edits')
+  if (id !== 'main' && w.ahead > 0) what.push(`${w.ahead} unmerged commit${w.ahead === 1 ? '' : 's'}`)
+  const age = w.touchedAt ? `, last touched ${Math.round((now() - w.touchedAt) / 60000)}m ago` : ''
+  return `${id} (${what.join(' + ') || 'work'}${age})`
 }
 
 /**
@@ -1384,7 +1461,12 @@ function autoship(kind = 'auto', session = 'auto') {
   if (retryConflicts(state)) write(state)
   if (state.release) return { shipped: false, reason: 'another chat is mid-release' }
   const busy = busyLanes(state)
-  if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.join(', ')}` }
+  // Named with the evidence, not just the lane. An agent repeats this reason to a person
+  // verbatim, and "waiting on chats still working: main" was read - correctly, from what
+  // it says - as "somebody is mid-feature", when the truth was an untouched file and an
+  // open window. Saying how long ago the work last moved makes the two distinguishable
+  // without anyone opening the ledger.
+  if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.map(busyDetail).join(', ')}` }
   if (!shippable(state)) return { shipped: false, reason: 'nothing to release' }
   const since = state.lastShip ? now() - state.lastShip.at : Infinity
   if (since < COOLDOWN_MS) {
@@ -2057,7 +2139,12 @@ function status(session) {
             }
           : null,
         dirty: w.dirty,
-        ahead: w.ahead
+        ahead: w.ahead,
+        // When the WORK last moved, not when the chat last spoke. A caller explaining a
+        // held-up release to a person needs this to tell "somebody is typing" from "a
+        // window is open" - reporting the second as the first is what made a squat read
+        // as normal traffic for hours. 0 when the lane holds nothing.
+        touchedAt: w.touchedAt ?? 0
       }
     }),
     // Why a finished lane has not gone out yet, in one field.
@@ -2113,7 +2200,7 @@ function doctor() {
 
   say('RELEASE')
   if (s.release) say(`  A release started ${Math.round((now() - s.release.at) / 60000)}m ago and is still running.`)
-  else if (s.blockedBy.length) say(`  Waiting on chats still working in: ${s.blockedBy.join(', ')}`)
+  else if (s.blockedBy.length) say(`  Waiting on chats still working in: ${s.blockedBy.map(busyDetail).join(', ')}`)
   else if (!s.pending) say('  Nothing is waiting to go out.')
   else {
     const since = s.lastShip ? now() - s.lastShip.at : Infinity
