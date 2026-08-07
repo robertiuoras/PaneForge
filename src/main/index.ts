@@ -1453,7 +1453,11 @@ function stashConfig(cfg: Config): StashConfig {
     stashMaxImages: cfg.stashMaxImages,
     stashFileHours: cfg.stashFileHours,
     stashMaxFileMb: cfg.stashMaxFileMb,
-    clipboardOverlay: cfg.clipboardOverlay
+    clipboardOverlay: cfg.clipboardOverlay,
+    // The overlay derives its own colours from this, the same way every other surface
+    // does. It arrives on the same push as the knobs, so moving the accent slider
+    // recolours the floating Stash on the same frame as the window behind it.
+    theme: cfg.theme
   }
 }
 

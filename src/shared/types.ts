@@ -1110,6 +1110,12 @@ export type StashConfig = Pick<
   | 'stashFileHours'
   | 'stashMaxFileMb'
   | 'clipboardOverlay'
+  // Read-only here, and deliberately absent from STASH_CONFIG_KEYS below: the overlay
+  // draws the app's colours and may not change them. Without this the floating Stash was
+  // the one surface in the app with a palette of its own - a cold blue on a warm orange
+  // theme, and dark while the app was on Paper - because it followed the OS's dark mode
+  // instead of the accent everything else is derived from.
+  | 'theme'
 >
 
 /** Exactly the keys the overlay may patch. Anything else on the wire is dropped. */

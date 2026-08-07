@@ -22,10 +22,44 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { RecentItem, StashConfig } from '@shared/types'
+import { DEFAULT_THEME, luminance, parseHex, paletteFor, type ThemeConfig } from '@shared/theme'
 import { keyLabel } from './platform'
+import { applyTheme } from './theme'
 import './shelf.css'
 
 const shelf = window.shelf
+
+/**
+ * The overlay wears the app's colours.
+ *
+ * Same `applyTheme` the main window calls, so there is one derivation and the two windows
+ * cannot disagree - they used to, badly: this one had a palette of its own picked by hand,
+ * and chose light or dark from `prefers-color-scheme`, which is macOS's answer and not the
+ * app's. See the header of shelf.css for what that measured.
+ *
+ * Two things applyTheme cannot do on its own, both because of the shape it writes:
+ *
+ * - the accent arrives as a hex, and eight rules in shelf.css want it at an alpha, which
+ *   needs the three numbers. `--acc-rgb` is that, off the SAME derived accent rather than
+ *   the raw config one - the palette gamut-clamps it and the two are not always equal.
+ * - nothing in the palette says "this is a light theme". Depth does, but only through the
+ *   surfaces it produces, so the honest question is what `--bg` actually came out as.
+ */
+function dressWindow(theme: ThemeConfig | undefined): void {
+  const t = theme ?? DEFAULT_THEME
+  const v = paletteFor(t)
+  applyTheme(t)
+  // parseHex answers in 0..1, because everything downstream of it in theme.ts is Oklab
+  // maths. `rgba()` wants 0..255, and it does not reject the small numbers - it reads
+  // 0.94 as ~1/255 and paints black. Caught by probing the live window: `--acc-rgb` read
+  // "0.941, 0.659, 0.408", which would have drawn every accent tint here - the active tab,
+  // the drop-target ring, the copied flash - as a dark smudge on a dark card.
+  const [r, g, b] = parseHex(v['--accent']).map((n) => Math.round(n * 255))
+  document.documentElement.style.setProperty('--acc-rgb', `${r}, ${g}, ${b}`)
+  // 0.5 is where the presets separate cleanly: Paper's base sits far above it and every
+  // dark preset far below, so nothing lands on the boundary and flickers between the two.
+  document.documentElement.classList.toggle('light', luminance(v['--bg']) > 0.5)
+}
 
 // AppKit may activate PaneForge for a click on the non-activating panel before Electron
 // routes its main-process input event. This reaches the same touch guard via a one-way IPC
@@ -398,11 +432,18 @@ function Overlay(): JSX.Element {
   const rowH = useRef(ROW_H)
   const scrollFrame = useRef(0)
 
+  // Every route the config arrives by repaints the window, not just the first: the accent
+  // slider in Settings pushes on every drag, and this window is on screen while it moves.
+  const dressed = (next: StashConfig): void => {
+    dressWindow(next.theme)
+    setConfig(next)
+  }
+
   useEffect(() => {
     shelf.list().then(setItems)
-    shelf.getConfig().then(setConfig)
+    shelf.getConfig().then(dressed)
     const offItems = shelf.onItems(setItems)
-    const offConfig = shelf.onConfig(setConfig)
+    const offConfig = shelf.onConfig(dressed)
     const offOpen = shelf.onExpanded((next) => {
       // Anything that opened it other than this page's own hover is a deliberate ask.
       if (next && !asked.current) sticky.current = true
@@ -562,7 +603,16 @@ function Overlay(): JSX.Element {
       e.dataTransfer.dropEffect = 'copy' as const
       if (!over) setOver(true)
     },
-    onDragLeave: (): void => setOver(false),
+    // Only when the drag has left the overlay for real. `dragleave` also fires every time
+    // the pointer crosses from the card into one of its children - the header, a tab, each
+    // row - and unconditionally clearing it there made the "drop it" highlight strobe all
+    // the way down a list on the way to the bottom of it. The in-window Stash
+    // (RecentsFlyout) has always checked this; this copy never did.
+    onDragLeave: (e: React.DragEvent): void => {
+      const to = e.relatedTarget as Node | null
+      if (to && e.currentTarget.contains(to)) return
+      setOver(false)
+    },
     onDrop: (e: React.DragEvent): void => {
       setOver(false)
       const files = [...(e.dataTransfer?.files ?? [])]
@@ -627,10 +677,15 @@ function Overlay(): JSX.Element {
   const shown = filter === 'all' ? items : items.filter((i) => i.kind === filter)
   const virt = shown.length > VIRT_MIN
   const rh = rowH.current
-  const first = virt ? Math.max(0, Math.floor(view.top / rh) - OVERSCAN) : 0
-  const last = virt
-    ? Math.min(shown.length, Math.ceil((view.top + view.h) / rh) + OVERSCAN)
-    : shown.length
+  // Clamped to the list it is about to slice, because `view.top` outlives the list that
+  // produced it. Deleting the row under the pointer, or the sweep dropping a batch of
+  // expired files, shortens `shown` while the scroller stays where it was; the browser
+  // then clamps its own scrollTop and the slice arithmetic here was left reading a
+  // position past the end - `first` beyond the last row, so the visible window filled with
+  // spacer and the list looked empty until it was scrolled.
+  const top = Math.max(0, Math.min(view.top, shown.length * rh - view.h))
+  const first = virt ? Math.max(0, Math.floor(top / rh) - OVERSCAN) : 0
+  const last = virt ? Math.min(shown.length, Math.ceil((top + view.h) / rh) + OVERSCAN) : shown.length
   const slice = virt ? shown.slice(first, last) : shown
   const counts = {
     text: items.filter((i) => i.kind === 'text').length,

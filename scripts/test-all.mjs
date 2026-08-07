@@ -32,6 +32,7 @@ const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['theme', 'theme-test.mjs'],
+  ['stashtheme', 'stash-theme-test.mjs'],
   ['place', 'place-test.mjs'],
   ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],

@@ -824,6 +824,51 @@ Info.plist`, which codesign rejects as "bundle format unrecognized, invalid, or 
 - while signing the MAIN executable, because signing anything inside a bundle walks the
 whole bundle. Both are fixed and worth not reintroducing.
 
+`npm run test:stashtheme` is about a different question, and the one a person actually
+asked: *why does the Stash look different in the app than it does outside it?* Because
+until 2026-08-07 it was two features. The in-window one (`RecentsFlyout.tsx`, rules in
+`styles.css`) and the floating one (`shelf.tsx`, `shelf.css`) share not a single selector,
+and only one of them was ever wired to the theme. Measured on a default install with a
+probe against both live windows:
+
+| | main window | Stash overlay |
+|---|---|---|
+| `--accent` | `#f0a868` | `128, 192, 255` |
+| body text | `#efecea` | `#ecedf2` |
+| surface | `#0d0907` (derived) | `rgba(38, 38, 48, .9)` (fixed) |
+| inline `:root` variables | 33 | **0** |
+
+Zero is the whole finding: `applyTheme` had never been called in that window, so the
+literals in `shelf.css` were not the ~40ms fallback CLAUDE.md describes — they were the
+palette. And light-or-dark came from `@media (prefers-color-scheme: light)`, which asks
+macOS. macOS does not know which preset is loaded, so PaneForge on Paper with the OS in
+dark mode drew a light window with a dark Stash floating over it and nothing in Settings
+could reach it.
+
+Three things that only turned up by reading the live window rather than the diff:
+
+- The overlay's accent was called `--accent`, the same name the palette writes as a hex.
+  `rgba(var(--accent), 0.2)` of a hex is not an error, it is a dropped declaration — eight
+  rules would have gone transparent the moment the fix landed, silently. It is `--acc-rgb`.
+- `parseHex` answers in 0..1, because everything downstream of it in `theme.ts` is Oklab
+  maths. The first build wrote `--acc-rgb: 0.941, 0.659, 0.408`, which `rgba()` reads as
+  ~1/255 and paints black. The probe read it back before anyone saw the window.
+- Deriving the third text step as muted mixed 74% toward the background matched the old
+  hand-picked `#74748a` on a dark card almost exactly, and measured **3.54:1** on Paper
+  where the old hard-coded light value had been 4.81:1 — Paper's muted is already close to
+  its paper. The faintest step is now `--muted` itself, which `test:theme` holds at 3:1 for
+  every preset and hue. Read back in a real window: 13.08 / 5.77 / 9.22 on Paper and
+  15.34 / 6.29 / 10.63 dark, body / secondary / buttons.
+
+The test that came out of it is structural, not a contrast run, and deliberately: the three
+text steps are now `--text`, `--muted` and a mix of the two, and a mix of two colours that
+each clear a ratio against the same background clears it too. The only way back to a
+failure is a colour of its own, so that is what it looks for — no hex and no chromatic
+`rgb()` in `shelf.css` outside a `var()` fallback slot, no `prefers-color-scheme`, no
+`rgba(var(--accent)`, no unscaled `parseHex`, and `theme` absent from `STASH_CONFIG_KEYS`
+(a window floating over every other app may read the theme and must never write it). Each
+of those five was re-broken and the test watched to go red before it was believed.
+
 `npm run test:stash` is what the Stash is allowed to cost, and it is model-free and
 window-free because the two things it pins are invisible while they are broken - the
 feature keeps working perfectly and only gets slow. A full 200-entry history was 414KB, of

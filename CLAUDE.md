@@ -179,6 +179,15 @@ slider**; Paper is 0.98. Default accent `#f0a868`; the sidebar mark is the icon'
 geometry in `currentColor`. `npm run test:theme` is 358 assertions whose load-bearing half
 is contrast: 4.5:1 body and 3:1 secondary, for every preset and every hue at full tint.
 
+**The floating Stash is a second window and it obeys the same law.** It keeps its own
+rules (`shelf.css` — 140KB of app CSS to draw a 172x38 pill is the thing being avoided)
+and takes its colours from `applyTheme`, called there exactly as in the main window. Two
+shapes the palette does not supply: `--acc-rgb`, the derived accent as a triplet, because
+eight rules want it at an alpha and `rgba()` of a hex is dropped in silence — and the
+`light` class on `:root`, off the luminance of the derived `--bg`, because *light or dark
+is the depth slider's answer and never the operating system's*. `npm run test:stashtheme`
+refuses a colour literal anywhere in that file outside a `var()` fallback.
+
 **Every pane says which project it is in.** `src/shared/place.ts` is the only thing allowed
 to turn a folder, a branch, a worktree suffix and a lane id into words.
 
@@ -338,7 +347,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 
 ## Checks
 
-`npm run typecheck` before committing, and `npm test` — 34 checks in ~30s, everything
+`npm run typecheck` before committing, and `npm test` — 35 checks in ~50s, everything
 below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
 It is also the gate's third step: `agentGate.ts` looks for a script called exactly
 `test`, and while there wasn't one every lane the app drove reported its suite step as
@@ -358,6 +367,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:stashtheme` | that the floating Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |

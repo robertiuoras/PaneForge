@@ -1,34 +1,76 @@
 /* The floating Stash. Its own stylesheet, not the app's: this page is a 172x38 pill most
-   of the time, and pulling in the whole app theme to draw it would cost a second copy of
-   every rule for a window that shows a list and nothing else. */
+   of the time, and pulling in the whole app's RULES to draw it would cost a second copy of
+   140KB of CSS for a window that shows a list and nothing else.
+
+   Its own rules, though - never its own palette. Everything below is written against the
+   app's derived variables (`shared/theme.ts`, written onto :root by `applyTheme`, the same
+   call the main window makes), with the old hand-picked literals kept only as the var()
+   fallback for the frame before the config arrives. The fallback is not the source; see
+   CLAUDE.md, "Every colour is derived".
+
+   It used to be the source, and it was the whole answer to "why does the Stash look
+   different from the app". Measured 2026-08-07 on a default install: the app drew
+   `--accent #f0a868` and text `#efecea` off a warm near-black `--bg #0d0907`, while this
+   window drew a cold `rgb(128, 192, 255)` on `rgba(38, 38, 48, .9)` blue-grey and had
+   ZERO inline variables on its :root, because nothing had ever called applyTheme here.
+   Worse than a drifted copy: light and dark were chosen by `prefers-color-scheme`, i.e.
+   by macOS, so the app on Paper with the OS in dark mode drew a light window with a dark
+   Stash floating over it, and neither slider in Settings could do anything about it. */
 
 * {
   box-sizing: border-box;
 }
 
 :root {
+  /* The three surfaces of the app's own ladder, at the alphas the glass wants. The stops
+     and their percentages are unchanged from the hand-tuned recipe; only the hues now come
+     from the theme instead of being picked here.
+
+     `color-mix` rather than `rgba()` because the palette hands over hex strings, and a hex
+     cannot be spread into rgba's three slots. Mixing toward `transparent` is exactly an
+     alpha multiply, so 92% here is the old 0.92. */
+  --surf-hi: var(--surface-2, #262630);
+  --surf-mid: var(--surface, #16161d);
+  --surf-lo: var(--bg, #0f0f14);
+
   /* One glass recipe, used by the pill and the card so they read as the same object at
      two sizes. */
   --glass: linear-gradient(
     168deg,
-    rgba(38, 38, 48, 0.9),
-    rgba(22, 22, 29, 0.94) 46%,
-    rgba(15, 15, 20, 0.96)
+    color-mix(in srgb, var(--surf-hi) 90%, transparent),
+    color-mix(in srgb, var(--surf-mid) 94%, transparent) 46%,
+    color-mix(in srgb, var(--surf-lo) 96%, transparent)
   );
   /* The card is read, not glanced at: the desktop behind it was legible through the pill's
      recipe, and a wallpaper showing through a list of your clipboard is just noise. */
   --glass-card: linear-gradient(
     168deg,
-    rgba(36, 36, 46, 0.985),
-    rgba(21, 21, 28, 0.99) 46%,
-    rgba(14, 14, 19, 0.995)
+    color-mix(in srgb, var(--surf-hi) 98.5%, transparent),
+    color-mix(in srgb, var(--surf-mid) 99%, transparent) 46%,
+    color-mix(in srgb, var(--surf-lo) 99.5%, transparent)
   );
-  --edge: rgba(255, 255, 255, 0.12);
-  --edge-lit: rgba(255, 255, 255, 0.22);
-  --ink: #ecedf2;
-  --ink-dim: #9b9bab;
-  --ink-faint: #74748a;
-  --accent: 128, 192, 255;
+  --edge: var(--line, rgba(255, 255, 255, 0.12));
+  --edge-lit: var(--line-strong, rgba(255, 255, 255, 0.22));
+  /* This file wants three steps of text and the palette guarantees two, so the middle one
+     is interpolated and the FAINTEST is the palette's own `--muted` - never something
+     mixed further toward the background.
+
+     Mixing toward the background is what the first version of this did (74% muted, 26%
+     surface, which matched the old hand-picked #74748a on a dark card almost exactly), and
+     it was measured wrong the moment the theme went light: Paper's muted is already close
+     to its paper, so washing it out further took the faint step to 3.54:1 where the old
+     hard-coded light value had been 4.81:1. `--muted` is the right floor by construction -
+     `test:theme` holds every preset and every hue at 3:1 there, and nothing derived from
+     it downstream can be checked the same way. */
+  --ink: var(--text, #ecedf2);
+  --ink-dim: color-mix(in srgb, var(--text, #ecedf2) 55%, var(--muted, #9b9bab));
+  --ink-faint: var(--muted, #74748a);
+  /* The one place the accent has to be a triplet rather than a hex: eight rules below want
+     it at an alpha. `applyTheme` cannot supply that shape, so shelf.tsx writes it from the
+     same derived accent right after. Note the NAME: while this was called `--accent` it
+     collided with the palette's own hex `--accent`, and every `rgba(var(--acc-rgb), .2)`
+     under it would have silently resolved to nothing the moment the theme was applied. */
+  --acc-rgb: 128, 192, 255;
   /* A drop shadow in a transparent window may not be wider than the window.
      This one was `0 12px 34px`, which needs ~29px below the card and ~17px to each side
      to reach zero, and the window gives it 3.8px - so it was CUT, not faded. Measured on
@@ -185,7 +227,7 @@ button {
 
 .pill-grip:hover {
   opacity: 1;
-  color: #fff;
+  color: var(--text, #fff);
 }
 
 .pill-grip:active {
@@ -245,7 +287,7 @@ button {
 /* Full: warm rather than red. Nothing is broken - the oldest entry is falling off, which
    is what the list is for - it just has to be possible to notice. */
 .head .count.full {
-  color: rgba(230, 175, 90, 0.95);
+  color: var(--warn, #e6af5a);
   cursor: help;
 }
 
@@ -271,19 +313,19 @@ button.mini {
 
 button.mini:hover {
   background: rgba(255, 255, 255, 0.13);
-  color: #fff;
+  color: var(--text, #fff);
 }
 
 button.mini.on {
-  background: rgba(var(--accent), 0.2);
-  border-color: rgba(var(--accent), 0.45);
-  color: #dcecff;
+  background: rgba(var(--acc-rgb), 0.2);
+  border-color: rgba(var(--acc-rgb), 0.45);
+  color: var(--accent-text, #dcecff);
 }
 
 button.mini.danger:hover {
-  background: rgba(220, 80, 80, 0.26);
-  border-color: rgba(220, 80, 80, 0.4);
-  color: #ffdede;
+  background: color-mix(in srgb, var(--danger, #dc5050) 26%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #dc5050) 40%, transparent);
+  color: color-mix(in srgb, var(--danger, #dc5050) 45%, var(--ink));
 }
 
 /* --- kind filter ------------------------------------------------------------ */
@@ -366,16 +408,16 @@ button.mini.danger:hover {
 }
 
 .item.copied {
-  border-color: rgba(90, 200, 130, 0.55);
-  background: rgba(90, 200, 130, 0.14);
+  border-color: color-mix(in srgb, var(--ok, #5ac882) 55%, transparent);
+  background: color-mix(in srgb, var(--ok, #5ac882) 14%, transparent);
 }
 
 .item.pinned {
-  background: rgba(var(--accent), 0.07);
+  background: rgba(var(--acc-rgb), 0.07);
 }
 
 .item.pinned:hover {
-  background: rgba(var(--accent), 0.13);
+  background: rgba(var(--acc-rgb), 0.13);
 }
 
 .item .body {
@@ -443,14 +485,14 @@ button.mini.danger:hover {
    accepting a drop is not something you would guess. */
 .pill.over,
 .card.over {
-  border-color: rgba(var(--accent), 0.75);
+  border-color: rgba(var(--acc-rgb), 0.75);
   box-shadow:
-    0 0 0 1px rgba(var(--accent), 0.3),
+    0 0 0 1px rgba(var(--acc-rgb), 0.3),
     var(--lift);
 }
 
 .pill.over .label {
-  color: #a8d4ff;
+  color: var(--accent-text, #a8d4ff);
 }
 
 .acts {
@@ -476,7 +518,7 @@ button.mini.danger:hover {
 
 .acts span:hover {
   background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  color: var(--text, #fff);
 }
 
 /* A pin that is not set is nearly invisible until the row is hovered; a set one stays. */
@@ -494,8 +536,8 @@ button.mini.danger:hover {
 }
 
 .acts .del:hover {
-  background: rgba(220, 80, 80, 0.28);
-  color: #ffd9d9;
+  background: color-mix(in srgb, var(--danger, #dc5050) 28%, transparent);
+  color: color-mix(in srgb, var(--danger, #dc5050) 40%, var(--ink));
 }
 
 .empty {
@@ -591,8 +633,8 @@ button.mini.danger:hover {
 }
 
 .seg-btn.on {
-  background: rgba(var(--accent), 0.24);
-  color: #eaf3ff;
+  background: rgba(var(--acc-rgb), 0.24);
+  color: var(--accent-text, #eaf3ff);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
 }
 
@@ -612,34 +654,26 @@ button.mini.danger:hover {
   text-wrap: balance;
 }
 
-/* --- light desktops --------------------------------------------------------- */
+/* --- light themes ------------------------------------------------------------ */
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --glass: linear-gradient(
-      168deg,
-      rgba(255, 255, 255, 0.95),
-      rgba(246, 246, 250, 0.95) 55%,
-      rgba(238, 238, 244, 0.96)
-    );
-    --glass-card: linear-gradient(
-      168deg,
-      rgba(255, 255, 255, 0.99),
-      rgba(247, 247, 251, 0.99) 55%,
-      rgba(240, 240, 246, 0.995)
-    );
-    --edge: rgba(0, 0, 0, 0.12);
-    --edge-lit: rgba(0, 0, 0, 0.2);
-    --ink: #16161c;
-    --ink-dim: #4a4a58;
-    --ink-faint: #71717f;
-    --accent: 40, 118, 214;
-    /* Same rule as the dark one, and this is the desktop it was reported on: a grey
-       rectangle is invisible on a dark wallpaper and unmissable on a white one. */
-    --lift: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 2px rgba(0, 0, 0, 0.16),
-      0 2px 3px rgba(0, 0, 0, 0.1);
-  }
+/* `:root.light`, not `@media (prefers-color-scheme: light)`. The media query asked macOS,
+   and macOS does not know which preset is loaded: on Paper with the OS in dark mode this
+   whole block sat unused and the Stash stayed dark under a light app. shelf.tsx sets the
+   class off the luminance of the derived `--bg`, so the one thing that decides it is the
+   depth slider - the same thing that decides it for every other surface.
 
+   The colours are gone from here: `--glass`, `--ink` and the rest already follow the
+   palette, and re-stating them light would be a second source again. What is left is the
+   handful of rules that hard-code a WHITE overlay for their hover and fill, which reads as
+   nothing at all on a pale surface and has to flip to black. */
+:root.light {
+  /* Same rule as the dark one, and this is the desktop it was reported on: a grey
+     rectangle is invisible on a dark wallpaper and unmissable on a white one. */
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 2px rgba(0, 0, 0, 0.16),
+    0 2px 3px rgba(0, 0, 0, 0.1);
+}
+
+:root.light {
   .head,
   .foot,
   .panel-foot {
@@ -655,11 +689,13 @@ button.mini.danger:hover {
     background: rgba(0, 0, 0, 0.04);
   }
 
+  /* Only the FILL flips. The text on all three of these is `var(--text)` in the rules
+     above, which is already the darkest ink on a light theme - restating it as #000 here
+     was the light branch re-deriving something the palette had answered. */
   button.mini:hover,
   .acts span:hover,
   .tab:hover:not(:disabled) {
     background: rgba(0, 0, 0, 0.09);
-    color: #000;
   }
 
   .seg {
@@ -671,9 +707,11 @@ button.mini.danger:hover {
     background: rgba(0, 0, 0, 0.07);
   }
 
+  /* Same again: `--accent-text` is the accent already pulled to a lightness that survives
+     the surface it is on, in either direction, so the dark rule's colour is correct here
+     and only the tint needs to be lighter under it. */
   .seg-btn.on {
-    background: rgba(var(--accent), 0.16);
-    color: #0d3f78;
+    background: rgba(var(--acc-rgb), 0.16);
   }
 
   .item:hover {
