@@ -759,6 +759,81 @@ J7, J9, and J8 last.
 
 ---
 
+## K. Warp — the terminal that became an agent runner, scanned 2026-08-07
+
+Read off warp.dev and docs.warp.dev. Warp in 2026 is not the "modern terminal" it was
+sold as: the front page is an **orchestration-native coding agent**, and the terminal is
+the surface it ships on. That is the same bet PaneForge makes, so most of what is over
+there is already somewhere on this page and the useful output of the scan is the short
+list of things that are **not**.
+
+**What Warp has that this app has no answer to at all: nothing.** That is the honest
+finding, and it is worth writing down rather than padding the list. What it has instead is
+one idea worth taking whole (K3), one worth taking a cheap tenth of (K1), and a long tail
+that is either already here, already on this page under another heading, or a team product
+we are not building.
+
+**Where we are ahead, and should stay:** a screenshot clicked here becomes a *path* at an
+agent's prompt (nothing in Warp does that); every colour is derived from one accent rather
+than a theme file; a pane says which project, checkout and lane it is in (`place.ts`);
+panes are real ptys running whichever of thirteen CLIs you like, where Warp's agent is
+Warp's agent. Warp is ahead on the editor surface — a real file tree, LSP and a review
+panel beside the terminal — which is this page's section A and is already the largest gap.
+
+- [ ] **K1. Walk the scrollback by turn, not by line** — S. Warp's headline terminal idea
+      is the **block**: a command and its output as one addressable thing, tinted red on a
+      non-zero exit, findable and filterable on its own. It costs Warp a shell integration
+      to know where a block starts, and that is exactly what we cannot have — a pane here
+      runs an agent's full-screen TUI, which repaints rather than emits, so there are no
+      blocks in it to find. But the cheap tenth of it is already sitting here unused: the
+      busy detector (`readsBusy`) knows when a turn started and ended, and the prompt rail
+      already draws a tag per ask. Bind those boundaries to a key in copy mode, so
+      Ctrl+Shift+U then `[`/`]` jumps to the previous or next turn instead of scrolling for
+      it. No shell integration, no new state, and it is the thing a block is actually used
+      for. Shell panes could have the real version later; agent panes never will.
+- [ ] **K2. Whether the pane's branch has a pull request** — S, and it belongs to **A**,
+      not here. Warp's vertical tabs carry the git branch, the worktree and the PR. We
+      already say project, checkout and lane (`place.ts`) and the badge already polls
+      `git status`; the PR is the one fact missing, and it should arrive with A's git work
+      rather than as a second poller. Recorded here only so the scan is complete.
+- [ ] **K3. A prompt library — the one Warp idea worth taking whole** — M. Warp Drive holds
+      four object types: workflows (YAML command sequences), notebooks (markdown runbooks),
+      environment variables, and **prompts**. Three of those are wrong for this app —
+      a shell-command library is not what an agent host is for, and a shared drive of
+      environment variables is the secret-management footgun J3 was just spent avoiding —
+      but *prompts* is a real hole. We have two halves of it and neither is the thing: the
+      Stash can **pin** a clip, and `promptArchive` knows what has been **asked before**.
+      Neither gives you a *named, reusable prompt with a blank in it* — "review the diff on
+      `{branch}` for `{concern}`" — that any pane can be handed.
+      Build it on what is already there rather than beside it: a pinned Stash entry with a
+      name and `{placeholders}`, inserted through `shared/draft.ts` (which is the door
+      every ask already goes through, and the reason `promptArchive` sees every agent
+      rather than only the two with hooks). Filling the blanks is the same dialog shape as
+      Improve. Per-project scoping is J5 and wants the same store, so build the two
+      together or the app ends up with two lists of saved text.
+- [ ] **K4. Say what a driven lane is allowed to do** — S, and it is closer to a defect
+      than a feature. Warp sells granular agent permissions; ours are a constant. Every
+      lane the app drives is started with the permission prompt turned OFF —
+      `--permission-mode bypassPermissions` for Claude, `--full-auto` for Codex, `--yolo`
+      for Gemini and Qwen (`HEADLESS` in `shared/agentic.ts`) — which is the only way an
+      unattended run can work, and nothing on screen says it. The board should say it on
+      the card, Settings should be able to refuse to drive an agent whose only unattended
+      mode is that, and the goal dialog should say it once before the first run. This is
+      not asking for Warp's permission engine: the CLIs own that. It is refusing to keep
+      the fact quiet.
+
+Deliberately **not** taken, with the reason, so the next scan does not re-litigate them:
+Warp's cloud agents and the Oz platform (section I is the local version of this, and a
+hosted fleet is a business rather than a feature); centralized governance, credit caps and
+seat-level usage visibility (a team product — E1 is the one-person version and is the part
+that pays); model routing across providers (the CLIs already route, and a second router
+would only disagree with them); command corrections, autosuggestions and tab completions
+(a pty host does not own the input line); codebase indexing (the agents do their own);
+session sharing by link (section B); and Warp's theme system, which is a file of colours
+where ours derives every one of them from a single accent.
+
+---
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
@@ -793,6 +868,15 @@ test:scrollback`), and it turned out an S rather than an M. G1 belongs with step
 needs nothing new, but its value is the comparison surface, and that is a real UI. G3 is
 step 7, where C7 and E5 already are; it is the reason to build them rather than a separate
 job.
+
+**J and K are both mostly closed, and what is left of them slots in rather than queueing.**
+J3, J1 and J6 shipped 2026-08-07 (the concealed clipboard, search, editing an entry). Of
+what remains, **K4 goes at step 1** — it is a fact the app currently keeps quiet about
+what it lets an unattended agent do, which makes it nearer a defect than a feature. **K3
+with J5** is the next real feature under either heading and belongs at step 4, beside the
+saved launch recipes it is the prompt-shaped half of. J2, J4, J7–J9 and K1 are step 7
+material: none of them is wrong, none of them is what somebody notices missing. **K2 is
+not a separate job at all** — it arrives with A's git work or not at all.
 
 **F sits across this order rather than at the end of it.** F1 and F3 are small and pay for
 themselves the first time two lanes touch one file, so they belong beside step 2. F5 belongs
