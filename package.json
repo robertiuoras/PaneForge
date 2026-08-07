@@ -119,7 +119,9 @@
     "test:sounds": "node scripts/sound-test.mjs",
     "test:blurbs": "node scripts/blurb-test.mjs",
     "test:laneargs": "node scripts/lane-args-test.mjs",
-    "shots": "node scripts/shots.mjs"
+    "shots": "node scripts/shots.mjs",
+    "test:phone": "node scripts/phone-test.mjs",
+    "test:phoneview": "node scripts/phone-view-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

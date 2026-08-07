@@ -344,6 +344,81 @@ derived from it (scrypt, then AES-256-GCM per direction). That is why rotating i
 every paired device off rather than just changing what to type next time. Hosting is off
 until switched on, and discovery is a UDP broadcast that carries no secret.
 
+## The phone is this window, served
+
+There is no second app and there will not be one. Every runner in the category shipped a
+phone client in the last nine months and they all shipped the same one - the desktop keeps
+the agent, the phone watches it and answers it - and T3 Code, Orca and the rest each
+maintain iOS + Android + web + Electron to do it. We maintain one renderer, because the
+renderer imports nothing from Electron and nothing from Node: it is pure UI over
+`window.api`. Supplying that object over HTTP is the whole client (`src/main/phone.ts`,
+`src/renderer/src/browserApi.ts`).
+
+What actually stopped it before was not the UI and not the transport. It was that the
+mapping from method name to IPC channel existed only as 141 hand-written closures inside
+the preload, so a second transport meant re-typing every one and drifting the first time
+anybody added a channel - the `promptKey.ts` failure mode, a lookup that quietly stops
+finding things. So the mapping is data now, in `src/shared/surface.ts`, typed as
+`{ [K in keyof Api]: SurfaceEntry }`: a method added to `Api` without a channel does not
+compile, and both transports are built from the one list. The preload is 38 lines.
+
+- **Calls land in the app's own handler, not a copy of one.** Electron has no public way
+  to call your own `ipcMain.handle` body (`_invokeHandlers` is private and a rename from
+  breaking in silence), so `src/main/ipcTap.ts` records the registrations as they happen -
+  which is why `tapIpc()` runs at the top of `index.ts`, above them. 134 of the 135
+  handlers ignore the event object; the one that does not is `recents:drag`, handing a file
+  to the OS drag layer, and it gets a sender that says it is gone rather than a fake window.
+- **Events down one stream, calls up as POSTs.** SSE, not a WebSocket: the repo has three
+  runtime dependencies and a socket here would mean a fourth or hand-rolled RFC 6455
+  framing. SSE also reconnects by itself, which is what a phone locking its screen needs.
+  `send` is fire-and-forget AND ordered - a keystroke then a resize must arrive that way
+  round - so the client queues sends, keeps one request in flight, and a burst of typing
+  collapses into one POST. `broadcast` sits *ahead* of the window check in `send()`: a
+  phone must keep receiving output while the window is minimized or being rebuilt.
+- **Off until switched on, and the code is the door.** Anything that can type into a pane
+  can run commands on this machine. An unpaired browser gets one 40-byte page and nothing
+  else - not the UI, not one asset - and five wrong codes buys that address a minute of
+  silence, including for the right code, because guessing is what is being stopped.
+- **The cookie is derived, never stored**: `hmac(deviceId, code)`. A restart does not sign
+  every phone out and rotating the code signs all of them out at once, with no token file
+  to keep in step. The code is six characters from an alphabet with no vowels and no
+  lookalikes: it is typed once, on a phone, off the screen in front of you.
+- **What stops `/../../secret` is normalizing an absolute path**, which folds away every
+  `..` that would leave the root - not the `startsWith('..')` line, which is a backstop for
+  the day the input stops being absolute. Proved by mutation: removing that line fails
+  nothing, removing the auth check fails eight assertions.
+- **Bytes travel as base64** (`shared/wireJson.ts`). Two calls on this surface carry a
+  `Uint8Array` and plain JSON turns those into `{"0":12,...}` - four times the size, and on
+  the way back an object the caller reads NaN out of.
+- **A phone is not a small desktop.** The window is a 282px sidebar beside the panes; at
+  414px that leaves a pane 132px wide, which is a 16-column terminal - not a small version
+  of this app, a broken one. Under 720px the two take turns (`handheld.ts`, one `@media`
+  block in `styles.css`): the list is the home screen - it already says which project,
+  which agent and who wants you, and it already holds Fleet, Swarm, search and Settings -
+  and a tapped pane gets the whole display with one 34px chip back. The tap has to hand
+  over the screen even when that pane was already active, which is the normal case coming
+  back from the list, so the row's click says so rather than something watching `activeId`.
+  One of the two halves is `display: none` rather than translated away: an xterm laid out
+  at 0px reflows its buffer to one column and does not come back.
+- **The pty never moves**, exactly as in the section above. A pane's agent, checkout and
+  transcript stay on the machine the pane was opened on.
+
+`npm run test:phone` is the server with no browser and no Electron: what it refuses, what
+it routes, and the parity - every method on the surface has a handler in `src/main`, the
+preload names no channel of its own, and every event `send()` pushes is one the surface can
+subscribe to. `npm run test:phoneview` is the half that test cannot reach: system Chrome,
+headless, at 414x896, against a running copy. It types the code into the pairing page the
+way a person does (the cookie is HttpOnly - there is no shortcut), opens a pane *from the
+browser*, types into it and reads the echo out of the terminal's own buffer, then measures
+the handheld layout. Reading that echo out of `document.body.innerText` finds nothing, ever:
+xterm draws to a canvas, so the text is in `window.__pf[id].term.buffer`, and a test looking
+in the DOM fails against a perfectly live pane.
+
+Not built, and the UI does not pretend otherwise: there is no headless host (the app has to
+be running - TODO B1), no QR (you type six characters - B3) and no phone-first diff view
+(H2). Reaching it from outside the network is a tailnet address, which is why `phoneUrls`
+sorts 100.64/10 first.
+
 ## Every colour is derived, and every pane says which project it is in
 
 Two rules that touch nearly every file in the renderer, both added 2026-08-01.

@@ -167,6 +167,36 @@ The pairing code is never sent, only proved; traffic keys derive from it (scrypt
 AES-256-GCM per direction), so rotating it cuts every paired device off. Hosting is off
 until switched on; discovery is a UDP broadcast carrying no secret. `npm run test:remote`.
 
+## The phone is this window, served
+
+There is no second app. The renderer imports nothing from Electron and nothing from Node -
+it is pure UI over `window.api` - so a phone client is that object over HTTP:
+`src/main/phone.ts` serves the built renderer, `renderer/src/browserApi.ts` supplies the
+object, and **`src/shared/surface.ts` is the ONE list** both transports are built from,
+typed `{ [K in keyof Api]: SurfaceEntry }` so a method with no channel does not compile.
+Never add a channel to a transport; add it there. The preload is 38 lines and names no
+channel of its own.
+
+- Calls land in the app's own `ipcMain` body via `src/main/ipcTap.ts`, so `tapIpc()` MUST
+  stay at the top of `index.ts`, above every registration.
+- Events go down one SSE stream; `phone.broadcast` sits **ahead** of the window check in
+  `send()` so a minimized window does not starve a phone. `send`s are queued client-side
+  because they are ordered.
+- **Off by default, and it stays that way.** Serving grants a browser a pane, which is
+  commands on this machine. Unpaired gets the pairing page and not one asset; five wrong
+  codes locks that address for a minute. The cookie is `hmac(deviceId, code)` - derived,
+  never stored - so rotating the code signs every phone out.
+- **A phone is not a small desktop.** Under 720px the list and the panes take turns
+  (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
+  the display. `display: none`, never a 0px xterm.
+- The pty never moves, same as Devices.
+- `npm run test:phone` (server + surface parity, no browser). `npm run test:phoneview`
+  needs a running copy: `npm run build && npm run try -- --keep --show`, then
+  `node scripts/phone-view-test.mjs --port <port> --code <code>`. A pane's text is in
+  `window.__pf[id].term.buffer`, never in the DOM - xterm draws to a canvas.
+- Not built: headless host (B1 - the app must be running), QR pairing (B3), phone-first
+  diff (H2).
+
 ## Every colour is derived, and every pane says which project it is in
 
 **There is no palette.** `src/shared/theme.ts` computes one from a single accent;
@@ -388,6 +418,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
 | `npm run test:cursorclick` | Alt-click placing the CLI's cursor: the keys it sends, and the clicks it refuses to answer |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
+| `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
@@ -407,7 +438,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:improveview`.
+`test:activate`, `test:improveview`, and `test:phoneview` (a real headless Chrome at
+414x896 against that copy — it skips out loud with no Chrome and no server).
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,
 which asks Discord what the shipped `DISCORD_APP_ID` is called AND whether it still has

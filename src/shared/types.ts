@@ -811,6 +811,35 @@ export interface RemoteState {
   guests: RemoteGuest[]
 }
 
+/**
+ * Serving this desk's own UI to a browser on this network - the phone client.
+ *
+ * Separate from `remote` on purpose: that one is two desktop copies proving a code to
+ * each other over an encrypted socket, and both ends run the app. This one has a browser
+ * at the far end, so the transport is HTTP and the secret is a cookie. See `main/phone.ts`.
+ */
+export interface PhoneConfig {
+  /** answer browsers. Off until switched on: anything that can type into a pane can run
+   * commands on this machine. */
+  on: boolean
+  port: number
+  /** the six characters a browser types once; rotating it signs every phone out */
+  code: string
+}
+
+export interface PhoneState {
+  /** the listener is actually up */
+  on: boolean
+  port: number
+  code: string
+  /** addresses to type into a phone, tailnet first */
+  urls: string[]
+  /** browsers holding a live event stream right now */
+  clients: number
+  /** why it is not up when it should be (a taken port) */
+  error?: string
+}
+
 export interface RemoteConfig {
   /** answer connections from your other devices */
   host: boolean
@@ -1015,6 +1044,11 @@ export interface Config {
   driveUnattended: boolean
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
+  /**
+   * The phone client. Optional so a config written by an older build still loads -
+   * `getConfig` fills it in, off, with a fresh code.
+   */
+  phone?: PhoneConfig
   /**
    * Colours, corners and row height. One accent plus four numbers; every other colour
    * in the window is derived from them - see shared/theme.ts.
@@ -1394,6 +1428,20 @@ export interface Api {
    * one holding the list that can actually be typed into.
    */
   stashInWindow(open: boolean): void
+
+  /**
+   * The phone client: whether this desk is serving its UI over HTTP, on what addresses,
+   * and how many browsers are watching right now. See `main/phone.ts`.
+   */
+  phoneState(): Promise<PhoneState>
+  /** start or stop serving. Never on by itself - it grants a browser a pane. */
+  setPhoneServing(on: boolean): Promise<PhoneState>
+  /** move the listener; returns the state with the error if the port is taken */
+  setPhonePort(port: number): Promise<PhoneState>
+  /** new pairing code: every phone holding the old cookie is signed out */
+  rotatePhoneCode(): Promise<PhoneState>
+  /** the count and the addresses change without anybody asking */
+  onPhone(cb: (state: PhoneState) => void): () => void
 
   /** hosting, pairings, discovered devices and who is connected right now */
   remoteState(): Promise<RemoteState>

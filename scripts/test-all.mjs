@@ -67,6 +67,7 @@ const TESTS = [
   ['notes', 'release-notes-test.mjs'],
   ['stash', 'stash-test.mjs'],
   ['onestash', 'one-stash-test.mjs'],
+  ['phone', 'phone-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]

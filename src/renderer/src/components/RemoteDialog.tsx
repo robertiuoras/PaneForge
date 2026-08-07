@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { Project, RemoteFound, RemoteState } from '@shared/types'
+import type { PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Switch } from './Controls'
@@ -28,6 +28,129 @@ interface Props {
   onState: (s: RemoteState) => void
   onClose: () => void
   flash: (message: string) => void
+}
+
+/**
+ * The phone client: this window's UI, in a browser on the network.
+ *
+ * Deliberately plainer than the hero card above it, and deliberately blunt in its words.
+ * The switch grants a browser the ability to type into a pane, which is the ability to run
+ * commands on this machine, so the hint says that rather than "share your desk". What
+ * makes it safe to leave on is the code below it - six characters, typed once per phone,
+ * and rotating it signs every one of them out.
+ *
+ * It keeps its own state rather than taking it from `RemoteState`: the two features share
+ * a screen and nothing else, and folding a phone into a list of paired desktops is what
+ * would make somebody expect a pane to move.
+ */
+function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Element {
+  const [state, setState] = useState<PhoneState | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void api.phoneState().then(setState)
+    // A browser arriving or leaving changes the count without anybody asking, so this is
+    // pushed rather than polled - see `onChange` in main/phone.ts.
+    return api.onPhone(setState)
+  }, [])
+
+  if (!state) return <></>
+  const url = state.urls[0] ?? ''
+
+  return (
+    <div className="setting">
+      <div className="setting-row">
+        <label>Phone or tablet</label>
+        {state.on && state.clients > 0 && (
+          <span className="hint">
+            {state.clients} {state.clients === 1 ? 'browser' : 'browsers'} watching
+          </span>
+        )}
+      </div>
+      <Switch
+        checked={state.on}
+        disabled={busy}
+        onChange={(on) => {
+          setBusy(true)
+          void api
+            .setPhoneServing(on)
+            .then(setState)
+            .finally(() => setBusy(false))
+        }}
+        label="Serve this desk to a browser on my network"
+        hint="Open the address below on a phone and you get this window: the same panes, live, and you can type into them. The agents keep running on this machine. Anything that can type into a pane can run commands here, so it stays behind the code."
+      />
+      {state.error && <div className="dev-error">{state.error}</div>}
+      {state.on && (
+        <div className="dev-self">
+          <div className="dev-field">
+            <span className="dev-key">Open on the phone</span>
+            <div className="dev-addrs">
+              {state.urls.length ? (
+                state.urls.map((u) => (
+                  <code key={u} className="dev-addr">
+                    {u}
+                  </code>
+                ))
+              ) : (
+                <code className="dev-addr muted">no network</code>
+              )}
+            </div>
+            <div className="dev-acts">
+              <button
+                className="ghost small"
+                disabled={!url}
+                onClick={() => {
+                  api.copyText(url)
+                  flash('Address copied.')
+                }}
+              >
+                Copy
+              </button>
+              <span className="dev-key">Port</span>
+              <input
+                className="dev-port"
+                aria-label="Phone port"
+                value={String(state.port)}
+                onChange={(e) => void api.setPhonePort(Number(e.target.value) || 0).then(setState)}
+              />
+            </div>
+          </div>
+          <div className="dev-field">
+            <span className="dev-key">Code</span>
+            {/* Not masked, unlike the pairing code above: this one is typed while looking
+                at this screen from the phone in your other hand. */}
+            <code className="dev-code">{state.code}</code>
+            <div className="dev-acts">
+              <button
+                className="ghost small"
+                onClick={() => {
+                  api.copyText(state.code)
+                  flash('Code copied.')
+                }}
+              >
+                Copy
+              </button>
+              <button
+                className="ghost small"
+                title="New code. Every phone signed in with the old one is signed out."
+                onClick={() => {
+                  void api.rotatePhoneCode().then(setState)
+                  flash('New code. Phones have to sign in again.')
+                }}
+              >
+                New code
+              </button>
+            </div>
+          </div>
+          <p className="hint">
+            Typed once per phone, then it stays signed in. A tailnet address is listed first
+            when there is one - that is the way in from outside this network.
+          </p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -369,6 +492,12 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             </div>
           )}
         </div>
+
+        {/* ------------------------------------------------------------------- phone
+            A phone is a device too, so it lives here rather than in Settings - but it
+            is not a peer: there is no app at the far end to pair with, only a browser,
+            and what it loads is this window's own UI. See main/phone.ts. */}
+        <PhonePanel flash={flash} />
 
         {/* ----------------------------------------------------------- other devices */}
         <div className="setting">

@@ -124,18 +124,27 @@ headless `t3 serve`, a Linux background service, Tailscale endpoints and SSH-lau
 environments.
 
 - [ ] **B1. Headless host mode** — L. `paneforge --serve` starts the pty host with no window.
-  This is the keystone: it is what makes B2/B3 and D1 (detach/reattach) possible, and it is
-  mostly a re-wiring of `src/main/index.ts` so the remote link and `sessions.ts` can run
-  without `BrowserWindow`. Do this before anything else in this section.
-- [ ] **B2. Browser client** — L. The renderer is already pure UI over a typed IPC surface
-  (`src/shared/types.ts`, 204 channels). Serve it over HTTP from B1's host and back the
-  same surface with the existing encrypted socket instead of `ipcRenderer`. That one change
-  is a phone client, a tablet client and a second-machine client at once — no App Store, no
-  second UI codebase. **Better than theirs:** they maintain native iOS + Android + web +
-  Electron; we would maintain one renderer.
-- [ ] **B3. QR / link pairing** — S. Today you read a pairing code out loud. Print a QR of
-  the pairing URL in `RemoteDialog.tsx` (the pairing code is still the secret; the QR only
-  carries the address and a one-shot token).
+  Still open, and B2 shipped without it: the window is what answers the browser today, so a
+  phone reaches this desk only while the app is up. That is the honest limit and it is stated
+  in Devices. What B1 adds is a desk with no window at all (and D1's detach/reattach), and it
+  is mostly a re-wiring of `src/main/index.ts` so the remote link and `sessions.ts` can run
+  without `BrowserWindow`. It no longer blocks anything below it.
+- [x] **B2. Browser client** — shipped 2026-08-08. The renderer was already pure UI over
+  `window.api`, so the whole client was supplying that object over HTTP. What was in the way
+  was that the name→channel mapping existed only as 141 closures in the preload; it is data
+  now (`src/shared/surface.ts`, typed by `keyof Api`) and both transports are built from it,
+  which is why the preload came out at 38 lines. `src/main/phone.ts` serves the built
+  renderer, SSE down and POSTs up, and every call lands in the app's own `ipcMain` body
+  through `src/main/ipcTap.ts` — no second surface, no copy of a handler. Off by default
+  behind a six-character code, cookie derived rather than stored. `npm run test:phone` +
+  `npm run test:phoneview` (real Chrome at 414x896: pane opened from the browser, typed
+  into, echo read back). Three decisions worth not re-litigating are in `docs/design-notes.md`
+  under "The phone is this window, served". **Better than theirs, as predicted:** they
+  maintain iOS + Android + web + Electron, we gained a phone, a tablet and a second-machine
+  client from one renderer.
+- [ ] **B3. QR / link pairing** — S. Today you type six characters. Print a QR of the address
+  in the Devices phone panel (the code stays the secret; the QR only carries the URL). Needs
+  a QR encoder with no dependency — ~200 lines, or a tiny checked-in one.
 - [ ] **B4. Reach beyond the LAN** — M. UDP broadcast dies at the subnet. Add a manual
   endpoint field, and detect Tailscale (`tailscale ip -4`, MagicDNS name) the way T3 Code
   does — a tailnet is the honest answer to remote access and costs us no server.
@@ -507,11 +516,14 @@ at independently by everyone who tried, and it is the reason the work below is a
 not a second product.
 
 **So B1 + B2 is the whole mobile app, and it stays that way.** T3 Code maintains iOS +
-Android + web + Electron; Orca maintains iOS + Android + Electron; we would serve the one
-renderer we already have over the encrypted socket we already have. The items here are what
-that renderer has to grow to be worth opening on a phone — because the finding that actually
-costs something is that **a phone is not a small desktop**, and a 200-column xterm on a
-5-inch screen is the version of this that gets installed once.
+Android + web + Electron; Orca maintains iOS + Android + Electron; we serve the one renderer
+we already have. **B2 shipped 2026-08-08 and it took B1 with it in one direction only:** a
+phone gets the desk while the app is running, which is every case except a closed laptop.
+The items here are what that renderer had to grow to be worth opening on a phone — because
+the finding that actually costs something is that **a phone is not a small desktop**, and a
+200-column xterm on a 5-inch screen is the version of this that gets installed once. That
+part is done: under 720px the list and the panes take turns (`handheld.ts`), measured at
+414x896 rather than looked at.
 
 **Transport: B4, and nothing more clever.** Orca has two open issues adding Tailscale and
 Tailscale SSH (#6754, #6184) — the biggest app in the category is, right now, arriving at

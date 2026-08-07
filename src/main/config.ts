@@ -14,6 +14,8 @@ import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
 import { newCode } from './remote/wire'
+// Same reason: phone.ts is a plain HTTP server with no config import of its own.
+import { newPhoneCode } from './phone'
 
 let cache: Config | null = null
 
@@ -124,6 +126,9 @@ export function defaultRoot(): string {
 /** The port this device listens on for its other devices, when hosting is on. */
 export const DEFAULT_REMOTE_PORT = 7311
 
+/** The port the phone client is served on. Not 7311: that one speaks its own protocol. */
+export const DEFAULT_PHONE_PORT = 7312
+
 /**
  * Remote defaults for a config written before the feature existed.
  *
@@ -223,6 +228,9 @@ function defaults(): Config {
     // by default would ship the feature dead. What K4 adds is that it is now sayable.
     driveUnattended: true,
     remote: defaultRemote(),
+    // Off, and it stays off until Settings says otherwise: serving the UI over HTTP hands
+    // a browser a pane, and a pane runs commands on this machine.
+    phone: { on: false, port: DEFAULT_PHONE_PORT, code: newPhoneCode() },
     theme: { ...DEFAULT_THEME },
     window: { width: 1500, height: 940, maximized: false }
   }
@@ -256,6 +264,9 @@ export function getConfig(): Config {
       // Merged rather than replaced so an upgrade keeps this device's identity and
       // its pairings while gaining any key added since the file was written.
       remote: { ...base.remote, ...(raw.remote ?? {}), peers: raw.remote?.peers ?? [] },
+      // Merged, so an upgrade keeps the code a phone is already paired with rather than
+      // rotating it - a new code signs every phone out, and nobody asked for that.
+      phone: { ...base.phone!, ...(raw.phone ?? {}) },
       // An empty roles array in an old config would leave the swarm dialog blank.
       swarmRoles: raw.swarmRoles?.length ? raw.swarmRoles : base.swarmRoles,
       // Every config written before the Appearance tab existed has no theme at all, and a

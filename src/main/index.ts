@@ -25,11 +25,14 @@ import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
-import { getConfig, setConfig } from './config'
+import { DEFAULT_PHONE_PORT, getConfig, setConfig } from './config'
 import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
+import { PhoneServer, newPhoneCode } from './phone'
+import { callInvoke, callSend, tapIpc } from './ipcTap'
+import { surfaceChannels } from '../shared/surface'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
@@ -206,6 +209,10 @@ import type {
 } from '../shared/types'
 import type { AgentSpec } from '../shared/agents'
 import type { ImproveMetrics } from '../shared/promptBudget'
+
+// Before a single handler registers: the phone client calls the same ipcMain bodies the
+// window does, and the tap can only record registrations it was in place for.
+tapIpc()
 
 const manager = new SessionManager()
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
@@ -491,6 +498,28 @@ function createWindow(): void {
   }
 }
 
+/**
+ * The phone client: this window's own UI, served over HTTP to a browser on this network.
+ *
+ * Every call lands in the ipcMain body the window's own would (`ipcTap.ts`), so there is
+ * no second surface to keep in step - see `phone.ts` for why it is off by default and
+ * what the code protects. Nothing about a pane moves; only the drawing happens elsewhere.
+ *
+ * Declared above `send()` because `send()` hands it every event, and a const read before
+ * its declaration is a crash rather than an undefined.
+ */
+const phone = new PhoneServer({
+  staticDir: join(__dirname, '../renderer'),
+  code: () => getConfig().phone?.code ?? '',
+  // The device id already exists and already survives an upgrade's config merge; the
+  // cookie is derived from it and the code, so there is no token to store or to expire.
+  secret: () => getConfig().remote.id,
+  invoke: (channel, args) => callInvoke(channel, args),
+  send: (channel, args) => callSend(channel, args),
+  channels: surfaceChannels(),
+  onChange: () => send('phone:changed', phone.state())
+})
+
 // The window can be gone (quit) or destroyed-but-still-referenced (teardown order)
 // while pty output and session events are still in flight.
 function alive(): boolean {
@@ -498,6 +527,9 @@ function alive(): boolean {
 }
 
 function send(channel: string, ...args: unknown[]): void {
+  // Ahead of the window check on purpose: a phone watching this desk must keep getting
+  // output while the window is minimized, hidden, or being rebuilt after a quiet restart.
+  phone.broadcast(channel, args)
   if (!alive()) return
   win!.webContents.send(channel, ...args)
 }
@@ -1346,6 +1378,30 @@ let laneSweepQueued = false
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.
+// The phone client. `phone:changed` goes out from the server's own onChange, so a browser
+// arriving or leaving updates Settings without anything polling.
+ipcMain.handle('phone:state', () => phone.state())
+ipcMain.handle('phone:serve', async (_e, on: boolean) => {
+  const cfg = getConfig()
+  const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
+  setConfig({ phone: { ...cfg.phone!, on: !!on } })
+  return on ? await phone.start(port) : (await phone.stop(), phone.state())
+})
+ipcMain.handle('phone:port', async (_e, port: number) => {
+  const next = Math.max(1024, Math.min(65535, Math.round(Number(port) || DEFAULT_PHONE_PORT)))
+  const cfg = getConfig()
+  setConfig({ phone: { ...cfg.phone!, port: next } })
+  if (!phone.running) return phone.state()
+  return await phone.start(next)
+})
+ipcMain.handle('phone:rotate', async () => {
+  const cfg = getConfig()
+  setConfig({ phone: { ...cfg.phone!, code: newPhoneCode() } })
+  // Every paired browser's cookie was derived from the old code, so they are already out;
+  // this only tells Settings the new one.
+  send('phone:changed', phone.state())
+  return phone.state()
+})
 ipcMain.handle('remote:state', () => remote.state())
 ipcMain.handle('remote:host', (_e, on: boolean) => {
   remote.setHosting(!!on)
@@ -2597,6 +2653,9 @@ app.whenReady().then(() => {
   // After the window exists: a device that reconnects immediately would otherwise
   // push its session list at a renderer that is not listening yet.
   remote.start()
+  // Same reason as remote.start(): a phone that reconnects the second the port opens
+  // would otherwise be answered by handlers whose window is still loading.
+  if (cfg.phone?.on) void phone.start(cfg.phone.port)
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
     // A "Restart now" whose install never applied: the relaunch is the old version
@@ -2742,6 +2801,9 @@ app.on('before-quit', () => {
   // is written while the panes are still alive to be read.
   saveDeskOnExit(manager.snapshot())
   remote.stop()
+  // A bound port outlives this process on Windows for long enough that the next launch
+  // reports it taken, so the listener is closed by hand rather than left to the exit.
+  void phone.stop()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.
