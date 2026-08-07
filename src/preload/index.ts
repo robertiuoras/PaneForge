@@ -131,7 +131,9 @@ const api: Api = {
   deleteHistory: (id) => ipcRenderer.invoke('history:delete', id),
 
   listRecents: () => ipcRenderer.invoke('recents:list'),
+  searchRecents: (q) => ipcRenderer.invoke('recents:search', q),
   recentText: (id) => ipcRenderer.invoke('recents:text', id),
+  editRecent: (id, text) => ipcRenderer.send('recents:edit', id, text),
   copyRecent: (id) => ipcRenderer.send('recents:copy', id),
   dragRecent: (id) => ipcRenderer.send('recents:drag', id),
   removeRecent: (id) => ipcRenderer.send('recents:remove', id),
@@ -257,6 +259,11 @@ const api: Api = {
     const h = (_e: unknown, items: RecentItem[]) => cb(items)
     ipcRenderer.on('recents:changed', h)
     return () => ipcRenderer.off('recents:changed', h)
+  },
+  onStashSearch: (cb) => {
+    const h = (): void => cb()
+    ipcRenderer.on('recents:openSearch', h)
+    return () => ipcRenderer.off('recents:openSearch', h)
   },
   onRecentToPane: (cb) => {
     const h = (_e: unknown, id: string): void => cb(id)

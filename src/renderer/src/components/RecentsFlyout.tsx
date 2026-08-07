@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RecentItem } from '@shared/types'
 import Blurb from './Blurb'
-import { keyLabel } from '../platform'
+import { keyLabel, modKey } from '../platform'
 
 const api = window.api
 
@@ -52,9 +52,12 @@ function clamp(p: Pos, w: number, h: number): Pos {
 }
 
 interface Props {
+  /** the newest handful, which is what a peek shows. Search goes past this - see below. */
   items: RecentItem[]
   /** open because the user asked (keybind/button): stays until dismissed */
   pinned: boolean
+  /** open with the search box focused, from the overlay's magnifier */
+  searching?: boolean
   /** briefly open because something new arrived */
   peek: boolean
   onClose: () => void
@@ -91,8 +94,29 @@ function left(it: RecentItem): string {
   return hrs < 48 ? `${s} · ${hrs}h left` : `${s} · ${Math.round(hrs / 24)}d left`
 }
 
-export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: Props): JSX.Element | null {
+export default function RecentsFlyout({
+  items,
+  pinned,
+  searching,
+  peek,
+  onClose,
+  onSend
+}: Props): JSX.Element | null {
   const [hover, setHover] = useState(false)
+  // What is typed in the search box, and what came back for it. Two states rather than a
+  // filter over `items`, because the answer comes from the main process: the list this
+  // window holds has had every clip's body stripped out of it, so a filter here could
+  // only ever match the first 140 characters of one.
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState<RecentItem[] | null>(null)
+  // Which row Enter would take. -1 is "none", which is where it starts: a shelf that
+  // opens with a row already chosen invites pressing Enter without reading it.
+  const [cursor, setCursor] = useState(-1)
+  // The entry being corrected, and the text as it stands. Held here rather than on the
+  // row, because the body is not in the list this window holds - it is fetched by id when
+  // the pencil is pressed, and there is only ever one open at a time.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
+  const search = useRef<HTMLInputElement>(null)
   // Re-render for the age labels while it is open, and never while it is not.
   const [, bump] = useState(0)
   const [pos, setPos] = useState<Pos | null>(loadPos)
@@ -109,6 +133,39 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
     const t = window.setInterval(() => bump((n) => n + 1), 15_000)
     return () => window.clearInterval(t)
   }, [open])
+
+  // Opened by the overlay's magnifier: the point of the press was to type, so the caret
+  // is already there. Never on an ordinary open - taking the keyboard off a pane because
+  // a shelf appeared is the thing this app does not do.
+  useEffect(() => {
+    if (searching) search.current?.focus()
+  }, [searching])
+
+  // Ask main for matches. Debounced, because a keystroke is cheap here and a walk over
+  // 200 bodies is not - and an empty box is not a search, it is the shelf as it was.
+  useEffect(() => {
+    if (!query.trim()) {
+      setFound(null)
+      setCursor(-1)
+      return
+    }
+    let live = true
+    const t = window.setTimeout(() => {
+      void api.searchRecents(query).then((r) => {
+        if (!live) return
+        setFound(r)
+        setCursor(r.length ? 0 : -1)
+      })
+    }, 90)
+    return () => {
+      live = false
+      window.clearTimeout(t)
+    }
+  }, [query])
+
+  // What the list is showing: the search's answer while there is one, otherwise the
+  // newest handful the peek was built for.
+  const shown = found ?? items
 
   // A window that got smaller must not leave the shelf off the edge with no way back.
   useEffect(() => {
@@ -253,17 +310,101 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
         every copy is the opposite of that.
       */}
       {pinned && <Blurb id="stash" />}
-      {!items.length && (
+      {/*
+        Only while it is open on purpose. A five-second peek at what you just copied is
+        not a thing anybody searches, and a caret appearing over a pane on every copy
+        would be the app taking the keyboard - which it does not do.
+      */}
+      {pinned && (
+        <div className="shelf-search">
+          <input
+            ref={search}
+            className="search"
+            type="text"
+            value={query}
+            placeholder="Search the Stash"
+            onChange={(e) => setQuery(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                if (!shown.length) return
+                setCursor((c) => {
+                  const n = c + (e.key === 'ArrowDown' ? 1 : -1)
+                  // Wraps, because a list this short is faster to walk round than to
+                  // walk back through.
+                  return (n + shown.length) % shown.length
+                })
+              } else if (e.key === 'Enter') {
+                const it = shown[cursor]
+                if (!it) return
+                e.preventDefault()
+                onSend(it)
+              } else if (e.key === 'Escape' && query) {
+                // The first Escape empties the box, the second closes the shelf. The
+                // half that lets this run at all is in App.tsx: its Escape handler is a
+                // CAPTURE listener on the window, so it sees the key before this field
+                // does and a stopPropagation here would be far too late.
+                e.preventDefault()
+                setQuery('')
+              }
+            }}
+          />
+          {found && (
+            <span className="hint">
+              {found.length ? `${found.length} match${found.length === 1 ? '' : 'es'}` : 'nothing'}
+            </span>
+          )}
+        </div>
+      )}
+      {editing && (
+        <div className="shelf-edit">
+          <textarea
+            autoFocus
+            rows={5}
+            value={editing.text}
+            onChange={(e) => setEditing({ ...editing, text: e.currentTarget.value })}
+            onKeyDown={(e) => {
+              // Enter alone is a newline - this is a text box and a clip can be a
+              // paragraph. Save is the modifier, the way every other multi-line field
+              // in the app works.
+              if (e.key === 'Enter' && modKey(e)) {
+                e.preventDefault()
+                api.editRecent(editing.id, editing.text)
+                setEditing(null)
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                setEditing(null)
+              }
+            }}
+          />
+          <div className="shelf-edit-row">
+            <span className="hint">{keyLabel('Ctrl Enter saves, Esc throws it away')}</span>
+            <button className="ghost small" onClick={() => setEditing(null)}>
+              Cancel
+            </button>
+            <button
+              className="small"
+              onClick={() => {
+                api.editRecent(editing.id, editing.text)
+                setEditing(null)
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+      {!items.length && !found && (
         <div className="shelf-empty">
           Nothing on the Stash yet. Copy text or a screenshot anywhere on the machine, or drop a
           file here, and it lands on the Stash.
         </div>
       )}
       <div className="shelf-items">
-        {items.map((it) => (
+        {shown.map((it, n) => (
           <button
             key={it.id}
-            className={'shelf-item ' + it.kind}
+            className={'shelf-item ' + it.kind + (n === cursor ? ' on' : '')}
             title={
               it.kind === 'text'
                 ? it.preview
@@ -302,6 +443,20 @@ export default function RecentsFlyout({ items, pinned, peek, onClose, onSend }: 
               </span>
               <span>{ago(it.at)}</span>
             </span>
+            {it.kind === 'text' && (
+              <span
+                className="shelf-copy"
+                title="Correct this entry - for the moment a copied path names the wrong branch"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // The body is not in this list - see `lean()` in recents.ts - so the
+                  // one being edited is fetched, and only then.
+                  void api.recentText(it.id).then((t) => setEditing({ id: it.id, text: t }))
+                }}
+              >
+                edit
+              </span>
+            )}
             <span
               className="shelf-copy"
               title="Copy back to the clipboard"

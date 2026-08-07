@@ -43,14 +43,22 @@ function eq(what, got, want) {
  * userData lives, the clipboard, and PNG encoding. A stub is enough, and it means this
  * whole file runs under plain node.
  */
-function loadRecents(userData) {
+function loadRecents(userData, clipFile) {
   const stub = join(work, `electron-${Math.random().toString(36).slice(2)}.cjs`)
+  // The clipboard is read out of a file when one is named, so a test can put something on
+  // it between ticks. Without that there is no way to drive the watcher at all, and the
+  // exclusion rules below live entirely inside it.
+  const clip = clipFile
+    ? `(() => { try { return JSON.parse(require('fs').readFileSync(${JSON.stringify(clipFile)}, 'utf8')) } catch { return { text: '', formats: [] } } })()`
+    : `({ text: '', formats: [] })`
   writeFileSync(
     stub,
-    `module.exports = {
+    `const clip = () => ${clip}
+     module.exports = {
        app: { getPath: () => ${JSON.stringify(userData)} },
-       clipboard: { readText: () => '', readImage: () => ({ isEmpty: () => true }),
-                    writeText: () => {}, writeImage: () => {}, availableFormats: () => [] },
+       clipboard: { readText: () => clip().text ?? '', readImage: () => ({ isEmpty: () => true }),
+                    writeText: () => {}, writeImage: () => {},
+                    availableFormats: () => clip().formats ?? [] },
        nativeImage: { createFromPath: () => ({}) }
      }`
   )
@@ -224,6 +232,87 @@ console.log('\n== a copy made in the last second of the app reaches disk')
   eq('and it is the entry that was made', readHistory(dir).length, 1)
   R.flushRecents()
   ok('a second flush with nothing pending is harmless', readHistory(dir).length === 1)
+}
+
+console.log('\n== a clip the copying app marked concealed never reaches the disk')
+{
+  const dir = profile()
+  const clipFile = join(work, `clip-${Math.random().toString(36).slice(2)}.json`)
+  const put = (text, formats) => writeFileSync(clipFile, JSON.stringify({ text, formats }))
+  put('', [])
+  const R = loadRecents(dir, clipFile)
+  R.startRecents(() => {})
+
+  put('an ordinary line worth keeping', ['public.utf8-plain-text'])
+  await settle()
+  eq('an ordinary copy is kept', R.listRecents().length, 1)
+
+  // The whole defect, in one step: this is what a password manager puts on the clipboard.
+  put('hunter2-the-actual-password', ['public.utf8-plain-text', 'org.nspasteboard.ConcealedType'])
+  await settle()
+  eq('a concealed copy is not kept', R.listRecents().length, 1)
+  ok(
+    'and it is nowhere in the history file either',
+    !readFileSync(historyOf(dir), 'utf8').includes('hunter2')
+  )
+
+  // The clip after it must still land. A refused clip that poisoned the de-duplication
+  // would make the NEXT copy vanish too, silently, and that is the shape of bug nobody
+  // reports because the feature looks like it is merely being slow.
+  put('the very next thing copied', ['public.utf8-plain-text'])
+  await settle()
+  eq('the copy after a refused one still lands', R.listRecents().length, 2)
+
+  // The user's own rule, off by default, applied to what is copied next.
+  R.configureRecents({ deny: 'staging.example.com' })
+  put('deploy to STAGING.EXAMPLE.COM now', ['public.utf8-plain-text'])
+  await settle()
+  eq('a denied clip is not kept', R.listRecents().length, 2)
+  put('deploy to production now', ['public.utf8-plain-text'])
+  await settle()
+  eq('and the rule does not swallow everything else', R.listRecents().length, 3)
+  R.stopRecents()
+}
+
+console.log('\n== search reads the bodies, and an edit corrects one in place')
+{
+  const body = 'line one\n' + 'filler '.repeat(60) + '\nBURIED-WORD at the very end'
+  const dir = profile([
+    { id: 't1', key: 't:a:1', kind: 'text', at: 3, text: body, preview: body.slice(0, 140), chars: body.length },
+    { id: 't2', key: 't:b:2', kind: 'text', at: 2, text: 'wrong-branch path', preview: 'wrong-branch path', chars: 17, pinned: true },
+    { id: 't3', key: 't:c:3', kind: 'text', at: 1, text: 'unrelated', preview: 'unrelated', chars: 9 }
+  ])
+  const R = loadRecents(dir)
+
+  ok('the buried word is past the preview', !body.slice(0, 140).includes('BURIED-WORD'))
+  eq('and search still finds that entry', R.searchRecents('BURIED-WORD').length, 1)
+  eq('two words both have to appear', R.searchRecents('BURIED-WORD unrelated').length, 0)
+  eq('order between them does not matter', R.searchRecents('end BURIED-WORD').length, 1)
+  eq('an empty query is the whole list', R.searchRecents('').length, 3)
+  ok(
+    'and a result carries no body either - the same rule as every other list',
+    R.searchRecents('BURIED-WORD').every((i) => i.text === undefined)
+  )
+
+  // Ids are handed out on load, not taken from the file, so they are read back rather
+  // than assumed. (The seeded `t2` does not survive the read - it becomes `tr1`.)
+  const idOf = (text) => R.listRecents().find((i) => i.preview.startsWith(text))?.id
+  const wrong = idOf('wrong-branch')
+  const before = R.listRecents().findIndex((i) => i.id === wrong)
+  ok('an edit is accepted', R.editRecent(wrong, 'right-branch path'))
+  const after = R.listRecents()
+  eq('the row stays where it was', after.findIndex((i) => i.id === wrong), before)
+  ok('its pin survives', after.find((i) => i.id === wrong).pinned === true)
+  eq('the preview is the corrected text', after.find((i) => i.id === wrong).preview, 'right-branch path')
+  eq('and it is what search now finds', R.searchRecents('right-branch').length, 1)
+  eq('the text it used to be is gone', R.searchRecents('wrong-branch').length, 0)
+
+  ok('an entry cannot be edited to nothing', !R.editRecent(wrong, '  '))
+  ok('and neither can an id that is not there', !R.editRecent('nope', 'x'))
+
+  // Editing one row into another row's text is one clip, not two rows that read the same.
+  R.editRecent(idOf('unrelated'), 'right-branch path')
+  eq('an edit onto an existing clip collapses into one row', R.listRecents().length, 2)
 }
 
 rmSync(work, { recursive: true, force: true })

@@ -955,7 +955,20 @@ body.sizing * { user-select: none !important; }
 .shelf-grip { color: var(--muted); font-size: 12px; line-height: 1; letter-spacing: -1px; }
 .shelf-empty { padding: 12px 11px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .shelf-head .hint { margin-left: auto; font-size: 10px; }
+.shelf-search {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 8px 0;
+}
+.shelf-search .search { flex: 1; min-width: 0; font-size: 11.5px; padding: 5px 7px; }
+.shelf-search .hint { font-size: 10px; white-space: nowrap; }
+.shelf-edit { padding: 7px 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.shelf-edit textarea { width: 100%; font-size: 11.5px; line-height: 1.45; }
+.shelf-edit-row { display: flex; align-items: center; gap: 7px; }
+.shelf-edit-row .hint { margin-right: auto; font-size: 10px; }
 .shelf-items { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+/* The row Enter would take. An outline rather than a fill: the row under the pointer is
+   already lit, and two rows lit the same way is worse than none. */
+.shelf-item.on { border-color: var(--accent); background: var(--accent-dim); }
 .shelf-item {
   position: relative; display: flex; align-items: center; gap: 9px;
   width: 100%; padding: 7px 8px; cursor: pointer; text-align: left;

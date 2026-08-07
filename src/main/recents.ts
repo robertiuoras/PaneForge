@@ -271,6 +271,71 @@ export function listRecents(): RecentItem[] {
  * "keep this", and a Clear that threw those away would make pinning pointless: you would
  * never dare press it, and the button that tidies up is the one you press most.
  */
+/**
+ * Everything on the Stash that matches, newest first.
+ *
+ * It runs HERE and not in a renderer because the renderer does not have the text to
+ * search: `lean()` strips the body out of every list that leaves this process, so a
+ * filter over what a window holds would only ever match the first 140 characters. The one
+ * clip you cannot find by its opening line is the four-thousand-line log, which is
+ * precisely the one worth finding.
+ *
+ * Words, not a phrase: "docker compose" finds a line that says compose before docker.
+ * Each word has to appear somewhere, which is what a person typing two words means, and
+ * it costs one pass per word over a list that is 200 entries at its largest.
+ */
+export function searchRecents(q: string, limit = 60): RecentItem[] {
+  load()
+  const words = String(q || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!words.length) return lean(items).slice(0, limit)
+  const out: RecentItem[] = []
+  for (const i of items) {
+    const hay = `${i.preview} ${i.name ?? ''} ${i.text ?? ''}`.toLowerCase()
+    if (words.every((w) => hay.includes(w))) out.push(i)
+    if (out.length >= limit) break
+  }
+  return lean(out)
+}
+
+/**
+ * Replace the text of one entry, in place.
+ *
+ * Its position and its pin are kept - the point is that a path naming the wrong branch is
+ * the thing you copied, corrected, not a new thing you copied. The key is recomputed, so
+ * an edit that lands on text already elsewhere on the Stash collapses into it rather than
+ * leaving two rows that read the same.
+ */
+export function editRecent(id: string, text: string): boolean {
+  load()
+  const at = items.findIndex((i) => i.id === id)
+  if (at < 0 || items[at].kind !== 'text') return false
+  const trimmed = text.trim()
+  if (trimmed.length < MIN_TEXT) return false
+  const key = textKey(text)
+  const edited: RecentItem = {
+    ...items[at],
+    key,
+    text,
+    preview: trimmed.length > PREVIEW ? trimmed.slice(0, PREVIEW) + '…' : trimmed,
+    lines: text.split('\n').length,
+    chars: text.length
+  }
+  // Any OTHER row that now has the same key is the same clip and goes; this one stays
+  // where it was rather than jumping to the top, because the row did not arrive, it
+  // changed.
+  items = items.filter((i, n) => n === at || i.key !== key)
+  items[items.findIndex((i) => i.id === id)] = edited
+  // The clipboard's own copy is stale the moment this is saved. Nothing follows it there
+  // on purpose: editing a stash entry is not a copy, and silently replacing what the
+  // system clipboard holds is the sort of thing that loses somebody else's work.
+  save()
+  onChange?.(lean(items))
+  return true
+}
+
 export function clearRecents(): void {
   load()
   items = items.filter((i) => i.pinned)

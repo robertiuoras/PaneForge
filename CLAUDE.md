@@ -377,7 +377,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
 | `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
-| `npm run test:stash` | what the Stash may cost — no list leaving main carries a body |
+| `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
 | `npm run test:copymode` | keyboard copy mode arithmetic |

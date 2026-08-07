@@ -679,13 +679,26 @@ to disk and its *path* typed at the agent's prompt. Every product above stops at
 is now on your clipboard", which is worth nothing to a CLI agent. That stays the headline;
 J1–J9 are the ordinary parts we are missing beneath it.
 
-- [ ] **J1. Search, and a keyboard-only picker** — S. All six search; we have four kind
-      tabs and a mouse, and `shelf.tsx` line 18 says so deliberately. At the 200-item cap
-      the tabs stop being enough. The catch is `focusable: false` — the overlay may never
-      take the keyboard, which is the whole reason clicking a row works — so the typing has
-      to happen either in the main window's shelf or in a focusable picker the global hotkey
-      opens and which hands focus back on Escape. Decide which before writing any of it.
-      This is the half of D11 that was left open.
+- [x] **J1. Search, and a keyboard-only picker** — S. **Done.** The decision the item asked
+      for: the search is in the **main window's** Stash, and the overlay stays mouse-only
+      for ever. `focusable: false` is not a setting to work around — on macOS the overlay
+      is also an `NSWindowStyleMaskNonactivatingPanel`, so a click on it never activates
+      the app at all, and that is the whole feature. Its header gets a magnifier that hands
+      the job over (`recents:openSearch` → `focusWindow(true)`, legal because a press is a
+      person asking for the app) and the main window opens its Stash with the caret already
+      in the box.
+      The search itself runs in **main**, not in the renderer, and that is load-bearing:
+      `lean()` strips every clip's body out of any list a window is handed, so a filter in
+      the window could only ever match a preview's first 140 characters — and the clip
+      nobody can find by its opening line is the four-thousand-line log. Measured against a
+      real window: a word 200 characters into a 1,430-character clip, absent from the
+      preview, is found. Words rather than a phrase; arrows walk the results and wrap;
+      Enter sends the highlighted row to the pane.
+      **Escape needed a fix a screenshot could not have found.** App.tsx's Escape handler
+      is a CAPTURE listener on the window, so it runs before the field ever sees the key: a
+      `stopPropagation` in the input was far too late and the probe showed the shelf
+      closing with the query still in it. The two-stage Escape (clear, then close) lives in
+      App.tsx for that reason.
 - [ ] **J2. Stop polling the clipboard** — S. `TICK_MS = 1200` in `recents.ts`, plus a 10s
       image re-read, runs all day whether or not anything was copied, and two copies inside
       one tick collapse into one. Maccy polls at 500ms only because AppKit offers it nothing
@@ -720,9 +733,17 @@ J1–J9 are the ordinary parts we are missing beneath it.
       pins. The version worth having here is per-project: the prompts, ids and paths for
       THIS repo, following the pane's folder. It wants `promptArchive` beside it rather than
       a second store of its own.
-- [ ] **J6. Edit an item before it is pasted** — S. CopyQ opens a clip in an editor. One
-      click, a textarea, save — and it is what you actually want the moment a copied path
-      names the wrong branch.
+- [x] **J6. Edit an item before it is pasted** — S. **Done.** `edit` beside `copy` on any
+      text row of the in-window Stash; the body is fetched by id when the button is pressed
+      (it is not in the list — same `lean()` rule as above), Ctrl/Cmd+Enter saves, Escape
+      throws it away. `editRecent` keeps the row's **position and its pin**, because a path
+      that named the wrong branch is the thing you copied corrected, not a new thing you
+      copied — and it recomputes the key, so an edit that lands on text already on the
+      Stash collapses into one row rather than leaving two that read the same. The OS
+      clipboard is deliberately left alone: editing a stash entry is not a copy, and
+      quietly replacing what the clipboard holds loses somebody else's work.
+      Only in the main window, for the same reason as J1: there is no keyboard in the
+      overlay.
 - [ ] **J7. The Stash across the device link** — M. Paste charges $2.49/mo for this and
       routes it through iCloud; `src/main/remote/` is already an authenticated, encrypted
       peer link between two machines on the desk. Copy on the laptop, paste on the desktop.

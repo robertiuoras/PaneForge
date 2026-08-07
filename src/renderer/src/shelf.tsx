@@ -734,6 +734,24 @@ function Overlay(): JSX.Element {
           >
             ⚙
           </button>
+          {/*
+            Search is a keyboard, and this window has none: `focusable: false` is what
+            makes clicking a row leave the caret in whatever you were typing in, and it
+            is not negotiable. So the magnifier hands over to the main window, which
+            opens its own Stash with the box already focused. The press is a person
+            asking for the app, which is the one reason allowed to raise it.
+          */}
+          <button
+            className="mini"
+            onClick={() => {
+              sticky.current = false
+              want(false)
+              shelf.openSearch()
+            }}
+            title="Search the whole Stash - opens in the PaneForge window, which can take a keyboard"
+          >
+            ⌕
+          </button>
           <button
             className="mini"
             onClick={() => shelf.clear()}

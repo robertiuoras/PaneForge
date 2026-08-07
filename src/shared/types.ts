@@ -1348,11 +1348,25 @@ export interface Api {
   /** the clipboard shelf, newest first */
   listRecents(): Promise<RecentItem[]>
   /**
+   * Everything on the Stash matching every word of `q`, newest first; the newest 60 for
+   * an empty query. It is a main-process search on purpose: the lists a window is handed
+   * have had the bodies stripped out of them, so a filter here would only ever match a
+   * clip's first 140 characters - and the clip nobody can find by its opening line is the
+   * four-thousand-line log.
+   */
+  searchRecents(q: string): Promise<RecentItem[]>
+  /**
    * The body of one stash entry. The list arrives without them - a full history is 383KB
    * of text nothing on screen shows - so the one click that types a clip into a pane
    * fetches that clip.
    */
   recentText(id: string): Promise<string>
+  /**
+   * Correct a text entry in place, keeping its position and its pin. For the moment a
+   * copied path names the wrong branch: the thing you copied, fixed, not a new thing.
+   * The OS clipboard is deliberately left alone - editing a stash entry is not a copy.
+   */
+  editRecent(id: string, text: string): void
   /** put a shelf item back on the OS clipboard */
   copyRecent(id: string): void
   /** hand an image item to the OS drag layer, so it can be dropped in any app */
@@ -1508,6 +1522,12 @@ export interface Api {
   /** the floating overlay asked for one of its items to go into the focused pane */
   onRecentToPane(cb: (id: string) => void): () => void
   /**
+   * The floating overlay's magnifier was pressed. It cannot be typed into itself - it is
+   * `focusable: false`, which is the reason clicking a row leaves your keyboard where it
+   * was - so searching happens in this window, which the press has already raised.
+   */
+  onStashSearch(cb: () => void): () => void
+  /**
    * A main-process error, which used to be a modal message box that stole the keyboard.
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
@@ -1547,6 +1567,12 @@ export interface ShelfApi {
    *  the keyboard where it was. */
   toPane(id: string, focus?: boolean): void
   focusApp(): void
+  /**
+   * Hand searching to the main window and raise it. A press on this button is a person
+   * asking for the app, which is the one thing allowed to take the screen - and it is
+   * the only way there is: an unfocusable window cannot be typed into.
+   */
+  openSearch(): void
   /** record a physical Stash press without bringing the main window forward */
   touch(): void
   /** open the folder the Stash's copies live in */

@@ -205,6 +205,9 @@ export default function App(): JSX.Element {
   recentsRef.current = recents
   const [shelfPinned, setShelfPinned] = useState(false)
   const [shelfPeek, setShelfPeek] = useState(false)
+  // The in-window Stash open for a search, which is the one thing the floating overlay
+  // cannot do for itself: it is unfocusable by design, so there is no keyboard in it.
+  const [shelfSearching, setShelfSearching] = useState(false)
   const peekTimer = useRef<number>()
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
@@ -703,6 +706,11 @@ export default function App(): JSX.Element {
       if (it) sendRecent(it)
     })
   }, [sendRecent])
+
+  // The overlay's magnifier. Main has already raised this window by the time this lands -
+  // a press on that button is a person asking for the app, which is the one kind of
+  // reason allowed to take the screen.
+  useEffect(() => api.onStashSearch(() => setShelfSearching(true)), [])
 
   /**
    * Dictation goes into the pane whose mic was clicked - the hotkey means the focused one -
@@ -1355,8 +1363,19 @@ export default function App(): JSX.Element {
         }
         // The shelf is the lightest layer on screen, so Escape closes it before it
         // starts closing dialogs underneath.
-        if (shelfPinned) {
+        if (shelfPinned || shelfSearching) {
+          // A search in progress owns the first Escape - it empties the box, and the
+          // second one closes the shelf. This test is HERE rather than a stopPropagation
+          // in the input, because this listener is a capture-phase one on the window and
+          // so runs before the field ever sees the key: measured against a real window,
+          // the shelf closed and the query survived, which is both halves backwards.
+          const el = document.activeElement as HTMLInputElement | null
+          if (el?.closest('.shelf-search') && el.value) return
+          // Same reason, for the editor: Escape there throws the correction away and
+          // leaves the shelf up, which is what somebody who mistyped one line meant.
+          if (el?.closest('.shelf-edit')) return
           setShelfPinned(false)
+          setShelfSearching(false)
           return
         }
         // Changes opened FROM the fleet list sit on top of it, so Escape closes the diff
@@ -1532,6 +1551,7 @@ export default function App(): JSX.Element {
     diff,
     fixUi,
     shelfPinned,
+    shelfSearching,
     shelfInWindow,
     cycleLayout,
     toggleZoom,
@@ -3023,15 +3043,26 @@ export default function App(): JSX.Element {
           onCancel={() => setAsk(null)}
         />
       )}
-      {shelfInWindow && (
+      {(shelfInWindow || shelfSearching) && (
         <RecentsFlyout
           // Only drawn when the floating Stash is off, so a copy never appears in two
           // places at once. The last handful, one click from a pane.
+          //
+          // The exception is a search: the overlay is `focusable: false` and cannot be
+          // typed into at all, so its magnifier hands the job here. That is a deliberate
+          // press, not a peek, and it closes with the search it opened for.
           items={recents.slice(0, 12)}
-          pinned={shelfPinned}
+          pinned={shelfPinned || shelfSearching}
+          searching={shelfSearching}
           peek={shelfPeek}
-          onClose={() => setShelfPinned(false)}
-          onSend={sendRecent}
+          onClose={() => {
+            setShelfPinned(false)
+            setShelfSearching(false)
+          }}
+          onSend={(it) => {
+            sendRecent(it)
+            setShelfSearching(false)
+          }}
         />
       )}
       {restore && (

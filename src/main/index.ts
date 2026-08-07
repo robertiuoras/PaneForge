@@ -119,6 +119,7 @@ import {
   clearRecents,
   configureRecents,
   copyRecent,
+  editRecent,
   flushRecents,
   getRecent,
   listRecents,
@@ -128,6 +129,7 @@ import {
   recentsDir,
   refreshRecents,
   removeRecent,
+  searchRecents,
   startRecents,
   stopRecents
 } from './recents'
@@ -1413,6 +1415,19 @@ ipcMain.handle('recents:list', () => listRecents())
 // The clip bodies never ride along with the list (see `lean` in recents.ts): the window
 // asks for the one it is about to type.
 ipcMain.handle('recents:text', (_e, id: string) => recentText(id))
+// Searching happens here because the bodies are here: `lean()` strips the text out of
+// every list a window is handed, so a filter in a renderer could only ever match the
+// first 140 characters of a clip.
+ipcMain.handle('recents:search', (_e, q: string) => searchRecents(String(q ?? '')))
+ipcMain.on('recents:edit', (_e, id: string, text: string) => editRecent(id, String(text ?? '')))
+// The overlay cannot be typed into - it is `focusable: false`, which is the whole reason
+// clicking a row leaves your keyboard where it was - so its magnifier hands the job to
+// the window that CAN take a keyboard. `asked` is true because a click on that button is
+// a person asking for the app, which is the one thing allowed to take the screen.
+ipcMain.on('recents:openSearch', () => {
+  focusWindow(true)
+  send('recents:openSearch')
+})
 ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
 ipcMain.on('recents:clear', () => clearRecents())
 ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
