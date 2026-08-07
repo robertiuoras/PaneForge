@@ -75,6 +75,7 @@ import VersionBadge from './components/VersionBadge'
 import { playEvent } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
+import { useHandheld } from './handheld'
 import { VoiceOverlay } from './components/VoiceOverlay'
 import {
   drag as dragTrack,
@@ -187,6 +188,12 @@ export default function App(): JSX.Element {
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
   const [fleet, setFleet] = useState(false)
+  /**
+   * On a phone (or any window under 720px) the list and the panes take turns rather than
+   * sharing the width - see handheld.ts. Nothing else in here has to know: the classes go
+   * on `<html>` and styles.css does the layout.
+   */
+  const handheld = useHandheld(activeId)
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
@@ -2316,6 +2323,10 @@ export default function App(): JSX.Element {
               onClick={() => {
                 if (draggedRef.current) return
                 setActiveId(s.id)
+                // On a phone the tap has to hand over the screen even when that pane was
+                // ALREADY the active one - which is the normal case, because the list is
+                // what you come back to. Watching activeId change cannot see this tap.
+                handheld.showPane()
               }}
               onDoubleClick={() => setRenaming(s.id)}
             >
@@ -2509,6 +2520,14 @@ export default function App(): JSX.Element {
             : undefined
         }
       >
+        {/* The way back to the list on a phone. Rendered rather than styled into
+            existence because it has to sit above the pane's own overlays, and it is the
+            only control on the screen while a pane has the whole display. */}
+        {handheld.handheld && !handheld.listOpen && (
+          <button className="handheld-back" onClick={handheld.showList} aria-label="Back to panes">
+            <span aria-hidden="true">‹</span> Panes
+          </button>
+        )}
         {/* One grab strip per line between two tracks, laid over the gap. Absolutely
             positioned rather than made of grid cells, because a CSS grid gap is not
             addressable - and it means the strip can be wider than the 9px gap it sits in

@@ -107,6 +107,57 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 
 .app { display: grid; grid-template-columns: 282px 1fr; height: 100vh; }
 
+/* ---- a phone, or any window under 720px -------------------------------------
+   The sidebar is 282px of a 414px screen, which leaves a pane 16 columns wide: not a
+   small version of this app, a broken one. So the two stop sharing the width and take
+   turns - the list is the home screen, a tapped pane gets the whole display, and one
+   chip comes back. `handheld` / `handheld-list` are written onto <html> by handheld.ts;
+   the media query only decides that the RULES apply, so a wide window is untouched even
+   if the classes are somehow left behind. See "A phone is not a small desktop" in
+   docs/design-notes.md.
+
+   Everything here is dark to the desktop build: at 1500x940 not one selector matches. */
+@media (max-width: 720px) {
+  html.handheld .app { grid-template-columns: 1fr; }
+  /* One of the two is display:none rather than translated off screen: an xterm that is
+     laid out at 0px wide reflows its buffer to one column and does not come back. */
+  html.handheld .sidebar { display: none; }
+  html.handheld .panes { display: block; }
+  html.handheld.handheld-list .sidebar {
+    display: flex;
+    border-right: 0;
+    /* iOS puts the URL bar and the home indicator inside 100vh. */
+    height: 100dvh;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  html.handheld.handheld-list .panes { display: none; }
+  /* Room for the Back chip, and a finger's worth of edge. */
+  html.handheld .panes { padding: 44px 4px max(4px, env(safe-area-inset-bottom)); }
+  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 4px; }
+  .handheld-back {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    /* 34px tall plus the padding above it clears the 44px Apple minimum for a target
+       this close to the top edge, without eating a line of the terminal. */
+    min-height: 34px;
+    padding: 0 13px 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: 600 13px/1 inherit;
+  }
+  .handheld-back span { font-size: 17px; opacity: 0.75; }
+  /* A dialog at phone width is the whole screen; a centred 620px card is not. */
+  html.handheld .dialog { width: 100%; max-width: 100%; max-height: 100dvh; border-radius: 0; }
+  html.handheld .overlay { padding: 0; }
+}
+
 /* ---- sidebar ---- */
 .sidebar {
   display: flex;
