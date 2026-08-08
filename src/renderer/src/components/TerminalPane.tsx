@@ -13,7 +13,7 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
-import { cellAt, keysForClick } from '../../../shared/cursorMove'
+import { cellAt, keysAlongLine, keysForClick } from '../../../shared/cursorMove'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -932,6 +932,71 @@ export default function TerminalPane({
       if (keys) api.write(sessionId, keys)
     }
 
+    /**
+     * A bare click puts the cursor where you clicked, as long as it stays on the line
+     * being typed.
+     *
+     * The modifier above is the honest answer for a click anywhere on the screen; it is
+     * the wrong answer for the thing people actually do, which is click into the middle of
+     * a prompt they have half typed. So a plain click is allowed the safe half of the same
+     * move: `keysAlongLine` emits left and right and NOTHING else, and this only runs when
+     * the click landed on the cursor's own logical line - its row, or a row the same input
+     * wrapped onto. An arrow that could recall a previous command is never reachable from
+     * here, so there is nothing to be careful about and no modifier to know.
+     *
+     * On mouseup, and only when the pointer did not travel: a mousedown that swallowed the
+     * click would take drag-selection with it, and copy-on-select is the more important of
+     * the two. A drag ends with a selection and leaves this alone.
+     */
+    let downAt: { x: number; y: number } | null = null
+    const markDown = (e: MouseEvent): void => {
+      downAt = e.button === 0 && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        ? { x: e.clientX, y: e.clientY }
+        : null
+    }
+
+    /** Whether two absolute buffer rows are the same line to the editor at the far end. */
+    const sameLine = (a: number, b: number): boolean => {
+      if (a === b) return true
+      const [lo, hi] = a < b ? [a, b] : [b, a]
+      // A wrapped row says so about ITSELF, so walking up from the lower row and requiring
+      // every step to be a continuation is what proves the two are one input.
+      for (let r = hi; r > lo; r--) if (!t.buffer.active.getLine(r)?.isWrapped) return false
+      return true
+    }
+
+    const moveAlongLine = (e: MouseEvent): void => {
+      const from = downAt
+      downAt = null
+      if (!clickCursorRef.current || !from) return
+      if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
+      if (t.getSelection()) return
+      if (t.buffer.active.type === 'alternate') return
+      const screen = el.querySelector('.xterm-screen') as HTMLElement | null
+      if (!screen) return
+      const r = screen.getBoundingClientRect()
+      if (!r.width || !r.height) return
+      const at = cellAt(e.clientX, e.clientY, r, t.cols, t.rows)
+      const b = t.buffer.active
+      const cursorRow = b.baseY + b.cursorY
+      const clickRow = b.viewportY + at.row
+      if (!sameLine(cursorRow, clickRow)) return
+      // Past the end of what is written is the end of what is written. Without this, a
+      // click in the empty half of the row sends a burst of rights that the editor eats one
+      // by one for nothing - and on a CLI that reads an arrow as a menu step, does worse.
+      const written = b.getLine(clickRow)?.translateToString(true).length ?? 0
+      const keys = keysAlongLine({
+        cursorCol: b.cursorX,
+        clickCol: Math.min(at.col, written),
+        rows: clickRow - cursorRow,
+        cols: t.cols
+      })
+      if (!keys) return
+      e.preventDefault()
+      e.stopPropagation()
+      api.write(sessionId, keys)
+    }
+
     const forceSelectable = (e: MouseEvent): void => {
       if (!mouseSelectRef.current || !mouseGrabbed()) return
       if (e.button !== 0 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
@@ -1055,8 +1120,10 @@ export default function TerminalPane({
 
     el.addEventListener('keydown', onKeyClearsSelection, true)
     el.addEventListener('mousedown', placeCursor, true)
+    el.addEventListener('mousedown', markDown, true)
     el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mousedown', onMouseDown, true)
+    el.addEventListener('mouseup', moveAlongLine, true)
     el.addEventListener('mouseup', onMouseUp)
     el.addEventListener('wheel', onWheel, { capture: true, passive: false })
     el.addEventListener('contextmenu', onContextMenu)
@@ -1424,8 +1491,10 @@ export default function TerminalPane({
       search.current = null
       el.removeEventListener('keydown', onKeyClearsSelection, true)
       el.removeEventListener('mousedown', placeCursor, true)
+      el.removeEventListener('mousedown', markDown, true)
       el.removeEventListener('mousedown', forceSelectable, true)
       el.removeEventListener('mousedown', onMouseDown, true)
+      el.removeEventListener('mouseup', moveAlongLine, true)
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('wheel', onWheel, true)
       vpEl?.removeEventListener('scroll', onViewportScroll)

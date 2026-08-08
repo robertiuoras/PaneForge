@@ -313,8 +313,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.clickMovesCursor}
                   onChange={(v) => onChange({ clickMovesCursor: v })}
-                  label={isMac ? 'Option-click moves the cursor' : 'Alt-click moves the cursor'}
-                  hint="A CLI's prompt is drawn text, so a click cannot place a caret there - it is sent as the arrow keys that would have reached the same spot. Held behind Alt because in a plain shell an up-arrow recalls the last command instead of moving, so a click more than a few lines away is ignored rather than guessed at."
+                  label="Click moves the cursor"
+                  hint={
+                    'A CLI’s prompt is drawn text, so a click cannot place a caret there - it is sent as the arrow keys that would have reached the same spot. A plain click works along the line you are typing, wrapped rows included, and sends left and right only. ' +
+                    (isMac ? 'Option-click' : 'Alt-click') +
+                    ' reaches other lines too, and is held behind the modifier because in a plain shell an up-arrow recalls the last command instead of moving.'
+                  }
                 />
                 <Switch
                   checked={config.autoFixUi}

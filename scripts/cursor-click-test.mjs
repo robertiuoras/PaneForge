@@ -32,7 +32,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { keysForClick, cellAt, ARROW } = createRequire(import.meta.url)(outfile)
+const { keysForClick, keysAlongLine, cellAt, ARROW } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -155,6 +155,56 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
     }),
     ''
   )
+}
+
+// --- a BARE click: along the line, and never off it --------------------------------
+// This is the one a person gets without knowing anything, so its refusals matter more
+// than the modifier's. The single rule it has to keep, at every input: not one up-arrow
+// and not one down-arrow, ever, whatever the numbers are - an up-arrow in a plain shell
+// recalls the last command, and a bare click may not be able to reach that.
+{
+  const line = (o) => ({ cursorCol: 20, clickCol: 20, rows: 0, cols: 80, ...o })
+  eq('same row, 5 right', keysAlongLine(line({ clickCol: 25 })), ARROW.right.repeat(5))
+  eq('same row, 7 left', keysAlongLine(line({ clickCol: 13 })), ARROW.left.repeat(7))
+  eq('the cell the cursor is on sends nothing', keysAlongLine(line({})), '')
+
+  // A prompt long enough to wrap is ONE line to the editor, so a row up is a whole
+  // terminal width of characters back and the arrows cross the wrap by themselves.
+  eq(
+    'a row up on a wrapped line is one width of lefts',
+    keysAlongLine(line({ rows: -1, clickCol: 20 })),
+    ARROW.left.repeat(80)
+  )
+  eq(
+    'a row up and 6 columns right is 74 lefts',
+    keysAlongLine(line({ rows: -1, clickCol: 26 })),
+    ARROW.left.repeat(74)
+  )
+  eq(
+    'two rows down and 3 left is 157 rights',
+    keysAlongLine(line({ rows: 2, clickCol: 17 })),
+    ARROW.right.repeat(157)
+  )
+
+  // The load-bearing assertion. Every shape, including ones the caller should never
+  // produce, and none of them may contain a vertical arrow.
+  for (const rows of [-6, -3, -1, 0, 1, 3, 6]) {
+    for (const clickCol of [0, 1, 19, 20, 21, 79]) {
+      const keys = keysAlongLine(line({ rows, clickCol }))
+      check(
+        `no up or down for rows=${rows} col=${clickCol}`,
+        !keys.includes(ARROW.up) && !keys.includes(ARROW.down),
+        JSON.stringify(keys)
+      )
+    }
+  }
+
+  // The same backstop the modifier has: nothing legitimate needs hundreds of keys.
+  eq('past the key limit sends nothing', keysAlongLine(line({ rows: 9, cols: 80 })), '')
+  eq('a keyLimit of its own is obeyed', keysAlongLine(line({ clickCol: 30, keyLimit: 5 })), '')
+  // A terminal with no width is a pane mid-resize, and `rows * 0` would silently turn a
+  // click three rows up into a horizontal move along the wrong line.
+  eq('no width, no keys', keysAlongLine(line({ rows: -1, cols: 0 })), '')
 }
 
 console.log(`cursor click: ${checks} checks passed`)

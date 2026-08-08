@@ -61,6 +61,38 @@ export function keysForClick(c: CursorClick): string {
 }
 
 /**
+ * The keys for a click that may only move ALONG the line the cursor is already editing -
+ * left and right, never up and never down.
+ *
+ * This is what a BARE click sends, and the restriction is the whole reason a bare click is
+ * allowed to do anything at all. An up-arrow in a plain shell is the previous command, not
+ * a movement, so a click that could emit one has to be behind a modifier. A click that can
+ * only emit left and right cannot recall anything, cannot leave the line, and in the worst
+ * case walks to the end of it and stops - which is what every line editor does with a right
+ * arrow it cannot honour.
+ *
+ * `cols` is what makes a wrapped line work. A long prompt drawn across three rows is ONE
+ * line to the editor at the far end, so a click two rows up is `2 * cols` characters back
+ * and the arrows cross the wrap by themselves. The caller decides which rows qualify -
+ * see `sameLine` in `TerminalPane.tsx`, which walks xterm's own `isWrapped` chain.
+ */
+export function keysAlongLine(c: {
+  cursorCol: number
+  clickCol: number
+  /** How many rows the click is from the cursor's row, positive downwards. */
+  rows: number
+  /** The terminal's width, so a wrapped row counts as that many characters. */
+  cols: number
+  keyLimit?: number
+}): string {
+  if (!(c.cols > 0)) return ''
+  const delta = c.rows * c.cols + (c.clickCol - c.cursorCol)
+  if (!delta) return ''
+  if (Math.abs(delta) > (c.keyLimit ?? DEFAULT_KEY_LIMIT)) return ''
+  return (delta > 0 ? ARROW.right : ARROW.left).repeat(Math.abs(delta))
+}
+
+/**
  * Which cell a pointer is over, given the pixel box the terminal's rows and columns are
  * drawn in. Kept here beside the arithmetic it feeds so both are testable without a
  * window; the caller supplies the rectangle it measured.
