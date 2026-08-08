@@ -76,11 +76,11 @@ export default function Elapsed({ since, until, className = 'elapsed', title }: 
   const now = useNow()
   const text = formatElapsed((until ?? now) - since)
   return (
-    // `data-t` is the same digits again, for the shimmer: the highlight that travels
-    // through a running clock is a second copy of the text drawn in a moving gradient
-    // and clipped to the glyphs (styles.css, `.elapsed::before`). A pseudo-element can
-    // only take its content from an attribute, hence the duplicate.
-    <span className={className} data-t={text} title={title ?? 'Time since this session started'}>
+    // One copy of the digits, and only one. The clock used to carry `data-t` so a
+    // pseudo-element could redraw the same text in a gradient clipped to the glyphs; two
+    // copies of a glyph antialiased two different ways is a ghost, not a shimmer
+    // (styles.css, `.elapsed`). The pill's sheen is the "live" signal now.
+    <span className={className} title={title ?? 'Time since this session started'}>
       {text}
     </span>
   )

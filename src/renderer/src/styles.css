@@ -311,16 +311,27 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* This line overflows the moment a card carries a model, a lane chip and a running
    clock - and `overflow: hidden` clips the RIGHT end, which is where the clock is. So
    something has to give way, and it is decided here rather than by whatever happens to
-   be last: the agent's name first (its logo is right beside it and says the same
-   thing), then the chips, and never the clock. The huge shrink factor is what orders
-   it - flex divides shrink by base width, so a factor of 999 empties the name before a
-   chip loses a pixel. */
-.row-agent { flex: 0 999 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+   be last. The clock never gives way; after that the order is the reverse of what it
+   used to be.
+
+   It used to empty the agent's NAME first, on the theory that the logo beside it says
+   the same thing. It does not: the logo is a 12px mark, and a card in a lane carries a
+   place chip and a lane chip that between them are 140px of text the pane's own title
+   has usually already said. Measured at the real 239px sub-line with `Claude Code`,
+   `sonnet` and `PaneForge · lane a` on it: the name wanted 67px and was given **6.7px**
+   - one letter and an ellipsis - which is Robert's "Claude Code text is hidden when a
+   lane is being used". So the place chip gives way first (it truncates and keeps its
+   full text on the title), then the other chips, and the name last, with a floor under
+   it so it can never be reduced to punctuation again. Flex divides shrink by base
+   width, which is what makes the big factor the FIRST to go. */
+.row-agent { flex: 0 1 auto; min-width: 4.2em; overflow: hidden; text-overflow: ellipsis; }
 .chip {
   background: #ffffff0f; border: 1px solid var(--line); border-radius: 5px;
   padding: 0 5px; font-size: 10px; color: var(--muted);
 }
-.row-sub .chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row-sub .chip { flex: 0 9 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The widest thing on the line and the most repeated, so it is the first to be asked. */
+.row-sub .chip.place { flex: 0 999 auto; min-width: 3.4em; }
 .chip.dead { color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
 /* The Ctrl-N key for the pane, and the one number on screen worth glancing at. Glass
    pill: a top-lit gradient with an inset highlight, so it reads as a raised key rather
@@ -532,48 +543,25 @@ html.hi-refresh .num.live::after { animation: none; }
   animation: sheen 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 @keyframes sheen { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
-/* And the digits themselves glimmer. A second copy of the text (`data-t` on the span)
-   painted in a moving gradient and clipped to the glyphs, laid exactly over the real
-   one - so the light travels THROUGH the numbers rather than over the pill they sit on.
-   The offsets repeat the host's padding and its 1px border, which is what puts the copy
-   on the original to the pixel; the border is transparent so nothing is drawn twice. */
-.elapsed::before {
-  content: attr(data-t);
-  position: absolute; left: 0; top: 0; pointer-events: none;
-  padding: 1px 7px; border: 1px solid transparent;
-  /* The band used to travel by animating `background-position` across a 300%-wide
-     gradient. Clipping a gradient to glyphs is already the most expensive kind of paint
-     in this sidebar, and moving it meant redoing that clip every frame, on every visible
-     clock, forever - 40% of a core measured on its own. The gradient is fixed now and the
-     copy's opacity rides in and out instead, so the light still arrives and leaves in
-     time with the pill's own sheen, and the clipped text is painted once. */
-  background-image: linear-gradient(100deg, #fff0 22%, #ffffffe0 50%, #fff0 78%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: digitBreath 2.9s ease-in-out infinite;
-  will-change: opacity;
-}
-@keyframes digitBreath {
-  0%, 100% { opacity: 0.12; }
-  55% { opacity: 1; }
-}
-html.app-blurred .elapsed::before,
+/* There is NO second copy of the digits. There used to be: `data-t` was painted again in
+   a gradient clipped to the glyphs and laid over the real text, so the light travelled
+   THROUGH the numbers. Two copies of the same glyphs can only ever line up to the pixel
+   while both are laid out identically, and they are not - the copy is a transparent-colour
+   background-clip layer, which Chromium antialiases differently from ordinary text, so at
+   every opacity between the breath's 0.12 and its 1.0 the number read as doubled. That is
+   the ghosting: a fringe on every digit, on the one element in the sidebar that is moving.
+   The pill's own sheen (::after, above) already says "live" and travels over the capsule
+   rather than the text, so the glimmer bought nothing the sheen was not already saying. */
 html.app-blurred .elapsed::after { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-  .elapsed::before, .elapsed::after { animation: none; }
-  .elapsed::before { opacity: 0.12; }
-}
 /* The same slot once the turn is over: frozen, flat, and dim enough that a still number
    never reads as a running one. No glass, no sheen - that is the whole tell. */
 .elapsed.done {
   padding: 0; border-color: transparent; background: none; box-shadow: none;
   color: var(--muted); opacity: 0.42;
 }
-.elapsed.done::after, .elapsed.done::before { content: none; }
+.elapsed.done::after { content: none; }
 @media (prefers-reduced-motion: reduce) {
   .elapsed::after { animation: none; opacity: 0.5; }
-  .elapsed::before { content: none; }
 }
 /* Auto-created worktree lane, so two agents in one project are visibly apart. It is a
    button - a lane has an end now, and this is the way to it - so it also has to unlearn
