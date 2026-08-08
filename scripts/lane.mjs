@@ -58,7 +58,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
 import { mergeImportConflicts } from './lane-merge.mjs'
-import { bumpFor, hasChanges, nextVersion, notes } from './release-notes.mjs'
+import { bumpFor, hasChanges, nextVersion, notes, smallOnly } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -379,6 +379,14 @@ const LOCK_MS = 20 * 60 * 1000
 // it ships the next time anyone finishes anything here, and `npm run ship` still
 // releases immediately when something must go out now.
 const COOLDOWN_MS = 30 * 60 * 1000
+// And a longer window when everything waiting is SMALL - only fix/docs/chore subjects and
+// under 150 changed lines between them (`smallOnly` in release-notes.mjs, which explains
+// why it is both halves). A version is a claim that something changed, and a release whose
+// entire content is one CSS line teaches you to stop reading the number; six hours is long
+// enough that a one-line fix picks up company and short enough that it is out the same day.
+// Nothing waits for this on its own: the fix is committed, pushed and backed up the moment
+// it verifies, it simply travels with the next release. `npm run ship` still goes now.
+const SMALL_HOLD_MS = 6 * 60 * 60 * 1000
 // A conflicted lane whose own chat has been quiet this long is nobody's problem, which
 // is how lane b sat conflicted for a day: the one chat that could fix it had moved on,
 // and every other chat was only told about it as a fact. After this, any live chat may
@@ -1469,15 +1477,21 @@ function autoship(kind = 'auto', session = 'auto') {
   if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.map(busyDetail).join(', ')}` }
   if (!shippable(state)) return { shipped: false, reason: 'nothing to release' }
   const since = state.lastShip ? now() - state.lastShip.at : Infinity
-  if (since < COOLDOWN_MS) {
-    const wait = Math.ceil((COOLDOWN_MS - since) / 60000)
+  const small = smallOnly(MAIN)
+  const window_ = small ? SMALL_HOLD_MS : COOLDOWN_MS
+  if (since < window_) {
+    const wait = Math.ceil((window_ - since) / 60000)
     return {
       shipped: false,
       // Says "still on its lane", not "on master": the merge happens inside ship(),
       // which this return skips. An agent told the work is already on master goes
       // looking for it there, does not find it, and starts undoing a release that was
       // only ever waiting on the clock. Cost that exactly once, 2026-07-28.
-      reason: `v${state.lastShip.version} went out ${Math.round(since / 60000)}m ago. The work is committed and still on its lane; it merges and goes out with the next release (about ${wait}m). Do not ship it separately - run autoship again then.`
+      reason:
+        `v${state.lastShip.version} went out ${Math.round(since / 60000)}m ago. The work is committed and still on its lane; it merges and goes out with the next release (about ${wait}m). Do not ship it separately - run autoship again then.` +
+        (small
+          ? ' Everything waiting is small (fixes only, under 150 changed lines), so it is waiting for company rather than cutting a version of its own - anything bigger landing here releases the lot at once.'
+          : '')
     }
   }
   // Nobody is watching an automatic release, so it checks itself first. A tag that fails
@@ -2204,8 +2218,15 @@ function doctor() {
   else if (!s.pending) say('  Nothing is waiting to go out.')
   else {
     const since = s.lastShip ? now() - s.lastShip.at : Infinity
-    if (since < COOLDOWN_MS)
-      say(`  Work is ready. It goes out in about ${Math.ceil((COOLDOWN_MS - since) / 60000)}m - releases batch, so one release carries all of it.`)
+    // The same two windows autoship uses, and it says WHICH one it is on: "6 hours" with
+    // no reason reads as a stuck release rather than as small work waiting for company.
+    const small = smallOnly(MAIN)
+    const window_ = small ? SMALL_HOLD_MS : COOLDOWN_MS
+    if (since < window_)
+      say(
+        `  Work is ready. It goes out in about ${Math.ceil((window_ - since) / 60000)}m - releases batch, so one release carries all of it.` +
+          (small ? '\n  Everything waiting is small, so it is waiting for company rather than cutting a version of its own.' : '')
+      )
     else say('  Work is ready and nothing is blocking it. The next lane command releases it.')
   }
   if (s.lastShip)

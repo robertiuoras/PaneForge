@@ -186,6 +186,48 @@ check('at 1.0 a feat: is a minor again', nextVersion('1.2.3', 'minor') === '1.3.
 check('and a breaking change is a major again', nextVersion('1.2.3', 'major') === '2.0.0')
 check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4')
 
+// ---- what is small enough to wait for company --------------------------------------
+//
+// A version is a claim that something changed, so a release whose whole content is one CSS
+// line teaches you to ignore the number. `smallOnly` decides only which batching window
+// applies; the load-bearing half is that it takes BOTH halves of the question, because a
+// `fix:` subject can carry a 900-line rewrite and four lines can be the end of a feature.
+{
+  const small = mkdtempSync(join(tmpdir(), 'pf-small-'))
+  const sgit = (...args) =>
+    execFileSync('git', ['-C', small, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  sgit('init', '-b', 'master')
+  sgit('config', 'user.email', 'test@example.com')
+  sgit('config', 'user.name', 'Test')
+  sgit('config', 'commit.gpgsign', 'false')
+  let k = 0
+  const put = (subject, lines) => {
+    writeFileSync(join(small, `s${k++}.txt`), Array.from({ length: lines }, (_, i) => `line ${i}`).join('\n'))
+    sgit('add', '-A')
+    sgit('commit', '-m', subject)
+  }
+  const { smallOnly } = await import('./release-notes.mjs')
+
+  put('chore: first', 1)
+  sgit('tag', 'v0.1.0')
+  check('nothing waiting is not "small"', smallOnly(small) === false)
+
+  put('fix: the running clock ghosts', 6)
+  check('a small fix waits for company', smallOnly(small) === true)
+
+  put('docs: say why', 4)
+  check('and so does a pile of small ones', smallOnly(small) === true)
+
+  put('feat: a whole new panel', 3)
+  check('a feat: is never small, however few lines it is', smallOnly(small) === false)
+
+  sgit('tag', 'v0.1.1')
+  put('fix: one line, but nine hundred of them', 900)
+  check('and neither is a fix: that rewrites the file', smallOnly(small) === false)
+
+  rmSync(small, { recursive: true, force: true })
+}
+
 rmSync(root, { recursive: true, force: true })
 
 if (failures) {

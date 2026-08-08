@@ -134,6 +134,41 @@ export function bumpFor(repo) {
 }
 
 /**
+ * Is everything waiting to go out a SMALL thing?
+ *
+ * "I don't want to release a new version every time for something like the running number
+ * ghosting" - and he is right: a version is a claim that something changed, and a release
+ * whose whole content is one CSS line teaches him to ignore the number. But a small fix
+ * must not be held for ever either, so this decides one thing only - whether the batching
+ * window is the ordinary half hour or the long one (`SMALL_HOLD_MS` in lane.mjs). Nothing
+ * is ever dropped: held work sits on master and goes out with whatever lands next.
+ *
+ * Small means BOTH halves, because either alone is wrong. A `fix:` subject can carry a
+ * 900-line rewrite, and a 4-line diff can be the last line of a feature - so it is the
+ * types AND the size, and anything that says `feat`/`perf`/`!` is not small whatever its
+ * diffstat says.
+ */
+export function smallOnly(repo, maxLines = 150) {
+  const latest = versionTags(repo)[0]
+  const range = latest ? `${latest}..HEAD` : 'HEAD'
+  const list = subjects(repo, range)
+  if (!list.length) return false
+  const big = new Set(['feat', 'perf'])
+  for (const s of list) {
+    if (/^[a-z]+(\([^)]+\))?!:/.test(s)) return false
+    if (big.has(parse(s).type ?? '')) return false
+  }
+  // `--shortstat` over the same range, so the size question is asked about exactly the
+  // commits the subjects were read from.
+  const stat = gitSafe(repo, ['diff', '--shortstat', range])
+  const changed = [...(stat || '').matchAll(/(\d+) (?:insertion|deletion)/g)].reduce(
+    (n, m) => n + Number(m[1]),
+    0
+  )
+  return changed > 0 && changed <= maxLines
+}
+
+/**
  * The version an automatic release cuts, given the one it is on and the bump its commits
  * asked for. `typed` is a bump Robert named himself (`ship minor`), which is always obeyed.
  *
