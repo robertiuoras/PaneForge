@@ -214,6 +214,26 @@ channel of its own.
   a phone in this room and another for an address off the internet. The same function
   labels each offered address with what it reaches, so the panel can never promise
   "works anywhere" for an address the server would then mark "this network".
+- **A way in from anywhere is `cloudflared`, and the URL is not the claim.** `main/tunnel.ts`
+  runs a Cloudflare quick tunnel so a phone on any network reaches this desk with no
+  account, no VPN and nothing installed on the phone. Tailscale is the wrong answer to
+  ship: it needs an account, an app on the phone and an install on the desk.
+  - **Never look the hostname up before the tunnel has registered.** `*.trycloudflare.com`
+    is not a wildcard, so an early query gets NXDOMAIN and the resolver **caches it** —
+    measured 40 unbroken seconds of `getaddrinfo ENOTFOUND` while 1.1.1.1 had been
+    answering since t=8s, against an instant resolve on the next run that waited. The
+    tunnel was healthy both times. Hence the `Registered tunnel connection` gate.
+  - `up` is set by a real HTTPS request coming back with this desk's own bytes, never by
+    the URL line appearing. Measured: hostname 3–6s, public DNS 8–13s, first 200 ~1s later.
+  - Everything cloudflared says is on **stderr**; its stdout was 0 bytes on every run.
+  - Turning it on **lengthens the pairing code to 14** and signs every phone out. Six
+    characters is a LAN number: 387M combinations, and on a public address the per-address
+    lockout stops mattering because attempts come from as many addresses as the attacker
+    likes. Nobody types it — the QR carries it — so the longer one costs nothing.
+  - The binary is downloaded once (19–54 MB), never bundled, through a `.part` name and a
+    rename. Quitting kills it — it is not a pty, so `strays.ts` has never heard of it.
+  - `npm run test:tunnel` drives all of it against a stub that prints what the real program
+    prints, with every budget overridable by env.
 - **A phone is not a small desktop.** Under 720px the list and the panes take turns
   (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
   the display. `display: none`, never a 0px xterm.
@@ -447,6 +467,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:cursorclick` | Alt-click placing the CLI's cursor: the keys it sends, and the clicks it refuses to answer |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
+| `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |
 | `npm run test:qr` | the pairing QR, by DECODING it: format bits, zig-zag, de-interleave, every Reed-Solomon syndrome zero, payload back out — every version at every mask. Nothing less catches a symbol that is drawn perfectly and reads nowhere |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |

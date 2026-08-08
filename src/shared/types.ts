@@ -858,8 +858,18 @@ export interface PhoneConfig {
    * commands on this machine. */
   on: boolean
   port: number
-  /** the six characters a browser types once; rotating it signs every phone out */
+  /** the characters a browser types once; rotating it signs every phone out */
   code: string
+  /**
+   * Reachable from outside this network, through a Cloudflare quick tunnel.
+   *
+   * Its own switch and not implied by `on`, because the two are different promises: `on`
+   * puts this desk on the LAN, where the front door is already a private address. This
+   * one puts a public https address in front of it, and the code stops being the second
+   * lock behind a network nobody else is on - which is why turning it on lengthens the
+   * code (see `LONG_CODE_LEN` in main/index.ts).
+   */
+  tunnel?: boolean
 }
 
 /**
@@ -883,6 +893,20 @@ export interface PhonePeer {
   since: number
 }
 
+/**
+ * A way in from a network that is not this one, without a VPN at either end.
+ *
+ * `off` and `up` are the settled pair; `fetching` (downloading cloudflared once) and
+ * `starting` are transient and carry a budget in `main/tunnel.ts`, because a phase that
+ * can be held for ever by a hung child is the one shape that makes somebody reinstall.
+ */
+export interface TunnelState {
+  phase: 'off' | 'fetching' | 'starting' | 'up'
+  /** the https address, and only once it has really answered - never on the phase alone */
+  url: string
+  error?: string
+}
+
 export interface PhoneState {
   /** the listener is actually up */
   on: boolean
@@ -894,6 +918,8 @@ export interface PhoneState {
   clients: number
   /** one per live stream, newest last */
   peers: PhonePeer[]
+  /** the way in from outside this network, off unless asked for */
+  tunnel: TunnelState
   /** why it is not up when it should be (a taken port) */
   error?: string
 }
@@ -1507,6 +1533,12 @@ export interface Api {
   setPhonePort(port: number): Promise<PhoneState>
   /** new pairing code: every phone holding the old cookie is signed out */
   rotatePhoneCode(): Promise<PhoneState>
+  /**
+   * Reachable from outside this network, through a Cloudflare quick tunnel. The first
+   * `true` downloads cloudflared once and can take a minute, so the answer comes back as
+   * soon as the phase is known and the rest arrives on `onPhone`.
+   */
+  setPhoneTunnel(on: boolean): Promise<PhoneState>
   /** the count and the addresses change without anybody asking */
   onPhone(cb: (state: PhoneState) => void): () => void
 

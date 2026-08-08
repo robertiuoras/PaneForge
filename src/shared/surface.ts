@@ -131,6 +131,7 @@ export const SURFACE: Surface = {
   setPhoneServing: ['invoke', 'phone:serve'],
   setPhonePort: ['invoke', 'phone:port'],
   rotatePhoneCode: ['invoke', 'phone:rotate'],
+  setPhoneTunnel: ['invoke', 'phone:tunnel'],
   onPhone: ['on', 'phone:changed'],
   remoteState: ['invoke', 'remote:state'],
   setRemoteHost: ['invoke', 'remote:host'],

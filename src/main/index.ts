@@ -31,12 +31,13 @@ import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
+import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
-import type { DiffScope } from '../shared/types'
+import type { DiffScope, PhoneState } from '../shared/types'
 import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
@@ -517,8 +518,35 @@ const phone = new PhoneServer({
   invoke: (channel, args) => callInvoke(channel, args),
   send: (channel, args) => callSend(channel, args),
   channels: surfaceChannels(),
-  onChange: () => send('phone:changed', phone.state())
+  onChange: () => send('phone:changed', phoneState())
 })
+
+/**
+ * A way in from a network that is not this one.
+ *
+ * Its own switch under the phone's, never implied by it: serving on the LAN and putting a
+ * public https address in front of that are different promises, and only the second one
+ * makes the pairing code the whole of the lock. See `tunnel.ts`.
+ */
+const tunnel = new Tunnel({
+  dir: join(app.getPath('userData'), 'bin'),
+  onChange: () => send('phone:changed', phoneState())
+})
+
+/**
+ * Long enough to survive being on the open internet. Six characters is a LAN number; the
+ * arithmetic that makes it one is in `newPhoneCode`. Nobody types either - the QR carries
+ * it - so the only cost of the longer one is that it looks less friendly on screen.
+ */
+const LONG_CODE_LEN = 14
+
+/** The code a public address needs, rotated in only when it is not already long enough. */
+function ensureCodeFor(tunnelOn: boolean): void {
+  const cfg = getConfig()
+  const code = cfg.phone?.code ?? ''
+  if (!tunnelOn || code.length >= LONG_CODE_LEN) return
+  setConfig({ phone: { ...cfg.phone!, code: newPhoneCode(LONG_CODE_LEN) } })
+}
 
 // The window can be gone (quit) or destroyed-but-still-referenced (teardown order)
 // while pty output and session events are still in flight.
@@ -1380,27 +1408,71 @@ let laneSweepQueued = false
 // has to guess what a change did - it just redraws what it is handed.
 // The phone client. `phone:changed` goes out from the server's own onChange, so a browser
 // arriving or leaving updates Settings without anything polling.
-ipcMain.handle('phone:state', () => phone.state())
+/** Every phone answer carries the tunnel too: one state, one repaint, no second poll. */
+function phoneState(): PhoneState {
+  return { ...phone.state(), tunnel: tunnel.state() }
+}
+ipcMain.handle('phone:state', () => phoneState())
 ipcMain.handle('phone:serve', async (_e, on: boolean) => {
   const cfg = getConfig()
   const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
   setConfig({ phone: { ...cfg.phone!, on: !!on } })
-  return on ? await phone.start(port) : (await phone.stop(), phone.state())
+  if (!on) {
+    // The tunnel points at a port that is about to stop answering; leaving it up would
+    // publish an address that 502s, which reads as a broken app rather than a closed door.
+    await tunnel.stop()
+    await phone.stop()
+    return phoneState()
+  }
+  await phone.start(port)
+  if (cfg.phone?.tunnel) void tunnel.start(port)
+  return phoneState()
 })
 ipcMain.handle('phone:port', async (_e, port: number) => {
   const next = Math.max(1024, Math.min(65535, Math.round(Number(port) || DEFAULT_PHONE_PORT)))
   const cfg = getConfig()
   setConfig({ phone: { ...cfg.phone!, port: next } })
-  if (!phone.running) return phone.state()
-  return await phone.start(next)
+  if (!phone.running) return phoneState()
+  await phone.start(next)
+  // The tunnel is bound to the OLD port, so it is restarted rather than left pointing at
+  // a door that moved. A new quick tunnel means a new address, which the panel redraws.
+  if (tunnel.running) void tunnel.start(next)
+  return phoneState()
+})
+
+/**
+ * Reachable from anywhere, or not. The first `on` downloads cloudflared once (19-54 MB)
+ * and can take a minute; the phases are reported rather than awaited silently.
+ */
+ipcMain.handle('phone:tunnel', async (_e, on: boolean) => {
+  const cfg = getConfig()
+  setConfig({ phone: { ...cfg.phone!, tunnel: !!on } })
+  if (!on) {
+    await tunnel.stop()
+    return phoneState()
+  }
+  // Before the address exists, never after: a public URL that is live for even a second
+  // in front of a six-character code is the window this is meant to close.
+  ensureCodeFor(true)
+  send('phone:changed', phoneState())
+  const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
+  if (!phone.running) await phone.start(port)
+  void tunnel.start(port)
+  return phoneState()
 })
 ipcMain.handle('phone:rotate', async () => {
   const cfg = getConfig()
-  setConfig({ phone: { ...cfg.phone!, code: newPhoneCode() } })
+  // A rotation while a public address is up must not shorten the code back down.
+  setConfig({
+    phone: {
+      ...cfg.phone!,
+      code: newPhoneCode(cfg.phone?.tunnel ? LONG_CODE_LEN : 6)
+    }
+  })
   // Every paired browser's cookie was derived from the old code, so they are already out;
   // this only tells Settings the new one.
-  send('phone:changed', phone.state())
-  return phone.state()
+  send('phone:changed', phoneState())
+  return phoneState()
 })
 ipcMain.handle('remote:state', () => remote.state())
 ipcMain.handle('remote:host', (_e, on: boolean) => {
@@ -2678,7 +2750,13 @@ app.whenReady().then(() => {
   remote.start()
   // Same reason as remote.start(): a phone that reconnects the second the port opens
   // would otherwise be answered by handlers whose window is still loading.
-  if (cfg.phone?.on) void phone.start(cfg.phone.port)
+  if (cfg.phone?.on) {
+    void phone.start(cfg.phone.port).then(() => {
+      // After the listener, never with it: a tunnel in front of a port that is not
+      // answering yet publishes an address that 502s for its first few seconds.
+      if (cfg.phone?.tunnel) void tunnel.start(cfg.phone.port)
+    })
+  }
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
     // A "Restart now" whose install never applied: the relaunch is the old version
@@ -2827,6 +2905,9 @@ app.on('before-quit', () => {
   // A bound port outlives this process on Windows for long enough that the next launch
   // reports it taken, so the listener is closed by hand rather than left to the exit.
   void phone.stop()
+  // Not a pty, so `strays.ts` has never heard of it: without this line the app leaves a
+  // cloudflared holding a public address open with nothing behind it.
+  void tunnel.stop()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

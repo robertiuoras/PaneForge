@@ -1777,6 +1777,14 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .dev-addr-row { display: inline-flex; align-items: center; gap: 5px; }
 .dev-reach { color: var(--muted); font-size: 10.5px; }
 .dev-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+/* ---- a way in from anywhere ----
+   The switch carries its own hint, which is a paragraph, so the row stops being a single
+   line and the label has to sit at the top of it rather than beside its middle. */
+.dev-tunnel { align-items: flex-start; }
+.tunnel-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* A 14-character code is what a public address needs, and it must not push the Copy and
+   New code buttons off the row - it wraps instead. */
+.dev-code { overflow-wrap: anywhere; }
 /* ---- who is watching ----
    One row per live event stream. `align-items: flex-start` because the label is a fixed
    78px column and the list beside it is several lines tall - centring it would float the

@@ -97,7 +97,7 @@ export class PhoneServer {
   constructor(private deps: PhoneDeps) {}
 
   /** Start answering. Resolves once the port is really bound, or with `error` set. */
-  async start(port: number, bind = '0.0.0.0'): Promise<PhoneState> {
+  async start(port: number, bind = '0.0.0.0'): Promise<Omit<PhoneState, 'tunnel'>> {
     await this.stop()
     this.lastError = ''
     const server = createServer((req, res) => {
@@ -158,7 +158,13 @@ export class PhoneServer {
     return !!this.server
   }
 
-  state(): PhoneState {
+  /**
+   * Everything this server knows. NOT the tunnel: that is a separate child process with a
+   * separate switch, and `main/index.ts` merges the two into the one `PhoneState` the
+   * panel redraws - so a server that has never heard of cloudflared stays testable on its
+   * own, and there is one repaint rather than two.
+   */
+  state(): Omit<PhoneState, 'tunnel'> {
     const port = this.listening || 0
     return {
       on: !!this.server,
@@ -393,11 +399,31 @@ function isTailscale(url: string): boolean {
   return !!m && Number(m[1]) >= 64 && Number(m[1]) <= 127
 }
 
-/** Six characters, no vowels and no lookalikes: it is read off a screen and typed once. */
-export function newPhoneCode(): string {
+/**
+ * No vowels and no lookalikes: it is read off a screen and typed once.
+ *
+ * **Six is a LAN number, not a secret.** 27 characters to the sixth is 387 million, which
+ * nobody walks through the front door of a private address - the lockout is five tries per
+ * address and there is nothing behind a wrong one but a 40-byte page. Put a public https
+ * address in front of the same door and that arithmetic changes: attempts come from as
+ * many addresses as the attacker likes, the per-address lockout stops counting for them,
+ * and 387 million at a thousand a second is about four and a half days for a shell on this
+ * machine. So the tunnel lengthens it rather than trusting the lockout - and it costs
+ * nothing, because the QR carries the code and nobody types it.
+ */
+export function newPhoneCode(length = 6): string {
   const alphabet = '23456789BCDFGHJKMNPQRSTVWXZ'
-  const bytes = randomBytes(6)
-  return [...bytes].map((b) => alphabet[b % alphabet.length]).join('')
+  // rejection-sampled: `% 27` over 256 favours the first 13 letters by about 1.2x, which
+  // is a real bias in a secret this short.
+  const out: string[] = []
+  while (out.length < length) {
+    for (const b of randomBytes(length * 2)) {
+      if (b >= 243) continue
+      out.push(alphabet[b % alphabet.length])
+      if (out.length === length) break
+    }
+  }
+  return out.join('')
 }
 
 function sameCode(typed: string, real: string): boolean {

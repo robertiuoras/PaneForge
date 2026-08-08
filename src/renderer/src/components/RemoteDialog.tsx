@@ -46,6 +46,62 @@ interface Props {
  * would make somebody expect a pane to move.
  */
 /**
+ * A way in from a network that is not this one.
+ *
+ * Its own switch under the phone's rather than folded into it, because the two are
+ * different promises and the second one is the bigger. Serving on the LAN puts this desk
+ * behind a private address that nobody outside the building can reach at all; a public
+ * https address in front of it makes the pairing code the entire lock, which is why
+ * turning this on rotates the code to a long one and says so rather than doing it quietly.
+ *
+ * The words under it name Cloudflare on purpose. Traffic goes through their edge and they
+ * terminate the TLS, so this is somebody else being able to see what is typed into a pane
+ * - a thing the person pressing the switch is entitled to know before they press it, not
+ * after.
+ */
+function PhoneTunnel({
+  state,
+  setState
+}: {
+  state: PhoneState
+  setState: (s: PhoneState) => void
+}): JSX.Element {
+  const t = state.tunnel
+  const working = t.phase === 'fetching' || t.phase === 'starting'
+  return (
+    <div className="dev-field dev-tunnel">
+      <span className="dev-key">Anywhere</span>
+      <div className="tunnel-body">
+        <Switch
+          checked={t.phase !== 'off'}
+          disabled={working}
+          onChange={(on) => void api.setPhoneTunnel(on).then(setState)}
+          label="Reachable from outside this network"
+          hint="Opens a Cloudflare tunnel and gives this desk a public https address that works on any network, with no account and nothing to install on the phone. Your panes travel through Cloudflare, who can see them. The pairing code becomes the only lock, so switching this on makes it a longer one and signs every phone out."
+        />
+        {/* A phase is never the claim. `up` is set by a real request against the real
+            address coming back with this desk's own bytes - see main/tunnel.ts. */}
+        {t.phase === 'fetching' && (
+          <span className="hint">Downloading cloudflared once (about 20 MB)&hellip;</span>
+        )}
+        {t.phase === 'starting' && (
+          <span className="hint">Opening the tunnel&hellip; this takes about twenty seconds.</span>
+        )}
+        {t.phase === 'up' && t.url && (
+          <div className="dev-addrs">
+            <span className="dev-addr-row">
+              <code className="dev-addr">{t.url}</code>
+              <span className="dev-reach">works anywhere</span>
+            </span>
+          </div>
+        )}
+        {t.error && <div className="dev-error">{t.error}</div>}
+      </div>
+    </div>
+  )
+}
+
+/**
  * Who is watching, right now.
  *
  * The word is "watching" and not "paired" because that is the only thing the server can
@@ -114,7 +170,10 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
   }, [])
 
   if (!state) return <></>
-  const url = state.urls[0] ?? ''
+  // The public address wins the QR whenever there is one. Scanning is the path this
+  // expects to be used, and a QR that quietly encodes a LAN address while a tunnel is up
+  // is the version of this feature that works at the desk and nowhere else.
+  const url = (state.tunnel.phase === 'up' && state.tunnel.url) || state.urls[0] || ''
 
   return (
     <div className="setting">
@@ -218,6 +277,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               </button>
             </div>
           </div>
+          <PhoneTunnel state={state} setState={setState} />
           <PhonePeers peers={state.peers} />
           <p className="hint">
             Typed once per phone, then it stays signed in. A tailnet address is listed first
