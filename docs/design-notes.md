@@ -472,12 +472,50 @@ Not built, and the UI does not pretend otherwise: there is no headless host (the
 be running - TODO B1) and no phone-first diff view (H2). Reaching it from outside the
 network is a tailnet address, which is why `phoneUrls` sorts 100.64/10 first.
 
-### Pairing is a camera, not a keyboard - and not an account
+### Scanning asks; a press on the desk answers
+
+The QR carried the code for a while, in the fragment, and that solved the typing. It did not
+solve the thing underneath it, which only became visible when Robert asked to see "the
+connected devices" and there was nothing honest to show: **the cookie was
+`hmac(deviceId, code)`, so every browser that ever used the code held the identical one.**
+There was no list of who was in, no way to remove one of them, and `New code` - which signs
+out all of them at once - was the only revoke that could exist. A per-row `Disconnect`
+button would have been a lie: the stream returns immediately, because the cookie is still
+good.
+
+So the picture is now the bare address and the secret is minted at the other end. The phone
+opens the link, `POST /pf/ask` raises a card on this desk with four digits that are on both
+screens, and Approve mints **that browser** a 32-byte token. What follows from that one
+change:
+
+- there is no secret on screen at all, so a photograph of the Devices panel is worth
+  nothing, and nothing has to be read across a room;
+- a device can be signed out **by name**, and it means it - `who()` looks the token up in
+  the list on every single request, so the stream ends and the next request gets the pairing
+  page (verified against a running copy, not only in tests);
+- an approved phone survives restarts and the app's own updates, because the list is in the
+  config like everything else that has to outlive the process;
+- the four digits are not a password and are never sent by the browser. They are generated
+  here and shown in both places, so Approve is a statement that *the phone in your hand is
+  the one that asked*.
+
+Nothing is granted by asking - the card is a refusal until it is answered. Anything that can
+reach the port can raise one, which is what an open port means, so: one request stands at a
+time, five per address per ten minutes, two minutes to answer, and the card says where the
+request came from. An `internet` origin (which is what a tunnel makes every phone) is drawn
+in the warning colour rather than like the phone in your pocket, because those two are
+answered differently. The whole thing is a switch; off, the QR goes back to carrying the code
+in the fragment and the old zero-tap path is exactly as it was.
+
+The code is still there, still typed on a phone with no camera, and `New code` still signs
+out everything that used one. What it no longer has to be is the only way in.
+
+### The code in a fragment, and why not an account
 
 Six characters is small, and it was still the only typing left in the product, done in the
 worst place there is to type: an on-screen keyboard, phone in one hand, copying off a screen
-a metre away. So Settings draws the address and the code together as a QR, the camera app
-opens it, and pairing is one tap.
+a metre away. So Settings drew the address and the code together as a QR, the camera app
+opens it, and pairing is one tap. That is the fallback path now, not the main one.
 
 **OAuth and email were asked for and refused, and the reason is not effort.** Both are
 identity services, and identity is not the question this link asks. What is behind the code
