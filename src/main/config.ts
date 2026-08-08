@@ -204,11 +204,14 @@ function defaults(): Config {
     historyDays: 30,
     autoLane: true,
     voice: { enabled: true, model: 'base', language: 'auto', engine: 'auto' },
-    // Off, and every other default chosen so that turning it on once changes as little as
-    // possible: the pane's own agent, one question at most, balanced budget, no telemetry,
-    // and no knowledge source configured until the user points at one.
+    // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
+    // nothing and nothing runs until a person clicks - which is what made off-by-default
+    // overcautious: the one person who wanted it on had to find a setting to learn the
+    // feature existed. Every other default still chosen so the first use changes as
+    // little as possible: the pane's own agent, one question at most, balanced budget,
+    // no telemetry, and no knowledge source until the user points at one.
     promptImprove: {
-      mode: 'off',
+      mode: 'suggest',
       engine: '',
       model: '',
       clarify: 'minimal',
@@ -231,6 +234,10 @@ function defaults(): Config {
     // On: every agent the app can drive only runs headlessly with its prompt off, so off
     // by default would ship the feature dead. What K4 adds is that it is now sayable.
     driveUnattended: true,
+    // The report is on by default because it costs nothing when the ask never came from
+    // a channel - TaskDriver stores the row and posts nowhere. The key is empty until
+    // the endpoint starts demanding one.
+    dispatch: { reportUrl: 'https://app.taskdriver.ai/api/dispatch/report', reportKey: '' },
     remote: defaultRemote(),
     // Off, and it stays off until Settings says otherwise: serving the UI over HTTP hands
     // a browser a pane, and a pane runs commands on this machine.
@@ -260,6 +267,7 @@ export function getConfig(): Config {
       // `undefined`, which every read below would then have to guard.
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
+      dispatch: { ...base.dispatch, ...(raw.dispatch ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },
