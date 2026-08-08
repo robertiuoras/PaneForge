@@ -28,13 +28,20 @@ mkdirSync(work, { recursive: true })
 const outfile = join(work, 'dispatch.bundle.cjs')
 buildSync({
   absWorkingDir: root,
-  entryPoints: ['src/shared/dispatch.ts'],
+  stdin: {
+    contents: [
+      "export { route, tierFor, escalate, wideAsk, pinpointed, planLine } from './src/shared/dispatch'",
+      "export { gateDue, diffKey, WATCH_QUIET_MS } from './src/shared/dispatchWatch'"
+    ].join('\n'),
+    resolveDir: root,
+    loader: 'ts'
+  },
   bundle: true,
   format: 'cjs',
   platform: 'node',
   outfile
 })
-const { route, tierFor, escalate, wideAsk, pinpointed, planLine } =
+const { route, tierFor, escalate, wideAsk, pinpointed, planLine, gateDue, diffKey, WATCH_QUIET_MS } =
   createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -201,6 +208,26 @@ eq('C is the ceiling', escalate('C'), null)
   check('the model', line.includes('sonnet'), line)
   check('the budget', line.includes('6m'), line)
   check('and every gate step that will really run', line.includes('diff, typecheck, suite'), line)
+}
+
+// --- D2's watch arithmetic: when is a pane's turn over? --------------------------------
+{
+  const base = { startedAt: 0, budgetMs: 60_000, lastChangeAt: 0, exited: false }
+  check('a pane still thinking is left alone', gateDue({ ...base, now: 30_000 }).due === false)
+  eq('a gone pty gates at once', gateDue({ ...base, exited: true, now: 1 }).reason, 'exit')
+  eq(
+    'a diff that sat still long enough gates',
+    gateDue({ ...base, lastChangeAt: 10_000, now: 10_000 + WATCH_QUIET_MS }).reason,
+    'quiet'
+  )
+  check(
+    'but never before it has changed at all',
+    gateDue({ ...base, budgetMs: 600_000, now: WATCH_QUIET_MS + 1 }).due === false
+  )
+  eq('the budget fires whether or not anything was written', gateDue({ ...base, now: 60_000 }).reason, 'budget')
+  const d = { files: 1, added: 3, removed: 0, paths: ['a.ts'] }
+  check('the same diff keys the same', diffKey(d) === diffKey({ ...d }))
+  check('a rename is a change', diffKey(d) !== diffKey({ ...d, paths: ['b.ts'] }))
 }
 
 console.log(`dispatch: ${checks} checks passed`)

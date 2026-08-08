@@ -47,11 +47,12 @@ import { which } from './which'
 import { cancelImprove, improve, resolveEngine, runCli } from './improve'
 import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
 import { cancelResearch, research } from './researchRun'
-import type { ClaimLane } from './supervisor'
+import type { ClaimLane, PaneDriver } from './supervisor'
 import {
   clearFinishedDrives,
   driveCwds,
   listDrives,
+  notePaneInput,
   onDriveChange,
   startDrive,
   stopAllDrives,
@@ -64,10 +65,16 @@ import {
   configureGoals,
   listGoals,
   noteDriveChange,
+  onGoalReport,
   onGoalsChange,
+  priorDispatch,
   removeGoal,
   retryGoal
 } from './goals'
+import { route } from '../shared/dispatch'
+import { buildAsk } from './dispatchAsk'
+import { buildReport, postReport } from './dispatchReport'
+import { currentBranch } from './agentRun'
 import type { Goal } from '../shared/goals'
 import type { DriveRequest, DriveRun } from '../shared/types'
 import { buildContextPack } from './contextPack'
@@ -934,6 +941,10 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 )
 ipcMain.on('pty:write', (_e, id: string, data: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+  // A person typing into a dispatched pane takes it over: the run is dropped, never
+  // fought over. Only this channel carries a person's bytes - the dispatcher's own
+  // prompt and retry brief go through `manager.write` directly.
+  notePaneInput(id)
   watchForClear(id, data)
   manager.write(id, data)
 })
@@ -1138,6 +1149,35 @@ onDriveChange((run) => {
   noteDriveChange(run)
 })
 
+// D2: how a dispatched run gets its pane. The same `laneFor` a person's launch goes
+// through, so the worktree comes out of the same pool, and `manager.start` types the
+// prompt through the same queue a Split launch uses. `alive` answers from the session
+// list rather than an exit event, because the watcher polls anyway - a session that is
+// gone entirely counts as exited, which it is.
+const dispatchPanes: PaneDriver = {
+  open: async (req) => {
+    const started = await laneFor(
+      {
+        cwd: req.cwd,
+        title: req.title,
+        role: 'dispatched',
+        agent: req.agent as StartSessionRequest['agent'],
+        model: req.model,
+        prompt: req.prompt
+      },
+      driveCwds()
+    )
+    const s = manager.start(started)
+    return { id: s.id, cwd: started.cwd, branch: await currentBranch(started.cwd) }
+  },
+  type: (id, text) => manager.write(id, `${text}\r`),
+  close: (id) => manager.kill(id),
+  alive: (id) => {
+    const s = manager.list().find((x) => x.id === id)
+    return Boolean(s && s.status !== 'exited')
+  }
+}
+
 // Both doors into a driven run ask the same question first (K4). A refusal throws, so the
 // renderer's invoke rejects with the sentence naming the flag - a button that silently
 // does nothing is the failure mode this is meant to avoid, not a second one to add.
@@ -1171,17 +1211,29 @@ ipcMain.handle('drive:clear', () => clearFinishedDrives())
 // recovery - anything left `running` by a kill becomes `interrupted` - so it runs at wiring
 // time and not on the first press.
 onGoalsChange((list) => send('goals:changed', list))
-configureGoals(claimForDrive)
+configureGoals(claimForDrive, { paneDriver: dispatchPanes })
+// D3: a finished dispatched goal reports back where the ask came from. TaskDriver owns
+// the Discord token and the channel row; this desk only ever POSTs.
+onGoalReport((g) => {
+  const d = getConfig().dispatch
+  const body = buildReport(g)
+  if (body && d.reportUrl) postReport(d.reportUrl, body, d.reportKey)
+})
 
 ipcMain.handle('goal:add', (_e, req: DriveRequest): Goal => {
-  refuseUnattended(req.agent ?? 'claude')
+  // D5.2: the router prices the ask - tier, model, budget, gate - and the board shows
+  // its reasoning. The dialog's own picks still win where they were made deliberately.
+  const plan = route(buildAsk(req.cwd, req.mission, priorDispatch(req.mission)))
+  const agent = req.agent ?? plan.agent
+  refuseUnattended(agent)
   return addGoal({
     cwd: req.cwd,
     mission: req.mission,
     plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
-    agent: req.agent ?? 'claude',
-    model: req.model,
-    skipReview: req.skipReview
+    agent,
+    model: req.model || (agent === plan.agent ? plan.model : ''),
+    skipReview: req.skipReview ?? !plan.gate.includes('review'),
+    dispatch: plan
   })
 })
 ipcMain.handle('goal:list', () => listGoals())

@@ -23,9 +23,10 @@
 import { randomUUID } from 'node:crypto'
 import type { DriveLane, DriveRun } from '../shared/agentic'
 import { MAX_ATTEMPTS, TURN_BUDGET_MS, retryBrief, runDone } from '../shared/agentic'
+import { WATCH_POLL_MS, diffKey, gateDue } from '../shared/dispatchWatch'
 import type { SplitPlan } from '../shared/types'
 import { runGate } from './agentGate'
-import { cancelAgentRun, headSha, runAgentTurn } from './agentRun'
+import { cancelAgentRun, diffSince, headSha, runAgentTurn } from './agentRun'
 import { laneBrief } from './split'
 
 /**
@@ -56,6 +57,8 @@ export interface DriveInput {
   model?: string
   /** Skip the reviewer agent. The two cheap gate steps still run. */
   skipReview?: boolean
+  /** Wall clock per attempt. The dispatch plan's number; `TURN_BUDGET_MS` otherwise. */
+  budgetMs?: number
   /**
    * The executable, and the arguments before the CLI's own, when PATH is not where it
    * lives. The seam `npm run test:agentic` drives the whole loop through - a stub that
@@ -285,7 +288,7 @@ async function driveLane(
       model: input.model,
       prompt,
       key,
-      budgetMs: TURN_BUDGET_MS,
+      budgetMs: input.budgetMs ?? TURN_BUDGET_MS,
       bin: input.bin,
       argsPrefix: input.argsPrefix,
       onEvent: (e) => {
@@ -340,6 +343,214 @@ async function driveLane(
 
     prompt = retryBrief(gate, attempt)
     set({ note: failed ? `retrying - ${failed.name} failed` : 'retrying' })
+  }
+}
+
+// --- D2: the run is a pane, because being watchable is the ask ---------------------------
+//
+// A dispatched goal opens a REAL pane on the lane worktree and types the prompt into it -
+// the same door a person's typing goes through. The supervisor never reads the pane's
+// text: it watches `diffSince` and the pty, and when `gateDue` says the turn is over it
+// runs the same `agentGate` the headless path runs. The pane closes itself on success and
+// stays on failure - a pane that vanished after a failed run takes the only readable
+// account of the failure with it.
+
+/**
+ * What the pane path needs from the window side, injected for the same reason `ClaimLane`
+ * is: panes live in `index.ts`'s session manager, and importing that here would make this
+ * file need a window to be tested at all. The tests hand in a fake made of a temp repo.
+ */
+export interface PaneDriver {
+  open(req: {
+    cwd: string
+    title: string
+    agent: string
+    model?: string
+    prompt: string
+  }): Promise<{ id: string; cwd: string; branch: string }>
+  /** Type into the pane - the retry brief goes in through the same keyboard. */
+  type(id: string, text: string): void
+  close(id: string): void
+  /** Is the pane's process still there? Polled, so no exit event has to be wired. */
+  alive(id: string): boolean
+}
+
+/** Pane session id → the run watching it. How a person's keystroke finds its run. */
+const watchedPanes = new Map<string, { runId: string; takenOver: boolean }>()
+
+/**
+ * A person typed into a watched pane. D2's rule: the run is DROPPED, never fought over -
+ * the pane becomes an ordinary pane, the gate does not run, and nothing closes it.
+ * Called from the `pty:write` handler, which only ever carries a person's bytes - the
+ * prompt and the retry brief go through `PaneDriver.type`, not through that channel.
+ */
+export function notePaneInput(sessionId: string): void {
+  const w = watchedPanes.get(sessionId)
+  if (w) w.takenOver = true
+}
+
+const pollMs = (): number => Number(process.env.PF_DISPATCH_POLL_MS) || WATCH_POLL_MS
+const quietMs = (): number | undefined =>
+  Number(process.env.PF_DISPATCH_QUIET_MS) || undefined
+
+/**
+ * Drive a single-lane plan through a visible pane. Same contract as `startDrive`:
+ * returns as soon as the run exists, progress arrives through `onDriveChange`, and the
+ * result is a branch and a diff - never a merge.
+ */
+export function startPaneDrive(input: DriveInput, driver: PaneDriver): DriveRun {
+  const id = randomUUID().slice(0, 8)
+  const run: DriveRun = {
+    id,
+    mission: input.mission,
+    cwd: input.cwd,
+    agent: input.agent,
+    model: input.model ?? '',
+    startedAt: Date.now(),
+    stopping: false,
+    tokens: { input: 0, output: 0 },
+    costUsd: 0,
+    lanes: [
+      {
+        name: input.plan.lanes[0]?.name ?? 'dispatch',
+        state: 'queued',
+        cwd: '',
+        branch: '',
+        attempt: 0,
+        note: ''
+      }
+    ]
+  }
+  runs.set(id, run)
+  changed(run)
+  void drivePane(run, input, driver).catch((e) => {
+    // Same rule as `drive()`: a programming error must not leave the board reading
+    // `working` for ever with nothing left to move it.
+    const lane = run.lanes[0]
+    lane.state = 'failed'
+    lane.note = e instanceof Error ? e.message : String(e)
+    lane.endedAt = Date.now()
+    run.endedAt = Date.now()
+    changed(run)
+  })
+  return run
+}
+
+async function drivePane(run: DriveRun, input: DriveInput, driver: PaneDriver): Promise<void> {
+  const lane = run.lanes[0]
+  const set = (patch: Partial<DriveLane>): void => {
+    Object.assign(lane, patch)
+    changed(run)
+  }
+  const end = (patch: Partial<DriveLane>): void => {
+    set({ ...patch, endedAt: Date.now() })
+    run.endedAt = Date.now()
+    changed(run)
+  }
+
+  set({ state: 'working', note: 'opening a pane', startedAt: Date.now() })
+  const brief = laneBrief(input.plan, 0, run.mission)
+  let pane: { id: string; cwd: string; branch: string }
+  try {
+    pane = await driver.open({
+      cwd: input.cwd,
+      title: lane.name,
+      agent: input.agent,
+      model: input.model,
+      prompt: brief
+    })
+  } catch (e) {
+    return end({ state: 'failed', note: `no pane: ${e instanceof Error ? e.message : String(e)}` })
+  }
+  watchedPanes.set(pane.id, { runId: run.id, takenOver: false })
+  set({ cwd: pane.cwd, branch: pane.branch })
+
+  try {
+    const base = await headSha(pane.cwd)
+    const budget = input.budgetMs ?? TURN_BUDGET_MS
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      set({ attempt, state: attempt === 0 ? 'working' : 'retrying', note: 'the pane is working' })
+
+      // The watch loop. Nothing here reads the pane's text: the diff and the process are
+      // the whole story, and both survive being asked from outside.
+      const attemptStart = Date.now()
+      let lastKey = ''
+      let lastChangeAt = 0
+      let exited = false
+      for (;;) {
+        await sleep(pollMs())
+        const w = watchedPanes.get(pane.id)
+        if (w?.takenOver) return end({ state: 'stopped', note: 'taken over - the pane is yours' })
+        if (run.stopping) {
+          driver.close(pane.id)
+          return end({ state: 'stopped', note: 'stopped' })
+        }
+        exited = !driver.alive(pane.id)
+        if (!exited) {
+          const d = await diffSince(pane.cwd, base)
+          const key = diffKey(d)
+          if (key !== lastKey) {
+            lastKey = key
+            lastChangeAt = Date.now()
+            set({ diffstat: d, note: d.files ? `${d.files} file${d.files === 1 ? '' : 's'} changed` : lane.note })
+          }
+        }
+        const due = gateDue({
+          startedAt: attemptStart,
+          budgetMs: budget,
+          lastChangeAt,
+          exited,
+          now: Date.now(),
+          quietMs: quietMs()
+        })
+        if (due.due) break
+      }
+
+      set({ state: 'verifying', note: 'verifying' })
+      const gate = await runGate({
+        cwd: pane.cwd,
+        base,
+        mission: run.mission,
+        brief,
+        agent: input.agent,
+        model: input.model,
+        key: `${run.id}:${lane.name}`,
+        skipReview: input.skipReview,
+        bin: input.bin,
+        argsPrefix: input.argsPrefix,
+        stopped: () => run.stopping || Boolean(watchedPanes.get(pane.id)?.takenOver),
+        onStep: (name) => set({ note: name === 'diff' ? 'checking what changed' : name })
+      })
+      set({ gate, diffstat: await diffSince(pane.cwd, base) })
+      if (watchedPanes.get(pane.id)?.takenOver)
+        return end({ state: 'stopped', note: 'taken over - the pane is yours' })
+      if (run.stopping) {
+        driver.close(pane.id)
+        return end({ state: 'stopped', note: 'stopped' })
+      }
+
+      if (gate.ok) {
+        // The pane closes itself on success - the work is on the branch and the board
+        // says so; the pane has nothing left to show that the diff does not.
+        driver.close(pane.id)
+        return end({ state: 'passed', note: 'verified' })
+      }
+
+      const failed = gate.steps.find((s) => !s.ok)
+      if (attempt + 1 >= MAX_ATTEMPTS || exited)
+        // A pane whose CLI exited cannot be handed a retry brief; and either way the
+        // pane STAYS - it is the only readable account of what went wrong.
+        return end({
+          state: 'failed',
+          note: failed ? `${failed.name}: ${failed.detail}` : 'failed verification'
+        })
+
+      driver.type(pane.id, retryBrief(gate, attempt))
+      set({ note: failed ? `retrying - ${failed.name} failed` : 'retrying' })
+    }
+  } finally {
+    watchedPanes.delete(pane.id)
   }
 }
 

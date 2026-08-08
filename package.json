@@ -47,6 +47,7 @@
     "test:fleet": "node scripts/fleet-test.mjs",
     "test:unattended": "node scripts/unattended-test.mjs",
     "test:dispatch": "node scripts/dispatch-test.mjs",
+    "test:dispatchpane": "node scripts/dispatch-pane-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",
     "test:routeview": "node scripts/route-view-test.mjs",
     "test:routecli": "node scripts/route-cli-test.mjs",

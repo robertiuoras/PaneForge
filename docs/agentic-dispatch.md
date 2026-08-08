@@ -1,6 +1,13 @@
 # Dispatch: the app picks the agent, and the fix happens without me
 
-**Status: D1 built (`shared/dispatch.ts`), D2-D5 planned.** `docs/agentic.md` is the sibling document — that
+**Status: D1–D3 and D5.2 built. Open: D4 (the TaskDriver Agents-tab feed) and D5.5
+(free-tier routing, deliberately parked until 1–4 have run for a week).** The router is
+`shared/dispatch.ts`; the ask-pricing is `main/dispatchAsk.ts` (`goal:add` routes every
+goal and the board prints the tier line); the watchable pane is `startPaneDrive` in
+`main/supervisor.ts` over the arithmetic in `shared/dispatchWatch.ts`; the report is
+`main/dispatchReport.ts` POSTing to TaskDriver's `/api/dispatch/report`
+(`config.dispatch.reportUrl`, empty = off). `npm run test:dispatch` and
+`npm run test:dispatchpane`. `docs/agentic.md` is the sibling document — that
 one is about PaneForge *driving a lane* (I1–I4, built: headless run, gate, supervisor,
 goal queue). This one is about the step before it: **deciding that a small ask should be
 done at all, by which CLI, on which model, at what effort — and reporting back where the
@@ -148,10 +155,21 @@ explaining why that is not free. Starting stays local: the goal dialog and this 
    are the ones where tier A must NOT be chosen: a repo with no typecheck or no `test`
    script (the gate would report *skipped* and pass), an ask naming no file, repo-wide
    words however few files are named, and a retry of a tier that already failed.
-2. Wire it to the existing goal queue: `goal:add` gets a `plan` from `route()` instead of
-   the hardcoded agent, and the board shows the tier.
-3. The watchable pane (D2) and the self-close.
-4. The report endpoint (D3), TaskDriver side first, then the POST.
+2. ~~Wire it to the existing goal queue.~~ **Built.** `goal:add` prices every ask through
+   `buildAsk` (named files that exist, whether the repo can check itself, and the queue's
+   own memory of this exact mission via `priorDispatch` — which, unlike `priorPrompt`,
+   deliberately has no quiet window: a dispatch retried a minute after failing is exactly
+   the case where the tier must move up). The plan rides the goal and the board prints
+   `planLine`.
+3. ~~The watchable pane (D2) and the self-close.~~ **Built.** `startPaneDrive` +
+   `shared/dispatchWatch.ts`: the turn is over when the pty exited, the diff sat still for
+   90s after first moving, or the budget fired — never when the pane's text says so. A
+   keystroke from a person (the `pty:write` channel, which never carries the dispatcher's
+   own typing) drops the run: no gate, no close, the pane is theirs. Retries go in
+   through the same keyboard; a pty that exited is never retried.
+4. ~~The report endpoint (D3), TaskDriver side first, then the POST.~~ **Built.**
+   `main/dispatchReport.ts`; the fingerprint is `promptFingerprint` — the archive's own
+   sha1, exported, so `test:recall`'s parity contract still covers it.
 5. Free-tier routing behind `dispatch.freeFirst`, once 1–4 have run for a week.
 
 ## D6. Failure modes this must not have

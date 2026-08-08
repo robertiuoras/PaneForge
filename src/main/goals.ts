@@ -34,8 +34,8 @@ import {
 } from '../shared/goals'
 import { headSha } from './agentRun'
 import { recordOutcome } from './promptArchive'
-import type { ClaimLane, DriveInput } from './supervisor'
-import { startDrive, stopDrive } from './supervisor'
+import type { ClaimLane, DriveInput, PaneDriver } from './supervisor'
+import { startDrive, startPaneDrive, stopDrive } from './supervisor'
 
 /**
  * How long a burst of changes is allowed to collect before the file is written.
@@ -63,6 +63,14 @@ let listener: Listener | null = null
 let claimFor: ((cwd: string) => ClaimLane) | null = null
 /** Set by `index.ts`; without it the pump has no way to start anything. */
 let driveOptions: { bin?: string; argsPrefix?: string[] } = {}
+/** The window side of D2. Absent (tests, headless futures) every goal runs headless. */
+let paneDriver: PaneDriver | null = null
+/** D3. Called with every finished dispatched goal; posting is `dispatchReport.ts`'s job. */
+let reporter: ((goal: Goal) => void) | null = null
+
+export function onGoalReport(fn: ((goal: Goal) => void) | null): void {
+  reporter = fn
+}
 
 function file(): string {
   const dir = app.getPath('userData')
@@ -161,10 +169,11 @@ export function onGoalsChange(fn: Listener | null): void {
  */
 export function configureGoals(
   claim: (cwd: string) => ClaimLane,
-  options: { bin?: string; argsPrefix?: string[] } = {}
+  options: { bin?: string; argsPrefix?: string[]; paneDriver?: PaneDriver } = {}
 ): void {
   claimFor = claim
   driveOptions = options
+  paneDriver = options.paneDriver ?? null
   load()
   pump()
 }
@@ -191,7 +200,8 @@ export function addGoal(input: GoalInput): Goal {
     state: 'queued',
     createdAt: Date.now(),
     attempts: [],
-    outcome: null
+    outcome: null,
+    ...(input.dispatch ? { dispatch: input.dispatch } : {})
   }
   goals.push(goal)
   changed(true)
@@ -309,10 +319,39 @@ async function finish(g: Goal, run: DriveRun): Promise<void> {
     } catch {
       /* the archive is a convenience; a goal must not fail because a lookup did */
     }
+
+    // D3: the report goes back where the ask came from. Only dispatched goals - the
+    // router's plan is what named the tier the message carries.
+    if (g.dispatch) {
+      try {
+        reporter?.(g)
+      } catch {
+        /* a report is a courtesy; a goal must not fail because a POST did */
+      }
+    }
   } finally {
     finishing.delete(g.id)
     pump()
   }
+}
+
+/**
+ * What the last dispatched attempt at this exact mission looked like, if any.
+ *
+ * The router's history signal. Goals are the right memory for it - unlike `priorPrompt`,
+ * which deliberately ignores anything under six hours old, a dispatch retried a minute
+ * after failing is exactly the case where the tier must move up. Exact text match on
+ * purpose: a reworded ask is a judgement call, and the router must not escalate on one.
+ */
+export function priorDispatch(mission: string): { tier?: 'A' | 'B' | 'C'; failed: boolean } | null {
+  const past = load()
+    .filter((g) => g.mission === mission && g.dispatch && goalDone(g))
+    .sort((a, b) => (b.endedAt ?? b.createdAt) - (a.endedAt ?? a.createdAt))
+  const last = past[0]
+  if (!last) return null
+  // Cancelled and interrupted are a person's or the power's doing, not the tier's.
+  const failed = last.state === 'done' && !(last.outcome ?? '').includes('verified')
+  return { tier: last.dispatch?.tier, failed }
 }
 
 /**
@@ -333,13 +372,22 @@ export function pump(): Goal | null {
     agent: g.agent,
     model: g.model || undefined,
     skipReview: g.skipReview,
+    budgetMs: g.dispatch?.budgetMs,
     bin: driveOptions.bin,
     argsPrefix: driveOptions.argsPrefix
   }
 
+  // D2: a dispatched single-ask goal runs as a visible pane when there is a window to
+  // put one in. Multi-lane plans stay headless - three panes racing three worktrees is
+  // the Swarm launch, and the supervisor already drives that without any.
+  const watchable =
+    Boolean(g.dispatch?.watch) && g.plan.lanes.length === 1 && paneDriver !== null
+
   let run: DriveRun
   try {
-    run = startDrive(input, claimFor(g.cwd))
+    run = watchable
+      ? startPaneDrive(input, paneDriver as PaneDriver)
+      : startDrive(input, claimFor(g.cwd))
   } catch (e) {
     // A goal that cannot even be started is finished, with the reason on it. Leaving it
     // `queued` would stall every goal behind it for ever, which is the one failure a queue
@@ -370,4 +418,6 @@ export function resetGoals(): void {
   listener = null
   claimFor = null
   driveOptions = {}
+  paneDriver = null
+  reporter = null
 }

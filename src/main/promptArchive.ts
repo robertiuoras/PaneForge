@@ -96,6 +96,16 @@ function promptHash(text: string): string {
 }
 
 /**
+ * The same fingerprint, for callers outside this file - D3's dispatch report carries it
+ * so TaskDriver can find the `prompt_log` row this ask came from. A wrapper rather than
+ * exporting `promptHash` itself, so the canonical algorithm keeps exactly one name inside
+ * this file and `test:recall`'s parity contract keeps exactly one thing to check.
+ */
+export function promptFingerprint(text: string): string {
+  return promptHash(text)
+}
+
+/**
  * Every entry, merged by hash, later line winning.
  *
  * Append-only with last-wins-on-read rather than a rewrite per prompt: two panes finishing a

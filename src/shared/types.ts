@@ -1208,6 +1208,13 @@ export interface Config {
    * start a drive or queue a goal at all, and says which flag it refused - K4.
    */
   driveUnattended: boolean
+  /**
+   * D3 of `docs/agentic-dispatch.md`: where a finished dispatched goal reports to.
+   * Empty `reportUrl` turns the POST off entirely; `reportKey` rides as `x-dispatch-key`
+   * when the endpoint demands one. The desk never holds the Discord token - the endpoint
+   * does the posting and the 24h delete.
+   */
+  dispatch: { reportUrl: string; reportKey: string }
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
   /**

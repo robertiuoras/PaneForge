@@ -4,6 +4,7 @@ import type { AgentInfo } from '@shared/agents'
 import { describePlace } from '@shared/place'
 import { driveLine, runDone, unattended, unattendedLine } from '@shared/agentic'
 import type { Goal } from '@shared/goals'
+import { planLine } from '@shared/dispatch'
 import { goalLine, queuePosition } from '@shared/goals'
 import { density, fleetOrder, fleetRow, gitLine } from '@shared/fleet'
 import AgentLogo from './AgentLogo'
@@ -254,6 +255,7 @@ export default function FleetDialog({
                   <span className="fleet-who">
                     <span className="fleet-title">{g.mission.slice(0, 80)}</span>
                     <span className="fleet-place">{goalLine(g, queuePosition(goals, g.id))}</span>
+                    {g.dispatch && <span className="fleet-place">{planLine(g.dispatch)}</span>}
                   </span>
                   <span className="fleet-state">
                     {g.state === 'queued' ? (

@@ -108,6 +108,11 @@ export async function headSha(cwd: string): Promise<string> {
   return (await git(cwd, ['rev-parse', 'HEAD'])).trim()
 }
 
+/** The branch a checkout is on, for the line a dispatched pane's board row prints. */
+export async function currentBranch(cwd: string): Promise<string> {
+  return (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+}
+
 /**
  * Everything that changed since `base`, committed or not.
  *

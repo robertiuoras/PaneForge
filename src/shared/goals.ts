@@ -30,6 +30,7 @@
 
 import type { DriveRun, DriveState } from './agentic'
 import { runDone } from './agentic'
+import type { Plan } from './dispatch'
 import type { SplitPlan } from './types'
 
 /**
@@ -52,6 +53,12 @@ export interface GoalLane {
   files: number
   added: number
   removed: number
+  /**
+   * The gate's per-step verdicts, kept because D3's report must carry them: a report
+   * that says "verified" while its suite step was skipped is the failure mode
+   * `agentGate` exists to avoid, so the steps travel rather than being summarised away.
+   */
+  gate?: Array<{ name: string; verdict: 'pass' | 'fail' | 'skipped' }>
 }
 
 /**
@@ -89,6 +96,8 @@ export interface Goal {
   attempts: GoalAttempt[]
   /** The newest attempt's outcome, promoted so a reader never has to index the array. */
   outcome: string | null
+  /** The router's decision, when this goal was dispatched rather than hand-configured. */
+  dispatch?: Plan
 }
 
 /** What a caller has to say to ask for one. Everything else is decided here. */
@@ -99,6 +108,7 @@ export interface GoalInput {
   model?: string
   skipReview?: boolean
   plan: SplitPlan
+  dispatch?: Plan
 }
 
 /** Terminal, in the sense that nothing this file does will move it again. */
@@ -133,7 +143,18 @@ export function snapshotRun(run: DriveRun, shas: Record<string, string> = {}): G
     note: l.note,
     files: l.diffstat?.files ?? 0,
     added: l.diffstat?.added ?? 0,
-    removed: l.diffstat?.removed ?? 0
+    removed: l.diffstat?.removed ?? 0,
+    ...(l.gate
+      ? {
+          gate: l.gate.steps.map((s) => ({
+            name: s.name,
+            verdict: (s.detail.startsWith('skipped') ? 'skipped' : s.ok ? 'pass' : 'fail') as
+              | 'pass'
+              | 'fail'
+              | 'skipped'
+          }))
+        }
+      : {})
   }))
   return {
     runId: run.id,
