@@ -1058,7 +1058,18 @@ function claim(session, cwd, prefer, tentative = false) {
   // `main` for the six hours after its last word, and every taskdriver chat after it opened
   // in `lane-a` for no reason at all. The 12h stale sweep is for chats that DIED, and the
   // idle sweep below only runs when the pool is full - which it never is at two chats.)
-  if (free && free !== 'main' && !prefer && POOL.includes('main')) {
+  //
+  // The guard is "did it GET the lane it asked for", not "did it ask": a preference is a
+  // chat protecting work it already has in a checkout, and a preference that was refused
+  // protects nothing - the folder it named belongs to somebody else and this chat is being
+  // sent somewhere new either way. Reading the bare `prefer` meant a chat sitting in
+  // `<repo>-a` while lane a was taken skipped the sweep on the strength of a wish it did
+  // not get, and opened a THIRD checkout beside a `main` nobody had touched for hours.
+  // Measured on taskdriver.ai 2026-08-09: main held by a chat last seen 2h53m earlier with
+  // nothing in it, lane b claimed 5 minutes ago by a chat sitting in `taskdriver.ai-a` -
+  // which is Robert's "why there's 2 lanes, main and lane-b".
+  const gotPrefer = Boolean(prefer) && free === prefer
+  if (free && free !== 'main' && !gotPrefer && POOL.includes('main')) {
     const held = state.lanes.main
     if (
       held &&

@@ -136,6 +136,21 @@ const preferred = claim('worker', '--prefer', 'b')
 ok('a chat that asked for its own lane still gets it', preferred.ok && JSON.parse(preferred.out).lane === 'b', preferred.err)
 ok('and main is untouched by that claim', state().lanes.main?.session === 'squatter')
 
+// ...but a preference that was REFUSED protects nothing. The chat asked for a checkout
+// somebody else is in, so it is being moved either way - and moving it to a third folder
+// while an untouched `main` sits idle is the exact shape this whole sweep exists to stop.
+reset()
+patchState((s) => {
+  s.lanes.b = { session: 'other', cwd: '/elsewhere', claimed: Date.now(), seen: Date.now() }
+})
+const refused = claim('worker', '--prefer', 'b')
+ok(
+  'a chat refused the lane it asked for still takes the idle main',
+  refused.ok && JSON.parse(refused.out).lane === 'main',
+  refused.err || refused.out
+)
+ok('and the quiet chat has been moved off it', state().lanes.main?.session === 'worker')
+
 // Commits on master are the repository's, not the holding chat's - `busyLanes` reads them
 // the same way, and a release waiting on them would wait for ever.
 reset()
