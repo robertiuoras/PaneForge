@@ -1,6 +1,6 @@
 # Dispatch: the app picks the agent, and the fix happens without me
 
-**Status: plan. Nothing here is built.** `docs/agentic.md` is the sibling document — that
+**Status: D1 built (`shared/dispatch.ts`), D2-D5 planned.** `docs/agentic.md` is the sibling document — that
 one is about PaneForge *driving a lane* (I1–I4, built: headless run, gate, supervisor,
 goal queue). This one is about the step before it: **deciding that a small ask should be
 done at all, by which CLI, on which model, at what effort — and reporting back where the
@@ -143,8 +143,11 @@ explaining why that is not free. Starting stays local: the goal dialog and this 
 
 ## D5. Order of work
 
-1. `shared/dispatch.ts` + `npm run test:dispatch` — the router alone, no runner. A table of
-   real asks (Robert's own, from the archive) against expected tiers.
+1. ~~`shared/dispatch.ts` + `npm run test:dispatch` — the router alone, no runner.~~
+   **Built.** 36 checks, 13 of them real asks against expected tiers. The load-bearing four
+   are the ones where tier A must NOT be chosen: a repo with no typecheck or no `test`
+   script (the gate would report *skipped* and pass), an ask naming no file, repo-wide
+   words however few files are named, and a retry of a tier that already failed.
 2. Wire it to the existing goal queue: `goal:add` gets a `plan` from `route()` instead of
    the hardcoded agent, and the board shows the tier.
 3. The watchable pane (D2) and the self-close.
