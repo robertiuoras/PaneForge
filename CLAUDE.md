@@ -316,8 +316,22 @@ modifier and why this one did too.
   (104, row 10) → (10, row 9) across a wrap in a 157-column pane, exact both times.
 - **On mouseup, and only when the pointer did not travel.** Swallowing the mousedown would
   take drag-selection with it, and copy-on-select is the more important of the two.
+- **A drawn input box is the one place a bare click may go up and down.** Every agent CLI
+  draws a multi-line box, and a second line of a draft is a hard newline rather than a
+  wrap - so the `isWrapped` chain called the rows unrelated and a click on line two did
+  nothing, which is "the cursor can't select exactly where I want". Inside a box the CLI is
+  handling the arrows itself, so they are movements; `shared/promptBox.ts` decides what a
+  box is, off the drawn text, and a plain shell draws none. An ASCII `|` is deliberately
+  not a frame - a markdown table is not an input box. `npm run test:promptbox`.
+- **A selection can be deleted, and typed over.** A highlight lives in this window and the
+  far end has never heard of it, which is why no terminal does this: `keysForDelete` walks
+  the cursor to the end of the selection and sends one backspace per character. Only on the
+  cursor's own line and only across rows the input WRAPPED onto - a selection spanning the
+  separate lines of a box is refused, never guessed, because the newline and the frame are
+  not `cols` characters. Mod+A highlights the whole input and hands the key back when there
+  is nothing to select, so Ctrl+A stays a line editor's "start of line" in a plain shell.
 - Alt/Option-click still reaches other lines, still refuses more than `rowLimit` rows away,
-  and is still the only path that can emit an up or a down.
+  and is still the only path that can emit an up or a down OUTSIDE a box.
 - The clicked column is clamped to what is written on that row. Without it, a click in the
   empty half of a row is a burst of rights a CLI reading arrows as menu steps acts on.
 
@@ -504,7 +518,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
 | `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
 | `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
-| `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input |
+| `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
+| `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
 | `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |

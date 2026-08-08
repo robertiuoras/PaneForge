@@ -32,7 +32,8 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { keysForClick, keysAlongLine, cellAt, ARROW } = createRequire(import.meta.url)(outfile)
+const { keysForClick, keysAlongLine, keysForDelete, cellAt, ARROW, BACKSPACE } =
+  createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -205,6 +206,69 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
   // A terminal with no width is a pane mid-resize, and `rows * 0` would silently turn a
   // click three rows up into a horizontal move along the wrong line.
   eq('no width, no keys', keysAlongLine(line({ rows: -1, cols: 0 })), '')
+}
+
+
+// --- deleting what is highlighted -------------------------------------------------
+//
+// The half a terminal normally cannot do at all: a selection lives in this window and the
+// far end has never heard of it. So it is walked to and backspaced over, and the risk is
+// entirely in the count - one too many eats a character nobody selected, and a guess
+// across a line boundary eats the line above.
+{
+  const sel = (o) => ({
+    cursorRow: 10,
+    cursorCol: 30,
+    startRow: 10,
+    startCol: 10,
+    endRow: 10,
+    endCol: 20,
+    cols: 80,
+    wrapped: false,
+    ...o
+  })
+
+  eq(
+    'the cursor walks back to the end of the selection, then backspaces over it',
+    keysForDelete(sel({})),
+    ARROW.left.repeat(10) + BACKSPACE.repeat(10)
+  )
+  eq(
+    'a cursor already at the end sends only backspaces',
+    keysForDelete(sel({ cursorCol: 20 })),
+    BACKSPACE.repeat(10)
+  )
+  eq(
+    'a cursor before the selection walks forward first',
+    keysForDelete(sel({ cursorCol: 4 })),
+    ARROW.right.repeat(16) + BACKSPACE.repeat(10)
+  )
+  eq('an empty selection sends nothing', keysForDelete(sel({ endCol: 10 })), '')
+  eq('a backwards selection sends nothing', keysForDelete(sel({ endCol: 4 })), '')
+
+  // A wrapped line is one line to the far end, `cols` characters a row, so the count
+  // crosses the wrap by itself - exactly as the arrows do for a click.
+  eq(
+    'a selection across a wrap counts a whole row per row',
+    keysForDelete(sel({ cursorRow: 11, cursorCol: 20, startRow: 10, startCol: 70, endRow: 11, endCol: 20, wrapped: true })),
+    BACKSPACE.repeat(80 - 70 + 20)
+  )
+
+  // The load-bearing refusal. Rows of a DRAWN input box are separate lines carrying a
+  // newline and a frame of unknown width; counting them as `cols` would send a burst of
+  // backspaces into whatever is above.
+  eq(
+    'a selection across separate lines is refused, not guessed',
+    keysForDelete(sel({ endRow: 11, endCol: 5, wrapped: false })),
+    ''
+  )
+  eq(
+    'and so is one whose cursor is on another line',
+    keysForDelete(sel({ cursorRow: 9, wrapped: false })),
+    ''
+  )
+  eq('no width, no keys', keysForDelete(sel({ cols: 0 })), '')
+  eq('past the key limit sends nothing', keysForDelete(sel({ startCol: 0, endCol: 40, keyLimit: 20 })), '')
 }
 
 console.log(`cursor click: ${checks} checks passed`)

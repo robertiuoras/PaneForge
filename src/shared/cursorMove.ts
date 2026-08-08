@@ -92,6 +92,60 @@ export function keysAlongLine(c: {
   return (delta > 0 ? ARROW.right : ARROW.left).repeat(Math.abs(delta))
 }
 
+/** What every line editor and every CLI input box reads as "delete one character back". */
+export const BACKSPACE = '\x7f'
+
+/**
+ * The keys that delete a highlighted piece of what you have typed.
+ *
+ * A terminal cannot hand a selection to the far end any more than it can hand it a caret,
+ * so a selection you can see and cannot delete is the ordinary state of every terminal -
+ * "can't select all and then delete" was the report. The move is the same one a click
+ * makes: walk the cursor to the END of the selection with arrows, then send one backspace
+ * per selected character. What comes back is the CLI's own editing, so it undoes, it
+ * re-wraps, and nothing here has to know what it is editing.
+ *
+ * `wrapped` is what makes a multi-row selection legal. Rows a long input WRAPPED onto are
+ * one line to the far end, `cols` characters each, so the arithmetic crosses them. Rows of
+ * a drawn input box are separate lines holding a newline and a frame of unknown width, and
+ * that count cannot be derived from the screen - so a selection across those is refused
+ * rather than guessed at, and a guess here is a burst of backspaces eating the line above.
+ */
+export function keysForDelete(c: {
+  cursorRow: number
+  cursorCol: number
+  /** the selection, in absolute buffer rows, end exclusive */
+  startRow: number
+  startCol: number
+  endRow: number
+  endCol: number
+  cols: number
+  /** the selected rows are one wrapped line, not separate lines of a box */
+  wrapped: boolean
+  keyLimit?: number
+}): string {
+  const keyLimit = c.keyLimit ?? DEFAULT_KEY_LIMIT
+  const rows = c.endRow - c.startRow
+  if (rows < 0) return ''
+  if (rows > 0 && !c.wrapped) return ''
+  if (!(c.cols > 0)) return ''
+  const length = rows * c.cols + (c.endCol - c.startCol)
+  if (length <= 0 || length > keyLimit) return ''
+  // The cursor has to reach the far end of the selection first, and it may only do that
+  // along the line it is already on - the same restriction a bare click lives under.
+  const toEnd = c.endRow - c.cursorRow
+  if (toEnd !== 0 && !c.wrapped) return ''
+  const move = keysAlongLine({
+    cursorCol: c.cursorCol,
+    clickCol: c.endCol,
+    rows: toEnd,
+    cols: c.cols,
+    keyLimit
+  })
+  if (Math.abs(toEnd) * c.cols + Math.abs(c.endCol - c.cursorCol) > keyLimit) return ''
+  return move + BACKSPACE.repeat(length)
+}
+
 /**
  * Which cell a pointer is over, given the pixel box the terminal's rows and columns are
  * drawn in. Kept here beside the arithmetic it feeds so both are testable without a

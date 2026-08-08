@@ -13,7 +13,8 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
-import { cellAt, keysAlongLine, keysForClick } from '../../../shared/cursorMove'
+import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
+import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -329,6 +330,11 @@ export default function TerminalPane({
   mouseSelectRef.current = mouseSelect
   const clickCursorRef = useRef(clickMovesCursor)
   clickCursorRef.current = clickMovesCursor
+  // The two halves of editing by selection. They read the live terminal, so they are built
+  // inside the effect that owns it; the key handler is attached before that point and
+  // reaches them through here.
+  const selectInputRef = useRef<() => boolean>(() => false)
+  const deleteSelectionRef = useRef<() => boolean>(() => false)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
@@ -841,9 +847,43 @@ export default function TerminalPane({
         e.preventDefault()
         return false
       }
+      // A highlight you can see and cannot delete is the ordinary state of every terminal,
+      // and it was Robert's "can't select all and then delete". Backspace clears it;
+      // typing over it replaces it, which is what the selection in every other text field
+      // on the machine does. Both refuse quietly when the selection is not on the line the
+      // far end is still editing - the highlight is left alone and the key does what it
+      // always did. Behind the same setting as click-to-place-cursor: it is the same trick,
+      // an intention this window can see turned into keys the pty understands.
+      if (
+        clickCursorRef.current &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        t.hasSelection() &&
+        (e.key === 'Backspace' || e.key === 'Delete' || e.key.length === 1)
+      ) {
+        if (deleteSelectionRef.current()) {
+          if (e.key.length !== 1) {
+            e.preventDefault()
+            return false
+          }
+          // The character itself still goes through, landing where the selection was.
+          return true
+        }
+      }
+
       const mod = isMac ? e.metaKey : e.ctrlKey
       if (!mod) return true
       const key = e.key.toLowerCase()
+
+      // Select everything typed so far. It hands the key back when there is nothing it can
+      // honestly select, which on Windows is what keeps Ctrl+A working as a line editor's
+      // own "beginning of line" in a plain shell.
+      if (key === 'a' && !e.shiftKey) {
+        if (!clickCursorRef.current || !selectInputRef.current()) return true
+        e.preventDefault()
+        return false
+      }
 
       if (key === 'c') {
         // Cmd+C and Ctrl+Shift+C are copy-only. A bare Ctrl+C copies when there is
@@ -965,6 +1005,84 @@ export default function TerminalPane({
       return true
     }
 
+    /** What is drawn on an absolute buffer row, trailing blanks off. */
+    const rowText = (r: number): string => t.buffer.active.getLine(r)?.translateToString(true) ?? ''
+
+    /** Never past what is written, and never into the input box's own frame. */
+    const clampCol = (row: number, col: number): number => {
+      const text = rowText(row)
+      return Math.min(Math.max(col, inputStart(text)), inputEnd(text))
+    }
+
+    /**
+     * The whole of what is being typed, as absolute buffer coordinates - the cursor's row
+     * plus every row the same input wrapped onto, from past the prompt marker to the last
+     * character written.
+     */
+    const inputSpan = (): { row: number; col: number; end: number; length: number } | null => {
+      if (t.buffer.active.type === 'alternate') return null
+      const b = t.buffer.active
+      const cursorRow = b.baseY + b.cursorY
+      let top = cursorRow
+      while (top > 0 && b.getLine(top)?.isWrapped) top--
+      let bottom = cursorRow
+      while (b.getLine(bottom + 1)?.isWrapped) bottom++
+      const col = inputStart(rowText(top))
+      const end = inputEnd(rowText(bottom))
+      const length = (bottom - top) * t.cols + (end - col)
+      return length > 0 ? { row: top, col, end, length } : null
+    }
+
+    /**
+     * Highlight everything typed so far, so the next Backspace clears it.
+     *
+     * Returns false - and lets the key through to the agent - whenever there is nothing it
+     * can honestly select. On Windows that matters: Ctrl+A is a line editor's own
+     * "beginning of line", and swallowing it in a plain shell would be taking a key away
+     * to do nothing with it.
+     */
+    const selectInput = (): boolean => {
+      const span = inputSpan()
+      if (!span) return false
+      t.select(span.col, span.row, span.length)
+      return t.hasSelection()
+    }
+
+    /**
+     * Delete the highlighted text by walking to it and backspacing over it.
+     *
+     * A selection lives in this window and the far end has never heard of it, which is why
+     * no terminal lets you delete one. The arithmetic and every refusal are in
+     * `cursorMove.ts`; this half is only about which selections are eligible - all of it on
+     * the line the far end is still editing, which is the cursor's own row and whatever
+     * that input wrapped onto.
+     */
+    const deleteSelection = (): boolean => {
+      const pos = t.getSelectionPosition()
+      if (!pos || t.buffer.active.type === 'alternate') return false
+      const b = t.buffer.active
+      const cursorRow = b.baseY + b.cursorY
+      if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return false
+      const keys = keysForDelete({
+        cursorRow,
+        cursorCol: b.cursorX,
+        startRow: pos.start.y,
+        startCol: clampCol(pos.start.y, pos.start.x),
+        endRow: pos.end.y,
+        endCol: clampCol(pos.end.y, pos.end.x),
+        cols: t.cols,
+        // Every row here is part of one wrapped input - `sameLine` walked the chain.
+        wrapped: true
+      })
+      if (!keys) return false
+      api.write(sessionId, keys)
+      t.clearSelection()
+      lastSelection.current = ''
+      return true
+    }
+    selectInputRef.current = selectInput
+    deleteSelectionRef.current = deleteSelection
+
     const moveAlongLine = (e: MouseEvent): void => {
       const from = downAt
       downAt = null
@@ -980,7 +1098,28 @@ export default function TerminalPane({
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
       const clickRow = b.viewportY + at.row
-      if (!sameLine(cursorRow, clickRow)) return
+      if (!sameLine(cursorRow, clickRow)) {
+        // A second LINE of a draft is a hard newline, not a wrap, so the chain above says
+        // the two rows are unrelated and a click on it used to do nothing at all - which is
+        // "the cursor can't select exactly where I want, it's very limited". Inside a drawn
+        // input box it is safe to send the vertical arrows a bare click may otherwise never
+        // send: the box is a text field the CLI is handling itself, so an up-arrow there is
+        // a movement and not the previous command. A plain shell draws no box, so this
+        // cannot fire in one - see shared/promptBox.ts.
+        if (!sameBox(rowText(cursorRow), rowText(clickRow))) return
+        const boxKeys = keysForClick({
+          cursorRow,
+          cursorCol: b.cursorX,
+          clickRow,
+          clickCol: clampCol(clickRow, at.col),
+          rowLimit: 8
+        })
+        if (!boxKeys) return
+        e.preventDefault()
+        e.stopPropagation()
+        api.write(sessionId, boxKeys)
+        return
+      }
       // Past the end of what is written is the end of what is written. Without this, a
       // click in the empty half of the row sends a burst of rights that the editor eats one
       // by one for nothing - and on a CLI that reads an arrow as a menu step, does worse.

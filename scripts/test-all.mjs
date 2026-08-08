@@ -32,6 +32,7 @@ const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
+  ['promptbox', 'prompt-box-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
