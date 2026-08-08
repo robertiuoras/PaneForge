@@ -666,6 +666,12 @@ export default function App(): JSX.Element {
     return api.onRecents((items) => {
       setRecents(items)
       if (!items.length || peekMs <= 0 || !shelfInWindow) return
+      // A copy this app made itself is not an event worth interrupting for. Selecting
+      // text in a pane copies it (copy-on-select is the terminal's whole contract), so
+      // reading a log used to make the Stash announce itself every few seconds - the
+      // "it keeps popping up randomly" this fixes. It is on the Stash either way; the
+      // list simply does not open for it. See `own` in main/recents.ts.
+      if (items[0]?.own) return
       setShelfPeek(true)
       window.clearTimeout(peekTimer.current)
       peekTimer.current = window.setTimeout(() => setShelfPeek(false), peekMs)

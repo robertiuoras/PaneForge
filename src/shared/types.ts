@@ -1245,6 +1245,13 @@ export interface RecentItem {
    * you are pasting all afternoon needs a way to opt out of that.
    */
   pinned?: boolean
+  /**
+   * This app put it on the clipboard: a pane copying on select, Ctrl+C over a highlight,
+   * or the Stash's own Copy button. It is still stashed - it is a thing you copied - but
+   * it never makes the Stash open by itself, because you were reading a pane, not asking
+   * for a list. See `noteOwnCopy` in main/recents.ts.
+   */
+  own?: boolean
 }
 
 /**

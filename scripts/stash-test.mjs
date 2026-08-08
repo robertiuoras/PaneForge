@@ -315,6 +315,51 @@ console.log('\n== search reads the bodies, and an edit corrects one in place')
   eq('an edit onto an existing clip collapses into one row', R.listRecents().length, 2)
 }
 
+console.log('\n== a copy this app made itself is stashed, and never announces itself')
+{
+  // The Stash opening by itself is right for "you copied something in another app". It is
+  // wrong for a copy the app made: a pane copies on SELECT, so dragging across two words
+  // in a log used to make the list appear every few seconds. `own` is what separates them,
+  // and the load-bearing half is that the clip is still KEPT - suppressing the row instead
+  // of the announcement would quietly stop the Stash holding what you copy out of a pane.
+  const dir = profile()
+  const clipFile = join(work, `clip-own-${Math.random().toString(36).slice(2)}.json`)
+  const put = (text) => writeFileSync(clipFile, JSON.stringify({ text, formats: ['public.utf8-plain-text'] }))
+  put('')
+  const R = loadRecents(dir, clipFile)
+  R.startRecents(() => {})
+
+  R.noteOwnCopy('selected in a pane')
+  put('selected in a pane')
+  await settle()
+  const mine = R.listRecents()[0]
+  eq('the app’s own copy is still stashed', mine?.preview, 'selected in a pane')
+  ok('and it is marked as ours, so nothing opens for it', mine?.own === true)
+
+  put('copied in some other app')
+  await settle()
+  const theirs = R.listRecents()[0]
+  eq('the next clip is the other one', theirs?.preview, 'copied in some other app')
+  ok('and it is NOT marked, so the Stash still announces it', theirs?.own === undefined)
+
+  // The mark is a moment, not a string: the same text copied again from somewhere else
+  // later is somebody else's copy and has to announce itself.
+  R.noteOwnCopy('said twice')
+  put('said twice')
+  await settle()
+  ok('ours the first time', R.listRecents()[0]?.own === true)
+  put('')
+  await settle()
+  await new Promise((r) => setTimeout(r, 4200))
+  put('said twice')
+  await settle()
+  ok(
+    'and not ours once the window has passed',
+    R.listRecents()[0]?.preview === 'said twice' && R.listRecents()[0]?.own === undefined
+  )
+  R.stopRecents()
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failed\n` : '\nall good\n')
 process.exit(failed ? 1 : 0)

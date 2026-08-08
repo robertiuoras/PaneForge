@@ -128,6 +128,7 @@ import {
   flushRecents,
   getRecent,
   listRecents,
+  noteOwnCopy,
   pinRecent,
   recentPath,
   recentText,
@@ -1569,7 +1570,13 @@ ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 ipcMain.on('clipboard:write', (_e, text: string) => {
-  if (typeof text === 'string' && text.length) clipboard.writeText(text)
+  if (typeof text === 'string' && text.length) {
+    // Every copy that starts inside this app comes through here - copy-on-select in a
+    // pane most of all, which fires on a drag across two words. It is still stashed; it
+    // is only marked as ours so the Stash does not announce it. See `noteOwnCopy`.
+    noteOwnCopy(text)
+    clipboard.writeText(text)
+  }
 })
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 

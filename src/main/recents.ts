@@ -80,6 +80,33 @@ let loaded = false
 let onChange: ((items: RecentItem[]) => void) | null = null
 
 /**
+ * The last thing THIS app put on the clipboard, and when.
+ *
+ * The watcher cannot tell who copied: it polls the clipboard and everything that lands
+ * there is a new clip. But the app copies constantly on its own - a terminal pane copies
+ * on select, so dragging across three words in a log is a copy, and so is every Ctrl+C
+ * over a highlight and every Copy button in the Stash itself. Each of those made the
+ * Stash announce itself, which is Robert's "it keeps popping up randomly": the copies
+ * were his, but he never asked for anything to open, he was reading a pane.
+ *
+ * So the clip is still recorded - it belongs on the Stash, that is the point of it - and
+ * only marked as ours, and only the ANNOUNCEMENT is skipped (`own` in App.tsx). The
+ * timestamp is what keeps the mark honest: an identical string copied from another app
+ * ten minutes later is not this one.
+ */
+let ownCopy = { text: '', at: 0 }
+const OWN_WINDOW_MS = 4000
+
+/** Called by every path in main that writes the clipboard on the app's own behalf. */
+export function noteOwnCopy(text: string): void {
+  ownCopy = { text, at: Date.now() }
+}
+
+function isOwn(text: string): boolean {
+  return text === ownCopy.text && Date.now() - ownCopy.at < OWN_WINDOW_MS
+}
+
+/**
  * Settings changed. Applied to what is already on the Stash straight away rather than
  * only to the next thing added: turning the history down from 200 to 20 has to actually
  * forget 180 things, or the setting reads as broken.
@@ -404,11 +431,18 @@ export function copyRecent(id: string): boolean {
   load()
   const it = items.find((i) => i.id === id)
   if (!it) return false
-  if (it.kind === 'text') clipboard.writeText(it.text ?? '')
+  if (it.kind === 'text') {
+    // Ours, so the Stash does not announce a clip the Stash itself just made.
+    noteOwnCopy(it.text ?? '')
+    clipboard.writeText(it.text ?? '')
+  }
   // A file is not something Electron can put on the Windows clipboard as a file, and a
   // video written as an image would be an empty bitmap. Its path is the useful thing to
   // hold anyway: it is what an agent, an upload box and a shell all take.
-  else if (it.kind === 'file') clipboard.writeText(it.path ?? '')
+  else if (it.kind === 'file') {
+    noteOwnCopy(it.path ?? '')
+    clipboard.writeText(it.path ?? '')
+  }
   else if (it.path) clipboard.writeImage(nativeImage.createFromPath(it.path))
   return true
 }
@@ -587,6 +621,7 @@ function readText(concealed: string | null): void {
     kind: 'text',
     at: Date.now(),
     text,
+    own: isOwn(text) || undefined,
     preview: trimmed.length > PREVIEW ? trimmed.slice(0, PREVIEW) + '…' : trimmed,
     lines: text.split('\n').length,
     chars: text.length
