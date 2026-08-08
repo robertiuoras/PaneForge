@@ -377,6 +377,18 @@ the conversation and not one line of the screen.
   cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
   after it. `npm run test:scrollback`.
 
+**And `/clear` no longer takes the previous turn with it.** A CLI clearing its screen sends
+`CSI 2 J` *and* `CSI 3 J`, and the second deletes this window's scrollback — measured across
+the 128 pane logs on this machine: 73 of each, always paired, and no other erase-in-display
+in the set. So `shared/keepScrollback.ts` sits in front of every write: the wipe is dropped,
+and the erase becomes a scroll (cursor to the bottom row, one newline per row, saved and
+restored around it) — a newline at the bottom row scrolls, and a scroll puts a line into the
+scrollback instead of deleting it. The alternate screen is left alone; vim clears constantly
+and has no scrollback to protect. It is stateful because a four-byte sequence is routinely
+torn across two chunks from the pty, so there is one per pane and every write site uses it.
+`npm run test:scrollclear` drives a real headless xterm and its control case proves a plain
+terminal loses the lines.
+
 ## The app remembers what has been asked
 
 `src/main/promptArchive.ts` answers one question — has this ask been made before — and it is
@@ -539,6 +551,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:macdownload` | every way a mac download can end — none of them a hang |
 | `npm run test:wedge` | that no hung promise can leave the updater needing a person |
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
+| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — the rewrite, a sequence torn across two chunks, and the result in a real headless xterm |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show

@@ -1,0 +1,148 @@
+// What survives an agent clearing its own screen.
+//
+// Two halves, and the second one is the point:
+//
+//   1. the transformer, as arithmetic - what it rewrites, what it passes through, and that
+//      a sequence split across two chunks from the pty is still recognised;
+//   2. the RESULT, in a real xterm.js: write a screen, clear it the way Claude Code really
+//      does (measured off this machine's pane logs: `CSI 2 J` and `CSI 3 J`, always paired),
+//      and assert the old screen is in the scrollback afterwards. Nothing about the
+//      rewrite's shape proves that - only the buffer does.
+//
+//   node scripts/scroll-clear-test.mjs
+
+import { buildSync } from 'esbuild'
+import { strict as assert } from 'node:assert'
+import { mkdirSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const work = join(tmpdir(), 'pf-scroll-clear-test')
+rmSync(work, { recursive: true, force: true })
+mkdirSync(work, { recursive: true })
+
+const outfile = join(work, 'keep.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/keepScrollback.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile
+})
+const require_ = createRequire(import.meta.url)
+const { keepScrollback } = require_(outfile)
+
+let checks = 0
+const check = (what, ok, detail) => {
+  checks++
+  assert.ok(ok, `${what}${detail === undefined ? '' : ` — ${detail}`}`)
+}
+const eq = (what, got, want) =>
+  check(what, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
+
+const CLEAR = '\x1b[2J\x1b[3J\x1b[H'
+const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
+
+// --- the rewrite -------------------------------------------------------------------
+{
+  const k = keeper(3)
+  const out = k(`before${CLEAR}after`)
+  check('the scrollback wipe is gone', !out.includes('\x1b[3J'), JSON.stringify(out))
+  check('and so is the erase it came with', !out.includes('\x1b[2J'), JSON.stringify(out))
+  check('everything around it is untouched', out.startsWith('before') && out.endsWith('\x1b[Hafter'))
+  eq('one newline per row on screen', (out.match(/\r\n/g) ?? []).length, 3)
+  check('the cursor is put back where the clear found it', out.includes('\x1b7') && out.includes('\x1b8'))
+}
+
+// A pane that is not clearing anything must come through byte for byte - this sits in
+// front of every byte an agent writes.
+{
+  const k = keeper()
+  const noisy = '\x1b[0m\x1b[K\x1b[38;5;174mhello\x1b[39m\r\n\x1b[?25l\x1b[2Cworld'
+  eq('ordinary output is not touched', k(noisy), noisy)
+}
+
+// vim, less, a menu: they clear constantly, have no scrollback of their own, and pushing
+// a frame of redraw into the real one several times a second is the worst case here.
+{
+  const k = keeper(24, true)
+  eq('the alternate screen keeps its own clears', k(`x${CLEAR}y`), `x${CLEAR}y`)
+}
+
+// --- split across chunks -----------------------------------------------------------
+// The pty hands over whatever the kernel had; a four-byte sequence is routinely torn.
+{
+  const k = keeper(2)
+  const first = k('a\x1b[')
+  eq('a partial sequence is held back, not printed', first, 'a')
+  const second = k('2J\x1b[3Jb')
+  check('and is rewritten once the rest arrives', !second.includes('\x1b[2J') && !second.includes('\x1b[3J'), JSON.stringify(second))
+  check('with the text after it intact', second.endsWith('b'))
+}
+{
+  // Torn in the middle of the SECOND sequence, which is the one that is dropped entirely.
+  const k = keeper(2)
+  eq('the first half of a wipe holds', k('q\x1b[3'), 'q')
+  eq('and the wipe disappears when it completes', k('J'), '')
+}
+{
+  // A lone ESC is a real keystroke echoed back, and holding it for a byte that never comes
+  // would stall the pane.
+  const k = keeper()
+  eq('a trailing ESC is held', k('\x1b'), '')
+  eq('and released as itself when the next chunk is ordinary', k('OA'), '\x1bOA')
+}
+
+// --- the result, in a real terminal --------------------------------------------------
+// esbuild the same module the app uses, then drive @xterm/xterm's headless build with it.
+{
+  let Terminal
+  try {
+    ;({ Terminal } = require_('@xterm/headless'))
+  } catch {
+    console.log('scroll clear: SKIPPED the buffer half - @xterm/headless is not installed')
+  }
+  if (Terminal) {
+    const rows = 10
+    const write = (t, s) => new Promise((r) => t.write(s, r))
+    const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    const k = keepScrollback(() => term.rows, () => term.buffer.active.type === 'alternate')
+
+    for (let i = 1; i <= rows; i++) await write(term, k(`line ${i}\r\n`))
+    await write(term, k(CLEAR))
+    await write(term, k('a fresh prompt'))
+
+    const all = []
+    for (let y = 0; y < term.buffer.active.length; y++) {
+      all.push(term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+    }
+    const text = all.join('\n')
+    check('the cleared screen is still in the buffer', text.includes('line 1'), text.slice(0, 200))
+    check('all of it, not the tail', text.includes('line 9') && text.includes('line 10'))
+    check('and the new prompt is there too', text.includes('a fresh prompt'))
+    check(
+      'the visible screen is blank apart from the prompt',
+      all
+        .slice(term.buffer.active.baseY, term.buffer.active.baseY + rows)
+        .filter((l) => l.trim() && !l.includes('a fresh prompt')).length === 0,
+      JSON.stringify(all.slice(term.buffer.active.baseY))
+    )
+
+    // The control: without the transformer, `3J` really does destroy it. If this ever
+    // stops being true the feature is pointless and this file should say so.
+    const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    for (let i = 1; i <= rows; i++) await write(bare, `line ${i}\r\n`)
+    await write(bare, CLEAR)
+    const left = []
+    for (let y = 0; y < bare.buffer.active.length; y++) {
+      left.push(bare.buffer.active.getLine(y)?.translateToString(true) ?? '')
+    }
+    check('a plain terminal loses it, which is the bug', !left.join('\n').includes('line 1'))
+  }
+}
+
+console.log(`scroll clear: ${checks} checks passed`)

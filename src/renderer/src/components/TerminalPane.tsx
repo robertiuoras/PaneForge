@@ -14,6 +14,7 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
+import { keepScrollback } from '../../../shared/keepScrollback'
 import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
@@ -484,6 +485,17 @@ export default function TerminalPane({
         selectionBackground: '#2f5d8a'
       }
     })
+    /**
+     * Everything an agent writes goes through here first, so that `/clear` stops taking
+     * the previous turn with it: the CLI sends `CSI 2 J` and `CSI 3 J` together, and the
+     * second one deletes this window's scrollback. See shared/keepScrollback.ts - it is
+     * stateful (a sequence is routinely torn across two chunks from the pty), so there is
+     * exactly one of it per pane and every write site uses it.
+     */
+    const keep = keepScrollback(
+      () => t.rows,
+      () => t.buffer.active.type === 'alternate'
+    )
     const f = new FitAddon()
     t.loadAddon(f)
     t.open(host.current)
@@ -1278,7 +1290,7 @@ export default function TerminalPane({
       // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
       if (b) {
         sawOutput = true
-        t.write(b, () => t.scrollToBottom())
+        t.write(keep(b), () => t.scrollToBottom())
       }
     })
 
@@ -1378,7 +1390,7 @@ export default function TerminalPane({
         if (dead) return
         sawOutput = Boolean(b)
         pinned.current = true
-        t.write(b, () => t.scrollToBottom())
+        t.write(keep(b), () => t.scrollToBottom())
       })
     })
 
@@ -1396,7 +1408,7 @@ export default function TerminalPane({
       // line lands in scrollback the scrollbar already believes it has reached, the turn
       // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
       // write should have). Intent cannot drift, so this recovers by itself.
-      t.write(data, () => {
+      t.write(keep(data), () => {
         if (pinned.current) t.scrollToBottom()
         // Same callback so the rail is measured against a buffer that has already grown,
         // rather than one write behind it.
