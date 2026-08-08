@@ -437,6 +437,85 @@ let cookie = ''
   )
 }
 
+// ---- being let in with nothing typed, and being signed out by name ---------------
+//
+// The code could only ever make ONE cookie: `hmac(deviceId, code)`, identical on every
+// browser that used it, so there was no list of who was in and no way to remove one of
+// them. Approving on the desk mints a device its own secret, which is what makes both
+// halves below possible - and the load-bearing half is the second one, because a "Sign
+// out" button that leaves the browser still able to read the desk is worse than none.
+{
+  let devices = []
+  let asking = true
+  const s2 = new PhoneServer({
+    staticDir,
+    code: () => 'ZZZ999',
+    secret: () => 'another-secret',
+    channels: { invoke: [], send: [], on: [] },
+    invoke: async () => null,
+    send: () => {},
+    devices: () => devices,
+    saveDevices: (list) => (devices = list),
+    canAsk: () => asking
+  })
+  const p2 = port + 1
+  const up = await s2.start(p2, '127.0.0.1')
+  ok(up.on, 'a second server is up for the ask flow', up.error)
+  const at = `http://127.0.0.1:${p2}`
+  const ask = async () => await fetch(at + '/pf/ask', { method: 'POST' })
+  const poll = async (id) => await (await fetch(`${at}/pf/ask?id=${encodeURIComponent(id)}`)).json()
+
+  const first = await ask()
+  ok(first.status === 200, 'a browser may ask to be let in', String(first.status))
+  const req = await first.json()
+  ok(/^\d{4}$/.test(req.sas), 'and is given four digits to compare', req.sas)
+  ok(s2.state().ask?.id === req.id, 'the desk is holding that request')
+  ok(!('token' in (s2.state().ask ?? {})), 'and the card carries no token')
+  ok((await poll(req.id)).state === 'waiting', 'nothing happens until somebody answers')
+
+  // Asking again from the same browser is a reload, not a second device.
+  ok((await (await ask()).json()).id === req.id, 'asking twice from one address is one request')
+
+  s2.answerAsk(true)
+  const done = await fetch(`${at}/pf/ask?id=${encodeURIComponent(req.id)}`)
+  const grant = done.headers.get('set-cookie') ?? ''
+  ok((await done.clone().json()).state === 'yes', 'approved, and the phone is told so')
+  ok(/^pf=[a-f0-9]{64};/.test(grant), 'the cookie arrives on the poll, the only door back')
+  ok(grant.includes('HttpOnly') && grant.includes('SameSite=Strict'), 'and is locked down')
+  ok(devices.length === 1, 'the device is remembered, so it comes back signed in')
+  ok(devices[0].token.length === 64 && grant.includes(devices[0].token), 'with its own secret')
+  ok(!JSON.stringify(s2.state().devices).includes(devices[0].token), 'never shown to any window')
+  ok(s2.state().ask === null, 'and the card is gone')
+
+  const mine = grant.split(';')[0]
+  const page = await fetch(at + '/', { headers: { cookie: mine } })
+  ok((await page.text()).includes('THE-REAL-UI'), 'that cookie is the whole app')
+
+  // The half that has to be true for "Sign out" to mean anything.
+  s2.forgetDevice(devices[0].id)
+  ok(devices.length === 0, 'signing out forgets it')
+  const after = await fetch(at + '/', { headers: { cookie: mine } })
+  ok(!(await after.text()).includes('THE-REAL-UI'), 'and its cookie stops working at once')
+
+  // Refusals, and the ceiling on how many cards one address may raise.
+  const again = await (await ask()).json()
+  s2.answerAsk(false)
+  ok((await poll(again.id)).state === 'no', 'a refusal is reported, not left hanging')
+  ok(devices.length === 0, 'and grants nothing')
+
+  let last = 200
+  for (let i = 0; i < 6; i++) {
+    const r = await ask()
+    last = r.status
+    if (r.status === 200) s2.answerAsk(false)
+  }
+  ok(last === 429, 'one address cannot raise cards for ever', String(last))
+
+  asking = false
+  ok((await ask()).status === 403, 'and the whole thing can be switched off', String(last))
+  await s2.stop()
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(`phone: ${checks - failures}/${checks} checks passed`)
 process.exit(failures ? 1 : 0)

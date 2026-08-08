@@ -519,6 +519,16 @@ const phone = new PhoneServer({
   invoke: (channel, args) => callInvoke(channel, args),
   send: (channel, args) => callSend(channel, args),
   channels: surfaceChannels(),
+  // Read and written through the config, like everything else that has to survive a
+  // restart: a device approved on Friday is still approved on Monday, which is the whole
+  // promise ("allow sign in for the future"), and a token held only in memory would break
+  // it on the first update the app installs for itself.
+  devices: () => getConfig().phone?.devices ?? [],
+  saveDevices: (list) => {
+    const cfg = getConfig()
+    setConfig({ phone: { ...cfg.phone!, devices: list } })
+  },
+  canAsk: () => getConfig().phone?.ask !== false,
   onChange: () => send('phone:changed', phoneState())
 })
 
@@ -1459,6 +1469,27 @@ ipcMain.handle('phone:tunnel', async (_e, on: boolean) => {
   const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
   if (!phone.running) await phone.start(port)
   void tunnel.start(port)
+  return phoneState()
+})
+/**
+ * The one press that lets a phone in.
+ *
+ * Nothing is granted by a browser asking - the card is a refusal until this is called with
+ * `true` - and what `true` grants is that device and no other, because approving mints it
+ * a secret of its own rather than handing it the shared derived cookie.
+ */
+ipcMain.handle('phone:answerAsk', (_e, ok: boolean) => {
+  phone.answerAsk(!!ok)
+  return phoneState()
+})
+ipcMain.handle('phone:forget', (_e, id: string) => {
+  phone.forgetDevice(String(id ?? ''))
+  return phoneState()
+})
+ipcMain.handle('phone:asking', (_e, on: boolean) => {
+  const cfg = getConfig()
+  setConfig({ phone: { ...cfg.phone!, ask: !!on } })
+  send('phone:changed', phoneState())
   return phoneState()
 })
 ipcMain.handle('phone:rotate', async () => {

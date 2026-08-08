@@ -233,7 +233,9 @@ function defaults(): Config {
     remote: defaultRemote(),
     // Off, and it stays off until Settings says otherwise: serving the UI over HTTP hands
     // a browser a pane, and a pane runs commands on this machine.
-    phone: { on: false, port: DEFAULT_PHONE_PORT, code: newPhoneCode() },
+    // `ask: true` is the ordinary way in and costs nothing while `on` is false: a browser
+    // asking raises a card that grants nothing until somebody here presses Approve.
+    phone: { on: false, port: DEFAULT_PHONE_PORT, code: newPhoneCode(), devices: [], ask: true },
     theme: { ...DEFAULT_THEME },
     window: { width: 1500, height: 940, maximized: false }
   }

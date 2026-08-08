@@ -870,6 +870,66 @@ export interface PhoneConfig {
    * code (see `LONG_CODE_LEN` in main/index.ts).
    */
   tunnel?: boolean
+  /**
+   * Browsers that were let in by somebody pressing Approve on this desk, each with its
+   * own secret. This is what makes "scan, approve, and it stays signed in" possible: the
+   * derived cookie above is the same on every phone that ever typed the code, so it can
+   * only ever be revoked for all of them at once, and there is no such thing as a list of
+   * WHICH devices are allowed. A per-device token is that list.
+   */
+  devices?: PhoneDevice[]
+  /**
+   * Let a browser ask to be let in instead of typing the code.
+   *
+   * On by default, because it is the whole point of the QR: the phone opens the address,
+   * this desk raises a card with four digits and the same four are on the phone, and one
+   * press signs it in for good. Nothing is granted by the asking - the card is a refusal
+   * until somebody here presses Approve.
+   */
+  ask?: boolean
+}
+
+/** One browser that was approved on this desk, and may come back without asking again. */
+export interface PhoneDevice {
+  id: string
+  /** 'iPhone' / 'Android phone' / 'Mac' - what its user-agent claimed when it asked */
+  kind: string
+  /** the address it asked from, kept so the list reads as a place and not an id */
+  address: string
+  /** which side of the front door it asked from */
+  origin: PhonePeer['origin']
+  /** ms epoch it was approved */
+  at: number
+  /** ms epoch it last held a live stream */
+  seen: number
+  /**
+   * Its secret, 32 random bytes as hex. NEVER leaves the main process: `PhoneState`
+   * carries `PhoneDeviceView`, which is this without the token.
+   */
+  token: string
+}
+
+/** A signed-in device as the panel is allowed to see it: everything except the secret. */
+export type PhoneDeviceView = Omit<PhoneDevice, 'token'> & { live: boolean }
+
+/**
+ * A browser waiting on this desk's Approve, and the four digits that decide it.
+ *
+ * The digits are not a password and are not sent by the browser: they are generated here
+ * and shown in both places, so pressing Approve is a statement that the phone in your hand
+ * is the one that just asked. Anything on the network can raise this card - that is what
+ * an open port means - which is why it says WHERE the request came from and why it grants
+ * nothing at all until a person answers it.
+ */
+export interface PhoneAsk {
+  id: string
+  /** four digits, shown here and on the phone */
+  sas: string
+  address: string
+  kind: string
+  origin: PhonePeer['origin']
+  /** ms epoch it arrived; it expires by itself */
+  at: number
 }
 
 /**
@@ -918,6 +978,12 @@ export interface PhoneState {
   clients: number
   /** one per live stream, newest last */
   peers: PhonePeer[]
+  /** approved once, allowed back without asking - the list `New code` used to have to be */
+  devices: PhoneDeviceView[]
+  /** a browser waiting on Approve right now, at most one */
+  ask: PhoneAsk | null
+  /** whether a browser may ask at all, rather than typing the code */
+  asking: boolean
   /** the way in from outside this network, off unless asked for */
   tunnel: TunnelState
   /** why it is not up when it should be (a taken port) */
@@ -1546,6 +1612,15 @@ export interface Api {
    * soon as the phase is known and the rest arrives on `onPhone`.
    */
   setPhoneTunnel(on: boolean): Promise<PhoneState>
+  /**
+   * Answer the browser waiting on this desk. `true` mints it a secret of its own, so it
+   * comes back signed in without asking again; `false` refuses and says so over there.
+   */
+  answerPhoneAsk(ok: boolean): Promise<PhoneState>
+  /** sign one approved device out. Its cookie stops working at once. */
+  forgetPhoneDevice(id: string): Promise<PhoneState>
+  /** whether a browser may ask to be let in at all, instead of typing the code */
+  setPhoneAsking(on: boolean): Promise<PhoneState>
   /** the count and the addresses change without anybody asking */
   onPhone(cb: (state: PhoneState) => void): () => void
 

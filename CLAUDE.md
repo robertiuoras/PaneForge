@@ -198,7 +198,17 @@ channel of its own.
   commands on this machine. Unpaired gets the pairing page and not one asset; five wrong
   codes locks that address for a minute. The cookie is `hmac(deviceId, code)` - derived,
   never stored - so rotating the code signs every phone out.
-- **Pairing is a camera, not a keyboard.** Settings draws `<address>/#<code>` as a QR
+- **Scanning asks; a press on the desk answers.** The QR carries the bare address, not the
+  code: the phone opens it, `POST /pf/ask` raises a card here with four digits that are on
+  both screens, and Approve mints THAT browser a 32-byte token of its own. So there is no
+  secret on screen to photograph, and — the part the code could never do — a device can be
+  signed out **by name**, because `who()` looks its token up on every request. `New code`
+  still exists and still signs out everything that typed one. One request at a time, five
+  per address per ten minutes, two minutes to answer, and the whole thing is a switch
+  (`phone.ask`) that falls back to the fragment-code QR. Nothing is granted by the asking.
+  `npm run test:phone` covers approve, the cookie arriving on the POLL (the only door back
+  to that browser), and that a signed-out cookie stops working on the next request.
+- **Pairing is a camera, not a keyboard.** With asking off, Settings draws `<address>/#<code>` as a QR
   (`shared/qr.ts`, no dependency, byte mode / level M / versions 1-6) and the pairing page
   posts a code it finds in the fragment. A **fragment** because a browser never sends one
   to the server: the code stays out of the access log and out of every `Referer`. The

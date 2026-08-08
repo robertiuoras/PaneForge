@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { PhonePeer, PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
+import type {
+  PhoneDeviceView,
+  PhonePeer,
+  PhoneState,
+  Project,
+  RemoteFound,
+  RemoteState
+} from '@shared/types'
 import { reachWords } from '@shared/net'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
@@ -120,50 +127,104 @@ function PhoneTunnel({
 }
 
 /**
- * Who is watching, right now.
+ * The phones that are in, and the ones watching right now.
  *
- * The word is "watching" and not "paired" because that is the only thing the server can
- * honestly say. The cookie is `hmac(deviceId, code)`, identical on every phone that ever
- * typed the code, so there is no per-device identity to keep and there can be no
- * per-device sign-out - the one revoke is `New code`, and it takes all of them. Drawing a
- * row per browser with a `Disconnect` button beside it would be the lie: the stream would
- * come straight back, because the cookie is still good.
+ * This used to be able to say only "somebody is watching": the cookie was
+ * `hmac(deviceId, code)`, identical on every browser that ever typed the code, so there
+ * was no per-device identity to keep, no way to sign one out, and `New code` - which took
+ * all of them - was the only revoke there could honestly be.
  *
- * `origin` leads each row rather than the make of the device. "Somebody is watching" reads
- * one way for a phone in this room and another for an address off the internet, and the
- * second is the one worth noticing at a glance.
+ * A device approved on this desk holds a secret of its own, so this is a real list now: a
+ * row per device, `Sign out` per row, and it means it - the token is looked up on every
+ * request, so the stream ends and the next one is refused. A browser that typed the code
+ * still has no identity, so it appears only while it is watching, under the honest word.
+ *
+ * `origin` is on every row because "a phone is signed in" reads one way for the one in
+ * this room and another for an address off the internet.
  */
-function PhonePeers({ peers }: { peers: PhonePeer[] }): JSX.Element {
+function PhoneDevices({
+  devices,
+  peers,
+  setState,
+  flash
+}: {
+  devices: PhoneDeviceView[]
+  peers: PhonePeer[]
+  setState: (s: PhoneState) => void
+  flash: (message: string) => void
+}): JSX.Element {
   // The only moving part is "how long ago", so this repaints itself rather than waiting
   // for a push that will not come - the desk pushes on connect and disconnect, not on the
   // clock ticking.
   const [, tick] = useState(0)
   useEffect(() => {
-    if (!peers.length) return
+    if (!devices.length && !peers.length) return
     const timer = setInterval(() => tick((n) => n + 1), 30_000)
     return () => clearInterval(timer)
-  }, [peers.length])
+  }, [devices.length, peers.length])
+
+  // A browser that typed the code has no device row to sit in, so it is shown as what it
+  // is - a live stream and nothing more. Anything belonging to an approved device is
+  // already drawn above it, by name.
+  const anon = peers.filter((p) => !devices.some((d) => d.live && d.address === p.address))
 
   return (
     <div className="dev-field dev-peers">
-      <span className="dev-key">Watching</span>
-      {peers.length ? (
+      <span className="dev-key">Signed in</span>
+      {devices.length || anon.length ? (
         <ul className="peer-list">
-          {peers.map((p) => (
+          {devices.map((d) => (
+            <li key={d.id} className={`peer peer-${d.origin.replace(/\s+/g, '-')}`}>
+              <span className={'peer-dot' + (d.live ? ' live' : '')} aria-hidden="true" />
+              <span className="peer-kind">{d.kind}</span>
+              <code className="peer-addr">{d.address}</code>
+              <span className="peer-where">{d.origin}</span>
+              <span className="peer-since">{d.live ? 'watching' : lastWords(d.seen)}</span>
+              <button
+                className="ghost small"
+                title="Sign this device out. It has to be approved again to come back."
+                onClick={() => {
+                  void api.forgetPhoneDevice(d.id).then(setState)
+                  flash('Signed out. That device has to be approved again.')
+                }}
+              >
+                Sign out
+              </button>
+            </li>
+          ))}
+          {anon.map((p) => (
             <li key={p.id} className={`peer peer-${p.origin.replace(/\s+/g, '-')}`}>
-              <span className="peer-dot" aria-hidden="true" />
+              <span className="peer-dot live" aria-hidden="true" />
               <span className="peer-kind">{p.kind}</span>
               <code className="peer-addr">{p.address}</code>
               <span className="peer-where">{p.origin}</span>
-              <span className="peer-since">{sinceWords(p.since)}</span>
+              <span className="peer-since">typed the code · {sinceWords(p.since)}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <span className="hint">Nothing connected. Scan the code above on a phone.</span>
+        <span className="hint">Nothing signed in yet. Scan the picture above with a phone.</span>
+      )}
+      {devices.length > 1 && (
+        <div className="dev-acts">
+          <button
+            className="ghost small"
+            onClick={() => {
+              void api.forgetPhoneDevice('*').then(setState)
+              flash('Every phone signed out.')
+            }}
+          >
+            Sign out all
+          </button>
+        </div>
       )}
     </div>
   )
+}
+
+/** A device that is not watching: when it last was, or that it never has been. */
+function lastWords(seen: number): string {
+  return seen ? `last seen ${sinceWords(seen)}` : 'not since it was approved'
 }
 
 /** Rounded hard: a stream's exact age is never the question, "just now or all morning" is. */
@@ -224,12 +285,18 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               and the code under `Other ways in` are what is left for a phone with no camera
               or an address the first one could not reach. */}
           <div className="pair-hero">
-            <PairQr url={url} code={state.code} size={168} />
+            {/* No code in the picture while a phone can ask for itself: what it opens is
+                the bare address, and what lets it in is a press on this desk. So a
+                photograph of this screen is worth nothing, and there is no secret on
+                screen to be read over a shoulder. With asking switched off the code goes
+                back into the fragment, which is the old zero-tap path. */}
+            <PairQr url={url} code={state.asking ? undefined : state.code} size={168} />
             <div className="pair-scan-say">
               <strong className="pair-scan-lead">Point your phone&apos;s camera at this</strong>
               <p className="hint">
-                Open the link it offers and the phone is in. Nothing to type: the code rides
-                in the part of the address a browser never sends anywhere.
+                {state.asking
+                  ? 'Open the link it offers and this desk asks you to approve it — four digits, on both screens. One press and that phone stays signed in.'
+                  : 'Open the link it offers and the phone is in. Nothing to type: the code rides in the part of the address a browser never sends anywhere.'}
               </p>
               {/* What this particular picture reaches, in the same words the address list
                   uses - a QR that works at the desk and nowhere else must not look like one
@@ -238,7 +305,12 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
             </div>
           </div>
           <PhoneTunnel state={state} setState={setState} />
-          <PhonePeers peers={state.peers} />
+          <PhoneDevices
+            devices={state.devices}
+            peers={state.peers}
+            setState={setState}
+            flash={flash}
+          />
           <Fold label="Other ways in">
             <div className="dev-field">
               <span className="dev-key">Open on the phone</span>
@@ -305,9 +377,16 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               </div>
             </div>
             <p className="hint">
-              Typed once per phone, then it stays signed in. A new code signs every phone out
-              — there is no per-device identity to sign out on its own.
+              The code is the way in for a browser that cannot scan, or when asking is off
+              below. A new code signs out every phone that used one — approved devices hold
+              a secret of their own and are signed out by name, above.
             </p>
+            <Switch
+              checked={state.asking}
+              onChange={(on) => void api.setPhoneAsking(on).then(setState)}
+              label="Let a browser ask to be let in"
+              hint="It raises a card on this screen with four digits and the same four on the phone. Nothing is granted until you press Approve here. Off, and a phone has to type the code."
+            />
           </Fold>
         </div>
       )}
@@ -802,7 +881,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         <div className="setting">
           <div className="setting-row">
             <label>Pair another device</label>
-            <span className="hint">press “Copy invite” over there, paste it here</span>
+            <span className="hint">tap it below — no code to type</span>
           </div>
 
           {waiting && (
@@ -817,24 +896,6 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
               <span className="hint">invite is on your clipboard - click to pair</span>
             </button>
           )}
-
-          <div className="dev-paste">
-            <input
-              className="dev-invite-in"
-              placeholder="Paste the invite from your other device"
-              aria-label="Paste an invite"
-              autoFocus
-              value=""
-              // The paste IS the action: there is nothing to check before pairing, and a
-              // separate button here would be one click that never means anything else.
-              onChange={(e) => void pasteInvite(e.target.value)}
-              onPaste={(e) => {
-                e.preventDefault()
-                void pasteInvite(e.clipboardData.getData('text'))
-              }}
-            />
-            {pairing && <span className="hint">Pairing...</span>}
-          </div>
 
           {/* A request this device sent, while somebody walks to the other machine. The
               six digits are here so they can be compared with the card over there - that
@@ -883,6 +944,29 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             </div>
           )}
 
+          {/* What is left is what you reach for when the network did not find the other
+              machine: an invite pasted from a clipboard the two do share, and the address
+              typed by hand. Both used to be on screen at all times, ABOVE the list of
+              devices this one can already see, which is the wrong way round - the
+              ordinary path is tapping a name. Closed until it is asked for. */}
+          <Fold label="Other ways to pair">
+            <div className="dev-paste">
+              <input
+                className="dev-invite-in"
+                placeholder="Paste the invite from your other device"
+                aria-label="Paste an invite"
+                value=""
+                // The paste IS the action: there is nothing to check before pairing, and a
+                // separate button here would be one click that never means anything else.
+                onChange={(e) => void pasteInvite(e.target.value)}
+                onPaste={(e) => {
+                  e.preventDefault()
+                  void pasteInvite(e.clipboardData.getData('text'))
+                }}
+              />
+              {pairing && <span className="hint">Pairing...</span>}
+            </div>
+
           {!manual && (
             <button className="ghost small dev-manual" onClick={() => setManual(true)}>
               Type an address and code instead
@@ -917,6 +1001,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
               {pairing ? 'Pairing...' : 'Pair'}
             </button>
           </div>
+          </Fold>
           {error && <div className="dev-error">{error}</div>}
         </div>
 

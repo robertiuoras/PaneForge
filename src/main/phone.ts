@@ -35,7 +35,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
 import { deviceKind, originOf } from '../shared/net'
-import type { PhonePeer, PhoneState } from '../shared/types'
+import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
 
 /** How long a phone's cookie is good for. Rotating the code invalidates it sooner. */
@@ -47,6 +47,18 @@ const LOCK_MS = 60_000
 const KEEPALIVE_MS = 15_000
 /** `transcribe` posts a wav. Anything past this is refused rather than buffered. */
 const BODY_LIMIT = 24 * 1024 * 1024
+/**
+ * How long a request to be let in stands before it expires by itself.
+ *
+ * Long enough to walk to the desk, short enough that a card nobody answered is gone by
+ * the time anybody wonders what it was. The phone polls, so an expiry is visible at both
+ * ends rather than being a screen that waits for ever.
+ */
+const ASK_MS = 120_000
+/** Requests one address may raise in ASK_WINDOW_MS. A card is cheap to refuse and
+ *  expensive to be shown twenty of. */
+const ASK_LIMIT = 5
+const ASK_WINDOW_MS = 10 * 60_000
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -78,17 +90,37 @@ export interface PhoneDeps {
   channels: { invoke: string[]; send: string[]; on: string[] }
   /** told whenever the client count or the error changes, for Settings */
   onChange?(): void
+  /** devices approved on this desk, with their secrets. Read fresh, same as `code`. */
+  devices?(): PhoneDevice[]
+  /** a device was approved, or forgotten: persist the new list */
+  saveDevices?(list: PhoneDevice[]): void
+  /** may a browser ask to be let in, rather than typing the code */
+  canAsk?(): boolean
 }
 
 interface Client extends PhonePeer {
   res: ServerResponse
   alive: boolean
+  /** the approved device this stream belongs to, '' for one that typed the code */
+  device: string
+}
+
+/** The card's half of a request: everything except the token it is holding for it. */
+function askView(a: PhoneAsk & { token?: string }): PhoneAsk {
+  const { id, sas, address, kind, origin, at } = a
+  return { id, sas, address, kind, origin, at }
 }
 
 export class PhoneServer {
   private server: Server | null = null
   private clients = new Set<Client>()
   private tries = new Map<string, { n: number; until: number }>()
+  /** the one browser waiting on Approve, plus how it will be answered */
+  private asking:
+    | (PhoneAsk & { answered: 'yes' | 'no' | null; token: string; ua: string })
+    | null = null
+  private askTries = new Map<string, { n: number; since: number }>()
+  private nextAsk = 1
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
@@ -166,6 +198,7 @@ export class PhoneServer {
    */
   state(): Omit<PhoneState, 'tunnel'> {
     const port = this.listening || 0
+    const live = new Set([...this.clients].map((c) => c.device).filter(Boolean))
     return {
       on: !!this.server,
       port,
@@ -179,8 +212,133 @@ export class PhoneServer {
         origin,
         since
       })),
+      // The token never leaves this process, so the view is built by dropping it rather
+      // than by remembering not to mention it.
+      devices: (this.deps.devices?.() ?? []).map(({ token: _t, ...d }) => ({
+        ...d,
+        live: live.has(d.id)
+      })),
+      ask: this.asking && !this.asking.answered ? askView(this.asking) : null,
+      asking: this.deps.canAsk?.() ?? true,
       error: this.lastError || undefined
     }
+  }
+
+  // ---- being let in without a code ---------------------------------------------
+
+  /**
+   * Answer the browser that is waiting. Called from the card on this desk.
+   *
+   * Approving MINTS the device: a fresh 32-byte token, kept here and set as that
+   * browser's cookie when it next polls. That is the difference between this and the
+   * pairing code - the code makes one cookie that every phone shares, so it can only be
+   * revoked for all of them at once and there is no list of who is in.
+   */
+  answerAsk(ok: boolean): void {
+    const ask = this.asking
+    if (!ask || ask.answered) return
+    ask.answered = ok ? 'yes' : 'no'
+    if (ok) {
+      const list = this.deps.devices?.() ?? []
+      this.deps.saveDevices?.([
+        ...list,
+        {
+          id: ask.id,
+          kind: ask.kind,
+          address: ask.address,
+          origin: ask.origin,
+          at: Date.now(),
+          seen: 0,
+          token: ask.token
+        }
+      ])
+    }
+    this.deps.onChange?.()
+  }
+
+  /**
+   * Sign one device out - or every one of them, with `*`. Its cookie stops matching at
+   * once, because `who()` looks the token up in this list on every single request, and its
+   * stream is ended rather than left drawing a desk it is no longer allowed to see.
+   */
+  forgetDevice(id: string): void {
+    const list = this.deps.devices?.() ?? []
+    this.deps.saveDevices?.(id === '*' ? [] : list.filter((d) => d.id !== id))
+    for (const c of [...this.clients]) {
+      if (!c.device || (id !== '*' && c.device !== id)) continue
+      c.alive = false
+      try {
+        c.res.end()
+      } catch {
+        /* already gone */
+      }
+      this.clients.delete(c)
+    }
+    this.deps.onChange?.()
+  }
+
+  private async ask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!(this.deps.canAsk?.() ?? true)) return this.plain(res, 403, 'asking is off')
+    const who = addressOf(req)
+    const now = Date.now()
+    const seen = this.askTries.get(who)
+    const win = seen && now - seen.since < ASK_WINDOW_MS ? seen : { n: 0, since: now }
+    // An expired request is not a live one: it must not hold the single slot for ever.
+    if (this.asking && (this.asking.answered || now - this.asking.at > ASK_MS)) this.asking = null
+    if (this.asking) {
+      // The same browser asking again gets its own request back rather than a refusal -
+      // a reload while waiting is the normal case, not a second device.
+      if (this.asking.address === who) return this.json(res, 200, askView(this.asking))
+      return this.plain(res, 409, 'another device is already asking')
+    }
+    if (win.n >= ASK_LIMIT) return this.plain(res, 429, 'too many requests')
+    this.askTries.set(who, { n: win.n + 1, since: win.since })
+    const ua = String(req.headers['user-agent'] ?? '')
+    this.asking = {
+      id: `d${now.toString(36)}${this.nextAsk++}`,
+      // Four digits, generated HERE and shown in both places. Not a secret: what it
+      // proves is that the phone in your hand is the one the card is about.
+      sas: String(randomBytes(2).readUInt16BE(0) % 10000).padStart(4, '0'),
+      address: who,
+      kind: deviceKind(ua),
+      origin: originOf(who),
+      at: now,
+      answered: null,
+      token: randomBytes(32).toString('hex'),
+      ua
+    }
+    this.deps.onChange?.()
+    this.json(res, 200, askView(this.asking))
+  }
+
+  /**
+   * "Has it been approved yet?" - polled by the waiting page.
+   *
+   * The cookie is set HERE rather than when Approve is pressed, because the desk has no
+   * way to reach that browser: the request it is waiting on is the only door back.
+   */
+  private askState(req: IncomingMessage, res: ServerResponse, id: string): void {
+    const ask = this.asking
+    if (!ask || ask.id !== id) return this.json(res, 200, { state: 'gone' })
+    if (Date.now() - ask.at > ASK_MS && !ask.answered) {
+      this.asking = null
+      this.deps.onChange?.()
+      return this.json(res, 200, { state: 'gone' })
+    }
+    if (ask.answered === 'no') {
+      this.asking = null
+      this.deps.onChange?.()
+      return this.json(res, 200, { state: 'no' })
+    }
+    if (ask.answered !== 'yes') return this.json(res, 200, { state: 'waiting' })
+    // Approved: hand this browser its own cookie and let go of the slot.
+    this.asking = null
+    this.deps.onChange?.()
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'set-cookie': `pf=${ask.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_DAYS * 86400}`
+    })
+    res.end('{"state":"yes"}')
   }
 
   /** One of main's own pushes, on its way to every paired browser. */
@@ -220,6 +378,10 @@ export class PhoneServer {
     const path = url.pathname
 
     if (path === '/pf/pair' && req.method === 'POST') return await this.pair(req, res)
+    // Both halves of being let in without a code, and both of them before the auth check:
+    // a browser that has not been approved yet is exactly who is asking.
+    if (path === '/pf/ask' && req.method === 'POST') return await this.ask(req, res)
+    if (path === '/pf/ask') return this.askState(req, res, url.searchParams.get('id') ?? '')
     if (!this.authed(req)) {
       // Anything under /pf is machinery: say no rather than handing back a page.
       if (path.startsWith('/pf/')) return this.plain(res, 401, 'pair first')
@@ -263,9 +425,18 @@ export class PhoneServer {
       'x-accel-buffering': 'no'
     })
     const address = addressOf(req)
+    const device = this.who(req)?.device ?? ''
+    if (device) {
+      // "Last seen" is the stream, not the request: a device that opened the page and
+      // walked away is not one that is watching.
+      const list = this.deps.devices?.() ?? []
+      const now = Date.now()
+      this.deps.saveDevices?.(list.map((d) => (d.id === device ? { ...d, seen: now } : d)))
+    }
     const client: Client = {
       res,
       alive: true,
+      device,
       id: `p${this.nextPeer++}`,
       address,
       kind: deviceKind(req.headers['user-agent'] ?? ''),
@@ -345,11 +516,29 @@ export class PhoneServer {
   }
 
   private authed(req: IncomingMessage): boolean {
+    return this.who(req) !== null
+  }
+
+  /**
+   * Which device this request is, or null for one that may not be here.
+   *
+   * Two kinds of cookie are good, and they are the two ways in: the derived one, which is
+   * `hmac(deviceId, code)` and identical on every browser that ever typed the code, and a
+   * device token minted when somebody pressed Approve. Both are 64 hex characters and
+   * both are compared in constant time; the difference is that a token can be taken away
+   * from one device without touching the others.
+   */
+  private who(req: IncomingMessage): { device: string } | null {
     const cookie = /(?:^|;\s*)pf=([a-f0-9]{64})/.exec(req.headers.cookie ?? '')
-    if (!cookie) return false
-    const a = Buffer.from(cookie[1], 'hex')
-    const b = Buffer.from(this.token(), 'hex')
-    return a.length === b.length && timingSafeEqual(a, b)
+    if (!cookie) return null
+    const got = Buffer.from(cookie[1], 'hex')
+    const same = (hex: string): boolean => {
+      const want = Buffer.from(hex, 'hex')
+      return got.length === want.length && timingSafeEqual(got, want)
+    }
+    if (same(this.token())) return { device: '' }
+    for (const d of this.deps.devices?.() ?? []) if (same(d.token)) return { device: d.id }
+    return null
   }
 
   private async readWire<T>(req: IncomingMessage, res: ServerResponse): Promise<T | null> {
@@ -485,7 +674,7 @@ const PAIR_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 :root{color-scheme:dark light}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#17150f;color:#f3ece0;
 font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-form{width:min(320px,86vw);text-align:center}
+main{width:min(320px,86vw);text-align:center}
 h1{font-size:17px;font-weight:600;letter-spacing:.02em;margin:0 0 4px}
 p{margin:0 0 22px;opacity:.6;font-size:14px}
 input{width:100%;box-sizing:border-box;font:600 28px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -495,26 +684,59 @@ input:focus{outline:2px solid #f0a868;outline-offset:1px}
 button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:12px;background:#f0a868;
 color:#211a10;font:600 16px/1 inherit}
 .bad{margin-top:14px;color:#f08a7a;font-size:14px;min-height:20px}
-.busy form{visibility:hidden}
-.busy #w{display:block}
-#w{display:none;position:fixed;inset:0;display:none;place-items:center;font-size:14px;opacity:.7}
-.busy #w{display:grid}
-</style></head><body><form id=f>
-<h1>PaneForge</h1><p>Type the code from Settings &rarr; Phone</p>
-<input id=c autocomplete=off autocapitalize=characters spellcheck=false inputmode=text maxlength=8>
-<button>Connect</button><div class=bad id=e></div></form><div id=w>Connecting&hellip;</div><script>
-var f=document.getElementById('f'),c=document.getElementById('c'),e=document.getElementById('e')
+.sas{font:700 44px/1.1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.22em;
+margin:6px 0 2px;text-indent:.22em}
+.dots{display:inline-flex;gap:5px;margin-top:16px}
+.dots i{width:6px;height:6px;border-radius:50%;background:#f0a868;opacity:.25;
+animation:b 1.2s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes b{40%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.dots i{animation:none;opacity:.6}}
+[hidden]{display:none!important}
+</style></head><body>
+<main id=wait hidden>
+<h1>PaneForge</h1><p id=waitsay>Check this number on the desk, then press Approve there.</p>
+<div class=sas id=sas></div>
+<div class=dots><i></i><i></i><i></i></div>
+<div class=bad id=asked></div>
+</main>
+<main id=manual hidden><form id=f>
+<h1>PaneForge</h1><p>Type the code from Settings &rarr; Devices</p>
+<input id=c autocomplete=off autocapitalize=characters spellcheck=false inputmode=text maxlength=16>
+<button>Connect</button><div class=bad id=e></div></form></main>
+<main id=busy hidden><p>Connecting&hellip;</p></main>
+<script>
+var el=function(id){return document.getElementById(id)}
+var f=el('f'),c=el('c'),e=el('e')
+function show(id){['wait','manual','busy'].forEach(function(k){el(k).hidden=k!==id})}
 function pair(code){return fetch('/pf/pair',{method:'POST',body:JSON.stringify({code:code})})}
 function fail(r){e.textContent=r&&r.status===429?'Too many tries. Wait a minute.':'That code is not right.'
 c.value='';c.focus()}
+function typeIt(msg){show('manual');if(msg)e.textContent=msg;c.focus()}
 f.onsubmit=function(ev){ev.preventDefault();e.textContent=''
 pair(c.value).then(function(r){if(r.ok){location.reload();return}fail(r)})
 .catch(function(){e.textContent='No answer from the desk.'})}
+
+/* Being let in with nothing typed. The desk raises a card carrying the same four digits
+   this page shows; the poll below is the only way back to this browser, so the cookie
+   arrives on it rather than on the press. A refusal, an expiry or asking being switched
+   off all land on the code form rather than on a dead end. */
+function askToGetIn(){show('wait')
+fetch('/pf/ask',{method:'POST'}).then(function(r){
+if(!r.ok)return typeIt(r.status===429?'Too many requests from here. Wait a few minutes, or type the code.':'')
+return r.json().then(function(a){el('sas').textContent=a.sas.slice(0,2)+' '+a.sas.slice(2)
+poll(a.id)})}).catch(function(){typeIt('No answer from the desk.')})}
+function poll(id){setTimeout(function(){
+fetch('/pf/ask?id='+encodeURIComponent(id)).then(function(r){return r.json()}).then(function(s){
+if(s.state==='yes'){show('busy');location.replace(location.pathname);return}
+if(s.state==='no')return typeIt('That was refused on the desk.')
+if(s.state==='gone')return typeIt('That request timed out.')
+poll(id)}).catch(function(){poll(id)})},1200)}
+
 var scanned=(location.hash||'').replace(/^#/,'').replace(/[^A-Za-z0-9]/g,'')
-if(scanned){document.documentElement.className='busy'
+if(scanned){show('busy')
 pair(scanned).then(function(r){
 if(r.ok){location.replace(location.pathname);return}
-document.documentElement.className='';fail(r);c.focus()})
-.catch(function(){document.documentElement.className=''
-e.textContent='No answer from the desk.'})}else{c.focus()}
+/* A stale code in an old QR is not a dead end: ask instead. */
+askToGetIn()}).catch(function(){typeIt('No answer from the desk.')})}else{askToGetIn()}
 </script></body></html>`

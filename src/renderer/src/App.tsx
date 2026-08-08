@@ -8,6 +8,7 @@ import type {
   PriorPrompt,
   Project,
   RecentItem,
+  PhoneState,
   RemoteState,
   RestoreOffer,
   Session,
@@ -39,6 +40,7 @@ import {
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
+import { PhoneAsk } from './components/PhoneAsk'
 import TerminalPane, {
   onPaneDraft,
   paneCopyMode,
@@ -198,6 +200,7 @@ export default function App(): JSX.Element {
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
+  const [phone, setPhone] = useState<PhoneState | null>(null)
   // The panes the last run left behind, when the launch decided to ask about them.
   const [restore, setRestore] = useState<RestoreOffer | null>(null)
   // One in-app dialog stands in for window.confirm and window.prompt. Both of those
@@ -338,15 +341,21 @@ export default function App(): JSX.Element {
     // this window is still loading, so it holds the question until we ask for it.
     api.pendingRestore().then(setRestore)
     api.remoteState().then(setRemote)
+    // The phone's state is held HERE and not only inside the Devices dialog, for one
+    // reason: a browser asking to be let in raises a card, and that request arrives while
+    // somebody is standing in the hall with a phone, not while that dialog is open.
+    api.phoneState().then(setPhone)
     const offS = api.onSessions(setSessions)
     const offC = api.onConfig(setConfigState)
     // Pushed rather than polled: a device coming or going, a guest attaching, a
     // reconnect finishing - all of them change what the sidebar says.
     const offR = api.onRemote(setRemote)
+    const offP = api.onPhone(setPhone)
     return () => {
       offS()
       offC()
       offR()
+      offP()
     }
   }, [])
 
@@ -3135,6 +3144,9 @@ export default function App(): JSX.Element {
           is here rather than inside the Devices dialog - that dialog is almost never the
           thing on screen when the request lands. */}
       {remote?.asking && <PairAsk ask={remote.asking} />}
+      {/* Same reasoning, one door along: a phone that scanned the picture is waiting on a
+          press here, and the person holding it is not the person with this dialog open. */}
+      {phone?.ask && <PhoneAsk ask={phone.ask} />}
       <UpdateToast />
     </div>
     </BlurbContext.Provider>

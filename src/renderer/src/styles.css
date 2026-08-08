@@ -1791,7 +1791,16 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 /* The dot carries the one thing worth catching without reading: green for something in
    this room, accent for a way in from outside, warning for a public address. Colour is
    never the ONLY signal - `.peer-where` prints the same fact in words beside it. */
-.peer-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ok, #6ec46e); }
+/* A device that is signed in but not watching is still a fact worth listing - it comes
+   back without asking - so it is drawn as an outline rather than dropped from the list.
+   Filled is "on screen right now". */
+.peer-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: none; border: 1px solid var(--line-strong);
+}
+.peer-dot.live { background: var(--ok, #6ec46e); border-color: transparent; }
+.peer .ghost.small { margin-left: auto; flex: none; }
+.peer-since { flex: none; }
 .peer-tailnet .peer-dot { background: var(--acc); }
 .peer-internet .peer-dot { background: var(--warn, #f0a868); }
 /* ---- pairing by asking ----
@@ -1813,6 +1822,13 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   box-shadow: 0 12px 34px #0009;
 }
 .pair-ask-who { font-size: 13px; color: var(--text); }
+/* The phone's card is the same object, with one difference that is worth a colour: a
+   request that came from the internet rather than from this network. Nothing about the
+   card is safe or unsafe on its own - it grants nothing until it is answered - but the
+   two are answered differently, so they must not look identical. */
+.phone-ask.far { border-color: var(--warn, #f0a868); }
+.phone-ask.far .pair-ask-sas { color: var(--warn, #f0a868); }
+.pair-ask-note { margin: 8px 0 0; }
 .pair-ask-say { margin: 2px 0 10px; }
 .pair-ask-acts { display: flex; gap: 8px; }
 .pair-ask-acts button { flex: 1; padding: 8px 10px; font-size: 12.5px; }
