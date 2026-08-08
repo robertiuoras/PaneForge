@@ -71,6 +71,7 @@ import LaneStrip, {
   useLaneBoard,
   useLanesByPane
 } from './components/LaneStrip'
+import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
@@ -2396,6 +2397,23 @@ export default function App(): JSX.Element {
                     >
                       {s.title}
                     </span>
+                    {/* The clock lives up HERE, at the far end of the name, because this
+                        line has spare room and the line below it has none: a lane card's
+                        sub-line wanted 214px of the 190px it has, and every arrangement
+                        that fits five facts into 190px destroys one of them. The title
+                        line holds a key, a name and nothing else, and a right-aligned
+                        clock is where every mail client has put one for thirty years.
+                        Counts only while the agent is working: a clock that ran from
+                        launch ticked through an idle night and read as "still busy". */}
+                    {s.status === 'exited' ? (
+                      <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                    ) : s.runSince ? (
+                      <Elapsed since={s.runSince} title="This turn" />
+                    ) : s.lastRunMs !== undefined ? (
+                      <span className="elapsed done" title="Last turn">
+                        {formatElapsed(s.lastRunMs)}
+                      </span>
+                    ) : null}
                   </div>
                 )}
                 <div className="row-sub">
@@ -2420,6 +2438,21 @@ export default function App(): JSX.Element {
                   {(() => {
                     const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 })
                     const inLane = place.kind === 'lane'
+                    // Usually the lane this chat HOLDS and the lane this pane is OPEN in
+                    // are one checkout, and then two chips were drawn for it. This one is
+                    // the useful half - it opens the lane's dialog - so it takes the other
+                    // one's colour and its word, and the other one is not drawn at all.
+                    const held = laneOfSession(lanesByPane, s.id)
+                    const heldHere = held ? samePath(held.dir, s.cwd) : false
+                    const laneMark = !heldHere
+                      ? ''
+                      : held!.conflicted
+                        ? ' stuck'
+                        : held!.ready
+                          ? ' done'
+                          : laneBusy(held!)
+                            ? ' busy'
+                            : ''
                     // A chip that repeats the line above it, and costs the line below it a
                     // word. A pane is named `basename(cwd)` by default, so on an ordinary
                     // card the title already IS the project - `taskdriver.ai` written
@@ -2434,9 +2467,19 @@ export default function App(): JSX.Element {
                     // into the lane dialog), a copy. The full sentence is on the title
                     // either way, so nothing is lost, only unrepeated.
                     if (!inLane && place.short.trim() === s.title.trim()) return null
+                    // In a lane the project name is on this line for the THIRD time - the
+                    // pane's own title says it, this chip said `PaneForge · lane a`, and
+                    // the lane chip beside it said `lane a` again. Measured with
+                    // scripts/card-fit-test.mjs at the real 190px sub-line: the line wanted
+                    // 313px, so the place chip was drawn 34px wide out of 99 and the agent's
+                    // name 46px out of 67 - Robert's "Claude Code text is hidden when a lane
+                    // is being used", reported for the second time. The project is dropped
+                    // whenever the title above has already printed it, which is the ordinary
+                    // case; it comes straight back on a renamed pane.
+                    const named = s.title.trim().includes(place.project)
                     return (
                       <button
-                        className={'chip place' + (inLane ? ' lane-chip' : '')}
+                        className={'chip place' + (inLane ? ' lane-chip' : '') + laneMark}
                         title={
                           place.full +
                           (inLane
@@ -2448,7 +2491,8 @@ export default function App(): JSX.Element {
                           if (inLane) setLaneCwd(s.cwd)
                         }}
                       >
-                        {place.short}
+                        {inLane && named ? place.role : place.short}
+                        {laneMark === ' done' ? ' done' : laneMark === ' stuck' ? ' stuck' : ''}
                       </button>
                     )
                   })()}
@@ -2461,25 +2505,22 @@ export default function App(): JSX.Element {
                       two facts about two things. It comes back the moment the lane is a
                       copy of some OTHER project than the one this pane is open in, which
                       happens: a chat opened in `assistant` can hold Toolstash's lane c. */}
-                  {laneOfSession(lanesByPane, s.id) ? (
-                    <LaneChip
-                      lane={laneOfSession(lanesByPane, s.id)!}
-                      paneProject={describePlace({ cwd: s.cwd, lane: s.lane }).project}
-                      onHelp={() => setLaneHelp(true)}
-                    />
-                  ) : null}
-                  {s.status === 'exited' ? (
-                    <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                  ) : s.runSince ? (
-                    // Counts only while the agent is working on something. A clock
-                    // that ran from launch kept ticking through an idle night and
-                    // read as "still busy" at a glance.
-                    <Elapsed since={s.runSince} title="This turn" />
-                  ) : s.lastRunMs !== undefined ? (
-                    <span className="elapsed done" title="Last turn">
-                      {formatElapsed(s.lastRunMs)}
-                    </span>
-                  ) : null}
+                  {/* ...and only when it is a DIFFERENT checkout from the one this pane is
+                      open in. A chat in `assistant` can hold Toolstash's lane c, and that
+                      is the case this chip exists for; the ordinary case - the pane sitting
+                      in the very lane its chat holds - is one fact, and the place chip
+                      above now carries it, colour and all. */}
+                  {(() => {
+                    const held = laneOfSession(lanesByPane, s.id)
+                    if (!held || samePath(held.dir, s.cwd)) return null
+                    return (
+                      <LaneChip
+                        lane={held}
+                        paneProject={describePlace({ cwd: s.cwd, lane: s.lane }).project}
+                        onHelp={() => setLaneHelp(true)}
+                      />
+                    )
+                  })()}
                 </div>
               </div>
               {s.status === 'exited' && (

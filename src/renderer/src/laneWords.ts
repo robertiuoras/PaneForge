@@ -19,6 +19,18 @@ export function ago(ms: number, now = Date.now()): string {
   return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
 }
 
+/**
+ * Two paths naming one checkout, whichever way their separators lean.
+ *
+ * The lane file records a lane's folder as the engine built it and a pane records the
+ * folder it was opened in; on Windows those routinely differ by a drive-letter case or a
+ * trailing slash and are the same directory.
+ */
+export function samePath(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
+}
+
 /** The last segment of a path, whichever way its separators lean. */
 export function folderName(p: string): string {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? p

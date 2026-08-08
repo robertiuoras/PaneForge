@@ -36,6 +36,7 @@ const TESTS = [
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
+  ['cardfit', 'card-fit-test.mjs'],
   ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],
   ['silence', 'silence-test.mjs'],

@@ -304,8 +304,19 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    on one line to the eye; the name keeps its own ellipsis as a flex item that may shrink. */
 .row-title.has-key { display: flex; align-items: center; min-width: 0; }
 .row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Pushed to the far end of the title line, and never squeezed: the name beside it has an
+   ellipsis and this does not - "1m 2" is a wrong number, where "PaneFo…" is a short name. */
+.row-title .elapsed, .row-title .chip.dead { margin-left: auto; flex: none; }
+/* It WRAPS. Everything below this rule is about which of five true facts gets destroyed
+   when they do not fit in 190px, and the answer kept being a different one - the clock,
+   then the agent's name, then the place - because with one line there is no answer that
+   is not a loss. A second line costs 15px on the cards that need one and nothing at all
+   on the cards that do not, and it is the only arrangement where "Claude Code" cannot be
+   hidden by a chip. Measured with scripts/card-fit-test.mjs: a lane card wanted 214px of
+   line and had 190. */
 .row-sub {
   color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px;
+  flex-wrap: wrap; row-gap: 2px;
   white-space: nowrap; overflow: hidden;
 }
 /* This line overflows the moment a card carries a model, a lane chip and a running
@@ -620,17 +631,17 @@ html.app-blurred .elapsed::after { animation: none; }
    own semantic colours rather than written as hex: these three rules were `#7ee087` and
    `#ff8f8f`, chosen against a near-black window, and on the Paper preset a 8%-alpha pastel
    on white is a chip with no state at all. */
-.chip.pf-lane.busy {
+.chip.pf-lane.busy, .chip.place.lane-chip.busy {
   color: var(--info);
   border-color: color-mix(in srgb, var(--info) 34%, transparent);
   background: color-mix(in srgb, var(--info) 12%, transparent);
 }
-.chip.pf-lane.done {
+.chip.pf-lane.done, .chip.place.lane-chip.done {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 30%, transparent);
   background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
-.chip.pf-lane.stuck {
+.chip.pf-lane.stuck, .chip.place.lane-chip.stuck {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 34%, transparent);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
@@ -641,10 +652,11 @@ html.app-blurred .elapsed::after { animation: none; }
    "is this happening" without reading the word, and a chip that has gone quiet stops
    asking for attention on its own. Only `opacity` moves, on a 60px pill - the whole-row
    glow lesson three rules down is why this is not a shadow. */
-.chip.pf-lane.busy { animation: laneBreath 2.8s ease-in-out infinite; }
+.chip.pf-lane.busy, .chip.place.lane-chip.busy { animation: laneBreath 2.8s ease-in-out infinite; }
 @keyframes laneBreath { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
 @media (prefers-reduced-motion: reduce) {
-  .chip.pf-lane.stuck, .chip.pf-lane.busy { animation: none; }
+  .chip.pf-lane.stuck, .chip.pf-lane.busy,
+  .chip.place.lane-chip.stuck, .chip.place.lane-chip.busy { animation: none; }
 }
 
 /* "How lanes work" - the one place lanes get whole sentences. Every lane surface links
