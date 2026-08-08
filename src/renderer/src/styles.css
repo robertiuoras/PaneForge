@@ -1839,6 +1839,37 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .pair-scan { align-items: center; gap: 12px; flex-wrap: nowrap; }
 .pair-scan-say { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pair-scan-say .hint { margin: 0; }
+/* ---- the picture IS the setup ----
+   Setting up a phone used to mean reading down a column of fields - an address list, a
+   code, a port, a New code - to find a 132px picture in the middle of it. The picture is
+   the only step, so it gets the raised plate, the top of the panel and enough size to be
+   scanned from arm's length across a desk; everything it is MADE of is one fold below. */
+.pair-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px; border-radius: var(--r);
+  border: 1px solid var(--line-strong); background: var(--surface-3);
+}
+.pair-scan-lead { font-size: 13.5px; color: var(--text); }
+/* What THIS picture reaches, in the address list's own words - a QR that works at the
+   desk and nowhere else must not look like one that works from a train. */
+.pair-reach {
+  align-self: flex-start; margin-top: 4px;
+  padding: 2px 7px; border-radius: 999px; font-size: 10.5px;
+  border: 1px solid var(--line); background: #00000030; color: var(--muted);
+}
+/* ---- what pairing is made of, closed until it is needed ---- */
+.dev-fold > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 5px 2px; font-size: 11.5px; color: var(--muted);
+}
+.dev-fold > summary::-webkit-details-marker { display: none; }
+.dev-fold > summary::before {
+  content: '›'; display: inline-block; width: 12px;
+  transition: transform var(--fast); transform-origin: 40% 55%;
+}
+.dev-fold[open] > summary::before { transform: rotate(90deg); }
+.dev-fold > summary:hover { color: var(--text); }
+.dev-fold-body { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
 /* Always a light plate with dark modules, whatever the theme: a phone camera will not
    read an inverted QR, and this one is looked at by a camera and nothing else. */
 .pair-qr {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import type { PhonePeer, PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
 import { reachWords } from '@shared/net'
@@ -22,6 +22,24 @@ function DeviceGlyph(): JSX.Element {
       <path d="M5.5 13.6h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       <path d="M8 11.25v2.35" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
+  )
+}
+
+/**
+ * A heading that opens.
+ *
+ * This screen had grown two of everything - a code, an address list, a port and a New code
+ * beside them, twice over, once for a phone and once for another desktop - and all of it
+ * was on screen at once, above and below the one picture somebody actually needs. None of
+ * it is wrong; it is what pairing is MADE of, and it is what you reach for when the picture
+ * or the invite did not work. So it is still here, one click away, and closed until then.
+ */
+function Fold({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <details className="dev-fold">
+      <summary>{label}</summary>
+      <div className="dev-fold-body">{children}</div>
+    </details>
   )
 }
 
@@ -201,88 +219,96 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
       {state.error && <div className="dev-error">{state.error}</div>}
       {state.on && (
         <div className="dev-self">
-          {/* Scanning is the path this expects to be used: the address and the code below
-              are what is left for a phone with no camera, or a second address to try. */}
-          <div className="dev-field pair-scan">
-            <PairQr url={url} code={state.code} />
+          {/* The picture IS the setup, so it is the whole of what this panel shows until
+              somebody opens the fold. Scanning takes one tap and types nothing; the address
+              and the code under `Other ways in` are what is left for a phone with no camera
+              or an address the first one could not reach. */}
+          <div className="pair-hero">
+            <PairQr url={url} code={state.code} size={168} />
             <div className="pair-scan-say">
-              <span className="dev-key">Scan this</span>
+              <strong className="pair-scan-lead">Point your phone&apos;s camera at this</strong>
               <p className="hint">
-                Point the phone&apos;s camera at it and open the link. Nothing to type: the
-                code travels in the part of the address a browser never sends anywhere.
+                Open the link it offers and the phone is in. Nothing to type: the code rides
+                in the part of the address a browser never sends anywhere.
               </p>
-            </div>
-          </div>
-          <div className="dev-field">
-            <span className="dev-key">Open on the phone</span>
-            <div className="dev-addrs">
-              {/* Each address says what it actually reaches. Without this the list is
-                  several equal-looking numbers, and the one difference that matters -
-                  whether it still works from a train - is invisible until it fails. */}
-              {state.urls.length ? (
-                state.urls.map((u) => (
-                  <span key={u} className="dev-addr-row">
-                    <code className="dev-addr">{u}</code>
-                    <span className="dev-reach">{reachWords(u)}</span>
-                  </span>
-                ))
-              ) : (
-                <code className="dev-addr muted">no network</code>
-              )}
-            </div>
-            <div className="dev-acts">
-              <button
-                className="ghost small"
-                disabled={!url}
-                onClick={() => {
-                  api.copyText(url)
-                  flash('Address copied.')
-                }}
-              >
-                Copy
-              </button>
-              <span className="dev-key">Port</span>
-              <input
-                className="dev-port"
-                aria-label="Phone port"
-                value={String(state.port)}
-                onChange={(e) => void api.setPhonePort(Number(e.target.value) || 0).then(setState)}
-              />
-            </div>
-          </div>
-          <div className="dev-field">
-            <span className="dev-key">Code</span>
-            {/* Not masked, unlike the pairing code above: this one is typed while looking
-                at this screen from the phone in your other hand. */}
-            <code className="dev-code">{state.code}</code>
-            <div className="dev-acts">
-              <button
-                className="ghost small"
-                onClick={() => {
-                  api.copyText(state.code)
-                  flash('Code copied.')
-                }}
-              >
-                Copy
-              </button>
-              <button
-                className="ghost small"
-                title="New code. Every phone signed in with the old one is signed out."
-                onClick={() => {
-                  void api.rotatePhoneCode().then(setState)
-                  flash('New code. Phones have to sign in again.')
-                }}
-              >
-                New code
-              </button>
+              {/* What this particular picture reaches, in the same words the address list
+                  uses - a QR that works at the desk and nowhere else must not look like one
+                  that works from a train. */}
+              {url && <span className="pair-reach">{reachWords(url)}</span>}
             </div>
           </div>
           <PhoneTunnel state={state} setState={setState} />
           <PhonePeers peers={state.peers} />
-          <p className="hint">
-            Typed once per phone, then it stays signed in. A tailnet address is listed first
-            when there is one - that is the way in from outside this network.
-          </p>
+          <Fold label="Other ways in">
+            <div className="dev-field">
+              <span className="dev-key">Open on the phone</span>
+              <div className="dev-addrs">
+                {/* Each address says what it actually reaches. Without this the list is
+                    several equal-looking numbers, and the one difference that matters -
+                    whether it still works from a train - is invisible until it fails. */}
+                {state.urls.length ? (
+                  state.urls.map((u) => (
+                    <span key={u} className="dev-addr-row">
+                      <code className="dev-addr">{u}</code>
+                      <span className="dev-reach">{reachWords(u)}</span>
+                    </span>
+                  ))
+                ) : (
+                  <code className="dev-addr muted">no network</code>
+                )}
+              </div>
+              <div className="dev-acts">
+                <button
+                  className="ghost small"
+                  disabled={!url}
+                  onClick={() => {
+                    api.copyText(url)
+                    flash('Address copied.')
+                  }}
+                >
+                  Copy
+                </button>
+                <span className="dev-key">Port</span>
+                <input
+                  className="dev-port"
+                  aria-label="Phone port"
+                  value={String(state.port)}
+                  onChange={(e) => void api.setPhonePort(Number(e.target.value) || 0).then(setState)}
+                />
+              </div>
+            </div>
+            <div className="dev-field">
+              <span className="dev-key">Code</span>
+              {/* Not masked, unlike the pairing code below: this one is typed while looking
+                  at this screen from the phone in your other hand. */}
+              <code className="dev-code">{state.code}</code>
+              <div className="dev-acts">
+                <button
+                  className="ghost small"
+                  onClick={() => {
+                    api.copyText(state.code)
+                    flash('Code copied.')
+                  }}
+                >
+                  Copy
+                </button>
+                <button
+                  className="ghost small"
+                  title="New code. Every phone signed in with the old one is signed out."
+                  onClick={() => {
+                    void api.rotatePhoneCode().then(setState)
+                    flash('New code. Phones have to sign in again.')
+                  }}
+                >
+                  New code
+                </button>
+              </div>
+            </div>
+            <p className="hint">
+              Typed once per phone, then it stays signed in. A new code signs every phone out
+              — there is no per-device identity to sign out on its own.
+            </p>
+          </Fold>
         </div>
       )}
     </div>
@@ -505,6 +531,14 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         </div>
         <Blurb id="devices" />
 
+        {/* ------------------------------------------------------------------- phone
+            First, above the desktop card, because it is the one people arrive here for
+            and because it is the one that finishes in a single action - point a camera at
+            the picture. A phone is a device too, so it lives here rather than in Settings,
+            but it is not a peer: there is no app at the far end to pair with, only a
+            browser, and what it loads is this window's own UI. See main/phone.ts. */}
+        <PhonePanel flash={flash} />
+
         {/* ------------------------------------------------------------- this device
             The hero card. It is the only thing on this screen that is about the
             machine you are sitting at, so it gets the raised surface and everything
@@ -582,63 +616,65 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     : 'No network - nothing to invite anyone to yet.'}
                 </span>
               </div>
-              <div className="dev-field">
-                <span className="dev-key">Pairing code</span>
-                <code className={'dev-code' + (showCode ? '' : ' masked')}>
-                  {showCode ? self.code : '••••-••••'}
-                </code>
-                <div className="dev-acts">
-                  <button className="ghost small" onClick={() => setShowCode((v) => !v)}>
-                    {showCode ? 'Hide' : 'Show'}
-                  </button>
-                  <button
-                    className="ghost small"
-                    onClick={() => {
-                      api.copyText(self.code)
-                      flash('Pairing code copied.')
-                    }}
-                  >
-                    Copy
-                  </button>
-                  <button
-                    className="ghost small"
-                    title="New code. Every device paired with the old one is disconnected and has to pair again."
-                    onClick={() => {
-                      void api.rotateRemoteCode().then(onState)
-                      flash('New pairing code. Paired devices have to be re-paired.')
-                    }}
-                  >
-                    New code
-                  </button>
+              <Fold label="Pair by hand">
+                <div className="dev-field">
+                  <span className="dev-key">Pairing code</span>
+                  <code className={'dev-code' + (showCode ? '' : ' masked')}>
+                    {showCode ? self.code : '••••-••••'}
+                  </code>
+                  <div className="dev-acts">
+                    <button className="ghost small" onClick={() => setShowCode((v) => !v)}>
+                      {showCode ? 'Hide' : 'Show'}
+                    </button>
+                    <button
+                      className="ghost small"
+                      onClick={() => {
+                        api.copyText(self.code)
+                        flash('Pairing code copied.')
+                      }}
+                    >
+                      Copy
+                    </button>
+                    <button
+                      className="ghost small"
+                      title="New code. Every device paired with the old one is disconnected and has to pair again."
+                      onClick={() => {
+                        void api.rotateRemoteCode().then(onState)
+                        flash('New pairing code. Paired devices have to be re-paired.')
+                      }}
+                    >
+                      New code
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="dev-field">
-                <span className="dev-key">Address</span>
-                <div className="dev-addrs">
-                  {self.addresses.length ? (
-                    self.addresses.map((a) => (
-                      <code key={a} className="dev-addr">
-                        {a}
-                      </code>
-                    ))
-                  ) : (
-                    <code className="dev-addr muted">no network</code>
-                  )}
+                <div className="dev-field">
+                  <span className="dev-key">Address</span>
+                  <div className="dev-addrs">
+                    {self.addresses.length ? (
+                      self.addresses.map((a) => (
+                        <code key={a} className="dev-addr">
+                          {a}
+                        </code>
+                      ))
+                    ) : (
+                      <code className="dev-addr muted">no network</code>
+                    )}
+                  </div>
+                  <div className="dev-acts">
+                    <span className="dev-key">Port</span>
+                    <input
+                      className="dev-port"
+                      aria-label="Port"
+                      value={String(self.port)}
+                      onChange={(e) => void api.setRemotePort(Number(e.target.value) || 0).then(onState)}
+                    />
+                  </div>
                 </div>
-                <div className="dev-acts">
-                  <span className="dev-key">Port</span>
-                  <input
-                    className="dev-port"
-                    aria-label="Port"
-                    value={String(self.port)}
-                    onChange={(e) => void api.setRemotePort(Number(e.target.value) || 0).then(onState)}
-                  />
-                </div>
-              </div>
-              <p className="hint">
-                The other device only needs one of those addresses and the code, and usually not even
-                that - it finds this one on its own while both are on the same network.
-              </p>
+                <p className="hint">
+                  The other device only needs one of those addresses and the code, and usually not even
+                  that - it finds this one on its own while both are on the same network.
+                </p>
+              </Fold>
             </div>
           )}
 
@@ -656,12 +692,6 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             </div>
           )}
         </div>
-
-        {/* ------------------------------------------------------------------- phone
-            A phone is a device too, so it lives here rather than in Settings - but it
-            is not a peer: there is no app at the far end to pair with, only a browser,
-            and what it loads is this window's own UI. See main/phone.ts. */}
-        <PhonePanel flash={flash} />
 
         {/* ----------------------------------------------------------- other devices */}
         <div className="setting">

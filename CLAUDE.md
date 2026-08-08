@@ -205,6 +205,14 @@ channel of its own.
   typed field is still there for a phone with no camera. OAuth and email were considered
   and refused - both move the secret through a third party and off this network to save
   six keystrokes on a link that is otherwise entirely local.
+- **So the picture is the panel, and everything it is made of is folded.** Devices leads
+  with the phone, above the desktop card, and the phone panel shows a 168px QR and one
+  line of words; the address list, the code, the port and `New code` live under
+  `Other ways in`, and the desktop card's own code, addresses and port under
+  `Pair by hand`. Measured with both folds closed: **zero** codes, addresses and New code
+  buttons on screen, against 2 codes / 4 addresses / 2 New code buttons before. None of
+  that is wrong — it is what you reach for when the camera did not work — but all of it
+  at once, twice over, is what buried the one step that finishes the job.
 - **The panel says who is watching, never who is paired.** The cookie is derived, so every
   phone that ever typed the code holds the same one and there is no per-device identity to
   keep — which means there can be no per-device sign-out, and a `Disconnect` button beside
@@ -281,6 +289,27 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
 - The sidebar has no `git status` of its own on purpose, so it may not assert "not a git
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
+
+## A click puts the cursor where you clicked
+
+A CLI's prompt is drawn text and a pty takes keystrokes, so a click cannot place a caret —
+it can only be turned into the arrows that would have reached the same cell
+(`src/shared/cursorMove.ts`). The trap is that an up-arrow in a plain shell is the previous
+command, not a movement, which is why every terminal that ships this hides it behind a
+modifier and why this one did too.
+
+- **A bare click is allowed the half that cannot recall anything.** `keysAlongLine` emits
+  left and right and nothing else, and the pane only calls it when the click landed on the
+  cursor's own logical line — its row, or a row the same input wrapped onto, proved by
+  walking xterm's `isWrapped` chain. A wrapped row is `cols` characters, so the arrows
+  cross the wrap by themselves. Verified against a real pty: 29 → 23 on one row, and
+  (104, row 10) → (10, row 9) across a wrap in a 157-column pane, exact both times.
+- **On mouseup, and only when the pointer did not travel.** Swallowing the mousedown would
+  take drag-selection with it, and copy-on-select is the more important of the two.
+- Alt/Option-click still reaches other lines, still refuses more than `rowLimit` rows away,
+  and is still the only path that can emit an up or a down.
+- The clicked column is clamped to what is written on that row. Without it, a click in the
+  empty half of a row is a burst of rights a CLI reading arrows as menu steps acts on.
 
 ## What a pane leaves running
 
@@ -464,7 +493,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
 | `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
 | `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
-| `npm run test:cursorclick` | Alt-click placing the CLI's cursor: the keys it sends, and the clicks it refuses to answer |
+| `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
 | `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |
