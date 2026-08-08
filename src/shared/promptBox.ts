@@ -68,7 +68,26 @@ export function inputStart(text: string): number {
   // Capped at the far end, or an empty box row - a frame, twenty spaces, a frame - walks
   // the start straight past the end and reports a negative length as a huge one.
   const cap = inputEnd(text)
-  let i = frame < 0 ? 0 : frame + 1
+  if (frame < 0) {
+    // A shell writes its prompt on the same row as what you type - `bash-3.2$ echo x`,
+    // `robert@mac PaneForge % npm run build` - and selecting from column 0 highlighted the
+    // prompt as if it were yours. Measured live: a select-all in a real pane read back
+    // "bash-3.2$ echo HELLOWORLD". The backspaces were harmless (a line editor refuses to
+    // delete its own prompt) but the highlight was a lie about what would go.
+    //
+    // The FIRST marker followed by a space, not the last: the prompt always precedes what
+    // was typed, so a `$` inside the text cannot win - and under-selecting is the one
+    // failure that would leave characters behind.
+    for (let i = 0; i + 1 < cap; i++) {
+      if (MARKERS.includes(text[i]) && text[i + 1] === ' ') {
+        let j = i + 1
+        while (j < cap && text[j] === ' ') j++
+        return j
+      }
+    }
+    return 0
+  }
+  let i = frame + 1
   while (i < cap && text[i] === ' ') i++
   if (i < cap && MARKERS.includes(text[i])) {
     i++

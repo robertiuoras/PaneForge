@@ -77,7 +77,11 @@ check('an indented frame is a different box', !sameBox(CC_FIRST, '  │ somethin
 // --- where the typing starts and stops ---------------------------------------------
 eq('past the frame and the prompt marker', inputStart(CC_FIRST), 4)
 eq('a continuation row starts after the padding', inputStart(CC_SECOND), 4)
-eq('a bare shell line starts at 0', inputStart(ZSH), 0)
+// A shell's prompt is on the same row as what you typed, and it is not yours to select.
+eq('a zsh prompt is skipped', inputStart(ZSH), 'robert@mac PaneForge % '.length)
+eq('a line with no marker at all starts at 0', inputStart('just some output'), 0)
+// The prompt always comes first, so a marker inside the typed text cannot win.
+eq('a $ inside the text does not move the start', inputStart('bash-3.2$ echo "a $ b"'), 'bash-3.2$ '.length)
 eq('a `$ ` prompt is a marker too', inputStart(BASH), 2)
 
 eq('the end is past the last typed character', inputEnd(CC_FIRST), 4 + 'fix the badge on the sidebar card'.length)
