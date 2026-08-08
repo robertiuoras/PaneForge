@@ -34,7 +34,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
-import type { PhoneState } from '../shared/types'
+import { deviceKind, originOf } from '../shared/net'
+import type { PhonePeer, PhoneState } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
 
 /** How long a phone's cookie is good for. Rotating the code invalidates it sooner. */
@@ -79,7 +80,7 @@ export interface PhoneDeps {
   onChange?(): void
 }
 
-interface Client {
+interface Client extends PhonePeer {
   res: ServerResponse
   alive: boolean
 }
@@ -91,6 +92,7 @@ export class PhoneServer {
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
+  private nextPeer = 1
 
   constructor(private deps: PhoneDeps) {}
 
@@ -164,6 +166,13 @@ export class PhoneServer {
       code: this.deps.code(),
       urls: this.server ? phoneUrls(port) : [],
       clients: this.clients.size,
+      peers: [...this.clients].map(({ id, address, kind, origin, since }) => ({
+        id,
+        address,
+        kind,
+        origin,
+        since
+      })),
       error: this.lastError || undefined
     }
   }
@@ -210,7 +219,7 @@ export class PhoneServer {
       if (path.startsWith('/pf/')) return this.plain(res, 401, 'pair first')
       return this.pairPage(res)
     }
-    if (path === '/pf/events') return this.events(res)
+    if (path === '/pf/events') return this.events(req, res)
     if (path === '/pf/call' && req.method === 'POST') return await this.call(req, res)
     if (path === '/pf/send' && req.method === 'POST') return await this.fire(req, res)
     return this.static(path, res)
@@ -240,14 +249,23 @@ export class PhoneServer {
     res.end('{"ok":true}')
   }
 
-  private events(res: ServerResponse): void {
+  private events(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no'
     })
-    const client: Client = { res, alive: true }
+    const address = addressOf(req)
+    const client: Client = {
+      res,
+      alive: true,
+      id: `p${this.nextPeer++}`,
+      address,
+      kind: deviceKind(req.headers['user-agent'] ?? ''),
+      origin: originOf(address),
+      since: Date.now()
+    }
     this.clients.add(client)
     res.write('retry: 2000\n\n')
     res.write(`data: ${encodeWire({ channel: 'phone:hello', args: [] })}\n\n`)
@@ -390,9 +408,19 @@ function sameCode(typed: string, real: string): boolean {
   return timingSafeEqual(a, b)
 }
 
+/**
+ * Node hands back an IPv4-mapped IPv6 address (`::ffff:192.168.1.5`) whenever the listener
+ * is dual-stack, which is every time it binds `0.0.0.0`. Normalising here rather than at
+ * the two call sites matters: this string is BOTH the lockout key and what the panel
+ * prints, and the two must be the same address or a phone can be locked out under one
+ * spelling and shown under another.
+ */
 function addressOf(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? '?'
+  const raw = req.socket.remoteAddress ?? '?'
+  const mapped = /^::ffff:((?:\d{1,3}\.){3}\d{1,3})$/.exec(raw)
+  return mapped ? mapped[1] : raw
 }
+
 
 async function readBody(req: IncomingMessage): Promise<string> {
   return await new Promise<string>((resolve, reject) => {

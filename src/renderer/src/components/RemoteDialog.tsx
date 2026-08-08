@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import type { PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
+import type { PhonePeer, PhoneState, Project, RemoteFound, RemoteState } from '@shared/types'
+import { reachWords } from '@shared/net'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -44,6 +45,63 @@ interface Props {
  * a screen and nothing else, and folding a phone into a list of paired desktops is what
  * would make somebody expect a pane to move.
  */
+/**
+ * Who is watching, right now.
+ *
+ * The word is "watching" and not "paired" because that is the only thing the server can
+ * honestly say. The cookie is `hmac(deviceId, code)`, identical on every phone that ever
+ * typed the code, so there is no per-device identity to keep and there can be no
+ * per-device sign-out - the one revoke is `New code`, and it takes all of them. Drawing a
+ * row per browser with a `Disconnect` button beside it would be the lie: the stream would
+ * come straight back, because the cookie is still good.
+ *
+ * `origin` leads each row rather than the make of the device. "Somebody is watching" reads
+ * one way for a phone in this room and another for an address off the internet, and the
+ * second is the one worth noticing at a glance.
+ */
+function PhonePeers({ peers }: { peers: PhonePeer[] }): JSX.Element {
+  // The only moving part is "how long ago", so this repaints itself rather than waiting
+  // for a push that will not come - the desk pushes on connect and disconnect, not on the
+  // clock ticking.
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!peers.length) return
+    const timer = setInterval(() => tick((n) => n + 1), 30_000)
+    return () => clearInterval(timer)
+  }, [peers.length])
+
+  return (
+    <div className="dev-field dev-peers">
+      <span className="dev-key">Watching</span>
+      {peers.length ? (
+        <ul className="peer-list">
+          {peers.map((p) => (
+            <li key={p.id} className={`peer peer-${p.origin.replace(/\s+/g, '-')}`}>
+              <span className="peer-dot" aria-hidden="true" />
+              <span className="peer-kind">{p.kind}</span>
+              <code className="peer-addr">{p.address}</code>
+              <span className="peer-where">{p.origin}</span>
+              <span className="peer-since">{sinceWords(p.since)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="hint">Nothing connected. Scan the code above on a phone.</span>
+      )}
+    </div>
+  )
+}
+
+/** Rounded hard: a stream's exact age is never the question, "just now or all morning" is. */
+function sinceWords(since: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - since) / 1000))
+  if (secs < 60) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.round(mins / 60)
+  return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
+}
+
 function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Element {
   const [state, setState] = useState<PhoneState | null>(null)
   const [busy, setBusy] = useState(false)
@@ -99,11 +157,15 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
           <div className="dev-field">
             <span className="dev-key">Open on the phone</span>
             <div className="dev-addrs">
+              {/* Each address says what it actually reaches. Without this the list is
+                  several equal-looking numbers, and the one difference that matters -
+                  whether it still works from a train - is invisible until it fails. */}
               {state.urls.length ? (
                 state.urls.map((u) => (
-                  <code key={u} className="dev-addr">
-                    {u}
-                  </code>
+                  <span key={u} className="dev-addr-row">
+                    <code className="dev-addr">{u}</code>
+                    <span className="dev-reach">{reachWords(u)}</span>
+                  </span>
                 ))
               ) : (
                 <code className="dev-addr muted">no network</code>
@@ -156,6 +218,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               </button>
             </div>
           </div>
+          <PhonePeers peers={state.peers} />
           <p className="hint">
             Typed once per phone, then it stays signed in. A tailnet address is listed first
             when there is one - that is the way in from outside this network.

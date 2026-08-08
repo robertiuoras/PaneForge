@@ -1772,7 +1772,32 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   padding: 3px 6px; border-radius: 5px; background: #ffffff0d; user-select: text;
 }
 .dev-addr.muted { color: var(--muted); }
+/* An address and what it reaches travel together, so they wrap as one unit rather than
+   leaving "works anywhere" stranded under the wrong number. */
+.dev-addr-row { display: inline-flex; align-items: center; gap: 5px; }
+.dev-reach { color: var(--muted); font-size: 10.5px; }
 .dev-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+/* ---- who is watching ----
+   One row per live event stream. `align-items: flex-start` because the label is a fixed
+   78px column and the list beside it is several lines tall - centring it would float the
+   word "Watching" against the middle row. */
+.dev-peers { align-items: flex-start; }
+.peer-list { flex: 1; min-width: 0; list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 4px; }
+.peer { display: flex; align-items: center; gap: 7px; font-size: 11.5px; min-width: 0; }
+.peer-kind { color: var(--text); flex: none; }
+.peer-addr {
+  font: 11px/1 ui-monospace, Consolas, monospace; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text;
+}
+.peer-where { color: var(--muted); flex: none; }
+.peer-since { color: var(--muted); margin-left: auto; flex: none; }
+/* The dot carries the one thing worth catching without reading: green for something in
+   this room, accent for a way in from outside, warning for a public address. Colour is
+   never the ONLY signal - `.peer-where` prints the same fact in words beside it. */
+.peer-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ok, #6ec46e); }
+.peer-tailnet .peer-dot { background: var(--acc); }
+.peer-internet .peer-dot { background: var(--warn, #f0a868); }
 /* ---- pairing by asking ----
    The six digits are the authentication, so they are drawn like the thing being read out
    loud: big, monospaced, split 3+3 the way anybody reads a number off a screen. Both the

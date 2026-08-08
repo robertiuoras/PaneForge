@@ -205,6 +205,15 @@ channel of its own.
   typed field is still there for a phone with no camera. OAuth and email were considered
   and refused - both move the secret through a third party and off this network to save
   six keystrokes on a link that is otherwise entirely local.
+- **The panel says who is watching, never who is paired.** The cookie is derived, so every
+  phone that ever typed the code holds the same one and there is no per-device identity to
+  keep — which means there can be no per-device sign-out, and a `Disconnect` button beside
+  a row would be a lie (the stream returns at once, the cookie is still good). `New code`
+  is the only revoke and it takes all of them. Each row leads with **where the browser came
+  from** (`originOf` in `shared/net.ts`), because "somebody is watching" reads one way for
+  a phone in this room and another for an address off the internet. The same function
+  labels each offered address with what it reaches, so the panel can never promise
+  "works anywhere" for an address the server would then mark "this network".
 - **A phone is not a small desktop.** Under 720px the list and the panes take turns
   (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
   the display. `display: none`, never a 0px xterm.

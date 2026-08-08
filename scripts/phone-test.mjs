@@ -212,7 +212,13 @@ let cookie = ''
 // ---- 7. events reach a browser, and nothing else does --------------------------
 
 {
-  const res = await fetch(base + '/pf/events', { headers: { cookie } })
+  const res = await fetch(base + '/pf/events', {
+    headers: {
+      cookie,
+      'user-agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1'
+    }
+  })
   ok(res.headers.get('content-type')?.startsWith('text/event-stream'), 'the stream is SSE')
   const reader = res.body.getReader()
   const seen = []
@@ -228,6 +234,32 @@ let cookie = ''
   })()
   await new Promise((r) => setTimeout(r, 150))
   ok(server.state().clients === 1, 'the desk knows one browser is watching')
+
+  // ---- who is watching, not just how many ------------------------------------
+  // The panel draws a row per live stream, so the row has to carry enough to tell one
+  // device from another WITHOUT inventing an identity the cookie cannot supply.
+  {
+    const [peer, ...rest] = server.state().peers
+    ok(!!peer && !rest.length, 'one live stream is one peer row')
+    ok(peer.id, 'a peer row has an id to key on', JSON.stringify(peer))
+    ok(peer.kind === 'iPhone', 'the device kind comes off the user-agent', peer.kind)
+    // The listener is on 127.0.0.1 for this test, and that must not read as a stranger.
+    ok(peer.origin === 'this machine', 'and it says where it came from', peer.origin)
+    ok(
+      !peer.address.startsWith('::ffff:'),
+      'the address is normalised out of IPv4-mapped IPv6',
+      peer.address
+    )
+    ok(
+      typeof peer.since === 'number' && Date.now() - peer.since < 60_000,
+      'and when the stream opened'
+    )
+    ok(
+      !('res' in peer) && !('alive' in peer),
+      'the response object does not leak into the state',
+      Object.keys(peer).join(',')
+    )
+  }
   server.broadcast('pty:data', ['p1', 'hello from the pty'])
   server.broadcast('config:changed', [{ secret: true }])
   await pump
@@ -281,6 +313,7 @@ let cookie = ''
   await server.stop()
   ok(!server.running, 'stop() means stopped')
   ok(server.state().clients === 0, 'and no client is still counted')
+  ok(server.state().peers.length === 0, 'and nobody is still listed as watching')
   let refused = false
   await fetch(base + '/').catch(() => {
     refused = true
@@ -332,6 +365,76 @@ let cookie = ''
   const subs = new Set(entries.filter((e) => e.mode === 'on').map((e) => e.channel))
   const unheard = [...pushed].filter((c) => !subs.has(c) && c !== 'phone:hello')
   ok(unheard.length === 0, 'every event main pushes is one the surface can hear', unheard.join(', '))
+}
+
+// ---- 12. what an address reaches, and what a browser is -------------------------
+//
+// `shared/net.ts` is one definition read from two sides: the server stamps each live
+// stream with the origin it CAME from, and the panel labels each address it offers with
+// the origin a browser WOULD come from. A second copy would let the panel promise
+// "works anywhere" for an address the server then marks "this network", so the two
+// answers are checked here against the same function.
+
+{
+  const netBundle = join(work, 'net.mjs')
+  buildSync({
+    entryPoints: ['src/shared/net.ts'],
+    outfile: netBundle,
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    logLevel: 'silent'
+  })
+  const { originOf, deviceKind, reachWords, hostOf } = await import(netBundle)
+
+  for (const [addr, want] of [
+    ['127.0.0.1', 'this machine'],
+    ['::1', 'this machine'],
+    ['192.168.1.7', 'this network'],
+    ['10.0.0.4', 'this network'],
+    ['172.16.4.1', 'this network'],
+    ['172.20.0.9', 'this network'],
+    ['169.254.7.1', 'this network'],
+    ['fe80::1', 'this network'],
+    ['100.89.94.66', 'tailnet'],
+    ['100.127.0.1', 'tailnet'],
+    // 100.5.x is ordinary public space, NOT carrier-grade NAT: the /10 boundary is the
+    // whole reason this is a range test and not a `startsWith('100.')`.
+    ['100.5.0.1', 'internet'],
+    ['172.32.0.1', 'internet'],
+    ['8.8.8.8', 'internet'],
+    ['2606:4700::1', 'internet']
+  ]) {
+    ok(originOf(addr) === want, `${addr} is ${want}`, originOf(addr))
+  }
+
+  ok(hostOf('http://100.89.94.66:7312') === '100.89.94.66', 'the host comes out of a url')
+  ok(reachWords('http://100.89.94.66:7312') === 'works anywhere', 'a tailnet address says so')
+  ok(
+    reachWords('http://192.168.1.7:7312') === 'this network only',
+    'and a LAN address does not promise more than it can do'
+  )
+
+  for (const [ua, want] of [
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)', 'iPhone'],
+    ['Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X)', 'iPad'],
+    ['Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari', 'Android phone'],
+    ['Mozilla/5.0 (Linux; Android 14; Tab S9) Safari', 'Android tablet'],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Mac'],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Windows'],
+    ['Mozilla/5.0 (X11; Linux x86_64)', 'Linux'],
+    ['', 'Browser'],
+    ['something nobody has shipped yet', 'Browser']
+  ]) {
+    ok(deviceKind(ua) === want, `"${ua.slice(0, 34)}" is a ${want}`, deviceKind(ua))
+  }
+
+  // Android names Linux too, and Windows names it in some embedded builds: the order of
+  // the tests in deviceKind is load-bearing, not incidental.
+  ok(
+    deviceKind('Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile') === 'Android phone',
+    'an Android is not reported as Linux'
+  )
 }
 
 rmSync(work, { recursive: true, force: true })

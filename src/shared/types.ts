@@ -862,6 +862,27 @@ export interface PhoneConfig {
   code: string
 }
 
+/**
+ * One browser holding a live event stream.
+ *
+ * Deliberately NOT "a paired device". The cookie is `hmac(deviceId, code)` and therefore
+ * identical on every phone that ever typed the code, so there is no per-device identity to
+ * remember and nothing to sign out one at a time - see `main/phone.ts`. What can honestly
+ * be shown is who is watching RIGHT NOW, which is what this is, and the panel says so.
+ */
+export interface PhonePeer {
+  /** stable while this stream is open; a reconnect is a new one */
+  id: string
+  /** the address it reached us on, normalised out of IPv4-mapped IPv6 */
+  address: string
+  /** 'iPhone' / 'iPad' / 'Android' / 'Mac' / 'Windows' / 'Browser' - coarse on purpose */
+  kind: string
+  /** which side of the front door it came from - see `originOf` in main/phone.ts */
+  origin: 'this machine' | 'this network' | 'tailnet' | 'internet'
+  /** ms epoch the stream opened, so the panel can say how long it has been up */
+  since: number
+}
+
 export interface PhoneState {
   /** the listener is actually up */
   on: boolean
@@ -871,6 +892,8 @@ export interface PhoneState {
   urls: string[]
   /** browsers holding a live event stream right now */
   clients: number
+  /** one per live stream, newest last */
+  peers: PhonePeer[]
   /** why it is not up when it should be (a taken port) */
   error?: string
 }
