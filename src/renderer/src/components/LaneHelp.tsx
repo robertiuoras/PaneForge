@@ -1,50 +1,100 @@
+import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
+import { paneRef } from '@shared/place'
+import { holderName, laneChipLabel, laneProject, laneState } from '../laneWords'
+
 /**
  * What lanes are, for someone who never read the release script.
  *
- * Every other lane surface (the chip on a card, the strip, the per-pane dialog) states
- * facts about ONE lane in as few words as fit. This card is the one place the system is
- * allowed a paragraph, so the words here assume nothing: no "worktree", no "master", no
- * command names. Each of those surfaces links here, which is what lets them stay terse.
+ * It used to be five paragraphs of general theory, and the report on it was "way too much
+ * content, hard to understand" - immediately followed by the question the theory does not
+ * answer: *why are there two lanes for this project right now?* A card explaining a system
+ * cannot answer that; only the board can. So the explanation is one sentence and the rest
+ * of the card is **this project at this moment**, one row per lane that is actually held,
+ * saying who has it and whether they are working. The three states that need a person are
+ * one line each underneath, and everything else - worktrees, branches, the release
+ * cooldown - is gone, because none of it is something to do.
  */
 interface Props {
   onClose: () => void
+  /** the lanes of the project the active pane is in, when the window has polled them */
+  board: LaneBoard | null
+  /** to name a lane by the pane holding it - "pane 3" is a key you can press */
+  sessions: Session[]
 }
 
-export default function LaneHelp({ onClose }: Props): JSX.Element {
+/** Lanes worth a row: somebody is in it, or it is waiting on a person. */
+function shown(lanes: LaneBoardEntry[]): LaneBoardEntry[] {
+  return lanes.filter((l) => l.held || l.ready || l.conflicted)
+}
+
+export default function LaneHelp({ onClose, board, sessions }: Props): JSX.Element {
+  const rows = shown(board?.lanes ?? [])
+  const project = rows.length ? laneProject(rows[0]) : ''
+  const paneOf = (l: LaneBoardEntry): number | undefined => {
+    const i = sessions.findIndex((s) => s.id === l.ownerPane)
+    return i >= 0 ? i + 1 : undefined
+  }
+
   return (
     <div className="overlay confirm-overlay" onMouseDown={onClose}>
       <div className="dialog confirm lane-help" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <strong>How lanes work</strong>
+          <strong>Lanes</strong>
         </div>
         <div className="confirm-body">
           <p>
-            Several chats can work on the same project at once. So they don&apos;t overwrite
-            each other, each gets a <b>lane</b>: its own copy of the project&apos;s folder.
-            You never set one up — a chat is handed a lane when a second chat opens the same
-            project, and it&apos;s cleaned up when the work is merged back.
+            Two chats cannot edit one folder without overwriting each other, so each chat
+            gets its own copy of the project. That copy is a <b>lane</b>. You never make
+            one, and finished lanes merge back and ship on their own.
           </p>
-          <p>
-            <span className="chip">w2</span> on a pane means that pane is working in its own
-            copy of the project it opened. Click the chip to see what&apos;s in there and
-            merge it back when you want it.
-          </p>
-          <p>
-            <span className="chip pf-lane">PF lane a</span> means that chat is editing
-            PaneForge itself in a shared lane. Finished lanes are folded together and go out
-            as <b>one update</b>, at most every half hour — so &quot;done, waiting&quot; is
-            normal, not stuck.
-          </p>
-          <p>
-            <b>Stuck</b> means two chats changed the same lines and the app won&apos;t guess
-            a winner. One chat gets a short note in its pane saying exactly what to run;
-            everything else still ships, and the stuck work rejoins the next update once
-            someone picks.
-          </p>
-          <p>
-            None of this needs managing. The chips are status, not chores — merging,
-            shipping and cleanup all happen on their own.
-          </p>
+
+          {rows.length > 0 && (
+            <>
+              {/* The whole reason the card exists now: "why are there two?" is a question
+                  about this minute, and the answer is a list of who is in there. */}
+              <div className="lane-help-when">
+                {project ? `${project} right now` : 'Right now'} — {rows.length} lane
+                {rows.length === 1 ? '' : 's'} in use
+              </div>
+              <ul className="lane-help-now">
+                {rows.map((l) => (
+                  <li key={l.lane}>
+                    <span
+                      className={
+                        'chip pf-lane' +
+                        (l.conflicted ? ' stuck' : l.ready ? ' done' : l.held ? ' busy' : '')
+                      }
+                    >
+                      {laneChipLabel(l, project)}
+                    </span>
+                    <span className="lane-help-who">
+                      {l.conflicted || l.ready
+                        ? laneState(l)
+                        : paneOf(l)
+                          ? `${paneRef(paneOf(l) as number)} has it, ${laneState(l, true)}`
+                          : `${holderName(l)}, ${laneState(l, true)}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* Only the states somebody may have to act on. Everything the app handles by
+              itself is deliberately not described - a chore list of non-chores is what
+              made the old card long. */}
+          <ul className="lane-help-states">
+            <li>
+              <b>busy now</b> — a chat is typing in that copy. Nothing to do.
+            </li>
+            <li>
+              <b>done</b> — finished; it merges back with the next update.
+            </li>
+            <li>
+              <b>stuck</b> — two lanes changed the same lines, so someone has to pick. That
+              lane waits; everything else still ships.
+            </li>
+          </ul>
         </div>
         <div className="dialog-row">
           <button className="primary" onClick={onClose}>

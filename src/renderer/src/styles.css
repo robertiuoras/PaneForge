@@ -654,6 +654,16 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-help .confirm-body p { margin: 0 0 10px; line-height: 1.5; }
 .lane-help .confirm-body p:last-child { margin-bottom: 0; }
 .lane-help .chip { pointer-events: none; }
+/* The live half of the card: one row per lane that is really in use. Rows rather than
+   prose because the question it answers ("why are there two?") is a count, and a count is
+   read off a list in a glance and out of a paragraph never. */
+.lane-help-when { color: var(--muted); font-size: 11px; margin: 0 0 6px; }
+.lane-help-now { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 5px; }
+.lane-help-now li { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lane-help-who { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-help-states { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 12px; }
+.lane-help-states b { color: var(--fg); font-weight: 600; }
+.lane-help-states li { color: var(--muted); line-height: 1.45; }
 
 /* There was a `.lane-live` ring here: a breathing blue halo around the whole card of a
    pane that held a lane and was mid-turn. It is gone, and nothing replaces it.

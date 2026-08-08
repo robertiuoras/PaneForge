@@ -3081,7 +3081,9 @@ export default function App(): JSX.Element {
           onClose={() => setDiff(null)}
         />
       )}
-      {laneHelp && <LaneHelp onClose={() => setLaneHelp(false)} />}
+      {laneHelp && (
+        <LaneHelp onClose={() => setLaneHelp(false)} board={laneBoard} sessions={sessions} />
+      )}
       {ask && (
         <ConfirmDialog
           title={ask.title}
