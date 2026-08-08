@@ -1670,6 +1670,7 @@ ipcMain.on('shelf:dragEnd', () => endShelfDrag())
 /** Just the Stash's own knobs, which is all of the config the overlay ever sees. */
 function stashConfig(cfg: Config): StashConfig {
   return {
+    stashSummon: cfg.stashSummon,
     stashPeekMs: cfg.stashPeekMs,
     stashAutoCloseMs: cfg.stashAutoCloseMs,
     stashMaxItems: cfg.stashMaxItems,

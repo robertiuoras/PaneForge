@@ -1095,6 +1095,13 @@ export interface Config {
    */
   clipboardOverlay: boolean
   /**
+   * Nothing on screen until it is asked for: no pill in the corner, and the list opens at
+   * the POINTER when the key is pressed. On by default. The pill was a window over
+   * somebody's work by definition, and it opened on hover - the thing you did not ask for
+   * happening while you reach for something else. Off puts the corner pill back.
+   */
+  stashSummon: boolean
+  /**
    * How long the Stash shows itself for when something new lands on it, in ms. 0 means it
    * never opens by itself and only the key (Ctrl+Shift+V) or the pill opens it - which is
    * what you want once you copy all day and stopped needing to be told.
@@ -1327,6 +1334,7 @@ export interface RecentItem {
  */
 export type StashConfig = Pick<
   Config,
+  | 'stashSummon'
   | 'stashPeekMs'
   | 'stashAutoCloseMs'
   | 'stashMaxItems'
@@ -1345,6 +1353,7 @@ export type StashConfig = Pick<
 
 /** Exactly the keys the overlay may patch. Anything else on the wire is dropped. */
 export const STASH_CONFIG_KEYS = [
+  'stashSummon',
   'stashPeekMs',
   'stashAutoCloseMs',
   'stashMaxItems',

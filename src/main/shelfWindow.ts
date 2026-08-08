@@ -133,6 +133,52 @@ function anchor(width: number, height: number): { x: number; y: number } {
   }
 }
 
+/**
+ * Summon-only: nothing on screen until it is asked for.
+ *
+ * The Stash was a pill in a corner, above every other window, that opened when the pointer
+ * came near it. Robert's report was that it "gets in the way whenever I copy things", and
+ * both halves of that are structural rather than tunable: a floating window is over
+ * somebody's work by definition, and hover means the thing you did not ask for happens
+ * while you are reaching for something else. So the pill is gone and the list is a summon
+ * - the hotkey opens it AT THE POINTER, and the auto-close timer already puts it away.
+ * Nothing is dropped: every copy is still captured, still searchable, still on the Stash.
+ */
+function summonOnly(): boolean {
+  try {
+    return getConfig().stashSummon !== false
+  } catch {
+    return false
+  }
+}
+
+/** Where the pointer was when it was summoned, so re-anchoring does not chase the mouse. */
+let summonPoint: { x: number; y: number } | null = null
+
+/**
+ * At the pointer, opening upwards, and never off the display it was summoned on. The 24px
+ * and 12px are the same offsets a context menu uses: beside the pointer, not under it, so
+ * the first row is not already highlighted by the cursor sitting on it.
+ */
+function pointerAnchor(width: number, height: number): { x: number; y: number } {
+  let p = summonPoint
+  try {
+    if (!p) p = screen.getCursorScreenPoint()
+  } catch {
+    p = null
+  }
+  if (!p) return corner(width, height)
+  try {
+    const area = screen.getDisplayNearestPoint(p).workArea
+    return {
+      x: Math.min(Math.max(p.x - 24, area.x), area.x + area.width - width),
+      y: Math.min(Math.max(p.y - height + 12, area.y), area.y + area.height - height)
+    }
+  } catch {
+    return corner(width, height)
+  }
+}
+
 /** Re-anchor. Called on every size change, every display change and every window move. */
 function place(): void {
   if (!alive()) return
@@ -145,7 +191,7 @@ function place(): void {
   // where this window is; endShelfDrag calls place() the moment it is let go.
   if (drag) return
   const size = currentSize()
-  const { x, y } = anchor(size.width, size.height)
+  const { x, y } = summonOnly() ? pointerAnchor(size.width, size.height) : anchor(size.width, size.height)
   try {
     shelf!.setBounds({ x, y, width: size.width, height: size.height })
   } catch {
@@ -506,12 +552,34 @@ export function setShelfExpanded(next: boolean): void {
   // after the press is exactly the case that made a drag turn into an expand. Main owns
   // the size, so main is where "not now" has to be true.
   if (drag) return
+  // Summoned: the list appears where the pointer is, and where it is asked for is decided
+  // once - re-anchoring on every resize would make it chase the mouse across the screen
+  // while the settings panel opens under it.
+  if (summonOnly() && next) summonPoint = cursorNow()
   expanded = next
   // Closing puts the settings panel away with it: reopening on the settings page rather
   // than on your clipboard would be the wrong half of the window every time.
   if (!next) tall = false
   place()
   shelf!.webContents.send('shelf:expanded', expanded)
+  // ...and there is nothing to leave on screen when it closes.
+  if (summonOnly()) {
+    if (next) {
+      if (!keptBack()) shelf!.showInactive()
+    } else {
+      summonPoint = null
+      shelf!.hide()
+    }
+  }
+}
+
+/** The pointer now, or nothing if the display layout is being rebuilt under us. */
+function cursorNow(): { x: number; y: number } | null {
+  try {
+    return screen.getCursorScreenPoint()
+  } catch {
+    return null
+  }
 }
 
 export function toggleShelf(): void {
@@ -580,7 +648,9 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
     if (input.type === 'mouseDown' || input.type === 'mouseUp') noteShelfTouch()
   })
   shelf.once('ready-to-show', () => {
-    if (!keptBack()) shelf?.showInactive()
+    // Summon-only builds the window and leaves it off screen. It has to exist - it holds
+    // the list and answers the hotkey in a frame - it simply is not shown until asked.
+    if (!keptBack() && !(summonOnly() && !expanded)) shelf?.showInactive()
     updateShelfItems(cached)
     if (cachedConfig) updateShelfConfig(cachedConfig)
     // Something may have asked for it open before the page existed (the hotkey bringing a

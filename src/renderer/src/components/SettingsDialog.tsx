@@ -485,6 +485,15 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       'A small pill in the bottom-left corner of whichever screen PaneForge is on, on top of every window, whether or not the app is focused. Hover it, or press Ctrl+Alt+V from anywhere, for the whole Stash: click a line to put it back on the clipboard, → to send it to the focused pane, ✕ to forget it. It never takes the keyboard, so you can click a line and paste straight back into what you were typing in. Files can be dropped straight onto the pill.'
                     )}
                   />
+                  <Switch
+                    checked={config.stashSummon}
+                    onChange={(v) => onChange({ stashSummon: v })}
+                    label="Only when I ask for it"
+                    disabled={!config.clipboardShelf || !config.clipboardOverlay}
+                    hint={keyLabel(
+                      'Nothing on screen until you press Ctrl+Alt+V, and then the Stash opens where your pointer already is and puts itself away again. Everything you copy is still captured either way - this is only about whether a pill sits over your other windows waiting to be hovered.'
+                    )}
+                  />
                 </div>
               </div>
 

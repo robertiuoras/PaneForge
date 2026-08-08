@@ -182,6 +182,7 @@ function defaults(): Config {
     discordStyle: { ...DEFAULT_DISCORD_STYLE },
     clipboardShelf: true,
     clipboardOverlay: true,
+    stashSummon: true,
     stashPeekMs: 5000,
     stashAutoCloseMs: 5000,
     stashMaxItems: 200,

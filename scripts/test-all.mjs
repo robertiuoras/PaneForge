@@ -34,6 +34,7 @@ const TESTS = [
   ['cursorclick', 'cursor-click-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
+  ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
