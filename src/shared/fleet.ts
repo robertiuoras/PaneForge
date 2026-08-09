@@ -131,6 +131,73 @@ export function fleetOrder(sessions: Session[]): Session[] {
   })
 }
 
+/**
+ * The screen in sections rather than one undifferentiated list.
+ *
+ * A flat sort already put the urgent rows first, but it made every row LOOK the same, so
+ * the reader still read all of them to find where the urgent ones stopped. A heading is
+ * the answer to that: everything under "Your move" wants a person, and everything under
+ * anything else does not, so the reading can stop at the first boundary. Sections with
+ * nobody in them are not drawn - an empty "Ended" heading is a line of chrome saying
+ * nothing.
+ */
+export interface FleetSection {
+  key: 'yourMove' | 'running' | 'idle' | 'ended'
+  title: string
+  sessions: Session[]
+}
+
+const SECTION_OF: Record<FleetState, FleetSection['key']> = {
+  needsYou: 'yourMove',
+  stalled: 'yourMove',
+  working: 'running',
+  starting: 'running',
+  ready: 'idle',
+  exited: 'ended'
+}
+
+const SECTION_TITLE: Record<FleetSection['key'], string> = {
+  yourMove: 'Your move',
+  running: 'Running',
+  idle: 'Ready',
+  ended: 'Ended'
+}
+
+export function fleetSections(sessions: Session[]): FleetSection[] {
+  const ordered = fleetOrder(sessions)
+  const out: FleetSection[] = (['yourMove', 'running', 'idle', 'ended'] as const).map((key) => ({
+    key,
+    title: SECTION_TITLE[key],
+    sessions: []
+  }))
+  for (const s of ordered) out.find((g) => g.key === SECTION_OF[fleetState(s)])!.sessions.push(s)
+  return out.filter((g) => g.sessions.length > 0)
+}
+
+/**
+ * The one line of terminal under a row: what the pane actually said last.
+ *
+ * This is the difference between "waiting for you" and knowing WHY it is waiting -
+ * the CLI's question, its last result line, the error it stopped on - without opening
+ * the pane. The lines come from xterm's own buffer (the caller reads them; this stays
+ * windowless and testable), bottom up, and most of what sits at the bottom of an agent
+ * CLI is furniture: the frame of its drawn input box, a bare prompt char, a spinner, a
+ * rule. A line made only of that is skipped; the first line with words in it wins. The
+ * frame's own edges are stripped so `│ text │` reads as its text.
+ */
+const FRAME_CHARS = /^[\s─-╿▀-▟⠀-⣿·•~✻✽✳✶✢*+=_,.…‥⋯>❯›|\\/-]*$/
+export function previewFrom(lines: string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let l = lines[i]
+    if (!l) continue
+    l = l.replace(/^[\s│┃║▏]+/, '').replace(/[\s│┃║▕]+$/, '')
+    l = l.replace(/\s+/g, ' ').trim()
+    if (!l || FRAME_CHARS.test(l)) continue
+    return l.length > 160 ? `${l.slice(0, 159)}…` : l
+  }
+  return null
+}
+
 /** How many rows want a person right now - the number the button wears. */
 export function fleetWaiting(sessions: Session[]): number {
   return sessions.filter((s) => {

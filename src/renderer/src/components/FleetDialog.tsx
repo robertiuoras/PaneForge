@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { DiffScope, DriveRun, GitInfo, Session } from '@shared/types'
 import type { AgentInfo } from '@shared/agents'
 import { describePlace } from '@shared/place'
@@ -6,7 +6,7 @@ import { driveLine, runDone, unattended, unattendedLine } from '@shared/agentic'
 import type { Goal } from '@shared/goals'
 import { planLine } from '@shared/dispatch'
 import { goalLine, queuePosition } from '@shared/goals'
-import { density, fleetOrder, fleetRow, gitLine } from '@shared/fleet'
+import { density, fleetRow, fleetSections, gitLine, previewFrom } from '@shared/fleet'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import Elapsed from './Elapsed'
@@ -88,10 +88,45 @@ export default function FleetDialog({
   }, [])
   const waiting = goals.filter((g) => g.state !== 'running')
 
-  const rows = useMemo(() => fleetOrder(sessions), [sessions])
+  const sections = useMemo(() => fleetSections(sessions), [sessions])
+  const rows = useMemo(() => sections.flatMap((g) => g.sessions), [sections])
+  const indexOf = useMemo(() => new Map(rows.map((s, i) => [s.id, i])), [rows])
   // The pane number is the sidebar's number and the Ctrl-N keystroke, so it has to come
   // from the ORIGINAL order, not from this screen's.
   const numberOf = useMemo(() => new Map(sessions.map((s, i) => [s.id, i + 1])), [sessions])
+
+  // What each pane last SAID, read straight out of its live xterm buffer - this dialog
+  // shares the renderer with every local pane, so the read costs no IPC and is as fresh
+  // as the screen itself. A remote mirror renders through the same path, so it is covered
+  // too. Faster than the git tick because this is the line a person is deciding on.
+  const [previews, setPreviews] = useState<Record<string, string | null>>({})
+  useEffect(() => {
+    type TermLine = { translateToString: (trim?: boolean) => string }
+    type Buf = { baseY: number; cursorY: number; getLine: (i: number) => TermLine | undefined }
+    type Reg = Record<string, { term?: { buffer: { active: Buf } } }>
+    const read = (): void => {
+      const reg = (window as unknown as { __pf?: Reg }).__pf
+      if (!reg) return
+      const next: Record<string, string | null> = {}
+      for (const s of sessions) {
+        const t = reg[s.id]?.term
+        if (!t) continue
+        const buf = t.buffer.active
+        // Up to the CURSOR row, not the buffer's end: the buffer is the whole screen, and
+        // on a half-full screen everything under the cursor is empty rows - reading "the
+        // last 40 lines" of those found nothing (measured: content on rows 0-10 of 57).
+        const end = buf.baseY + buf.cursorY
+        const lines: string[] = []
+        for (let i = Math.max(0, end - 39); i <= end; i++)
+          lines.push(buf.getLine(i)?.translateToString(true) ?? '')
+        next[s.id] = previewFrom(lines)
+      }
+      setPreviews((p) => ({ ...p, ...next }))
+    }
+    read()
+    const t = window.setInterval(read, 2000)
+    return () => window.clearInterval(t)
+  }, [sessions])
 
   // One request per distinct folder, so a swarm of four panes in one repo does not run
   // four identical diffs. The scope matches what the pane's own badge would open: a lane
@@ -172,8 +207,15 @@ export default function FleetDialog({
         </div>
         <Blurb id="fleet" />
         <div className="fleet-list" ref={listRef}>
-          {rows.map((s, i) => {
-            const row = fleetRow(s)
+          {sections.map((sec) => (
+            <Fragment key={sec.key}>
+              <div className={`fleet-sec sec-${sec.key}`}>
+                {sec.title}
+                <span className="n">{sec.sessions.length}</span>
+              </div>
+              {sec.sessions.map((s) => {
+                const i = indexOf.get(s.id) ?? 0
+                const row = fleetRow(s)
             const key = `${s.cwd}\u0000${s.lane ? 'all' : 'working'}`
             const repo = s.remote ? undefined : repos[key]
             const pane = numberOf.get(s.id) ?? 0
@@ -202,6 +244,7 @@ export default function FleetDialog({
                     {place.short}
                     {s.remote && <span className="fleet-remote"> · {s.remote.name}</span>}
                   </span>
+                  {previews[s.id] && <span className="fleet-preview">{previews[s.id]}</span>}
                 </span>
                 <span className="fleet-state">
                   <span className="fleet-label">{row.label}</span>
@@ -234,8 +277,10 @@ export default function FleetDialog({
                   <span className="fleet-git">{git ?? ''}</span>
                 </button>
               </div>
-            )
-          })}
+                )
+              })}
+            </Fragment>
+          ))}
           {rows.length === 0 && drives.length === 0 && waiting.length === 0 && (
             <div className="empty">No panes open.</div>
           )}

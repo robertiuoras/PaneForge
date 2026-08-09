@@ -29,7 +29,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { density, fleetOrder, fleetRow, fleetState, fleetWaiting, gitLine } = createRequire(
+const { density, fleetOrder, fleetRow, fleetSections, fleetState, fleetWaiting, gitLine, previewFrom } = createRequire(
   import.meta.url
 )(out)
 
@@ -230,5 +230,54 @@ is(
   '7 changed · 2 to push · 1 to pull',
   'and one with something says all of it, in words'
 )
+
+// ---------------------------------------------------------------------------
+// Sections: the screen in groups, so reading stops at the first boundary
+
+{
+  const mk = (id, over) => ({ id, status: 'idle', engaged: false, ...over })
+  const needs = mk('n', { engaged: true })
+  const work = mk('w', { status: 'working' })
+  const ready = mk('r', {})
+  const dead = mk('x', { status: 'exited' })
+  const secs = fleetSections([ready, dead, work, needs])
+  is(
+    secs.map((g) => g.key),
+    ['yourMove', 'running', 'idle', 'ended'],
+    'sections come urgent-first, whatever order the panes opened in'
+  )
+  is(
+    secs.map((g) => g.sessions.map((s) => s.id)),
+    [['n'], ['w'], ['r'], ['x']],
+    'and each pane sits under its own heading'
+  )
+  const some = fleetSections([work, ready])
+  is(some.map((g) => g.key), ['running', 'idle'], 'a section with nobody in it is not drawn')
+  is(fleetSections([]), [], 'no panes, no headings')
+  ok(
+    fleetSections([mk('a', { status: 'working', stalledSince: 5 })])[0].key === 'yourMove',
+    'a stalled pane files under Your move, not Running'
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The preview line: what the pane last said, minus the furniture
+
+is(previewFrom(['npm test', '43 checks passed', '']), '43 checks passed', 'the last line with words wins')
+is(
+  previewFrom(['Do you want to proceed?', '╭──────────────╮', '│ ❯ 1. Yes     │', '╰──────────────╯']),
+  '❯ 1. Yes',
+  'a drawn input box is read through its frame, not skipped as one'
+)
+is(previewFrom(['error: thing broke', '───────────', '  ', '']), 'error: thing broke', 'rules and blanks are furniture')
+is(previewFrom(['❯', '', ' ']), null, 'a bare prompt char is not a preview')
+is(previewFrom([]), null, 'an empty buffer says nothing')
+is(previewFrom(['   spaced   out   words  ']), 'spaced out words', 'runs of spaces collapse - the row is one line tall')
+{
+  const long = 'x'.repeat(400)
+  const p = previewFrom([long])
+  ok(p.length <= 160 && p.endsWith('…'), 'a huge line is cut, with the cut said out loud')
+}
+is(previewFrom(['✻ Thinking…', '⠋ ⠙ ⠹']), '✻ Thinking…', 'a spinner row is furniture but a labelled one is words')
 
 console.log(`\n${checks} checks - all good`)
