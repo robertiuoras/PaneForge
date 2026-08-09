@@ -340,6 +340,15 @@ const STALE_MS = 12 * 60 * 60 * 1000
 // and had to wait for a human to close a window. Nothing can be lost: a lane with so much
 // as one uncommitted character is never taken, however long it has been quiet.
 const IDLE_EMPTY_MS = 60 * 60 * 1000
+// A hold whose chat ENDED ITS TURN with the lane clean is parked (`park`, run by the Stop
+// hook). Parked is not stale: the window is open and the chat may speak again - but the
+// evidence says nobody is mid-anything, so the wait for its lane is minutes, not the hour
+// the idle sweep needs. A parked hold from a VISITOR chat - one whose own project is a
+// different repo, which claimed here only because its shell happened to be standing in
+// this folder - is stealable immediately: that is the chat that held taskdriver.ai's
+// `main` for half an hour on 2026-08-09 with nothing in it, three minutes of work done,
+// committed and pushed, while every real taskdriver chat was sent to a letter lane.
+const PARK_STEAL_MS = 10 * 60 * 1000
 // A chat that only MENTIONED PaneForge gets a lane on approval, not on the word. Saying
 // "why does PaneForge show X" from a Jarvis chat used to claim a real lane: the pane then
 // wore a "PF lane main" chip for a chat that never opened the repo, and a chat that did
@@ -493,6 +502,47 @@ function drainLane(state, id) {
  * that reaps now has the option of writing it down.
  */
 let reaped = false
+
+/**
+ * Has this hold's chat, by the evidence, stopped needing the checkout?
+ *
+ * Three ways to say yes, weakest first: an hour of silence (the original idle sweep - a
+ * window open with nothing said and nothing left behind), a parked hold past its grace
+ * (the Stop hook saw the turn END with the lane clean, so the wait is minutes), and a
+ * parked VISITOR hold (a chat that lives in another project and stood here in passing -
+ * the moment its turn ends clean it has no claim on anybody's patience at all). Callers
+ * still check dirty/ready/conflict themselves - this only answers the liveness half.
+ */
+function holdGivenUp(c) {
+  if (now() - (c.seen ?? c.claimed ?? 0) > IDLE_EMPTY_MS) return true
+  if (!c.parked) return false
+  if (c.visitor) return true
+  return now() - c.parked > PARK_STEAL_MS
+}
+
+/**
+ * The Stop hook's word that a chat's turn ended with its lane clean.
+ *
+ * Records `parked` on every hold this session has whose lane holds no uncommitted work.
+ * Nothing is released here and nothing can be lost: the chat keeps its lane, and speaks
+ * again by claiming - which deletes the mark. All this changes is what another chat's
+ * claim may conclude: a parked `main` is handed over in minutes (PARK_STEAL_MS, or at
+ * once for a visitor) instead of the hour the silence sweep needs.
+ */
+function park(session) {
+  if (!session) throw new Error('park needs --session')
+  const state = reap(read())
+  const parked = []
+  for (const [id, c] of Object.entries(state.lanes)) {
+    if (c.session !== session || c.parked) continue
+    if (state.ready[id] || state.conflicts[id]) continue
+    if (laneWork(id).dirty) continue
+    c.parked = now()
+    parked.push(id)
+  }
+  if (parked.length || reaped) write(state)
+  return { parked }
+}
 
 function reap(state) {
   for (const [id, c] of Object.entries(state.lanes)) {
@@ -964,7 +1014,7 @@ function excludeModules(dir) {
 
 // ---------------------------------------------------------------- commands
 
-function claim(session, cwd, prefer, tentative = false) {
+function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (!session) throw new Error('claim needs --session')
   const state = reap(read())
   // Cheap, throttled, and the reason most conflicts never reach a human.
@@ -973,6 +1023,12 @@ function claim(session, cwd, prefer, tentative = false) {
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
       c.seen = now()
+      // The chat is back: whatever `park` said about its turn being over is no longer
+      // true, and a claim that is not a visit clears the visitor word too - the hook
+      // decides that from where the chat LIVES, so a home chat is never marked down for
+      // one prompt sent from somewhere else.
+      delete c.parked
+      if (!visitor) delete c.visitor
       // A lane can stop being a checkout while its own chat is sitting in it - a pruned
       // worktree, an interrupted install, a folder deleted from underneath, a node_modules
       // link removed by a cleanup. The chat is then told, every prompt, to work in a folder
@@ -1041,7 +1097,16 @@ function claim(session, cwd, prefer, tentative = false) {
   // different ideas of one checkout, which is the failure lanes exist to prevent. Ignoring
   // it puts that chat in a real lane instead.
   if (prefer && !POOL.includes(prefer)) prefer = null
-  const spare = POOL.filter((id) => !state.lanes[id])
+  // A visitor prefers `main` only because its shell is standing there. Standing is not
+  // work: unless the folder holds uncommitted edits to protect, the visitor is sent to a
+  // letter lane and `main` stays what it is - the checkout of the repo's own chats. With
+  // dirty work in the folder the preference is honoured exactly as before, because losing
+  // sight of half an edit is worse than any squat.
+  if (visitor && prefer === 'main' && !laneWork('main').dirty) prefer = null
+  // Same idea for a visitor with no preference at all: hand out letters first, `main`
+  // only when it is the last checkout left.
+  const order = visitor ? [...POOL.filter((id) => id !== 'main'), ...POOL.filter((id) => id === 'main')] : POOL
+  const spare = order.filter((id) => !state.lanes[id])
   let free =
     (prefer && !state.lanes[prefer] ? prefer : null) ??
     spare.find((id) => !state.ready[id] && !state.conflicts[id]) ??
@@ -1069,14 +1134,14 @@ function claim(session, cwd, prefer, tentative = false) {
   // nothing in it, lane b claimed 5 minutes ago by a chat sitting in `taskdriver.ai-a` -
   // which is Robert's "why there's 2 lanes, main and lane-b".
   const gotPrefer = Boolean(prefer) && free === prefer
-  if (free && free !== 'main' && !gotPrefer && POOL.includes('main')) {
+  if (free && free !== 'main' && !gotPrefer && POOL.includes('main') && !visitor) {
     const held = state.lanes.main
     if (
       held &&
       held.session !== session &&
       !state.ready.main &&
       !state.conflicts.main &&
-      now() - (held.seen ?? held.claimed ?? 0) > IDLE_EMPTY_MS &&
+      holdGivenUp(held) &&
       !laneWork('main').dirty
     ) {
       delete state.lanes.main
@@ -1090,7 +1155,7 @@ function claim(session, cwd, prefer, tentative = false) {
     const idle = Object.entries(state.lanes)
       .filter(([id, c]) => {
         // A lane only reserved by a mention is idle the moment anyone actually needs one.
-        if (!c.tentative && now() - (c.seen ?? c.claimed ?? 0) < IDLE_EMPTY_MS) return false
+        if (!c.tentative && !holdGivenUp(c)) return false
         if (state.ready[id] || state.conflicts[id]) return false
         const w = laneWork(id)
         return !w.dirty && w.ahead === 0
@@ -1118,7 +1183,14 @@ function claim(session, cwd, prefer, tentative = false) {
     if (/conflicts with /.test(healed)) noteConflict(state.conflicts, free, healed)
     else delete state.conflicts[free]
   }
-  state.lanes[free] = { session, cwd: cwd ?? null, claimed: now(), seen: now(), ...(tentative ? { tentative: true } : {}) }
+  state.lanes[free] = {
+    session,
+    cwd: cwd ?? null,
+    claimed: now(),
+    seen: now(),
+    ...(tentative ? { tentative: true } : {}),
+    ...(visitor ? { visitor: true } : {})
+  }
   write(state)
   return {
     lane: free,
@@ -1162,8 +1234,10 @@ function guard(session, path) {
   if (holder?.session === session) {
     holder.seen = now()
     // Writing in the lane is the moment a reservation becomes a real claim: this chat is
-    // editing PaneForge, not talking about it, so the lane is now its lane.
+    // editing PaneForge, not talking about it, so the lane is now its lane - and a chat
+    // that is writing has plainly not finished its turn, whatever `park` recorded.
     delete holder.tentative
+    delete holder.parked
     write(state)
     return null
   }
@@ -2247,6 +2321,11 @@ function status(session) {
         // Reserved by a chat that has not written here. Callers that describe lanes to a
         // human (the hook, the app) leave these out - they are not work, they are a word.
         tentative: Boolean(state.lanes[id]?.tentative),
+        // The Stop hook saw this hold's chat end a turn with the lane clean - the hold
+        // survives, but any chat that needs the checkout takes it in minutes.
+        parked: state.lanes[id]?.parked ?? null,
+        // Claimed by a chat whose own project is a different repo - it stood here.
+        visitor: Boolean(state.lanes[id]?.visitor),
         from: state.lanes[id]?.cwd ?? null,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
@@ -2308,7 +2387,16 @@ function doctor() {
   const live = s.lanes.filter((l) => l.exists || l.heldBy || l.ready || l.conflicted || l.ahead > 0)
   for (const l of live) {
     const what = []
-    if (l.heldBy) what.push(l.tentative ? 'reserved by a chat that has not written here' : 'held by a chat')
+    if (l.heldBy)
+      what.push(
+        l.tentative
+          ? 'reserved by a chat that has not written here'
+          : l.parked
+            ? `held by a chat whose turn ended ${Math.round((now() - l.parked) / 60000)}m ago - taken over the moment anyone needs it`
+            : l.visitor
+              ? 'held by a visiting chat from another project'
+              : 'held by a chat'
+      )
     if (l.dirty) what.push('uncommitted edits')
     if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
     if (l.ready) what.push('finished, waiting for the next release')
@@ -2476,7 +2564,11 @@ try {
     // and its own working directory is the answer it would have given. Better a folder
     // that might be a PaneForge checkout than a hold nothing can put a name to.
     console.log(
-      JSON.stringify(claim(session, arg('cwd') ?? process.cwd(), arg('prefer'), argv.includes('--tentative')), null, 2)
+      JSON.stringify(
+        claim(session, arg('cwd') ?? process.cwd(), arg('prefer'), argv.includes('--tentative'), argv.includes('--visitor')),
+        null,
+        2
+      )
     )
   else if (cmd === 'guard') {
     const reason = guard(session, arg('path'))
@@ -2504,6 +2596,11 @@ try {
     const r = releaseClaim(session)
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
+  } else if (cmd === 'park') {
+    // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
+    // chat that needs one takes it in minutes; the mark clears itself on the next claim.
+    const r = park(session)
+    console.log(JSON.stringify(r))
   } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {
     const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session)
