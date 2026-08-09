@@ -183,6 +183,13 @@ export default function RecentsFlyout({
 
   const open = pinned || peek || hover
 
+  // Unpinned while the pointer is resting on the panel: hover would hold it open, so
+  // Ctrl+Shift+V read as a dead key - the same trap the head's ✕ hit before close()
+  // learned to drop hover. The keybind path gets the same cure.
+  useEffect(() => {
+    if (!pinned) setHover(false)
+  }, [pinned])
+
   useEffect(() => {
     if (!open) return
     const t = window.setInterval(() => bump((n) => n + 1), 15_000)
@@ -461,11 +468,12 @@ export default function RecentsFlyout({
       */}
       {pinned && <Blurb id="stash" />}
       {/*
-        Only while it is open on purpose. A peek at what you just copied is not a thing
-        anybody searches, and a caret appearing over a pane on every copy would be the
-        app taking the keyboard - which it does not do.
+        ONE view, however it opened. Search, tabs and the footer used to be pinned-only,
+        which drew a second, stripped-down shelf on a peek or a hover - "why is there 2
+        separate views". The input is rendered but never focused here (focus is the
+        magnifier's deliberate press), so no caret is taken from a pane by a copy.
       */}
-      {pinned && (
+      {(
         <div className="shelf-search">
           <input
             ref={search}
@@ -506,7 +514,7 @@ export default function RecentsFlyout({
           )}
         </div>
       )}
-      {pinned && items.length > 0 && (
+      {items.length > 0 && (
         <div className="shelf-tabs">
           {tabs.map((t) => (
             <button
@@ -673,7 +681,7 @@ export default function RecentsFlyout({
           </div>
         ))}
       </div>
-      {pinned && (
+      {(
         <div className="shelf-foot">
           <span className="hint">{keyLabel('Click a row to put it in the pane · Ctrl Shift V')}</span>
           <button

@@ -66,7 +66,18 @@ function dressWindow(theme: ThemeConfig | undefined): void {
 // during the activation settle, before the pill, card, or button handlers decide the click.
 window.addEventListener('pointerdown', () => shelf.touch(), { capture: true })
 
-type Filter = 'all' | 'text' | 'image' | 'file'
+type Filter = 'all' | 'text' | 'image' | 'video' | 'file'
+
+/**
+ * What a row IS, for the tabs - the same split the in-window shelf draws, so the Stash
+ * is one view wherever it appears. A video is a stashed file to the store, but "where is
+ * that clip" is a different question from "where is that PDF"; told apart by mime, the
+ * same test the row uses to draw a first frame.
+ */
+function rowKind(it: { kind: string; mime?: string }): Exclude<Filter, 'all'> {
+  if (it.kind === 'file') return it.mime?.startsWith('video/') ? 'video' : 'file'
+  return it.kind as Exclude<Filter, 'all'>
+}
 
 /**
  * Only the rows you can see are drawn.
@@ -782,7 +793,7 @@ function Overlay(): JSX.Element {
 
   const cap = config?.stashMaxItems ?? 200
   const full = items.length >= cap
-  const shown = filter === 'all' ? items : items.filter((i) => i.kind === filter)
+  const shown = filter === 'all' ? items : items.filter((i) => rowKind(i) === filter)
   const virt = shown.length > VIRT_MIN
   const rh = rowH.current
   // Clamped to the list it is about to slice, because `view.top` outlives the list that
@@ -796,14 +807,17 @@ function Overlay(): JSX.Element {
   const last = virt ? Math.min(shown.length, Math.ceil((top + view.h) / rh) + OVERSCAN) : shown.length
   const slice = virt ? shown.slice(first, last) : shown
   const counts = {
-    text: items.filter((i) => i.kind === 'text').length,
-    image: items.filter((i) => i.kind === 'image').length,
-    file: items.filter((i) => i.kind === 'file').length
+    text: items.filter((i) => rowKind(i) === 'text').length,
+    image: items.filter((i) => rowKind(i) === 'image').length,
+    video: items.filter((i) => rowKind(i) === 'video').length,
+    file: items.filter((i) => rowKind(i) === 'file').length
   }
+  // Same labels as the in-window shelf: one Stash, one set of words for its kinds.
   const tabs: { key: Filter; label: string; n: number }[] = [
     { key: 'all', label: 'All', n: items.length },
     { key: 'text', label: 'Text', n: counts.text },
-    { key: 'image', label: 'Shots', n: counts.image },
+    { key: 'image', label: 'Images', n: counts.image },
+    { key: 'video', label: 'Video', n: counts.video },
     { key: 'file', label: 'Files', n: counts.file }
   ]
 

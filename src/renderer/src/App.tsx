@@ -1498,8 +1498,14 @@ export default function App(): JSX.Element {
         e.stopPropagation()
         // One Stash: while the floating one is on, this key opens that, not a second
         // list drawn inside the window.
-        if (shelfInWindow) setShelfPinned((p) => !p)
-        else api.toggleStash()
+        if (shelfInWindow) {
+          // Open by ANY hold - pinned or a search - and the key means hide. Flipping
+          // only the pin left a searching shelf on screen, which read as a dead key.
+          if (shelfPinned || shelfSearching) {
+            setShelfPinned(false)
+            setShelfSearching(false)
+          } else setShelfPinned(true)
+        } else api.toggleStash()
       } else if (k === 'd' && e.shiftKey) {
         e.preventDefault()
         setDevices(true)
