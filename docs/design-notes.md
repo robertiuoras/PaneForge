@@ -66,6 +66,22 @@ get lanes. A chat alone in a repo is told nothing: it gets `main`, which is the 
 was already in, and silence is the point - a line about lanes on every prompt in every
 project is how a useful line stops being read.
 
+**A visitor never squats `main`.** Twice (2026-08-07, 2026-08-09) a chat whose own
+project was a different repository - its shell had merely cd'd here - claimed `main`,
+finished in minutes, and then held the checkout for as long as its window stayed open;
+every real chat in the repo was sent to a letter lane by a chat that had left. The idle
+sweep could not help for an hour, because an hour of silence is the least a LIVE holder
+deserves. Two rules close it. A claim now says whether its chat is a visitor - the hook
+reads the session's home project off its transcript path, because `cwd` follows the
+shell and is exactly how the squatter got in - and a visitor is handed a letter lane
+while one is free, keeping `main` only when the folder holds uncommitted work to
+protect. And a `Stop` hook runs `park` when any chat's turn ends: holds on clean lanes
+are marked, the mark clears the moment that chat claims again, and a claim that needs a
+parked `main` takes it after ten minutes (`PARK_STEAL_MS`) - at once when the parked
+holder is a visitor. Nothing can be lost: one uncommitted character and `park` records
+nothing and no steal touches the lane. `visitor-park-test.mjs` is the proof, and 8 of
+its 14 checks fail on the engine as it was.
+
 `npm run test:lanes` ends with `lane-anyrepo-test.mjs`, which drives the real script
 against real throwaway repos on `main` with real remotes. It pins the two answers that are
 easy to get wrong once a second repo exists: a repo that never asked for releases must

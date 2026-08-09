@@ -27,7 +27,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Where the engine lives. Both names: the checkout family was renamed
@@ -232,7 +232,27 @@ if (event === 'prompt') {
         ? t.slice(repo.length + 1).split(sep)[0]
         : null
 
-  const r = lane(repo, 'claim', '--session', session, '--cwd', cwd, ...(prefer ? ['--prefer', prefer] : []))
+  // A VISITOR is a chat whose own project is a different repository - it is only here
+  // because its shell happened to cd into this one. The tell is the transcript, which
+  // lives under the project the session was STARTED in, spelled as a slug (every
+  // non-alphanumeric becomes a dash); `cwd` follows the shell and cannot answer this.
+  // A visitor is handed a letter lane and gives its checkout back the moment its turn
+  // ends clean (`park`); a home chat is treated exactly as before.
+  const slugOf = (p) => String(p).replace(/[^A-Za-z0-9-]/g, '-')
+  const tp = input.transcript_path ?? input.transcriptPath ?? ''
+  const home = tp ? basename(dirname(tp)) : ''
+  const visitor = Boolean(home) && home !== slugOf(repo) && !home.startsWith(slugOf(repo) + '-')
+
+  const r = lane(
+    repo,
+    'claim',
+    '--session',
+    session,
+    '--cwd',
+    cwd,
+    ...(prefer ? ['--prefer', prefer] : []),
+    ...(visitor ? ['--visitor'] : [])
+  )
   if (r.code !== 0) {
     // Every lane busy is worth saying out loud: the alternative is two chats quietly
     // sharing one checkout, which is the exact failure this exists to prevent.
@@ -433,6 +453,23 @@ if (event === 'pretool') {
   if (!repo) process.exit(0)
   const r = lane(repo, 'guard', '--session', session, '--path', String(path))
   if (r.code === 2 && r.out) deny(r.out)
+  process.exit(0)
+}
+
+// ------------------------------------------------------------------ stop
+//
+// The turn ended. Park every hold this chat has whose lane is clean: the hold survives
+// and the chat speaks again by claiming (which clears the mark), but a chat that NEEDS
+// the checkout now waits minutes for it instead of the hour the silence sweep costs.
+// Fast by construction - a session that never claimed a repo does one registry read and
+// exits, which is every session on the machine except the handful holding lanes.
+
+if (event === 'stop') {
+  const reg = readRegistry()
+  for (const repo of reg.sessions[session] ?? []) {
+    if (!existsSync(repo)) continue
+    lane(repo, 'park', '--session', session)
+  }
   process.exit(0)
 }
 

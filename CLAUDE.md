@@ -33,6 +33,13 @@ given**; writing into another chat's checkout is refused by a PreToolUse hook.
 node scripts/lane.mjs status --repo <dir>      # who holds what
 ```
 
+A chat visiting from another project (home read off its transcript path) gets a letter
+lane, never `main`, unless `main` holds uncommitted work to protect. A `Stop` hook runs
+`lane.mjs park` when a turn ends: clean holds are marked, and a parked `main` is handed
+to a chat that needs it after 10 minutes - instantly when the holder was a visitor. A
+claim by the parked chat clears the mark. `npm run test:lanes` includes
+`visitor-park-test.mjs` for all of it.
+
 One engine drives every repo on the machine, not just this one — `lane.mjs --repo <dir>`.
 Per-repo config is `.lanes.json` in the repo root, every field optional:
 

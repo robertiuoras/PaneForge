@@ -54,7 +54,10 @@ const SPECS = [
     timeout: 20,
     statusMessage: undefined as string | undefined
   },
-  { event: 'SessionEnd', matcher: undefined, arg: '--event=end', timeout: 30, statusMessage: undefined }
+  { event: 'SessionEnd', matcher: undefined, arg: '--event=end', timeout: 30, statusMessage: undefined },
+  // The turn ended: park this chat's clean holds so a chat that needs one takes it in
+  // minutes instead of waiting out the hour-long silence sweep.
+  { event: 'Stop', matcher: undefined, arg: '--event=stop', timeout: 30, statusMessage: undefined }
 ]
 
 /**

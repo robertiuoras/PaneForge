@@ -39,22 +39,18 @@ writeFileSync(
 )
 
 const bundle = join(work, 'laneHooks.mjs')
-// node_modules/.bin/esbuild.cmd cannot be spawned by execFileSync on Windows - since the
-// Node 20.12 argument-injection fix a .cmd needs a shell, and without one it is EINVAL.
-// The package's own JS shim has no such problem and is the same binary either way.
-execFileSync(
-  process.execPath,
-  [
-    join(REPO, 'node_modules', 'esbuild', 'bin', 'esbuild'),
-    join(REPO, 'src', 'main', 'laneHooks.ts'),
-    '--bundle',
-    '--format=esm',
-    '--platform=node',
-    `--alias:electron=${stub}`,
-    `--outfile=${bundle}`
-  ],
-  { stdio: 'pipe' }
-)
+// esbuild's bin/ entry is a JS shim only on Windows; on macOS it is the native binary,
+// and `node <native binary>` is a SyntaxError. The library API is the same build on
+// every platform, so use it directly.
+const { buildSync } = await import('esbuild')
+buildSync({
+  entryPoints: [join(REPO, 'src', 'main', 'laneHooks.ts')],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  alias: { electron: stub },
+  outfile: bundle
+})
 
 /** Run installLaneHooks() with a throwaway home, and hand back what it did and wrote. */
 function run(home, settings) {
@@ -86,7 +82,7 @@ const laneCommands = (s) =>
 const fresh = join(work, 'fresh')
 const a = run(fresh, {})
 say('a fresh machine gets the hooks installed', /installed ->/.test(a.said), a.said + a.err)
-say('all three events are wired', laneCommands(a.settings).length === 3, JSON.stringify(laneCommands(a.settings)))
+say('all four events are wired', laneCommands(a.settings).length === 4, JSON.stringify(laneCommands(a.settings)))
 say(
   'each event gets its own arg',
   // Not endsWith: every command we write carries the --installed-by=paneforge marker
@@ -104,7 +100,7 @@ say(
 
 const b = run(fresh, undefined) // same home, whatever the first run left
 say('running again changes nothing', /already installed/.test(b.said), b.said + b.err)
-say('and does not stack a second copy', laneCommands(b.settings).length === 3, JSON.stringify(laneCommands(b.settings)))
+say('and does not stack a second copy', laneCommands(b.settings).length === 4, JSON.stringify(laneCommands(b.settings)))
 
 // ---------------------------------------------------------------- app moved
 
@@ -116,7 +112,7 @@ for (const groups of Object.values(stale.hooks))
 const c = run(moved, stale)
 say('an upgrade repoints the old entries', /installed ->/.test(c.said), c.said + c.err)
 say('without leaving the old path behind', !laneCommands(c.settings).some((x) => x.includes('C:/Old/Location')), JSON.stringify(laneCommands(c.settings)))
-say('and still exactly three', laneCommands(c.settings).length === 3, JSON.stringify(laneCommands(c.settings)))
+say('and still exactly four', laneCommands(c.settings).length === 4, JSON.stringify(laneCommands(c.settings)))
 
 // ---------------------------------------------------------------- hand-wired machine
 
