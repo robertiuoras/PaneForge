@@ -2121,6 +2121,103 @@ function reconcileFeed(state) {
   return up.ok ? { version: last.version, name, was: size, now: mine[2] } : null
 }
 
+/** This repo's GitHub publish target, or null - the throwaway test repos have none. */
+function githubPublish() {
+  try {
+    const pub = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).build?.publish?.[0]
+    return pub?.provider === 'github' ? `${pub.owner}/${pub.repo}` : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Promotion is the ONLY door from the dev channel to everybody's app.
+ *
+ * Every automatic release is cut as a GitHub PRERELEASE. Installs opted into the dev
+ * channel (Settings, `devUpdates`) take it within the half hour; everyone else's updater
+ * resolves /releases/latest, which GitHub keeps pointed at the newest PROMOTED release.
+ * So a broken build is a dev-channel event, fixed by the next `ready` without anybody's
+ * daily app ever seeing it - and nothing reaches a stable install until this command
+ * says a named build proved itself: `node scripts/lane.mjs promote [version]`.
+ *
+ * It refuses, by name, what the feed lessons taught. A release missing either platform's
+ * feed is a build that silently strands every install on that platform (v0.7.2 went out
+ * Windows-only and v0.8.0 Mac-only, neither run red). A feed whose declared size
+ * disagrees with the asset actually being served fails every update's hash check on
+ * somebody else's machine with no reporter (v0.4.27). Promoting is asserting both are
+ * right, so both are checked here, not assumed.
+ */
+function promote(versionArg) {
+  const repo = githubPublish()
+  if (!repo) return { promoted: false, reason: 'this repo has no GitHub publish config - nothing releases to a channel' }
+
+  let tag
+  if (versionArg) {
+    tag = `v${String(versionArg).replace(/^v/, '')}`
+    const view = runSafe('gh', ['api', `repos/${repo}/releases/tags/${tag}`], { timeout: 30_000 })
+    if (!view.ok) return { promoted: false, reason: `no release ${tag} on ${repo}` }
+    let rel
+    try {
+      rel = JSON.parse(view.out)
+    } catch {
+      return { promoted: false, reason: 'releases API answered something unreadable' }
+    }
+    if (rel.draft) return { promoted: false, reason: `${tag} is still a draft - its build has not finished uploading` }
+    if (!rel.prerelease) return { promoted: false, reason: `${tag} is already promoted` }
+  } else {
+    const list = runSafe('gh', ['api', `repos/${repo}/releases?per_page=20`], { timeout: 30_000 })
+    if (!list.ok) return { promoted: false, reason: `cannot list ${repo}'s releases (is gh logged in?)` }
+    let releases
+    try {
+      releases = JSON.parse(list.out)
+    } catch {
+      return { promoted: false, reason: 'releases API answered something unreadable' }
+    }
+    const newest = releases.find((r) => !r.draft)
+    if (!newest) return { promoted: false, reason: 'no releases exist at all' }
+    if (!newest.prerelease)
+      return { promoted: false, reason: `newest release ${newest.tag_name} is already promoted - nothing is waiting on the dev channel` }
+    tag = newest.tag_name
+  }
+
+  const listed = runSafe('gh', ['release', 'view', tag, '--json', 'assets'], { timeout: 30_000 })
+  if (!listed.ok) return { promoted: false, reason: `cannot read ${tag}'s assets` }
+  let assets
+  try {
+    assets = JSON.parse(listed.out).assets ?? []
+  } catch {
+    return { promoted: false, reason: `unreadable asset list on ${tag}` }
+  }
+  for (const name of ['latest.yml', 'latest-mac.yml']) {
+    if (!assets.some((a) => a.name === name))
+      return {
+        promoted: false,
+        reason: `${tag} has no ${name} - that platform's build is missing, and promoting a one-legged release strands every install on it`
+      }
+    const feed = runSafe('gh', ['release', 'download', tag, '-p', name, '-O', '-'], { timeout: 60_000 })
+    if (!feed.ok) return { promoted: false, reason: `cannot read ${name} from ${tag}` }
+    const declared = /^\s*-?\s*url:\s*(\S+)[\s\S]*?size:\s*(\d+)/m.exec(feed.out)
+    if (!declared) return { promoted: false, reason: `${name} on ${tag} declares no installer` }
+    const [, file, size] = declared
+    const real = assets.find((a) => a.name === file)?.size
+    if (real == null) return { promoted: false, reason: `${name} names ${file}, which is not among ${tag}'s assets` }
+    if (String(real) !== size)
+      return {
+        promoted: false,
+        reason: `${name} describes a ${size}-byte ${file} and the release is serving ${real} bytes - every update would fail its hash check`
+      }
+  }
+
+  const edit = runSafe('gh', ['release', 'edit', tag, '--prerelease=false', '--latest'], { timeout: 60_000 })
+  if (!edit.ok) return { promoted: false, reason: `gh release edit failed: ${edit.out.slice(-200)}` }
+  // The claim is what /releases/latest actually answers now, not that the edit exited 0.
+  const latest = runSafe('gh', ['api', `repos/${repo}/releases/latest`, '--jq', '.tag_name'], { timeout: 30_000 })
+  if (!latest.ok || latest.out.trim() !== tag)
+    return { promoted: false, reason: `edited ${tag}, but /releases/latest answers "${latest.out.trim()}" - the promotion did not take` }
+  return { promoted: true, tag }
+}
+
 function status(session) {
   const state = reap(read())
   // Asking is not writing, except when the asking found something to throw away: an
@@ -2242,6 +2339,31 @@ function doctor() {
   }
   if (s.lastShip)
     say(`  Last ${s.lastShip.version ? `release: v${s.lastShip.version}` : 'merge'}, ${Math.round((now() - s.lastShip.at) / 60000)}m ago.`)
+
+  // What the dev channel is holding that stable installs have not seen. One API call,
+  // only in doctor - status must stay offline - and a gh that cannot answer says nothing:
+  // an absent fact is not a known-empty channel.
+  const repo = RELEASE === 'version' ? githubPublish() : null
+  if (repo) {
+    const list = runSafe('gh', ['api', `repos/${repo}/releases?per_page=20`], { timeout: 15_000 })
+    try {
+      const releases = JSON.parse(list.ok ? list.out : '[]').filter((r) => !r.draft)
+      const pending = []
+      for (const r of releases) {
+        if (!r.prerelease) break
+        pending.push(r.tag_name)
+      }
+      if (pending.length) {
+        const stable = releases.find((r) => !r.prerelease)
+        say(
+          `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable ? stable.tag_name : 'nothing'}.`
+        )
+        say('  When the newest has proved itself: node scripts/lane.mjs promote')
+      }
+    } catch {
+      /* gh answered something unreadable - doctor stays quiet rather than guessing */
+    }
+  }
   say()
 
   // ---- debris: folders and branches that look like lanes and are not
@@ -2323,7 +2445,7 @@ try {
         'No GitHub Actions run appeared for this tag in time, so this machine built and published the installer itself. If Actions was merely slow it will publish too; the feed is checked and repaired on the retry timer. Running copies update within 30 minutes.'
       : b?.by === 'failed'
         ? `Tag is pushed but NO installers exist: ${b.reason}. Fix and run: node scripts/lane.mjs ship`
-        : 'GitHub is building Windows and macOS. Running copies update within 30 minutes.'
+        : 'GitHub is building Windows and macOS. Dev-channel copies update within 30 minutes; stable installs move only when this build is promoted (node scripts/lane.mjs promote, once it has proved itself).'
   const sayRelease = (r) => {
     if (!r) return
     if (r.shipped) {
@@ -2393,6 +2515,13 @@ try {
     } else {
       console.log(`Not shipped: ${r.reason}`)
     }
+  } else if (cmd === 'promote') {
+    const r = promote(argv[1] && !argv[1].startsWith('--') ? argv[1] : '')
+    if (r.promoted)
+      console.log(
+        `Promoted ${r.tag}. /releases/latest now serves it, and every stable install updates within the half hour.`
+      )
+    else console.log(`Not promoted: ${r.reason}`)
   } else if (cmd === 'retry') {
     // Every other retry rides on a chat happening to run a lane command, so on a quiet
     // machine a conflict was never re-tried at all: it stayed on the strip long after the

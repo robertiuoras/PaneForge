@@ -1169,6 +1169,12 @@ export interface Config {
   /** check GitHub releases in the background and offer the update */
   autoUpdate: boolean
   /**
+   * Take every build as soon as it is cut. Automatic releases are GitHub prereleases
+   * (the dev channel); a stable install only moves when one is promoted
+   * (`lane.mjs promote`). On, this install updates on every build - sooner, less proven.
+   */
+  devUpdates: boolean
+  /**
    * Reopen the panes an update closed. Off means a restart is a clean desk, which
    * is the only way to get rid of a set of panes that otherwise comes back every
    * time the app updates itself.

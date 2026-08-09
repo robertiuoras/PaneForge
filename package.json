@@ -32,6 +32,7 @@
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
+    "test:promote": "node scripts/promote-test.mjs",
     "test:diff": "node scripts/diff-test.mjs",
     "test:grid": "node scripts/grid-layout-test.mjs",
     "test:buffer": "node scripts/outbuffer-test.mjs",
@@ -181,7 +182,7 @@
         "provider": "github",
         "owner": "robertiuoras",
         "repo": "PaneForge",
-        "releaseType": "release"
+        "releaseType": "prerelease"
       }
     ],
     "win": {

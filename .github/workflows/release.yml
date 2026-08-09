@@ -88,7 +88,10 @@ jobs:
           files=(dist/latest*.yml dist/*"$version"*.exe dist/*"$version"*.dmg dist/*"$version"*.zip dist/*"$version"*.blockmap)
           if [ ${#files[@]} -eq 0 ]; then echo "nothing built for $version"; exit 1; fi
           printf '%s\n' "${files[@]}"
-          gh release view "v$version" >/dev/null 2>&1 || gh release create "v$version" --title "$version" --notes ""
+          # --prerelease: every automatic release is cut on the dev channel. Stable
+          # installs resolve /releases/latest, which skips prereleases, so nothing
+          # reaches them until `lane.mjs promote` flips this flag off by hand.
+          gh release view "v$version" >/dev/null 2>&1 || gh release create "v$version" --prerelease --latest=false --title "$version" --notes ""
           gh release upload "v$version" "${files[@]}" --clobber
 
       # electron-builder's own asset names carry the version, so a link to one dies

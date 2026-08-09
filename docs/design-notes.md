@@ -172,7 +172,50 @@ again and the mark is dropped and the release waits for you, by name. Nothing to
 it except mark ready again - but it means a release never stalls silently on a chat that
 said done and kept typing (`scripts/release-gate-test.mjs` is that failure, pinned).
 
-## The folder rename to PaneForge (done 2026-07-27, PC)
+### Every automatic release is a dev release (2026-08-09)
+
+Robert's ask, verbatim in intent: stop broken builds reaching the app he is sitting in.
+Until now every `ready` fed the same feed his live copy polls, so a session's mistake
+was on his desk within the half hour and the fix cost more releases - the version
+number had become a mistake counter. The missing piece was a channel between "the lane
+engine released it" and "everybody runs it".
+
+The mechanism is GitHub's own, which is why it is small. A release cut with the
+prerelease flag is invisible to `/releases/latest`, and `/releases/latest` is exactly
+what a stable electron-updater resolves (`GitHubProvider.getLatestTagName`; the token
+path's `PrivateGitHubProvider` appends `/latest` the same way - both were read, not
+assumed, in `node_modules/electron-updater@6.8.9`). Flip `allowPrerelease` and the same
+provider reads the newest atom-feed entry instead - every build, the moment it is cut.
+So: `releaseType: "prerelease"` in `package.json` and `--prerelease --latest=false` in
+the workflow's `gh release create` make every automatic release a dev one, and
+`config.devUpdates` → `setDevChannel()` → `allowPrerelease` makes any single install
+the copy that takes them. The flag is re-asserted on every check, not trusted from
+wiring time, because a setting that changes at runtime must not need a restart to mean
+anything. The Mac's fallback path (`macFallback`, which answers from the releases API
+when a release carries no mac feed) had `/releases/latest` hardcoded and would have
+quietly pinned a dev-channel Mac to stable - it now asks per channel.
+
+Tags stay plain (`v0.8.29`, never `v0.8.29-dev.1`): the GitHub prerelease FLAG is the
+channel, so promotion is one metadata edit and stable installs update to exactly the
+bytes the dev channel proved. A `-dev` suffix would have meant retagging or rebuilding
+on promote - a second artifact that is precisely NOT the one that was tested.
+
+`lane.mjs promote [version]` is the only door to stable, and it re-checks the two
+failures this repo has already shipped before flipping the flag: a one-legged release
+(v0.7.2 Windows-only, v0.8.0 Mac-only - either platform's feed missing) and a feed
+whose declared size disagrees with the asset actually served (v0.4.27, the hash-check
+death with no reporter). It then verifies `/releases/latest` really answers the
+promoted tag, because the claim is what stable installs will see, not that an edit
+exited 0. `doctor` lists what sits unpromoted so a quiet dev channel is visible;
+`status` deliberately does not - it must stay offline.
+
+Older installs (≤ v0.8.28, `allowPrerelease` never set) already resolve
+`/releases/latest`, so they wait for promotions correctly without knowing the channel
+exists. `install.sh` / `install.ps1` and the README's fixed-name links all go through
+`releases/latest/download/`, so a first-time install is always the promoted build.
+
+`npm run test:promote` drives the command against a stubbed `gh`; `test:updater` pins
+the channel flag's default, its flip, and its re-assertion per check.
 
 The checkouts on disk are `PaneForge`, `-a`, `-b`, `-c`. They used to be
 `claude-orchestrator*`, and `scripts/rename-repo.mjs` moved them: `git worktree move` for

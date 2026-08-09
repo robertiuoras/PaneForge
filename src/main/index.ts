@@ -181,6 +181,7 @@ import {
   initUpdater,
   installUpdate,
   setAutoCheck,
+  setDevChannel,
   stagedInstallable,
   updateLog,
   bootMs
@@ -1255,6 +1256,12 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)
   if (patch.autoUpdate !== undefined) setAutoCheck(patch.autoUpdate)
+  if (patch.devUpdates !== undefined) {
+    setDevChannel(patch.devUpdates)
+    // Joining the dev channel means "there may already be a build for me": look now,
+    // not at the next half-hour tick. Leaving it re-resolves to the promoted release.
+    void checkForUpdates()
+  }
   if (patch.voice !== undefined) applyVoiceHotkey(next)
   if (patch.gameMode !== undefined) refreshGameWatch(next)
   if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
@@ -2848,6 +2855,7 @@ app.whenReady().then(() => {
       if (cfg.phone?.tunnel) void tunnel.start(cfg.phone.port)
     })
   }
+  setDevChannel(!!cfg.devUpdates)
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
     // A "Restart now" whose install never applied: the relaunch is the old version

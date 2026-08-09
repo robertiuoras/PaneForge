@@ -349,6 +349,24 @@ function isPublishing(message: string): boolean {
  * needs no assets at all - only the tag name. Error is reported only if that fails too.
  */
 const API_LATEST = 'https://api.github.com/repos/robertiuoras/PaneForge/releases/latest'
+const API_ALL = 'https://api.github.com/repos/robertiuoras/PaneForge/releases?per_page=10'
+
+// --- which releases this install takes --------------------------------------
+//
+// Every automatic release is cut as a GitHub PRERELEASE - the dev channel. A stable
+// install resolves /releases/latest, which GitHub only ever points at a promoted
+// (non-prerelease) release, so it moves when `lane.mjs promote` says a build is good.
+// The dev channel reads the newest release including prereleases: every build, the
+// moment it is cut. electron-updater's own switch for exactly this is
+// `allowPrerelease`, and both its providers honour it - the anonymous atom-feed path
+// and the token path borrowGhToken swaps in.
+let devChannel = false
+
+export function setDevChannel(on: boolean): void {
+  devChannel = !!on
+  const u = load()
+  if (u) u.allowPrerelease = devChannel
+}
 
 /**
  * A new version, on a Mac. Either this app can swap itself or you get the page.
@@ -419,10 +437,18 @@ function offerMac(version: string): void {
 /** The version being downloaded for a Mac right now, so two checks cannot both fetch it. */
 let macStaging = ''
 
+/** The newest release this install's channel accepts, out of a releases API answer. */
+function pickRelease(json: unknown): string {
+  const rel = Array.isArray(json) ? json.find((r) => !(r as { draft?: boolean })?.draft) : json
+  return String((rel as { tag_name?: string })?.tag_name ?? '')
+}
+
 function publicLatestMacRelease(): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = get(
-      API_LATEST,
+      // /releases/latest is GitHub's own "newest promoted release"; the dev channel
+      // wants the newest release full stop, which only the list can answer.
+      devChannel ? API_ALL : API_LATEST,
       {
         headers: {
           'user-agent': `PaneForge/${app.getVersion()}`,
@@ -442,7 +468,7 @@ function publicLatestMacRelease(): Promise<string> {
         })
         res.on('end', () => {
           try {
-            const tag = String(JSON.parse(body)?.tag_name ?? '')
+            const tag = pickRelease(JSON.parse(body))
             const version = tag.replace(/^v/, '')
             if (!version) return reject(new Error('no tag_name in the releases API response'))
             resolve(version)
@@ -461,7 +487,9 @@ function ghLatestMacRelease(): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'gh',
-      ['api', 'repos/robertiuoras/PaneForge/releases/latest', '--jq', '.tag_name'],
+      devChannel
+        ? ['api', 'repos/robertiuoras/PaneForge/releases?per_page=10', '--jq', '[.[]|select(.draft|not)][0].tag_name']
+        : ['api', 'repos/robertiuoras/PaneForge/releases/latest', '--jq', '.tag_name'],
       { windowsHide: true, timeout: 15_000 },
       (err, out) => {
         const version = err ? '' : out.trim().replace(/^v/, '')
@@ -874,6 +902,10 @@ export async function checkForUpdates(): Promise<UpdateState> {
     retry = null
   }
   try {
+    // Re-asserted on every check rather than trusted from wiring time: the setting can
+    // change while the app runs, and a stale flag here is a stable install silently
+    // taking dev builds (or a dev copy silently not).
+    u.allowPrerelease = devChannel
     set({ phase: 'checking', error: undefined })
     await u.checkForUpdates()
   } catch (e) {

@@ -97,8 +97,21 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   one's failure. `runSafe` quotes its arguments now (`cmdQuote`); `npm run test:laneargs`
   round-trips them through a real cmd.exe. Assume nothing about an argument.
 
+- **Every automatic release is a DEV release.** It is cut as a GitHub prerelease:
+  installs opted into the dev channel (Settings → Updates → "Dev channel", config
+  `devUpdates`) take it within the half hour, while every stable install resolves
+  `/releases/latest`, which GitHub keeps pointed at the newest PROMOTED release.
+  Nothing reaches a stable app until `node scripts/lane.mjs promote` — run that only
+  after the build has proved itself at runtime, never on a green diff. Promote refuses
+  a one-legged release (either platform's feed missing) and a feed whose declared size
+  disagrees with the asset being served, then verifies `/releases/latest` really moved.
+  `lane.mjs doctor` lists what waits unpromoted. Tags stay plain (`v0.8.29`) — the
+  prerelease FLAG is the channel, so stable gets exactly the tested bytes.
+  `npm run test:promote`.
+
 **A release claims the thing is finished.** Never cut one while any next step for that
-issue is still open.
+issue is still open — and **promotion claims it is proved**: the dev channel buys the
+room to iterate, not permission to promote unverified.
 
 ## An update may never need a person
 

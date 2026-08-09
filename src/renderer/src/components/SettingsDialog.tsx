@@ -1294,6 +1294,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     hint="Downloads quietly, then asks before restarting."
                   />
                   <Switch
+                    checked={!!config.devUpdates}
+                    onChange={(v) => onChange({ devUpdates: v })}
+                    label="Dev channel: take every build the moment it is cut"
+                    hint="New releases start as dev builds and everyone else updates only when one is promoted. On, this install is the proving ground - newer, sooner, less proven."
+                  />
+                  <Switch
                     checked={config.restoreAfterUpdate}
                     onChange={(v) => onChange({ restoreAfterUpdate: v })}
                     label="Reopen my panes after an update restart"

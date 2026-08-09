@@ -198,6 +198,11 @@ function defaults(): Config {
     launchAtLogin: false,
     adminMode: false,
     autoUpdate: true,
+    // Stable channel. Every automatic release is cut as a GitHub prerelease first, and
+    // an install only moves when one is promoted - so a broken build is a dev-channel
+    // event, fixed by the next release, and never lands here unasked. Flipping this on
+    // makes THIS install the dev copy that takes every build the moment it is cut.
+    devUpdates: false,
     restoreAfterUpdate: true,
     restoreAfterRestart: 'ask',
     saveHistory: true,

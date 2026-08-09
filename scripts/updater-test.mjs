@@ -196,6 +196,25 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   ship({version:held,at:Date.now()}); ok(u.pollDelay()===600_000,'no chase for a version already in hand')
   ship(null); ok(u.pollDelay()===600_000,'no lane file, ordinary poll')
 
+  // setDevChannel: every automatic release is cut as a GitHub prerelease now (the dev
+  // channel), and a stable install only ever moves when 'lane.mjs promote' says a build
+  // proved itself. electron-updater's own switch for this is allowPrerelease, and most
+  // apps read a setting like it once at startup - so flipping it in Settings would need a
+  // restart to take effect. Here it is re-asserted on every checkForUpdates() call (see
+  // the module's own comment beside the reassignment), so the toggle is live. Each probe
+  // below fires 'error' with a fresh message first to leave whatever phase (often
+  // 'ready') the checks above finished in - a repeated message inside 5s is deduplicated
+  // and would not move the phase, which is why the three messages differ.
+  h['error'](new Error('reset-devchannel-1')); await u.checkForUpdates()
+  ok(stub.autoUpdater.allowPrerelease===false,'default: stable channel after an ordinary check')
+  u.setDevChannel(true)
+  ok(stub.autoUpdater.allowPrerelease===true,'setDevChannel(true) flips it immediately, no check needed')
+  h['error'](new Error('reset-devchannel-2')); await u.checkForUpdates()
+  ok(stub.autoUpdater.allowPrerelease===true,'and a check re-asserts it rather than reverting to stable')
+  u.setDevChannel(false)
+  h['error'](new Error('reset-devchannel-3')); await u.checkForUpdates()
+  ok(stub.autoUpdater.allowPrerelease===false,'setDevChannel(false) then a check goes back to the stable feed')
+
   const log=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8'):''
   ok(/sha512 checksum mismatch/.test(log),'error written to updater.log')
   ok(/state downloading/.test(log),'phase transitions logged')
