@@ -995,7 +995,7 @@ body.sizing * { user-select: none !important; }
 /* ---- clipboard shelf (bottom-left, see RecentsFlyout) ---- */
 .shelf {
   position: fixed; bottom: 14px; left: 14px; z-index: 35;
-  width: 300px; max-height: 62vh; display: flex; flex-direction: column;
+  width: 320px; max-height: 62vh; display: flex; flex-direction: column;
   background: var(--surface-3); border: 1px solid var(--line-strong);
   border-radius: var(--r-lg); box-shadow: var(--shadow);
   animation: rise var(--fast);
@@ -1016,6 +1016,26 @@ body.sizing * { user-select: none !important; }
 .shelf-grip { color: var(--muted); font-size: 12px; line-height: 1; letter-spacing: -1px; }
 .shelf-empty { padding: 12px 11px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .shelf-head .hint { margin-left: auto; font-size: 10px; }
+.shelf-head .spacer { flex: 1; }
+/* How many things are saved, always on the head - the one number the old strip never
+   said. tabular-nums so it does not wobble as copies land. */
+.shelf-count {
+  padding: 0 7px; border-radius: 999px; background: var(--accent-dim);
+  border: 1px solid var(--line); color: var(--text);
+  font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
+}
+/* One tab per kind of thing, counts on each - the same split the floating overlay draws. */
+.shelf-tabs { display: flex; gap: 4px; padding: 7px 8px 0; flex-wrap: wrap; }
+.shelf-tab {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  font-size: 10.5px;
+}
+.shelf-tab:hover { border-color: var(--line-strong); color: var(--text); }
+.shelf-tab.on { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.shelf-tab:disabled { opacity: 0.4; cursor: default; }
+.shelf-tab-n { font-size: 9.5px; font-variant-numeric: tabular-nums; }
 .shelf-search {
   display: flex; align-items: center; gap: 7px;
   padding: 7px 8px 0;
@@ -1026,7 +1046,47 @@ body.sizing * { user-select: none !important; }
 .shelf-edit textarea { width: 100%; font-size: 11.5px; line-height: 1.45; }
 .shelf-edit-row { display: flex; align-items: center; gap: 7px; }
 .shelf-edit-row .hint { margin-right: auto; font-size: 10px; }
-.shelf-items { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+.shelf-items { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+/* A row plus, sometimes, its unfolded body. */
+.shelf-row { display: flex; flex-direction: column; gap: 4px; }
+/* The unfold chevron: always drawn, because "there is more of this" is the fact the
+   two-line clamp hides. */
+.shelf-expand {
+  flex: none; align-self: center; padding: 1px 4px; border-radius: 4px;
+  color: var(--muted); font-size: 10px; line-height: 1.3;
+}
+.shelf-expand:hover { color: var(--text); background: #ffffff12; }
+/* The whole clip: full text in a scrollable block, the full-size image or the playable
+   clip via stash:// - never the 76px thumb the row draws. */
+.shelf-full {
+  margin: 0 2px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r);
+  background: #00000026;
+}
+.shelf-full pre {
+  margin: 0; max-height: 220px; overflow: auto;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.4;
+  white-space: pre-wrap; word-break: break-word; color: var(--text);
+}
+.shelf-full img, .shelf-full video {
+  display: block; max-width: 100%; max-height: 260px; margin: 0 auto; border-radius: 4px;
+}
+/* The resize grip - drawn on the corner that can actually move: top-right while the
+   shelf is anchored to its default bottom-left corner, bottom-right once it has been
+   dragged somewhere (top-left anchored). */
+.shelf-resize {
+  position: absolute; width: 16px; height: 16px; z-index: 2; opacity: 0.55; touch-action: none;
+}
+.shelf-resize:hover { opacity: 1; }
+.shelf-resize.tr {
+  top: 0; right: 0; cursor: nesw-resize;
+  background: linear-gradient(45deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 60%, transparent 60%, transparent 75%, var(--line-strong) 75%, var(--line-strong) 85%, transparent 85%);
+  border-top-right-radius: var(--r-lg);
+}
+.shelf-resize.br {
+  bottom: 0; right: 0; cursor: nwse-resize;
+  background: linear-gradient(-45deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 60%, transparent 60%, transparent 75%, var(--line-strong) 75%, var(--line-strong) 85%, transparent 85%);
+  border-bottom-right-radius: var(--r-lg);
+}
 /* The row Enter would take. An outline rather than a fill: the row under the pointer is
    already lit, and two rows lit the same way is worse than none. */
 .shelf-item.on { border-color: var(--accent); background: var(--accent-dim); }

@@ -51,6 +51,8 @@ const api = window.api
 interface Props {
   config: Config
   agents: AgentInfo[]
+  /** the page to open on, when the button pressed was about one page (the Stash gear) */
+  initial?: Tab
   onChange: (patch: Partial<Config>) => void
   onClose: () => void
 }
@@ -132,8 +134,8 @@ function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): 
   onChange({ customAgents: [...config.customAgents.filter((c) => c.id !== spec.id), spec] })
 }
 
-export default function SettingsDialog({ config, agents, onChange, onClose }: Props): JSX.Element {
-  const [tab, setTab] = useState<Tab>('general')
+export default function SettingsDialog({ config, agents, initial, onChange, onClose }: Props): JSX.Element {
+  const [tab, setTab] = useState<Tab>(initial ?? 'general')
   const [find, setFind] = useState('')
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)

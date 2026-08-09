@@ -181,6 +181,9 @@ export default function App(): JSX.Element {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
+  // Which page Settings should open on, when a button somewhere IS about one page - the
+  // Stash panel's gear. null is "wherever it opens by default".
+  const [settingsFrom, setSettingsFrom] = useState<'stash' | null>(null)
   const [help, setHelp] = useState(false)
   const [palette, setPalette] = useState(false)
   /** the folder whose changes are being read, and how it was opened */
@@ -215,7 +218,22 @@ export default function App(): JSX.Element {
   // (and re-subscribed) every time something new is copied.
   const recentsRef = useRef<RecentItem[]>([])
   recentsRef.current = recents
-  const [shelfPinned, setShelfPinned] = useState(false)
+  // Remembered across restarts: "leave the Stash on screen" is a state somebody chose,
+  // and an app restart (most often the updater's) must not quietly undo it.
+  const [shelfPinned, setShelfPinned] = useState(() => {
+    try {
+      return localStorage.getItem('pf.shelfPinned') === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('pf.shelfPinned', shelfPinned ? '1' : '0')
+    } catch {
+      /* the shelf just forgets it was open */
+    }
+  }, [shelfPinned])
   const [shelfPeek, setShelfPeek] = useState(false)
   // The in-window Stash open for a search, which is the one thing the floating overlay
   // cannot do for itself: it is unfocusable by design, so there is no keyboard in it.
@@ -659,7 +677,7 @@ export default function App(): JSX.Element {
    * corner for as long as Settings says, and stays on the Stash for later. A peek of 0 is
    * "never open by itself": the list is still filling, it just stops interrupting.
    */
-  const peekMs = config?.stashPeekMs ?? 5000
+  const peekMs = config?.stashPeekMs ?? 0
   /**
    * There is one Stash, not two. While the floating window is on it owns all of this -
    * the same copy showing up both there and in an in-window panel was the app talking
@@ -3021,8 +3039,12 @@ export default function App(): JSX.Element {
         <SettingsDialog
           config={config}
           agents={agents}
+          initial={settingsFrom ?? undefined}
           onChange={patchConfig}
-          onClose={() => setSettings(false)}
+          onClose={() => {
+            setSettings(false)
+            setSettingsFrom(null)
+          }}
         />
       )}
       {swarm && config && (
@@ -3139,12 +3161,13 @@ export default function App(): JSX.Element {
       {(shelfInWindow || shelfSearching) && (
         <RecentsFlyout
           // Only drawn when the floating Stash is off, so a copy never appears in two
-          // places at once. The last handful, one click from a pane.
+          // places at once. The whole lean list - the panel has tabs, search and a
+          // scrollbar now, and "the last 12" was why it could never show everything.
           //
           // The exception is a search: the overlay is `focusable: false` and cannot be
           // typed into at all, so its magnifier hands the job here. That is a deliberate
           // press, not a peek, and it closes with the search it opened for.
-          items={recents.slice(0, 12)}
+          items={recents}
           pinned={shelfPinned || shelfSearching}
           searching={shelfSearching}
           peek={shelfPeek}
@@ -3155,6 +3178,10 @@ export default function App(): JSX.Element {
           onSend={(it) => {
             sendRecent(it)
             setShelfSearching(false)
+          }}
+          onSettings={() => {
+            setSettingsFrom('stash')
+            setSettings(true)
           }}
         />
       )}
