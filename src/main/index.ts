@@ -41,7 +41,7 @@ import { diffFiles, diffPatch } from './diff'
 import type { DiffScope, PhoneState, ShelfEdge } from '../shared/types'
 import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
-import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
+import { attachLaneOwners, laneBoards, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -1385,7 +1385,7 @@ const lanePanes = (): LanePane[] =>
 
 ipcMain.handle('lanes:board', () => {
   const panes = lanePanes()
-  return attachLaneOwners(laneBoard(panes), panes)
+  return laneBoards(panes).map((b) => attachLaneOwners(b, panes))
 })
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the

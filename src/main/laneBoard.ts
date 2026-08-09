@@ -141,6 +141,42 @@ function resolveRepo(panes: LanePane[]): string | null {
 }
 
 /**
+ * EVERY repo the panes are in that uses lanes, the vote's winner first.
+ *
+ * `resolveRepo` picks one repo, and for a long time that one was the only repo the board
+ * ever answered for. On a desk with eight panes in eight projects that meant seven repos'
+ * holds were on no screen at all: the chats in them were fine - the engine is per-repo
+ * and never cared - but the strip, the card chips and the help card all read the single
+ * winner of a vote, and the answer to "why is my taskdriver chat's lane not showing" was
+ * that taskdriver lost a tiebreak nobody could see. `laneReclaim` already walks every
+ * repo for exactly this reason; the board now does too.
+ */
+function resolveRepos(panes: LanePane[]): string[] {
+  const lanes = (main: string): boolean => existsSync(join(main, '.git', 'paneforge-lanes.json'))
+  const votes = new Map<string, number>()
+  const spelling = new Map<string, string>()
+  const add = (main: string, weight: number): void => {
+    const k = samePath(main)
+    if (!spelling.has(k)) spelling.set(k, main)
+    votes.set(k, (votes.get(k) ?? 0) + weight)
+  }
+  if (process.env.PANEFORGE_REPO && lanes(process.env.PANEFORGE_REPO)) add(process.env.PANEFORGE_REPO, 1000)
+  for (const p of panes) {
+    const main = p.cwd && mainCheckout(p.cwd)
+    if (main && lanes(main)) add(main, 1)
+  }
+  if (!votes.size) {
+    // No panes at all (or none in a lane repo): same fallback the single-repo path uses,
+    // so a window with nothing open still shows this machine's own lanes.
+    const one = findRepo(panes)
+    return one ? [one] : []
+  }
+  return [...votes.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => spelling.get(k) as string)
+}
+
+/**
  * The main checkout above `dir`, which is where the shared `.git` - and so the lane state -
  * lives. A lane is a worktree, whose `.git` is a FILE pointing at
  * `<main>/.git/worktrees/<name>`, so a pane sitting in one still answers `<main>`.
@@ -255,6 +291,32 @@ export function laneBoard(panes: LanePane[] = []): LaneBoard | null {
   return cache.board
 }
 
+let boardsCache: { at: number; key: string; boards: LaneBoard[] } = { at: 0, key: '', boards: [] }
+
+/** Drop both board caches, so the next poll reads what a retry or reclaim just changed. */
+function dropCaches(): void {
+  cache = { at: 0, board: null }
+  boardsCache = { at: 0, key: '', boards: [] }
+}
+
+/**
+ * One board per repo the panes are in, winner first. This is what the renderer draws:
+ * every repo's holds, conflicts and finished lanes, not just the vote's winner.
+ */
+export function laneBoards(panes: LanePane[] = []): LaneBoard[] {
+  const now = Date.now()
+  const key = panes
+    .map((p) => p.cwd)
+    .sort()
+    .join('|')
+  if (now - boardsCache.at < TTL && boardsCache.key === key) return boardsCache.boards
+  const boards = resolveRepos(panes)
+    .map(readRepo)
+    .filter((b): b is LaneBoard => b !== null)
+  boardsCache = { at: now, key, boards }
+  return boards
+}
+
 /**
  * Ask lane.mjs to try the stuck lanes again, and to put out anything that is waiting.
  *
@@ -271,47 +333,52 @@ export function laneBoard(panes: LanePane[] = []): LaneBoard | null {
  * master has not moved and returns from the release without work in one `rev-list`.
  */
 export function laneRetry(panes: LanePane[] = []): void {
-  const board = laneBoard(panes)
-  if (!board || retrying) return
-  // A release is not finished when it is cut. For an hour afterwards lane.mjs still has
-  // two things to fix from here - the notes, and a `latest.yml` overwritten by whichever
-  // publisher finished last (see reconcileFeed). Both need the timer, and the timer used
-  // to stop the moment no lane was ready or conflicted - which is precisely what a
-  // release makes true, at precisely the moment it creates the work. So the reconcilers
-  // could only ever run when some OTHER lane happened to be mid-flight, and v0.4.27's
-  // broken feed would have sat there being served until somebody noticed by hand.
-  const ship = lastShip()
-  const watching = !!ship && Date.now() - ship.at < RECONCILE_AFTER_SHIP
-  if (!watching && !board.lanes.some((l) => l.conflicted || l.ready)) return
-  const engine = laneEngine(board.repo)
-  if (!engine) return
+  if (retrying) return
   const now = Date.now()
   if (now - retryAt < RETRY_EVERY) return
-  retryAt = now
-  retrying = true
-  execFile(
-    process.execPath,
-    [engine, 'retry', '--repo', board.repo],
-    {
-      cwd: board.repo,
-      windowsHide: true,
-      timeout: RETRY_TIMEOUT,
-      // process.execPath is Electron here; this makes that binary behave as plain node,
-      // so the retry does not depend on node being on the app's PATH.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-    },
-    (_err, stdout, stderr) => {
-      retrying = false
-      // What it said, kept. This runs with no window and its output went nowhere, so a
-      // release that refuses every ten minutes ("No release yet: ...") was invisible:
-      // lane a stayed finished-but-unshipped for a day and the only way to find out why
-      // was to re-run the command by hand. See noteRetry.
-      noteRetry(board.repo, `${stdout ?? ''}${stderr ?? ''}`)
-      // Whatever it did (cleared a lane, marked one ready, shipped) is in the state file
-      // now; drop the TTL cache so the strip shows it on its next poll, not in 4s.
-      cache = { at: 0, board: null }
-    }
-  )
+  // Every repo the panes are in, one per tick, same as laneReclaim: the retry used to run
+  // only against the vote's winning repo, so a conflict in any other open project was
+  // never retried by the clock at all.
+  for (const board of laneBoards(panes)) {
+    // A release is not finished when it is cut. For an hour afterwards lane.mjs still has
+    // two things to fix from here - the notes, and a `latest.yml` overwritten by whichever
+    // publisher finished last (see reconcileFeed). Both need the timer, and the timer used
+    // to stop the moment no lane was ready or conflicted - which is precisely what a
+    // release makes true, at precisely the moment it creates the work. So the reconcilers
+    // could only ever run when some OTHER lane happened to be mid-flight, and v0.4.27's
+    // broken feed would have sat there being served until somebody noticed by hand.
+    const ship = board.lastShip
+    const watching = !!ship?.version && now - ship.at < RECONCILE_AFTER_SHIP
+    if (!watching && !board.lanes.some((l) => l.conflicted || l.ready)) continue
+    const engine = laneEngine(board.repo)
+    if (!engine) continue
+    retryAt = now
+    retrying = true
+    execFile(
+      process.execPath,
+      [engine, 'retry', '--repo', board.repo],
+      {
+        cwd: board.repo,
+        windowsHide: true,
+        timeout: RETRY_TIMEOUT,
+        // process.execPath is Electron here; this makes that binary behave as plain node,
+        // so the retry does not depend on node being on the app's PATH.
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      },
+      (_err, stdout, stderr) => {
+        retrying = false
+        // What it said, kept. This runs with no window and its output went nowhere, so a
+        // release that refuses every ten minutes ("No release yet: ...") was invisible:
+        // lane a stayed finished-but-unshipped for a day and the only way to find out why
+        // was to re-run the command by hand. See noteRetry.
+        noteRetry(board.repo, `${stdout ?? ''}${stderr ?? ''}`)
+        // Whatever it did (cleared a lane, marked one ready, shipped) is in the state file
+        // now; drop the TTL caches so the strip shows it on its next poll, not in 4s.
+        dropCaches()
+      }
+    )
+    return
+  }
 }
 
 /** Enough retry log to see a pattern, small enough to never be a problem. */
@@ -506,8 +573,8 @@ export function laneReclaim(panes: LanePane[]): void {
   for (const main of groups.keys()) for (const chat of heartbeat(main, chats)) living.add(chat)
 
   for (const [main, own] of groups) {
-    const board = attachLaneOwners(read(own), own)
-    if (!board || board.repo !== main) continue
+    const board = attachLaneOwners(readRepo(main), own)
+    if (!board) continue
     const gone = goneLanes(board, living)
     if (!gone.length) continue
     const engine = laneEngine(board.repo)
@@ -524,7 +591,7 @@ export function laneReclaim(panes: LanePane[]): void {
       },
       () => {
         reclaiming = false
-        cache = { at: 0, board: null }
+        dropCaches()
       }
     )
     // One lane per tick: each release ends in an autoship, and the tick comes round every
@@ -535,7 +602,10 @@ export function laneReclaim(panes: LanePane[]): void {
 
 function readState(panes: LanePane[] = []): RawState | null {
   const main = findRepo(panes)
-  if (!main) return null
+  return main ? stateOf(main) : null
+}
+
+function stateOf(main: string): RawState | null {
   const file = join(main, '.git', 'paneforge-lanes.json')
   try {
     // A half-written file is impossible (lane.mjs writes then renames), so a parse
@@ -562,8 +632,11 @@ export function lastShip(): { version: string; at: number } | null {
 
 function read(panes: LanePane[] = []): LaneBoard | null {
   const main = findRepo(panes)
-  if (!main) return null
-  const state = readState(panes)
+  return main ? readRepo(main) : null
+}
+
+function readRepo(main: string): LaneBoard | null {
+  const state = stateOf(main)
   if (!state) return null
   const mb = mainBranch(main)
   const pool = lanePool(main)

@@ -7,7 +7,7 @@ import { laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } f
 const api = window.api
 
 interface Props {
-  board: LaneBoard | null
+  boards: LaneBoard[]
   sessions: Session[]
   /** focus the pane a job was handed to */
   onFocus: (id: string) => void
@@ -29,8 +29,8 @@ interface Props {
  * finished work waiting on a release, a conflict nobody owns. Only those appear here, so
  * on an ordinary day this section is not on screen at all.
  */
-export function useLaneBoard(): LaneBoard | null {
-  const [board, setBoard] = useState<LaneBoard | null>(null)
+export function useLaneBoards(): LaneBoard[] {
+  const [boards, setBoards] = useState<LaneBoard[]>([])
 
   useEffect(() => {
     let live = true
@@ -38,7 +38,7 @@ export function useLaneBoard(): LaneBoard | null {
       // Not `document.hidden`: it never turns true in this window. See appVisible.ts.
       void appVisible().then((v) => {
         if (!v || !live) return
-        api.laneBoard().then((b) => live && setBoard(b))
+        api.laneBoard().then((b) => live && setBoards(b ?? []))
       })
     }
     poll()
@@ -51,7 +51,7 @@ export function useLaneBoard(): LaneBoard | null {
     }
   }, [])
 
-  return board
+  return boards
 }
 
 /**
@@ -69,13 +69,13 @@ export function laneOwner(lane: LaneBoardEntry, sessions: Session[]): Session | 
   return sessions.find((s) => s.id === lane.ownerPane && s.status !== 'exited')
 }
 
-/** Lanes keyed by the pane holding them, for the chip on a session card. */
-export function useLanesByPane(board: LaneBoard | null): Map<string, LaneBoardEntry> {
+/** Lanes keyed by the pane holding them, for the chip on a session card - every repo's. */
+export function useLanesByPane(boards: LaneBoard[]): Map<string, LaneBoardEntry> {
   return useMemo(() => {
     const m = new Map<string, LaneBoardEntry>()
-    for (const l of board?.lanes ?? []) if (l.ownerPane) m.set(l.ownerPane, l)
+    for (const b of boards) for (const l of b.lanes) if (l.ownerPane) m.set(l.ownerPane, l)
     return m
-  }, [board])
+  }, [boards])
 }
 
 /** The lane a pane holds, if any. Callers hold the map from useLanesByPane. */
@@ -91,11 +91,12 @@ export function laneOfSession(
 // a DOM that may not exist. See scripts/lane-holder-test.mjs.
 
 /** The job handed to a chat to unstick a lane, in the form lane.mjs expects back. */
-function fixPrompt(lane: LaneBoardEntry): string {
+function fixPrompt(lane: LaneBoardEntry, repo: string): string {
   return (
-    `PaneForge lane ${lane.lane} is conflicted, so its finished work is left out of every release. ` +
-    `Take it over: node scripts/lane.mjs resolve --session <this chat's session id> --lane ${lane.lane}, ` +
-    `resolve the files it lists in ${lane.dir}, commit, then node scripts/lane.mjs ready --session <same id> --lane ${lane.lane}.`
+    `${laneProject(lane)} lane ${lane.lane} is conflicted, so its finished work is left out of every release. ` +
+    `Take it over: node scripts/lane.mjs resolve --repo ${repo} --session <this chat's session id> --lane ${lane.lane} ` +
+    `(lane.mjs lives in the PaneForge checkout), ` +
+    `resolve the files it lists in ${lane.dir}, commit, then node scripts/lane.mjs ready --repo ${repo} --session <same id> --lane ${lane.lane}.`
   )
 }
 
@@ -158,7 +159,7 @@ export function LaneChip({
   )
 }
 
-export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): JSX.Element | null {
+export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props): JSX.Element | null {
   // A job is handed over once. Keyed by when the conflict started, so a lane that gets
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
@@ -169,24 +170,30 @@ export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): 
   // (its chat has gone quiet) any idle pane takes it. Never a pane that is mid-turn -
   // that job waits for a free one rather than landing in the middle of someone's answer.
   useEffect(() => {
-    for (const lane of board?.lanes ?? []) {
-      if (!lane.conflicted || lane.resolver) continue
-      const key = `${lane.lane}:${lane.conflictSince ?? 0}`
-      if (handed.current.has(key)) continue
-      const own = laneOwner(lane, sessions)
-      const target =
-        own ??
-        (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
-      if (!target || target.status === 'working') continue
-      handed.current.add(key)
-      api.write(target.id, fixPrompt(lane) + '\r')
-    }
-  }, [board, sessions])
+    for (const board of boards)
+      for (const lane of board.lanes) {
+        if (!lane.conflicted || lane.resolver) continue
+        const key = `${board.repo}:${lane.lane}:${lane.conflictSince ?? 0}`
+        if (handed.current.has(key)) continue
+        const own = laneOwner(lane, sessions)
+        const target =
+          own ??
+          (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
+        if (!target || target.status === 'working') continue
+        handed.current.add(key)
+        api.write(target.id, fixPrompt(lane, board.repo) + '\r')
+      }
+  }, [boards, sessions])
 
-  // Whatever a session card already says is not repeated here.
-  const orphans = (board?.lanes ?? []).filter((l) => !laneOwner(l, sessions))
-  if (!board || !orphans.length) return null
-  const stuck = orphans.filter((l) => l.conflicted).length
+  // Whatever a session card already says is not repeated here. Every open repo's lanes
+  // are listed, not just one winner's - each row already names its project (laneLabel),
+  // so one flat list still reads unambiguously.
+  const orphans = boards.flatMap((b) =>
+    b.lanes.filter((l) => !laneOwner(l, sessions)).map((l) => ({ repo: b.repo, lane: l }))
+  )
+  if (!orphans.length) return null
+  const stuck = orphans.filter((o) => o.lane.conflicted).length
+  const releasing = boards.some((b) => b.releasing !== null)
 
   return (
     <>
@@ -200,7 +207,7 @@ export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): 
             {stuck} stuck
           </span>
         )}
-        {board.releasing !== null && (
+        {releasing && (
           <span className="badge run" title="Finished lanes are being folded into one update right now">
             releasing
           </span>
@@ -210,8 +217,8 @@ export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): 
         </button>
       </div>
       <div className="lanes">
-        {orphans.map((l) => (
-          <LaneRow key={l.lane} lane={l} sessions={sessions} onFocus={onFocus} />
+        {orphans.map((o) => (
+          <LaneRow key={`${o.repo}:${o.lane.lane}`} lane={o.lane} repo={o.repo} sessions={sessions} onFocus={onFocus} />
         ))}
       </div>
     </>
@@ -220,10 +227,12 @@ export default function LaneStrip({ board, sessions, onFocus, onHelp }: Props): 
 
 function LaneRow({
   lane,
+  repo,
   sessions,
   onFocus
 }: {
   lane: LaneBoardEntry
+  repo: string
   sessions: Session[]
   onFocus: (id: string) => void
 }): JSX.Element {
@@ -236,7 +245,7 @@ function LaneRow({
     if (!target) return
     onFocus(target.id)
     // Typed in, not sent: this one is a click, so the chat it lands in may be mid-thought.
-    api.write(target.id, fixPrompt(lane))
+    api.write(target.id, fixPrompt(lane, repo))
   }
 
   // The pane holding this lane, as its Ctrl-N number.

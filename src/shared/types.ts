@@ -1472,8 +1472,8 @@ export interface Api {
   diffFiles(cwd: string, scope: DiffScope): Promise<DiffSet>
   /** one file's patch, read when that file is selected */
   diffPatch(cwd: string, scope: DiffScope, path: string, untracked: boolean): Promise<DiffPatch>
-  /** PaneForge's own dev lanes, or null on a machine without a PaneForge checkout */
-  laneBoard(): Promise<LaneBoard | null>
+  /** one board per lane-using repo the open panes are in; empty on a machine without one */
+  laneBoard(): Promise<LaneBoard[]>
   /** what is in a pane's worktree lane; null when the folder is not a lane */
   laneWork(cwd: string): Promise<LaneWork | null>
   /** merge a worktree lane back into the branch it came from */

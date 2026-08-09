@@ -68,7 +68,7 @@ import ShortcutsDialog from './components/ShortcutsDialog'
 import LaneStrip, {
   LaneChip,
   laneOfSession,
-  useLaneBoard,
+  useLaneBoards,
   useLanesByPane
 } from './components/LaneStrip'
 import { laneBusy, samePath } from './laneWords'
@@ -2151,10 +2151,10 @@ export default function App(): JSX.Element {
   // `waiting` above is narrower than this - it clears the moment you LOOK at the pane,
   // where this keeps counting until the pane is actually answered.
   const needsYou = fleetWaiting(sessions)
-  // PaneForge's own dev lanes, on a machine that develops PaneForge. Null everywhere else,
-  // and then nothing below draws anything.
-  const laneBoard = useLaneBoard()
-  const lanesByPane = useLanesByPane(laneBoard)
+  // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
+  // machine with no lane-using checkout, and then nothing below draws anything.
+  const laneBoards = useLaneBoards()
+  const lanesByPane = useLanesByPane(laneBoards)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   const [laneHelp, setLaneHelp] = useState(false)
@@ -2295,10 +2295,10 @@ export default function App(): JSX.Element {
           </>
         )}
 
-        {/* Only the PaneForge lanes no open pane accounts for; the rest are chips on the
-            session cards below. Renders nothing at all off a PaneForge machine. */}
+        {/* Only the lanes no open pane accounts for, across every open repo; the rest are
+            chips on the session cards below. Renders nothing without a lane-using repo. */}
         <LaneStrip
-          board={laneBoard}
+          boards={laneBoards}
           sessions={sessions}
           onFocus={setActiveId}
           onHelp={() => setLaneHelp(true)}
@@ -3151,7 +3151,7 @@ export default function App(): JSX.Element {
         />
       )}
       {laneHelp && (
-        <LaneHelp onClose={() => setLaneHelp(false)} board={laneBoard} sessions={sessions} />
+        <LaneHelp onClose={() => setLaneHelp(false)} boards={laneBoards} sessions={sessions} />
       )}
       {ask && (
         <ConfirmDialog

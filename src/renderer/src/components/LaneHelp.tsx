@@ -16,8 +16,8 @@ import { holderName, laneChipLabel, laneProject, laneState } from '../laneWords'
  */
 interface Props {
   onClose: () => void
-  /** the lanes of the project the active pane is in, when the window has polled them */
-  board: LaneBoard | null
+  /** the lanes of every open project, one board each, when the window has polled them */
+  boards: LaneBoard[]
   /** to name a lane by the pane holding it - "pane 3" is a key you can press */
   sessions: Session[]
 }
@@ -27,9 +27,12 @@ function shown(lanes: LaneBoardEntry[]): LaneBoardEntry[] {
   return lanes.filter((l) => l.held || l.ready || l.conflicted)
 }
 
-export default function LaneHelp({ onClose, board, sessions }: Props): JSX.Element {
-  const rows = shown(board?.lanes ?? [])
-  const project = rows.length ? laneProject(rows[0]) : ''
+export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Element {
+  const rows = shown(boards.flatMap((b) => b.lanes))
+  // One project name in the heading only when every row is that project; a mixed list's
+  // rows each name their own (laneChipLabel with no project drops nothing).
+  const projects = new Set(rows.map((l) => laneProject(l)))
+  const project = projects.size === 1 ? (rows.length ? laneProject(rows[0]) : '') : ''
   const paneOf = (l: LaneBoardEntry): number | undefined => {
     const i = sessions.findIndex((s) => s.id === l.ownerPane)
     return i >= 0 ? i + 1 : undefined
@@ -58,14 +61,14 @@ export default function LaneHelp({ onClose, board, sessions }: Props): JSX.Eleme
               </div>
               <ul className="lane-help-now">
                 {rows.map((l) => (
-                  <li key={l.lane}>
+                  <li key={l.dir}>
                     <span
                       className={
                         'chip pf-lane' +
                         (l.conflicted ? ' stuck' : l.ready ? ' done' : l.held ? ' busy' : '')
                       }
                     >
-                      {laneChipLabel(l, project)}
+                      {laneChipLabel(l, project || undefined)}
                     </span>
                     <span className="lane-help-who">
                       {l.conflicted || l.ready

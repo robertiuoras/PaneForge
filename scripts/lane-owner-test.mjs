@@ -229,6 +229,49 @@ const twoDead = {
   delete process.env.PANEFORGE_ENGINE
 }
 
+{
+  // The board itself answers for EVERY open repo now, not the vote's winner. Eight panes
+  // in eight projects used to mean seven repos' holds were on no screen: the strip, the
+  // card chips and the help card all read one board, chosen by a tiebreak nobody could
+  // see. laneBoards returns one board per repo, winner first.
+  const other = join(work, 'other-project')
+  state({ a: { session: CHAT_A, cwd: repo, claimed: now - 60_000, seen: now - 60_000 } })
+  writeFileSync(
+    join(other, '.git', 'paneforge-lanes.json'),
+    JSON.stringify({
+      lanes: { main: { session: CHAT_B, cwd: other, claimed: now - 60_000, seen: now - 60_000 } },
+      ready: {},
+      conflicts: {},
+      release: null,
+      lastShip: null
+    })
+  )
+  const { laneBoards } = await load()
+  const boards = laneBoards([
+    { id: 'pane1', cwd: repo, resumeId: CHAT_A },
+    { id: 'pane2', cwd: repo, resumeId: CHAT_B },
+    { id: 'pane3', cwd: other, resumeId: CHAT_MAIN }
+  ])
+  check('every open repo is on the board', boards.length === 2, `got ${boards.length}`)
+  check('the vote’s winner still leads', boards[0]?.repo === repo, boards[0]?.repo)
+  check(
+    'and the losing repo’s hold is no longer invisible',
+    boards[1]?.repo === other && boards[1]?.lanes.some((l) => l.lane === 'main' && l.held),
+    JSON.stringify(boards[1]?.lanes.map((l) => l.lane))
+  )
+  // No panes at all: the old fallback path (env override, then the folder guesses) still
+  // answers, so the updater's lastShip and an empty window keep working.
+  process.env.PANEFORGE_REPO = repo
+  const { laneBoards: overridden } = await load()
+  const none = overridden([])
+  check(
+    'no panes still answers with this machine’s own repo',
+    none.length === 1 && none[0].repo === repo,
+    JSON.stringify(none.map((b) => b.repo))
+  )
+  delete process.env.PANEFORGE_REPO
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(failures ? `\n${failures} failed` : '\nall good')
 process.exit(failures ? 1 : 0)
