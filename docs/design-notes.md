@@ -225,6 +225,22 @@ promoted tag, because the claim is what stable installs will see, not that an ed
 exited 0. `doctor` lists what sits unpromoted so a quiet dev channel is visible;
 `status` deliberately does not - it must stay offline.
 
+Promotion is normally not typed at all (2026-08-10). The channels follow the shape
+every big vendor converged on - Chrome Canary→Stable, VS Code Insiders→Stable: the
+fast channel churns per release, stable takes batched, proven jumps. The promotion
+signal is a QUIET PERIOD: `autoPromote` (on the `retry` minute timer, throttled to one
+releases lookup per `PF_PROMOTE_POLL_MS`, default an hour) promotes the newest dev
+build once it has sat `PF_PROMOTE_SOAK_MS` (default 3 days) with nothing shipped on
+top of it. Age-of-newest is the whole test on purpose: a newer build landing resets
+the clock, so "3 days with no fix needed" and "3 days of dev installs running it" are
+the same fact - the dev channel (Robert's own machines) is the canary population. The
+flip itself goes through `promote('')`, so an auto-promotion is refused by exactly the
+checks a typed one gets, and a refusal is printed and re-tried next poll rather than
+escalated - `doctor` says what waits and when. Hand `promote [version]` remains for
+the one case batching is wrong: a bad build already on stable, where the fix must not
+wait out a soak. The known cost: daily churn defers stable indefinitely, which is
+read as "not settled yet", and doctor keeps it visible.
+
 Older installs (≤ v0.8.28, `allowPrerelease` never set) already resolve
 `/releases/latest`, so they wait for promotions correctly without knowing the channel
 exists. `install.sh` / `install.ps1` and the README's fixed-name links all go through

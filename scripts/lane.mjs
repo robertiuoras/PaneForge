@@ -2292,6 +2292,48 @@ function promote(versionArg) {
   return { promoted: true, tag }
 }
 
+const PROMOTE_SOAK_MS = Number(process.env.PF_PROMOTE_SOAK_MS ?? 3 * 24 * 60 * 60 * 1000)
+const PROMOTE_POLL_MS = Number(process.env.PF_PROMOTE_POLL_MS ?? 60 * 60 * 1000)
+
+/**
+ * Stable follows the big-company shape (Chrome, VS Code, Firefox): the dev channel
+ * churns per release, stable takes batched, proven jumps. The promotion signal is a
+ * QUIET PERIOD - the newest dev build has sat PROMOTE_SOAK_MS with nothing shipped on
+ * top of it, which means dev-channel installs have run it that long and nothing needed
+ * a fix. While churn continues stable waits; when it stops, the survivor carries
+ * everything before it in one update. electron-updater downloads the full installer of
+ * whatever /releases/latest names, so skipped versions cost a stable install nothing.
+ *
+ * Rides the same minute timer as everything else here, throttled to one releases
+ * lookup per PROMOTE_POLL_MS (state.promoteAt), and hands the actual flip to
+ * `promote()` - so every refusal that protects a hand promotion (one-legged release,
+ * lying feed) protects this one. A refusal is reported and re-tried on the next poll,
+ * never faster; `promote [version]` by hand still works for "stable needs this now".
+ *
+ * Returns null when it did nothing at all; any non-null means state.promoteAt moved
+ * and the caller should write.
+ */
+function autoPromote(state) {
+  if (RELEASE !== 'version') return null
+  const repo = githubPublish()
+  if (!repo) return null
+  if (state.promoteAt && now() < state.promoteAt) return null
+  state.promoteAt = now() + PROMOTE_POLL_MS
+  const list = runSafe('gh', ['api', `repos/${repo}/releases?per_page=5`], { timeout: 30_000 })
+  if (!list.ok) return { checked: true }
+  let releases
+  try {
+    releases = JSON.parse(list.out)
+  } catch {
+    return { checked: true }
+  }
+  const newest = releases.find((r) => !r.draft)
+  if (!newest?.prerelease) return { checked: true }
+  const born = Date.parse(newest.published_at ?? '')
+  if (!Number.isFinite(born) || now() - born < PROMOTE_SOAK_MS) return { checked: true }
+  return { checked: true, tag: newest.tag_name, ...promote('') }
+}
+
 function status(session) {
   const state = reap(read())
   // Asking is not writing, except when the asking found something to throw away: an
@@ -2446,7 +2488,13 @@ function doctor() {
         say(
           `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable ? stable.tag_name : 'nothing'}.`
         )
-        say('  When the newest has proved itself: node scripts/lane.mjs promote')
+        const born = Date.parse(releases[0]?.published_at ?? '')
+        const wait = Number.isFinite(born) ? Math.max(0, PROMOTE_SOAK_MS - (now() - born)) : null
+        say(
+          wait == null
+            ? '  The newest promotes to stable by itself once it has soaked; sooner by hand: node scripts/lane.mjs promote'
+            : `  The newest auto-promotes in ~${Math.ceil(wait / 3600000)}h if nothing newer ships; sooner by hand: node scripts/lane.mjs promote`
+        )
       }
     } catch {
       /* gh answered something unreadable - doctor stays quiet rather than guessing */
@@ -2664,6 +2712,19 @@ try {
           `build and the installer being served is ${feed.now} bytes, so every update would ` +
           `have failed its hash check.`
       )
+    // Stable moves by itself: a dev build that soaked with nothing shipped on top of it
+    // is the proof promotion was waiting for, so the timer flips it.
+    {
+      const st = reap(read())
+      const p = autoPromote(st)
+      if (p) write(st)
+      if (p?.promoted)
+        console.log(
+          `Promoted ${p.tag} to stable: it sat on the dev channel ${Math.round(PROMOTE_SOAK_MS / 3600000)}h ` +
+            `with nothing shipped on top of it. Stable installs update within the half hour.`
+        )
+      else if (p?.reason) console.log(`Stable promotion of ${p.tag} waits: ${p.reason}`)
+    }
   } else if (cmd === 'doctor') console.log(doctor())
   else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
   else {

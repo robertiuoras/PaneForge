@@ -250,6 +250,107 @@ const feed = (file, size) => `files:\n  - url: ${file}\n    size: ${size}\npath:
   ok('and gh is never even invoked', r.log.length === 0, JSON.stringify(r.log))
 }
 
+// ---------------------------------------------------------------- auto-promote (retry timer)
+//
+// Stable follows the big-company channel shape: the newest dev build promotes ITSELF once
+// it has soaked PF_PROMOTE_SOAK_MS with nothing shipped on top of it. These drive the real
+// `lane.mjs retry` (the command the app's minute timer calls) and assert the four moments
+// that matter: a young build waits, a soaked build promotes, a soaked-but-broken build is
+// refused by the same checks a hand promotion gets, and the releases lookup is throttled.
+
+/** Run `retry` for real. Repos here carry a tag matching package.json so autoship no-ops. */
+function retry(repo, scenario, envExtra = {}) {
+  writeFileSync(logPath, '')
+  writeFileSync(scenarioPath, JSON.stringify(scenario))
+  const env = {
+    ...process.env,
+    PATH: stubDir + delimiter + process.env.PATH,
+    Path: stubDir + delimiter + (process.env.Path ?? process.env.PATH),
+    PF_GH_LOG: logPath,
+    PF_GH_SCENARIO: scenarioPath,
+    PF_PROMOTE_SOAK_MS: String(3 * 24 * 60 * 60 * 1000),
+    PF_PROMOTE_POLL_MS: '0',
+    ...envExtra
+  }
+  let out = ''
+  try {
+    out = execFileSync(process.execPath, [ENGINE, 'retry', '--repo', repo], { encoding: 'utf8', stdio: 'pipe', env }).trim()
+  } catch (e) {
+    out = `${(e.stdout ?? '').toString()}${(e.stderr ?? '').toString()}`.trim()
+  }
+  const log = existsSync(logPath)
+    ? readFileSync(logPath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : []
+  const edited = log.some((a) => a[0] === 'release' && a[1] === 'edit' && a.includes('--prerelease=false'))
+  const looked = log.some((a) => a[0] === 'api' && String(a[1] ?? '').includes('per_page=5'))
+  return { out, log, edited, looked }
+}
+
+const soakedAt = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()
+const goodRelease = (published_at) => ({
+  releases: [{ tag_name: 'v0.0.2', draft: false, prerelease: true, published_at }],
+  assets: [
+    { name: 'latest.yml', size: 500 },
+    { name: 'latest-mac.yml', size: 500 },
+    { name: 'app-Setup.exe', size: 111 },
+    { name: 'app.zip', size: 222 }
+  ],
+  feeds: { 'latest.yml': feed('app-Setup.exe', 111), 'latest-mac.yml': feed('app.zip', 222) },
+  latestAfterEdit: 'v0.0.2'
+})
+
+const repoRetry = buildRepo('retry-repo', { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
+git(repoRetry, 'tag', 'v0.0.2')
+
+// 7. a build still soaking waits
+{
+  const r = retry(repoRetry, goodRelease(new Date().toISOString()))
+  ok('a dev build younger than the soak is not promoted', !r.edited, r.out)
+  ok('but the channel was looked at', r.looked, JSON.stringify(r.log))
+}
+
+// 8. a soaked build promotes by itself
+{
+  const r = retry(repoRetry, goodRelease(soakedAt))
+  ok('a dev build past the soak promotes by itself', r.edited && /Promoted v0\.0\.2 to stable/.test(r.out), r.out)
+}
+
+// 9. a soaked build that fails promote's own checks is refused, and says so
+{
+  const scenario = goodRelease(soakedAt)
+  scenario.assets = scenario.assets.filter((a) => a.name !== 'latest-mac.yml')
+  delete scenario.feeds['latest-mac.yml']
+  const r = retry(repoRetry, scenario)
+  ok(
+    'a soaked one-legged release is refused by the same checks as a hand promotion',
+    !r.edited && /Stable promotion of v0\.0\.2 waits:.*latest-mac\.yml/.test(r.out),
+    r.out
+  )
+}
+
+// 10. a newest release already stable: looked at, left alone, nothing said
+{
+  const r = retry(repoRetry, {
+    releases: [{ tag_name: 'v0.0.2', draft: false, prerelease: false, published_at: soakedAt }]
+  })
+  ok('a newest release already stable is left alone', !r.edited && !/Promot|promotion/.test(r.out), r.out)
+}
+
+// 11. the lookup is throttled between polls
+{
+  const repoThrottle = buildRepo('retry-throttle', { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
+  git(repoThrottle, 'tag', 'v0.0.2')
+  const poll = { PF_PROMOTE_POLL_MS: String(60 * 60 * 1000) }
+  const first = retry(repoThrottle, goodRelease(new Date().toISOString()), poll)
+  const second = retry(repoThrottle, goodRelease(new Date().toISOString()), poll)
+  ok('the first retry looks at the channel', first.looked, JSON.stringify(first.log))
+  ok('a second retry inside the poll window does not', !second.looked, JSON.stringify(second.log))
+}
+
 rmSync(root, { recursive: true, force: true })
 
 if (failed) console.log(`\n${failed} of ${total} promote check(s) failed`)

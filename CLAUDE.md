@@ -108,17 +108,24 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   installs opted into the dev channel (Settings → Updates → "Dev channel", config
   `devUpdates`) take it within the half hour, while every stable install resolves
   `/releases/latest`, which GitHub keeps pointed at the newest PROMOTED release.
-  Nothing reaches a stable app until `node scripts/lane.mjs promote` — run that only
-  after the build has proved itself at runtime, never on a green diff. Promote refuses
+  Nothing reaches a stable app until a build is promoted — and promotion happens **by
+  itself**, on the big-company channel shape (Chrome, VS Code): the newest dev build
+  auto-promotes once it has soaked `PF_PROMOTE_SOAK_MS` (3 days) with nothing shipped
+  on top of it, from the same minute timer as everything else (`autoPromote` in
+  `lane.mjs retry`). The quiet period IS the proof: dev-channel installs ran it that
+  long and nothing needed a fix; while churn continues, stable waits, and the survivor
+  carries every skipped version in one update. `node scripts/lane.mjs promote
+  [version]` by hand is for "stable needs this now" (a bad build already reached
+  stable) — never promote a build by hand on a green diff alone. Both paths refuse
   a one-legged release (either platform's feed missing) and a feed whose declared size
-  disagrees with the asset being served, then verifies `/releases/latest` really moved.
-  `lane.mjs doctor` lists what waits unpromoted. Tags stay plain (`v0.8.29`) — the
-  prerelease FLAG is the channel, so stable gets exactly the tested bytes.
-  `npm run test:promote`.
+  disagrees with the asset being served, then verify `/releases/latest` really moved.
+  `lane.mjs doctor` lists what waits and when it auto-promotes. Tags stay plain
+  (`v0.8.29`) — the prerelease FLAG is the channel, so stable gets exactly the tested
+  bytes. `npm run test:promote`.
 
 **A release claims the thing is finished.** Never cut one while any next step for that
 issue is still open — and **promotion claims it is proved**: the dev channel buys the
-room to iterate, not permission to promote unverified.
+room to iterate, and the soak is what turns iteration into proof.
 
 ## An update may never need a person
 
