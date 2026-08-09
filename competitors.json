@@ -42,6 +42,14 @@
       "why": "A container per agent. We rejected it (TODO header); watched in case isolation stops costing what it costs."
     },
     {
+      "repo": "block/buzz",
+      "why": "Block's chat-first agent workspace: agents as channel members over ACP, branch-as-channel, reaction-as-approval-gate, self-terminating remote agents. Apache-2.0. Watched for the ACP harness and the lane-timeline ideas, not the relay."
+    },
+    {
+      "repo": "AtomicBot-ai/atomic-agent",
+      "why": "Local-first agent CLI (MIT, pre-1.0, one maintainer): candidate pane agent once it grows a structured stdout mode; watched for stream-json or serve-API stabilising."
+    },
+    {
       "repo": "p0deje/Maccy",
       "why": "The Stash's closest relative that is MIT: exclusion rules, the keyboard picker, paste-to-the-app-you-came-from. TODO section J. Swift, so technique rather than code."
     },
