@@ -194,6 +194,7 @@ function defaults(): Config {
     stashMaxFileMb: 512,
     stashDeny: '',
     stashPos: null,
+    stashSize: null,
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',

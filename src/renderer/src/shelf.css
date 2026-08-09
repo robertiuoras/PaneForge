@@ -322,6 +322,16 @@ button.mini.on {
   color: var(--accent-text, #dcecff);
 }
 
+/* The glyph buttons - add, gear, magnifier, close. A ⚙ at 11px was a smudge nobody could
+   hit; these carry a single symbol, so they get the room a symbol needs while the worded
+   buttons ("clear", "done") keep their size. */
+button.mini.ico {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  font-size: 14px;
+}
+
 button.mini.danger:hover {
   background: color-mix(in srgb, var(--danger, #dc5050) 26%, transparent);
   border-color: color-mix(in srgb, var(--danger, #dc5050) 40%, transparent);
@@ -521,6 +531,10 @@ button.mini.danger:hover {
   color: var(--text, #fff);
 }
 
+.acts .peek {
+  font-size: 10px;
+}
+
 /* A pin that is not set is nearly invisible until the row is hovered; a set one stays. */
 .acts .pin {
   filter: grayscale(1);
@@ -538,6 +552,166 @@ button.mini.danger:hover {
 .acts .del:hover {
   background: color-mix(in srgb, var(--danger, #dc5050) 28%, transparent);
   color: color-mix(in srgb, var(--danger, #dc5050) 40%, var(--ink));
+}
+
+/* --- one clip, whole --------------------------------------------------------- */
+
+.detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.detail-head .spacer {
+  flex: 1;
+}
+
+.detail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+}
+
+.detail-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.detail-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+}
+
+/* The one place in this window text may be selected: the whole point of opening a clip
+   is reading it, and reading includes taking a piece of it. */
+.detail-text {
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  cursor: text;
+}
+
+.detail-media {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.detail-audio {
+  width: 100%;
+}
+
+.detail-fileglyph {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 40px;
+  color: var(--ink-faint);
+}
+
+.detail-meta {
+  padding: 6px 10px 8px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* --- resize handles ----------------------------------------------------------- */
+
+/* The window's rim, made grabbable. They sit on the 4px transparent margin around the
+   card plus a little of its border, so they cover no content and eat no row clicks; the
+   corners win over the edges by coming later in the DOM at the same z. */
+.rs {
+  position: fixed;
+  z-index: 40;
+}
+
+.rs-n {
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 7px;
+  cursor: ns-resize;
+}
+
+.rs-s {
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 7px;
+  cursor: ns-resize;
+}
+
+.rs-e {
+  right: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 7px;
+  cursor: ew-resize;
+}
+
+.rs-w {
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 7px;
+  cursor: ew-resize;
+}
+
+.rs-ne,
+.rs-sw {
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.rs-nw,
+.rs-se {
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.rs-ne {
+  top: 0;
+  right: 0;
+}
+
+.rs-nw {
+  top: 0;
+  left: 0;
+}
+
+.rs-se {
+  bottom: 0;
+  right: 0;
+}
+
+.rs-sw {
+  bottom: 0;
+  left: 0;
 }
 
 .empty {
@@ -676,8 +850,14 @@ button.mini.danger:hover {
 :root.light {
   .head,
   .foot,
-  .panel-foot {
+  .panel-foot,
+  .detail-head,
+  .detail-meta {
     border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .detail-body::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
   }
 
   .grip {

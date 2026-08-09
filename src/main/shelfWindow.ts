@@ -23,7 +23,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, screen } from 'electron'
 import { getConfig, setConfig } from './config'
-import type { RecentItem, ShelfLift, StashConfig } from '../shared/types'
+import type { RecentItem, ShelfEdge, ShelfLift, StashConfig } from '../shared/types'
 
 /** The resting size: a pill with the count on it. */
 const COLLAPSED = { width: 190, height: 38 }
@@ -33,6 +33,30 @@ const EXPANDED = { width: 352, height: 470 }
 const TALL = { width: 352, height: 566 }
 /** Gap from the corner of the work area, so it clears the taskbar. */
 const MARGIN = 12
+/**
+ * What a resized Stash may be. The floor keeps the header's buttons and one readable row;
+ * the ceiling is a courtesy - past it the work-area clamp in `resizeBounds` takes over
+ * anyway. Both apply on the way OUT of the config too, so a hand-edited or corrupt
+ * `stashSize` cannot draw a 20px sliver with no edge left to grab.
+ */
+const MIN_W = 280
+const MIN_H = 300
+const MAX_W = 1100
+const MAX_H = 1400
+
+/** The size the expanded Stash was dragged to, if it ever was. */
+function customSize(): { width: number; height: number } | null {
+  try {
+    const s = getConfig().stashSize
+    if (!s) return null
+    return {
+      width: Math.min(MAX_W, Math.max(MIN_W, Math.round(s.width))),
+      height: Math.min(MAX_H, Math.max(MIN_H, Math.round(s.height)))
+    }
+  } catch {
+    return null
+  }
+}
 
 let shelf: BrowserWindow | null = null
 let expanded = false
@@ -99,7 +123,12 @@ function corner(width: number, height: number): { x: number; y: number } {
 }
 
 function currentSize(): { width: number; height: number } {
-  return expanded ? (tall ? TALL : EXPANDED) : COLLAPSED
+  if (!expanded) return COLLAPSED
+  // A dragged-to size wins over both stock sizes. The settings panel scrolls inside it
+  // (`.panel` is overflow-y auto), so `tall` only matters while no custom size exists.
+  const custom = customSize()
+  if (custom) return custom
+  return tall ? TALL : EXPANDED
 }
 
 /**
@@ -189,7 +218,8 @@ function place(): void {
   // is the "it extends sideways instead of moving" - the pill growing into the 352px card
   // from its left edge, mid-gesture. During a drag the pointer is the only authority on
   // where this window is; endShelfDrag calls place() the moment it is let go.
-  if (drag) return
+  // A resize is the same gesture with the same authority.
+  if (drag || resize) return
   const size = currentSize()
   const { x, y } = summonOnly() ? pointerAnchor(size.width, size.height) : anchor(size.width, size.height)
   try {
@@ -201,9 +231,85 @@ function place(): void {
 
 /** The list needs a taller window when the settings panel is showing behind the gear. */
 export function setShelfTall(next: boolean): void {
-  if (!alive() || tall === next || drag) return
+  if (!alive() || tall === next || drag || resize) return
   tall = next
   place()
+}
+
+// --- resizing ---------------------------------------------------------------
+//
+// Same contract as the drag below: `focusable: false` rules out the native resize frame
+// (and the window is frameless anyway), so the page's edge handles report pointer travel
+// and main does the bounds arithmetic. The grabbed edge is the one that moves; the
+// opposite edge stays planted, which is what "drag any side in or out" means.
+
+let resize: { orig: Electron.Rectangle; edge: ShelfEdge } | null = null
+
+/** Where the dragged-to spot and size are remembered, and the summon anchor kept true. */
+function rememberBounds(b: Electron.Rectangle, size: boolean): void {
+  try {
+    setConfig({
+      stashPos: { x: b.x, y: b.y + b.height },
+      ...(size ? { stashSize: { width: b.width, height: b.height } } : {})
+    })
+  } catch {
+    /* a position that could not be written is only a position */
+  }
+  // Summon mode re-anchors at `summonPoint` on every place() - so after a drag or a
+  // resize, the point has to be moved to reproduce these bounds, or the next place()
+  // (the settings panel opening, a display event) teleports the window back to where it
+  // was summoned. That WAS the macOS "it jumps around when I move it": pointerAnchor is
+  // the inverse of this arithmetic, x = p.x - 24 and y = p.y - height + 12.
+  if (summonOnly()) summonPoint = { x: b.x + 24, y: b.y + b.height - 12 }
+}
+
+export function beginShelfResize(edge: ShelfEdge): void {
+  if (!alive() || drag || ghost || !expanded) return
+  resize = { orig: shelf!.getBounds(), edge }
+}
+
+/** The bounds the grabbed edge asks for, clamped to sane sizes. */
+function resizeBounds(orig: Electron.Rectangle, edge: ShelfEdge, dx: number, dy: number): Electron.Rectangle {
+  let { x, y, width, height } = orig
+  if (edge.includes('e')) width += dx
+  if (edge.includes('s')) height += dy
+  if (edge.includes('w')) {
+    width -= dx
+    x = orig.x + orig.width - Math.min(MAX_W, Math.max(MIN_W, width))
+  }
+  if (edge.includes('n')) {
+    height -= dy
+    y = orig.y + orig.height - Math.min(MAX_H, Math.max(MIN_H, height))
+  }
+  width = Math.min(MAX_W, Math.max(MIN_W, width))
+  height = Math.min(MAX_H, Math.max(MIN_H, height))
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) }
+}
+
+export function moveShelfResize(dx: number, dy: number): void {
+  if (!alive() || !resize) return
+  try {
+    shelf!.setBounds(resizeBounds(resize.orig, resize.edge, dx, dy))
+  } catch {
+    /* a display vanished mid-move; the next move (or the end) puts it right */
+  }
+}
+
+export function endShelfResize(): void {
+  if (!resize) return
+  resize = null
+  if (!alive()) return
+  try {
+    rememberBounds(shelf!.getBounds(), true)
+  } catch {
+    /* nothing to remember is only a default next time */
+  }
+  place()
+}
+
+/** A resize is in flight. Read by the activation handlers the same way as a drag. */
+export function shelfResizing(): boolean {
+  return !!resize
 }
 
 // --- dragging ---------------------------------------------------------------
@@ -324,8 +430,7 @@ function moveShelfDragFinal(orig: Electron.Rectangle, dx: number, dy: number): v
       width: orig.width,
       height: orig.height
     })
-    const b = shelf!.getBounds()
-    setConfig({ stashPos: { x: b.x, y: b.y + b.height } })
+    rememberBounds(shelf!.getBounds(), false)
   } catch {
     /* a position that could not be written is only a position */
   }
@@ -366,8 +471,7 @@ export function dropShelfDrag(dx: number, dy: number): void {
       width: orig.width,
       height: orig.height
     })
-    const b = shelf!.getBounds()
-    setConfig({ stashPos: { x: b.x, y: b.y + b.height } })
+    rememberBounds(shelf!.getBounds(), false)
   } catch {
     /* a position that could not be written is only a position */
   }
@@ -550,8 +654,8 @@ export function setShelfExpanded(next: boolean): void {
   // A window being dragged does not change size. The renderer holds this off too, but it
   // is the renderer's own hover timer that asks, and a timer that fires one millisecond
   // after the press is exactly the case that made a drag turn into an expand. Main owns
-  // the size, so main is where "not now" has to be true.
-  if (drag) return
+  // the size, so main is where "not now" has to be true. A resize holds it the same way.
+  if (drag || resize) return
   // Summoned: the list appears where the pointer is, and where it is asked for is decided
   // once - re-anchoring on every resize would make it chase the mouse across the screen
   // while the settings panel opens under it.
@@ -579,6 +683,21 @@ function cursorNow(): { x: number; y: number } | null {
     return screen.getCursorScreenPoint()
   } catch {
     return null
+  }
+}
+
+/**
+ * The summon setting changed - from either settings surface. Summon-only keeps nothing on
+ * screen until asked, so flipping it on puts a resting pill away; flipping it off brings
+ * the pill back where it belongs. An expanded list stays: somebody is reading it.
+ */
+export function refreshShelfSummon(): void {
+  if (!alive() || keptBack() || expanded) return
+  if (summonOnly()) {
+    shelf!.hide()
+  } else {
+    place()
+    if (!shelf!.isVisible()) shelf!.showInactive()
   }
 }
 
@@ -665,6 +784,7 @@ export function openShelfWindow(mainWindow: () => BrowserWindow | null): void {
     expanded = false
     tall = false
     drag = null
+    resize = null
     if (ghost) clearTimeout(ghost.watchdog)
     ghost = null
   })

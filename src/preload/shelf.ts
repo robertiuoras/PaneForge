@@ -3,7 +3,7 @@
 // no config writes, no shell.
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { RecentItem, ShelfApi, StashConfig } from '../shared/types'
+import type { RecentItem, ShelfApi, ShelfEdge, StashConfig } from '../shared/types'
 
 const api: ShelfApi = {
   list: () => ipcRenderer.invoke('recents:list'),
@@ -13,6 +13,8 @@ const api: ShelfApi = {
   pin: (id, on) => ipcRenderer.send('recents:pin', id, on),
   drag: (id) => ipcRenderer.send('recents:drag', id),
   add: (paths) => ipcRenderer.invoke('stash:add', paths),
+  addData: (name, data) => ipcRenderer.invoke('stash:addData', name, data),
+  text: (id) => ipcRenderer.invoke('recents:text', id),
   pick: () => ipcRenderer.invoke('stash:pick'),
   // Electron took File.path away; the real path is only reachable from a preload.
   pathForFile: (file) => {
@@ -36,6 +38,11 @@ const api: ShelfApi = {
     shown: () => ipcRenderer.send('shelf:dragShown'),
     drop: (dx, dy) => ipcRenderer.invoke('shelf:dragDrop', dx, dy),
     end: () => ipcRenderer.send('shelf:dragEnd')
+  },
+  resizeWindow: {
+    start: (edge: ShelfEdge) => ipcRenderer.send('shelf:resizeStart', edge),
+    move: (dx, dy) => ipcRenderer.send('shelf:resizeMove', dx, dy),
+    end: () => ipcRenderer.send('shelf:resizeEnd')
   },
   getConfig: () => ipcRenderer.invoke('shelf:config'),
   setConfig: (patch) => ipcRenderer.invoke('shelf:setConfig', patch),

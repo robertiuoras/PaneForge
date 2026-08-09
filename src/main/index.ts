@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -37,7 +38,7 @@ import { surfaceChannels } from '../shared/surface'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
-import type { DiffScope, PhoneState } from '../shared/types'
+import type { DiffScope, PhoneState, ShelfEdge } from '../shared/types'
 import { laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoard, laneReclaim, laneRetry } from './laneBoard'
@@ -148,12 +149,16 @@ import {
 } from './recents'
 import {
   beginShelfDrag,
+  beginShelfResize,
   closeShelfWindow,
   dropShelfDrag,
   endShelfDrag,
+  endShelfResize,
   liftShelfDrag,
   moveShelfDrag,
+  moveShelfResize,
   openShelfWindow,
+  refreshShelfSummon,
   shownShelfDrag,
   setShelfHidden,
   setShelfQuiet,
@@ -1266,6 +1271,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.gameMode !== undefined) refreshGameWatch(next)
   if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
   else if (patch.clipboardOverlay !== undefined) applyShelfOverlay(next)
+  if (patch.stashSummon !== undefined) refreshShelfSummon()
   // The Stash caps apply to what is already on it, not only to the next thing added, so
   // they go through even when the watcher itself was not touched.
   if (
@@ -1725,6 +1731,16 @@ ipcMain.on('shelf:dragMove', (_e, dx: number, dy: number) => moveShelfDrag(dx, d
 ipcMain.on('shelf:dragShown', () => shownShelfDrag())
 ipcMain.handle('shelf:dragDrop', (_e, dx: number, dy: number) => dropShelfDrag(dx, dy))
 ipcMain.on('shelf:dragEnd', () => endShelfDrag())
+// Resized by its own edges, the same way it is moved: the page reports pointer travel,
+// main owns the bounds. Only the eight edges the renderer names are ever accepted.
+ipcMain.on('shelf:resizeStart', (_e, edge: string) => {
+  if (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].includes(edge))
+    beginShelfResize(edge as ShelfEdge)
+})
+ipcMain.on('shelf:resizeMove', (_e, dx: number, dy: number) =>
+  moveShelfResize(Number(dx) || 0, Number(dy) || 0)
+)
+ipcMain.on('shelf:resizeEnd', () => endShelfResize())
 
 /** Just the Stash's own knobs, which is all of the config the overlay ever sees. */
 function stashConfig(cfg: Config): StashConfig {
@@ -1756,7 +1772,7 @@ ipcMain.handle('shelf:setConfig', (_e, patch: Partial<StashConfig>) => {
   const raw = (patch ?? {}) as Record<string, unknown>
   for (const k of STASH_CONFIG_KEYS) {
     const v = raw[k]
-    if (k === 'clipboardOverlay') {
+    if (k === 'clipboardOverlay' || k === 'stashSummon') {
       if (typeof v === 'boolean') clean[k] = v
     } else if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
       clean[k] = v
@@ -1765,6 +1781,7 @@ ipcMain.handle('shelf:setConfig', (_e, patch: Partial<StashConfig>) => {
   const next = setConfig(clean as Partial<Config>)
   applyStashCaps(next)
   if (clean.clipboardOverlay !== undefined) applyShelfOverlay(next)
+  if (clean.stashSummon !== undefined) refreshShelfSummon()
   // Settings is a different window looking at the same numbers; it must not go stale.
   send('config:changed', next)
   const out = stashConfig(next)
@@ -1776,6 +1793,38 @@ ipcMain.handle('shelf:setConfig', (_e, patch: Partial<StashConfig>) => {
 ipcMain.handle('stash:add', (_e, paths: string[]) =>
   Array.isArray(paths) ? addRecentFiles(paths) : 0
 )
+/**
+ * A drop that arrived as bytes rather than a path - an image dragged out of a browser
+ * page, a file from an app that never touches the disk. The bytes are parked as a real
+ * file (name sanitised, never trusted as a path) and stashed through the same door as
+ * every other file, so the size cap and the file clock apply to it too.
+ */
+ipcMain.handle('stash:addData', (_e, name: string, data: unknown) => {
+  const buf = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.isBuffer(data) ? data : null
+  if (!buf || !buf.length) return 0
+  const safe =
+    String(name ?? '')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim()
+      .slice(0, 120) || `dropped-${Date.now()}`
+  // Its own scratch directory, so the file inside keeps the name it arrived with - that
+  // basename is what the row shows and what a drag back out is called.
+  const dir = mkdtempSync(join(tmpdir(), 'pf-stash-'))
+  const tmp = join(dir, safe)
+  try {
+    writeFileSync(tmp, buf)
+    return addRecentFiles([tmp])
+  } catch {
+    return 0
+  } finally {
+    // addRecentFiles copies into the Stash's own folder; the parked original is litter.
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* a temp file left behind is only a temp file */
+    }
+  }
+})
 ipcMain.handle('stash:pick', async () => {
   // A picker is a foreground dialog, which the app is not allowed to raise on its own -
   // this one only ever runs from a click, so it is the user asking for it.

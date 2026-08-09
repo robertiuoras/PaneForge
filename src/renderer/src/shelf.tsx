@@ -21,7 +21,7 @@
 
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { RecentItem, StashConfig } from '@shared/types'
+import type { RecentItem, ShelfEdge, StashConfig } from '@shared/types'
 import { DEFAULT_THEME, luminance, parseHex, paletteFor, type ThemeConfig } from '@shared/theme'
 import { keyLabel } from './platform'
 import { applyTheme } from './theme'
@@ -258,6 +258,64 @@ function useWindowDrag(): {
   }
 }
 
+/**
+ * Resize the window by its edges. Same shape as the window drag: pointer capture holds
+ * the gesture while the pointer leaves the window (the edge is moving away from under
+ * it), one report per frame, and main does the bounds arithmetic. The handles only exist
+ * while the list is open - a 38px pill has nothing to resize.
+ */
+function useWindowResize(): {
+  handlersFor: (edge: ShelfEdge) => React.HTMLAttributes<HTMLElement>
+  resizing: () => boolean
+} {
+  const from = useRef<{ x: number; y: number } | null>(null)
+  const delta = useRef({ x: 0, y: 0 })
+  const frame = useRef(0)
+
+  const report = (): void => {
+    if (frame.current) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      if (from.current) shelf.resizeWindow.move(delta.current.x, delta.current.y)
+    })
+  }
+
+  return {
+    handlersFor: (edge: ShelfEdge) => ({
+      onPointerDown: (e: React.PointerEvent) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        from.current = { x: e.screenX, y: e.screenY }
+        delta.current = { x: 0, y: 0 }
+        ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+        shelf.resizeWindow.start(edge)
+      },
+      onPointerMove: (e: React.PointerEvent) => {
+        if (!from.current) return
+        delta.current = { x: e.screenX - from.current.x, y: e.screenY - from.current.y }
+        report()
+      },
+      onPointerUp: (e: React.PointerEvent) => {
+        if (!from.current) return
+        ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+        delta.current = { x: e.screenX - from.current.x, y: e.screenY - from.current.y }
+        shelf.resizeWindow.move(delta.current.x, delta.current.y)
+        from.current = null
+        if (frame.current) {
+          cancelAnimationFrame(frame.current)
+          frame.current = 0
+        }
+        shelf.resizeWindow.end()
+      }
+    }),
+    resizing: () => !!from.current
+  }
+}
+
+/** The eight zones, each naming the cursor and the edge it drags. */
+const RESIZE_EDGES: ShelfEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
+
 /** One setting: a label and a row of choices, because there is no keyboard here. */
 function Choice({
   label,
@@ -305,6 +363,16 @@ function Settings({
   if (!config) return <div className="panel-empty">Loading…</div>
   return (
     <div className="panel">
+      <Choice
+        label="On screen"
+        hint={keyLabel('nothing until Ctrl+Alt+V, or a pill waiting in the corner')}
+        value={config.stashSummon ? 1 : 0}
+        options={[
+          { value: 1, label: 'hotkey summon' },
+          { value: 0, label: 'corner pill' }
+        ]}
+        onPick={(v) => patch({ stashSummon: v === 1 })}
+      />
       <Choice
         label="Pop open for"
         hint="when something new lands"
@@ -419,6 +487,10 @@ function Overlay(): JSX.Element {
   const [config, setConfig] = useState<StashConfig | null>(null)
   // A file drag is over the overlay right now.
   const [over, setOver] = useState(false)
+  // One clip, whole: the row shows one line and the ask was always "let me see the rest".
+  const [detail, setDetail] = useState<RecentItem | null>(null)
+  // Its full text, fetched by id when the detail opens - the list never carries bodies.
+  const [detailText, setDetailText] = useState<string | null>(null)
   // Opened by the hotkey, not by the mouse: it must not vanish the moment the pointer
   // crosses it on the way to the window underneath.
   const sticky = useRef(false)
@@ -426,6 +498,7 @@ function Overlay(): JSX.Element {
   const closeTimer = useRef<number>()
   const copiedTimer = useRef<number>()
   const drag = useWindowDrag()
+  const resize = useWindowResize()
   // What the scroller can see: where it is and how tall it is. Both in pixels.
   const listRef = useRef<HTMLDivElement>(null)
   const [view, setView] = useState({ top: 0, h: 400 })
@@ -450,7 +523,10 @@ function Overlay(): JSX.Element {
       if (!next) sticky.current = false
       asked.current = false
       setOpen(next)
-      if (!next) setSettings(false)
+      if (!next) {
+        setSettings(false)
+        setDetail(null)
+      }
     })
     return () => {
       offItems()
@@ -486,7 +562,18 @@ function Overlay(): JSX.Element {
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
     setView((v) => (v.top === 0 ? v : { ...v, top: 0 }))
-  }, [filter, open, settings])
+  }, [filter, open, settings, detail])
+
+  // Dragging an edge resizes the window without a re-render, so the virtualiser's idea
+  // of the visible height has to be told the window moved under it.
+  useEffect(() => {
+    const measure = (): void => {
+      const h = listRef.current?.clientHeight
+      if (h) setView((v) => (v.h === h ? v : { ...v, h }))
+    }
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
 
   // One slice per frame, whatever rate the wheel reports at.
   const onScroll = (): void => {
@@ -544,7 +631,9 @@ function Overlay(): JSX.Element {
   const armIdle = (): void => {
     window.clearTimeout(idleTimer.current)
     const ms = config?.stashAutoCloseMs ?? 5000
-    if (!open || !ms || settings || over || inside.current) return
+    // Settings, an open clip and a file drag are deliberate stops: reading the whole of
+    // something is exactly when it must not fold up by itself.
+    if (!open || !ms || settings || detail || over || inside.current) return
     idleTimer.current = window.setTimeout(() => {
       sticky.current = false
       want(false)
@@ -554,7 +643,7 @@ function Overlay(): JSX.Element {
   useEffect(() => {
     armIdle()
     return () => window.clearTimeout(idleTimer.current)
-  }, [open, settings, over, config?.stashAutoCloseMs])
+  }, [open, settings, detail, over, config?.stashAutoCloseMs])
 
   const enter = (): void => {
     inside.current = true
@@ -564,6 +653,9 @@ function Overlay(): JSX.Element {
   }
 
   const leave = (): void => {
+    // A resize drags the pointer across the window edge by definition; that is not the
+    // pointer leaving.
+    if (resize.resizing()) return
     inside.current = false
     cancelOpen()
     armIdle()
@@ -594,6 +686,14 @@ function Overlay(): JSX.Element {
     void shelf.setConfig(p).then(setConfig)
   }
 
+  /** Open one clip whole. The body is fetched by id - the list never carries it. */
+  const openDetail = (it: RecentItem): void => {
+    sticky.current = true
+    setDetail(it)
+    setDetailText(null)
+    if (it.kind === 'text') void shelf.text(it.id).then((t) => setDetailText(t ?? ''))
+  }
+
   // Files dragged onto the overlay from anywhere on the desktop. The pill accepts them
   // too, collapsed: dropping a clip on a 172px pill is the fastest way to park one.
   const dragProps = {
@@ -618,7 +718,15 @@ function Overlay(): JSX.Element {
       const files = [...(e.dataTransfer?.files ?? [])]
       if (!files.length) return
       e.preventDefault()
-      const paths = files.map((f) => shelf.pathForFile(f)).filter(Boolean)
+      // Per file, not per drop: a browser image has no path and a Finder file does, and
+      // one drop can carry both. Whatever has a real path goes in by path; anything else
+      // goes in as bytes and main parks it as a file.
+      const paths: string[] = []
+      for (const f of files) {
+        const p = shelf.pathForFile(f)
+        if (p) paths.push(p)
+        else void f.arrayBuffer().then((buf) => buf.byteLength && shelf.addData(f.name, buf))
+      }
       if (paths.length) void shelf.add(paths)
     }
   }
@@ -701,6 +809,10 @@ function Overlay(): JSX.Element {
 
   return (
     <div className="wrap" onMouseEnter={enter} onMouseLeave={leave} {...dragProps}>
+      {/* The eight resize zones, along the window's own rim outside the card. */}
+      {RESIZE_EDGES.map((eg) => (
+        <span key={eg} className={`rs rs-${eg}`} aria-hidden="true" {...resize.handlersFor(eg)} />
+      ))}
       <div className={'card' + (over ? ' over' : '')}>
         <div className="head" {...drag.handlers} title="Drag to move the Stash anywhere">
           <span className="grip" aria-hidden="true" />
@@ -719,16 +831,16 @@ function Overlay(): JSX.Element {
           </span>
           <span className="spacer" />
           <button
-            className="mini"
+            className="mini ico"
             onClick={() => {
               void shelf.pick()
             }}
-            title="Add a file to the Stash"
+            title="Add a file to the Stash — or just drop one anywhere on this window"
           >
             +
           </button>
           <button
-            className={'mini' + (settings ? ' on' : '')}
+            className={'mini ico' + (settings ? ' on' : '')}
             onClick={() => showSettings(!settings)}
             title="Stash settings"
           >
@@ -742,7 +854,7 @@ function Overlay(): JSX.Element {
             asking for the app, which is the one reason allowed to raise it.
           */}
           <button
-            className="mini"
+            className="mini ico"
             onClick={() => {
               sticky.current = false
               want(false)
@@ -760,7 +872,7 @@ function Overlay(): JSX.Element {
             clear
           </button>
           <button
-            className="mini"
+            className="mini ico"
             onClick={() => {
               sticky.current = false
               showSettings(false)
@@ -774,6 +886,67 @@ function Overlay(): JSX.Element {
 
         {settings ? (
           <Settings config={config} patch={patch} onClose={() => showSettings(false)} />
+        ) : detail ? (
+          <div className="detail">
+            <div className="detail-head">
+              <button className="mini" onClick={() => setDetail(null)} title="Back to the list">
+                ‹ back
+              </button>
+              <span className="detail-name">
+                {detail.kind === 'file' ? (detail.name ?? detail.preview) : detail.kind}
+              </span>
+              <span className="spacer" />
+              <button
+                className="mini"
+                onClick={() => {
+                  shelf.copy(detail.id)
+                  flashCopied(detail.id)
+                }}
+                title="Put it back on the clipboard"
+              >
+                {copied === detail.id ? 'copied' : 'copy'}
+              </button>
+              <button
+                className="mini"
+                onClick={() => {
+                  shelf.copy(detail.id)
+                  shelf.toPane(detail.id)
+                }}
+                title="Type it into the focused pane"
+              >
+                to pane
+              </button>
+            </div>
+            <div className="detail-body">
+              {detail.kind === 'text' ? (
+                <pre className="detail-text">{detailText ?? 'Loading…'}</pre>
+              ) : detail.kind === 'image' || detail.mime?.startsWith('image/') ? (
+                <img className="detail-media" src={`stash://${detail.id}`} alt="" />
+              ) : detail.mime?.startsWith('video/') ? (
+                <video
+                  className="detail-media"
+                  src={`stash://${detail.id}`}
+                  controls
+                  playsInline
+                />
+              ) : detail.mime?.startsWith('audio/') ? (
+                <audio className="detail-audio" src={`stash://${detail.id}`} controls />
+              ) : (
+                <div className="detail-fileglyph" aria-hidden="true">
+                  ▤
+                </div>
+              )}
+            </div>
+            <div className="detail-meta">
+              {detail.kind === 'image'
+                ? `${detail.width}×${detail.height}`
+                : detail.kind === 'file'
+                  ? left(detail)
+                  : `${detail.chars} chars · ${detail.lines ?? 1} ${detail.lines === 1 ? 'line' : 'lines'}`}
+              {' · '}
+              {ago(detail.at)} ago
+            </div>
+          </div>
         ) : (
           <>
             {items.length > 0 && (
@@ -782,8 +955,9 @@ function Overlay(): JSX.Element {
                   <button
                     key={t.key}
                     className={'tab' + (filter === t.key ? ' on' : '')}
+                    // Never disabled: an empty kind is still a place - it shows the drop
+                    // hint, and it is where a first image or file is about to land.
                     onClick={() => setFilter(t.key)}
-                    disabled={t.n === 0 && t.key !== 'all'}
                   >
                     {t.label}
                     <span className="tab-n">{t.n}</span>
@@ -888,6 +1062,16 @@ function Overlay(): JSX.Element {
                     </span>
                   </span>
                   <span className="acts">
+                    <span
+                      className="peek"
+                      title="See the whole thing"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openDetail(it)
+                      }}
+                    >
+                      ⤢
+                    </span>
                     <span
                       className={'pin' + (it.pinned ? ' on' : '')}
                       title={it.pinned ? 'Stop keeping this one' : 'Keep this one, whatever else goes'}

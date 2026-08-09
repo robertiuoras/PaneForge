@@ -1142,6 +1142,12 @@ export interface Config {
    * no longer on any display (a monitor unplugged, a resolution changed).
    */
   stashPos: { x: number; y: number } | null
+  /**
+   * The size the expanded Stash was last resized to by dragging its edges. Null means the
+   * built-in size. Clamped to sane bounds on the way in (`shelfWindow.ts`), so a corrupt
+   * config cannot draw an unusable window.
+   */
+  stashSize: { width: number; height: number } | null
   /** show every session at once instead of one at a time */
   grid: boolean
   /**
@@ -1835,6 +1841,9 @@ export interface Api {
  */
 export type ShelfLift = { dx: number; dy: number; w: number; h: number } | { live: true } | null
 
+/** Which edge (or corner) of the Stash a resize grabbed. */
+export type ShelfEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
 export interface ShelfApi {
   list(): Promise<RecentItem[]>
   /** put it back on the OS clipboard, ready for Ctrl+V wherever you already were */
@@ -1847,6 +1856,14 @@ export interface ShelfApi {
   drag(id: string): void
   /** files dropped onto the overlay itself, by absolute path */
   add(paths: string[]): Promise<number>
+  /**
+   * A drop that carries bytes and no path - an image dragged out of a browser, a file
+   * from an app that hands over data rather than a file. Main parks the bytes as a file
+   * and stashes that, so the same drop works wherever it came from.
+   */
+  addData(name: string, data: ArrayBuffer): Promise<number>
+  /** the full body of a text clip, on demand - the list never carries it */
+  text(id: string): Promise<string>
   /** the overlay's + button: an OS file picker, then the same */
   pick(): Promise<number>
   /** absolute path of a dropped File, which Electron only exposes in a preload */
@@ -1892,6 +1909,16 @@ export interface ShelfApi {
     shown(): void
     /** Settle at the dragged-to position and remember it. */
     drop(dx: number, dy: number): Promise<void>
+    end(): void
+  }
+  /**
+   * Resize the window by dragging any edge or corner. Same shape as the drag: the page
+   * reports pointer travel in screen pixels, main does the bounds arithmetic and
+   * remembers the size (`stashSize`) so the Stash reopens at the size it was left.
+   */
+  resizeWindow: {
+    start(edge: ShelfEdge): void
+    move(dx: number, dy: number): void
     end(): void
   }
   onItems(cb: (items: RecentItem[]) => void): () => void
