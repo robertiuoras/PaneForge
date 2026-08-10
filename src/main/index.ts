@@ -2630,6 +2630,10 @@ export interface OpenRequest {
   open?: string
   prompt?: string
   route?: string
+  /** agent model to start the session with, same values as StartSessionRequest.model */
+  model?: string
+  /** pane title override, same as StartSessionRequest.title */
+  title?: string
 }
 
 /** Read from a command line that is still in the order it was typed. */
@@ -2643,9 +2647,13 @@ export function parseOpenArgs(argv: string[]): OpenRequest {
   const open = take('--open')
   const prompt = take('--prompt')
   const route = take('--route')
+  const model = take('--model')
+  const title = take('--title')
   if (open) req.open = open
   if (prompt) req.prompt = prompt
   if (route) req.route = route
+  if (model) req.model = model
+  if (title) req.title = title
   return req
 }
 
@@ -2664,7 +2672,12 @@ function openRequest(req: OpenRequest): void {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
-    manager.start({ cwd: target, prompt: req.prompt ?? req.route ?? undefined })
+    manager.start({
+      cwd: target,
+      prompt: req.prompt ?? req.route ?? undefined,
+      model: req.model,
+      title: req.title
+    })
   } catch {
     /* bad path on the command line - ignore rather than crash the launch */
   }
@@ -2916,7 +2929,12 @@ app.whenReady().then(() => {
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.
   if (app.hasSingleInstanceLock()) openRequest(launchRequest)
-  if (process.env['PANEFORGE_OPEN']) openRequest({ open: process.env['PANEFORGE_OPEN'] as string })
+  if (process.env['PANEFORGE_OPEN'])
+    openRequest({
+      open: process.env['PANEFORGE_OPEN'] as string,
+      model: process.env['PANEFORGE_MODEL'] || undefined,
+      title: process.env['PANEFORGE_TITLE'] || undefined
+    })
   // An activation is not acted on the moment it lands. It and the press that caused it
   // reach main by different routes - AppKit's notification, and the browser routing the
   // input to whichever window was clicked - and nothing promises which arrives first, so
