@@ -24,6 +24,7 @@ import type {
   StartSessionRequest
 } from '../../shared/types'
 import type { AgentInfo } from '../../shared/agents'
+import type { HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
@@ -144,6 +145,20 @@ export class Remote extends EventEmitter {
     const client = this.clients.get(device)
     if (!client) return Promise.reject(new Error('That device is not connected'))
     return client.projects()
+  }
+
+  /** Deliver one pane's handoff to a device. See `main/handoff.ts` for what one is. */
+  handoffTo(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
+    const client = this.clients.get(device)
+    if (!client || client.status !== 'online') {
+      return Promise.reject(new Error('That device is not connected'))
+    }
+    return client.handoff(payload, file)
+  }
+
+  /** The name a handoff commit mentions - the device's, or its id when unpaired. */
+  peerName(device: string): string {
+    return getConfig().remote.peers.find((p) => p.id === device)?.name || device
   }
 
   agentsOn(device: string): Promise<AgentInfo[]> {

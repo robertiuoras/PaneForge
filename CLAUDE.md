@@ -206,6 +206,17 @@ older build does not recognise `askpair` and refuses, which is correct — it ha
 show. `npm run test:pairask`, whose load-bearing case is a real relay proving the two
 numbers differ.
 
+**A handoff moves the WORK, still never the pty.** `Hand off` on a paired device's card
+(two presses — the first arms it) pushes each pane's repo as an `auto-sync:` commit,
+streams its transcript and screen tail over the link, and the far end pulls the branch,
+writes the transcript where its own CLI looks, and starts a fresh pane with `--resume` —
+through the same lane split a local launch gets. The sender's pane closes only on the far
+end's ack and immediately reappears as a mirror, so the desk that handed off keeps
+watching. The receiver never destroys local state: a dirty or unpushed checkout over
+there refuses THAT pane by name, and the sender keeps it. Paths map by grafting the
+pane's root-relative path onto the receiver's projects root (`shared/handoff.ts`).
+`npm run test:handoff`.
+
 ## The phone is this window, served
 
 There is no second app. The renderer imports nothing from Electron and nothing from Node -
@@ -562,6 +573,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:pairask` | pairing with no code typed: the six digits agree between the two ends, and — the case the whole design exists for — a real relay in the middle makes them DISAGREE |
+| `npm run test:handoff` | a pane handed to the other machine whole, over a real link and real git: WIP pushed as `auto-sync:`, a 5 MB transcript chunked and reassembled byte-for-byte, `--resume` on the far end — and the refusals: a dirty far checkout, unpushed far commits, a folder outside the root |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
 | `npm run test:stashtheme` | that the floating Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |

@@ -69,9 +69,12 @@ const released = new Set<string>()
  */
 const settled = new Set<string>()
 
-/** Claude Code's folder name for a working directory. */
-function projectDir(cwd: string): string {
-  return join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+/** Claude Code's folder name for a working directory. Exported for handoff, which
+ * writes a transcript from another machine where the CLI here will look for it.
+ * The env override exists for the handoff test, which must not touch the real one. */
+export function projectDir(cwd: string): string {
+  const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+  return join(base, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
 }
 
 /** The transcripts in a folder, newest write first. */

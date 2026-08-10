@@ -26,7 +26,7 @@ import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
-import { DEFAULT_PHONE_PORT, getConfig, setConfig } from './config'
+import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { Remote } from './remote'
@@ -115,7 +115,8 @@ import {
   sweepOwnConsolesOnExit
 } from './consoles'
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
-import { lastPrompt, resumable, resumeIdFor } from './transcripts'
+import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
+import { receiveHandoff, sendHandoff } from './handoff'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
@@ -759,6 +760,22 @@ const remote = new Remote({
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
   startSession: async (req) => manager.start(await laneFor(req)),
+  // A pane handed here from another device: pull its branch, drop its transcript
+  // where the CLI will look, start it as an ordinary local pane. The lane split
+  // applies exactly as it would to a local launch - two agents in one repo must
+  // not share a checkout because one of them arrived by handoff.
+  receiveHandoff: (payload, file) =>
+    receiveHandoff(
+      {
+        root: projectsRoot,
+        place: (req) => laneFor(req),
+        start: (req) => manager.start(req),
+        historyDir: () => join(app.getPath('userData'), 'history'),
+        claudeProjectDir: projectDir
+      },
+      payload,
+      file
+    ),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   onData: (cb) => {
@@ -1666,6 +1683,25 @@ ipcMain.handle('remote:projects', (_e, device: string) => remote.projectsOn(Stri
 ipcMain.handle('remote:agents', (_e, device: string) => remote.agentsOn(String(device)))
 ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
   remote.startOn(String(device), req)
+)
+// Handing panes the OTHER way: this machine's live panes move to that device and
+// keep going there. The push happens before anything is killed here, and a pane
+// whose handoff fails stays open - see main/handoff.ts.
+ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[]) =>
+  sendHandoff(
+    {
+      root: projectsRoot,
+      list: () => manager.list(),
+      snapshot: () => manager.snapshot(),
+      kill: (id) => manager.kill(id),
+      tailOf: (id, bytes) => history.tail(id, bytes),
+      transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
+      deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
+      deviceName: (dev) => remote.peerName(dev)
+    },
+    String(device),
+    Array.isArray(ids) && ids.length ? ids.map(String) : undefined
+  )
 )
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.

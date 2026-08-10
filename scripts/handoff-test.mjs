@@ -1,0 +1,222 @@
+// A pane handed to another machine, end to end, with nothing faked that matters:
+// a real repo with a real bare origin, a real loopback link between a real
+// RemoteHost and RemoteClient, and a transcript big enough that it MUST travel
+// as chunks. The far end's "session manager" is a capture - everything up to
+// the pty is the thing under test, and the pty is the one part that cannot move.
+//
+// The refusal case is load-bearing: a receiver whose checkout holds uncommitted
+// work must say so and touch nothing, and the sender must keep its pane.
+
+import { buildSync } from 'esbuild'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createServer } from 'node:net'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const out = mkdtempSync(join(tmpdir(), 'pf-handoff-'))
+let failures = 0
+let checks = 0
+
+function ok(what, cond, detail = '') {
+  checks++
+  if (cond) return console.log(`  ok   ${what}`)
+  failures++
+  console.log(`  FAIL ${what}${detail ? ' - ' + detail : ''}`)
+}
+
+function git(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+}
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = createServer()
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address()
+      s.close(() => resolve(port))
+    })
+  })
+}
+
+function bundle() {
+  const entry = join(out, 'entry.ts')
+  const p = (rel) => JSON.stringify(join(root, rel).replace(/\\/g, '/'))
+  writeFileSync(
+    entry,
+    [
+      `export { RemoteHost } from ${p('src/main/remote/host.ts')}`,
+      `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
+      `export { newCode } from ${p('src/main/remote/wire.ts')}`,
+      `export { sendHandoff, receiveHandoff } from ${p('src/main/handoff.ts')}`,
+      `export { mapCwd } from ${p('src/shared/handoff.ts')}`
+    ].join('\n'),
+    'utf8'
+  )
+  const file = join(out, 'handoff.mjs')
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    logLevel: 'warning',
+    outfile: file
+  })
+  return file
+}
+
+/** Every HostBackend method the handoff path never touches, stubbed inert. */
+function inertBackend() {
+  return {
+    list: () => [],
+    buffer: () => '',
+    write: () => {},
+    resize: () => {},
+    redraw: () => {},
+    setBusy: () => {},
+    clearAttention: () => {},
+    kill: () => {},
+    restart: () => null,
+    rename: () => {},
+    switchAgent: () => null,
+    startSession: () => {
+      throw new Error('not under test')
+    },
+    projects: () => Promise.resolve([]),
+    agents: () => Promise.resolve([]),
+    onData: () => () => {},
+    onSessions: () => () => {},
+    onAttention: () => () => {}
+  }
+}
+
+const mod = await import(pathToFileURL(bundle()).href)
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd } = mod
+
+// ---------------------------------------------------------------- mapCwd
+console.log('mapCwd')
+ok('mac path onto a windows root', mapCwd('/Users/r/Projects/PaneForge', '/Users/r/Projects', 'C:\\Users\\G\\Desktop\\Projects') === 'C:\\Users\\G\\Desktop\\Projects\\PaneForge')
+ok('windows path onto a mac root', mapCwd('C:\\Users\\G\\Desktop\\Projects\\a\\b', 'C:\\Users\\G\\Desktop\\Projects', '/Users/r/Projects') === '/Users/r/Projects/a/b')
+ok('the root itself maps to the root', mapCwd('/Users/r/Projects', '/Users/r/Projects', '/x') === '/x')
+ok('outside the root refuses', mapCwd('/etc/passwd', '/Users/r/Projects', '/x') === null)
+ok('prefix is a path segment, not a string prefix', mapCwd('/Users/r/Projects2/app', '/Users/r/Projects', '/x') === null)
+
+// ---------------------------------------------------------------- the link
+const senderRoot = join(out, 'sender')
+const receiverRoot = join(out, 'receiver')
+const claudeDir = join(out, 'claude-projects')
+const historyDir = join(out, 'history')
+for (const d of [senderRoot, receiverRoot]) mkdirSync(d, { recursive: true })
+
+// A real repo with a real origin: the git remote is the code's transport.
+const repo = join(senderRoot, 'proj')
+const origin = join(out, 'origin.git')
+mkdirSync(repo)
+git(out, 'init', '--bare', origin)
+git(senderRoot, 'init', '-b', 'work', repo)
+git(repo, 'config', 'user.email', 't@t')
+git(repo, 'config', 'user.name', 't')
+writeFileSync(join(repo, 'app.js'), 'one\n')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-m', 'feat: start')
+git(repo, 'remote', 'add', 'origin', origin)
+git(repo, 'push', 'origin', 'work')
+// ...and uncommitted work on top, which the handoff must carry.
+writeFileSync(join(repo, 'app.js'), 'one\ntwo\n')
+writeFileSync(join(repo, 'new.txt'), 'born dirty\n')
+
+// A transcript that cannot fit one chunk: reassembly is the thing proved.
+const transcript = join(out, 'conv123.jsonl')
+const line = JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(4000) } }) + '\n'
+writeFileSync(transcript, line.repeat(1300)) // ~5.2 MB
+const transcriptBytes = readFileSync(transcript)
+
+const started = []
+const receiver = {
+  root: () => receiverRoot,
+  place: async (req) => ({ ...req }),
+  start: (req) => {
+    started.push(req)
+    return { id: `pc-${started.length}`, title: req.title ?? 'pane', cwd: req.cwd, agent: req.agent ?? 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }
+  },
+  historyDir: () => historyDir,
+  claudeProjectDir: (cwd) => join(claudeDir, cwd.replace(/[^A-Za-z0-9]/g, '-'))
+}
+
+const backend = inertBackend()
+backend.receiveHandoff = (payload, file) => receiveHandoff(receiver, payload, file)
+
+const code = newCode()
+const port = await freePort()
+const me = (id, name) => () => ({ id, name, platform: process.platform, version: '0.0.0' })
+const host = new RemoteHost(backend, me('pc', 'PC'), () => code)
+host.start(port)
+const client = new RemoteClient({ id: 'pc', name: 'PC', address: '127.0.0.1', port, code, auto: false }, me('mac', 'Laptop'))
+await new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error(`link never came up: ${client.error}`)), 10_000)
+  client.on('status', () => {
+    if (client.status === 'online') {
+      clearTimeout(t)
+      resolve()
+    }
+  })
+  client.connect()
+})
+
+// ---------------------------------------------------------------- hand one pane over
+console.log('handoff')
+const killed = []
+const sender = {
+  root: () => senderRoot,
+  list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }],
+  snapshot: () => [{ cwd: repo, title: 'proj', agent: 'claude', resumeId: 'conv123', scrollbackId: 's1' }],
+  kill: (id) => killed.push(id),
+  tailOf: () => 'SCREEN-TAIL\u001b[32mgreen\u001b[0m\n',
+  transcriptFileFor: () => transcript,
+  deliver: (dev, payload, file) => client.handoff(payload, file),
+  deviceName: () => 'PC'
+}
+
+const items = await sendHandoff(sender, 'pc')
+ok('one pane, one report', items.length === 1)
+ok('the pane moved', items[0]?.ok === true, items[0]?.error)
+ok('the sender pane was closed after the ack', killed.join() === 's1')
+
+const clone = join(receiverRoot, 'proj')
+ok('the repo was cloned under the receiving root', existsSync(join(clone, '.git')))
+ok('the dirty work travelled through the remote', existsSync(join(clone, 'new.txt')) && readFileSync(join(clone, 'app.js'), 'utf8') === 'one\ntwo\n')
+ok('the WIP commit is an auto-sync subject', git(clone, 'log', '--format=%s', '-1') === 'auto-sync: handoff to PC')
+ok('the sender repo is clean after the push', git(repo, 'status', '--porcelain') === '')
+
+const req = started[0]
+ok('the far pane starts in the mapped folder', req?.cwd === clone, req?.cwd)
+ok('the far pane resumes THAT conversation', req?.resume === true && req?.resumeId === 'conv123')
+const landed = join(receiver.claudeProjectDir(clone), 'conv123.jsonl')
+ok('the transcript landed where the CLI looks', existsSync(landed))
+ok('5 MB of chunks reassembled byte-for-byte', existsSync(landed) && readFileSync(landed).equals(transcriptBytes))
+ok('the screen tail seeds the far scrollback', Boolean(req?.scrollbackId) && readFileSync(join(historyDir, `${req.scrollbackId}.log`), 'utf8').includes('SCREEN-TAIL'))
+
+// ---------------------------------------------------------------- refusals
+console.log('refusals')
+writeFileSync(join(clone, 'local-edit.txt'), 'work someone did on the PC\n')
+const again = await sendHandoff(sender, 'pc')
+ok('a dirty receiver checkout refuses by name', again[0]?.ok === false && /uncommitted/.test(again[0]?.error ?? ''), again[0]?.error)
+ok('the refused pane was NOT closed', killed.length === 1)
+ok('the receiver kept its local edit', readFileSync(join(clone, 'local-edit.txt'), 'utf8').includes('someone'))
+rmSync(join(clone, 'local-edit.txt'))
+
+const outside = await sendHandoff(
+  { ...sender, list: () => [{ id: 's9', title: 'sys', cwd: '/etc', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }], snapshot: () => [{ cwd: '/etc', agent: 'claude', scrollbackId: 's9' }] },
+  'pc'
+)
+ok('a folder outside the projects root fails its own pane', outside[0]?.ok === false)
+
+client.disconnect()
+host.stop()
+rmSync(out, { recursive: true, force: true })
+
+console.log(`\n${checks} checks, ${failures} failures`)
+process.exit(failures ? 1 : 0)

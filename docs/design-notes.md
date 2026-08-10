@@ -395,6 +395,30 @@ on the device it was opened on; the other window watches and types. Moving a run
 mean moving the folder it is editing, which is the one thing that cannot be done over a
 socket. "Continue where I left off" is therefore *remote control*, not migration.
 
+Handoff (v0.8.37) is the third answer, between those two: not moving the pty, and not
+merely watching it, but moving the three things a pane is FOR and starting a new pty on
+top of them over there. The insight that makes it small is that each of the three
+already has a transport: the code's is the git remote (the sender commits dirty work as
+an `auto-sync:` subject — which the deploy guard ignores — and pushes; the receiver
+clones or fast-forwards), the conversation's is the CLI's own `--resume` (the transcript
+jsonl is the only payload that has to cross the link, chunked because the wire caps a
+frame at 8 MB and transcripts run to tens of MB), and the screen's is the pane history
+file the scrollback-restore path already reads (`scrollbackId` pointing at a seeded
+log). `main/handoff.ts` takes every dependency as an argument and imports nothing from
+Electron, so `test:handoff` drives BOTH ends against real repositories and a real
+loopback link with only the pty captured.
+
+Two refusals are the safety of it. The receiver never touches a checkout that has
+uncommitted or unpushed work — that is another machine's live state, and the lesson list
+is full of sessions that clobbered one — and the sender kills its pane only after the
+far end has answered that the replacement is running, so a refused or failed handoff
+costs nothing. Paths cross machines by grafting the pane's position relative to the
+sender's projects root onto the receiver's (`mapCwd`, case-insensitive because one end
+is Windows, realpath-tolerant because macOS tmp and linked roots lie about themselves).
+The far pane goes through `laneFor` like any local launch — and the transcript is
+written AFTER placement, because a lane split moves the cwd and the CLI reads
+transcripts from a folder named after the cwd it actually starts in.
+
 Session ids are the seam. A mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in
 `main/index.ts` routes every pane message to the link instead of the pty manager - so
 the sidebar, the palette, the grid and every shortcut treat it as an ordinary pane.

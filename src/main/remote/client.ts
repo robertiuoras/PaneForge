@@ -10,8 +10,15 @@
 // watching and typing from here, not moving the agent.
 
 import { EventEmitter } from 'node:events'
+import { randomBytes } from 'node:crypto'
 import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
+import {
+  HANDOFF_ASK_MS,
+  HANDOFF_CHUNK,
+  type HandoffPayload,
+  type HandoffResult
+} from '../../shared/handoff'
 import type { Project, RemotePeer, Session, StartSessionRequest } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
@@ -135,6 +142,36 @@ export class RemoteClient extends EventEmitter {
     return this.tag(s)
   }
 
+  /**
+   * Hand one pane over. The payload goes out under the ordinary rid, and the
+   * transcript follows it as chunk frames tied together by `xfer` - the wire
+   * caps a frame at 8 MB and a transcript is routinely bigger. The answer only
+   * comes once the far end's pane is actually running, so the timeout is the
+   * long one: a clone on a cold repo is part of what it is waiting for.
+   */
+  handoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
+    const body: HandoffPayload = { ...payload }
+    if (!file || file.length === 0) {
+      file = null
+      delete body.transcript
+      delete body.xfer
+    } else {
+      body.xfer = randomBytes(8).toString('hex')
+    }
+    const answer = this.ask<HandoffResult>({ t: 'handoff', payload: body }, HANDOFF_ASK_MS)
+    if (file && body.xfer) {
+      for (let off = 0; off < file.length; off += HANDOFF_CHUNK) {
+        this.send({
+          t: 'handoffdata',
+          xfer: body.xfer,
+          data: file.subarray(off, off + HANDOFF_CHUNK).toString('base64'),
+          last: off + HANDOFF_CHUNK >= file.length
+        })
+      }
+    }
+    return answer
+  }
+
   // -------------------------------------------------------------------------
 
   private open(): void {
@@ -229,6 +266,9 @@ export class RemoteClient extends EventEmitter {
         return
       case 'started':
         this.settle(m, m.session)
+        return
+      case 'handoffdone':
+        this.settle(m, m.result)
         return
       case 'projects':
         this.settle(m, m.list)

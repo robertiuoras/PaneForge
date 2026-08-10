@@ -457,6 +457,36 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
    * installed CLIs say nothing about what is checked out or usable on the other one.
    */
   const [opening, setOpening] = useState<string | null>(null)
+  // Hand off is two presses on purpose: the first arms it, the second moves every
+  // pane on this machine. A mis-click costs a re-read, never a desk.
+  const [handing, setHanding] = useState<string | null>(null)
+  const [handBusy, setHandBusy] = useState(false)
+  useEffect(() => {
+    if (!handing) return
+    const t = setTimeout(() => setHanding(null), 6000)
+    return () => clearTimeout(t)
+  }, [handing])
+
+  async function handOff(id: string, name: string): Promise<void> {
+    if (handing !== id) {
+      setHanding(id)
+      return
+    }
+    setHanding(null)
+    setHandBusy(true)
+    try {
+      const items = await api.handoffToDevice(id)
+      const ok = items.filter((i) => i.ok).length
+      const bad = items.filter((i) => !i.ok)
+      if (items.length === 0) flash('No local panes to hand off')
+      else if (bad.length === 0) flash(`Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`)
+      else flash(`Moved ${ok} of ${items.length} — ${bad[0].title}: ${bad[0].error}`)
+    } catch (err) {
+      flash((err as Error).message)
+    } finally {
+      setHandBusy(false)
+    }
+  }
   const [far, setFar] = useState<{ projects: Project[]; agents: AgentInfo[] } | null>(null)
   const [farCwd, setFarCwd] = useState('')
   const [farAgent, setFarAgent] = useState('')
@@ -851,6 +881,16 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                         onClick={() => void openLauncher(p.id)}
                       >
                         New pane
+                      </button>
+                    )}
+                    {p.status === 'online' && (
+                      <button
+                        className="ghost small"
+                        title={`Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors.`}
+                        disabled={handBusy}
+                        onClick={() => void handOff(p.id, p.name)}
+                      >
+                        {handBusy ? 'Handing off…' : handing === p.id ? 'Move all panes?' : 'Hand off'}
                       </button>
                     )}
                     <button

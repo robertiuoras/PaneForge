@@ -7,6 +7,8 @@ import type { DriveRun } from './agentic'
 import type { Goal } from './goals'
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
+// Same type-level-only cycle as goals: handoff.ts imports Session from here.
+import type { HandoffItem } from './handoff'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
@@ -1728,6 +1730,12 @@ export interface Api {
   remoteAgents(device: string): Promise<AgentInfo[]>
   /** open a pane on that device; it appears here mirrored, like the rest of its panes */
   startRemote(device: string, req: StartSessionRequest): Promise<Session>
+  /**
+   * Move live panes TO that device: code via the git remote, conversation and
+   * screen over the link. Each pane closes here only once its replacement is
+   * running there; the report says per pane what carried and what refused.
+   */
+  handoffToDevice(device: string, ids?: string[]): Promise<HandoffItem[]>
 
   /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */

@@ -11,6 +11,7 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
+import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
@@ -33,6 +34,8 @@ export interface HostBackend {
    * drawing while a remote pane is being placed.
    */
   startSession(req: StartSessionRequest): Session | Promise<Session>
+  /** a pane another device is handing to this one - pull, restore, start */
+  receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /** subscribe to pty output; returns an unsubscribe */
@@ -53,6 +56,8 @@ export interface Guest {
 
 class GuestConn {
   attached = new Set<string>()
+  /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
+  xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
   readonly since = Date.now()
   constructor(readonly conn: Conn) {}
 }
@@ -273,6 +278,43 @@ export class RemoteHost extends EventEmitter {
           )
           return
         }
+        case 'handoff': {
+          const payload = m.payload as HandoffPayload
+          const rid = Number(m.rid ?? 0)
+          if (!payload || typeof payload !== 'object' || !payload.spec) {
+            conn.send({ t: 'failed', rid, error: 'Malformed handoff' })
+            return
+          }
+          // A transcript is announced here and arrives as chunk frames; the work
+          // starts once the last one lands. No transcript means start now.
+          if (payload.xfer && payload.transcript) {
+            if (payload.transcript.size > HANDOFF_MAX_FILE) {
+              conn.send({ t: 'failed', rid, error: 'Transcript too large to hand off' })
+              return
+            }
+            guest.xfers.set(String(payload.xfer), { payload, rid, parts: [], size: 0 })
+            return
+          }
+          this.runHandoff(conn, rid, payload, null)
+          return
+        }
+        case 'handoffdata': {
+          const x = guest.xfers.get(String(m.xfer ?? ''))
+          if (!x) return
+          const part = Buffer.from(String(m.data ?? ''), 'base64')
+          x.size += part.length
+          if (x.size > HANDOFF_MAX_FILE) {
+            guest.xfers.delete(String(m.xfer))
+            conn.send({ t: 'failed', rid: x.rid, error: 'Transcript too large to hand off' })
+            return
+          }
+          x.parts.push(part)
+          if (m.last) {
+            guest.xfers.delete(String(m.xfer))
+            this.runHandoff(conn, x.rid, x.payload, Buffer.concat(x.parts))
+          }
+          return
+        }
         case 'projects':
           void this.backend.projects().then((list) => conn.send({ t: 'projects', rid: m.rid, list }))
           return
@@ -290,6 +332,13 @@ export class RemoteHost extends EventEmitter {
       // down with it.
       conn.send({ t: 'failed', rid: m.rid, error: (err as Error).message })
     }
+  }
+
+  /** Run a received handoff and answer by rid - a refusal is a sentence, not a hang. */
+  private runHandoff(conn: Conn, rid: number, payload: HandoffPayload, file: Buffer | null): void {
+    void Promise.resolve(this.backend.receiveHandoff(payload, file))
+      .then((result) => conn.send({ t: 'handoffdone', rid, result }))
+      .catch((err: Error) => conn.send({ t: 'failed', rid, error: err.message }))
   }
 }
 

@@ -49,6 +49,7 @@ const TESTS = [
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
   ['unattended', 'unattended-test.mjs'],
+  ['handoff', 'handoff-test.mjs'],
   ['dispatch', 'dispatch-test.mjs'],
   ['dispatchpane', 'dispatch-pane-test.mjs'],
   ['route', 'project-route-test.mjs'],

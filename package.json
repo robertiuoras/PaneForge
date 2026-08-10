@@ -55,6 +55,7 @@
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
+    "test:handoff": "node scripts/handoff-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
     "test:rail": "node scripts/rail-test.mjs",
