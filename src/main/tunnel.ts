@@ -54,6 +54,8 @@ const ms = (name: string, fallback: number): number =>
 
 /** cloudflared has printed a hostname but nothing has proved it serves yet. */
 const URL_BUDGET_MS = ms('PF_TUNNEL_URL_MS', 60_000)
+/** How long to wait for public DNS to carry the record before probing anyway. */
+const RESOLVE_BUDGET_MS = ms('PF_TUNNEL_RESOLVE_MS', 30_000)
 /** From the registered line to a real 200. Measured at ~10s; this is the give-up point. */
 const PROBE_BUDGET_MS = ms('PF_TUNNEL_PROBE_MS', 120_000)
 /** The whole start, from spawn to `up`. Past this the phase is dropped and it can retry. */
@@ -119,6 +121,8 @@ export interface TunnelDeps {
   binary?: string
   /** proves the hostname really serves this desk; overridable for the same reason */
   probe?(url: string): Promise<boolean>
+  /** answers "does public DNS carry this name yet", without touching the system resolver */
+  resolve?(host: string): Promise<boolean>
 }
 
 export class Tunnel {
@@ -128,6 +132,8 @@ export class Tunnel {
   private url = ''
   private lastError = ''
   private stopping = false
+  /** the one download in flight, shared so prefetch and start never race two writers */
+  private fetching: Promise<string> | null = null
 
   constructor(private deps: TunnelDeps) {}
 
@@ -177,7 +183,7 @@ export class Tunnel {
       else {
         this.note('fetching')
         try {
-          binary = await this.fetchBinary(kept)
+          binary = await this.ensureBinary(kept)
         } catch (err) {
           this.note('off', `could not download cloudflared - ${msg(err)}`)
           return this.state()
@@ -275,14 +281,55 @@ export class Tunnel {
    */
   private async waitUntilServing(url: string): Promise<boolean> {
     const probe = this.deps.probe ?? defaultProbe
+    // A stubbed probe touches no resolver, so it needs no gate; the real one does. The
+    // gate asks 1.1.1.1 over DoH — which bypasses the system resolver's cache entirely —
+    // until the record exists, and only then is the hostname itself looked up. Probing
+    // straight after `Registered` was the residue of the NXDOMAIN trap this file already
+    // documents: the record appears 8-13s later, so the FIRST system lookup cached the
+    // NXDOMAIN and the probe then failed for 40s against a tunnel that was serving.
+    const resolve = this.deps.resolve ?? (this.deps.probe ? alwaysThere : defaultResolve)
+    const host = url.replace(/^https?:\/\//, '')
     const deadline = Date.now() + PROBE_BUDGET_MS
+    const resolveBy = Math.min(deadline, Date.now() + RESOLVE_BUDGET_MS)
+    // Scaled to the budget so the shrunken test budgets still get several polls in;
+    // at the real 30s budget this is the measured-sensible 1.5s.
+    const step = Math.max(250, Math.min(1500, RESOLVE_BUDGET_MS / 20))
+    while (Date.now() < resolveBy && !this.stopping) {
+      if (await resolve(host).catch(() => false)) break
+      await sleep(step)
+    }
     let wait = 1000
     while (Date.now() < deadline && !this.stopping) {
       if (await probe(url).catch(() => false)) return true
       await sleep(wait)
-      wait = Math.min(wait * 1.5, 8000)
+      // DNS is confirmed by the time this runs, so the answer is seconds away: a cap of
+      // 8s here is what used to turn a 13s activation into a 16s one.
+      wait = Math.min(wait * 1.5, 4000)
     }
     return false
+  }
+
+  /**
+   * Download the binary ahead of need, quietly. Called when the Devices panel opens, so
+   * that flipping the tunnel switch later starts at "starting", not at a 20 MB download —
+   * which was most of the wait the switch was blamed for. Failing is not an event: the
+   * switch still downloads on demand, with its own error reporting.
+   */
+  prefetch(): void {
+    if (this.deps.binary || this.deps.onPath) return
+    const kept = join(this.deps.dir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')
+    if (existsSync(kept)) return
+    void this.ensureBinary(kept).catch(() => {})
+  }
+
+  /** One download at a time, whoever asks: both callers get the same promise. */
+  private ensureBinary(to: string): Promise<string> {
+    if (!this.fetching) {
+      this.fetching = this.fetchBinary(to).finally(() => {
+        this.fetching = null
+      })
+    }
+    return this.fetching
   }
 
   private async fetchBinary(to: string): Promise<string> {
@@ -329,6 +376,23 @@ export class Tunnel {
     this.url = ''
     if (this.phase !== 'off') this.note('off')
   }
+}
+
+const alwaysThere = async (): Promise<boolean> => true
+
+/**
+ * "Does public DNS carry this name yet" — asked of Cloudflare's DoH endpoint, never of
+ * the system resolver, because a negative answer from the system resolver is CACHED and
+ * keeps answering "no such host" long after the record exists.
+ */
+async function defaultResolve(host: string): Promise<boolean> {
+  const res = await fetch(
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`,
+    { headers: { accept: 'application/dns-json' } }
+  )
+  if (!res.ok) return false
+  const body = (await res.json()) as { Answer?: { type: number }[] }
+  return !!body.Answer?.some((a) => a.type === 1)
 }
 
 /** A real request over the real internet: anything but our own bytes is not proof. */

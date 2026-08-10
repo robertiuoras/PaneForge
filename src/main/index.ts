@@ -1502,6 +1502,10 @@ ipcMain.handle('phone:serve', async (_e, on: boolean) => {
   }
   await phone.start(port)
   if (cfg.phone?.tunnel) void tunnel.start(port)
+  // Serving is the moment somebody is about to pair, and the tunnel switch is an inch
+  // away: having the 20 MB binary already on disk is what makes that switch feel like a
+  // switch instead of a download.
+  tunnel.prefetch()
   return phoneState()
 })
 ipcMain.handle('phone:port', async (_e, port: number) => {

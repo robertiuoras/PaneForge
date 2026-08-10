@@ -19,6 +19,7 @@
 process.env.PF_TUNNEL_URL_MS = '2000'
 process.env.PF_TUNNEL_PROBE_MS = '1500'
 process.env.PF_TUNNEL_START_MS = '8000'
+process.env.PF_TUNNEL_RESOLVE_MS = '600'
 
 import { buildSync } from 'esbuild'
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
@@ -132,6 +133,61 @@ const nodeShim = (file) => {
     s.phase !== 'up',
     'an address that never answers is never reported as up',
     `${s.phase} after ${Date.now() - started}ms`
+  )
+}
+
+// ---- 2b. the resolver is not asked before public DNS has the record -------------------
+//
+// The cached-NXDOMAIN trap, as a sequence: the first lookup of a name that does not exist
+// yet poisons the system resolver, so the probe may not run until the DoH gate says the
+// record is there - and a gate that never answers must fall through after its budget, not
+// hold the start hostage.
+
+{
+  const order = []
+  let there = false
+  setTimeout(() => {
+    there = true
+  }, 300)
+  const t = new Tunnel({
+    dir: join(work, 'bin'),
+    binary: nodeShim(stub('ok')),
+    resolve: async () => {
+      order.push(there ? 'resolved' : 'asked-early')
+      return there
+    },
+    probe: async () => {
+      order.push('probed')
+      return true
+    },
+    onChange: () => {}
+  })
+  const s = await t.start(7412)
+  await t.stop()
+  ok(s.phase === 'up', 'the gated start still comes up', s.phase)
+  const firstProbe = order.indexOf('probed')
+  const resolved = order.indexOf('resolved')
+  ok(
+    resolved !== -1 && firstProbe > resolved,
+    'the hostname is not probed until DNS carries it',
+    order.join(',')
+  )
+
+  // And a DoH endpoint that never answers yes gives up at its budget and probes anyway.
+  const stuck = new Tunnel({
+    dir: join(work, 'bin'),
+    binary: nodeShim(stub('ok')),
+    resolve: async () => false,
+    probe: async () => true,
+    onChange: () => {}
+  })
+  const began = Date.now()
+  const s2 = await stuck.start(7413)
+  await stuck.stop()
+  ok(
+    s2.phase === 'up',
+    'a silent DoH endpoint delays the probe, never defeats it',
+    `${s2.phase} after ${Date.now() - began}ms`
   )
 }
 
