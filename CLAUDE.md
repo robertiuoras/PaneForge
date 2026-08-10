@@ -221,10 +221,28 @@ channel of its own.
 - Events go down one SSE stream; `phone.broadcast` sits **ahead** of the window check in
   `send()` so a minimized window does not starve a phone. `send`s are queued client-side
   because they are ordered.
-- **Off by default, and it stays that way.** Serving grants a browser a pane, which is
-  commands on this machine. Unpaired gets the pairing page and not one asset; five wrong
-  codes locks that address for a minute. The cookie is `hmac(deviceId, code)` - derived,
-  never stored - so rotating the code signs every phone out.
+- **Off until the Devices panel is opened — and opening it is the switch.** Serving
+  grants a browser a pane, which is commands on this machine, so the app never listens
+  on its own; but opening Devices IS the intent to pair, so the panel starts serving on
+  mount and the QR is on screen the moment the panel is. There is no separate toggle any
+  more (v0.8.36: the toggle was where the QR hid, and the QR is the whole setup). `Stop
+  serving` lives in the fold and holds until the panel is next opened. Unpaired gets the
+  pairing page and not one asset; five wrong codes locks that address for a minute. The
+  cookie is `hmac(deviceId, code)` - derived, never stored - so rotating the code signs
+  every phone out.
+- **The QR leads with an address a plain phone can reach.** `phoneUrls()` puts the LAN
+  address first and the tailnet one after it: 100.64/10 answers only for a phone running
+  Tailscale, and leading with it made the QR a dead link on every ordinary phone the
+  moment this desk had a tailscale interface up. `reachWords` says "needs Tailscale on
+  the phone" for it, never "works anywhere" — only the tunnel earns that. Pinned by
+  `test:phone`, which feeds `phoneUrls` a mixed interface set.
+- **The tunnel never asks the system resolver for a name public DNS does not carry yet.**
+  `waitUntilServing` gates the probe on a DNS-over-HTTPS answer (cloudflare-dns.com,
+  which bypasses the local cache) and only then touches the hostname — probing straight
+  after `Registered` was the cached-NXDOMAIN trap in slow motion, 40s of ENOTFOUND
+  against a serving tunnel. The gate falls through after `PF_TUNNEL_RESOLVE_MS` (30s) so
+  a blocked DoH endpoint delays the probe, never defeats it. And the 20 MB binary is
+  prefetched when serving starts, so the switch costs seconds, not a download.
 - **Scanning asks; a press on the desk answers.** The QR carries the bare address, not the
   code: the phone opens it, `POST /pf/ask` raises a card here with four digits that are on
   both screens, and Approve mints THAT browser a 32-byte token of its own. So there is no

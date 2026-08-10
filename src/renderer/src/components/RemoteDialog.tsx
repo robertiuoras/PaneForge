@@ -242,7 +242,20 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void api.phoneState().then(setState)
+    // Opening this panel IS the intent to pair, so serving starts here rather than
+    // behind a switch: the QR must be on screen the moment the panel is. The one thing
+    // the old switch did that mattered — turning it off — lives on as a button in the
+    // fold, and the OFF it sets holds only until this panel is opened again.
+    void api.phoneState().then((s) => {
+      setState(s)
+      if (!s.on) {
+        setBusy(true)
+        void api
+          .setPhoneServing(true)
+          .then(setState)
+          .finally(() => setBusy(false))
+      }
+    })
     // A browser arriving or leaving changes the count without anybody asking, so this is
     // pushed rather than polled - see `onChange` in main/phone.ts.
     return api.onPhone(setState)
@@ -264,20 +277,24 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
           </span>
         )}
       </div>
-      <Switch
-        checked={state.on}
-        disabled={busy}
-        onChange={(on) => {
-          setBusy(true)
-          void api
-            .setPhoneServing(on)
-            .then(setState)
-            .finally(() => setBusy(false))
-        }}
-        label="Serve this desk to a browser on my network"
-        hint="Open the address below on a phone and you get this window: the same panes, live, and you can type into them. The agents keep running on this machine. Anything that can type into a pane can run commands here, so it stays behind the code."
-      />
       {state.error && <div className="dev-error">{state.error}</div>}
+      {!state.on && !busy && (
+        <div className="dev-acts">
+          <span className="hint">Serving is stopped.</span>
+          <button
+            className="ghost small"
+            onClick={() => {
+              setBusy(true)
+              void api
+                .setPhoneServing(true)
+                .then(setState)
+                .finally(() => setBusy(false))
+            }}
+          >
+            Start again
+          </button>
+        </div>
+      )}
       {state.on && (
         <div className="dev-self">
           {/* The picture IS the setup, so it is the whole of what this panel shows until
@@ -387,6 +404,21 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               label="Let a browser ask to be let in"
               hint="It raises a card on this screen with four digits and the same four on the phone. Nothing is granted until you press Approve here. Off, and a phone has to type the code."
             />
+            <div className="dev-acts">
+              <button
+                className="ghost small"
+                title="Closes the phone page. Opening this panel starts it again."
+                onClick={() => {
+                  setBusy(true)
+                  void api
+                    .setPhoneServing(false)
+                    .then(setState)
+                    .finally(() => setBusy(false))
+                }}
+              >
+                Stop serving this desk
+              </button>
+            </div>
           </Fold>
         </div>
       )}
