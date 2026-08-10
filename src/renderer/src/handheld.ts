@@ -52,12 +52,17 @@ export function useHandheld(activeId: string | null): Handheld {
 
   // A pane became the active one: that is the tap, and the pane gets the screen. Not on
   // first mount - there the list is what should be up - so an id that was already active
-  // does not steal it.
+  // does not steal it. And not on the null -> id transition either: that is the RESTORE
+  // filling activeId as the sessions load, seconds after mount, which on a phone put a
+  // pane on the home screen before the list was ever seen (measured: listOpen was false
+  // at first paint). A real tap does not need this effect - the row's onClick calls
+  // showPane() itself.
   const [seen, setSeen] = useState(activeId)
   useEffect(() => {
     if (activeId === seen) return
+    const restore = seen === null
     setSeen(activeId)
-    if (activeId) setListOpen(false)
+    if (activeId && !restore) setListOpen(false)
   }, [activeId, seen])
 
   useEffect(() => {

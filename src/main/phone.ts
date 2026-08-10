@@ -38,8 +38,12 @@ import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
 
-/** How long a phone's cookie is good for. Rotating the code invalidates it sooner. */
-const COOKIE_DAYS = 30
+/**
+ * How long a phone's cookie is good for. Effectively permanent: an approved device says
+ * "It stays signed in until you sign it out here", and a 30-day silent expiry made that
+ * a lie. Revocation is explicit — sign the device out by name, or rotate the code.
+ */
+const COOKIE_DAYS = 3650
 /** Wrong codes from one address before it waits. */
 const TRY_LIMIT = 5
 const LOCK_MS = 60_000

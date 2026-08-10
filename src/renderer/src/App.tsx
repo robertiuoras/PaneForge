@@ -41,6 +41,7 @@ import {
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
 import { PhoneAsk } from './components/PhoneAsk'
+import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
   onPaneDraft,
   paneCopyMode,
@@ -201,6 +202,10 @@ export default function App(): JSX.Element {
    * on `<html>` and styles.css does the layout.
    */
   const handheld = useHandheld(activeId)
+  // A swipe in from the left edge is the phone's Back, same gesture as iOS. Only armed
+  // while a pane holds the screen, and only from the first 28px so a terminal's own
+  // horizontal scrolls and selections never trigger it.
+  const swipeFrom = useRef<{ x: number; y: number } | null>(null)
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
@@ -2594,6 +2599,18 @@ export default function App(): JSX.Element {
 
       <main
         ref={panesRef}
+        onTouchStart={(e) => {
+          if (!handheld.handheld || handheld.listOpen) return
+          const t = e.touches[0]
+          swipeFrom.current = t.clientX <= 28 ? { x: t.clientX, y: t.clientY } : null
+        }}
+        onTouchEnd={(e) => {
+          const from = swipeFrom.current
+          swipeFrom.current = null
+          if (!from) return
+          const t = e.changedTouches[0]
+          if (t.clientX - from.x > 60 && Math.abs(t.clientY - from.y) < 50) handheld.showList()
+        }}
         className={'panes' + (tiled ? ' grid' : '')}
         style={
           tiled
@@ -2609,6 +2626,9 @@ export default function App(): JSX.Element {
             <span aria-hidden="true">‹</span> Panes
           </button>
         )}
+        {/* And the way to talk to it: a phone keyboard composes a line better than
+            xterm's hidden textarea ever lets it. */}
+        {handheld.handheld && !handheld.listOpen && activeId && <HandheldType id={activeId} />}
         {/* One grab strip per line between two tracks, laid over the gap. Absolutely
             positioned rather than made of grid cells, because a CSS grid gap is not
             addressable - and it means the strip can be wider than the 9px gap it sits in

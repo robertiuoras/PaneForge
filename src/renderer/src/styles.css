@@ -156,6 +156,57 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   /* A dialog at phone width is the whole screen; a centred 620px card is not. */
   html.handheld .dialog { width: 100%; max-width: 100%; max-height: 100dvh; border-radius: 0; }
   html.handheld .overlay { padding: 0; }
+  /* The list is the home screen, so the 282px sidebar's rows become finger-sized cards:
+     every row at least Apple's 44px, real borders so each card reads as one tap target,
+     and the desktop's hover-density type stepped up to phone size. */
+  html.handheld.handheld-list .sidebar { padding: 14px 12px; }
+  html.handheld.handheld-list .list { gap: 8px; }
+  html.handheld.handheld-list .list .row {
+    min-height: 52px;
+    padding: 11px 13px;
+    border-color: var(--line);
+    background: var(--surface-2);
+  }
+  html.handheld.handheld-list .list .row.active { border-color: var(--line-strong); }
+  html.handheld.handheld-list .row-title { font-size: 15px; }
+  html.handheld.handheld-list .row-sub { font-size: 12.5px; }
+  /* Typing on a phone: xterm's hidden textarea summons the keyboard but fights
+     autocorrect, so a pane held by a phone gets a real input bar pinned to the bottom.
+     The keyboard resizes the viewport (interactive-widget=resizes-content), so bottom: 0
+     stays above it. */
+  .handheld-type {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: max(4px, env(safe-area-inset-bottom));
+    z-index: 40;
+    display: flex;
+    gap: 6px;
+  }
+  .handheld-type input {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: 400 15px/1 inherit;
+  }
+  .handheld-type input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .handheld-type button {
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--surface);
+    font: 600 15px/1 inherit;
+  }
+  /* The bar sits over the terminal's last lines otherwise. */
+  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 56px; }
 }
 
 /* ---- sidebar ---- */
@@ -1904,6 +1955,21 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   box-shadow: 0 12px 34px #0009;
 }
 .pair-ask-who { font-size: 13px; color: var(--text); }
+/* The PHONE ask is the exception to the corner: the person asked for it seconds ago from
+   the phone in their own hand, so it is the one thing being decided — centred, dimmed,
+   "Is this you?". Window-level only; the window itself is never raised or focused. */
+.phone-ask-veil {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: #0008; padding: 16px;
+}
+.phone-ask-veil .phone-ask {
+  position: static; width: min(380px, calc(100vw - 32px));
+  padding: 18px 20px 15px; text-align: center;
+}
+.phone-ask-title { margin: 0 0 6px; font-size: 19px; font-weight: 650; color: var(--text); }
+.phone-ask-veil .pair-ask-sas { font-size: 38px; margin: 10px 0 6px; }
+.phone-ask-veil .pair-ask-acts { margin-top: 4px; }
+.phone-ask-veil .pair-ask-acts button { padding: 11px 10px; font-size: 14px; }
 /* The phone's card is the same object, with one difference that is worth a colour: a
    request that came from the internet rather than from this network. Nothing about the
    card is safe or unsafe on its own - it grants nothing until it is answered - but the
