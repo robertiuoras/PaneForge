@@ -34,7 +34,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
-import { deviceKind, originOf } from '../shared/net'
+import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
 
@@ -569,17 +569,21 @@ export class PhoneServer {
 }
 
 /** Addresses a phone on this network can actually type, best first. */
-export function phoneUrls(port: number): string[] {
+export function phoneUrls(port: number, nets = networkInterfaces()): string[] {
   const out: string[] = []
-  for (const [, list] of Object.entries(networkInterfaces())) {
+  for (const [, list] of Object.entries(nets)) {
     for (const net of list ?? []) {
       if (net.family !== 'IPv4' || net.internal) continue
       out.push(`http://${net.address}:${port}`)
     }
   }
-  // A tailnet address (100.64.0.0/10) reaches the phone off this network too, so it
-  // is the one worth reading out first.
-  out.sort((a, b) => Number(isTailscale(b)) - Number(isTailscale(a)))
+  // The QR encodes the FIRST of these, and what a phone's camera opens must be an address
+  // a plain phone can reach: the LAN. A tailnet address (100.64.0.0/10) answers only for
+  // a phone that runs Tailscale itself — leading with it is what made the QR a dead link
+  // on every ordinary phone the moment this desk had a tailscale interface up.
+  const rank = (u: string): number =>
+    originOf(hostOf(u)) === 'this network' ? 0 : isTailscale(u) ? 1 : 2
+  out.sort((a, b) => rank(a) - rank(b))
   return out
 }
 

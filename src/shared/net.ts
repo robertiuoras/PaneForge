@@ -50,8 +50,10 @@ export function hostOf(url: string): string {
  */
 export function reachWords(url: string): string {
   switch (originOf(hostOf(url))) {
+    // Honest, not optimistic: this address answers only for a phone that runs Tailscale
+    // itself. "Works anywhere" here was the panel promising what only the tunnel delivers.
     case 'tailnet':
-      return 'works anywhere'
+      return 'needs Tailscale on the phone'
     case 'internet':
       return 'public address'
     case 'this machine':

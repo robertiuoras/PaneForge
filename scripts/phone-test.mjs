@@ -310,6 +310,25 @@ let cookie = ''
     'loopback is not an address to type into a phone'
   )
 
+  // THE address: the QR encodes urls[0], so the first entry must be one a plain phone can
+  // reach. On a desk with Tailscale up, the tailnet address used to sort first and the QR
+  // was a dead link for any phone not on the tailnet - which no test caught, because
+  // test:qr proves the symbol decodes and nothing proved WHAT it should encode.
+  const mixed = phoneUrls(7312, {
+    utun6: [{ family: 'IPv4', internal: false, address: '100.89.94.66' }],
+    en0: [{ family: 'IPv4', internal: false, address: '192.168.1.7' }],
+    lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }]
+  })
+  ok(
+    mixed[0] === 'http://192.168.1.7:7312',
+    'the LAN address wins the QR, however the interfaces enumerate',
+    mixed.join(' ')
+  )
+  ok(
+    mixed.includes('http://100.89.94.66:7312'),
+    'the tailnet address is still offered, after it'
+  )
+
   await server.stop()
   ok(!server.running, 'stop() means stopped')
   ok(server.state().clients === 0, 'and no client is still counted')
@@ -409,7 +428,12 @@ let cookie = ''
   }
 
   ok(hostOf('http://100.89.94.66:7312') === '100.89.94.66', 'the host comes out of a url')
-  ok(reachWords('http://100.89.94.66:7312') === 'works anywhere', 'a tailnet address says so')
+  // "Works anywhere" was a lie: a tailnet address answers only for a phone that runs
+  // Tailscale itself, and the QR led with it - a dead link on every ordinary phone.
+  ok(
+    reachWords('http://100.89.94.66:7312') === 'needs Tailscale on the phone',
+    'a tailnet address names its condition instead of promising anywhere'
+  )
   ok(
     reachWords('http://192.168.1.7:7312') === 'this network only',
     'and a LAN address does not promise more than it can do'
