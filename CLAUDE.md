@@ -463,6 +463,30 @@ owns it. Closing a pane, quitting and the next launch all kill from that ledger.
   `spawnDetachedNoWindow`; stubbing it with a plain detached `spawn` makes every kill
   silently do nothing.
 
+## A pane opened with a prompt sends it
+
+`queuePrompt` in `src/main/sessions.ts`. A prompt handed to `sessions:start` used to be
+written as `prompt + '\r'` on a blind 2500ms timer, and the way that fails is silent:
+the pane holds a fully typed prompt nobody sent, idle and green, looking exactly like a
+person who walked away mid-sentence. Two #momin bundles sat like that for hours.
+
+- **The readiness signal is an idle COMPOSER, never a clock.** Output stopped AND
+  `readsBusy` false — Codex pauses mid-startup on `Starting MCP servers (0/4) … esc to
+  interrupt`, and a return sent into that screen cancels the startup instead.
+- **The busy read looks at the last thing PAINTED, not at a window of scrollback.** The
+  boot's own `esc to interrupt` never leaves the buffer, so a fixed tail calls a pane
+  busy for ever and the prompt is never typed at all.
+- **The return is a separate write**, a beat after the text: a CLI that is still booting
+  replays what arrived into its composer, where a trailing return is one more character
+  of the paste.
+- **The submit is confirmed, not assumed** — still idle a few seconds later means the
+  return was eaten, so another goes, up to three. Everything is capped and every budget
+  is an env knob, which is what lets `npm run test:promptsubmit` run in a second.
+- Model ids are part of this: a Codex pane started on any `gpt-5.1-codex*` id answers
+  `400 … not supported when using Codex with a ChatGPT account` INSIDE a healthy-looking
+  pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
+  answering on a subscription login.
+
 ## A reopened pane comes back with what was on its screen
 
 The terminal's own scrollback is renderer memory, so before this every pane reopened blank —
@@ -641,6 +665,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
+| `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:stashsummon` | that the Stash is not on screen until it is asked for: closing HIDES the window rather than parking a pill, and a summon opens at the pointer, on the pointer's own display, clamped on |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
