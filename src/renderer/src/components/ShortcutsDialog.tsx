@@ -147,7 +147,7 @@ const TOPICS: Topic[] = [
           halfway through the other&apos;s edit, and neither of them knows.
         </p>
         <p>
-          So the second pane gets a <b>lane</b> — its own checkout of that repository in a
+          So the second pane gets a <b>lane</b>, its own checkout of that repository in a
           folder beside the first (<code>myapp-w2</code>), on its own branch, with its own
           port. The first pane keeps the original folder. That is the whole idea: two chats in
           one project, each with a copy that only it writes to.
@@ -155,7 +155,7 @@ const TOPICS: Topic[] = [
         <p>
           The <b>w2</b> or <b>w3</b> chip on a pane&apos;s card is the lane it was given. You
           never make one and never clean one up. It is an ordinary git worktree, so you commit
-          in it and merge it like any other branch — and once you have, PaneForge deletes the
+          in it and merge it like any other branch, and once you have, PaneForge deletes the
           folder and the branch by itself and puts the pane&apos;s card back on the project.
         </p>
         <p>
@@ -163,7 +163,7 @@ const TOPICS: Topic[] = [
           window. It only ever removes a lane it made (<code>-a</code> on a{' '}
           <code>lane-a</code> branch)
           that has nothing uncommitted in it, no untracked files, no pane open on it, and no
-          commit the project does not already have. Anything else keeps its folder — including
+          commit the project does not already have. Anything else keeps its folder, including
           a lane whose several commits were squashed into one, which cannot be told apart from
           unmerged work. So a folder that is still there is a folder with something in it.
         </p>
@@ -182,21 +182,21 @@ const TOPICS: Topic[] = [
       <>
         <p>
           Only on a machine with a PaneForge checkout. Several chats improve PaneForge at
-          once, each holding one <b>PF lane</b> — a numbered copy of the repository, claimed
+          once, each holding one <b>PF lane</b>, a numbered copy of the repository, claimed
           when the chat starts and given back when it ends. It shares the word &quot;lane&quot;
           with the chip above and is otherwise unrelated: a pane can carry both at once, and a
           PF lane says nothing about the folder the pane is open in.
         </p>
         <p>
           When a chat finishes, its lane is merged and released together with every other
-          finished lane — one version, not one per chat. <b>Stuck</b> means a lane&apos;s
+          finished lane: one version, not one per chat. <b>Stuck</b> means a lane&apos;s
           finished work will not merge into master, so every release is leaving it out. That
           used to be invisible and one sat unnoticed for a day, which is why it is on screen
           now.
         </p>
         <p>
           A stuck lane is retried by itself every few minutes and most clear on their own, as
-          soon as master stops disagreeing — including when the chat that made the mess has
+          soon as master stops disagreeing, including when the chat that made the mess has
           gone and left uncommitted files in there. The ones that need real editing are handed
           to a free pane automatically, and the <b>fix</b> button hands one over now instead of
           waiting. A lane held by a chat you have open is shown on that pane&apos;s card; the
@@ -213,7 +213,7 @@ const TOPICS: Topic[] = [
       <>
         <p>
           {MOD} G shows every pane at once instead of one at a time. Typing still goes to the
-          focused pane only — the one with the lit border — so a grid of eight agents is safe
+          focused pane only (the one with the lit border), so a grid of eight agents is safe
           to leave up.
         </p>
         <p>

@@ -64,7 +64,7 @@ export function PhoneAsk({ ask }: { ask: Ask }): JSX.Element {
             No
           </button>
           <button className="primary" onClick={() => void api.answerPhoneAsk(true)}>
-            Yes — let it in
+            Yes
           </button>
         </div>
         <p className="hint pair-ask-note">It stays signed in until you sign it out here.</p>

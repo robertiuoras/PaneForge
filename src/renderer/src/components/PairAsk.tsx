@@ -47,7 +47,7 @@ export function PairAsk({ ask }: { ask: RemoteAsk }): JSX.Element {
           Deny
         </button>
         <button className="primary" onClick={() => void api.answerPair(true)}>
-          Numbers match — approve
+          Numbers match, approve
         </button>
       </div>
     </div>

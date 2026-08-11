@@ -761,7 +761,7 @@ function Overlay(): JSX.Element {
             if ((e.target as HTMLElement).closest?.('.pill-grip')) return
             if (!drag.wasDrag()) want(true)
           }}
-          title={keyLabel('Stash — Ctrl+Alt+V. Drop a file here to park it. Drag it by the grip on the right.')}
+          title={keyLabel('Stash, Ctrl+Alt+V. Drop a file here to park it. Drag it by the grip on the right.')}
         >
           <span className="glyph" aria-hidden="true">
             ▤
@@ -775,7 +775,7 @@ function Overlay(): JSX.Element {
           <span
             className="pill-grip"
             aria-hidden="true"
-            title="Drag to move the Stash — any corner, any screen. It stays there."
+            title="Drag to move the Stash: any corner, any screen. It stays there."
             onMouseEnter={() => {
               onGrip.current = true
               cancelOpen()
@@ -837,7 +837,7 @@ function Overlay(): JSX.Element {
             className={'count' + (full ? ' full' : '')}
             title={
               full
-                ? `Full: ${items.length} of ${cap}. The oldest entry drops off each time you copy — Clear, or raise "Keep" under ⚙.`
+                ? `Full: ${items.length} of ${cap}. The oldest entry drops off each time you copy. Clear, or raise "Keep" under ⚙.`
                 : `${items.length} of ${cap} kept`
             }
           >
@@ -849,7 +849,7 @@ function Overlay(): JSX.Element {
             onClick={() => {
               void shelf.pick()
             }}
-            title="Add a file to the Stash — or just drop one anywhere on this window"
+            title="Add a file to the Stash, or just drop one anywhere on this window"
           >
             +
           </button>
@@ -985,7 +985,7 @@ function Overlay(): JSX.Element {
                   <span className="empty-glyph" aria-hidden="true">
                     ▤
                   </span>
-                  Copy anything, anywhere — or drop a file on here — and it stays.
+                  Copy anything, anywhere, or drop a file on here, and it stays.
                 </div>
               )}
               {!!items.length && !shown.length && <div className="empty">Nothing of that kind.</div>}
@@ -999,7 +999,7 @@ function Overlay(): JSX.Element {
                   title={
                     it.kind === 'text'
                       ? it.preview
-                      : `${it.preview} — click to put it in the pane, drag it out`
+                      : `${it.preview}: click to put it in the pane, drag it out`
                   }
                   onClick={() => {
                     // Clicking is the whole gesture: the thing you came here for is

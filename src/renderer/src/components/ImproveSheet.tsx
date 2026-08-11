@@ -391,14 +391,14 @@ export default function ImproveSheet({
         <div className="improve-report">
           <div>
             {report.outcome === 'skipped'
-              ? `Already known — ${report.detail}`
+              ? `Already known: ${report.detail}`
               : report.detail}
           </div>
           {report.kept.length ? (
             <ul className="improve-list">
               {report.kept.map((k) => (
                 <li key={k.id}>
-                  <strong>{k.name}</strong> ({k.category}) — {k.description}{' '}
+                  <strong>{k.name}</strong> ({k.category}): {k.description}{' '}
                   <span className="improve-untrusted">new, untested</span>
                 </li>
               ))}

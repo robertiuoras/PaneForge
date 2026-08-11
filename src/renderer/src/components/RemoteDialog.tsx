@@ -312,7 +312,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               <strong className="pair-scan-lead">Point your phone&apos;s camera at this</strong>
               <p className="hint">
                 {state.asking
-                  ? 'Open the link it offers and this desk asks you to approve it — four digits, on both screens. One press and that phone stays signed in.'
+                  ? 'Open the link it offers and this desk asks you to approve it: four digits, on both screens. One press and that phone stays signed in.'
                   : 'Open the link it offers and the phone is in. Nothing to type: the code rides in the part of the address a browser never sends anywhere.'}
               </p>
               {/* What this particular picture reaches, in the same words the address list
@@ -395,7 +395,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
             </div>
             <p className="hint">
               The code is the way in for a browser that cannot scan, or when asking is off
-              below. A new code signs out every phone that used one — approved devices hold
+              below. A new code signs out every phone that used one. Approved devices hold
               a secret of their own and are signed out by name, above.
             </p>
             <Switch
@@ -480,7 +480,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
       const bad = items.filter((i) => !i.ok)
       if (items.length === 0) flash('No local panes to hand off')
       else if (bad.length === 0) flash(`Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`)
-      else flash(`Moved ${ok} of ${items.length} — ${bad[0].title}: ${bad[0].error}`)
+      else flash(`Moved ${ok} of ${items.length}. ${bad[0].title}: ${bad[0].error}`)
     } catch (err) {
       flash((err as Error).message)
     } finally {
@@ -722,7 +722,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
               checked={self.pairByAsking}
               onChange={(on) => void api.setPairByAsking(on).then(onState)}
               label="Let a device on this network ask to pair"
-              hint="It puts a card on this screen with six digits. Approve it only when the same six are on the other device — that match is what proves nothing is relaying the connection. Off, and pairing needs the code typed."
+              hint="It puts a card on this screen with six digits. Approve it only when the same six are on the other device. That match is what proves nothing is relaying the connection. Off, and pairing needs the code typed."
             />
           )}
 
@@ -953,7 +953,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         <div className="setting">
           <div className="setting-row">
             <label>Pair another device</label>
-            <span className="hint">tap it below — no code to type</span>
+            <span className="hint">tap it below, no code to type</span>
           </div>
 
           {waiting && (

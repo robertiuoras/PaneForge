@@ -56,7 +56,7 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
               {/* The whole reason the card exists now: "why are there two?" is a question
                   about this minute, and the answer is a list of who is in there. */}
               <div className="lane-help-when">
-                {project ? `${project} right now` : 'Right now'} — {rows.length} lane
+                {project ? `${project} right now` : 'Right now'}: {rows.length} lane
                 {rows.length === 1 ? '' : 's'} in use
               </div>
               <ul className="lane-help-now">
@@ -88,13 +88,13 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
               made the old card long. */}
           <ul className="lane-help-states">
             <li>
-              <b>busy now</b> — a chat is typing in that copy. Nothing to do.
+              <b>busy now</b>: a chat is typing in that copy. Nothing to do.
             </li>
             <li>
-              <b>done</b> — finished; it merges back with the next update.
+              <b>done</b>: finished; it merges back with the next update.
             </li>
             <li>
-              <b>stuck</b> — two lanes changed the same lines, so someone has to pick. That
+              <b>stuck</b>: two lanes changed the same lines, so someone has to pick. That
               lane waits; everything else still ships.
             </li>
           </ul>
