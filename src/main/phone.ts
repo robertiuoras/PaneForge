@@ -639,9 +639,43 @@ function sameCode(typed: string, real: string): boolean {
  * spelling and shown under another.
  */
 function addressOf(req: IncomingMessage): string {
-  const raw = req.socket.remoteAddress ?? '?'
+  const socket = normalise(req.socket.remoteAddress ?? '?')
+  // Behind the tunnel EVERY phone arrives from 127.0.0.1: cloudflared holds the TLS
+  // connection and re-issues the request locally. Believing the socket there collapses
+  // every device on earth into one identity, and this string is the ask slot, the lockout
+  // key and the words the panel prints - so a second phone scanning while a first waited
+  // was handed the first one's request and its four digits, five scans from anywhere in the
+  // world locked the door for ten minutes, and a phone on a train was labelled "this
+  // machine", which is the one label that turns the card's internet warning off.
+  //
+  // The header is believed ONLY from loopback, which is the one hop we put there ourselves.
+  // A local process could spoof it, and that grants nothing: it is already inside the trust
+  // boundary (it can read the pairing code out of config.json, which is what `pf-ctl` does)
+  // and the only thing it could buy is an escape from a rate limit it never had to obey.
+  if (!isLoopback(socket)) return socket
+  const forwarded =
+    header(req, 'cf-connecting-ip') ||
+    // The left-most entry of `x-forwarded-for` is the client; the rest are the proxies.
+    header(req, 'x-forwarded-for').split(',')[0].trim()
+  const claimed = normalise(forwarded)
+  // Shape-checked before it is believed: this string is printed in the panel and in the
+  // card, and a header is written by whoever sent the request.
+  const looksLikeAddress = /^[0-9a-fA-F.:]{3,45}$/.test(claimed)
+  return looksLikeAddress && !isLoopback(claimed) ? claimed : socket
+}
+
+function header(req: IncomingMessage, name: string): string {
+  const v = req.headers[name]
+  return (Array.isArray(v) ? v[0] : v) ?? ''
+}
+
+function normalise(raw: string): string {
   const mapped = /^::ffff:((?:\d{1,3}\.){3}\d{1,3})$/.exec(raw)
   return mapped ? mapped[1] : raw
+}
+
+function isLoopback(address: string): boolean {
+  return address === '::1' || address === '127.0.0.1' || address.startsWith('127.')
 }
 
 

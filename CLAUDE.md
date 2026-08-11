@@ -264,6 +264,22 @@ channel of its own.
   (`phone.ask`) that falls back to the fragment-code QR. Nothing is granted by the asking.
   `npm run test:phone` covers approve, the cookie arriving on the POLL (the only door back
   to that browser), and that a signed-out cookie stops working on the next request.
+- **"One request at a time, five per address" needs the address to be real, and behind the
+  tunnel it is not.** cloudflared holds the phone's TLS connection and re-issues the request
+  locally, so every device on earth arrives as 127.0.0.1. That string is the ask slot, the
+  lockout key and the words the card prints, so believing the socket meant a second phone was
+  handed the first one's request and its four digits, five scans from anywhere shut the door
+  for ten minutes, and a phone on a train was labelled "this machine", which is exactly the
+  label that turns the card's internet warning off. `addressOf` believes `cf-connecting-ip`
+  (then `x-forwarded-for`) and does so ONLY from loopback, which is the one hop we put there
+  ourselves; a local process could spoof it and gains nothing, being already able to read the
+  pairing code out of config.json. Shape-checked before it is printed.
+- **The approve card belongs to the desk, and this UI also runs on the phone.** Drawn there
+  it is a full-screen veil over whatever that phone was doing, thrown up by any device
+  asking to get in, offering Approve to the one screen that cannot compare the digits with
+  the desk. `isPhoneClient()` (`renderer/src/client.ts`, set by `browserApi.ts`) is the only
+  thing that may gate on which copy is running, and it is for authority, never for layout:
+  a narrow window is `handheld.ts`'s question.
 - **Pairing is a camera, not a keyboard.** With asking off, Settings draws `<address>/#<code>` as a QR
   (`shared/qr.ts`, no dependency, byte mode / level M / versions 1-6) and the pairing page
   posts a code it finds in the fragment. A **fragment** because a browser never sends one

@@ -13,8 +13,10 @@ import type { PhonePeer } from './types'
 export type Origin = PhonePeer['origin']
 
 /**
- * Read off the address and nothing else. `X-Forwarded-For` is whatever the client felt
- * like sending, and there is no proxy in front of this by design.
+ * Read off the address and nothing else. Deciding WHICH address that is happens once, in
+ * `addressOf` in `main/phone.ts`, which is the only place allowed to believe a forwarded
+ * header and only from loopback: the tunnel is a proxy we start ourselves, and everything
+ * arriving through it says 127.0.0.1 on the socket.
  */
 export function originOf(address: string): Origin {
   if (address === '127.0.0.1' || address === '::1' || address === '?') return 'this machine'

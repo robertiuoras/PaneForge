@@ -540,6 +540,73 @@ let cookie = ''
   await s2.stop()
 }
 
+// Who a request is FROM, when the tunnel is in front of it.
+//
+// cloudflared holds the phone's TLS connection and re-issues the request from 127.0.0.1,
+// so believing the socket collapses every device on earth into one identity: one ask slot,
+// one lockout, and "this machine" printed for a phone on a train. Each of those is a real
+// failure, and the first two are how the door ends up shut on the person who owns it.
+{
+  const devices = []
+  const s3 = new PhoneServer({
+    code: () => code,
+    staticDir: () => staticDir,
+    invoke: async () => null,
+    send: () => {},
+    devices: () => devices,
+    saveDevices: (l) => devices.splice(0, devices.length, ...l)
+  })
+  const p3 = port + 2
+  ok((await s3.start(p3, '127.0.0.1')).on, 'a third server is up for the forwarded-address flow')
+  const at = `http://127.0.0.1:${p3}`
+  const askFrom = async (headers) =>
+    await fetch(at + '/pf/ask', { method: 'POST', headers })
+  // A refused ask answers in plain text, and the whole point of these cases is that one
+  // can be refused when it should not be: read it as a card only when it IS one, or the
+  // regression arrives as a JSON parse error rather than as a named failure.
+  const card = async (headers) => {
+    const r = await askFrom(headers)
+    return r.status === 200 ? await r.json() : { address: `refused ${r.status}`, origin: '', id: '' }
+  }
+
+  const phone = await card({ 'cf-connecting-ip': '203.0.113.9' })
+  ok(phone.address === '203.0.113.9', 'a tunnelled phone is its own address', phone.address)
+  ok(phone.origin === 'internet', 'so the card can say it came from the internet', phone.origin)
+
+  // The bug this exists for: a SECOND device must not be handed the first one's request
+  // and the first one's four digits.
+  const other = await askFrom({ 'cf-connecting-ip': '198.51.100.4' })
+  ok(other.status === 409, 'a second device is told somebody else is asking', String(other.status))
+  const same = await card({ 'cf-connecting-ip': '203.0.113.9' })
+  ok(same.id === phone.id, 'while a reload from the SAME phone is still one request')
+  s3.answerAsk(false)
+
+  // The lockout counts devices, not the tunnel. Five from one address, and the next
+  // address is still let in.
+  let last = 200
+  for (let i = 0; i < 6; i++) {
+    const r = await askFrom({ 'cf-connecting-ip': '203.0.113.9' })
+    last = r.status
+    if (r.status === 200) s3.answerAsk(false)
+  }
+  ok(last === 429, 'one tunnelled device can be locked out', String(last))
+  const fresh = await askFrom({ 'cf-connecting-ip': '198.51.100.4' })
+  ok(fresh.status === 200, 'without taking every other phone with it', String(fresh.status))
+  s3.answerAsk(false)
+
+  // And a header is only believed from the hop we put there ourselves. This server is bound
+  // to loopback, so the only way to prove the negative is the header a spoofer would send:
+  // one naming loopback (ignored, or it would be a way to look local), and one that is not
+  // an address at all.
+  const liar = await card({ 'cf-connecting-ip': '127.0.0.1' })
+  ok(liar.address === '127.0.0.1', 'a loopback claim changes nothing', liar.address)
+  s3.answerAsk(false)
+  const junk = await card({ 'cf-connecting-ip': 'not-an-address; drop table' })
+  ok(junk.address === '127.0.0.1', 'and a header that is not an address is ignored', junk.address)
+  s3.answerAsk(false)
+  await s3.stop()
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(`phone: ${checks - failures}/${checks} checks passed`)
 process.exit(failures ? 1 : 0)
