@@ -249,13 +249,28 @@ const commit = (cwd, file, text, msg) => {
   // process for a second or two. Reading git's exit code alone left the branch behind
   // forever and re-tried the same lane on every sweep.
   const { repo, lane } = fixture('locked')
-  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { cwd: lane })
+  const holder = spawn(
+    process.execPath,
+    [
+      '-e',
+      "const { existsSync } = require('node:fs'); process.stdin.once('data', () => process.stdout.write(existsSync(process.cwd()) ? 'present' : 'missing'))"
+    ],
+    { cwd: lane, stdio: ['pipe', 'pipe', 'inherit'] }
+  )
   await new Promise((r) => setTimeout(r, 400))
 
   const removed = await lw.sweepLanes(repo, [])
-  check('a lane whose folder is pinned open is still swept', removed.some((p2) => lw.samePath(p2, lane)))
-  check('...git no longer calls it a worktree', !git(repo, ['worktree', 'list']).includes('-w2'))
-  check('...and its branch is deleted, not left behind', !git(repo, ['branch', '--list', 'pf/w2']))
+  holder.stdin.write('check\n')
+  const cwdAfterSweep = await new Promise((resolve) => holder.stdout.once('data', (chunk) => resolve(String(chunk))))
+  check('a paused CLI still has a valid cwd path after the lane sweep', cwdAfterSweep === 'present', cwdAfterSweep)
+  if (process.platform === 'win32') {
+    check('a Windows lane whose folder is pinned open is still swept', removed.some((p2) => lw.samePath(p2, lane)))
+    check('...git no longer calls it a worktree', !git(repo, ['worktree', 'list']).includes('-w2'))
+    check('...and its branch is deleted, not left behind', !git(repo, ['branch', '--list', 'pf/w2']))
+  } else {
+    check('a POSIX lane used as a live cwd remains a worktree', git(repo, ['worktree', 'list']).includes('-w2'))
+    check('...and its branch remains available to that process', Boolean(git(repo, ['branch', '--list', 'pf/w2'])))
+  }
   holder.kill()
 }
 
