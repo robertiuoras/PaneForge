@@ -153,5 +153,8 @@ export async function installBrowserApi(): Promise<void> {
     pathForFile: () => ''
   })
   ;(window as unknown as { api: Api }).api = api
+  // This copy of the UI is a browser on somebody's phone, not the desk. A few things are
+  // the DESK's to answer and must not be drawn here at all: see `isPhoneClient`.
+  ;(window as unknown as { __pfPhone?: boolean }).__pfPhone = true
   await transport.open()
 }

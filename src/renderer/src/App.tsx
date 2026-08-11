@@ -41,6 +41,7 @@ import {
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
 import { PhoneAsk } from './components/PhoneAsk'
+import { isPhoneClient } from './client'
 import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
   onPaneDraft,
@@ -3241,8 +3242,12 @@ export default function App(): JSX.Element {
           thing on screen when the request lands. */}
       {remote?.asking && <PairAsk ask={remote.asking} />}
       {/* Same reasoning, one door along: a phone that scanned the picture is waiting on a
-          press here, and the person holding it is not the person with this dialog open. */}
-      {phone?.ask && <PhoneAsk ask={phone.ask} />}
+          press here, and the person holding it is not the person with this dialog open.
+          Never on a phone: this UI also runs in that browser, so an unguarded card covered
+          a signed-in phone with a full-screen veil the moment any device asked to get in,
+          and offered Approve to the one screen that cannot check the digits against the
+          desk. The desk decides. */}
+      {phone?.ask && !isPhoneClient() && <PhoneAsk ask={phone.ask} />}
       <UpdateToast />
     </div>
     </BlurbContext.Provider>
