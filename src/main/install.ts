@@ -27,6 +27,9 @@ export interface RunHandle {
  * window is meant to close everything.
  */
 const running = new Set<pty.IPty>()
+// Quitting is not an install result. node-pty reports a clean exit code for a shell that
+// received SIGHUP on macOS, so remember the app stopped it before its exit handler runs.
+const stopped = new WeakSet<pty.IPty>()
 
 /** Shell that can run a one-liner containing pipes and &&, per platform. */
 function shellFor(command: string): { bin: string; args: string[] } {
@@ -67,7 +70,7 @@ export function runCommand(
   proc.onData(onData)
   proc.onExit(({ exitCode }) => {
     running.delete(proc)
-    if (finished) return
+    if (finished || stopped.has(proc)) return
     finished = true
     onDone(exitCode)
   })
@@ -123,6 +126,7 @@ export function stopInstalls(): void {
     }
   }
   for (const p of live) {
+    stopped.add(p)
     try {
       p.kill()
     } catch {
