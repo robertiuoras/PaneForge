@@ -159,7 +159,11 @@ const receiver = {
 }
 
 const backend = inertBackend()
-backend.receiveHandoff = (payload, file) => receiveHandoff(receiver, payload, file)
+const received = []
+backend.receiveHandoff = (payload, file) => {
+  received.push(payload)
+  return receiveHandoff(receiver, payload, file)
+}
 
 const code = newCode()
 const port = await freePort()
@@ -213,7 +217,7 @@ ok('the sender repo is clean after the push', git(repo, 'status', '--porcelain')
 const req = started[0]
 ok('the far pane starts in the mapped folder', req?.cwd === clone, req?.cwd)
 ok('the far pane resumes THAT conversation', req?.resume === true && req?.resumeId === 'conv123')
-ok('the far pane carries its close-when-done instruction', req && true)
+ok('the far pane carries its close-when-done instruction', received[0]?.closeReceiverWhenDone === true)
 const landed = join(receiver.claudeProjectDir(clone), 'conv123.jsonl')
 ok('the transcript landed where the CLI looks', existsSync(landed))
 ok('5 MB of chunks reassembled byte-for-byte', existsSync(landed) && readFileSync(landed).equals(transcriptBytes))

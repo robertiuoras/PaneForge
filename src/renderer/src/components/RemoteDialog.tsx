@@ -603,7 +603,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
         setCode('')
         setAddress('')
         flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
-        onClose()
+        if (!handoff) onClose()
         return
       }
       // A bare code is not a failure, it is half of what is needed: fill it in and open
@@ -636,7 +636,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
       onState(res.state)
       if (res.ok) {
         flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
-        onClose()
+        if (!handoff) onClose()
         return
       }
       setError(res.error ?? 'Could not pair from that invite.')
