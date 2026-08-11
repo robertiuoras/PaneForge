@@ -45,7 +45,7 @@ buildSync({
   platform: 'node',
   logLevel: 'silent'
 })
-const { Tunnel, assetFor, downloadUrl, untarOne } = await import(bundle)
+const { Tunnel, assetFor, downloadUrl, untarOne, sweepOrphans } = await import(bundle)
 
 /** A stub cloudflared. `mode` decides which of the real program's endings it acts out. */
 function stub(mode) {
@@ -296,6 +296,42 @@ const nodeShim = (file) => {
     'in that order'
   )
   ok(!existsSync(join(dir, 'cloudflared')), 'and nothing was downloaded by this test')
+}
+
+// A cloudflared this app lost is a public address still reaching this desk, so exactly one
+// process may carry a given port. Proven against REAL processes with the real command line,
+// because all the sweep can ever see is a string in a process table.
+
+if (process.platform === 'win32') {
+  console.log('  SKIP orphan sweep: the Windows half matches cloudflared.exe by name')
+} else {
+  const { spawn } = await import('node:child_process')
+  const port = 7466
+  // Not cloudflared, but wearing its arguments: that is the whole of what is matched.
+  const ghost = (p) =>
+    spawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60000)', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${p}`],
+      { stdio: 'ignore' }
+    )
+  const lost = ghost(port)
+  const ours = ghost(port)
+  const elsewhere = ghost(7467)
+  const alive = (child) => {
+    try {
+      process.kill(child.pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  await new Promise((r) => setTimeout(r, 400))
+  await sweepOrphans(port, [ours.pid])
+  await new Promise((r) => setTimeout(r, 400))
+  ok(!alive(lost), 'a cloudflared left on this port is killed before a new one starts')
+  ok(alive(ours), 'our own child is never swept')
+  ok(alive(elsewhere), 'and a second profile on its own port is not in scope')
+  for (const c of [lost, ours, elsewhere]) c.kill()
 }
 
 rmSync(work, { recursive: true, force: true })

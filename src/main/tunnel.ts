@@ -37,7 +37,7 @@
  *   preferred and nothing is downloaded in that case.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -197,6 +197,7 @@ export class Tunnel {
   }
 
   private async run(binary: string, port: number): Promise<TunnelState> {
+    await sweepOrphans(port, this.child ? [this.child.pid ?? 0] : [])
     const child = spawn(
       binary,
       [
@@ -375,6 +376,64 @@ export class Tunnel {
     this.kill()
     this.url = ''
     if (this.phase !== 'off') this.note('off')
+  }
+}
+
+/**
+ * Kill a cloudflared this app started and then lost.
+ *
+ * `stop()` kills the child, and both quit paths call it, but neither runs when the process
+ * dies without them: a crash, a force quit, an installer swapping the app out. What is left
+ * behind is not an idle process, it is a PUBLIC address still reaching this desk, on a
+ * hostname the app no longer knows and nobody is watching.
+ *
+ * What was actually measured, 2026-08-11: two cloudflareds alive at once against one phone
+ * port, the older by four and a half hours than the app run that owned it. The old one did
+ * exit on its own some minutes later, so the leak is not proven permanent, and this is
+ * cheap insurance rather than a fix for a demonstrated hang: at most one process should be
+ * carrying a given port out to the internet, and after this, exactly one is.
+ *
+ * Matched on the port in the argument list rather than on the program name, so a second
+ * profile (`npm run try`, which serves its phone on its own port) is never in scope. Async
+ * throughout and silent on failure: this is tidy-up in front of a spawn, never a gate in
+ * front of it.
+ */
+export async function sweepOrphans(port: number, mine: number[] = []): Promise<void> {
+  const run = async (file: string, args: string[]): Promise<string> =>
+    await new Promise((resolve) => {
+      execFile(file, args, { windowsHide: true, timeout: 4000 }, (_err, out) =>
+        resolve(String(out ?? ''))
+      )
+    })
+  const want = `127.0.0.1:${port}`
+  try {
+    let pids: number[] = []
+    if (process.platform === 'win32') {
+      const out = await run('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | ` +
+          `Where-Object { $_.CommandLine -like '*${want}*' } | ` +
+          `ForEach-Object { $_.ProcessId }`
+      ])
+      pids = out.split(/\r?\n/).map((l) => Number(l.trim())).filter(Boolean)
+    } else {
+      const out = await run('/usr/bin/pgrep', ['-f', `cloudflared tunnel --url http://${want}`])
+      pids = out.split('\n').map((l) => Number(l.trim())).filter(Boolean)
+    }
+    for (const pid of pids) {
+      if (pid === process.pid || mine.includes(pid)) continue
+      if (process.platform === 'win32') await run('taskkill.exe', ['/F', '/PID', String(pid)])
+      else {
+        try {
+          process.kill(pid, 'SIGTERM')
+        } catch {
+          /* gone between listing and killing is the normal case */
+        }
+      }
+    }
+  } catch {
+    /* a sweep that could not run must never stop the tunnel starting */
   }
 }
 
