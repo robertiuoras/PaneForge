@@ -55,6 +55,8 @@ interface Props {
   onState: (s: RemoteState) => void
   onClose: () => void
   flash: (message: string) => void
+  /** A local pane or lane selected from the desk, rather than the deliberate bulk path. */
+  handoff?: { ids: string[]; title: string } | null
 }
 
 /**
@@ -439,7 +441,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
  * the link is encrypted with, which is why regenerating it cuts every paired device
  * off rather than just changing what to type next time.
  */
-export default function RemoteDialog({ state, onState, onClose, flash }: Props): JSX.Element {
+export default function RemoteDialog({ state, onState, onClose, flash, handoff = null }: Props): JSX.Element {
   const [address, setAddress] = useState('')
   const [port, setPort] = useState('7311')
   const [code, setCode] = useState('')
@@ -475,11 +477,16 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
     setHanding(null)
     setHandBusy(true)
     try {
-      const items = await api.handoffToDevice(id)
+      const items = await api.handoffToDevice(id, handoff?.ids, Boolean(handoff))
       const ok = items.filter((i) => i.ok).length
       const bad = items.filter((i) => !i.ok)
       if (items.length === 0) flash('No local panes to hand off')
-      else if (bad.length === 0) flash(`Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`)
+      else if (bad.length === 0)
+        flash(
+          handoff
+            ? `Moved ${handoff.title} to ${name}. It closes PaneForge there only after it exits and no other local pane is running.`
+            : `Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`
+        )
       else flash(`Moved ${ok} of ${items.length}. ${bad[0].title}: ${bad[0].error}`)
     } catch (err) {
       flash((err as Error).message)
@@ -670,6 +677,13 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           <strong>Devices</strong>
           <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
         </div>
+        {handoff && (
+          <p className="dev-empty">
+            <strong>Hand off {handoff.title}.</strong> Choose your online PC below. If it is not listed, open Devices on
+            the PC, press Copy invite, then paste that one line here. The PC will close PaneForge only after this work
+            exits and it has no other local pane.
+          </p>
+        )}
         <Blurb id="devices" />
 
         {/* ------------------------------------------------------------------- phone
@@ -846,7 +860,9 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           </div>
           {state.peers.length === 0 && (
             <p className="dev-empty">
-              None yet. Turn the switch above on over there, then pair with it below.
+              {handoff
+                ? 'No PC is paired yet. On the PC open Devices and press Copy invite, then paste it here below.'
+                : 'None yet. Turn the switch above on over there, then pair with it below.'}
             </p>
           )}
           <div className="dev-list">
@@ -886,11 +902,23 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     {p.status === 'online' && (
                       <button
                         className="ghost small"
-                        title={`Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors.`}
+                        title={
+                          handoff
+                            ? `Move ${handoff.title} to ${p.name}. Code is pushed, the conversation and screen travel, and this PC closes PaneForge only when the transferred work exits with no other local pane.`
+                            : `Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors.`
+                        }
                         disabled={handBusy}
                         onClick={() => void handOff(p.id, p.name)}
                       >
-                        {handBusy ? 'Handing off…' : handing === p.id ? 'Move all panes?' : 'Hand off'}
+                        {handBusy
+                          ? 'Handing off…'
+                          : handing === p.id
+                            ? handoff
+                              ? `Move ${handoff.title}?`
+                              : 'Move all panes?'
+                            : handoff
+                              ? 'Hand off here'
+                              : 'Hand off'}
                       </button>
                     )}
                     <button

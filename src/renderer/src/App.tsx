@@ -202,6 +202,8 @@ export default function App(): JSX.Element {
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
+  /** The pane (or its one worktree lane) that is about to move to a paired machine. */
+  const [handoff, setHandoff] = useState<{ ids: string[]; title: string } | null>(null)
   const [fleet, setFleet] = useState(false)
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
@@ -2892,6 +2894,26 @@ export default function App(): JSX.Element {
                 >
                   Fix
                 </button>
+                {!s.remote && s.status !== 'exited' && (
+                  <button
+                    className="ghost small desk-only"
+                    title={
+                      s.lane
+                        ? `Hand off lane ${s.lane}: its pane moves to your paired PC, then that PC closes when this lane exits and it has no other local pane.`
+                        : `Hand off ${s.title} to your paired PC. The PC closes only after this pane exits and it has no other local pane.`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const ids = s.lane
+                        ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
+                        : [s.id]
+                      setHandoff({ ids, title: s.lane ? `lane ${s.lane}` : s.title })
+                      setDevices(true)
+                    }}
+                  >
+                    Hand off
+                  </button>
+                )}
                 {/* Both of these open something on THIS machine. For a mirrored pane
                     the folder is on the other one, so they would open the wrong thing
                     or nothing at all - better absent than quietly wrong. */}
@@ -3160,7 +3182,11 @@ export default function App(): JSX.Element {
           state={remote}
           onState={setRemote}
           flash={flash}
-          onClose={() => setDevices(false)}
+          handoff={handoff}
+          onClose={() => {
+            setDevices(false)
+            setHandoff(null)
+          }}
         />
       )}
       {history && (

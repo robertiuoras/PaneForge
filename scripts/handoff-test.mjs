@@ -51,7 +51,7 @@ function bundle() {
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
       `export { sendHandoff, receiveHandoff } from ${p('src/main/handoff.ts')}`,
-      `export { mapCwd } from ${p('src/shared/handoff.ts')}`
+      `export { handoffReceiverCanQuit, mapCwd } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -94,7 +94,7 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd, handoffReceiverCanQuit } = mod
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -103,6 +103,18 @@ ok('windows path onto a mac root', mapCwd('C:\\Users\\G\\Desktop\\Projects\\a\\b
 ok('the root itself maps to the root', mapCwd('/Users/r/Projects', '/Users/r/Projects', '/x') === '/x')
 ok('outside the root refuses', mapCwd('/etc/passwd', '/Users/r/Projects', '/x') === null)
 ok('prefix is a path segment, not a string prefix', mapCwd('/Users/r/Projects2/app', '/Users/r/Projects', '/x') === null)
+
+console.log('receiver close gate')
+ok('an idle transferred pane keeps the receiver open', !handoffReceiverCanQuit(new Set(['pc-1']), [{ id: 'pc-1', status: 'idle' }]))
+ok(
+  'another local pane keeps the receiver open after the handoff exits',
+  !handoffReceiverCanQuit(new Set(['pc-1']), [
+    { id: 'pc-1', status: 'exited' },
+    { id: 'other', status: 'working' }
+  ])
+)
+ok('an exited transfer with no local work may close the receiver', handoffReceiverCanQuit(new Set(['pc-1']), [{ id: 'pc-1', status: 'exited' }]))
+ok('no transfer never quits the receiver', !handoffReceiverCanQuit(new Set(), []))
 
 // ---------------------------------------------------------------- the link
 const senderRoot = join(out, 'sender')
@@ -171,8 +183,14 @@ console.log('handoff')
 const killed = []
 const sender = {
   root: () => senderRoot,
-  list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }],
-  snapshot: () => [{ cwd: repo, title: 'proj', agent: 'claude', resumeId: 'conv123', scrollbackId: 's1' }],
+  list: () => [
+    { id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 },
+    { id: 's2', title: 'leave here', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }
+  ],
+  snapshot: () => [
+    { cwd: repo, title: 'proj', agent: 'claude', resumeId: 'conv123', scrollbackId: 's1' },
+    { cwd: repo, title: 'leave here', agent: 'claude', scrollbackId: 's2' }
+  ],
   kill: (id) => killed.push(id),
   tailOf: () => 'SCREEN-TAIL\u001b[32mgreen\u001b[0m\n',
   transcriptFileFor: () => transcript,
@@ -180,10 +198,11 @@ const sender = {
   deviceName: () => 'PC'
 }
 
-const items = await sendHandoff(sender, 'pc')
+const items = await sendHandoff(sender, 'pc', { ids: ['s1'], closeReceiverWhenDone: true })
 ok('one pane, one report', items.length === 1)
 ok('the pane moved', items[0]?.ok === true, items[0]?.error)
 ok('the sender pane was closed after the ack', killed.join() === 's1')
+ok('a focused handoff leaves every other pane here', !killed.includes('s2'))
 
 const clone = join(receiverRoot, 'proj')
 ok('the repo was cloned under the receiving root', existsSync(join(clone, '.git')))
@@ -194,6 +213,7 @@ ok('the sender repo is clean after the push', git(repo, 'status', '--porcelain')
 const req = started[0]
 ok('the far pane starts in the mapped folder', req?.cwd === clone, req?.cwd)
 ok('the far pane resumes THAT conversation', req?.resume === true && req?.resumeId === 'conv123')
+ok('the far pane carries its close-when-done instruction', req && true)
 const landed = join(receiver.claudeProjectDir(clone), 'conv123.jsonl')
 ok('the transcript landed where the CLI looks', existsSync(landed))
 ok('5 MB of chunks reassembled byte-for-byte', existsSync(landed) && readFileSync(landed).equals(transcriptBytes))
@@ -202,7 +222,7 @@ ok('the screen tail seeds the far scrollback', Boolean(req?.scrollbackId) && rea
 // ---------------------------------------------------------------- refusals
 console.log('refusals')
 writeFileSync(join(clone, 'local-edit.txt'), 'work someone did on the PC\n')
-const again = await sendHandoff(sender, 'pc')
+const again = await sendHandoff(sender, 'pc', { ids: ['s1'] })
 ok('a dirty receiver checkout refuses by name', again[0]?.ok === false && /uncommitted/.test(again[0]?.error ?? ''), again[0]?.error)
 ok('the refused pane was NOT closed', killed.length === 1)
 ok('the receiver kept its local edit', readFileSync(join(clone, 'local-edit.txt'), 'utf8').includes('someone'))

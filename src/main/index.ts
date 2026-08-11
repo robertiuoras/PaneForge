@@ -116,7 +116,8 @@ import {
 } from './consoles'
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
-import { handoffReceiverCanQuit, receiveHandoff, sendHandoff } from './handoff'
+import { receiveHandoff, sendHandoff } from './handoff'
+import { handoffReceiverCanQuit } from '../shared/handoff'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
