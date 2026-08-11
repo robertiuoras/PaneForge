@@ -17,6 +17,17 @@
  * process that can read it is already inside the trust boundary. Pairs fresh each run -
  * pairing is idempotent and only wrong codes are rate limited.
  *
+ * THIS IS THE ONLY WAY AUTOMATION MAY OPEN A PANE ON A MAC. `open -na PaneForge --args
+ * --open <dir> --prompt <text>` looks equivalent and is not: measured 2026-08-11, it
+ * SILENTLY DROPS THE WHOLE ARGUMENT LIST when any argument contains an em dash (U+2014),
+ * exiting 0 with empty stderr - the app launches, finds no `--open`, and quits. An em
+ * dash in `--title` alone kills it too, so it is not about the prompt and escaping the
+ * value cannot fix it. It cost the #momin backlog runner five bundles across two days,
+ * each one reporting "session spawned" with no pane anywhere. A JSON body has no argv
+ * parser to lose bytes in, and `sessions:start` answers with the pane's id, so a caller
+ * can VERIFY the pane against `sessions:list` rather than trust that a launcher accepted
+ * a request. `--open` on the command line stays for a human typing it.
+ *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
 import { readFileSync } from 'node:fs'

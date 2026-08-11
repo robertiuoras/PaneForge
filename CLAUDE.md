@@ -353,6 +353,13 @@ channel of its own.
   was spent proving it was a tap. A touch that did not become a drag opens the row from
   `pointerup` instead, which no scroll heuristic gets to veto; a `pointercancel` and a
   finger that travelled more than `TAP_SLOP` still open nothing.
+- **Automation opens a pane through `scripts/pf-ctl.mjs`, never through `open --args`.**
+  On a Mac `open -na PaneForge --args --open <dir> --prompt <text>` drops the WHOLE
+  argument list when any argument holds an em dash, exits 0 with empty stderr, and the
+  app quits having found no request - five #momin bundles reported "session spawned" with
+  no pane. pf-ctl posts JSON to the phone server and `sessions:start` answers with the
+  pane's id, so the caller checks `sessions:list` instead of trusting a launcher.
+  `--open` on the command line is for a person typing it.
 - The pty never moves, same as Devices.
 - `npm run test:phone` (server + surface parity, no browser). `npm run test:phoneview`
   needs a running copy: `npm run build && npm run try -- --keep --show`, then
