@@ -324,9 +324,35 @@ channel of its own.
     rename. Quitting kills it — it is not a pty, so `strays.ts` has never heard of it.
   - `npm run test:tunnel` drives all of it against a stub that prints what the real program
     prints, with every budget overridable by env.
+- **The desk owns a pane's shape; a phone borrows it.** One pty cannot be 50 columns and
+  157 at once, and both windows fit their own screen and say so - so whoever spoke last
+  won, and a phone that looked at a pane left the DESK drawing a full-width pane whose
+  every line wrapped a third of the way across, for as long as it took somebody to resize
+  the window by hand. Measured minutes after the phone was closed: desk terminal 157x57,
+  pty 50x50. `resize` takes a `borrowed` flag; `returnSizes` puts every borrowed pty back
+  and runs when the phone leaves the pane (`pty:return`, from `showList`) and when the
+  last phone stream closes (`onIdle`). A desk resize takes ownership back on the spot, so
+  a phone that borrowed hours ago can never snap a window the user has since resized.
+  `npm run test:panesize`.
+- **What was on screen was drawn at the other width, so the phone drops it.** The CLI
+  hard-wrapped those lines itself; re-wrapping 157-column box drawing at 50 is not history,
+  it is soup - which is what "I open a pane and it is all messed up, I have to clear it"
+  was. On a phone, a COLUMN change clears the buffer and asks for a repaint. `clear`, never
+  `reset`: it keeps the line the cursor is on, so a plain shell is left holding its prompt
+  rather than a blank pane. Only columns, because the keyboard opening takes rows and
+  nothing re-wraps.
 - **A phone is not a small desktop.** Under 720px the list and the panes take turns
   (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
-  the display. `display: none`, never a 0px xterm.
+  the display. `display: none`, never a 0px xterm. The pane's own header is made to FIT
+  rather than to scroll: measured at 414px it wanted 458px of the 404 it had, so Close was
+  off the edge entirely and Clear and Fix were 27x23 and 30x19 against a 44px finger. The
+  path goes (the list said it), the folder and editor buttons go (`desk-only` - they open a
+  window on the machine you are not holding), and what is left is 36px.
+- **A tap opens a pane on the first press.** A finger is never still, and a mobile browser
+  throws the `click` away the moment it decides the gesture was a scroll - so the first tap
+  was spent proving it was a tap. A touch that did not become a drag opens the row from
+  `pointerup` instead, which no scroll heuristic gets to veto; a `pointercancel` and a
+  finger that travelled more than `TAP_SLOP` still open nothing.
 - The pty never moves, same as Devices.
 - `npm run test:phone` (server + surface parity, no browser). `npm run test:phoneview`
   needs a running copy: `npm run build && npm run try -- --keep --show`, then
@@ -611,6 +637,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
 | `npm run test:stashsummon` | that the Stash is not on screen until it is asked for: closing HIDES the window rather than parking a pill, and a summon opens at the pointer, on the pointer's own display, clamped on |
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
+| `npm run test:panesize` | who owns a pane's shape when the desk and a phone are both drawing it: a phone BORROWS the pty's size, gives it back when it looks away, and can never undo a size the desk chose afterwards |
 | `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |
 | `npm run test:qr` | the pairing QR, by DECODING it: format bits, zig-zag, de-interleave, every Reed-Solomon syndrome zero, payload back out — every version at every mask. Nothing less catches a symbol that is drawn perfectly and reads nowhere |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |

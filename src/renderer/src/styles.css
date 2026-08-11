@@ -207,6 +207,37 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   }
   /* The bar sits over the terminal's last lines otherwise. */
   html.handheld .panes:not(.grid) .pane { inset: 44px 4px 56px; }
+
+  /* ---- the pane's own header, at 414px --------------------------------------
+     Measured before this block, on a real 414px phone viewport: the row wanted 458px
+     of the 404 it had, so the folder button, the editor button and the CLOSE button
+     were off the right-hand edge with nothing to scroll them back, and the two that
+     were reachable - Clear and Fix - measured 27x23 and 30x19 against a 44px finger.
+     That is "I cannot see the header, it is not easy to swipe and see the rubbish bin
+     and the fix buttons".
+
+     So the row is made to FIT rather than made to scroll. What goes is what the phone
+     already knows or cannot use: the path is the line under the pane's name in the list
+     you just came from, and the folder and the editor open something on the desk, which
+     is the machine you are not sitting at. What stays gets a finger-sized target. */
+  html.handheld .pane-title { min-height: 44px; padding: 4px 6px 4px 9px; gap: 6px; }
+  html.handheld .pt-path { display: none; }
+  /* The name gives way before the buttons do: a truncated title still says which pane
+     this is, and a button that is off the edge does nothing at all. */
+  html.handheld .pt-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  html.handheld .pt-actions { gap: 2px; margin-left: auto; }
+  html.handheld .pt-actions .icon {
+    min-width: 36px;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+  }
+  /* After the rule above, and carrying its class, because `display: none` on a plainer
+     selector LOSES to it - measured: the folder and editor buttons were still drawn at
+     36x36 and Close was still off the edge. */
+  html.handheld .pt-actions .icon.desk-only { display: none; }
 }
 
 /* ---- sidebar ---- */

@@ -111,6 +111,12 @@ const DONE_GLOW_MS = 5200
  *  the real window: a press that drifted 6px selected nothing, because 5px was inside
  *  the noise of an ordinary mouse click. */
 const DRAG_SLOP = 9
+/**
+ * How far a finger may travel and still be a tap. Under the drag threshold on purpose:
+ * this one only decides whether a touch OPENS the card it was pressed on, and a gesture
+ * that wandered this far was somebody starting to scroll the list.
+ */
+const TAP_SLOP = 6
 
 /** How long a press has to be HELD before the card shows the grab cursor. Purely the
  *  cursor - the drag itself still starts on DRAG_SLOP of movement, so a fast grab is
@@ -541,11 +547,22 @@ export default function App(): JSX.Element {
   // not also select whatever card is now under the cursor.
   const draggedRef = useRef(false)
 
-  const beginDrag = useCallback((e: React.PointerEvent, id: string) => {
+  const beginDrag = useCallback((e: React.PointerEvent, id: string, tap?: () => void) => {
     if (e.button !== 0) return
     // The close/restart buttons and the rename box own their own presses.
     if ((e.target as HTMLElement).closest('button, input')) return
+    // A finger is never still. A touch that drifts even slightly makes a mobile browser
+    // decide the gesture was a scroll and throw the `click` away, which is why opening a
+    // pane on a phone took two taps: the first one was spent proving it was a tap. So a
+    // touch that did not turn into a drag opens the row from `pointerup`, which no scroll
+    // heuristic gets to veto. A click that does still arrive lands on the same two idempotent
+    // calls. Mouse presses are left alone - a click is reliable there, and `onClick` also
+    // catches keyboard activation.
+    const finger = e.pointerType === 'touch'
     const startY = e.clientY
+    const startX = e.clientX
+    /** the finger travelled far enough that this was a scroll, not a tap */
+    let drifted = false
     let dragging = false
     const startIds = idsRef.current
     let latest = startIds
@@ -584,6 +601,8 @@ export default function App(): JSX.Element {
     }
     const move = (ev: PointerEvent): void => {
       if (!dragging) {
+        if (Math.abs(ev.clientY - startY) >= TAP_SLOP || Math.abs(ev.clientX - startX) >= TAP_SLOP)
+          drifted = true
         if (Math.abs(ev.clientY - startY) < DRAG_SLOP) return
         dragging = true
         disarm()
@@ -620,8 +639,11 @@ export default function App(): JSX.Element {
       latest = next
       setOrder(next)
     }
-    const up = (): void => {
+    const up = (ev?: Event): void => {
       disarm()
+      // A pointercancel is the browser taking the gesture away to scroll with it. That is
+      // not a tap however still the finger was, so it never opens anything.
+      const stolen = ev?.type === 'pointercancel'
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
@@ -630,7 +652,12 @@ export default function App(): JSX.Element {
       } catch {
         /* already gone */
       }
-      if (!dragging) return
+      if (!dragging) {
+        // Never reordered, so this was a tap, and on touch that is the only signal that
+        // reliably survives - see `finger` above.
+        if (finger && !stolen && !drifted) tap?.()
+        return
+      }
       document.body.classList.remove('dragging')
       setDragId(null)
       // A gesture that ended with every card where it started is a click, however far
@@ -2366,7 +2393,12 @@ export default function App(): JSX.Element {
                 // meant nothing the card was not already saying twice. The chip keeps the
                 // colour, because the chip can be hovered and can say why.
               }
-              onPointerDown={(e) => beginDrag(e, s.id)}
+              onPointerDown={(e) =>
+                beginDrag(e, s.id, () => {
+                  setActiveId(s.id)
+                  handheld.showPane()
+                })
+              }
               onClick={() => {
                 if (draggedRef.current) return
                 setActiveId(s.id)
@@ -2863,9 +2895,12 @@ export default function App(): JSX.Element {
                 {/* Both of these open something on THIS machine. For a mirrored pane
                     the folder is on the other one, so they would open the wrong thing
                     or nothing at all - better absent than quietly wrong. */}
+                {/* `desk-only` because they are also useless at phone width, for the same
+                    reason they are absent on a mirror: they open a window on the machine
+                    you are not holding. Dropping them is what lets Close fit on screen. */}
                 {!s.remote && (
                   <button
-                    className="icon"
+                    className="icon desk-only"
                     title={`Open ${s.cwd} in Explorer - drop files there, or drag them onto this pane`}
                     onClick={() => api.reveal(s.cwd)}
                   >
@@ -2874,7 +2909,7 @@ export default function App(): JSX.Element {
                 )}
                 {!s.remote && (
                   <button
-                    className="icon"
+                    className="icon desk-only"
                     title="Open in editor"
                     onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
                   >

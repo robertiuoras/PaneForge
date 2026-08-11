@@ -663,6 +663,70 @@ differs only in its fragment is a same-document navigation - assigning `location
 not reload the page, the inline script never re-runs, and the result reads exactly like a
 broken feature.
 
+### The desk owns a pane's shape; a phone borrows it
+
+The remote link settled this question for two machines - "the host owns the terminal's
+size", above - and the phone was never asked it, because the phone is not a mirror. It is
+this renderer, drawing the same pane over HTTP, and it fits the pty to its own screen
+exactly as the window does. So both of them did, and whoever spoke last won.
+
+Measured on 2026-08-11, reproduced against a running copy: the desk fitted its pane to
+157x57; a phone opened that pane and the pty became 50x49; the phone was then closed, and
+minutes later the desk terminal was still 157 columns wide with the pty at 50, so the CLI's
+output filled the left third of a full-width pane and stopped. The report was "the pane is
+broken, half split in terminal" and the guess attached to it was low power mode. Nothing in
+the app had ever undone a phone's resize - there was no code path that could.
+
+The rule is one sentence: the desk owns the size, a phone borrows it. `resize` carries a
+`borrowed` flag, a borrowed resize leaves `deskCols/deskRows` alone, and `returnSizes` puts
+every borrowed pty back and asks the CLI to repaint. It is called from the two places a
+phone stops looking: `pty:return`, sent when the handheld list comes back, and `onIdle`,
+when the last phone stream closes - the second because a browser that is closed, locked or
+carried out of range never gets to send a parting message. A desk resize takes ownership
+back on the spot, which is the case that would otherwise rot in silence: a phone that
+borrowed hours ago must not snap a window the user has since resized by hand.
+
+The same handover explains the other half of that report - "when I open a pane it is all
+messed up and I have to clear it, then it is fine". Everything on the phone's screen was
+drawn at the desk's width, and the CLI hard-wrapped those lines itself: its box drawing, its
+input frame and its paragraphs are all 157 characters wide, so re-wrapping them at 50 is not
+history, it is soup, and `/clear` was the only thing that got rid of it. A phone now clears
+the buffer itself when the COLUMNS change and asks for a repaint. `clear`, never `reset`:
+clear keeps the line the cursor is on, so a plain shell is left holding its prompt rather
+than a blank pane - a shell has no frame to repaint and the redraw poke would print nothing
+back. Deliberately outside the `autoFixUi` switch and the mount grace that guard the ordinary
+post-resize repaint: those are about not poking a CLI mid-paint, this is about a frame that
+is already unreadable, and a phone's first tap usually lands inside that grace. Columns only,
+because the keyboard opening takes rows away and nothing re-wraps - a reset there would wipe
+the screen while somebody was typing into it.
+
+`npm run test:panesize` pins the bookkeeping without a window or a pty: borrow, return,
+return twice, and the desk overruling a borrow. Proved red by making a borrowed resize
+overwrite the desk size, which is what the code did before - four of its thirteen checks
+fail, the first being that returning gives back 50x49.
+
+### A phone's pane header is made to fit, and a tap lands on the first press
+
+Measured at a real 414px viewport before either fix: the pane's own header wanted 458px of
+the 404 it had, so the folder button, the editor button and Close were off the right-hand
+edge with nothing to scroll them back, and the two that were reachable - Clear and Fix -
+were 27x23 and 30x19 against a 44px finger. "I cannot see the header, it is not easy to
+swipe and see the rubbish bin and the fix buttons" is that, exactly.
+
+Making it scroll would have been answering the complaint with the thing being complained
+about, so it fits instead. The path goes, because it is the line under the pane's name in
+the list you came from. The folder and the editor go (`desk-only`) for the same reason a
+mirrored pane never shows them: they open a window on a machine you are not holding. What
+is left gets 36px, and the row now measures 404 against 404 with every button on screen.
+
+The tap needed no layout at all. A finger is never still, and a mobile browser throws the
+`click` away the moment it decides the gesture was a scroll - so the first tap on a card was
+spent proving it was a tap, and the second one opened the pane. A touch that did not become
+a drag now opens the row from `pointerup`, which no scroll heuristic gets to veto. A
+`pointercancel` is the browser taking the gesture away to scroll with it and opens nothing,
+and neither does a finger that travelled more than `TAP_SLOP`. Mouse presses are untouched:
+a click is reliable there, and `onClick` is also what catches keyboard activation.
+
 ## Every colour is derived, and every pane says which project it is in
 
 Two rules that touch nearly every file in the renderer, both added 2026-08-01.
