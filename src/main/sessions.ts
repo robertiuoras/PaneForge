@@ -21,7 +21,8 @@ import { killPaneStrays, trackStrays } from './strays'
 import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs } from '../shared/agents'
-import { anchoredStart } from '../shared/busy'
+import { anchoredStart, readsBusy } from '../shared/busy'
+import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import type {
   Agent,
@@ -65,6 +66,22 @@ const ATTENTION_AFTER_FOOTER_MS = 12_000
 const REPAINT_GRACE_MS = 1200
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
 const BUFFER_LIMIT = 400_000
+/**
+ * How long a launching CLI must stop painting before its prompt is typed in, how
+ * long to keep waiting for that, and the beat between the prompt and its return.
+ * See `queuePrompt`: the quiet is the readiness signal, the separate return is what
+ * stops the CLI reading it as part of a paste.
+ */
+const ms = (name: string, fallback: number): number => Number(process.env[name]) || fallback
+const PROMPT_START_MS = ms('PF_PROMPT_START_MS', 2500)
+const PROMPT_QUIET_MS = ms('PF_PROMPT_QUIET_MS', 900)
+const PROMPT_WAIT_MAX_MS = ms('PF_PROMPT_WAIT_MAX_MS', 45_000)
+const PROMPT_POLL_MS = ms('PF_PROMPT_POLL_MS', 300)
+const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
+/** How much of the pane's tail the busy read looks at, and the confirm-and-retry. */
+const PROMPT_TAIL_CHARS = 2000
+const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
+const PROMPT_ENTER_TRIES = 3
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
 const RESET = '\x1bc'
 /**
@@ -1025,10 +1042,76 @@ export class SessionManager extends EventEmitter {
     })
   }
 
+  /**
+   * Type a launch prompt into a pane and submit it.
+   *
+   * A fixed delay is not enough and the failure it causes is silent. Codex starts its
+   * MCP servers before the composer takes keys - measured 2026-08-11, still painting
+   * `Starting MCP servers (0/2)` well past the old 2500ms - and a CLI that is still
+   * booting replays what arrived during the boot INTO the composer, where the trailing
+   * carriage return of `prompt + '\r'` is one more character of the paste rather than a
+   * keystroke. The pane then sits for ever holding a fully typed prompt nobody sent,
+   * looking exactly like a person who walked away mid-sentence. Two #momin bundles sat
+   * like that for hours.
+   *
+   * So the wait is for an IDLE COMPOSER, not for a clock: the pane's own output has to
+   * stop AND stop saying it is working, which is `readsBusy` - the same reading the
+   * board draws - over the tail of what the pty has printed. Quiet alone is not enough
+   * and was measured failing: Codex pauses mid-startup with `Starting MCP servers
+   * (0/4) ... esc to interrupt` on screen, and a return sent into that screen cancels
+   * the startup instead of submitting anything.
+   *
+   * Then the return goes as a SEPARATE write a beat later, so the CLI sees a keystroke
+   * on a composer it has already drawn rather than the last byte of a paste - and the
+   * submit is CONFIRMED, not assumed: if the pane is still idle a few seconds later the
+   * return is sent again, up to `PROMPT_ENTER_TRIES`. Every step is capped, so the worst
+   * case is a prompt typed late and left on screen for a person, never a hang.
+   */
   private queuePrompt(id: string, prompt?: string, extraDelay = 0): void {
     if (!prompt) return
-    // The agent needs a moment to draw its input box before it accepts keys.
-    setTimeout(() => this.write(id, prompt + '\r'), 2500 + Math.max(0, extraDelay))
+    const deadline = Date.now() + PROMPT_WAIT_MAX_MS + Math.max(0, extraDelay)
+    // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
+    // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
+    // fixed tail reports a pane as working long after it went quiet at its composer
+    // and the prompt is never typed at all. What is asked here is "what was on screen
+    // when it stopped", which is the newest output and nothing older.
+    let seen = 0
+    let painted = ''
+    const idle = (live: Live): boolean => {
+      const text = strip(live.buffer.read())
+      if (text.length < seen) seen = 0
+      if (text.length > seen) {
+        painted = text.slice(seen).slice(-PROMPT_TAIL_CHARS)
+        seen = text.length
+      }
+      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted)
+    }
+
+    const submit = (tries: number): void => {
+      const live = this.sessions.get(id)
+      if (!live) return
+      this.write(id, '\r')
+      if (tries + 1 >= PROMPT_ENTER_TRIES) return
+      setTimeout(() => {
+        const still = this.sessions.get(id)
+        // Work of any kind means it went in: the agent is answering, or the CLI is at
+        // least painting something back. A pane still sitting at an idle composer has
+        // eaten the return, so send another one.
+        if (still && idle(still)) submit(tries + 1)
+      }, PROMPT_CONFIRM_MS)
+    }
+
+    const tick = (): void => {
+      const live = this.sessions.get(id)
+      if (!live) return
+      if (!idle(live) && Date.now() < deadline) {
+        setTimeout(tick, PROMPT_POLL_MS)
+        return
+      }
+      this.write(id, prompt)
+      setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
+    }
+    setTimeout(tick, PROMPT_START_MS + Math.max(0, extraDelay))
   }
 
   private sweepIdle(): void {

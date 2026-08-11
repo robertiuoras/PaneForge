@@ -33,6 +33,7 @@ const TESTS = [
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],

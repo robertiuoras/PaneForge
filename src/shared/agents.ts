@@ -126,7 +126,13 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     // `resume` is a subcommand, not a flag, so it has to lead the argv.
     resumeArgs: ['resume', '--last'],
     modelFlag: '-m',
-    models: ['gpt-5.6-terra', 'gpt-5.1-codex-max', 'gpt-5.1-codex'],
+    // Measured 2026-08-11 against a ChatGPT-plan login: every `gpt-5.1-codex*` id
+    // is answered `400 invalid_request_error - not supported when using Codex with
+    // a ChatGPT account`, and the CLI reports that as an error INSIDE a pane that
+    // otherwise looks healthy, so a pane launched on one sits there having burned
+    // its prompt. Only the ids below answer on a subscription login; an API-key
+    // user can still type any string, which is what the list is for.
+    models: ['gpt-5.6-terra', 'gpt-5.6-sol'],
     color: '#10a37f',
     install: 'npm i -g @openai/codex',
     uninstall: 'npm rm -g @openai/codex',

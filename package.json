@@ -63,6 +63,7 @@
     "test:railplace": "node scripts/rail-place-test.mjs",
     "test:cursorclick": "node scripts/cursor-click-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
+    "test:promptsubmit": "node scripts/prompt-submit-test.mjs",
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
