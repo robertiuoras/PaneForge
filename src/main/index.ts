@@ -543,6 +543,7 @@ const phone = new PhoneServer({
     setConfig({ phone: { ...cfg.phone!, devices: list } })
   },
   canAsk: () => getConfig().phone?.ask !== false,
+  onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })
 
@@ -1037,9 +1038,15 @@ async function laneWentQuiet(id: string): Promise<void> {
  * every round. The device the agent runs on owns the size; the mirror is drawn at the
  * host's own cols/rows and scaled to fit whatever window is watching it.
  */
-ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => {
-  if (!remote.owns(id)) manager.resize(id, cols, rows)
+ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?: boolean) => {
+  if (!remote.owns(id)) manager.resize(id, cols, rows, borrowed === true)
 })
+/**
+ * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at
+ * 50 columns is right for the phone and wrong for the 157-column window it is also drawn
+ * in, and before this nothing ever undid it - see `resize` in sessions.ts.
+ */
+ipcMain.on('pty:return', () => manager.returnSizes())
 ipcMain.on('pty:redraw', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)
 )

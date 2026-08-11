@@ -79,6 +79,7 @@ interface Props {
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
 import { isMac } from '../platform'
+import { isPhoneClient } from '../client'
 
 /**
  * Panes register their repair function here, so the toolbar button, the shortcut and the
@@ -373,7 +374,12 @@ export default function TerminalPane({
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
     const changed = refit(t, f, pinned.current)
-    if (changed) api.resize(sessionId, t.cols, t.rows)
+    // A phone BORROWS the pty's shape rather than owning it. One pty cannot be 50 columns
+    // for a phone and 157 for the window it is also drawn in, and before this the phone
+    // simply won and never gave it back - the desk went on drawing a full-width pane whose
+    // every line wrapped a third of the way across, for as long as it took somebody to
+    // resize the window by hand. See `resize` in main/sessions.ts.
+    if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient())
     return changed
   }
   const [dropping, setDropping] = useState(false)
@@ -1573,6 +1579,7 @@ export default function TerminalPane({
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       let changed = false
+      const wasCols = t.cols
       try {
         changed = reshape(t, f)
         // The rail is measured against the scrollbar, so it has to be re-measured with it.
@@ -1586,6 +1593,35 @@ export default function TerminalPane({
       // at a size the terminal already has. That is not a resize and must not queue a
       // repaint - the repaint is the flash the user sees on every session switch.
       if (!changed) return
+      // A phone that opened this pane just bent the pty from the desk's width to its own,
+      // and everything on screen was drawn at the OLD one. The CLI hard-wrapped those
+      // lines itself - its box drawing, its input frame, its paragraphs are all 157
+      // characters wide - so re-wrapping them at 50 is not history, it is soup. That is
+      // "I open a pane and it is all messed up and I have to clear it", and this is the
+      // clear, minus the agent losing its conversation.
+      //
+      // Deliberately outside the guards below: `autoFixUi` is about not poking a CLI
+      // mid-paint, and the mount grace is about a welcome screen, while this is about a
+      // frame that is already unreadable - and a phone's first tap usually lands inside
+      // that grace. Only when the COLUMNS moved: the keyboard opening takes rows away and
+      // nothing re-wraps, so a reset there would wipe the screen while you were typing.
+      //
+      // `clear`, never `reset`: it drops the buffer and keeps the line the cursor is on,
+      // so a plain shell is left holding its prompt rather than a blank pane - a shell has
+      // no frame to repaint and `redraw` would print nothing back. `reset` would also put
+      // modes and colours back, which is not ours to do to a CLI mid-run.
+      const rewrapped = t.cols !== wasCols
+      if (isPhoneClient() && rewrapped) {
+        window.setTimeout(() => {
+          if (!host.current?.offsetParent) return
+          try {
+            t.clear()
+          } catch {
+            /* detached */
+          }
+          api.redraw(sessionId)
+        }, 400)
+      }
       // A resize is where panes get garbled: the agent redraws against a size it half
       // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
       // whole frame again. Held off for the first seconds so a CLI still painting its

@@ -1414,7 +1414,14 @@ export interface Api {
   killSession(id: string): Promise<void>
   write(id: string, data: string): void
   /** send the same line to every live session */
-  resize(id: string, cols: number, rows: number): void
+  /**
+   * `borrowed` is a phone saying "this is my screen's size, not the desk's". One pty
+   * cannot be two shapes, so a phone that opens a pane bends it to a phone and the desk
+   * gets the size back the moment the phone looks away - see `returnSizes` in sessions.ts.
+   */
+  resize(id: string, cols: number, rows: number, borrowed?: boolean): void
+  /** the phone has stopped looking: every borrowed pty goes back to the desk's shape */
+  returnSize(): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
   /**

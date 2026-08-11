@@ -137,6 +137,11 @@ interface Live {
   req: StartSessionRequest
   cols: number
   rows: number
+  /** the size the DESK window last fitted this pane to - see `resize` */
+  deskCols: number
+  deskRows: number
+  /** a phone is holding the pty at its own shape, and owes the desk its size back */
+  borrowed?: boolean
   /**
    * What the pane can see and this process cannot: the agent's own footer still
    * says it is running ("esc to interrupt"). A long tool call is silent for
@@ -318,6 +323,8 @@ export class SessionManager extends EventEmitter {
       req,
       cols: 120,
       rows: 30,
+      deskCols: 120,
+      deskRows: 30,
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
@@ -656,11 +663,34 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
-  resize(id: string, cols: number, rows: number): void {
+  /**
+   * One pty cannot be two shapes at once.
+   *
+   * A pane is drawn by the desk window AND, when it is serving one, by a phone - and
+   * both of them fit their own screen and say so here. Whoever spoke last won, which
+   * meant a phone that looked at a pane left the pty 50 columns wide and the desk drew
+   * its 157-column pane with every line wrapped a third of the way across. Nothing gave
+   * it back, so the desk stayed broken until the window was resized by hand. Measured:
+   * desk terminal 157x57, pty 50x50, and the phone had been closed for minutes.
+   *
+   * So the desk OWNS the size and a phone BORROWS it. A borrowed resize bends the pty to
+   * the phone and leaves `deskCols/deskRows` alone; `returnSizes` puts every borrowed pty
+   * back, and it is called when the phone leaves the pane (`pty:return`) and when the last
+   * phone stream closes. A desk resize takes ownership back on the spot: a window the user
+   * is dragging is a person at the desk, and they win.
+   */
+  resize(id: string, cols: number, rows: number, borrowed = false): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
+    if (borrowed) {
+      s.borrowed = true
+    } else {
+      s.borrowed = false
+      s.deskCols = s.cols
+      s.deskRows = s.rows
+    }
     // Carried on the session itself so a device mirroring this pane can draw it at the
     // size it actually is. Only pushed when the numbers moved: a window drag is dozens
     // of these a second and they mostly land on the same cell count.
@@ -675,6 +705,24 @@ export class SessionManager extends EventEmitter {
       s.proc.resize(s.cols, s.rows)
     } catch {
       // pty already gone between the renderer's measure and this call - harmless.
+    }
+  }
+
+  /**
+   * Give every borrowed pty back to the desk.
+   *
+   * Called when a phone stops looking at a pane and when the last phone stream closes,
+   * because those are the two ways "a phone is drawing this" ends. Idempotent, and it
+   * asks the CLI to repaint: the frame on the desk was drawn for a phone and would
+   * otherwise sit there at a third of the width until the agent printed something.
+   */
+  returnSizes(): void {
+    for (const [id, s] of this.sessions) {
+      if (!s.borrowed) continue
+      s.borrowed = false
+      if (s.cols === s.deskCols && s.rows === s.deskRows) continue
+      this.resize(id, s.deskCols, s.deskRows)
+      this.redraw(id)
     }
   }
 

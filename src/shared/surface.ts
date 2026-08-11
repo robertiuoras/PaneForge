@@ -51,6 +51,7 @@ export const SURFACE: Surface = {
   clearAttention: ['send', 'sessions:attention-clear'],
   write: ['send', 'pty:write'],
   resize: ['send', 'pty:resize'],
+  returnSize: ['send', 'pty:return'],
   redraw: ['send', 'pty:redraw'],
   setBusy: ['send', 'sessions:busy'],
   startSwarm: ['invoke', 'sessions:swarm'],

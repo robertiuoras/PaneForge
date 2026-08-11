@@ -16,7 +16,8 @@
  * problem, and a tablet held wide does not.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { isPhoneClient } from './client'
 
 /** Below this the sidebar and the panes take turns. Matches the `@media` in styles.css. */
 export const HANDHELD_MAX = 720
@@ -74,10 +75,23 @@ export function useHandheld(activeId: string | null): Handheld {
     }
   }, [handheld, listOpen])
 
+  /**
+   * Going back to the list is a phone saying "I have stopped looking at that pane", and
+   * that is the moment the desk gets its pty shape back: a pane fitted to 50 columns is
+   * right for the phone in your hand and wrong for the 157-column window it is also drawn
+   * in. The stream closing says the same thing for a phone that is simply put down - see
+   * `returnSizes` in main/sessions.ts. A narrow DESKTOP window is handheld too and owes
+   * nothing, so only a phone speaks up.
+   */
+  const showList = useCallback(() => {
+    setListOpen(true)
+    if (isPhoneClient()) window.api.returnSize()
+  }, [])
+
   return {
     handheld,
     listOpen,
-    showList: () => setListOpen(true),
+    showList,
     showPane: () => setListOpen(false)
   }
 }

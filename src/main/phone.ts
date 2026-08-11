@@ -100,6 +100,8 @@ export interface PhoneDeps {
   saveDevices?(list: PhoneDevice[]): void
   /** may a browser ask to be let in, rather than typing the code */
   canAsk?(): boolean
+  /** the last watching browser has gone: give back anything a phone was holding */
+  onIdle?(): void
 }
 
 interface Client extends PhonePeer {
@@ -453,6 +455,10 @@ export class PhoneServer {
     res.on('close', () => {
       client.alive = false
       this.clients.delete(client)
+      // The last phone put its screen down. Anything it bent to a phone's shape - a pane's
+      // pty size - belongs to the desk again, and nothing else would ever say so: a browser
+      // that is closed, locked or out of range never gets to send a parting message.
+      if (!this.clients.size) this.deps.onIdle?.()
       this.deps.onChange?.()
     })
     this.deps.onChange?.()
