@@ -289,7 +289,9 @@ export async function mergeLaneBack(
   }
 
   // Merged and empty: the folder is now pure cost. It only goes if no session is in it.
-  const held = (opts.busy ?? []).some((b) => samePath(b, work.dir))
+  const held =
+    (opts.busy ?? []).some((b) => samePath(b, work.dir)) ||
+    (await heldAsProcessCwd(work.dir))
   const removed = held ? false : await removeLane(work.repo, work.dir, work.branch)
   return { ok: true, commits: work.ahead, base: work.base, branch: work.branch, removed }
 }
@@ -336,6 +338,34 @@ const exec = (cwd: string, args: string[], timeout: number): Promise<boolean> =>
   new Promise((done) => {
     execFile('git', args, { cwd, windowsHide: true, timeout }, (err) => done(!err))
   })
+
+/**
+ * Is a process still rooted in this folder even though PaneForge has no pane metadata
+ * for it?
+ *
+ * CLI agents keep one process alive between prompts. On POSIX a directory can be
+ * unlinked while that process still uses it, so `git worktree remove` succeeds and the
+ * next prompt fails before its hook can rebuild the lane. Windows refuses the removal
+ * itself. `lsof -d cwd` asks the missing question on macOS/Linux without walking the
+ * lane's files; if lsof is unavailable, preserving a clean lane is safer than making a
+ * live session unusable.
+ */
+async function heldAsProcessCwd(dir: string): Promise<boolean> {
+  if (process.platform === 'win32') return false
+  return new Promise((done) => {
+    execFile(
+      'lsof',
+      ['-t', '-a', '-d', 'cwd', '--', dir],
+      { encoding: 'utf8', windowsHide: true, timeout: 10_000 },
+      (err, stdout) => {
+        if (!err) return done(Boolean(stdout.trim()))
+        // lsof uses status 1 for the ordinary "no matching process" answer. Any other
+        // failure leaves the lane intact because it could not prove the cwd is unused.
+        done(Number((err as NodeJS.ErrnoException).code) !== 1)
+      }
+    )
+  })
+}
 
 /** The main checkout a folder belongs to (itself, when it is not a worktree). */
 export function repoOf(cwd: string): Promise<string | null> {
@@ -465,6 +495,10 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     if (!laneBranches(work.lane).includes(work.branch)) continue
     const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
+    // A paused CLI session is invisible to `busy`: its PaneForge pane can remain in the
+    // main checkout while the agent process is rooted here. POSIX permits deleting that
+    // cwd, but the agent cannot start its next turn afterwards.
+    if (await heldAsProcessCwd(dir)) continue
     await exec(repo, ['worktree', 'remove', dir], 120_000)
     // Not the exit code - see finished(). A lane can be gone and still make git unhappy.
     if (!(await finished(repo, dir))) continue
