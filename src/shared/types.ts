@@ -1742,7 +1742,7 @@ export interface Api {
    * screen over the link. Each pane closes here only once its replacement is
    * running there; the report says per pane what carried and what refused.
    */
-  handoffToDevice(device: string, ids?: string[]): Promise<HandoffItem[]>
+  handoffToDevice(device: string, ids?: string[], closeReceiverWhenDone?: boolean): Promise<HandoffItem[]>
 
   /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */

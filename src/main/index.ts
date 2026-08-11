@@ -116,7 +116,7 @@ import {
 } from './consoles'
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
-import { receiveHandoff, sendHandoff } from './handoff'
+import { handoffReceiverCanQuit, receiveHandoff, sendHandoff } from './handoff'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
@@ -629,6 +629,15 @@ function focusWindow(asked = false): void {
 // See dataPump.ts. Everything that would reorder or lose output flushes it first.
 const pump = new DataPump((id: string, data: string) => send('pty:data', id, data))
 
+/** Receiver-only: a handoff asked to leave this PC clean after its transferred work ends. */
+const closeAfterHandoff = new Set<string>()
+let closingAfterHandoff = false
+function closeReceiverWhenClear(): void {
+  if (closingAfterHandoff || !handoffReceiverCanQuit(closeAfterHandoff, manager.list())) return
+  closingAfterHandoff = true
+  app.quit()
+}
+
 manager.on('data', (id: string, data: string) => {
   pump.push(id, data)
 })
@@ -642,6 +651,7 @@ manager.on('sessions', () => {
   // in a second and they are worth one write.
   noteDesk()
   presence.update(presenceCounts())
+  closeReceiverWhenClear()
 })
 
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
@@ -776,7 +786,13 @@ const remote = new Remote({
       },
       payload,
       file
-    ),
+    ).then((result) => {
+      if (payload.closeReceiverWhenDone && result.ok && result.session) {
+        closeAfterHandoff.add(result.session.id)
+        closeReceiverWhenClear()
+      }
+      return result
+    }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   onData: (cb) => {
@@ -1694,7 +1710,7 @@ ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
 // Handing panes the OTHER way: this machine's live panes move to that device and
 // keep going there. The push happens before anything is killed here, and a pane
 // whose handoff fails stays open - see main/handoff.ts.
-ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[]) =>
+ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean) =>
   sendHandoff(
     {
       root: projectsRoot,
@@ -1707,7 +1723,10 @@ ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[]) =>
       deviceName: (dev) => remote.peerName(dev)
     },
     String(device),
-    Array.isArray(ids) && ids.length ? ids.map(String) : undefined
+    {
+      ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
+      closeReceiverWhenDone: closeReceiverWhenDone === true
+    }
   )
 )
 // The renderer runs from file:// in production, which is not a secure context, so

@@ -21,6 +21,7 @@ import {
   HANDOFF_MAX_FILE,
   mapCwd,
   type HandoffItem,
+  type HandoffRequest,
   type HandoffPayload,
   type HandoffRepo,
   type HandoffResult
@@ -85,8 +86,8 @@ export interface SendDeps {
  * nothing else with it. `ids` empty means every local live pane. A pane is
  * killed here only after the far end has said its replacement is running.
  */
-export async function sendHandoff(deps: SendDeps, device: string, ids?: string[]): Promise<HandoffItem[]> {
-  const wanted = new Set(ids ?? [])
+export async function sendHandoff(deps: SendDeps, device: string, request: HandoffRequest = {}): Promise<HandoffItem[]> {
+  const wanted = new Set(request.ids ?? [])
   const panes = deps
     .list()
     .filter((s) => !s.id.startsWith('@') && s.status !== 'exited')
@@ -94,7 +95,7 @@ export async function sendHandoff(deps: SendDeps, device: string, ids?: string[]
   const out: HandoffItem[] = []
   for (const pane of panes) {
     try {
-      out.push(await sendOne(deps, device, pane))
+      out.push(await sendOne(deps, device, pane, request.closeReceiverWhenDone === true))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -102,7 +103,7 @@ export async function sendHandoff(deps: SendDeps, device: string, ids?: string[]
   return out
 }
 
-async function sendOne(deps: SendDeps, device: string, pane: Session): Promise<HandoffItem> {
+async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean): Promise<HandoffItem> {
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
@@ -116,7 +117,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session): Promise<H
     spec,
     senderRoot: deps.root(),
     repo: repo ?? undefined,
-    tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined
+    tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
+    closeReceiverWhenDone: closeReceiverWhenDone || undefined
   }
   if (spec.resumeId) {
     const path = deps.transcriptFileFor(pane.cwd, spec.resumeId)

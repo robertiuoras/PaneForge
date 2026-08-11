@@ -31,6 +31,14 @@ export interface HandoffPayload {
   xfer?: string
   /** what was on the pane's screen, replayed into the new pane's scrollback */
   tail?: string
+  /** close the receiver only after this transferred pane ends and nothing else runs there */
+  closeReceiverWhenDone?: boolean
+}
+
+/** What the handoff chooser is allowed to move. No ids is the deliberate bulk action. */
+export interface HandoffRequest {
+  ids?: string[]
+  closeReceiverWhenDone?: boolean
 }
 
 export interface HandoffResult {
@@ -48,6 +56,14 @@ export interface HandoffItem {
   ok: boolean
   error?: string
   notes: string[]
+}
+
+/**
+ * A handoff receiver is safe to quit only after its transferred work has stopped and it
+ * has no other local pty left. An idle pane is still somebody's question, never "done".
+ */
+export function handoffReceiverCanQuit(ids: ReadonlySet<string>, sessions: Pick<Session, 'id' | 'status'>[]): boolean {
+  return ids.size > 0 && sessions.every((s) => s.status === 'exited')
 }
 
 /** Chunks stay well under the wire's 8 MB frame cap even after base64. */
