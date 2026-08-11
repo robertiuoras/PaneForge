@@ -59,21 +59,24 @@ const alive = (pid) => {
 
 /** Every descendant of a pid, so "the tree died" can be checked rather than assumed. */
 function children(pid) {
-  if (process.platform !== 'win32') return []
-  const out = execFileSync(
-    'powershell',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${pid} } | ForEach-Object { $_.ProcessId }`
-    ],
-    { encoding: 'utf8', windowsHide: true }
-  )
+  const out =
+    process.platform === 'win32'
+      ? execFileSync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${pid} } | ForEach-Object { $_.ProcessId }`
+          ],
+          { encoding: 'utf8', windowsHide: true }
+        )
+      : execFileSync('ps', ['-Ao', 'pid=,ppid='], { encoding: 'utf8' })
   return out
     .split(/\r?\n/)
-    .map((s) => Number(s.trim()))
-    .filter(Boolean)
+    .map((s) => s.trim().split(/\s+/).map(Number))
+    .filter((parts) => (process.platform === 'win32' ? Boolean(parts[0]) : parts[1] === pid))
+    .map((parts) => parts[0])
 }
 
 // A command that sits there, so the test is about the teardown and not about a race with
