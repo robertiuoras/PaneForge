@@ -10,8 +10,10 @@
 //   PF_PORT=9334 node scripts/session-choice-test.mjs
 
 import { setTimeout as sleep } from 'node:timers/promises'
+import { readFileSync } from 'node:fs'
 
 const port = process.env.PF_PORT ?? '9334'
+const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE ?? ''
 const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
 
 async function page() {
@@ -196,13 +198,10 @@ try {
     if (!shell || !config.root) return { error: 'shell runner or project root missing' }
     const output = 'copy-output-' + Date.now()
     const encoded = btoa(output)
-    const originalCopy = window.api.copyText
-    let copied = ''
     const started = await window.api.startSession({ cwd: config.root, agent: 'shell', title: 'Copy output probe' })
     try {
       // Keep the expected output out of the typed command: matching the echo alone
       // would not prove the Copy button captured terminal output.
-      window.api.copyText = (text) => { copied = text }
       window.api.write(started.id, 'node -e "process.stdout.write(Buffer.from(\\'' + encoded + '\\', \\'base64\\').toString())"\\r')
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 100))
@@ -212,16 +211,16 @@ try {
       if (!button) return { error: 'copy-output button missing' }
       button.click()
       await new Promise((r) => setTimeout(r, 100))
-      return { copied, output }
+      return { output }
     } finally {
-      window.api.copyText = originalCopy
       await window.api.killSession(started.id)
     }
   })()`)
+  const copiedText = testClipboardFile ? readFileSync(testClipboardFile, 'utf8') : ''
   ok(
     'the visible Copy button puts complete terminal output on the clipboard',
-    copiedOutput.copied?.includes(copiedOutput.output),
-    JSON.stringify(copiedOutput)
+    copiedText.includes(copiedOutput.output),
+    JSON.stringify({ ...copiedOutput, copiedText })
   )
 } finally {
   if (originalConfig) {

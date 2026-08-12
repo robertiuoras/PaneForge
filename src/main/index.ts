@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1732,8 +1732,12 @@ ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeRecei
 )
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
+// A disposable dev copy can set this to prove its clipboard path without replacing the
+// real user's rich clipboard formats (images, files and custom app payloads).
+const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE?.trim()
 ipcMain.on('clipboard:write', (_e, text: string) => {
   if (typeof text === 'string' && text.length) {
+    if (testClipboardFile) return void writeFileSync(testClipboardFile, text, 'utf8')
     // Every copy that starts inside this app comes through here - copy-on-select in a
     // pane most of all, which fires on a drag across two words. It is still stashed; it
     // is only marked as ours so the Stash does not announce it. See `noteOwnCopy`.
@@ -1741,7 +1745,14 @@ ipcMain.on('clipboard:write', (_e, text: string) => {
     clipboard.writeText(text)
   }
 })
-ipcMain.handle('clipboard:read', () => clipboard.readText())
+ipcMain.handle('clipboard:read', () => {
+  if (!testClipboardFile) return clipboard.readText()
+  try {
+    return readFileSync(testClipboardFile, 'utf8')
+  } catch {
+    return ''
+  }
+})
 
 // The clipboard shelf: the last things copied, one click from the focused pane.
 ipcMain.handle('recents:list', () => listRecents())
