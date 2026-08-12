@@ -6,14 +6,15 @@
 // restored before the probe exits, including when an assertion fails.
 //
 //   npm run build
-//   npm run try -- --keep --show --remote-debugging-port=9334
-//   PF_PORT=9334 node scripts/session-choice-test.mjs
+//   PF_TEST_CLIPBOARD_FILE=/tmp/paneforge-clipboard-test npm run try -- --keep --show --remote-debugging-port=9334
+//   PF_TEST_CLIPBOARD_FILE=/tmp/paneforge-clipboard-test PF_PORT=9334 node scripts/session-choice-test.mjs
 
 import { setTimeout as sleep } from 'node:timers/promises'
 import { readFileSync } from 'node:fs'
 
 const port = process.env.PF_PORT ?? '9334'
 const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE ?? ''
+if (!testClipboardFile) throw new Error('PF_TEST_CLIPBOARD_FILE is required so this probe never replaces a real clipboard')
 const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
 
 async function page() {
