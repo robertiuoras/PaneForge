@@ -13,6 +13,8 @@ interface Props {
   defaultAgent: Agent
   /** last model used per agent, so the pick sticks between launches */
   defaultModels: Record<string, string>
+  /** persist the last runner/model picked here for the next New session */
+  onDefaultsChange: (agent: Agent, model: string) => void
   agents: AgentInfo[]
   onStart: (reqs: StartSessionRequest[]) => void
   /** save the current tick-list as a named workspace without launching it */
@@ -28,6 +30,7 @@ export default function NewSessionDialog({
   projects,
   defaultAgent,
   defaultModels,
+  onDefaultsChange,
   agents: probed,
   onStart,
   onSaveWorkspace,
@@ -327,9 +330,11 @@ export default function NewSessionDialog({
               model={model}
               onInstalled={reprobe}
               onChange={(a, m) => {
-                setAgent(a)
                 // Switching CLI carries its own remembered model, not the previous one's.
-                setModel(a === agent ? m : defaultModels[a] ?? '')
+                const nextModel = a === agent ? m : defaultModels[a] ?? ''
+                setAgent(a)
+                setModel(nextModel)
+                onDefaultsChange(a, nextModel)
               }}
             />
             <button className="ghost" onClick={save} disabled={!ticked.length}>

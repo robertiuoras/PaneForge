@@ -51,6 +51,7 @@
     "test:dispatchpane": "node scripts/dispatch-pane-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",
     "test:routeview": "node scripts/route-view-test.mjs",
+    "test:sessionchoice": "node scripts/session-choice-test.mjs",
     "test:routecli": "node scripts/route-cli-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
