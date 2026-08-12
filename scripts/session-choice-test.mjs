@@ -6,15 +6,12 @@
 // restored before the probe exits, including when an assertion fails.
 //
 //   npm run build
-//   PF_TEST_CLIPBOARD_FILE=/tmp/paneforge-clipboard-test npm run try -- --keep --show --remote-debugging-port=9334
-//   PF_TEST_CLIPBOARD_FILE=/tmp/paneforge-clipboard-test PF_PORT=9334 node scripts/session-choice-test.mjs
+//   npm run try -- --keep --show --clipboard-test --remote-debugging-port=9334
+//   PF_PORT=9334 node scripts/session-choice-test.mjs
 
 import { setTimeout as sleep } from 'node:timers/promises'
-import { readFileSync } from 'node:fs'
 
 const port = process.env.PF_PORT ?? '9334'
-const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE ?? ''
-if (!testClipboardFile) throw new Error('PF_TEST_CLIPBOARD_FILE is required so this probe never replaces a real clipboard')
 const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
 
 async function page() {
@@ -197,7 +194,9 @@ try {
     const shell = agents.find((a) => a.id === 'shell' && a.available)
     const config = await window.api.getConfig()
     if (!shell || !config.root) return { error: 'shell runner or project root missing' }
-    const output = 'copy-output-' + Date.now()
+    // Long enough to wrap in the real xterm buffer. The output itself never appears in
+    // the typed command, so this also proves we copied output rather than command echo.
+    const output = 'copy-output-' + Date.now() + '-' + 'x'.repeat(400)
     const encoded = btoa(output)
     const started = await window.api.startSession({ cwd: config.root, agent: 'shell', title: 'Copy output probe' })
     try {
@@ -212,16 +211,15 @@ try {
       if (!button) return { error: 'copy-output button missing' }
       button.click()
       await new Promise((r) => setTimeout(r, 100))
-      return { output }
+      return { output, copied: await window.api.readClipboard() }
     } finally {
       await window.api.killSession(started.id)
     }
   })()`)
-  const copiedText = testClipboardFile ? readFileSync(testClipboardFile, 'utf8') : ''
   ok(
     'the visible Copy button puts complete terminal output on the clipboard',
-    copiedText.includes(copiedOutput.output),
-    JSON.stringify({ ...copiedOutput, copiedText })
+    copiedOutput.copied.includes(copiedOutput.output),
+    JSON.stringify(copiedOutput)
   )
 } finally {
   if (originalConfig) {

@@ -22,7 +22,8 @@
 // seconds instead of a minute.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, mkdtempSync, openSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devProfile } from './dev-profile.mjs'
@@ -34,6 +35,7 @@ const keep = args.includes('--keep')
 // --minimized/-m still accepted, and now redundant: --show is the way to see the window.
 const minimized = !args.includes('--show')
 const close = args.includes('--close')
+const clipboardTest = args.includes('--clipboard-test')
 
 // `npm run try -- --close` shuts the test copy without touching the live app. Lane
 // release calls the same thing, so this is only for closing one by hand mid-session.
@@ -59,8 +61,19 @@ const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
 // itself out can be checked against the real window instead of a screenshot of it.
 const passThrough = args.filter(
-  (a) => !['--keep', '--minimized', '-m', '--show', '--close'].includes(a) && !a.startsWith('--profile=')
+  (a) => !['--keep', '--minimized', '-m', '--show', '--close', '--clipboard-test'].includes(a) && !a.startsWith('--profile=')
 )
+
+// A UI copy test must never replace the user's real clipboard, including non-text
+// formats. Make one owner-only fixture and hand it only to this detached test copy.
+let clipboardEnv = {}
+if (clipboardTest) {
+  const dir = mkdtempSync(join(tmpdir(), 'paneforge-clipboard-test-'))
+  chmodSync(dir, 0o700)
+  const file = join(dir, 'clipboard.txt')
+  closeSync(openSync(file, 'wx', 0o600))
+  clipboardEnv = { PF_TEST_CLIPBOARD_DIR: dir, PF_TEST_CLIPBOARD_FILE: file }
+}
 
 const electron = join(
   root,
@@ -105,7 +118,7 @@ spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
   cwd: root,
   detached: true,
   stdio: 'ignore',
-  env: { ...process.env, PANEFORGE_PROFILE: profile }
+  env: { ...process.env, ...clipboardEnv, PANEFORGE_PROFILE: profile }
 }).unref()
 
 const dockOrTaskbar = process.platform === 'darwin' ? 'Dock' : 'taskbar'

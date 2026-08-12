@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1735,6 +1735,7 @@ ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeRecei
 // A disposable dev copy can set this to prove its clipboard path without replacing the
 // real user's rich clipboard formats (images, files and custom app payloads).
 const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE?.trim()
+const testClipboardDir = process.env.PF_TEST_CLIPBOARD_DIR?.trim()
 ipcMain.on('clipboard:write', (_e, text: string) => {
   if (typeof text === 'string' && text.length) {
     if (testClipboardFile) return void writeFileSync(testClipboardFile, text, 'utf8')
@@ -1753,6 +1754,21 @@ ipcMain.handle('clipboard:read', () => {
     return ''
   }
 })
+
+/** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
+function removeTestClipboard(): void {
+  if (!testClipboardFile || !testClipboardDir || !testClipboardFile.startsWith(testClipboardDir + '/')) return
+  try {
+    const dir = lstatSync(testClipboardDir)
+    const file = lstatSync(testClipboardFile)
+    if (!dir.isDirectory() || dir.isSymbolicLink() || !file.isFile() || file.isSymbolicLink()) return
+    if ((dir.mode & 0o077) !== 0 || (file.mode & 0o077) !== 0) return
+    unlinkSync(testClipboardFile)
+    rmSync(testClipboardDir, { recursive: true, force: true })
+  } catch {
+    /* a test fixture that is already gone is clean enough */
+  }
+}
 
 // The clipboard shelf: the last things copied, one click from the focused pane.
 ipcMain.handle('recents:list', () => listRecents())
@@ -3172,4 +3188,5 @@ app.on('will-quit', () => {
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.
   flushRecents()
+  removeTestClipboard()
 })

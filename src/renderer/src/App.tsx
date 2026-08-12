@@ -1330,7 +1330,11 @@ export default function App(): JSX.Element {
         const text = terminal
           ? Array.from({ length: terminal.buffer.active.length }, (_, i) => {
               const line = terminal.buffer.active.getLine(i)
-              return (line?.translateToString(true) ?? '') + (line && !line.isWrapped ? '\n' : '')
+              // xterm marks the *following* row as wrapped. That is the row which
+              // decides whether this one gets a newline: using this row's flag splits
+              // one long logical line and joins it to the next one.
+              const next = terminal.buffer.active.getLine(i + 1)
+              return (line?.translateToString(true) ?? '') + (next?.isWrapped ? '' : '\n')
             })
               .join('')
               .trimEnd()
