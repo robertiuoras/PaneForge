@@ -298,6 +298,8 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
    its usual 22 (measured). */
 .section-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-btn { padding: 2px 4px; display: inline-flex; align-items: center; line-height: 1; }
+.device-filter { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; padding: 0 2px; }
+.device-filter select { min-width: 0; flex: 1; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 6px; font: inherit; }
 /* Red at rest so it is readable as "this destroys something" before the hover text is,
    but dimmed: full red on every pane header would look like a row of alarms. */
 .icon.danger { color: var(--danger); opacity: 0.72; }

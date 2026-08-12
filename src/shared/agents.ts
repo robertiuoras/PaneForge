@@ -132,7 +132,13 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     // otherwise looks healthy, so a pane launched on one sits there having burned
     // its prompt. Only the ids below answer on a subscription login; an API-key
     // user can still type any string, which is what the list is for.
-    models: ['gpt-5.6-terra', 'gpt-5.6-sol'],
+    // These are display names as well as picker choices. Leaving them as bare ids made
+    // a Sol pane look like it had no model identity on a crowded card, while Terra was
+    // only recognisable to somebody who knew the raw CLI spelling.
+    models: [
+      { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', hint: 'balanced' },
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', hint: 'deep reasoning' }
+    ],
     color: '#10a37f',
     install: 'npm i -g @openai/codex',
     uninstall: 'npm rm -g @openai/codex',
@@ -370,6 +376,12 @@ export function modelLabel(m: ModelChoice): string {
 
 export function modelHint(m: ModelChoice): string | undefined {
   return typeof m === 'string' ? undefined : m.hint
+}
+
+/** The friendly model name for a pane card, without ever changing what reaches the CLI. */
+export function agentModelLabel(agent: Pick<AgentSpec, 'models'> | undefined, value: string): string {
+  const choice = agent?.models?.find((m) => modelValue(m) === value)
+  return choice ? modelLabel(choice) : value
 }
 
 /** Full argv for one launch: resume form or fresh form, plus the model. */

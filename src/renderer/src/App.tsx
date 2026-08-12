@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentInfo } from '@shared/agents'
+import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import type {
   Config,
   DiffScope,
@@ -168,6 +168,8 @@ interface AskState {
 
 export default function App(): JSX.Element {
   const [rawSessions, setSessions] = useState<Session[]>([])
+  /** Which device's panes the sidebar is showing. `all` remains the default desk view. */
+  const [deviceFilter, setDeviceFilter] = useState('all')
   // The order the sidebar was dragged into, by id. Main is told about it too (so the
   // grid, the Ctrl-N keys and a restore after an update all agree), but the list is
   // sorted here as well: a drop has to land the instant the mouse comes up, not one
@@ -183,6 +185,26 @@ export default function App(): JSX.Element {
       (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
     )
   }, [rawSessions, order])
+  const deviceChoices = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const session of sessions) {
+      if (session.remote) seen.set(session.remote.device, session.remote.name)
+    }
+    return [...seen].map(([id, name]) => ({ id, name }))
+  }, [sessions])
+  const shownSessions = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          deviceFilter === 'all' ||
+          (deviceFilter === 'local' ? !session.remote : session.remote?.device === deviceFilter)
+      ),
+    [sessions, deviceFilter]
+  )
+  useEffect(() => {
+    if (deviceFilter !== 'all' && deviceFilter !== 'local' && !deviceChoices.some((d) => d.id === deviceFilter))
+      setDeviceFilter('all')
+  }, [deviceFilter, deviceChoices])
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
@@ -1294,6 +1316,18 @@ export default function App(): JSX.Element {
     [flash]
   )
 
+  /** Copy the complete retained terminal output, including text no longer on screen. */
+  const copyPaneOutput = useCallback(
+    (session: Session) => {
+      void api.getBuffer(session.id).then((text) => {
+        if (!text) return flash(`${session.title} has no output to copy yet.`)
+        api.copyText(text)
+        flash(`Copied ${session.title}'s output.`)
+      })
+    },
+    [flash]
+  )
+
   const grid = config?.grid ?? false
 
   /**
@@ -2341,7 +2375,9 @@ export default function App(): JSX.Element {
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
-          <span className="section-title">Sessions ({sessions.length})</span>
+          <span className="section-title">
+            Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
+          </span>
           {/* Badges and the empty-everything button travel together, hard right. One
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
@@ -2374,8 +2410,22 @@ export default function App(): JSX.Element {
             )}
           </span>
         </div>
+        {deviceChoices.length > 0 && (
+          <label className="device-filter">
+            <span>Show</span>
+            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
+              <option value="all">All devices</option>
+              <option value="local">This device</option>
+              {deviceChoices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="list" ref={listRef}>
-          {sessions.map((s, i) => (
+          {shownSessions.map((s, i) => (
             <div
               key={s.id}
               data-id={s.id}
@@ -2489,7 +2539,11 @@ export default function App(): JSX.Element {
                   <span className="row-agent">
                     {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
                   </span>
-                  {s.model ? <span className="chip">{s.model}</span> : null}
+                  {s.model ? (
+                    <span className="chip" title={s.model}>
+                      {agentModelLabel(agents.find((a) => a.id === s.agent), s.model)}
+                    </span>
+                  ) : null}
                   {/* Which project this pane is in, which the card never said.
                       The title is whatever the pane was named - `basename(cwd)` by
                       default, which for a worktree copy is `PaneForge-w2`, and anything
@@ -2854,6 +2908,14 @@ export default function App(): JSX.Element {
                   onInstalled={() => void api.listAgents().then(setAgents)}
                   onChange={(a, m) => switchAgent(s, a, m)}
                 />
+                <button
+                  className="icon"
+                  title="Copy this pane's complete terminal output"
+                  aria-label={`Copy ${s.title} output`}
+                  onClick={() => copyPaneOutput(s)}
+                >
+                  Copy
+                </button>
                 {/* Clears the agent's context and keeps the run. Where the mic used to
                     be, which is why the mic moved down to the prompt it dictates into:
                     the two got clicked for each other up here. */}
