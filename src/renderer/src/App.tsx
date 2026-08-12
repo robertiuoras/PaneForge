@@ -3119,6 +3119,12 @@ export default function App(): JSX.Element {
           agents={agents}
           defaultAgent={config.defaultAgent}
           defaultModels={config.defaultModels}
+          onDefaultsChange={(agent, model) =>
+            patchConfig({
+              defaultAgent: agent,
+              defaultModels: { ...config.defaultModels, [agent]: model }
+            })
+          }
           onCancel={() => setPicking(false)}
           onStart={start}
           onSaveWorkspace={(name, reqs) => {
