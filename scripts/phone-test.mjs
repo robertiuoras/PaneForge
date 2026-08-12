@@ -515,6 +515,24 @@ let cookie = ''
   const page = await fetch(at + '/', { headers: { cookie: mine } })
   ok((await page.text()).includes('THE-REAL-UI'), 'that cookie is the whole app')
 
+  // A named public hostname must not turn one user's approved phone into a key for a
+  // different PaneForge installation. Each desk keeps its own device list and root
+  // secret, so a cookie minted by this server is only meaningful here.
+  const otherOwner = new PhoneServer({
+    staticDir,
+    code: () => 'OWN777',
+    secret: () => 'separate-owner-secret',
+    channels: { invoke: [], send: [], on: [] },
+    invoke: async () => null,
+    send: () => {},
+    devices: () => []
+  })
+  const otherPort = port + 3
+  ok((await otherOwner.start(otherPort, '127.0.0.1')).on, 'a separate owner server is up')
+  const crossOwner = await fetch(`http://127.0.0.1:${otherPort}/`, { headers: { cookie: mine } })
+  ok(!(await crossOwner.text()).includes('THE-REAL-UI'), 'an approved device cookie never opens another owner\'s desk')
+  await otherOwner.stop()
+
   // The half that has to be true for "Sign out" to mean anything.
   s2.forgetDevice(devices[0].id)
   ok(devices.length === 0, 'signing out forgets it')
