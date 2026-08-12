@@ -529,9 +529,15 @@ let cookie = ''
   })
   const otherPort = port + 3
   ok((await otherOwner.start(otherPort, '127.0.0.1')).on, 'a separate owner server is up')
-  const crossOwner = await fetch(`http://127.0.0.1:${otherPort}/`, { headers: { cookie: mine } })
-  ok(!(await crossOwner.text()).includes('THE-REAL-UI'), 'an approved device cookie never opens another owner\'s desk')
-  await otherOwner.stop()
+  try {
+    const crossOwner = await fetch(`http://127.0.0.1:${otherPort}/`, { headers: { cookie: mine } })
+    const crossOwnerPage = await crossOwner.text()
+    ok(crossOwner.status === 200, 'another owner returns the normal unauthenticated page', String(crossOwner.status))
+    ok(crossOwnerPage.includes('/pf/pair'), 'another owner asks to pair instead of serving its desk')
+    ok(!crossOwnerPage.includes('THE-REAL-UI'), 'an approved device cookie never opens another owner\'s desk')
+  } finally {
+    await otherOwner.stop()
+  }
 
   // The half that has to be true for "Sign out" to mean anything.
   s2.forgetDevice(devices[0].id)
