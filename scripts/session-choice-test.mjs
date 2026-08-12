@@ -1,8 +1,9 @@
 // Does New session remember the runner and model picked there?
 //
 // This drives the real React picker in a separate PaneForge test copy. It starts no
-// agent and no terminal: choose Codex, close, reopen, then read both the saved config
-// and the labels on screen.
+// agent and no terminal: choose an installed runner with a model, close, reopen, then
+// read both the saved config and the labels on screen. The original preferences are
+// restored before the probe exits, including when an assertion fails.
 //
 //   npm run build
 //   npm run try -- --keep --show --remote-debugging-port=9334
@@ -72,56 +73,108 @@ const OPEN = `(() => {
   return true
 })()`
 
-await evaluate(`(async () => {
-  document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-  await window.api.setConfig({ defaultAgent: 'claude', defaultModels: {} })
-  return true
-})()`)
-await sleep(150)
-ok('the New session button opens the picker', await evaluate(OPEN), 'button or dialog missing')
-await sleep(150)
+let originalConfig
+try {
+  originalConfig = await evaluate(`window.api.getConfig()`)
+  await evaluate(`(async () => {
+    document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    const available = (await window.api.listAgents()).find((a) => a.available)
+    if (!available) throw new Error('no installed runner is available to back the probe fixture')
+    await window.api.setConfig({
+      defaultAgent: 'claude',
+      defaultModels: {},
+      customAgents: [
+        ...${JSON.stringify(originalConfig?.customAgents ?? [])},
+        {
+          id: 'session-choice-probe',
+          label: 'Session choice probe',
+          // Use the resolvable command name, not its absolute path: availability is
+          // defined as the command resolving to a different, concrete path.
+          bin: available.bin,
+          modelFlag: '--model',
+          models: ['probe-model'],
+          color: '#10a37f',
+          custom: true
+        }
+      ]
+    })
+    return true
+  })()`)
+  await sleep(300)
+  ok('the New session button opens the picker', await evaluate(OPEN), 'button or dialog missing')
+  await sleep(150)
 
-const picked = await evaluate(`(async () => {
-  const agentTrigger = document.querySelector('.dialog .agent-pick .select')
-  if (!agentTrigger) return { error: 'agent picker missing' }
-  agentTrigger.click()
-  await new Promise((r) => setTimeout(r, 80))
-  const codex = [...document.querySelectorAll('.select-menu .opt')]
-    .find((o) => o.querySelector('.opt-label')?.textContent === 'Codex')
-  if (!codex) return { error: 'Codex option missing' }
-  codex.click()
-  await new Promise((r) => setTimeout(r, 80))
+  const picked = await evaluate(`(async () => {
+    const agents = await window.api.listAgents()
+    const chosen = agents.find((a) => a.id === 'session-choice-probe' && a.available)
+    if (!chosen) return { error: 'controlled model-capable runner fixture missing' }
+    const firstModel = chosen.models[0]
+    const modelValue = typeof firstModel === 'string' ? firstModel : firstModel.value
+    const modelLabel = typeof firstModel === 'string' ? firstModel : firstModel.label
 
-  const modelTrigger = [...document.querySelectorAll('.dialog .agent-pick .select')][1]
-  if (!modelTrigger) return { error: 'Codex model picker missing' }
-  modelTrigger.click()
-  await new Promise((r) => setTimeout(r, 80))
-  const terra = [...document.querySelectorAll('.select-menu .opt')]
-    .find((o) => o.querySelector('.opt-label')?.textContent === 'gpt-5.6-terra')
-  if (!terra) return { error: 'Codex model option missing' }
-  terra.click()
-  await new Promise((r) => setTimeout(r, 150))
+    const agentTrigger = document.querySelector('.dialog .agent-pick .select')
+    if (!agentTrigger) return { error: 'agent picker missing' }
+    agentTrigger.click()
+    await new Promise((r) => setTimeout(r, 80))
+    const agentOption = [...document.querySelectorAll('.select-menu .opt')]
+      .find((o) => o.querySelector('.opt-label')?.textContent === chosen.label)
+    if (!agentOption) return { error: chosen.label + ' option missing' }
+    agentOption.click()
+    await new Promise((r) => setTimeout(r, 80))
 
-  const config = await window.api.getConfig()
-  return { defaultAgent: config.defaultAgent, defaultModel: config.defaultModels.codex }
-})()`)
-ok('choosing Codex saves it as the next-session runner', picked.defaultAgent === 'codex', JSON.stringify(picked))
-ok('choosing a Codex model saves it for the next session', picked.defaultModel === 'gpt-5.6-terra', JSON.stringify(picked))
+    const modelTrigger = [...document.querySelectorAll('.dialog .agent-pick .select')][1]
+    if (!modelTrigger) return { error: chosen.label + ' model picker missing' }
+    modelTrigger.click()
+    await new Promise((r) => setTimeout(r, 80))
+    const modelOption = [...document.querySelectorAll('.select-menu .opt')]
+      .find((o) => o.querySelector('.opt-label')?.textContent === modelLabel)
+    if (!modelOption) return { error: modelLabel + ' option missing' }
+    modelOption.click()
+    await new Promise((r) => setTimeout(r, 150))
 
-await evaluate(`document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
-await sleep(150)
-await evaluate(OPEN)
-await sleep(150)
-const labels = await evaluate(
-  `[...document.querySelectorAll('.dialog .agent-pick .select-label')].map((n) => n.textContent)`
-)
-ok(
-  'reopening New session restores Codex and its model',
-  labels[0] === 'Codex' && labels[1] === 'gpt-5.6-terra',
-  JSON.stringify(labels)
-)
+    const config = await window.api.getConfig()
+    return {
+      agentId: chosen.id,
+      agentLabel: chosen.label,
+      modelValue,
+      modelLabel,
+      defaultAgent: config.defaultAgent,
+      defaultModel: config.defaultModels[chosen.id]
+    }
+  })()`)
+  ok(
+    'choosing a runner saves it for the next session',
+    picked.agentId && picked.defaultAgent === picked.agentId,
+    JSON.stringify(picked)
+  )
+  ok(
+    'choosing its model saves it for the next session',
+    picked.modelValue && picked.defaultModel === picked.modelValue,
+    JSON.stringify(picked)
+  )
 
-await evaluate(`document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
-ws.close()
-if (failed) process.exit(1)
-console.log('\nall checks passed')
+  await evaluate(`document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
+  await sleep(150)
+  await evaluate(OPEN)
+  await sleep(150)
+  const labels = await evaluate(
+    `[...document.querySelectorAll('.dialog .agent-pick .select-label')].map((n) => n.textContent)`
+  )
+  ok(
+    'reopening New session restores the runner and its model',
+    labels[0] === picked.agentLabel && labels[1] === picked.modelLabel,
+    JSON.stringify({ labels, picked })
+  )
+} finally {
+  if (originalConfig) {
+    await evaluate(`window.api.setConfig(${JSON.stringify({
+      defaultAgent: originalConfig.defaultAgent,
+      defaultModels: originalConfig.defaultModels,
+      customAgents: originalConfig.customAgents
+    })})`)
+  }
+  await evaluate(`document.querySelector('.overlay')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
+  ws.close()
+}
+if (failed) process.exitCode = 1
+else console.log('\nall checks passed')
