@@ -80,8 +80,10 @@ function backend() {
   ]
   const buffers = { s1: 'SECRET-SCROLLBACK-s1', s2: '' }
   const typed = []
+  const started = []
   return {
     typed,
+    started,
     sessions,
     emitData(id, data) {
       buffers[id] = (buffers[id] ?? '') + data
@@ -105,7 +107,10 @@ function backend() {
       restart: () => null,
       rename: () => {},
       switchAgent: () => null,
-      startSession: () => sessions[0],
+      startSession: (req) => {
+        started.push(req)
+        return { ...sessions[0], agent: req.agent ?? sessions[0].agent, model: req.model }
+      },
       projects: async () => [{ name: 'assistant', path: '/w/assistant', lastUsed: 0, isGit: true }],
       agents: async () => [{ id: 'claude', label: 'Claude Code', available: true }],
       onData: (cb) => (listeners.data.push(cb), () => {}),
@@ -238,6 +243,18 @@ async function main() {
   // Request/response.
   const projects = await client.projects()
   ok('the far project list can be asked for', projects.length === 1 && projects[0].name === 'assistant')
+  const started = await client.startSession({
+    cwd: '/w/assistant',
+    agent: 'codex',
+    model: 'gpt-5.6-sol',
+    prompt: 'audit the remote pane launcher'
+  })
+  ok('a remote launch preserves the selected agent and model', started.agent === 'codex' && started.model === 'gpt-5.6-sol')
+  ok(
+    'a remote launch sends its first task to the device that owns the pane',
+    be.started[0]?.prompt === 'audit the remote pane launcher',
+    JSON.stringify(be.started)
+  )
 
   // A pane closing over there disappears here.
   be.sessions.pop()
