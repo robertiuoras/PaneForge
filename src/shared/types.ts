@@ -1475,6 +1475,8 @@ export interface Api {
   /** write to the OS clipboard (renderer has no navigator.clipboard under file://) */
   copyText(text: string): void
   readClipboard(): Promise<string>
+  /** True only for the private clipboard fixture used by the disposable Electron probe. */
+  clipboardFixtureActive(): Promise<boolean>
   /** branch + dirty count for a folder; null when it is not a repo */
   gitInfo(path: string): Promise<GitInfo | null>
   /** the changed files in a folder, for one scope. Cheap; no patches are read. */

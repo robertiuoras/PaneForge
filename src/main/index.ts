@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   app,
@@ -1736,9 +1736,32 @@ ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeRecei
 // real user's rich clipboard formats (images, files and custom app payloads).
 const testClipboardFile = process.env.PF_TEST_CLIPBOARD_FILE?.trim()
 const testClipboardDir = process.env.PF_TEST_CLIPBOARD_DIR?.trim()
+function clipboardFixtureActive(): boolean {
+  if (!testClipboardFile || !testClipboardDir) return false
+  try {
+    const dir = lstatSync(testClipboardDir)
+    const file = lstatSync(testClipboardFile)
+    return (
+      dirname(resolve(testClipboardFile)) === resolve(testClipboardDir) &&
+      dir.isDirectory() &&
+      !dir.isSymbolicLink() &&
+      file.isFile() &&
+      !file.isSymbolicLink() &&
+      (dir.mode & 0o077) === 0 &&
+      (file.mode & 0o077) === 0
+    )
+  } catch {
+    return false
+  }
+}
 ipcMain.on('clipboard:write', (_e, text: string) => {
   if (typeof text === 'string' && text.length) {
-    if (testClipboardFile) return void writeFileSync(testClipboardFile, text, 'utf8')
+    // A test launch with a bad fixture must fail closed, never fall through to the
+    // user's clipboard. The probe first asks fixtureActive and refuses to click Copy.
+    if (testClipboardFile || testClipboardDir) {
+      if (clipboardFixtureActive()) writeFileSync(testClipboardFile!, text, 'utf8')
+      return
+    }
     // Every copy that starts inside this app comes through here - copy-on-select in a
     // pane most of all, which fires on a drag across two words. It is still stashed; it
     // is only marked as ours so the Stash does not announce it. See `noteOwnCopy`.
@@ -1747,22 +1770,21 @@ ipcMain.on('clipboard:write', (_e, text: string) => {
   }
 })
 ipcMain.handle('clipboard:read', () => {
-  if (!testClipboardFile) return clipboard.readText()
+  if (!testClipboardFile && !testClipboardDir) return clipboard.readText()
+  if (!clipboardFixtureActive()) return ''
   try {
-    return readFileSync(testClipboardFile, 'utf8')
+    return readFileSync(testClipboardFile!, 'utf8')
   } catch {
     return ''
   }
 })
+ipcMain.handle('clipboard:fixtureActive', () => clipboardFixtureActive())
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {
-  if (!testClipboardFile || !testClipboardDir || !testClipboardFile.startsWith(testClipboardDir + '/')) return
+  if (!testClipboardFile || !testClipboardDir || dirname(resolve(testClipboardFile)) !== resolve(testClipboardDir)) return
   try {
-    const dir = lstatSync(testClipboardDir)
-    const file = lstatSync(testClipboardFile)
-    if (!dir.isDirectory() || dir.isSymbolicLink() || !file.isFile() || file.isSymbolicLink()) return
-    if ((dir.mode & 0o077) !== 0 || (file.mode & 0o077) !== 0) return
+    if (!clipboardFixtureActive()) return
     unlinkSync(testClipboardFile)
     rmSync(testClipboardDir, { recursive: true, force: true })
   } catch {

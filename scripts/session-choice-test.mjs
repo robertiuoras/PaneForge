@@ -190,6 +190,7 @@ try {
   )
 
   const copiedOutput = await evaluate(`(async () => {
+    if (!(await window.api.clipboardFixtureActive())) return { error: 'private clipboard fixture is not active' }
     const agents = await window.api.listAgents()
     const shell = agents.find((a) => a.id === 'shell' && a.available)
     const config = await window.api.getConfig()
@@ -218,7 +219,7 @@ try {
   })()`)
   ok(
     'the visible Copy button puts complete terminal output on the clipboard',
-    copiedOutput.copied.includes(copiedOutput.output),
+    !copiedOutput.error && copiedOutput.copied.includes(copiedOutput.output),
     JSON.stringify(copiedOutput)
   )
 } finally {
