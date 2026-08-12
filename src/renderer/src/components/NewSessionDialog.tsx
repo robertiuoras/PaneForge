@@ -50,6 +50,7 @@ export default function NewSessionDialog({
   const [agent, setAgent] = useState<Agent>(defaultAgent)
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
   const [prompt, setPrompt] = useState('')
+  const [promptCopied, setPromptCopied] = useState(false)
   // What the first message says it is about. `routed` is the project this dialog ticked
   // on the message's behalf, kept apart from the user's own ticks so it can be swapped
   // when the message changes and dropped the moment the user disagrees with it.
@@ -258,18 +259,34 @@ export default function NewSessionDialog({
             ))}
         </div>
 
-        <input
-          className="search prompt"
-          // Routing decides which folder a session opens in from state nothing else can
-          // see. These two say what it decided, so route-view-test.mjs can measure it in
-          // a real window instead of inferring it from which row looks ticked.
-          data-routed={routed ?? ''}
-          data-manual={manual ? '1' : '0'}
-          placeholder="Optional first message, sent to every session started here"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && go()}
-        />
+        <div className="prompt-row">
+          <input
+            className="search prompt"
+            // Routing decides which folder a session opens in from state nothing else can
+            // see. These two say what it decided, so route-view-test.mjs can measure it in
+            // a real window instead of inferring it from which row looks ticked.
+            data-routed={routed ?? ''}
+            data-manual={manual ? '1' : '0'}
+            placeholder="Optional first message, sent to every session started here"
+            value={prompt}
+            onChange={(e) => {
+              setPrompt(e.target.value)
+              setPromptCopied(false)
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && go()}
+          />
+          <button
+            className="ghost small"
+            disabled={!prompt}
+            title="Copy this first prompt"
+            onClick={() => {
+              api.copyText(prompt)
+              setPromptCopied(true)
+            }}
+          >
+            {promptCopied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
 
         {/*
          * What the message is about. A session opened in the wrong project is silent and

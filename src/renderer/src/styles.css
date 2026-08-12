@@ -1353,6 +1353,9 @@ body.sizing * { user-select: none !important; }
 .search::placeholder { color: #6f6f7d; }
 .search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 .prompt { font-size: 12px; }
+.prompt-row { display: flex; align-items: center; gap: 6px; }
+.prompt-row .prompt { flex: 1; min-width: 0; }
+.dev-launch .dev-task { width: 100%; }
 .proj-list { max-height: 42vh; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .proj {
   display: flex; align-items: center; gap: 9px;

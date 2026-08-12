@@ -11,6 +11,7 @@ import type {
 import { reachWords } from '@shared/net'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
+import AgentPicker from './AgentPicker'
 import Blurb from './Blurb'
 import { Switch } from './Controls'
 import Select from './Select'
@@ -497,6 +498,8 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
   const [far, setFar] = useState<{ projects: Project[]; agents: AgentInfo[] } | null>(null)
   const [farCwd, setFarCwd] = useState('')
   const [farAgent, setFarAgent] = useState('')
+  const [farModel, setFarModel] = useState('')
+  const [farPrompt, setFarPrompt] = useState('')
 
   const openLauncher = async (device: string): Promise<void> => {
     if (opening === device) {
@@ -511,7 +514,12 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
       const usable = agents.filter((a) => a.available)
       setFar({ projects, agents: usable })
       setFarCwd(projects[0]?.path ?? '')
-      setFarAgent(usable[0]?.id ?? 'claude')
+      // A remote pane is normally an interactive coding task. Prefer Claude when it is
+      // available, then Codex, then the first usable runner instead of making a phone
+      // user choose an implementation detail before they can start work on the PC.
+      setFarAgent(usable.find((a) => a.id === 'claude')?.id ?? usable.find((a) => a.id === 'codex')?.id ?? usable[0]?.id ?? '')
+      setFarModel('')
+      setFarPrompt('')
     } catch (e) {
       setError((e as Error).message)
       setOpening(null)
@@ -521,10 +529,15 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
   const launchFar = async (device: string, deviceName: string): Promise<void> => {
     if (!farCwd || !farAgent) return
     try {
-      await api.startRemote(device, { cwd: farCwd, agent: farAgent })
+      await api.startRemote(device, {
+        cwd: farCwd,
+        agent: farAgent,
+        model: farModel || undefined,
+        prompt: farPrompt.trim() || undefined
+      })
       setOpening(null)
       onClose()
-      flash(`Started on ${deviceName}. The pane is in your list.`)
+      flash(`Started on ${deviceName}. The pane is in your list and stays live on that device.`)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -954,19 +967,24 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
                           placeholder="Folder on that device"
                           options={far.projects.map((pr) => ({ value: pr.path, label: pr.name, hint: pr.path }))}
                         />
-                        <Select
-                          size="sm"
-                          menuWidth={220}
-                          value={farAgent}
-                          onChange={setFarAgent}
-                          options={far.agents.map((a) => ({
-                            value: a.id,
-                            label: a.label,
-                            icon: <AgentLogo id={a.id} spec={a} size={13} />
-                          }))}
+                        <AgentPicker
+                          small
+                          agents={far.agents}
+                          agent={farAgent}
+                          model={farModel}
+                          onChange={(agent, model) => {
+                            setFarAgent(agent)
+                            setFarModel(agent === farAgent ? model : '')
+                          }}
                         />
-                        <button className="primary" disabled={!farCwd} onClick={() => void launchFar(p.id, p.name)}>
-                          Start there
+                        <input
+                          className="search prompt dev-task"
+                          value={farPrompt}
+                          onChange={(e) => setFarPrompt(e.target.value)}
+                          placeholder="Describe the work. PaneForge sends it when the pane is ready."
+                        />
+                        <button className="primary" disabled={!farCwd || !farAgent} onClick={() => void launchFar(p.id, p.name)}>
+                          {farPrompt.trim() ? 'Start task there' : 'Start there'}
                         </button>
                       </>
                     )}
