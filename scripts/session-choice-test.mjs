@@ -190,32 +190,37 @@ try {
   )
 
   const copiedOutput = await evaluate(`(async () => {
-    const originalClipboard = await window.api.readClipboard()
     const agents = await window.api.listAgents()
     const shell = agents.find((a) => a.id === 'shell' && a.available)
     const config = await window.api.getConfig()
     if (!shell || !config.root) return { error: 'shell runner or project root missing' }
-    const marker = 'copy-probe-' + Date.now()
+    const output = 'copy-output-' + Date.now()
+    const encoded = btoa(output)
+    const originalCopy = window.api.copyText
+    let copied = ''
     const started = await window.api.startSession({ cwd: config.root, agent: 'shell', title: 'Copy output probe' })
     try {
-      window.api.write(started.id, 'echo ' + marker + '\\r')
+      // Keep the expected output out of the typed command: matching the echo alone
+      // would not prove the Copy button captured terminal output.
+      window.api.copyText = (text) => { copied = text }
+      window.api.write(started.id, 'node -e "process.stdout.write(Buffer.from(\\'' + encoded + '\\', \\'base64\\').toString())"\\r')
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 100))
-        if ((await window.api.getBuffer(started.id)).includes(marker)) break
+        if ((await window.api.getBuffer(started.id)).includes(output)) break
       }
       const button = document.querySelector('button[aria-label="Copy Copy output probe output"]')
       if (!button) return { error: 'copy-output button missing' }
       button.click()
       await new Promise((r) => setTimeout(r, 100))
-      return { copied: await window.api.readClipboard(), marker }
+      return { copied, output }
     } finally {
-      await window.api.copyText(originalClipboard)
+      window.api.copyText = originalCopy
       await window.api.killSession(started.id)
     }
   })()`)
   ok(
     'the visible Copy button puts complete terminal output on the clipboard',
-    copiedOutput.copied?.includes(copiedOutput.marker),
+    copiedOutput.copied?.includes(copiedOutput.output),
     JSON.stringify(copiedOutput)
   )
 } finally {

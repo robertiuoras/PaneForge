@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
+import { stripAnsi } from '@shared/ansi'
 import type {
   Config,
   DiffScope,
@@ -49,6 +50,7 @@ import TerminalPane, {
   paneDraft,
   paneFind,
   paneFocus,
+  paneTerms,
   paneInsert,
   paneRepair,
   syncedPanes
@@ -1316,10 +1318,23 @@ export default function App(): JSX.Element {
     [flash]
   )
 
-  /** Copy the complete retained terminal output, including text no longer on screen. */
+  /** Copy readable terminal text, including scrollback no longer on screen. */
   const copyPaneOutput = useCallback(
     (session: Session) => {
-      void api.getBuffer(session.id).then((text) => {
+      void api.getBuffer(session.id).then((raw) => {
+        // xterm has already interpreted cursor movement, colours and redraw traffic. Its
+        // buffer is therefore the copy a person expects, unlike raw pty bytes. A pane
+        // can briefly be unmounted during a layout change, in which case stripping the
+        // raw stream still leaves a useful, safe fallback.
+        const terminal = paneTerms.get(session.id)
+        const text = terminal
+          ? Array.from({ length: terminal.buffer.active.length }, (_, i) => {
+              const line = terminal.buffer.active.getLine(i)
+              return (line?.translateToString(true) ?? '') + (line && !line.isWrapped ? '\n' : '')
+            })
+              .join('')
+              .trimEnd()
+          : stripAnsi(raw).trimEnd()
         if (!text) return flash(`${session.title} has no output to copy yet.`)
         api.copyText(text)
         flash(`Copied ${session.title}'s output.`)
@@ -2425,7 +2440,11 @@ export default function App(): JSX.Element {
           </label>
         )}
         <div className="list" ref={listRef}>
-          {shownSessions.map((s, i) => (
+          {shownSessions.map((s) => {
+            // Device filtering is visual only. The badge must retain the full-list
+            // number because Ctrl+1..9 always address that full ordered session list.
+            const paneNumber = sessions.indexOf(s) + 1
+            return (
             <div
               key={s.id}
               data-id={s.id}
@@ -2483,7 +2502,7 @@ export default function App(): JSX.Element {
                     {/* The switch key, and the fastest place to read the pane's state:
                         lit green while its agent is running, amber when a turn finished
                         while you were looking somewhere else. */}
-                    {i < 9 && (
+                    {paneNumber <= 9 && (
                       /* The wrapper exists only to carry the breathing halo. The key
                          itself is `overflow: hidden` so its sheen stays inside the
                          pill, and that clips a pseudo-element halo too - so the halo
@@ -2496,9 +2515,9 @@ export default function App(): JSX.Element {
                           className={
                             'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')
                           }
-                          title={keyLabel(`Ctrl ${i + 1}`)}
+                          title={keyLabel(`Ctrl ${paneNumber}`)}
                         >
-                          {i + 1}
+                          {paneNumber}
                         </span>
                       </span>
                     )}
@@ -2507,7 +2526,7 @@ export default function App(): JSX.Element {
                         branch and the pane number are all still one hover away. */}
                     <span
                       className="row-name"
-                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 }).full}
+                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber }).full}
                     >
                       {s.title}
                     </span>
@@ -2554,7 +2573,7 @@ export default function App(): JSX.Element {
                       status` per pane for a word that says nothing. The pane header's
                       badge, which already polls, carries the branch. */}
                   {(() => {
-                    const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 })
+                    const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber })
                     const inLane = place.kind === 'lane'
                     // Usually the lane this chat HOLDS and the lane this pane is OPEN in
                     // are one checkout, and then two chips were drawn for it. This one is
@@ -2672,7 +2691,8 @@ export default function App(): JSX.Element {
                 x
               </button>
             </div>
-          ))}
+            )
+          })}
           {sessions.length === 0 && (
             <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
           )}
