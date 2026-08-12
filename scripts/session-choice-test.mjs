@@ -188,6 +188,36 @@ try {
     solCard.labels?.includes('GPT-5.6 Sol'),
     JSON.stringify(solCard)
   )
+
+  const copiedOutput = await evaluate(`(async () => {
+    const originalClipboard = await window.api.readClipboard()
+    const agents = await window.api.listAgents()
+    const shell = agents.find((a) => a.id === 'shell' && a.available)
+    const config = await window.api.getConfig()
+    if (!shell || !config.root) return { error: 'shell runner or project root missing' }
+    const marker = 'copy-probe-' + Date.now()
+    const started = await window.api.startSession({ cwd: config.root, agent: 'shell', title: 'Copy output probe' })
+    try {
+      window.api.write(started.id, 'echo ' + marker + '\\r')
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 100))
+        if ((await window.api.getBuffer(started.id)).includes(marker)) break
+      }
+      const button = document.querySelector('button[aria-label="Copy Copy output probe output"]')
+      if (!button) return { error: 'copy-output button missing' }
+      button.click()
+      await new Promise((r) => setTimeout(r, 100))
+      return { copied: await window.api.readClipboard(), marker }
+    } finally {
+      await window.api.copyText(originalClipboard)
+      await window.api.killSession(started.id)
+    }
+  })()`)
+  ok(
+    'the visible Copy button puts complete terminal output on the clipboard',
+    copiedOutput.copied?.includes(copiedOutput.marker),
+    JSON.stringify(copiedOutput)
+  )
 } finally {
   if (originalConfig) {
     await evaluate(`window.api.setConfig(${JSON.stringify({
