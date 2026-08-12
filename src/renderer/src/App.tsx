@@ -2552,7 +2552,15 @@ export default function App(): JSX.Element {
                         }
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (inLane) setLaneCwd(s.cwd)
+                          if (inLane) {
+                            // This button sits inside the session card and names the
+                            // checkout that session is running in. Opening its details
+                            // without selecting the session made the most explicit
+                            // PaneForge-a target feel dead whenever another pane was up.
+                            setActiveId(s.id)
+                            handheld.showPane()
+                            setLaneCwd(s.cwd)
+                          }
                         }}
                       >
                         {inLane && named ? place.role : place.short}

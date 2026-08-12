@@ -25,6 +25,10 @@ import { closeTestApps } from './test-app.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const keep = process.argv.includes('--keep')
+// A narrow red/green probe for the session-card lane button. The full focus suite also
+// covers global shortcuts; this flag lets a card-click repair prove itself without an
+// unrelated shortcut regression hiding its result.
+const laneChipOnly = process.argv.includes('--lane-chip-only')
 // Overridable for the same reason PF_RAIL_PORT is: a copy that died can leave this port
 // bound to a pid that no longer exists, and every run afterwards reports "did the test copy
 // start?" when the copy started and simply could not be talked to.
@@ -288,6 +292,21 @@ async function run(cdp) {
     'terminal 1',
     await active()
   )
+
+  // A lane button is nested inside the session card. It may open the lane details, but
+  // it must still select the session whose checkout it describes. Otherwise the largest
+  // labelled target saying "lane a" feels like a dead part of the PaneForge-a row.
+  await clickAt(cdp, '.list .row', 0)
+  check('single: lane-button probe starts on the other session', String(await active()), '0', await active())
+  await clickAt(cdp, '.list .row:nth-child(2) .lane-chip')
+  check(
+    'single: clicking the lane button also selects its session',
+    String(await active()),
+    '1',
+    await active()
+  )
+  await press(cdp, 'Escape')
+  if (laneChipOnly) return
 
   // --- grid ---------------------------------------------------------------
   await setGrid(true)
