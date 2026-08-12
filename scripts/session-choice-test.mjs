@@ -165,6 +165,29 @@ try {
     labels[0] === picked.agentLabel && labels[1] === picked.modelLabel,
     JSON.stringify({ labels, picked })
   )
+
+  const solCard = await evaluate(`(async () => {
+    const agents = await window.api.listAgents()
+    const codex = agents.find((a) => a.id === 'codex' && a.available)
+    const config = await window.api.getConfig()
+    if (!codex || !config.root) return { error: 'Codex runner or project root missing' }
+    const started = await window.api.startSession({
+      cwd: config.root,
+      agent: 'codex',
+      model: 'gpt-5.6-sol',
+      title: 'Sol label probe'
+    })
+    await new Promise((r) => setTimeout(r, 120))
+    const row = document.querySelector('[data-id="' + started.id + '"]')
+    const labels = [...(row?.querySelectorAll('.chip') ?? [])].map((n) => n.textContent?.trim())
+    await window.api.killSession(started.id)
+    return { labels }
+  })()`)
+  ok(
+    'a Sol pane card uses the friendly Codex model label',
+    solCard.labels?.includes('GPT-5.6 Sol'),
+    JSON.stringify(solCard)
+  )
 } finally {
   if (originalConfig) {
     await evaluate(`window.api.setConfig(${JSON.stringify({
