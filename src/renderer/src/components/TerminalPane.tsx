@@ -506,10 +506,11 @@ export default function TerminalPane({
     })
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
-     * the previous turn with it: the CLI sends `CSI 2 J` and `CSI 3 J` together, and the
-     * second one deletes this window's scrollback. See shared/keepScrollback.ts - it is
-     * stateful (a sequence is routinely torn across two chunks from the pty), so there is
-     * exactly one of it per pane and every write site uses it.
+     * the previous turn with it - `CSI 2 J` plus `CSI 3 J` in the CLIs that still send
+     * those, and an erase-per-row in the Claude Code builds that no longer do. See
+     * shared/keepScrollback.ts: it is stateful (a sequence is routinely torn across two
+     * chunks from the pty), so there is exactly one of it per pane and every write site
+     * uses it, and `arm()` below is what tells it a wipe is a clear, not a repaint.
      */
     const keep = keepScrollback(
       () => t.rows,
