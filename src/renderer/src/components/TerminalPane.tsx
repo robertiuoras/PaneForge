@@ -14,7 +14,7 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
-import { keepScrollback } from '../../../shared/keepScrollback'
+import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
 import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
@@ -758,6 +758,10 @@ export default function TerminalPane({
       pending = r.state
       publishDraft(sessionId, r.state)
       for (const line of r.submitted) {
+        // `/clear` and friends are the one moment a full-screen wipe means "throw the
+        // conversation off the screen" rather than "repaint it". Claude Code does both
+        // with the same bytes, so the intent has to come from here - see keepScrollback.
+        if (clearsScreen(line)) keep.arm()
         const text = flatDraft(line, RAIL_LABEL_CHARS)
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.

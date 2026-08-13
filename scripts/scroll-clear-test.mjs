@@ -34,7 +34,7 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { keepScrollback } = require_(outfile)
+const { keepScrollback, clearsScreen } = require_(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -142,6 +142,94 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
       left.push(bare.buffer.active.getLine(y)?.translateToString(true) ?? '')
     }
     check('a plain terminal loses it, which is the bug', !left.join('\n').includes('line 1'))
+  }
+}
+
+// --- the erase-per-row wipe ----------------------------------------------------------
+// What Claude Code v2.1.229 really sends. Measured off this machine's pane logs: no `2J`
+// and no `3J` anywhere in 4 MB, and 60 of these instead - which is the point of the
+// arming, because 58 of the 60 are ordinary repaints that must be left alone.
+const wipe = (rows) => '\x1b[H\x1b[2K' + '\x1b[1B\x1b[2K'.repeat(rows) + '\x1b[1B\x1b[H'
+{
+  const k = keeper(10)
+  eq('an unarmed repaint is passed through untouched', k(wipe(10)), wipe(10))
+}
+{
+  const k = keeper(10)
+  k.arm()
+  const out = k(`x${wipe(10)}banner`)
+  check('an armed wipe is preceded by a scroll', out.includes('\x1b[10;1H'), JSON.stringify(out.slice(0, 60)))
+  eq('one newline per row on screen', (out.match(/\r\n/g) ?? []).length, 10)
+  check('the wipe itself still runs', out.includes(wipe(10)))
+  check('and it comes after the scroll', out.indexOf('\x1b[10;1H') < out.indexOf(wipe(10)))
+  check('nothing around it is lost', out.startsWith('x') && out.endsWith('banner'))
+  const again = k(wipe(10))
+  eq('the arming is spent on the first wipe, not every repaint after it', again, wipe(10))
+}
+{
+  // Armed, and the CLI never wipes: the arming has to lapse rather than sit waiting to
+  // fire on some repaint minutes later.
+  let now = 0
+  const k = keepScrollback(() => 10, () => false, () => now)
+  k.arm()
+  now = 10_001
+  eq('a stale arming lapses', k(wipe(10)), wipe(10))
+}
+{
+  const k = keeper(10)
+  k.arm()
+  eq('a torn wipe is held back', k('a\x1b[H\x1b[2K\x1b[1B'), 'a')
+  const rest = k('\x1b[2K\x1b[1B\x1b[2K\x1b[1B\x1b[H')
+  check('and rewritten once the rest arrives', rest.includes('\x1b[10;1H'), JSON.stringify(rest))
+}
+{
+  const k = keeper(10)
+  eq('an unarmed pane does not hold cursor traffic back', k('\x1b[H'), '\x1b[H')
+}
+eq('a slash clear arms it', clearsScreen('/clear'), true)
+eq('so does compact', clearsScreen('  /compact  '), true)
+eq('and codex’s new', clearsScreen('/new'), true)
+eq('an ordinary prompt does not', clearsScreen('clear the cache in redis'), false)
+eq('nor does a path that starts with a slash', clearsScreen('/etc/hosts is wrong'), false)
+
+// --- the erase-per-row wipe, in a real terminal ---------------------------------------
+{
+  let Terminal
+  try {
+    ;({ Terminal } = require_('@xterm/headless'))
+  } catch {
+    /* already reported above */
+  }
+  if (Terminal) {
+    const rows = 10
+    const write = (t, s) => new Promise((r) => t.write(s, r))
+    const lines = async (t) => {
+      const all = []
+      for (let y = 0; y < t.buffer.active.length; y++) {
+        all.push(t.buffer.active.getLine(y)?.translateToString(true) ?? '')
+      }
+      return all.join('\n')
+    }
+
+    const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    const k = keepScrollback(() => term.rows, () => term.buffer.active.type === 'alternate')
+    for (let i = 1; i <= rows; i++) await write(term, k(`turn ${i}\r\n`))
+    k.arm()
+    await write(term, k(wipe(rows)))
+    await write(term, k('Claude Code v2.1.229'))
+    const text = await lines(term)
+    check('the wiped screen is still in the buffer', text.includes('turn 1'), text.slice(0, 200))
+    check('all of it, not the tail', text.includes('turn 9') && text.includes('turn 10'))
+    check('and the banner is on a clean screen below it', text.includes('Claude Code v2.1.229'))
+
+    // The control. This is the bug as reported: the last screenful of the conversation
+    // gone, and the banner drawn from row 1 over the top of where it was.
+    const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    for (let i = 1; i <= rows; i++) await write(bare, `turn ${i}\r\n`)
+    await write(bare, wipe(rows))
+    await write(bare, 'Claude Code v2.1.229')
+    const left = await lines(bare)
+    check('a plain terminal loses it, which is the bug', !left.includes('turn 10'), left.slice(0, 200))
   }
 }
 
