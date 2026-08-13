@@ -15,10 +15,10 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
+import { profileData } from './dev-profile.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const keep = process.argv.includes('--keep')
@@ -33,9 +33,11 @@ const PROFILE = 'rail-probe'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// `profileData()`, not a hand-built `%APPDATA%` path: that path is Windows-only, so on
+// macOS the reset landed in `~/AppData/Roaming` and the profile Electron actually used was
+// never cleared - every mac run inherited the last one's panes and config.
 function freshProfile() {
-  const roaming = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-  const dir = join(roaming, `claude-orchestrator-${PROFILE}`)
+  const dir = profileData(PROFILE)
   try {
     rmSync(dir, { recursive: true, force: true })
   } catch {

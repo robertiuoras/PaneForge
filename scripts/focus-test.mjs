@@ -18,10 +18,10 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeTestApps } from './test-app.mjs'
+import { profileData } from './dev-profile.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const keep = process.argv.includes('--keep')
@@ -29,6 +29,11 @@ const keep = process.argv.includes('--keep')
 // covers global shortcuts; this flag lets a card-click repair prove itself without an
 // unrelated shortcut regression hiding its result.
 const laneChipOnly = process.argv.includes('--lane-chip-only')
+// The inverse, for bisecting the grid click window: the lane-chip case opens a flyout and
+// Escapes it immediately before the grid is switched on, and it is the only step in that
+// run that opens anything. Skipping it says in one run whether the flyout is the cause.
+//   npm run test:focus -- --keep --skip-lane-chip
+const skipLaneChip = process.argv.includes('--skip-lane-chip')
 // Overridable for the same reason PF_RAIL_PORT is: a copy that died can leave this port
 // bound to a pid that no longer exists, and every run afterwards reports "did the test copy
 // start?" when the copy started and simply could not be talked to.
@@ -45,10 +50,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * panes?" across the screen - and every click in the first case landed on that dialog
  * instead of a terminal. A test whose result depends on the previous run's leftovers is
  * worse than no test. The config written here also turns the offer off at the source.
+ *
+ * The folder comes from `profileData()`, NOT a hand-built `%APPDATA%` path. That path is
+ * Windows-only, so on macOS this reset wrote into `~/AppData/Roaming` - a folder nothing
+ * reads - while the profile Electron actually used
+ * (`~/Library/Application Support/claude-orchestrator-focus-probe`) was never touched.
+ * Every mac run therefore started on the PREVIOUS run's leftovers, which is exactly what
+ * this function exists to prevent: that profile held `grid: true` and
+ * `restoreAfterRestart: "ask"` on disk, the two things the config below forbids.
  */
 function freshProfile() {
-  const roaming = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-  const dir = join(roaming, `claude-orchestrator-${PROFILE}`)
+  const dir = profileData(PROFILE)
   try {
     rmSync(dir, { recursive: true, force: true })
   } catch {
@@ -226,6 +238,48 @@ function check(name, got, want, thinks) {
 async function run(cdp) {
   await evalIn(cdp, PROBE)
 
+  /**
+   * Read through the probe, reinstalling it if the renderer threw it away.
+   *
+   * `window.__focus` lives in the page, so any renderer reload wipes it and every read
+   * afterwards dies with "Cannot read properties of undefined (reading 'panes')" - which
+   * looks like the app failing and is only the probe being gone. A profile's FIRST launch
+   * copies the live config in and reloads once it lands, so this happens on exactly the
+   * run that matters: the first one after the profile was correctly cleared.
+   */
+  const viaProbe = async (expr) => {
+    if (!(await evalIn(cdp, `typeof window.__focus === 'object' && window.__focus !== null`)))
+      await evalIn(cdp, PROBE)
+    return await evalIn(cdp, expr)
+  }
+
+  /**
+   * What was in the way, printed only after a case has already failed.
+   *
+   * `caret: nothing` says the keyboard went to `body` and nothing at all about why, which
+   * is how this suite's grid failures were read as a focus bug for a day. The two answers
+   * that matter are "something is still on screen" and "the click did not land on the
+   * terminal", and both are one DOM read.
+   */
+  const explain = async () => {
+    const name = `((el) => el ? el.tagName.toLowerCase() + (el.className && String(el.className).trim() ? '.' + String(el.className).trim().split(/\\s+/).join('.') : '') : 'none')`
+    const d = await viaProbe(`(() => {
+      const name = ${name}
+      const p = window.__focus.panes()[0]
+      const r = p && p.getBoundingClientRect()
+      const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+      return {
+        onScreen: [...document.querySelectorAll('.overlay, .dialog, .backdrop, .scrim, .flyout, .menu, .dropdown, .sheet')].map(name),
+        overPane0: name(hit),
+        active: name(document.activeElement)
+      }
+    })()`)
+    console.log(
+      `        why: over pane 0 -> ${d.overPane0}; activeElement ${d.active}; ` +
+        `on screen: ${d.onScreen.length ? d.onScreen.join(', ') : 'nothing'}`
+    )
+  }
+
   // Two panes on the shell agent. `shell` runs the plain OS shell: no CLI to install, no
   // tokens, and it draws a prompt within a second - which is all a caret needs.
   await evalIn(
@@ -236,14 +290,14 @@ async function run(cdp) {
      ])`
   )
   const deadline = Date.now() + 20_000
-  while ((await evalIn(cdp, 'window.__focus.panes().length')) < 2 && Date.now() < deadline)
+  while ((await viaProbe('window.__focus.panes().length')) < 2 && Date.now() < deadline)
     await sleep(300)
-  if ((await evalIn(cdp, 'window.__focus.panes().length')) < 2)
+  if ((await viaProbe('window.__focus.panes().length')) < 2)
     throw new Error('panes never appeared - the shell agent did not start')
   await sleep(1200)
 
-  const where = () => evalIn(cdp, 'window.__focus.where()')
-  const active = () => evalIn(cdp, 'window.__focus.active()')
+  const where = () => viaProbe('window.__focus.where()')
+  const active = () => viaProbe('window.__focus.active()')
   /**
    * Wait until every terminal is back inside its own pane.
    *
@@ -296,47 +350,64 @@ async function run(cdp) {
   // A lane button is nested inside the session card. It may open the lane details, but
   // it must still select the session whose checkout it describes. Otherwise the largest
   // labelled target saying "lane a" feels like a dead part of the PaneForge-a row.
-  await clickAt(cdp, '.list .row', 0)
-  check('single: lane-button probe starts on the other session', String(await active()), '0', await active())
-  await clickAt(cdp, '.list .row:nth-child(2) .lane-chip')
-  check(
-    'single: clicking the lane button also selects its session',
-    String(await active()),
-    '1',
-    await active()
-  )
-  await press(cdp, 'Escape')
+  if (!skipLaneChip) {
+    await clickAt(cdp, '.list .row', 0)
+    check(
+      'single: lane-button probe starts on the other session',
+      String(await active()),
+      '0',
+      await active()
+    )
+    await clickAt(cdp, '.list .row:nth-child(2) .lane-chip')
+    check(
+      'single: clicking the lane button also selects its session',
+      String(await active()),
+      '1',
+      await active()
+    )
+    await press(cdp, 'Escape')
+  }
   if (laneChipOnly) return
 
   // --- grid ---------------------------------------------------------------
   await setGrid(true)
   await clickTerminal(0)
-  check('grid: clicking a pane puts the caret in it', await where(), 'terminal 0', await active())
+  if (!check('grid: clicking a pane puts the caret in it', await where(), 'terminal 0', await active()))
+    await explain()
 
   await press(cdp, '2', { ctrl: true })
-  check(
-    'grid: Ctrl+2 moves the caret, not just the highlight',
-    await where(),
-    'terminal 1',
-    await active()
+  if (
+    !check(
+      'grid: Ctrl+2 moves the caret, not just the highlight',
+      await where(),
+      'terminal 1',
+      await active()
+    )
   )
+    await explain()
 
   await clickTerminal(0)
   await press(cdp, 'Tab', { ctrl: true })
-  check(
-    'grid: Ctrl+Tab moves the caret to the next pane',
-    await where(),
-    'terminal 1',
-    await active()
+  if (
+    !check(
+      'grid: Ctrl+Tab moves the caret to the next pane',
+      await where(),
+      'terminal 1',
+      await active()
+    )
   )
+    await explain()
 
   await clickAt(cdp, '.list .row', 0)
-  check(
-    'grid: clicking a sidebar row moves the caret too',
-    await where(),
-    'terminal 0',
-    await active()
+  if (
+    !check(
+      'grid: clicking a sidebar row moves the caret too',
+      await where(),
+      'terminal 0',
+      await active()
+    )
   )
+    await explain()
 
   // --- a new pane must not grab the keyboard off you ----------------------
   await clickTerminal(0)
