@@ -1034,6 +1034,54 @@ body.sizing * { user-select: none !important; }
   box-shadow: var(--shadow); animation: rise var(--fast);
 }
 .jump-newest:hover { border-color: var(--accent); }
+
+/* ---- copying out of a pane ------------------------------------------------
+   Both of these follow the .jump-newest pill above rather than inventing a shape: it is
+   the app's existing "a control floating over live terminal output" recipe, and a pane
+   with three floating controls in three idioms reads as three unrelated apps.
+
+   z-index 10 for the same reason .jump-newest has it - see the pane-overlay note: below 9
+   a control over the terminal renders and then eats no clicks, because the xterm layers
+   sit on top of it.
+
+   CHIP_W / CHIP_H in TerminalPane.tsx are these numbers. The chip is positioned by
+   arithmetic in shared/copyChip.ts, which has to know how big it is BEFORE it is laid out
+   - measuring would cost a frame of the chip drawn in the wrong place on every drag - so
+   if the padding here changes, those two constants change with it. */
+.sel-copy {
+  position: absolute; z-index: 10;
+  width: 76px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 999px;
+  font-size: 11px; cursor: pointer;
+  box-shadow: var(--shadow);
+  animation: rise var(--fast);
+}
+.sel-copy:hover { background: var(--accent); color: var(--accent-on); }
+
+/* The turn's own two buttons, pinned to the right edge of the pane at the top of whatever
+   turn the pointer is in. Faint until the pointer is near them, for the same reason the
+   mic float is: they live on top of the agent's output and must not compete with it. */
+.turn-copy {
+  position: absolute; right: 24px; z-index: 10;
+  display: flex; gap: 4px;
+  opacity: 0.34;
+  transition: opacity var(--fast);
+}
+.pane:hover .turn-copy { opacity: 0.72; }
+.turn-copy:hover { opacity: 1; }
+.turn-copy button {
+  background: var(--surface-3); color: var(--muted);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: 2px 8px; font-size: 10.5px; line-height: 1.5; cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: color var(--fast), border-color var(--fast), background var(--fast);
+}
+.turn-copy button:hover { color: var(--text); border-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .sel-copy { animation: none; }
+}
 .icon.fix { font-size: 10.5px; font-weight: 600; letter-spacing: 0.3px; }
 
 /* The terminal's scrollbar is the one that gets dragged - 20k lines of scrollback

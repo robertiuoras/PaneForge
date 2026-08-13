@@ -16,6 +16,7 @@ import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } fro
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
 import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
+import { blockFor, chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
@@ -74,7 +75,11 @@ interface Props {
     cursor: string
     cursorAccent: string
     selectionBackground: string
+    selectionForeground: string
+    selectionInactiveBackground: string
   }
+  /** Say something happened, in the window's own toast. */
+  onToast?: (msg: string) => void
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
@@ -120,6 +125,14 @@ export const syncedPanes = new Set<string>()
  * that draft. The mirror feeds it the same bytes instead.
  */
 const paneFeed = new Map<string, (d: string) => void>()
+
+/**
+ * The selection chip's own size, in pixels, so `chipSpot` can keep it inside the pane.
+ * Kept next to the CSS rather than measured: measuring it means laying it out first, which
+ * means one frame of a chip drawn in the wrong place on every drag.
+ */
+const CHIP_W = 76
+const CHIP_H = 26
 
 /** Each pane's live prompt-mark list, for the debug handle. */
 const paneMarks = new Map<string, { marker: { line: number }; text: string }[]>()
@@ -353,7 +366,8 @@ export default function TerminalPane({
   clickMovesCursor,
   autoFixUi,
   mirror = null,
-  termTheme
+  termTheme,
+  onToast
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
@@ -480,6 +494,29 @@ export default function TerminalPane({
   const [flash, setFlash] = useState(-1)
   const flashTimer = useRef<number | undefined>(undefined)
 
+  /**
+   * The two copy affordances, and why they are separate.
+   *
+   * `selChip` follows a HIGHLIGHT: something is selected and there is a button beside it.
+   * Ctrl+C already copies, and copy-on-select copies without being asked - but both are
+   * invisible, so the only way to find out whether the copy happened was to paste
+   * somewhere and look. A button is the affordance; the toast is the receipt.
+   *
+   * `block` follows the POINTER: hovering a turn offers that turn's two halves, the prompt
+   * that was typed and the reply it got. That is the ask this exists for - a suggested
+   * prompt an agent prints in the middle of a paragraph is the single most-copied thing in
+   * this app, and until now getting it out meant dragging across wrapped lines by hand.
+   */
+  const [selChip, setSelChip] = useState<{ left: number; top: number } | null>(null)
+  const [block, setBlock] = useState<{
+    top: number
+    from: number
+    to: number
+    prompt: string
+  } | null>(null)
+  const toast = useRef(onToast)
+  toast.current = onToast
+
   const syncTotal = (): void => {
     const t = term.current
     if (!t) return
@@ -493,6 +530,111 @@ export default function TerminalPane({
       height: vp.clientHeight
     }
     setTrack((p) => (Math.abs(p.top - next.top) < 0.5 && p.height === next.height ? p : next))
+  }
+
+  /**
+   * One cell in pixels, measured rather than derived from the font size.
+   *
+   * xterm rounds a cell to whole device pixels and the host is inset, so a number worked
+   * out from `fontSize` is out by a pixel or two per row - which is invisible at the top
+   * of a pane and half a line out by the bottom of it. `.xterm-screen` is the element the
+   * rows are actually drawn into, so its box divided by the grid is the truth.
+   */
+  const cellBox = (): ChipBox | null => {
+    const t = term.current
+    const screen = host.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const w = wrap.current
+    if (!t || !screen || !w) return null
+    const r = screen.getBoundingClientRect()
+    if (!r.width || !r.height) return null
+    return {
+      cellW: r.width / t.cols,
+      cellH: r.height / t.rows,
+      width: r.width,
+      height: r.height,
+      viewportY: t.buffer.active.viewportY,
+      chipW: CHIP_W,
+      chipH: CHIP_H
+    }
+  }
+
+  /** The pane offset of the screen box, so a chip drawn on the wrap lands on the right cell. */
+  const screenOffset = (): { x: number; y: number } => {
+    const screen = host.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const w = wrap.current
+    if (!screen || !w) return { x: 0, y: 0 }
+    const a = screen.getBoundingClientRect()
+    const b = w.getBoundingClientRect()
+    return { x: a.left - b.left, y: a.top - b.top }
+  }
+
+  /** Plain text of an absolute buffer row range, trailing blank lines off. */
+  const textOf = (from: number, to: number): string => {
+    const t = term.current
+    if (!t) return ''
+    const buf = t.buffer.active
+    const out: string[] = []
+    for (let i = from; i <= to; i++) {
+      const line = buf.getLine(i)
+      if (!line) continue
+      // `true` keeps a wrapped line joined to the one it wrapped from, which is what makes
+      // a copied paragraph paste as a paragraph instead of as terminal-width fragments.
+      out.push(line.translateToString(true).replace(/\s+$/, ''))
+    }
+    while (out.length && !out[out.length - 1]) out.pop()
+    while (out.length && !out[0]) out.shift()
+    return out.join('\n')
+  }
+
+  /**
+   * Put the selection chip where the selection is, or take it away.
+   *
+   * Called from the selection change AND from every scroll: the highlight is anchored to
+   * absolute buffer rows and the chip is drawn in pane pixels, so a pane that scrolls
+   * under a live selection would otherwise leave the button hovering over an unrelated
+   * line. Scrolled out of view entirely, it goes - `chipSpot` clamps into the pane, and a
+   * clamped chip pointing at nothing on screen is worse than no chip.
+   */
+  const refreshSelChip = (): void => {
+    const t = term.current
+    const box = cellBox()
+    if (!t || !box || !t.getSelection()) {
+      setSelChip(null)
+      return
+    }
+    const pos = t.getSelectionPosition()
+    if (!pos) {
+      setSelChip(null)
+      return
+    }
+    const rowsOnScreen = t.rows
+    const endRow = pos.end.y - box.viewportY
+    if (endRow < -1 || endRow > rowsOnScreen) {
+      setSelChip(null)
+      return
+    }
+    const spot = chipSpot(pos.start, pos.end, box)
+    if (!spot) {
+      setSelChip(null)
+      return
+    }
+    const off = screenOffset()
+    setSelChip({ left: spot.left + off.x, top: spot.top + off.y })
+  }
+
+  const say = (msg: string): void => toast.current?.(msg)
+
+  const putOnClipboard = (text: string, what: string): void => {
+    const body = text.trim()
+    if (!body) {
+      say('Nothing to copy there')
+      return
+    }
+    api.copyText(body)
+    // The count is the receipt: "Copied" alone cannot tell a whole reply from one blank
+    // line, and a copy that quietly took the wrong range is the failure worth catching.
+    const lines = body.split('\n').length
+    say(`${what} copied - ${lines} line${lines === 1 ? '' : 's'}`)
   }
 
   /**
@@ -872,6 +1014,11 @@ export default function TerminalPane({
       pinned.current = follow
       setScrolledUp(!follow)
       bumpTotal()
+      // The chip is drawn in pane pixels and the highlight lives on absolute buffer rows,
+      // so a scroll moves one and not the other. See refreshSelChip.
+      refreshSelChip()
+      // Same for the hover block: the row under the pointer is a different turn now.
+      setBlock(null)
     })
 
     t.onData((d) => {
@@ -892,6 +1039,9 @@ export default function TerminalPane({
     t.onSelectionChange(() => {
       const s = t.getSelection()
       if (s) lastSelection.current = s
+      // The chip follows the highlight itself, not the mouse: a selection made from the
+      // keyboard (copy mode, Mod+A) gets the same button a drag does.
+      refreshSelChip()
     })
 
     // A CLI ringing the bell is the only way it has of asking for a person directly,
@@ -1310,6 +1460,51 @@ export default function TerminalPane({
       // following Ctrl+C should still copy rather than interrupt.
       copySelection(true)
     }
+    /**
+     * Which turn the pointer is over.
+     *
+     * Recomputed only when the ROW changes, not on every mousemove: a mousemove fires per
+     * pixel and this walks the mark list, and the answer cannot change inside one row.
+     *
+     * A pane with no prompt marks offers nothing at all. That is the honest answer rather
+     * than a missing feature: with no marks there is nothing that says where one turn ends,
+     * so a "copy this reply" button would be copying a guess.
+     */
+    let hoverRow = -1
+    const onMove = (e: MouseEvent): void => {
+      if (!list.length) return
+      const screen = host.current?.querySelector('.xterm-screen') as HTMLElement | null
+      const box = cellBox()
+      if (!screen || !box) return
+      const r = screen.getBoundingClientRect()
+      const y = e.clientY - r.top
+      if (y < 0 || y > r.height) {
+        hoverRow = -1
+        setBlock(null)
+        return
+      }
+      const row = box.viewportY + Math.floor(y / box.cellH)
+      if (row === hoverRow) return
+      hoverRow = row
+      const b = blockFor(
+        list.map((m) => m.marker.line),
+        row,
+        t.buffer.active.baseY + t.rows - 1
+      )
+      if (!b) {
+        setBlock(null)
+        return
+      }
+      const off = screenOffset()
+      // Clamped to the top of the pane: a turn that started above the view still gets its
+      // buttons, sitting at the edge the way a sticky header does.
+      const top = Math.max(0, (b.from - box.viewportY) * box.cellH) + off.y
+      setBlock({ top, from: b.from, to: b.to, prompt: list[b.index]?.text ?? '' })
+    }
+    const onLeave = (): void => {
+      hoverRow = -1
+      setBlock(null)
+    }
     // Right-click: copy when something is selected, paste when nothing is.
     const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault()
@@ -1363,6 +1558,8 @@ export default function TerminalPane({
     el.addEventListener('mousedown', onMouseDown, true)
     el.addEventListener('mouseup', moveAlongLine, true)
     el.addEventListener('mouseup', onMouseUp)
+    el.addEventListener('mousemove', onMove)
+    el.addEventListener('mouseleave', onLeave)
     el.addEventListener('wheel', onWheel, { capture: true, passive: false })
     el.addEventListener('contextmenu', onContextMenu)
 
@@ -1765,6 +1962,8 @@ export default function TerminalPane({
       el.removeEventListener('mousedown', onMouseDown, true)
       el.removeEventListener('mouseup', moveAlongLine, true)
       el.removeEventListener('mouseup', onMouseUp)
+      el.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
       el.removeEventListener('wheel', onWheel, true)
       vpEl?.removeEventListener('scroll', onViewportScroll)
       cancelAnimationFrame(scrollFrame)
@@ -2116,6 +2315,47 @@ export default function TerminalPane({
             ✕
           </button>
         </div>
+      )}
+      {/* The two copy affordances. Both are drawn on the wrap rather than inside the
+          terminal, because the terminal is a canvas and has nothing to hang a button off,
+          and both preventDefault their mousedown for the reason every control in this pane
+          does: a mousedown inside the pane takes focus off the terminal and starts a
+          selection drag, which would clear the very highlight the button is there to copy. */}
+      {block && (
+        <div className="turn-copy" style={{ top: block.top }}>
+          <button
+            title="Copy the prompt that started this turn"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => putOnClipboard(block.prompt, 'Prompt')}
+          >
+            Prompt
+          </button>
+          <button
+            title="Copy everything the agent printed for this turn"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => putOnClipboard(textOf(block.from + 1, block.to), 'Reply')}
+          >
+            Reply
+          </button>
+        </div>
+      )}
+      {selChip && (
+        <button
+          className="sel-copy"
+          title="Copy the highlighted text"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const t = term.current
+            const text = t?.getSelection() ?? ''
+            putOnClipboard(text, 'Selection')
+            // The highlight stays: it is the only thing on screen saying WHAT was copied,
+            // and dropping it the instant the button is pressed reads as the click having
+            // gone somewhere else.
+            term.current?.focus()
+          }}
+        >
+          Copy
+        </button>
       )}
       {/* Rendered before the pill and the drop hint on purpose: all three are positioned,
           so DOM order is what keeps a tag near the tail from painting over the pill. */}
