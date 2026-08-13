@@ -253,6 +253,33 @@ async function run(cdp) {
     return await evalIn(cdp, expr)
   }
 
+  /**
+   * What was in the way, printed only after a case has already failed.
+   *
+   * `caret: nothing` says the keyboard went to `body` and nothing at all about why, which
+   * is how this suite's grid failures were read as a focus bug for a day. The two answers
+   * that matter are "something is still on screen" and "the click did not land on the
+   * terminal", and both are one DOM read.
+   */
+  const explain = async () => {
+    const name = `((el) => el ? el.tagName.toLowerCase() + (el.className && String(el.className).trim() ? '.' + String(el.className).trim().split(/\\s+/).join('.') : '') : 'none')`
+    const d = await viaProbe(`(() => {
+      const name = ${name}
+      const p = window.__focus.panes()[0]
+      const r = p && p.getBoundingClientRect()
+      const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+      return {
+        onScreen: [...document.querySelectorAll('.overlay, .dialog, .backdrop, .scrim, .flyout, .menu, .dropdown, .sheet')].map(name),
+        overPane0: name(hit),
+        active: name(document.activeElement)
+      }
+    })()`)
+    console.log(
+      `        why: over pane 0 -> ${d.overPane0}; activeElement ${d.active}; ` +
+        `on screen: ${d.onScreen.length ? d.onScreen.join(', ') : 'nothing'}`
+    )
+  }
+
   // Two panes on the shell agent. `shell` runs the plain OS shell: no CLI to install, no
   // tokens, and it draws a prompt within a second - which is all a caret needs.
   await evalIn(
@@ -345,32 +372,42 @@ async function run(cdp) {
   // --- grid ---------------------------------------------------------------
   await setGrid(true)
   await clickTerminal(0)
-  check('grid: clicking a pane puts the caret in it', await where(), 'terminal 0', await active())
+  if (!check('grid: clicking a pane puts the caret in it', await where(), 'terminal 0', await active()))
+    await explain()
 
   await press(cdp, '2', { ctrl: true })
-  check(
-    'grid: Ctrl+2 moves the caret, not just the highlight',
-    await where(),
-    'terminal 1',
-    await active()
+  if (
+    !check(
+      'grid: Ctrl+2 moves the caret, not just the highlight',
+      await where(),
+      'terminal 1',
+      await active()
+    )
   )
+    await explain()
 
   await clickTerminal(0)
   await press(cdp, 'Tab', { ctrl: true })
-  check(
-    'grid: Ctrl+Tab moves the caret to the next pane',
-    await where(),
-    'terminal 1',
-    await active()
+  if (
+    !check(
+      'grid: Ctrl+Tab moves the caret to the next pane',
+      await where(),
+      'terminal 1',
+      await active()
+    )
   )
+    await explain()
 
   await clickAt(cdp, '.list .row', 0)
-  check(
-    'grid: clicking a sidebar row moves the caret too',
-    await where(),
-    'terminal 0',
-    await active()
+  if (
+    !check(
+      'grid: clicking a sidebar row moves the caret too',
+      await where(),
+      'terminal 0',
+      await active()
+    )
   )
+    await explain()
 
   // --- a new pane must not grab the keyboard off you ----------------------
   await clickTerminal(0)

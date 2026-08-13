@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { paneRef } from '@shared/place'
 import { holderName, laneChipLabel, laneProject, laneState } from '../laneWords'
@@ -33,6 +34,18 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
   // rows each name their own (laneChipLabel with no project drops nothing).
   const projects = new Set(rows.map((l) => laneProject(l)))
   const project = projects.size === 1 ? (rows.length ? laneProject(rows[0]) : '') : ''
+  // Escape closes it, like every other dialog. This card opens on top of LaneDialog, whose
+  // own handler stands down while `.lane-help` is on screen, so one press peels one layer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
   const paneOf = (l: LaneBoardEntry): number | undefined => {
     const i = sessions.findIndex((s) => s.id === l.ownerPane)
     return i >= 0 ? i + 1 : undefined

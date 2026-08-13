@@ -60,6 +60,33 @@ export default function LaneDialog({ cwd, onClose, onHelp, onReview }: Props): J
   }
   useEffect(load, [cwd])
 
+  /**
+   * Escape closes it, like every other dialog in the app.
+   *
+   * It was the one overlay that had no way out but the mouse: App's global Escape branch
+   * closes nine dialogs by name and this was not among them, and unlike ConfirmDialog this
+   * card focuses nothing on mount, so an `onKeyDown` on the overlay would never have run
+   * either. The cost was not a missing shortcut - the backdrop covers the panes, so the
+   * app looked DEAD rather than looking open. `npm run test:focus` reported it as four
+   * lost-focus failures (`caret: nothing`, selection frozen on the pane whose chip opened
+   * this) which were clicks landing on `div.dialog.confirm`; the run only recovered when a
+   * later click happened to hit the backdrop and close it by mouse.
+   *
+   * Capture phase on the window for the same reason App's handler is: xterm swallows keys
+   * otherwise. The "how lanes work" card opens FROM here and sits on top, so it owns
+   * Escape while it is up - the same rule App applies to an open `.select-menu`.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (document.querySelector('.lane-help')) return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
   const merge = (): void => {
     setBusy(true)
     setSaid(null)
