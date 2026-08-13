@@ -193,6 +193,28 @@ export const paneSearch = new Map<string, SearchAddon>()
 ;(window as unknown as { __paneSearch: Map<string, SearchAddon> }).__paneSearch = paneSearch
 
 /**
+ * The panes that currently hold a live WebGL context.
+ *
+ * A pane that is not on screen was still paying for the GPU renderer: every session's
+ * `TerminalPane` stays mounted and is hidden with CSS, so a WebGL context and its glyph
+ * atlas lived for the whole session whether or not anyone could see the pane. Measured on
+ * this machine with seven sessions open: the GPU helper process sat at 1.57 GB resident
+ * and had peaked at 1.81 GB, against 251 MB in the renderer - roughly 220 MB of GPU memory
+ * per pane, most of it for panes nobody was looking at. On a 16 GB machine that is enough
+ * to push the whole system into swap, and the first thing that shows it is this app, which
+ * is the one repainting continuously.
+ *
+ * So the context now follows visibility (see the effect below), and this set is the
+ * backstop for the other half of the problem: Chromium caps live WebGL contexts per
+ * renderer, and past the cap it evicts the oldest, which arrives here as a context loss and
+ * drops that pane to the DOM renderer for good. Keeping our own count below the browser's
+ * means the fallback stays something that happens to a driver, not something we cause by
+ * opening one pane too many.
+ */
+const glLive = new Set<string>()
+const GL_BUDGET = 8
+
+/**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
@@ -324,6 +346,9 @@ export default function TerminalPane({
   const wrap = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
+  // Null whenever this pane is drawing itself as DOM: off screen, over the context budget,
+  // or after the GPU took the context away. See `glLive` for why that is worth tracking.
+  const glRef = useRef<WebglAddon | null>(null)
   // Read inside listeners that are attached once per session, so flipping the
   // setting takes effect without tearing the terminal down.
   const copyOnSelectRef = useRef(copyOnSelect)
@@ -576,19 +601,11 @@ export default function TerminalPane({
      * renderer once enough panes are open - the addon is disposed and xterm falls straight
      * back to the DOM renderer for that pane. Slower, still correct, and never a blank
      * pane, which is what a lost context looks like if nothing handles it.
+     *
+     * The context itself is acquired and released by the visibility effect below rather
+     * than here, because a hidden pane holds its atlas just as hard as a visible one and
+     * there is nothing on screen to show for it.
      */
-    let gl: WebglAddon | null = null
-    try {
-      gl = new WebglAddon()
-      gl.onContextLoss(() => {
-        gl?.dispose()
-        gl = null
-      })
-      t.loadAddon(gl)
-    } catch {
-      /* no WebGL on this box - the DOM renderer is already what is drawing */
-      gl = null
-    }
 
     // Loaded after the renderer, because the highlight for every other match is drawn as
     // an xterm decoration and a decoration needs something to be drawn on.
@@ -609,7 +626,20 @@ export default function TerminalPane({
     // pane's cost scales with its grid and no two panes have the same one.
     dbg.__pf = {
       ...(dbg.__pf ?? {}),
-      [sessionId]: { term: t, fit: f, host: host.current, dropWebgl: () => gl?.dispose() },
+      [sessionId]: {
+        term: t,
+        fit: f,
+        host: host.current,
+        dropWebgl: () => {
+          glRef.current?.dispose()
+          glRef.current = null
+          glLive.delete(sessionId)
+        },
+        // What a probe needs to check the visibility rule from outside: whether this pane
+        // is holding a context right now, and how many are held in total.
+        hasWebgl: () => glRef.current !== null,
+        webglLive: () => glLive.size
+      },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
       // answer. `prompt-view-test.mjs` reads it back after typing through xterm's own
@@ -1691,9 +1721,58 @@ export default function TerminalPane({
       // into a component that is on its way out.
       dead = true
       for (const m of list.splice(0)) m.marker.dispose()
+      // Before dispose(), so the seat is free for whichever pane asks for it next -
+      // t.dispose() takes the addon with it, but only this line gives up the budget.
+      glRef.current = null
+      glLive.delete(sessionId)
       t.dispose()
     }
   }, [sessionId])
+
+  /**
+   * Hold a GPU context only while the pane is on screen.
+   *
+   * Every session's pane stays mounted - hiding one is a CSS class, not an unmount - so
+   * without this a pane you last looked at yesterday keeps its WebGL context and glyph
+   * atlas alive for as long as the session does. That is invisible in the renderer's own
+   * memory and shows up in the GPU helper process instead, which is why it went unnoticed:
+   * seven sessions here held 1.57 GB of GPU memory between them, and at most one or two of
+   * those panes were being looked at.
+   *
+   * Dropping the addon puts that pane back on xterm's DOM renderer, which is slower per
+   * frame and does not matter at all for something `display: none` is not painting. It
+   * picks the context back up when the pane is shown again; that path is the same one the
+   * context-loss handler has always used, so it is not a new way for a pane to be drawn.
+   */
+  useEffect(() => {
+    const t = term.current
+    if (!t) return
+    if (!visible) {
+      glRef.current?.dispose()
+      glRef.current = null
+      glLive.delete(sessionId)
+      return
+    }
+    if (glRef.current) return
+    // Over budget the pane simply stays on the DOM renderer. Refusing here is better than
+    // letting Chromium hit its own cap, because Chromium answers by evicting some OTHER
+    // pane's context - and that pane is one somebody may well be watching.
+    if (glLive.size >= GL_BUDGET) return
+    try {
+      const gl = new WebglAddon()
+      gl.onContextLoss(() => {
+        gl.dispose()
+        if (glRef.current === gl) glRef.current = null
+        glLive.delete(sessionId)
+      })
+      t.loadAddon(gl)
+      glRef.current = gl
+      glLive.add(sessionId)
+    } catch {
+      /* no WebGL on this box - the DOM renderer is already what is drawing */
+      glRef.current = null
+    }
+  }, [visible, sessionId])
 
   /**
    * Recolour without rebuilding.
