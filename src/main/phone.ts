@@ -70,6 +70,9 @@ const TYPES: Record<string, string> = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Served with the wrong type a manifest is ignored in silence, and the home-screen
+  // icon quietly stops being an app and goes back to being a Safari tab.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',

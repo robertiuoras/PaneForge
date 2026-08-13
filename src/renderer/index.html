@@ -10,6 +10,22 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>PaneForge</title>
+    <!-- Saved to a phone's home screen this is the whole app: a quick tunnel address is
+         long and forgettable, so the icon IS the bookmark. `start_url`/`scope` are
+         RELATIVE on purpose - the page is served from a LAN address, a tailnet address
+         and a fresh trycloudflare hostname, and an absolute one would pin the icon to
+         whichever host it was installed from. iOS ignores the manifest for installing,
+         hence the apple-* pair beside it. -->
+    <!-- `use-credentials` is load-bearing: a manifest is fetched WITHOUT cookies by
+         default, and this server answers a cookie-less page request with the pairing
+         page - so the install would silently read HTML as its manifest. -->
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
+    <meta name="theme-color" content="#0a0a0d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PaneForge" />
+    <link rel="apple-touch-icon" href="pf-192.png" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://huggingface.co https://*.hf.co https://*.huggingface.co"
