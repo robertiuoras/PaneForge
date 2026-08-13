@@ -264,5 +264,43 @@ is(onColor('#101014'), '#ffffff', 'near-black takes white text')
   }
 }
 
+/**
+ * The terminal's selection, which is three colours that only work as a set.
+ *
+ * A selection over a CLI is a solid block with forced text on it, so there are three ways
+ * to get it wrong and every one of them is invisible to whoever picked the accent: a block
+ * the same lightness as the terminal background (a highlight nobody can see - measured at
+ * 1.15:1 in the middle of the depth slider before this was derived from the background),
+ * text that does not read on the block (4.35:1 at depth 0.5, because between L 0.52 and
+ * 0.68 neither black nor white reaches AA), and an unfocused block that has faded past the
+ * point of saying anything.
+ *
+ * Swept rather than spot-checked: the failures above each appeared at ONE slider position
+ * and were clean either side of it.
+ */
+{
+  let swept = 0
+  for (const depth of [0, 0.2, 0.3, 0.42, 0.5, 0.54, 0.6, 0.8, 0.9, 0.98, 1]) {
+    for (const hue of [10, 60, 150, 220, 300]) {
+      for (const tint of [0, 0.5, 1]) {
+        const accent = toHex(oklchToRgb({ l: 0.72, c: 0.14, h: hue }))
+        const v = paletteFor({ ...DEFAULT_THEME, accent, depth, tint })
+        const where = `depth ${depth} hue ${hue} tint ${tint}`
+        ok(contrast(v['--term-sel'], v['--term-sel-fg']) >= 4.5, `selected text reads (${where})`)
+        ok(
+          contrast(v['--term-sel'], v['--term-bg']) >= 1.6,
+          `the selection block is visible against the terminal (${where})`
+        )
+        ok(
+          contrast(v['--term-sel-dim'], v['--term-sel-fg']) >= 3,
+          `an unfocused selection still reads (${where})`
+        )
+        swept++
+      }
+    }
+  }
+  ok(swept === 165, 'the selection sweep covered every combination it meant to')
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(`PASS theme: ${checks} assertions`)

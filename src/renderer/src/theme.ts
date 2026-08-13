@@ -35,6 +35,8 @@ export function terminalTheme(theme: ThemeConfig | undefined): {
   cursor: string
   cursorAccent: string
   selectionBackground: string
+  selectionForeground: string
+  selectionInactiveBackground: string
 } {
   const v = paletteFor(theme ?? DEFAULT_THEME)
   return {
@@ -42,6 +44,10 @@ export function terminalTheme(theme: ThemeConfig | undefined): {
     foreground: v['--term-fg'],
     cursor: v['--term-cursor'],
     cursorAccent: v['--bg'],
-    selectionBackground: v['--term-sel']
+    // See --term-sel in shared/theme.ts: a solid block plus a forced foreground is what
+    // makes a highlight read over a CLI's own colours and box rules.
+    selectionBackground: v['--term-sel'],
+    selectionForeground: v['--term-sel-fg'],
+    selectionInactiveBackground: v['--term-sel-dim']
   }
 }
