@@ -61,7 +61,7 @@ import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
 import './components/ImproveSheet.css'
-import { keyLabel, modKey } from './platform'
+import { keyLabel, modKey, isMac } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RecentsFlyout from './components/RecentsFlyout'
@@ -1508,6 +1508,20 @@ export default function App(): JSX.Element {
   )
 
   /**
+   * Walk the focus to the next pane. One function because two chords reach it on a Mac -
+   * Mod+Tab, and Ctrl+Tab because the OS eats the first one - and two copies of a wrap
+   * calculation is how they drift apart.
+   */
+  const cyclePane = useCallback(
+    (delta: number) => {
+      if (sessions.length < 2) return
+      const i = sessions.findIndex((s) => s.id === activeRef.current)
+      setActiveId(sessions[(i + delta + sessions.length) % sessions.length].id)
+    },
+    [sessions]
+  )
+
+  /**
    * Synchronised typing: every keystroke into every open pane at once.
    *
    * Kept as an app-level flag rather than a per-pane one because the question is always
@@ -1600,6 +1614,28 @@ export default function App(): JSX.Element {
         e.preventDefault()
         e.stopPropagation()
         setHelp((h) => !h)
+        return
+      }
+      /**
+       * Cycling panes needs a chord the OS will actually hand over, and on a Mac the one
+       * this app claimed is not one.
+       *
+       * Every shortcut below reads `modKey`, which is Cmd on a Mac so that Ctrl stays the
+       * shell's - correct, and it made Mod+Tab into Cmd+Tab, which macOS takes for the
+       * application switcher before any app sees the key. So walking the panes from the
+       * keyboard has never worked on this platform, and it was invisible from inside a
+       * test: a synthetic KeyboardEvent bypasses the OS entirely, so Cmd+Tab moved the
+       * focus in a probe and nothing at all under a finger.
+       *
+       * Ctrl+Tab is the one exception the shell rule can afford. Ctrl belongs to the
+       * terminal here, but no shell, readline binding or agent CLI binds Ctrl+Tab - it is
+       * "cycle" in every browser and editor on the machine, which is where the hand goes
+       * anyway. On Windows and Linux Mod+Tab already IS Ctrl+Tab, so this changes nothing.
+       */
+      if (isMac && e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab') {
+        e.preventDefault()
+        e.stopPropagation()
+        cyclePane(e.shiftKey ? -1 : 1)
         return
       }
       if (!modKey(e) || e.altKey) return
@@ -1717,10 +1753,7 @@ export default function App(): JSX.Element {
         patchConfig({ fontSize: Math.min(22, Math.max(9, config.fontSize + delta)) })
       } else if (e.key === 'Tab') {
         e.preventDefault()
-        if (sessions.length < 2) return
-        const i = sessions.findIndex((s) => s.id === activeId)
-        const next = (i + (e.shiftKey ? -1 : 1) + sessions.length) % sessions.length
-        setActiveId(sessions[next].id)
+        cyclePane(e.shiftKey ? -1 : 1)
       } else if (/^[1-9]$/.test(k)) {
         const target = sessions[Number(k) - 1]
         if (target) {
@@ -1753,6 +1786,7 @@ export default function App(): JSX.Element {
     cycleLayout,
     toggleZoom,
     movePane,
+    cyclePane,
     toggleSyncTyping
   ])
 

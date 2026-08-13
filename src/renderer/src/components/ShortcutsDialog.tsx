@@ -14,7 +14,7 @@ import { Segmented } from './Controls'
 import MicIcon from './MicIcon'
 // The rows below are written with Ctrl because that is what Windows and Linux use; on a
 // Mac the same shortcuts are on Cmd, so every key is printed through `keyLabel`.
-import { keyLabel, MOD } from '../platform'
+import { isMac, keyLabel, MOD } from '../platform'
 
 interface Props {
   onClose: () => void
@@ -63,8 +63,12 @@ const KEYS: Key[] = [
     true
   ],
   ['Ctrl 1 - 9', 'Jump to that session'],
-  ['Ctrl Tab', 'Next session'],
-  ['Ctrl Shift Tab', 'Previous session'],
+  // Spelled out rather than run through `keyLabel`, because on a Mac this is the one
+  // shortcut that is NOT on the command modifier: macOS takes Cmd+Tab for the application
+  // switcher before any app sees it, so cycling panes is on Ctrl+Tab there. Printing "⌘
+  // Tab" would document a chord that cannot arrive.
+  [isMac ? '⌃ Tab' : 'Ctrl Tab', 'Next session'],
+  [isMac ? '⌃ Shift Tab' : 'Ctrl Shift Tab', 'Previous session'],
   ['Ctrl + / Ctrl -', 'Terminal font bigger / smaller'],
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
   ['Ctrl Shift C', 'Always copy, never interrupt'],
