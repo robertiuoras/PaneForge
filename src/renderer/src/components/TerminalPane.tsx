@@ -1508,6 +1508,13 @@ export default function TerminalPane({
     // Right-click: copy when something is selected, paste when nothing is.
     const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault()
+      const sel = t.getSelection()
+      if (sel) {
+        api.copyText(sel)
+        const lines = sel.split('n').length
+        say(`Selection copied - ${lines} line${lines === 1 ? '' : 's'}`)
+        return
+      }
       if (!copySelection()) pasteClipboard()
     }
     /**
@@ -2357,6 +2364,47 @@ export default function TerminalPane({
           Copy
         </button>
       )}
+      {block && (
+        <div
+          className="block-copy-chip"
+          style={{
+            top: Math.max(0, block.top - 40),
+            left: 16,
+            position: 'absolute',
+            display: 'flex',
+            gap: 8,
+            zIndex: 1000
+          }}
+        >
+          <button
+            className="block-copy-prompt"
+            title="Copy the prompt"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (block.prompt) putOnClipboard(block.prompt, 'Prompt')
+            }}
+          >
+            ✂️ Copy Prompt
+          </button>
+          <button
+            className="block-copy-reply"
+            title="Copy the reply"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const reply = textOf(block.from, block.to);
+              if (reply && block.prompt) {
+                // Try to separate prompt from reply
+                const promptIdx = reply.indexOf(block.prompt);
+                const actual = promptIdx >= 0 ? reply.slice(promptIdx + block.prompt.length).trim() : reply;
+                putOnClipboard(actual || reply, 'Reply');
+              }
+            }}
+          >
+            ✂️ Copy Reply
+          </button>
+        </div>
+      )}
+      
       {/* Rendered before the pill and the drop hint on purpose: all three are positioned,
           so DOM order is what keeps a tag near the tail from painting over the pill. */}
       {marks.length > 0 && (
@@ -2368,7 +2416,11 @@ export default function TerminalPane({
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p
             const label = markLabel(m)
-            return (
+          
+  // Extract full text of block for copying
+  const blockText = block ? textOf(block.from, block.to) : null;
+
+  return (
               <button
                 key={m.id}
                 className={
