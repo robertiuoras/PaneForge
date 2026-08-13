@@ -15,6 +15,7 @@ import {
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
 import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
+import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
@@ -285,8 +286,17 @@ const BUSY_RESTATE = 120_000
 
 /** A prompt that was submitted to this pane, pinned to the buffer line it was sent on. */
 interface Mark {
+  /** The FIRST marker's id, kept as the React key across a re-anchor. */
   id: number
   marker: IMarker
+  /**
+   * The buffer line the marker was last seen on.
+   *
+   * xterm sets a marker's line to -1 before it announces the disposal, so this is the only
+   * way to know where a tag was when its marker died - which is what re-anchoring one
+   * needs. Refreshed every render; a marker keeps its own line right in between.
+   */
+  line: number
   text: string
   at: number
 }
@@ -727,6 +737,31 @@ export default function TerminalPane({
       return 0
     }
 
+    /**
+     * The terminal, as much of it as re-anchoring a tag needs. See shared/markAnchor.ts:
+     * a marker dying is not always a line being forgotten - xterm disposes every marker on
+     * a row that `CSI J` blanks, which is how Codex repaints, and it cost that pane a
+     * quarter to a half of its prompt tags.
+     */
+    const markerHost: MarkerHost = {
+      cursor: () => t.buffer.active.baseY + t.buffer.active.cursorY,
+      length: () => t.buffer.active.length,
+      register: (offset) => t.registerMarker(offset),
+      defer: (fn) => queueMicrotask(fn)
+    }
+
+    const anchor = (entry: Mark, marker: IMarker): void =>
+      anchorMark(markerHost, entry, marker, {
+        alive: () => !dead && list.indexOf(entry) >= 0,
+        drop: () => {
+          const at = list.indexOf(entry)
+          if (at < 0) return
+          list.splice(at, 1)
+          publish()
+        },
+        changed: publish
+      })
+
     const addMark = (text: string): void => {
       // A prompt cannot have been sent above one that was sent before it, so the scan for
       // the box top is not allowed to walk past the last prompt's line.
@@ -745,13 +780,8 @@ export default function TerminalPane({
       // scrollback, neither of which a plain line number could do.
       const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
-      const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
-      marker.onDispose(() => {
-        const i = list.indexOf(entry)
-        if (i < 0) return
-        list.splice(i, 1)
-        publish()
-      })
+      const entry: Mark = { id: marker.id, marker, line: marker.line, text, at: Date.now() }
+      anchor(entry, marker)
       list.push(entry)
       // Past this many the tags are a solid bar and stop being aimable, so the oldest go.
       while (list.length > MARK_CAP) list.shift()?.marker.dispose()
@@ -799,6 +829,13 @@ export default function TerminalPane({
     // wheel notch, a keyboard scroll and a write all end up judged the same way. No snap
     // here: this fires *during* a drag, and yanking the view out from under the mouse is
     // worse than a stale pill for one frame.
+    // Where each tag is, one frame behind. `anchor` needs it because xterm blanks a
+    // marker's line before it says the marker is going, and eighty numbers a frame is
+    // nothing next to the repaint that fires this.
+    t.onRender(() => {
+      for (const m of list) if (m.marker.line >= 0) m.line = m.marker.line
+    })
+
     t.onScroll(() => {
       const follow = nearBottom()
       pinned.current = follow

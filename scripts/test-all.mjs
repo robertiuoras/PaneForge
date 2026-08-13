@@ -36,6 +36,7 @@ const TESTS = [
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
+  ['markanchor', 'mark-anchor-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],

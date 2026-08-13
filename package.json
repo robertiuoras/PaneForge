@@ -68,6 +68,7 @@
     "test:promptsubmit": "node scripts/prompt-submit-test.mjs",
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
+    "test:markanchor": "node scripts/mark-anchor-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
