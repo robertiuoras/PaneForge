@@ -120,6 +120,9 @@ export const syncedPanes = new Set<string>()
  */
 const paneFeed = new Map<string, (d: string) => void>()
 
+/** Each pane's live prompt-mark list, for the debug handle. */
+const paneMarks = new Map<string, { marker: { line: number }; text: string }[]>()
+
 type DraftListener = (id: string, state: DraftState) => void
 const draftListeners = new Set<DraftListener>()
 
@@ -615,7 +618,12 @@ export default function TerminalPane({
       // answer. `prompt-view-test.mjs` reads it back after typing through xterm's own
       // input path, which is the only honest way to check the reconstruction in a real
       // window.
-      draft: (id: string) => paneDraft.get(id) ?? null
+      draft: (id: string) => paneDraft.get(id) ?? null,
+      // The prompt rail's own list, for the same reason: a tag that is missing is either
+      // a mark that was never made or a mark the rail declined to draw, and the DOM
+      // cannot tell those apart.
+      marks: (id: string) =>
+        (paneMarks.get(id) ?? []).map((m) => ({ line: m.marker.line, text: m.text }))
     }
 
     // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
@@ -675,6 +683,7 @@ export default function TerminalPane({
      */
     const MARK_CAP = 80
     const list: Mark[] = []
+    paneMarks.set(sessionId, list)
     let pending: DraftState = newDraft()
     let dead = false
     const publish = (): void => {
@@ -1668,6 +1677,7 @@ export default function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneFeed.delete(sessionId)
+      paneMarks.delete(sessionId)
       paneCopyMode.delete(sessionId)
       copy.current = null
       // A closed pane cannot be typed into, and leaving its id in the group would send
