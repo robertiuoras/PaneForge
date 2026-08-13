@@ -11,7 +11,15 @@
 //   node scripts/restore-context-test.mjs
 
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  utimesSync
+} from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -166,6 +174,31 @@ try {
   transcript('chat-b', [user('pane two prompt')])
   assert.equal(T.resumeIdFor('pane2'), 'chat-b')
   assert.equal(T.resumeIdFor('pane1'), 'chat-a', 'pane one lost its chat to pane two')
+
+  // ...and neither must a pane in a LANE of that folder, whose own project directory is a
+  // symlink to this one. Claims are compared as paths, so the same transcript reached
+  // through `-assistant` and through `-assistant-a` was two different strings and deduped
+  // against nothing: measured on a real desk, three `assistant` panes all reporting one
+  // conversation id, which is three panes reopening into one chat.
+  const lane = `${cwd}-a`
+  mkdirSync(lane, { recursive: true })
+  symlinkSync(projects, join(homedir(), '.claude', 'projects', slug(lane)))
+  T.noteSession('paneLane', lane, 'claude')
+  // It has written nothing of its own yet, and every transcript here is somebody's: the
+  // right answer is no id at all. Through the symlink the newest one is `chat-b` spelled
+  // a second way, which is what it used to take.
+  assert.equal(T.resumeIdFor('paneLane'), undefined, 'a lane pane took a claimed conversation')
+  // Then it writes one, and that is its own.
+  transcript('chat-lane', [user('lane prompt')])
+  assert.equal(T.resumeIdFor('paneLane'), 'chat-lane')
+  assert.equal(T.resumeIdFor('pane1'), 'chat-a', 'pane one lost its chat to a lane pane')
+  assert.equal(T.resumeIdFor('pane2'), 'chat-b', 'pane two lost its chat to a lane pane')
+  T.forgetSession('paneLane')
+  // ...and out of the folder again, so the cases after this one see the two panes and the
+  // two chats they were written for.
+  rmSync(join(projects, 'chat-lane.jsonl'), { force: true })
+  rmSync(join(homedir(), '.claude', 'projects', slug(lane)), { force: true })
+  rmSync(lane, { recursive: true, force: true })
 
   // /clear starts a new transcript inside the same pane, and being re-noted is NOT
   // enough to follow it. sessions.ts re-notes when the command is submitted, which is

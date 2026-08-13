@@ -18,7 +18,16 @@
 // typed. A folder name and an agent logo do not tell you what a pane was for; the prompt
 // does, which is why the restore dialog shows it.
 
-import { existsSync, openSync, readFileSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  closeSync,
+  readdirSync,
+  realpathSync,
+  statSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -74,7 +83,26 @@ const settled = new Set<string>()
  * The env override exists for the handoff test, which must not touch the real one. */
 export function projectDir(cwd: string): string {
   const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
-  return join(base, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  const dir = join(base, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  // ...through any symlink, because a lane's folder is routinely one.
+  //
+  // A worktree gets its own name here (`...-assistant-a`), and on this machine those are
+  // SYMLINKS to the project's own folder, so a chat in a lane writes its transcript into
+  // the same directory as one in the main checkout. That is fine and deliberate - it is
+  // one project's history. What was not fine is that every claim below compares PATHS: the
+  // same file reached through `-assistant`, `-assistant-a` and `-assistant-b` is three
+  // different strings, so `taken` deduped nothing and all three panes claimed the newest
+  // transcript at once. Measured on this desk: three `assistant` panes reporting one
+  // conversation id (9994a3c5), which made the lane board pick a pane by array order and
+  // would have reopened three panes into ONE conversation. Resolving here is enough,
+  // because every path in this file is built from it.
+  try {
+    return realpathSync(dir)
+  } catch {
+    // Not there yet - a folder no chat has ever run in. The unresolved path is still the
+    // right answer and existsSync below will say so.
+    return dir
+  }
 }
 
 /** The transcripts in a folder, newest write first. */
