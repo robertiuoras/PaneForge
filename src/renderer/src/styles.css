@@ -1275,8 +1275,17 @@ body.sizing * { user-select: none !important; }
   /* Every pixel the overlay's own padding takes away from the window, so the dialog
      inside can size itself against what is actually left rather than against 100vh. */
   --dlg-space: calc(9vh + 16px);
-  background: #05050899;
-  backdrop-filter: blur(3px);
+  /* A SCRIM, never a blur. `backdrop-filter` on a fullscreen layer asks the compositor to
+     re-sample everything underneath it every frame, and what is underneath here is a grid
+     of xterm WebGL canvases that repaint whenever an agent prints a line - so on screen
+     the whole window strobed for as long as a dialog was open. The cost is invisible in a
+     CPU sample (measured: +1.8% GPU, +1.6% renderer with four hammering panes) because it
+     is a presentation artifact, not work; an offscreen capture cannot see it either
+     (backdrop luminance spread over ten frames: 0.03). What it is is the one construct in
+     this file that makes a live GPU surface the INPUT to a full-window filter.
+     The scrim is opaque enough to do the blur's real job - stop the panes competing with
+     the dialog - and costs the compositor one flat rectangle. */
+  background: #050508eb;
   display: grid; place-items: start center; padding: 9vh 16px 16px;
   animation: fade var(--fast);
 }
@@ -1731,9 +1740,11 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   width: 28px; height: 28px; padding: 0; line-height: 1;
   border-radius: 50%; cursor: pointer;
   border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  /* Opaque rather than blurred: this pill sits directly ON the pane's WebGL canvas, so a
+     backdrop filter here re-samples a surface that repaints on every line the agent
+     prints. See `.overlay` for the whole argument. */
+  background: var(--surface-2);
   color: var(--muted);
-  backdrop-filter: blur(6px);
   opacity: 0.55;
   transition: opacity var(--fast), color var(--fast), background var(--fast), border-color var(--fast);
 }
@@ -2568,8 +2579,8 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .voice-overlay {
   position: fixed; inset: 0; z-index: 80;
   display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(7px);
+  /* Same rule as `.overlay`: a fullscreen filter whose input is a live WebGL surface. */
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
   padding: 22px;
 }
 .voice-sheet {
