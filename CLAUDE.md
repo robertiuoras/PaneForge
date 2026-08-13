@@ -652,6 +652,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |

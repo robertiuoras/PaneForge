@@ -37,6 +37,18 @@ export interface Project {
   /** epoch ms of the newest Claude Code transcript for this path, 0 if never used */
   lastUsed: number
   isGit: boolean
+  /**
+   * This folder is a second checkout of another project in the same root - a git
+   * worktree (`<repo>-a` on `lane-a`, Claude Code's `worktree-<slug>`) or what one
+   * left behind. The value is that project's NAME, so the launcher can fold them
+   * under it instead of listing eight copies of one repository.
+   *
+   * Proved, never guessed: `.git` is a file pointing into the parent's
+   * `.git/worktrees`, or the folder is a `<project>-<letter>` sibling of a real
+   * repository while being no repository itself. `service-a` next to no `service`
+   * is a project, and stays one.
+   */
+  checkoutOf?: string
 }
 
 /**
