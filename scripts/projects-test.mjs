@@ -12,7 +12,7 @@
 // find at all, with nothing on screen to say why.
 
 import { buildSync } from 'esbuild'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -99,6 +99,22 @@ const alone = checkoutOwners([
   { name: 'notes', isGit: false }
 ])
 ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].join(', '))
+
+// The list is read from disk on every call, so the only way a project can be missing
+// is the renderer never asking again. It used to ask once at startup, which means a
+// repo created by an agent an hour into the session was absent from New Session until
+// the app restarted - and restarting the app is the one thing that kills every pane.
+// So the picker opening has to be a reason to re-read.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const m = app.match(/api\.listProjects\(\)\.then\(setProjects\)\s*\n\s*\}, \[([^\]]*)\]/)
+  ok('the project list is fetched from an effect', Boolean(m), 'listProjects effect not found')
+  ok(
+    'and re-fetched when the picker opens, so a folder made mid-session appears',
+    Boolean(m && /\bpicking\b/.test(m[1])),
+    m ? `deps: [${m[1]}]` : 'no match'
+  )
+}
 
 rmSync(out, { recursive: true, force: true })
 console.log(`\n${checks - failures}/${checks} checks passed`)

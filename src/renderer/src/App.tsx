@@ -417,10 +417,13 @@ export default function App(): JSX.Element {
   }, [])
 
   // The project list is derived from the root folder, so refresh it whenever the
-  // root changes (and once at startup).
+  // root changes - and on every open of the picker, so a project folder created
+  // while the app was running shows up without a restart. Without `picking` here
+  // the list was read once at startup: a repo an agent created an hour into the
+  // session was simply absent from New Session, with nothing to explain why.
   useEffect(() => {
     api.listProjects().then(setProjects)
-  }, [config?.root])
+  }, [config?.root, picking])
 
   // Re-probed whenever the custom list changes, and on every open of the picker, so
   // a CLI installed while the app was running shows up without a restart.
