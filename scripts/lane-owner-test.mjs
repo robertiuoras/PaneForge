@@ -120,6 +120,24 @@ const twoDead = {
 }
 
 {
+  // One conversation, three panes. A chat resumed into a second checkout - or three panes
+  // seeded from one transcript - gives several panes the same resumeId, and the first one
+  // in the list used to take the lane. Measured on this desk: three `assistant` panes all
+  // reporting chat db2d73b3, so the `main` hold was drawn on the pane sitting in
+  // `assistant-a`, whose card then read `lane a` and `main checkout` at once.
+  state({ main: { session: CHAT_A, cwd: repo, claimed: now - 60_000, seen: now - 60_000 } })
+  const { attachLaneOwners, laneBoard } = await load()
+  const board = attachLaneOwners(laneBoard(), [
+    { id: 'paneA', cwd: `${repo}-a`, resumeId: CHAT_A },
+    { id: 'paneMain', cwd: repo, resumeId: CHAT_A },
+    { id: 'paneB', cwd: `${repo}-b`, resumeId: CHAT_A }
+  ])
+  const main = board.lanes.find((l) => l.lane === 'main')
+  check('with the id tied, the lane goes to the pane standing in it', main?.ownerPane === 'paneMain',
+    String(main?.ownerPane))
+}
+
+{
   // A pane whose conversation cannot be named yet (nothing written since it opened) still
   // gets the folder fallback - but only once, or it collects every lane in the folder.
   state(twoDead)

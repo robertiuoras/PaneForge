@@ -448,7 +448,21 @@ export function attachLaneOwners(board: LaneBoard | null, panes: LanePane[]): La
 
 function ownerOf(lane: LaneBoardEntry, panes: LanePane[], taken: Set<string>): string | null {
   if (lane.session) {
-    const exact = panes.find((p) => p.resumeId && p.resumeId === lane.session)
+    // More than one pane can carry the same conversation id - a chat resumed into a second
+    // checkout, or three panes seeded from one transcript - and `find` then handed the lane
+    // to whichever pane happened to be first in the list. Measured on this machine: three
+    // `assistant` panes all reporting chat db2d73b3, so the lane `main` hold was drawn on
+    // the pane sitting in `assistant-a`, whose card then said `lane a` AND `main checkout`
+    // at once. Both chips were telling the truth about the data; the data named the wrong
+    // pane. Where the ids tie, the folder breaks it: the pane actually standing in the
+    // lane's own checkout is the holder.
+    const claims = panes.filter((p) => p.resumeId && p.resumeId === lane.session && !taken.has(p.id))
+    const dir = samePath(lane.dir ?? '')
+    const from = lane.from ? samePath(lane.from) : ''
+    const exact =
+      claims.find((p) => dir && samePath(p.cwd) === dir) ??
+      claims.find((p) => from && samePath(p.cwd) === from) ??
+      claims[0]
     if (exact) {
       taken.add(exact.id)
       return exact.id
