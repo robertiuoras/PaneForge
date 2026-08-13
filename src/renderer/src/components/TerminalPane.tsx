@@ -14,7 +14,8 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
-import { keepScrollback } from '../../../shared/keepScrollback'
+import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
+import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
@@ -119,6 +120,9 @@ export const syncedPanes = new Set<string>()
  * that draft. The mirror feeds it the same bytes instead.
  */
 const paneFeed = new Map<string, (d: string) => void>()
+
+/** Each pane's live prompt-mark list, for the debug handle. */
+const paneMarks = new Map<string, { marker: { line: number }; text: string }[]>()
 
 type DraftListener = (id: string, state: DraftState) => void
 const draftListeners = new Set<DraftListener>()
@@ -304,8 +308,17 @@ const BUSY_RESTATE = 120_000
 
 /** A prompt that was submitted to this pane, pinned to the buffer line it was sent on. */
 interface Mark {
+  /** The FIRST marker's id, kept as the React key across a re-anchor. */
   id: number
   marker: IMarker
+  /**
+   * The buffer line the marker was last seen on.
+   *
+   * xterm sets a marker's line to -1 before it announces the disposal, so this is the only
+   * way to know where a tag was when its marker died - which is what re-anchoring one
+   * needs. Refreshed every render; a marker keeps its own line right in between.
+   */
+  line: number
   text: string
   at: number
 }
@@ -518,10 +531,11 @@ export default function TerminalPane({
     })
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
-     * the previous turn with it: the CLI sends `CSI 2 J` and `CSI 3 J` together, and the
-     * second one deletes this window's scrollback. See shared/keepScrollback.ts - it is
-     * stateful (a sequence is routinely torn across two chunks from the pty), so there is
-     * exactly one of it per pane and every write site uses it.
+     * the previous turn with it - `CSI 2 J` plus `CSI 3 J` in the CLIs that still send
+     * those, and an erase-per-row in the Claude Code builds that no longer do. See
+     * shared/keepScrollback.ts: it is stateful (a sequence is routinely torn across two
+     * chunks from the pty), so there is exactly one of it per pane and every write site
+     * uses it, and `arm()` below is what tells it a wipe is a clear, not a repaint.
      */
     const keep = keepScrollback(
       () => t.rows,
@@ -645,7 +659,12 @@ export default function TerminalPane({
       // answer. `prompt-view-test.mjs` reads it back after typing through xterm's own
       // input path, which is the only honest way to check the reconstruction in a real
       // window.
-      draft: (id: string) => paneDraft.get(id) ?? null
+      draft: (id: string) => paneDraft.get(id) ?? null,
+      // The prompt rail's own list, for the same reason: a tag that is missing is either
+      // a mark that was never made or a mark the rail declined to draw, and the DOM
+      // cannot tell those apart.
+      marks: (id: string) =>
+        (paneMarks.get(id) ?? []).map((m) => ({ line: m.marker.line, text: m.text }))
     }
 
     // Only a deliberate gesture stops this pane following the tail - a wheel notch upward,
@@ -705,6 +724,7 @@ export default function TerminalPane({
      */
     const MARK_CAP = 80
     const list: Mark[] = []
+    paneMarks.set(sessionId, list)
     let pending: DraftState = newDraft()
     let dead = false
     const publish = (): void => {
@@ -748,6 +768,31 @@ export default function TerminalPane({
       return 0
     }
 
+    /**
+     * The terminal, as much of it as re-anchoring a tag needs. See shared/markAnchor.ts:
+     * a marker dying is not always a line being forgotten - xterm disposes every marker on
+     * a row that `CSI J` blanks, which is how Codex repaints, and it cost that pane a
+     * quarter to a half of its prompt tags.
+     */
+    const markerHost: MarkerHost = {
+      cursor: () => t.buffer.active.baseY + t.buffer.active.cursorY,
+      length: () => t.buffer.active.length,
+      register: (offset) => t.registerMarker(offset),
+      defer: (fn) => queueMicrotask(fn)
+    }
+
+    const anchor = (entry: Mark, marker: IMarker): void =>
+      anchorMark(markerHost, entry, marker, {
+        alive: () => !dead && list.indexOf(entry) >= 0,
+        drop: () => {
+          const at = list.indexOf(entry)
+          if (at < 0) return
+          list.splice(at, 1)
+          publish()
+        },
+        changed: publish
+      })
+
     const addMark = (text: string): void => {
       // A prompt cannot have been sent above one that was sent before it, so the scan for
       // the box top is not allowed to walk past the last prompt's line.
@@ -766,13 +811,8 @@ export default function TerminalPane({
       // scrollback, neither of which a plain line number could do.
       const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
-      const entry: Mark = { id: marker.id, marker, text, at: Date.now() }
-      marker.onDispose(() => {
-        const i = list.indexOf(entry)
-        if (i < 0) return
-        list.splice(i, 1)
-        publish()
-      })
+      const entry: Mark = { id: marker.id, marker, line: marker.line, text, at: Date.now() }
+      anchor(entry, marker)
       list.push(entry)
       // Past this many the tags are a solid bar and stop being aimable, so the oldest go.
       while (list.length > MARK_CAP) list.shift()?.marker.dispose()
@@ -788,6 +828,10 @@ export default function TerminalPane({
       pending = r.state
       publishDraft(sessionId, r.state)
       for (const line of r.submitted) {
+        // `/clear` and friends are the one moment a full-screen wipe means "throw the
+        // conversation off the screen" rather than "repaint it". Claude Code does both
+        // with the same bytes, so the intent has to come from here - see keepScrollback.
+        if (clearsScreen(line)) keep.arm()
         const text = flatDraft(line, RAIL_LABEL_CHARS)
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.
@@ -816,6 +860,13 @@ export default function TerminalPane({
     // wheel notch, a keyboard scroll and a write all end up judged the same way. No snap
     // here: this fires *during* a drag, and yanking the view out from under the mouse is
     // worse than a stale pill for one frame.
+    // Where each tag is, one frame behind. `anchor` needs it because xterm blanks a
+    // marker's line before it says the marker is going, and eighty numbers a frame is
+    // nothing next to the repaint that fires this.
+    t.onRender(() => {
+      for (const m of list) if (m.marker.line >= 0) m.line = m.marker.line
+    })
+
     t.onScroll(() => {
       const follow = nearBottom()
       pinned.current = follow
@@ -1694,6 +1745,7 @@ export default function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneFeed.delete(sessionId)
+      paneMarks.delete(sessionId)
       paneCopyMode.delete(sessionId)
       copy.current = null
       // A closed pane cannot be typed into, and leaving its id in the group would send

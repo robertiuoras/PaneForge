@@ -528,6 +528,38 @@ torn across two chunks from the pty, so there is one per pane and every write si
 `npm run test:scrollclear` drives a real headless xterm and its control case proves a plain
 terminal loses the lines.
 
+- **Then Claude Code stopped sending either of them, and the whole thing quietly became a
+  no-op.** Measured 2026-08-13 over this machine's live pane logs: v2.1.229 emits ZERO `2J`
+  and ZERO `3J` in 4 MB. It erases a row at a time instead — `ESC[H ESC[2K` then
+  `(ESC[1B ESC[2K)` once per row — which blanks the visible screen in place, and a blanked
+  line is never pushed into the scrollback the way a scrolled one is. So the last screenful
+  of the conversation was destroyed and the banner redrawn over the top of it, with
+  everything older still there: history right up to a hole where the last turn was.
+- **That erase-per-row is also its ordinary repaint** — 60 of them in one session log, only
+  two of them a clear. Rewriting every one would push a duplicate screenful into the
+  scrollback sixty times, so the wipe is kept only when the user has just ASKED for one:
+  `keep.arm()`, called from the pane when a submitted line matches `clearsScreen` (`/clear`,
+  `/compact`, `/new`, `/reset`), spent on the first wipe that follows and lapsed after 10s.
+  The intent comes from the keystrokes the app is relaying anyway, never from guessing which
+  repaint is which. The arming also widens the carry — a chunk may be part-way through the
+  15-byte opener — and that longer hold is armed-only, because a chunk ending in `ESC [ H` is
+  ordinary cursor traffic that must not wait for a byte that may be a frame away.
+
+**And a prompt tag survives the CLI repainting over it.** The rail's tags are xterm markers,
+and xterm disposes every marker on a row that `CSI J` blanks (`eraseInDisplay` →
+`_resetBufferLine` → `Buffer.clearMarkers`, read off a stack trace taken from inside the
+disposal). Claude Code repaints with erase-in-LINE, which touches no marker; Codex repaints
+with erase-in-DISPLAY. Measured by replaying this machine's own pane logs into a real xterm
+and registering a marker every 20 KB: **Claude Code lost 0 of 278, Codex lost 25%, 33% and
+50% across three panes** — which is the "Codex shows no prompt tags so I cannot jump to my
+prompts" report, and the prompt had not scrolled anywhere. `shared/markAnchor.ts` reads a
+disposal for what it is: the line still being in the buffer means another marker goes on it
+(on a deferred callback — the disposal fires from inside xterm's own walk over its marker
+list), and only a line the buffer has genuinely forgotten ends the tag. Line 0 is the one
+that goes: a trimmed marker was on line 0 an instant earlier, and that is indistinguishable
+from a tag still sitting on the oldest line. `npm run test:markanchor`, whose control proves
+a bare marker really does die.
+
 ## The app remembers what has been asked
 
 `src/main/promptArchive.ts` answers one question — has this ask been made before — and it is
@@ -698,7 +730,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:macdownload` | every way a mac download can end — none of them a hang |
 | `npm run test:wedge` | that no hung promise can leave the updater needing a person |
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
-| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — the rewrite, a sequence torn across two chunks, and the result in a real headless xterm |
+| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — both shapes it has had (`CSI 2 J`, and the erase-per-row Claude Code sends now), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm |
+| `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
