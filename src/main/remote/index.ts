@@ -29,6 +29,7 @@ import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
+import { dropSelf, isSelfPeer } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 
@@ -87,6 +88,12 @@ export class Remote extends EventEmitter {
     // writing them now is what stops them being different on the next launch, which
     // would quietly break every pairing the other device had just made.
     const c = getConfig().remote
+    // A device paired with ITSELF mirrors every one of its own panes back into its own
+    // window, so every session is on screen twice - which is exactly what a desk here was
+    // doing, its peer list holding its own id at its own tailnet address. `pair` refuses
+    // that now; this line clears the ones already saved, because the config outlives the
+    // bug and nothing else would ever take it back out.
+    c.peers = dropSelf(c.peers, c.id)
     setConfig({ remote: c })
     if (c.host) this.host.start(c.port)
     this.discovery.update({ port: c.port, hosting: c.host && c.discoverable })
@@ -138,7 +145,10 @@ export class Remote extends EventEmitter {
   startOn(device: string, req: StartSessionRequest): Promise<Session> {
     const client = this.clients.get(device)
     if (!client) return Promise.reject(new Error('That device is not connected'))
-    return client.startSession(req)
+    return client.startSession(req).then((s) => {
+      this.rememberWatch(client)
+      return s
+    })
   }
 
   projectsOn(device: string): Promise<Project[]> {
@@ -153,7 +163,16 @@ export class Remote extends EventEmitter {
     if (!client || client.status !== 'online') {
       return Promise.reject(new Error('That device is not connected'))
     }
-    return client.handoff(payload, file)
+    return client.handoff(payload, file).then((r) => {
+      this.rememberWatch(client)
+      return r
+    })
+  }
+
+  /** Keep a pick the link made on its own (a launch, a handoff) across restarts. */
+  private rememberWatch(client: RemoteClient): void {
+    this.savePeer({ ...client.peer, watch: client.watched() })
+    this.changed()
   }
 
   /** The name a handoff commit mentions - the device's, or its id when unpaired. */
@@ -198,10 +217,19 @@ export class Remote extends EventEmitter {
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
+        const watched = new Set(client?.watched() ?? p.watch ?? [])
         return {
           ...p,
           status: client?.status ?? 'off',
           error: client?.error || undefined,
+          panes: (client?.panes() ?? []).map((s) => ({
+            id: s.id,
+            title: s.title,
+            cwd: s.cwd,
+            agent: s.agent,
+            status: s.status,
+            watched: watched.has(s.id)
+          })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,
           seen: beacons.some((b) => b.id === p.id)
@@ -470,6 +498,22 @@ export class Remote extends EventEmitter {
     this.discovery.query()
   }
 
+  /**
+   * Pick which of a device's panes this window mirrors. `all` mirrors whatever it has,
+   * now and later; otherwise `ids` is the whole pick, replacing the previous one.
+   *
+   * Saved on the peer, so a reconnect - or the next launch - brings back the same panes
+   * rather than asking again or, as before, mirroring the lot.
+   */
+  setWatch(device: string, ids: string[], all = false): void {
+    const client = this.clients.get(device)
+    if (!client) return
+    if (all) client.setMirrorAll(true)
+    else client.setWatch(ids)
+    this.savePeer({ ...client.peer, watch: client.watched(), mirrorAll: all })
+    this.changed()
+  }
+
   // -------------------------------------------------------------------------
 
   /**
@@ -496,6 +540,16 @@ export class Remote extends EventEmitter {
         done('That device did not answer in time.')
       }, 20_000)
       client.on('identified', (identity: PeerIdentity) => {
+        // Pairing with yourself is always a mistake and never a harmless one: the link
+        // comes up, every local pane arrives back mirrored, and the window lists the same
+        // work twice with no way to tell which copy is the real one. The handshake is the
+        // first moment the far end's id is known, so it is the first moment this can be
+        // caught - an address check could not, a machine answers on several.
+        if (isSelfPeer(identity.id, getConfig().remote.id)) {
+          client.disconnect()
+          done('That is this device. Pair the OTHER machine with it.')
+          return
+        }
         const known = this.clients.get(identity.id)
         if (known) {
           // Re-pairing a device we already have: update it in place rather than

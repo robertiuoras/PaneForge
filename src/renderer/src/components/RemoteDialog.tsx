@@ -13,7 +13,7 @@ import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import AgentPicker from './AgentPicker'
 import Blurb from './Blurb'
-import { Switch } from './Controls'
+import { Checkbox, Switch } from './Controls'
 import Select from './Select'
 
 const api = window.api
@@ -890,7 +890,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
                       <span className="dev-nm">{p.name}</span>
                       {p.status === 'online' && (
                         <span className="chip remote">
-                          {p.sessions} {p.sessions === 1 ? 'pane' : 'panes'}
+                          {p.sessions ? `mirroring ${p.sessions} of ${p.panes.length}` : `${p.panes.length} panes there`}
                         </span>
                       )}
                       {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
@@ -952,6 +952,57 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
                     </button>
                   </div>
                 </div>
+                {/* What this window mirrors from that device.
+                    Connecting used to mean mirroring all of it, immediately - so the
+                    sidebar filled with panes nobody asked for, each streaming its output
+                    across the network, and the same work appeared twice whenever both
+                    machines had it open. A link is permission to watch; this is the
+                    watching, and it is a tick per pane. */}
+                {p.status === 'online' && p.panes.length > 0 && (
+                  <div className="dev-panes">
+                    <div className="dev-panes-head">
+                      <span className="hint">
+                        {p.sessions === 0
+                          ? `Nothing from ${p.name} is on screen here. Tick what to watch.`
+                          : `Watching ${p.sessions} of ${p.panes.length} on ${p.name}.`}
+                      </span>
+                      <button
+                        className={'ghost small' + (p.mirrorAll ? ' active' : '')}
+                        title={`Mirror every pane ${p.name} has, including ones it opens later`}
+                        onClick={() => void api.watchRemote(p.id, [], true).then(onState)}
+                      >
+                        All
+                      </button>
+                      <button
+                        className="ghost small"
+                        disabled={p.sessions === 0}
+                        title={`Stop mirroring ${p.name}'s panes. The link stays up.`}
+                        onClick={() => void api.watchRemote(p.id, []).then(onState)}
+                      >
+                        None
+                      </button>
+                    </div>
+                    {p.panes.map((pane) => (
+                      <label key={pane.id} className={'dev-pane' + (pane.watched ? ' on' : '')} title={pane.cwd}>
+                        <Checkbox
+                          checked={pane.watched}
+                          onChange={() =>
+                            void api
+                              .watchRemote(
+                                p.id,
+                                p.panes.filter((x) => (x.id === pane.id ? !x.watched : x.watched)).map((x) => x.id)
+                              )
+                              .then(onState)
+                          }
+                        />
+                        <AgentLogo id={pane.agent} size={13} />
+                        <span className="dev-pane-nm">{pane.title}</span>
+                        <span className="dev-pane-cwd">{pane.cwd}</span>
+                        <span className={'dot ' + (pane.status === 'exited' ? 'off' : 'online')} />
+                      </label>
+                    ))}
+                  </div>
+                )}
                 {opening === p.id && (
                   <div className="dev-launch">
                     {!far && <span className="hint">Asking {p.name} what it has...</span>}

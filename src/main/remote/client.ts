@@ -8,6 +8,14 @@
 // The mirror is deliberately a mirror: the pty, the history file and the working
 // copy stay on the device that owns them. Picking work up somewhere else means
 // watching and typing from here, not moving the agent.
+//
+// NOTHING IS MIRRORED UNTIL IT IS PICKED. Connecting used to mirror every pane the
+// other device had, and attach to every one of them, the moment the link came up -
+// so a desk that paired with itself (which the app used to allow: see `Remote.probe`)
+// drew every one of its own panes twice, and a desk paired with a busy machine got
+// eight panes it had not asked for, each streaming its output across the network.
+// `watch` is that pick. `panes()` still reports everything the device has, because
+// the Devices panel has to offer the list you are choosing from.
 
 import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
@@ -51,6 +59,11 @@ export class RemoteClient extends EventEmitter {
   since = 0
   sessions: Session[] = []
 
+  /** Every pane that device has, whether or not this one is mirroring it. */
+  private available: Session[] = []
+  /** The panes this device chose to mirror, by their id ON that device. */
+  private watching = new Set<string>()
+
   private conn: Conn | null = null
   private socket: Socket | null = null
   private buffers = new Map<string, OutBuffer>()
@@ -66,6 +79,7 @@ export class RemoteClient extends EventEmitter {
     private readonly me: () => PeerIdentity
   ) {
     super()
+    for (const id of peer.watch ?? []) this.watching.add(id)
   }
 
   get id(): string {
@@ -75,6 +89,55 @@ export class RemoteClient extends EventEmitter {
   /** Mirrored sessions, already namespaced and tagged with the device they are on. */
   list(): Session[] {
     return this.sessions
+  }
+
+  /** Every pane on that device, mirrored or not - what the Devices panel offers. */
+  panes(): Session[] {
+    return this.available
+  }
+
+  /** The ids on that device this one is mirroring. */
+  watched(): string[] {
+    return [...this.watching]
+  }
+
+  /**
+   * Choose what to mirror. Ids are the OTHER device's, as `panes()` reports them.
+   *
+   * Streams follow the pick both ways: a newly watched pane is attached (its scrollback
+   * arrives, then live output), and one dropped is detached over the wire rather than
+   * merely hidden here - the point of picking is that an unwatched pane costs nothing.
+   */
+  setWatch(ids: string[]): void {
+    const next = new Set(ids)
+    for (const id of this.watching) {
+      if (next.has(id)) continue
+      this.buffers.delete(id)
+      this.conn?.send({ t: 'detach', id })
+    }
+    this.watching = next
+    if (this.peer.mirrorAll) this.peer = { ...this.peer, mirrorAll: false }
+    this.applyWatch()
+  }
+
+  /** Mirror everything this device has, now and as it opens more. */
+  setMirrorAll(on: boolean): void {
+    this.peer = { ...this.peer, mirrorAll: on }
+    if (!on) {
+      for (const id of this.watching) this.conn?.send({ t: 'detach', id })
+      this.watching.clear()
+    }
+    this.applyWatch()
+  }
+
+  private applyWatch(): void {
+    if (this.peer.mirrorAll) for (const s of this.available) this.watching.add(s.id)
+    const live = new Set(this.available.map((s) => s.id))
+    for (const id of [...this.watching]) if (!live.has(id)) this.watching.delete(id)
+    for (const id of this.watching) this.attach(id)
+    for (const id of [...this.buffers.keys()]) if (!this.watching.has(id)) this.buffers.delete(id)
+    this.sessions = this.available.filter((s) => this.watching.has(s.id)).map((s) => this.tag(s))
+    this.emit('sessions')
   }
 
   buffer(localId: string): string {
@@ -139,7 +202,18 @@ export class RemoteClient extends EventEmitter {
 
   async startSession(req: StartSessionRequest): Promise<Session> {
     const s = await this.ask<Session>({ t: 'start', req })
+    // A pane opened from here is one this device asked for, so it is mirrored without
+    // being picked twice - "New pane" that opened nothing visible would read as a failure.
+    this.watch(s.id)
     return this.tag(s)
+  }
+
+  /** Add one pane to the mirror, the way opening or receiving it implies. */
+  watch(localId: string): void {
+    if (!localId || this.watching.has(localId)) return
+    this.watching.add(localId)
+    this.attach(localId)
+    if (this.available.some((s) => s.id === localId)) this.applyWatch()
   }
 
   /**
@@ -158,7 +232,12 @@ export class RemoteClient extends EventEmitter {
     } else {
       body.xfer = randomBytes(8).toString('hex')
     }
-    const answer = this.ask<HandoffResult>({ t: 'handoff', payload: body }, HANDOFF_ASK_MS)
+    // The desk that hands work over keeps watching it, which is the whole promise of the
+    // feature - so the pane that comes back is picked for us, and nothing else is.
+    const answer = this.ask<HandoffResult>({ t: 'handoff', payload: body }, HANDOFF_ASK_MS).then((r) => {
+      if (r?.ok && r.session?.id) this.watch(r.session.id)
+      return r
+    })
     if (file && body.xfer) {
       for (let off = 0; off < file.length; off += HANDOFF_CHUNK) {
         this.send({
@@ -229,15 +308,10 @@ export class RemoteClient extends EventEmitter {
   private receive(m: Msg): void {
     switch (m.t) {
       case 'sessions': {
-        const list = (m.list as Session[]) ?? []
-        this.sessions = list.map((s) => this.tag(s))
-        // Everything visible is attached: the renderer keeps every pane mounted, so
-        // "only stream what is on screen" would mean streaming all of them anyway.
-        for (const s of list) this.attach(s.id)
-        for (const id of [...this.buffers.keys()]) {
-          if (!list.some((s) => s.id === id)) this.buffers.delete(id)
-        }
-        this.emit('sessions')
+        this.available = (m.list as Session[]) ?? []
+        // Only what was picked is attached. A pane nobody asked for is listed and left
+        // alone: no scrollback fetched, no live output crossing the network for it.
+        this.applyWatch()
         return
       }
       case 'data': {
@@ -331,6 +405,9 @@ export class RemoteClient extends EventEmitter {
     }
     this.socket = null
     this.since = 0
+    this.available = []
+    // `watching` deliberately survives: it is what this device chose to mirror, and a
+    // reconnect should bring those panes back rather than make the choice again.
     if (this.sessions.length) {
       this.sessions = []
       this.buffers.clear()

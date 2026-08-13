@@ -179,6 +179,16 @@ window, or pop a dialog. Only a click or a hotkey earns the foreground.
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers — each
 can host and each can connect out. Three decisions not to re-litigate:
 
+- **Nothing is mirrored until it is picked, and a device may not pair with itself.**
+  Connecting used to mirror every pane the other machine had and attach to all of them, so
+  a link was a decision to watch everything. Worse, `pair` accepted this device's own id: a
+  desk here held ITSELF in `peers` at its own tailnet address, so every local pane arrived
+  back as `@<self>/<id>` and the whole window listed twice, half the copies refusing every
+  action that only works on a local pane. `Remote.probe` refuses an id equal to ours at the
+  handshake — the first moment the far end's identity is known, and the only check an
+  address test could not make — and `start()` drops one already saved, because a config
+  outlives the bug. Mirroring is `peer.watch`, a tick per pane in Devices; a pane opened
+  from here and a pane handed off are picked for you, and nothing else is. `test:remote`.
 - **The pty never moves.** A mirrored pane's agent, checkout, transcript and worktree stay
   on the device it was opened on. Remote control, not migration. Session ids are the seam:
   a mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in `main/index.ts` routes every

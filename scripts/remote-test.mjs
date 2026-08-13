@@ -52,7 +52,8 @@ function bundle() {
       `export { RemoteHost } from ${JSON.stringify(join(root, 'src/main/remote/host.ts').replace(/\\/g, '/'))}`,
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
-      `export { makeInvite, readInvite, INVITE_MINUTES } from ${JSON.stringify(join(root, 'src/main/remote/invite.ts').replace(/\\/g, '/'))}`
+      `export { makeInvite, readInvite, INVITE_MINUTES } from ${JSON.stringify(join(root, 'src/main/remote/invite.ts').replace(/\\/g, '/'))}`,
+      `export { isSelfPeer, dropSelf, liveWatch } from ${JSON.stringify(join(root, 'src/main/remote/peers.ts').replace(/\\/g, '/'))}`
     ].join('\n'),
     'utf8'
   )
@@ -134,7 +135,27 @@ async function until(fn, ms = 8000) {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
-  const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES } = mod
+  const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES, isSelfPeer, dropSelf, liveWatch } =
+    mod
+
+  // ------------------------------------------------------------------ pairing with self
+  // The bug this test exists for: a device paired with its own id mirrors every one of its
+  // own panes back into its own window, so every session is listed twice and half the
+  // copies refuse the actions that only work on a local pane. Measured in a real config.
+  {
+    ok('a device recognises its own id', isSelfPeer('e38080cc', 'e38080cc'))
+    ok('another device is not it', !isSelfPeer('e8a289e1', 'e38080cc'))
+    ok('an empty id is nobody', !isSelfPeer('', ''))
+    const peers = [{ id: 'e38080cc' }, { id: 'e8a289e1' }]
+    ok(
+      'a saved self-pairing is dropped, and only it',
+      dropSelf(peers, 'e38080cc').length === 1 && dropSelf(peers, 'e38080cc')[0].id === 'e8a289e1'
+    )
+    ok(
+      'a pick only names panes that device still has',
+      liveWatch({ watch: ['s1', 'gone'] }, [{ id: 's1' }, { id: 's2' }]).join() === 's1'
+    )
+  }
 
   // ------------------------------------------------------------------- invites
   // The one line that replaced three typed fields. Everything here is about the round
@@ -215,14 +236,32 @@ async function main() {
   ok('the host lists the guest', await until(() => host.list().length === 1))
   ok('the guest is named', host.list()[0]?.name === 'Laptop', JSON.stringify(host.list()[0]))
 
-  ok('both panes are mirrored', await until(() => client.list().length === 2))
+  // Connecting is permission to watch, not a decision to watch everything.
+  ok('both panes are offered', await until(() => client.panes().length === 2))
+  ok('nothing is mirrored until it is picked', client.list().length === 0, JSON.stringify(client.list()))
+  ok('and nothing is attached either', await until(() => (host.list()[0]?.watching ?? 0) === 0))
+  ok('so no scrollback was fetched for an unwatched pane', client.buffer('s1') === '')
+
+  client.setWatch(['s1'])
+  ok('a picked pane is mirrored', await until(() => client.list().length === 1), JSON.stringify(client.list()))
   const mirrored = client.list()
   ok('ids are namespaced by device', mirrored[0].id === '@HOSTID/s1', mirrored[0].id)
   ok('each pane says which device it is on', mirrored[0].remote?.name === 'Desk PC')
   ok('the host grid comes with it', mirrored[0].cols === 100 && mirrored[0].rows === 28)
 
   ok('scrollback arrives on attach', await until(() => client.buffer('s1') === 'SECRET-SCROLLBACK-s1'))
-  ok('attaching is reported to the host', await until(() => host.list()[0]?.watching === 2))
+  ok('attaching is reported to the host', await until(() => host.list()[0]?.watching === 1))
+
+  // Dropping a pick detaches over the wire rather than merely hiding it here: an
+  // unwatched pane has to cost nothing, or "pick what you watch" buys nothing.
+  client.setWatch([])
+  ok('dropping a pick empties the mirror', await until(() => client.list().length === 0))
+  ok('and detaches it at the far end', await until(() => host.list()[0]?.watching === 0))
+  client.setWatch(['s1', 's2'])
+  ok('picking again brings both back', await until(() => client.list().length === 2))
+  // The pick is not live until the far end has registered it, and the next assertion is
+  // about output arriving - wait for the attach rather than for a guess at how long it takes.
+  ok('both are attached again over there', await until(() => host.list()[0]?.watching === 2))
 
   // Live output.
   be.emitData('s2', 'hello from the other machine')
