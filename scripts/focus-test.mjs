@@ -176,12 +176,27 @@ const KEYS = {
   2: { key: '2', code: 'Digit2', vk: 50 }
 }
 
-async function press(cdp, name, { ctrl = false } = {}) {
+/**
+ * The app's command modifier on THIS platform - Cmd on a Mac, Ctrl everywhere else.
+ *
+ * `src/renderer/src/platform.ts` makes the two deliberately non-interchangeable: macOS
+ * leaves Ctrl to the shell (Ctrl+C interrupts an agent, Ctrl+A jumps to line start), so
+ * `modKey` accepts Cmd there and Cmd only. A test that presses Ctrl+2 on a Mac is
+ * therefore not catching a broken shortcut, it is pressing a chord the app never claimed
+ * and reporting the app's correct refusal as a failure - which is exactly what it did,
+ * for as long as this suite has run on a Mac.
+ *
+ * CDP modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8.
+ */
+const MOD_BIT = process.platform === 'darwin' ? 4 : 2
+const MOD = process.platform === 'darwin' ? 'Cmd' : 'Ctrl'
+
+async function press(cdp, name, { ctrl = false, mod = false } = {}) {
   const k = KEYS[name]
   for (const type of ['keyDown', 'keyUp']) {
     await cdp.send('Input.dispatchKeyEvent', {
       type,
-      modifiers: ctrl ? 2 : 0,
+      modifiers: (ctrl ? 2 : 0) | (mod ? MOD_BIT : 0),
       key: k.key,
       code: k.code,
       windowsVirtualKeyCode: k.vk,
@@ -375,10 +390,10 @@ async function run(cdp) {
   if (!check('grid: clicking a pane puts the caret in it', await where(), 'terminal 0', await active()))
     await explain()
 
-  await press(cdp, '2', { ctrl: true })
+  await press(cdp, '2', { mod: true })
   if (
     !check(
-      'grid: Ctrl+2 moves the caret, not just the highlight',
+      `grid: ${MOD}+2 moves the caret, not just the highlight`,
       await where(),
       'terminal 1',
       await active()
@@ -426,8 +441,19 @@ async function run(cdp) {
 
   // --- dialogs give the keyboard back ------------------------------------
   await clickTerminal(0)
-  await press(cdp, 'k', { ctrl: true })
+  await press(cdp, 'k', { mod: true })
   const inPalette = await where()
+  // The palette has to have OPENED, or "closing it gives the caret back" passes without
+  // testing anything: this case pressed Ctrl+K on a Mac, where the app's modifier is Cmd,
+  // so the palette never appeared, the caret never left terminal 0, and the assertion that
+  // it came back was true for the wrong reason. It printed `which took: terminal 0` the
+  // whole time - the evidence was on screen and read as a detail.
+  check(
+    `grid: ${MOD}+K opens the command palette`,
+    inPalette.startsWith('terminal') ? 'palette never opened' : 'opened',
+    'opened',
+    await active()
+  )
   await press(cdp, 'Escape')
   await sleep(250)
   check(
