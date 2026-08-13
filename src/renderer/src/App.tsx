@@ -1264,6 +1264,58 @@ export default function App(): JSX.Element {
     [asked]
   )
 
+  /**
+   * Type a command into a pane's TUI and press Enter once it has actually arrived.
+   *
+   * This used to be two `setTimeout`s, at 320ms and 680ms. Those numbers were measured, and
+   * they were measured on an idle machine - which is the one state a person never files a
+   * bug from. On a box under real load (measured here at load average 131, 20 GB into swap)
+   * Claude Code needs well past 360ms to draw its slash menu, so the Enter landed before the
+   * menu existed: no popup, "/clear" left sitting in the box, and the pane keeping the
+   * context it was asked to drop. A fixed delay cannot be right for both machines, so this
+   * waits for the thing it was really waiting for - the command showing up on screen.
+   *
+   * The deadline is a backstop, not a schedule: if the echo never appears we still send
+   * Enter (typing a command and abandoning it half-entered is worse than being early) but
+   * we say so instead of reporting a clear that may not have happened.
+   */
+  const typeAndSubmit = useCallback(
+    async (s: Session, cmd: string, say: (m: string) => void): Promise<void> => {
+      const seen = (): boolean => {
+        const t = paneTerms.get(s.id)
+        if (!t) return false
+        const b = t.buffer.active
+        // Only the rows around the cursor: `/clear` scrolled up from an earlier turn is not
+        // evidence that this one has been typed.
+        const bottom = b.baseY + t.rows - 1
+        for (let y = Math.max(0, b.baseY + b.cursorY - 2); y <= bottom; y++) {
+          if (b.getLine(y)?.translateToString(true).includes(cmd)) return true
+        }
+        return false
+      }
+      const until = async (ok: () => boolean, deadlineMs: number): Promise<boolean> => {
+        const stop = Date.now() + deadlineMs
+        while (Date.now() < stop) {
+          if (ok()) return true
+          await new Promise((r) => window.setTimeout(r, 40))
+        }
+        return ok()
+      }
+      // The wipe has already been written. Give the box a frame to come back empty before
+      // typing over it, or the first characters race the erase.
+      await new Promise((r) => window.setTimeout(r, 60))
+      api.write(s.id, cmd)
+      const echoed = await until(seen, 5000)
+      api.write(s.id, '\r')
+      if (!echoed) {
+        say(`${s.title}: sent ${cmd}, but the pane never showed it - check that pane.`)
+        return
+      }
+      say(`${s.title}: cleared.`)
+    },
+    []
+  )
+
   const clearPane = useCallback(
     (s: Session) => {
       const shell = s.agent === 'shell'
@@ -1291,14 +1343,9 @@ export default function App(): JSX.Element {
       const rounds = Math.min(24, Math.max(4, lines + 2))
       const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
       api.write(s.id, wipe)
-      // The gaps are measured too: at 40ms/120ms the Enter reached Claude Code before
-      // its slash menu had drawn, and "/clear" sat in the box unsubmitted. It is a TUI
-      // being typed at, and this is the price of not needing a second click.
-      window.setTimeout(() => api.write(s.id, cmd), 320)
-      window.setTimeout(() => api.write(s.id, '\r'), 680)
-      flash(`${s.title}: cleared.`)
+      void typeAndSubmit(s, cmd, flash)
     },
-    [flash]
+    [flash, typeAndSubmit]
   )
 
   /**
