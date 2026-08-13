@@ -3098,6 +3098,10 @@ export default function App(): JSX.Element {
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
               termTheme={termColors}
+              // A copy out of a pane is silent by construction - the clipboard gives no
+              // feedback - so the pane says so in the window's own toast rather than
+              // growing a second one of its own.
+              onToast={flash}
               // A mirrored pane is drawn at the far machine's grid, not fitted to this
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}

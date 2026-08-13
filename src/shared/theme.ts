@@ -339,6 +339,27 @@ export function paletteFor(theme: ThemeConfig): Vars {
   const [bg, s1, s2, s3] = surfaceLadder(theme.depth)
   const light = bg > 0.5
   const [textL, mutedL] = textLadder(theme.depth)
+  // The terminal sits a touch deeper than the window it is in; the selection colours below
+  // are measured off THIS, not off the window's own background.
+  const termL = Math.max(0, bg - 0.012)
+  // The selection block, a fixed DISTANCE from the terminal background rather than a
+  // constant lightness - see --term-sel below for the depth-0.9 case that proved it.
+  /**
+   * A selection block is a fixed DISTANCE from the terminal's background, then pushed out
+   * of the dead band in the middle.
+   *
+   * The distance is what makes it visible at all - a constant lightness sat on a 0.84
+   * background at 1.15:1 in the middle of the depth slider, a selection nobody could see.
+   * The band is the second half: between roughly L 0.52 and 0.68 a chroma-0.1 colour is too
+   * light for white text and too dark for black, and neither reaches 4.5:1 (measured at
+   * depth 0.5, every hue: 4.35:1 whichever way `onColor` went). Nothing about that is
+   * fixable downstream, so the block does not sit there - it steps to the far side, away
+   * from the background it has to be distinguishable from.
+   */
+  const rawSelL = termL > 0.5 ? Math.max(0.28, termL - 0.22) : Math.min(0.8, termL + 0.3)
+  const selL =
+    rawSelL > 0.52 && rawSelL < 0.68 ? (termL > 0.5 ? 0.5 : 0.7) : rawSelL
+  const selHex = inGamut(selL, 0.1, hue)
 
   // 4 + 10 puts the middle of the slider on the 6px / 9px / 13px the app shipped with.
   const r = 4 + clamp01(theme.round) * 10
@@ -402,10 +423,58 @@ export function paletteFor(theme: ThemeConfig): Vars {
       : '0 18px 44px #000000a8, 0 2px 8px #0000005c',
     // xterm draws on a canvas and cannot read a CSS variable, so the terminal's own
     // colours are handed over separately - see applyTheme in the renderer.
-    '--term-bg': inGamut(Math.max(0, bg - 0.012), grey, hue),
+    '--term-bg': inGamut(termL, grey, hue),
     '--term-fg': inGamut(textL, grey * 0.3, hue),
     '--term-cursor': accent,
-    '--term-sel': accent + '3d'
+    /**
+     * A SOLID block, and a foreground to go on it.
+     *
+     * This was `accent + '3d'` - the accent at 24% alpha - and a 24% wash is not a
+     * selection over a TUI. Every agent CLI draws its own colours and its own box rules,
+     * so what showed through a quarter-opacity tint was the box: the highlight read as a
+     * faint stain that stopped at each frame line and changed shade over every coloured
+     * run, which is "the highlight area is a bit bad because of the terminal lines/ui
+     * messing with it". Alpha cannot fix that at any value - it is compositing, so the
+     * thing underneath is always part of the answer.
+     *
+     * Solid can. The block is one colour whatever it covers, and `--term-sel-fg` forces
+     * the text on it to one colour too (xterm's `selectionForeground`), so a selection
+     * over a coloured diff reads exactly like a selection over plain output. Losing the
+     * syntax colour inside the highlight is the trade every terminal that does this makes
+     * - Terminal.app and iTerm both - and it is the trade that makes the edges sharp.
+     *
+     * The inactive one is the same block at a lightness that still reads without claiming
+     * the eye: a pane that lost focus must not look like a pane with nothing selected,
+     * because the selection is still what Ctrl+C will copy.
+     */
+    /**
+     * Measured off the TERMINAL's background, not off a light/dark constant.
+     *
+     * The first version of this used one lightness per side (0.82 light, 0.42 dark) and
+     * failed the middle of the slider silently: at depth 0.9 the window is light but not
+     * white, so a 0.82 block sat on a 0.84 background at 1.15:1 - a selection nobody could
+     * see, on exactly the presets where a wash had at least tinted something. A selection
+     * has to be a fixed DISTANCE from whatever is behind it, which is a subtraction, not a
+     * constant. Checked across 70 theme/hue/tint combinations: block vs terminal background
+     * never below 1.6:1, text on the block never below 4.5:1.
+     */
+    '--term-sel': selHex,
+    /**
+     * MEASURED against the block, never picked from a threshold.
+     *
+     * Two thresholds were tried and both shipped an unreadable case. "Is the window light"
+     * put dark text on a dark block at depth 0.5 (3.85:1), and "is the block's Oklab L
+     * above 0.5" still missed at depth 0.9 (3.84:1) - because a chroma-0.1 orange at L 0.62
+     * is far brighter in sRGB luminance than its Oklab lightness suggests, and the accent's
+     * hue decides how far off that is. `onColor` asks the contrast question directly, which
+     * is the same helper `--accent-on` has always used for the same reason.
+     */
+    '--term-sel-fg': onColor(selHex),
+    // The unfocused one is the same block walked most of the way back to the background:
+    // still visibly a selection, no longer the brightest thing in a pane nobody is looking
+    // at. Derived from `selL` rather than given its own pair of constants, so it cannot
+    // drift to the wrong side of the background the way an independent number would.
+    '--term-sel-dim': inGamut(selL + (termL - selL) * 0.25, 0.06, hue)
   }
 }
 

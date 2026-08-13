@@ -37,6 +37,7 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
+  ['copychip', 'copychip-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],
