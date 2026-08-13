@@ -37,6 +37,18 @@ export interface Project {
   /** epoch ms of the newest Claude Code transcript for this path, 0 if never used */
   lastUsed: number
   isGit: boolean
+  /**
+   * This folder is a second checkout of another project in the same root - a git
+   * worktree (`<repo>-a` on `lane-a`, Claude Code's `worktree-<slug>`) or what one
+   * left behind. The value is that project's NAME, so the launcher can fold them
+   * under it instead of listing eight copies of one repository.
+   *
+   * Proved, never guessed: `.git` is a file pointing into the parent's
+   * `.git/worktrees`, or the folder is a `<project>-<letter>` sibling of a real
+   * repository while being no repository itself. `service-a` next to no `service`
+   * is a project, and stays one.
+   */
+  checkoutOf?: string
 }
 
 /**
@@ -759,6 +771,26 @@ export interface RemotePeer {
   code: string
   /** reconnect to it automatically, on launch and after it goes away */
   auto: boolean
+  /**
+   * The panes on THAT device this one mirrors, by their id over there. Empty means the
+   * link is up and this window is drawing none of its panes, which is the default: a
+   * connection is permission to watch, not a decision to watch everything.
+   */
+  watch?: string[]
+  /** mirror every pane it has, including ones opened later. Off unless asked for. */
+  mirrorAll?: boolean
+}
+
+/** One pane on a paired device, as the Devices panel offers it. */
+export interface RemotePaneInfo {
+  /** its id ON that device - what `watch` holds and `remote:watch` is given */
+  id: string
+  title: string
+  cwd: string
+  agent: Agent
+  status: SessionStatus
+  /** this device is mirroring it right now */
+  watched: boolean
 }
 
 /** Live state of one paired device. */
@@ -768,6 +800,8 @@ export interface RemotePeerState extends RemotePeer {
   error?: string
   /** panes mirrored from it right now */
   sessions: number
+  /** every pane it has, mirrored or not, so the panel can offer the pick */
+  panes: RemotePaneInfo[]
   /** epoch ms the current connection came up */
   since?: number
   /** it is announcing itself on this network right now */
@@ -1733,6 +1767,12 @@ export interface Api {
   connectRemote(id: string, on: boolean): Promise<RemoteState>
   /** ask the LAN who is there, now, rather than waiting for the next announcement */
   scanRemote(): Promise<RemoteState>
+  /**
+   * Choose which of a device's panes this window mirrors - `ids` are ITS ids, and the
+   * list replaces the previous pick. `all` mirrors everything it has, now and later.
+   * Connecting mirrors nothing until this is called.
+   */
+  watchRemote(device: string, ids: string[], all?: boolean): Promise<RemoteState>
   /** that device's own project folders, so a pane can be opened over there */
   remoteProjects(device: string): Promise<Project[]>
   /** the CLIs installed on that device - its list, not this one's */

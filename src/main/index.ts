@@ -1701,6 +1701,11 @@ ipcMain.handle('remote:scan', () => {
   remote.scan()
   return remote.state()
 })
+// Which of a device's panes this window mirrors. Nothing is mirrored until this says so.
+ipcMain.handle('remote:watch', (_e, device: string, ids: string[], all: boolean) => {
+  remote.setWatch(String(device), Array.isArray(ids) ? ids.map(String) : [], !!all)
+  return remote.state()
+})
 // Opening a pane on the other machine. The folder list has to come from there too -
 // this machine's projects root says nothing about what is checked out over there.
 ipcMain.handle('remote:projects', (_e, device: string) => remote.projectsOn(String(device)))

@@ -76,11 +76,24 @@ export default function NewSessionDialog({
     setRoot(picked)
   }
 
-  const shown = useMemo(() => {
+  /*
+   * Lane worktrees are folded away.
+   *
+   * A projects root that has been worked in holds one folder per repository and one MORE
+   * per lane - `taskdriver.ai`, `taskdriver.ai-a`, `taskdriver.ai-b`, `taskdriver-sessionA` -
+   * so this list was half copies, sorted by recency, which puts the copies ABOVE the project
+   * they belong to. Nobody launches into a lane by hand either: opening the project is what
+   * makes the lane hook hand this chat one. So the answer to "which project" is the list, and
+   * the copies live behind a fold that says how many there are.
+   */
+  const [copiesOpen, setCopiesOpen] = useState(false)
+  const { shown, copies } = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const list = needle ? projects.filter((p) => p.name.toLowerCase().includes(needle)) : projects
-    return list.slice(0, 60)
-  }, [projects, q])
+    const own = list.filter((p) => !p.checkoutOf)
+    const rest = list.filter((p) => p.checkoutOf)
+    return { shown: (copiesOpen ? [...own, ...rest] : own).slice(0, 60), copies: rest }
+  }, [projects, q, copiesOpen])
 
   useEffect(() => setSel(0), [q])
 
@@ -233,11 +246,24 @@ export default function NewSessionDialog({
                 <Checkbox checked={ticked.includes(p.path)} onChange={() => toggle(p.path)} />
               </span>
               <span className="proj-name">{p.name}</span>
-              {!p.isGit && <span className="tag">no git</span>}
+              {p.checkoutOf && <span className="tag">copy of {p.checkoutOf}</span>}
+              {!p.isGit && !p.checkoutOf && <span className="tag">no git</span>}
               <span className="proj-age">{ago(p.lastUsed)}</span>
             </div>
           ))}
+          {copies.length > 0 && (
+            <button
+              className="proj-copies"
+              aria-expanded={copiesOpen}
+              title="Lane worktrees: second checkouts the lane engine made of these projects. Opening the project itself is what gets this chat a lane."
+              onClick={() => setCopiesOpen((v) => !v)}
+            >
+              <span className={'proj-copies-mark' + (copiesOpen ? ' on' : '')}>›</span>
+              {copiesOpen ? 'Hide' : 'Show'} {copies.length} lane {copies.length === 1 ? 'checkout' : 'checkouts'}
+            </button>
+          )}
           {shown.length === 0 &&
+            copies.length === 0 &&
             (q.trim() ? (
               <div className="empty">No match</div>
             ) : (

@@ -1371,6 +1371,16 @@ body.sizing * { user-select: none !important; }
   border-radius: 5px; padding: 0 5px;
 }
 .proj-age { color: var(--muted); font-size: 11px; margin-left: 12px; flex: none; font-variant-numeric: tabular-nums; }
+/* The lane checkouts, folded. Same disclosure as the phone panel's "Other ways in":
+   present, countable, and out of the way of the one question this list is asking. */
+.proj-copies {
+  display: flex; align-items: center; gap: 4px; align-self: flex-start;
+  margin-top: 2px; padding: 6px 6px; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 11.5px;
+}
+.proj-copies:hover { color: var(--text); }
+.proj-copies-mark { display: inline-block; width: 12px; transition: transform var(--fast); transform-origin: 40% 55%; }
+.proj-copies-mark.on { transform: rotate(90deg); }
 .dialog-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dialog-row .primary { margin-left: auto; }
 
@@ -2091,6 +2101,24 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   image-rendering: pixelated; shape-rendering: crispEdges;
 }
 .dev-error { color: var(--danger); font-size: 11.5px; margin-top: 6px; }
+/* ---- what this window mirrors from a paired device ----
+   One row per pane over there, ticked or not. It sits inside the device's card because
+   the pick belongs to the device, and it is the answer to "why is this pane on my screen". */
+.dev-panes { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px 8px 40px; }
+.dev-panes-head { display: flex; align-items: center; gap: 8px; }
+.dev-panes-head .hint { flex: 1; }
+.dev-pane {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 5px 7px; border-radius: var(--r-sm); border: 1px solid transparent;
+  font-size: 12px; min-height: 30px;
+}
+.dev-pane:hover { background: #ffffff0d; }
+.dev-pane.on { background: var(--accent-dim); border-color: #8b9dff33; }
+.dev-pane-nm { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-pane-cwd {
+  flex: 1; color: var(--muted); font-size: 11px; direction: rtl; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dev-guests { display: flex; flex-direction: column; gap: 5px; padding-top: 2px; }
 .dev-guest { display: flex; align-items: center; gap: 7px; font-size: 12px; }
 

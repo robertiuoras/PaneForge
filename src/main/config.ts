@@ -198,7 +198,12 @@ function defaults(): Config {
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',
-    confirmClose: true,
+    // Off: the x closes the pane on the press. Closing one pane is not the dangerous
+    // half - the conversation stays in history and `--resume` brings it back - and a
+    // dialog in front of every close costs a click each time to prevent a mistake that
+    // is already undoable. Closing them ALL still asks, and the switch is still there
+    // for anyone who wants the question back.
+    confirmClose: false,
     launchAtLogin: false,
     adminMode: false,
     autoUpdate: true,

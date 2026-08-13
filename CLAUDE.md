@@ -179,6 +179,16 @@ window, or pop a dialog. Only a click or a hotkey earns the foreground.
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers — each
 can host and each can connect out. Three decisions not to re-litigate:
 
+- **Nothing is mirrored until it is picked, and a device may not pair with itself.**
+  Connecting used to mirror every pane the other machine had and attach to all of them, so
+  a link was a decision to watch everything. Worse, `pair` accepted this device's own id: a
+  desk here held ITSELF in `peers` at its own tailnet address, so every local pane arrived
+  back as `@<self>/<id>` and the whole window listed twice, half the copies refusing every
+  action that only works on a local pane. `Remote.probe` refuses an id equal to ours at the
+  handshake — the first moment the far end's identity is known, and the only check an
+  address test could not make — and `start()` drops one already saved, because a config
+  outlives the bug. Mirroring is `peer.watch`, a tick per pane in Devices; a pane opened
+  from here and a pane handed off are picked for you, and nothing else is. `test:remote`.
 - **The pty never moves.** A mirrored pane's agent, checkout, transcript and worktree stay
   on the device it was opened on. Remote control, not migration. Session ids are the seam:
   a mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in `main/index.ts` routes every
@@ -652,6 +662,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
