@@ -273,30 +273,53 @@ if (event === 'prompt') {
   reg.sessions[session] = [...new Set([...(reg.sessions[session] ?? []), repo])]
   writeRegistry(reg)
 
-  // What the other chats are doing, so this one can answer "is anyone else in here?"
-  // without going and looking, and knows why a finished lane has not gone out yet.
+  // Who holds what, so this chat can answer "is anyone else in here?" without going and
+  // looking, and knows why a finished lane has not gone out yet.
+  //
+  // This is a ROSTER of every held lane, this chat's own included, and not a list of the
+  // OTHERS - which is the whole point. The others-only list gave each pane a different
+  // sentence (pane A: "lane main and lane a"; pane B: "lane a"; pane main: "lane a"), all
+  // of them true, none of them the same, and none showing the reader's own row. Three
+  // panes then read as three contradictory accounts of one repository. Printing the same
+  // table everywhere, with `<- THIS CHAT` on one row, makes the panes agree by
+  // construction.
+  let roster = []
   let others = []
   let stuck = null
   let orphan = null
   try {
     const s = JSON.parse(lane(repo, 'status', '--session', session).out)
-    others = s.lanes
-      // A lane another chat only reserved by saying the word is not another chat working
-      // here, and announcing it as one is what made three idle lanes look like a crowd.
-      .filter((l) => l.heldBy && !l.mine && !l.tentative)
-      .map((l) => {
-        const where = l.from ? ` (started in ${l.from.split(sep).pop()})` : ''
-        const what = l.conflicted
-          ? `finished but conflicting with ${s.branch}`
+    const held = s.lanes.filter((l) => l.heldBy)
+    const pad = Math.max(...held.map((l) => l.lane.length), 1)
+    roster = held.map((l) => {
+      // The folder a chat STARTED in is worth printing only when it is not the folder it
+      // was given - that mismatch (a chat sitting in `<repo>-b` while holding lane a) is
+      // the genuinely confusing case. On the normal case it was pure noise repeating the
+      // lane's own name back.
+      // Whole path, not its last segment: `from` is a chat's shell cwd and is often a
+      // SUBDIRECTORY of a checkout (the PreToolUse guard claims with the folder of the
+      // file being written), so the last segment read "started in scripts" - a folder
+      // name that is not a checkout and belongs to no lane.
+      const from = l.from && resolve(l.from) !== resolve(l.dir) ? `, started in ${l.from}` : ''
+      const what = l.mine
+        ? '<- THIS CHAT'
+        : l.conflicted
+          ? `another chat: finished but conflicting with ${s.branch}${from}`
           : l.ready
-            ? 'finished, waiting for the release'
+            ? `another chat: finished, waiting for the release${from}`
             : l.dirty
-              ? 'mid-edit, uncommitted changes'
+              ? `another chat: mid-edit, uncommitted changes${from}`
               : l.ahead > 0
-                ? `${l.ahead} commit${l.ahead === 1 ? '' : 's'}, not marked done yet`
-                : 'no work yet'
-        return `lane ${l.lane}${where}: ${what}`
-      })
+                ? `another chat: ${l.ahead} commit${l.ahead === 1 ? '' : 's'}, not marked done yet${from}`
+                : l.tentative
+                  ? `another chat: only mentioned ${s.repo}, nothing claimed yet${from}`
+                  : `another chat: no work yet${from}`
+      return `  ${l.lane.padEnd(pad)}  ${l.dir}  ${what}`
+    })
+    // A lane another chat only reserved by saying the word is not another chat working
+    // here; it stays on the roster (the panes must agree) but it does not make a quiet
+    // repo speak up.
+    others = held.filter((l) => !l.mine && !l.tentative)
     // A lane left out of a release for conflicting is the one thing the automation cannot
     // finish on its own, so the chat that lands in it is told straight away.
     const mineNow = s.lanes.find((l) => l.mine)
@@ -360,9 +383,9 @@ if (event === 'prompt') {
     )
   }
   lines.push(
-    others.length
-      ? `Other chats in ${name} right now - ${others.join('; ')}.`
-      : `No other chat holds a ${name} lane right now.`
+    roster.length
+      ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
+      : `No chat holds a ${name} lane right now.`
   )
   console.log([...lines, stuck, orphan].filter(Boolean).join('\n'))
   process.exit(0)
