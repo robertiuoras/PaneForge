@@ -2179,22 +2179,48 @@ export default function TerminalPane({
 
   // Re-fit when this pane becomes visible again: the terminal was not measurable
   // while hidden, so its cols/rows can be stale.
+  //
+  // It retries rather than firing once. A single rAF is a bet that this frame will be
+  // laid out, and it is lost whenever the window is occluded or minimised at the moment
+  // the pane comes back - rAF does not run there at all, and the callback that finally
+  // arrives can still measure a 0x0 host. Nothing then refits the pane for the rest of
+  // its life, because every other refit path is also keyed on something CHANGING: the
+  // observer needs a new box, the font effect needs a new font. Measured on a live pane
+  // stuck at 120x30 in a window whose own grid was 104x37 - the CLI drew 30 rows and the
+  // bottom fifth of the pane was dead space, and only toggling the grid moved it.
   useEffect(() => {
     if (!visible) return
-    const id = requestAnimationFrame(() => {
-      try {
-        if (term.current && fit.current) {
-          // Same rule as the observer: only a pane that really changed shape while it was
-          // away gets to disturb the pty. Coming back unchanged must be silent.
-          reshape(term.current, fit.current)
-          // The buffer kept growing while this pane was hidden, so the rail is stale.
-          syncTotal()
+    let raf = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let left = 12
+    const attempt = (): void => {
+      raf = requestAnimationFrame(() => {
+        let laidOut = false
+        try {
+          const t = term.current
+          const f = fit.current
+          if (t && f) {
+            const d = f.proposeDimensions()
+            laidOut = Boolean(d && d.cols > 0 && d.rows > 0)
+            if (laidOut) {
+              // Same rule as the observer: only a pane that really changed shape while it
+              // was away gets to disturb the pty. Coming back unchanged must be silent.
+              reshape(t, f)
+              // The buffer kept growing while this pane was hidden, so the rail is stale.
+              syncTotal()
+            }
+          }
+        } catch {
+          /* not laid out yet */
         }
-      } catch {
-        /* not laid out yet */
-      }
-    })
-    return () => cancelAnimationFrame(id)
+        if (!laidOut && --left > 0) timer = setTimeout(attempt, 250)
+      })
+    }
+    attempt()
+    return () => {
+      cancelAnimationFrame(raf)
+      if (timer) clearTimeout(timer)
+    }
   }, [visible, sessionId])
 
   /**

@@ -441,6 +441,16 @@ function createWindow(): void {
   win.on('focus', () => {
     win?.flashFrame(false)
     refreshRecents()
+    // A borrow that was never handed back is invisible until somebody drags the window,
+    // because the desk only sends a resize when ITS OWN measurement moves - and it never
+    // does: xterm still holds 157x57 while the pty sits at the phone's 120x30, so `fit()`
+    // computes the same numbers it already has and returns without a word. Measured on a
+    // live pane whose CLI addressed no row past 30 in a 57-row window: the space below the
+    // composer was screen the agent had never been told about. Coming back to the desk is
+    // a person at the desk, which is exactly who owns the size, so take it back here too
+    // rather than waiting for the phone to close politely. No-op unless something is
+    // actually borrowed.
+    manager.returnSizes()
     // Focus is the fastest answer there is to "is a game holding the display" - it is
     // not - so do not make a held update or a held window wait up to 15s for the poller
     // to work that out. Blur is checked too, for the other direction.
