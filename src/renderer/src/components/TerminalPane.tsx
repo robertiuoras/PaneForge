@@ -402,7 +402,7 @@ export default function TerminalPane({
   // inside the effect that owns it; the key handler is attached before that point and
   // reaches them through here.
   const selectInputRef = useRef<() => boolean>(() => false)
-  const deleteSelectionRef = useRef<() => boolean>(() => false)
+  const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
@@ -1160,13 +1160,20 @@ export default function TerminalPane({
         t.hasSelection() &&
         (e.key === 'Backspace' || e.key === 'Delete' || e.key.length === 1)
       ) {
-        if (deleteSelectionRef.current()) {
+        const outcome = deleteSelectionRef.current()
+        if (outcome === 'done') {
           if (e.key.length !== 1) {
             e.preventDefault()
             return false
           }
           // The character itself still goes through, landing where the selection was.
           return true
+        }
+        if (outcome === 'refused') {
+          // Eligible and not doable: do NOTHING rather than eat one character out of the
+          // middle of the highlight. See `deleteSelection`.
+          e.preventDefault()
+          return false
         }
       }
 
@@ -1347,6 +1354,25 @@ export default function TerminalPane({
     }
 
     /**
+     * The delete path's version of `clampCol`.
+     *
+     * Same job - never past what is written, never into the box's own frame - minus the
+     * prompt-marker half on any row that is a CONTINUATION of a wrapped input. `inputStart`
+     * hunts for the first marker character followed by a space and moves the start past it,
+     * which is right on the row a shell drew its prompt on and wrong on every row after it:
+     * ordinary wrapped prose contains `> ` and `- ` and `$ ` all the time, and moving the
+     * start forward there deletes fewer characters than were highlighted. Under-selecting is
+     * the one failure mode that leaves text behind, which is the bug being fixed.
+     */
+    const clampDeleteCol = (row: number, col: number): number => {
+      const text = rowText(row)
+      const end = Math.min(col, inputEnd(text))
+      // A row that says it is wrapped is a continuation, so nothing precedes the input on it.
+      const continuation = t.buffer.active.getLine(row)?.isWrapped === true
+      return continuation ? Math.max(end, 0) : Math.max(end, inputStart(text))
+    }
+
+    /**
      * Delete the highlighted text by walking to it and backspacing over it.
      *
      * A selection lives in this window and the far end has never heard of it, which is why
@@ -1354,29 +1380,37 @@ export default function TerminalPane({
      * `cursorMove.ts`; this half is only about which selections are eligible - all of it on
      * the line the far end is still editing, which is the cursor's own row and whatever
      * that input wrapped onto.
+     *
+     * Three answers, not two, and the third is the whole point. `no` means the selection is
+     * somewhere this cannot act on - scrollback, an alternate screen, another line - and the
+     * key must go to the pty untouched. `refused` means the selection IS on the line being
+     * edited and the keys still could not be built; there the key must be SWALLOWED, because
+     * handing a bare Backspace to the pty in that state removes exactly one character out of
+     * a highlighted block and leaves the highlight up. That is what "it doesn't delete fully"
+     * was: a refusal reported as ineligibility.
      */
-    const deleteSelection = (): boolean => {
+    const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
-      if (!pos || t.buffer.active.type === 'alternate') return false
+      if (!pos || t.buffer.active.type === 'alternate') return 'no'
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
-      if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return false
+      if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return 'no'
       const keys = keysForDelete({
         cursorRow,
         cursorCol: b.cursorX,
         startRow: pos.start.y,
-        startCol: clampCol(pos.start.y, pos.start.x),
+        startCol: clampDeleteCol(pos.start.y, pos.start.x),
         endRow: pos.end.y,
-        endCol: clampCol(pos.end.y, pos.end.x),
+        endCol: clampDeleteCol(pos.end.y, pos.end.x),
         cols: t.cols,
         // Every row here is part of one wrapped input - `sameLine` walked the chain.
         wrapped: true
       })
-      if (!keys) return false
+      if (!keys) return 'refused'
       api.write(sessionId, keys)
       t.clearSelection()
       lastSelection.current = ''
-      return true
+      return 'done'
     }
     selectInputRef.current = selectInput
     deleteSelectionRef.current = deleteSelection

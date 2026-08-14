@@ -2,6 +2,9 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { Verdict } from './capacity'
+import type { RecoverConfig } from './recover'
+import type { ReclaimConfig } from './reclaim'
+import type { UsageReport } from './usage'
 
 import type { DriveRun } from './agentic'
 // Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
@@ -1302,6 +1305,16 @@ export interface Config {
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
   /**
+   * Finish a turn the transport cut in half, without being asked - see shared/recover.ts.
+   * Optional so a config written by an older build still loads; `getConfig` fills it in.
+   */
+  recover?: RecoverConfig
+  /**
+   * Close idle panes when this machine runs out of memory - see shared/reclaim.ts.
+   * Optional so a config written by an older build still loads.
+   */
+  reclaim?: ReclaimConfig
+  /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
    */
@@ -1899,6 +1912,13 @@ export interface Api {
   onRemote(cb: (s: RemoteState) => void): () => void
   /** What this machine can still hold - see src/shared/capacity.ts. */
   onCapacity(cb: (v: Verdict) => void): () => void
+  /**
+   * What the panes are costing right now, measured rather than modelled - see
+   * src/shared/usage.ts. Pushed every few seconds while a window is on screen.
+   */
+  onUsage(cb: (r: UsageReport) => void): () => void
+  /** The last reading, for a window that opened between samples. Null before the first. */
+  usage(): Promise<UsageReport | null>
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending

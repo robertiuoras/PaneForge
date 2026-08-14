@@ -269,6 +269,48 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
   )
   eq('no width, no keys', keysForDelete(sel({ cols: 0 })), '')
   eq('past the key limit sends nothing', keysForDelete(sel({ startCol: 0, endCol: 40, keyLimit: 20 })), '')
+
+  // "Highlight it and press delete and it doesn't delete fully."
+  //
+  // A delete used to share the ARROW backstop of 400, so a selection any longer than that
+  // produced '' - which the pane read as "not eligible" and handed the key to the pty, and
+  // a bare Backspace at a pty removes exactly one character. A Mod+A over a paragraph is
+  // past 400 immediately, so the select-all the feature exists for was the case that could
+  // not work. These two are the same selection either side of the old ceiling.
+  const long = (chars) =>
+    sel({
+      cursorRow: 10 + Math.floor(chars / 80),
+      cursorCol: chars % 80,
+      startRow: 10,
+      startCol: 0,
+      endRow: 10 + Math.floor(chars / 80),
+      endCol: chars % 80,
+      wrapped: true
+    })
+  eq(
+    'a 399-character selection worked before and still does',
+    keysForDelete(long(399)),
+    BACKSPACE.repeat(399)
+  )
+  eq(
+    'a 401-character selection is deleted whole, not dropped on the old arrow limit',
+    keysForDelete(long(401)),
+    BACKSPACE.repeat(401)
+  )
+  eq(
+    'and a full 200x50 screenful still answers',
+    keysForDelete(long(9600)),
+    BACKSPACE.repeat(9600)
+  )
+  // The backstop is raised, not removed: past a screenful something is wrong with the
+  // caller, and a burst that size is not a keystroke anybody typed.
+  eq('past a screenful it still refuses', keysForDelete(long(10001)), '')
+  // An explicitly passed limit is still obeyed, so the arrow paths are unaffected.
+  eq(
+    'an explicit limit still wins',
+    keysForDelete(sel({ startCol: 0, endCol: 40, keyLimit: 20 })),
+    ''
+  )
 }
 
 console.log(`cursor click: ${checks} checks passed`)

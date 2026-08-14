@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.60",
+  "version": "0.8.61",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -65,6 +65,8 @@
     "test:railplace": "node scripts/rail-place-test.mjs",
     "test:cursorclick": "node scripts/cursor-click-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
+    "test:recover": "node scripts/recover-test.mjs",
+    "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:promptsubmit": "node scripts/prompt-submit-test.mjs",
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
@@ -145,7 +147,8 @@
     "test:pairask": "node scripts/pair-ask-test.mjs",
     "test:phoneview": "node scripts/phone-view-test.mjs",
     "test:funnel": "node scripts/funnel-test.mjs",
-    "test:gist": "node scripts/gist-test.mjs"
+    "test:gist": "node scripts/gist-test.mjs",
+    "test:usage": "node scripts/usage-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

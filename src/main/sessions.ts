@@ -24,6 +24,8 @@ import { buildArgs } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
+import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
+import { getConfig } from './config'
 import type {
   Agent,
   PipeInfo,
@@ -204,6 +206,17 @@ interface Live {
    * you while the agent was still running, which is the random chime.
    */
   sawFooter: boolean
+  /**
+   * How much of this pane's output has already been read for a truncated turn.
+   *
+   * The error line stays in the buffer for ever, so "is it in the last 4000 characters"
+   * would keep answering yes long after it was dealt with and would spend the whole retry
+   * budget on one failure. Only output produced SINCE the last look is considered - the
+   * same trick `queuePrompt` uses, and for the same reason.
+   */
+  recoverSeen: number
+  /** Auto-continues sent in a row on this pane. Reset by any turn that ends whole. */
+  recoverTries: number
   /** The frame the pane was looking at when it last said the turn was over. Diagnostics. */
   lastTail: string
   /**
@@ -253,11 +266,21 @@ export class SessionManager extends EventEmitter {
     setInterval(() => this.sweepIdle(), 1000).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
-    trackStrays(() =>
-      [...this.sessions.entries()]
-        .map(([id, s]) => ({ id, pid: s.proc.pid }))
-        .filter((p) => typeof p.pid === 'number' && p.pid > 0)
-    )
+    trackStrays(() => this.roots())
+  }
+
+  /**
+   * Live pane ptys, as `id -> pid`.
+   *
+   * Two samplers want this and neither wants a Session: the stray ledger (which is
+   * recording what to kill later) and the usage readout (which is adding up what each
+   * pane costs). Both walk the same trees from the same roots, and both must ask per
+   * sample rather than hold a list - see strays.ts.
+   */
+  roots(): { id: string; pid: number }[] {
+    return [...this.sessions.entries()]
+      .map(([id, s]) => ({ id, pid: s.proc.pid }))
+      .filter((p) => typeof p.pid === 'number' && p.pid > 0)
   }
 
   list(): Session[] {
@@ -348,6 +371,8 @@ export class SessionManager extends EventEmitter {
       turnPending: false,
       footerEndedAt: 0,
       sawFooter: false,
+      recoverSeen: 0,
+      recoverTries: 0,
       lastTail: '',
       typed: '',
       slashAt: 0,
@@ -1114,6 +1139,42 @@ export class SessionManager extends EventEmitter {
     setTimeout(tick, PROMPT_START_MS + Math.max(0, extraDelay))
   }
 
+  /**
+   * Finish a turn that was cut in half, or reset the budget because one ended whole.
+   *
+   * Only output produced since the last look is considered. The error line stays in the
+   * buffer for ever, so a fixed tail would keep reporting the same failure until the retry
+   * budget was gone - the same trap `queuePrompt`'s busy read documents, one function up.
+   *
+   * The send goes through `queuePrompt`, which is the machinery that already knows how to
+   * put text into a CLI's composer and confirm the return actually took: a bare write here
+   * would be the blind 2500ms timer that left two panes holding a typed prompt nobody sent.
+   */
+  private sweepRecover(live: Live): void {
+    const cfg = getConfig().recover ?? DEFAULT_RECOVER
+    if (!cfg.enabled) return
+    const text = strip(live.buffer.read())
+    if (text.length < live.recoverSeen) live.recoverSeen = 0
+    if (text.length <= live.recoverSeen) return
+    const fresh = text.slice(live.recoverSeen)
+    const found = recover(
+      { painted: fresh.slice(-TAIL_CHARS), busy: false, tries: live.recoverTries },
+      cfg
+    )
+    // Everything from here has been read, whichever way it went: a turn that ended whole
+    // gives the budget back, so a pane that drops once an hour never runs out of tries.
+    live.recoverSeen = text.length
+    if (!found) {
+      live.recoverTries = 0
+      return
+    }
+    live.recoverTries++
+    console.info(
+      `recover: ${live.meta.id} continuing a cut-off turn (${live.recoverTries}/${cfg.maxTries}) - ${found.because}`
+    )
+    this.queuePrompt(live.meta.id, found.text)
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -1140,6 +1201,23 @@ export class SessionManager extends EventEmitter {
       } else if (meta.status === 'starting' && now - meta.createdAt > IDLE_AFTER_MS * 3) {
         meta.status = 'idle'
         changed = true
+      }
+
+      // A turn the transport cut in half, finished without anybody noticing.
+      //
+      // Deliberately here, in the sweep, rather than on the output stream: the decision
+      // needs the turn to have ENDED, and "the pane stopped and stopped saying it was
+      // working" is the one thing this loop already knows how to establish. Reading the
+      // error the instant it is painted would fire while the CLI is still redrawing its
+      // composer underneath it.
+      if (
+        meta.status === 'idle' &&
+        !busyOnScreen &&
+        !meta.runSince &&
+        quiet > IDLE_AFTER_MS &&
+        live.proc
+      ) {
+        this.sweepRecover(live)
       }
       // Raised once per quiet stretch, never re-raised until output resumes and
       // goes quiet again. A CLI that has only painted its own welcome screen is

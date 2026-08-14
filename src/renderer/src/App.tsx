@@ -64,6 +64,9 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
+import { DEFAULT_RECLAIM, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import { fleetState } from '../../shared/fleet'
+import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
 import { STRONG_MATCH } from '../../shared/promptKey'
@@ -1530,6 +1533,19 @@ export default function App(): JSX.Element {
    * destroy that with no undo and no message. Off-screen panes go first; a visible but
    * unfocused pane only once the kernel says critical.
    */
+  /**
+   * What each pane is really costing, four seconds at a time (src/shared/usage.ts).
+   *
+   * Asked for once as well as subscribed to: the push only fires on the next sample, so a
+   * window that just opened would draw no figures for a few seconds and read as "nothing
+   * is running" rather than "not measured yet".
+   */
+  const [usage, setUsage] = useState<UsageReport | null>(null)
+  useEffect(() => {
+    void api.usage().then((u) => u && setUsage(u))
+    return api.onUsage(setUsage)
+  }, [])
+
   const depthRef = useRef(FULL_SCROLLBACK)
   useEffect(() => {
     if (!capacity) return
@@ -1557,6 +1573,47 @@ export default function App(): JSX.Element {
       )
     }
   }, [capacity, sessions, activeId, visibleIds])
+
+  /**
+   * And giving back the part that scrollback never could: the agent.
+   *
+   * Trimming twelve panes on this desk returned ~74 MB of the ~1.5 GB they were holding,
+   * because the cost is the CLI inside the pane (~190 MB each) and not the pane. The only
+   * way to return one is to close it, which every terminal refuses to do for a good reason
+   * - except that closing a pane HERE keeps its History row, its `resumeId` and its
+   * `scrollbackId`, so reopening restores the conversation and the screen. That is what
+   * makes this defensible, and `shared/reclaim.ts` holds every refusal that keeps it timid:
+   * pressure is the trigger, never a clock, and a pane waiting on a person is never touched.
+   *
+   * Runs beside the trim rather than inside it: they answer to the same reading but they
+   * are not the same promise, and the trim must keep working if this is switched off.
+   */
+  useEffect(() => {
+    if (!capacity) return
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    const plan = reclaimPlan(
+      sessions.map((s) => ({
+        id: s.id,
+        state: fleetState(s),
+        lastOutput: s.lastOutput,
+        focused: s.id === activeId,
+        visible: visibleIds.has(s.id),
+        remote: !!s.remote
+      })),
+      capacity,
+      cfg,
+      Date.now()
+    )
+    if (!plan.length) return
+    for (const p of plan) {
+      console.info(
+        `capacity: ${capacity.level}, closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+          `${p.hadAgent ? '' : ' (already exited)'}`
+      )
+      void api.killSession(p.id)
+    }
+    console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
+  }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
@@ -2623,6 +2680,24 @@ export default function App(): JSX.Element {
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
           <span className="section-tail">
+            {/* The desk's total, beside the pane count it belongs to: panes plus the app
+                itself, which is the figure that answers "what would quitting give me
+                back". The per-pane chips say which one to close; this says whether to
+                bother. Only once something is running - a total of "250 MB" over an
+                empty desk is a number about nothing. */}
+            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+              <span
+                className="badge res"
+                title={
+                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
+                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
+                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
+                }
+              >
+                {formatMb(usage.totalMb)}
+                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
+              </span>
+            )}
             {working > 0 && (
               <span className="badge run" title="Agents whose own footer says they are still running">
                 {working} working
@@ -3065,6 +3140,33 @@ export default function App(): JSX.Element {
                 </span>
               )}
               {s.role && <span className="chip role">{s.role}</span>}
+              {/* What this pane costs, measured off its pty's whole process tree - so a
+                  pane that started a build reports the build, which is the whole point.
+                  Memory always, CPU only above 1%: a row of live-looking 0% is the same
+                  noise as a status line that never changes. Absent for a mirrored pane,
+                  whose agent is a process on the other machine. */}
+              {usage?.panes[s.id] && (
+                <span
+                  className={
+                    'chip res' +
+                    ((usage.panes[s.id].cpuPct ?? 0) >= 90 ? ' hot' : '') +
+                    (usage.panes[s.id].rssMb >= 2048 ? ' heavy' : '')
+                  }
+                  title={
+                    `This pane holds ${formatMb(usage.panes[s.id].rssMb)} across ` +
+                    `${usage.panes[s.id].procs} process${usage.panes[s.id].procs === 1 ? '' : 'es'}` +
+                    (usage.panes[s.id].cpuPct === null
+                      ? ''
+                      : `, and is using ${usage.panes[s.id].cpuPct}% of one CPU core`) +
+                    '. The agent and anything it started are both counted.'
+                  }
+                >
+                  {formatMb(usage.panes[s.id].rssMb)}
+                  {formatCpu(usage.panes[s.id].cpuPct) && (
+                    <span className="res-cpu">{formatCpu(usage.panes[s.id].cpuPct)}</span>
+                  )}
+                </span>
+              )}
               {/* The worktree chip used to live here, beside a git badge that printed
                   `master`: two chips about one place, neither of which named the place.
                   Both are the badge's job now - it is the thing that already knows the

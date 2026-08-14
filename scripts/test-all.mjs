@@ -31,6 +31,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
+  ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
@@ -38,6 +39,8 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
+  ['recover', 'recover-test.mjs'],
+  ['reclaim', 'reclaim-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],

@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
+import { DEFAULT_RECLAIM } from '../shared/reclaim'
+import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
@@ -245,6 +247,14 @@ function defaults(): Config {
     // configured by default - the app's own history is what it runs on, and a second one is
     // only worth naming if the person already has prompts written down somewhere else.
     promptRecall: { enabled: true, extraArchives: [] },
+    // On: it costs nothing until a turn is actually cut in half, it only ever fires on a
+    // pane that is idle with an unfinished answer on it, and it stops after three in a row.
+    // Off by default would ship a feature whose entire value is that nobody has to notice.
+    recover: DEFAULT_RECOVER,
+    // On, but it only ever acts on a machine the kernel says is out of memory, and never on
+    // a pane that is working or waiting for a person. Closing keeps the History row, the
+    // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
+    reclaim: DEFAULT_RECLAIM,
     // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
@@ -285,6 +295,8 @@ export function getConfig(): Config {
       // `undefined`, which every read below would then have to guard.
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
+      recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
+      reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
       dispatch: { ...base.dispatch, ...(raw.dispatch ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.

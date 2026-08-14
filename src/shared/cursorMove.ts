@@ -40,6 +40,26 @@ const DEFAULT_ROW_LIMIT = 6
 const DEFAULT_KEY_LIMIT = 400
 
 /**
+ * The same backstop for a DELETE, and it is twenty-five times the other one on purpose.
+ *
+ * 400 is right for arrows: the danger there is a CLI reading an arrow as a menu step, and
+ * nothing legitimate needs hundreds of them. A backspace is not an arrow. It is bounded by
+ * something real - you cannot have typed more than the screen holds - and the worst a
+ * spurious one does is delete a character the CLI can put back.
+ *
+ * Sharing the arrow limit is what made "highlight it and press delete" leave text behind.
+ * `keysForDelete` returned `''` for any selection over 400 characters, the pane read that
+ * as "not eligible" and handed the key to the pty, and the pty did what a bare Backspace
+ * always does: removed ONE character and left the highlight sitting there. A Mod+A over a
+ * paragraph-length prompt is past 400 immediately, so the whole-input case - the one the
+ * select-all exists for - was the case that could not work.
+ *
+ * 10000 is a 200x50 screenful, which is the true ceiling on what may be selected here: the
+ * selection has to be on the line the far end is editing, and that line is on the screen.
+ */
+const DEFAULT_DELETE_LIMIT = 10000
+
+/**
  * The keys to send so the far end's cursor ends up where the click was, or `''` when the
  * click should be left alone.
  *
@@ -124,7 +144,7 @@ export function keysForDelete(c: {
   wrapped: boolean
   keyLimit?: number
 }): string {
-  const keyLimit = c.keyLimit ?? DEFAULT_KEY_LIMIT
+  const keyLimit = c.keyLimit ?? DEFAULT_DELETE_LIMIT
   const rows = c.endRow - c.startRow
   if (rows < 0) return ''
   if (rows > 0 && !c.wrapped) return ''
