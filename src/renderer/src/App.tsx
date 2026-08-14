@@ -61,6 +61,8 @@ import {
   trimPlan,
   type Verdict
 } from '../../shared/capacity'
+import { DEFAULT_RECLAIM, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import { fleetState } from '../../shared/fleet'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
@@ -1496,6 +1498,47 @@ export default function App(): JSX.Element {
       )
     }
   }, [capacity, sessions, activeId, visibleIds])
+
+  /**
+   * And giving back the part that scrollback never could: the agent.
+   *
+   * Trimming twelve panes on this desk returned ~74 MB of the ~1.5 GB they were holding,
+   * because the cost is the CLI inside the pane (~190 MB each) and not the pane. The only
+   * way to return one is to close it, which every terminal refuses to do for a good reason
+   * - except that closing a pane HERE keeps its History row, its `resumeId` and its
+   * `scrollbackId`, so reopening restores the conversation and the screen. That is what
+   * makes this defensible, and `shared/reclaim.ts` holds every refusal that keeps it timid:
+   * pressure is the trigger, never a clock, and a pane waiting on a person is never touched.
+   *
+   * Runs beside the trim rather than inside it: they answer to the same reading but they
+   * are not the same promise, and the trim must keep working if this is switched off.
+   */
+  useEffect(() => {
+    if (!capacity) return
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    const plan = reclaimPlan(
+      sessions.map((s) => ({
+        id: s.id,
+        state: fleetState(s),
+        lastOutput: s.lastOutput,
+        focused: s.id === activeId,
+        visible: visibleIds.has(s.id),
+        remote: !!s.remote
+      })),
+      capacity,
+      cfg,
+      Date.now()
+    )
+    if (!plan.length) return
+    for (const p of plan) {
+      console.info(
+        `capacity: ${capacity.level}, closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+          `${p.hadAgent ? '' : ' (already exited)'}`
+      )
+      void api.killSession(p.id)
+    }
+    console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
+  }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.

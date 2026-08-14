@@ -835,6 +835,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
 | `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — both shapes it has had (`CSI 2 J`, and the erase-per-row Claude Code sends now), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm |
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
+| `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
+| `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
@@ -855,6 +857,52 @@ watched separately by `npm run competitors` (`npm run test:competitors`), which 
 repos in `competitors.json` against the checked-in `docs/competitors.state.json` and prints
 only what moved. It is deliberately quiet: sub-5% star drift says nothing, and a changed
 README is the one line that means go re-read a feature list into `TODO.md`.
+
+## A turn the transport cut in half finishes itself
+
+An agent whose stream dies mid-answer prints an error and returns to its composer. The
+session is fine - context intact, CLI healthy, pane idle and green - and the only thing
+between it and the rest of its answer is somebody typing `continue`. `shared/recover.ts`
+is that decision and nothing else. `npm run test:recover`.
+
+- **It keys on the SECOND sentence.** Measured over the 557 MB of pane logs on this
+  machine, five different first sentences have already shipped (connection closed, response
+  stalled, connection lost, the response stopped arriving, server error) and every one ends
+  `The response above may be incomplete.` That sentence is the CLI stating the precise thing
+  that makes resuming safe: cut off rather than refused. The first sentence is a vendor's
+  wording and is the wrong half.
+- **A rate limit, usage limit, credit balance, auth failure or overload is never
+  continued**, even carrying that sentence. The CLI retries what deserves retrying.
+- **An error somebody QUOTED is not an error.** Once submitted the CLI echoes it back into
+  the transcript with no box around it and the full string intact - this desk's logs hold
+  exactly that, twice. What separates them is the marker a CLI draws in front of a person's
+  words and never in front of its own errors, so a line starting `> ` is somebody talking. A
+  copy still being typed is caught by `promptBox`'s frame instead.
+- Three in a row and it stops; only output since the last look is read (the error line
+  stays in the buffer for ever); and the send goes through `queuePrompt`, so it waits for an
+  idle composer and confirms the return took.
+
+## A full machine gets its panes back
+
+`capacity.ts` gives back scrollback, which is the part the app can return instantly and is
+about 5% of the bill: measured here with twelve panes, trimming all of them returns ~74 MB
+of the ~1.5 GB they hold, because the cost is the agent CLI inside the pane (~190 MB each,
+against 16-17 MB for a Codex one) and not the pane. `shared/reclaim.ts` returns the agent,
+by closing the pane. `npm run test:reclaim`.
+
+- **What makes that defensible here and nowhere else**: `kill()` calls `recordEnd`, so a
+  closed pane keeps its History row, its `resumeId` and its `scrollbackId`. Reopening
+  restores the conversation AND what was on the screen (`test:restore`, `test:scrollback`).
+  A closed pane in this app is a minimised pane in any other.
+- **Pressure is the trigger, never a clock.** A pane idle six hours on a machine with room
+  is costing nobody anything, and closing it is the app tidying up after somebody who did
+  not ask. Idle time only breaks ties once the kernel is already objecting.
+- **A pane waiting for a person is never closed.** `needsYou` is the one that would feel
+  like theft: the agent asked a question, so it is quiet BECAUSE it is owed an answer, and
+  every "is it idle" reading in the app says yes about it. Nor is the focused pane, one on
+  screen, one that is working or starting or stalled, or a mirror of another device's pty.
+- **The window is never emptied.** An app that closes its own last pane under memory
+  pressure has removed the reason the window is open.
 
 ## Gotchas that look like mistakes
 

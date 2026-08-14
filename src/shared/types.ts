@@ -3,6 +3,7 @@
 
 import type { Verdict } from './capacity'
 import type { RecoverConfig } from './recover'
+import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
 
 import type { DriveRun } from './agentic'
@@ -1302,6 +1303,11 @@ export interface Config {
    * Optional so a config written by an older build still loads; `getConfig` fills it in.
    */
   recover?: RecoverConfig
+  /**
+   * Close idle panes when this machine runs out of memory - see shared/reclaim.ts.
+   * Optional so a config written by an older build still loads.
+   */
+  reclaim?: ReclaimConfig
   /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
