@@ -249,3 +249,67 @@ export function savingMb(plan: Trim[], from = FULL_SCROLLBACK): number {
   for (const t of plan) mb += ((from - t.scrollback) / 1000) * BUFFER_MB_PER_1K
   return Math.round(mb)
 }
+
+/** A paired device that should host the next pane instead of this one. */
+export interface Offload {
+  device: string
+  deviceName: string
+  /** THAT device's path for the same project. Never this machine's path. */
+  cwd: string
+}
+
+/** One paired device, as much of it as the decision below needs. */
+export interface OffloadCandidate {
+  device: string
+  deviceName: string
+  online: boolean
+  /** Every project that device can open, by its own name and its own path. */
+  projects: { name: string; path: string }[]
+}
+
+/**
+ * Where the next pane should start.
+ *
+ * `Verdict.offload` has existed since the capacity work landed and said, in the very
+ * sentence shown to the user - "the paired device can take the next one" - what ought to
+ * happen. Nothing consumed it, so the advice was a chore handed to the person at the exact
+ * moment the machine was too busy to be pleasant to use. This is that sentence executed.
+ *
+ * Three refusals, all of them load-bearing:
+ *
+ *   - **A path is not portable.** `/Users/robertiuoras/Projects/toolstash` does not exist
+ *     on Windows, so a pane started over there with this machine's cwd opens nothing, or
+ *     worse, something else. The peer is asked what IT calls the project and the pane is
+ *     started on the peer's own path; no name match, no offload. This is why the match is
+ *     on `Project.name` rather than on the path or a basename parsed out of it.
+ *   - **Only an online peer.** A paired-but-off device would swallow the launch.
+ *   - **Only when the policy says so.** At `level: 'ok'` this returns null however many
+ *     peers are up: a machine with room should keep its own panes, where the agent can
+ *     see the files being edited.
+ */
+export function offloadTarget(
+  v: Verdict,
+  candidates: OffloadCandidate[],
+  projectName: string,
+  enabled = true
+): Offload | null {
+  if (!enabled || !v.offload || !projectName) return null
+  for (const c of candidates) {
+    if (!c.online) continue
+    const hit = c.projects.find((p) => p.name === projectName)
+    if (!hit) continue
+    return { device: c.device, deviceName: c.deviceName, cwd: hit.path }
+  }
+  return null
+}
+
+/**
+ * The project name a path belongs to, on either platform's separator.
+ *
+ * The launcher hands this a cwd that came from THIS machine, and the peer is matched on
+ * the name, so both separators have to be understood wherever the path was made.
+ */
+export function projectNameOf(cwd: string): string {
+  const parts = cwd.split(/[\\/]/).filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ''
+}
