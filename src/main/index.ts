@@ -199,7 +199,9 @@ import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, type Pressure } from '../shared/capacity'
+import type { UsageReport } from '../shared/usage'
 import { totalMb, watchPressure } from './memory'
+import { trackUsage } from './usage'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
@@ -865,6 +867,30 @@ function publishCapacity(): void {
     })
   )
 }
+
+/**
+ * What every pane is costing, measured, four seconds at a time.
+ *
+ * `capacity:changed` above is a VERDICT from a model - 190 MB an agent, whatever the agent
+ * is doing. This is the reading, per pane and totalled, and it exists because the model
+ * cannot answer the question a person asks with four panes open and the fans up: which one
+ * of these is eating my machine. The sampler measures the pty's whole tree, so a pane that
+ * started a build reports the build.
+ *
+ * Pushed rather than polled, and pushed only while a window can be looked at - the sampler
+ * itself declines to read the process table when the app is hidden or minimized.
+ */
+let lastUsage: UsageReport | null = null
+const stopUsage = trackUsage(
+  () => manager.roots(),
+  (r) => {
+    lastUsage = r
+    send('usage:changed', r)
+  }
+)
+// A window opened after the last sample (a reload, a quiet restart) would otherwise draw
+// no figures until the next tick.
+ipcMain.handle('usage:get', () => lastUsage)
 
 let lastPressure: Pressure = 'normal'
 // Only fires on a CHANGE of level, so this is a handful of messages in a session rather
@@ -3268,6 +3294,7 @@ app.on('will-quit', () => {
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
   presence.dispose()
   stopPressure()
+  stopUsage()
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.
   flushRecents()

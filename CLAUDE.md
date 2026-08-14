@@ -557,6 +557,22 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
   pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
   answering on a subscription login.
 
+## What a pane costs is measured, not modelled
+
+`capacity.ts` models a pane at 190 MB and answers "is there room for another". The chip in
+each pane title and the total beside the Sessions count answer "which one is eating the
+machine", and those are readings — `src/shared/usage.ts` (arithmetic) and
+`src/main/usage.ts` (the platform commands and the timer).
+
+- A pane is its pty's whole descendant TREE. Counting the pty loses the build the agent
+  started, which is the only reading anybody needed.
+- CPU is a delta of cumulative counters, never `ps %cpu` (a lifetime average) or a Windows
+  perf counter. First sample has no CPU figure at all; a process first seen mid-flight is
+  capped at the interval.
+- The sampler does not read the process table while the window is hidden or minimised, and
+  never has two reads in flight.
+- `npm run test:usage`. Detail, and the four traps in full, in `docs/design-notes.md`.
+
 ## A reopened pane comes back with what was on its screen
 
 The terminal's own scrollback is renderer memory, so before this every pane reopened blank —

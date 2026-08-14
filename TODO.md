@@ -203,9 +203,11 @@ environments.
 - [ ] **C7. Preview pane** — L. T3 Code renders the project's dev server next to the agent
   (`preview.refresh`). We already assign each lane its own `PORT` — we know the URL better
   than they do. A `BrowserView` tile in the grid pointed at it, auto-refreshed on save.
-- [ ] **C8. Per-pane resource readout** — S. T3 Code has resource telemetry. We have status
-  dots. Add CPU / RSS per pty to the pane footer — with four agents running, "which one is
-  eating the machine" is a real question, and the pid is already in `sessions.ts`.
+- [x] **C8. Per-pane resource readout** — done. A chip in each pane title carries that
+  pane's resident memory (and its CPU above 1%), measured off the pty's whole descendant
+  tree so a pane running a build reports the build; the desk's total sits beside the
+  Sessions count in the sidebar. `src/shared/usage.ts` + `src/main/usage.ts`,
+  `npm run test:usage`.
 - [ ] **C9. Switch model mid-run** — M. `Ctrl Shift A` swaps the *agent* by restarting the
   pane; T3 Code switches model inside a thread. For a CLI the equivalent is sending the
   agent's own in-band command (`/model …` for Claude Code) instead of restarting. Per-agent

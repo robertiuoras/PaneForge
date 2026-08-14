@@ -253,11 +253,21 @@ export class SessionManager extends EventEmitter {
     setInterval(() => this.sweepIdle(), 1000).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
-    trackStrays(() =>
-      [...this.sessions.entries()]
-        .map(([id, s]) => ({ id, pid: s.proc.pid }))
-        .filter((p) => typeof p.pid === 'number' && p.pid > 0)
-    )
+    trackStrays(() => this.roots())
+  }
+
+  /**
+   * Live pane ptys, as `id -> pid`.
+   *
+   * Two samplers want this and neither wants a Session: the stray ledger (which is
+   * recording what to kill later) and the usage readout (which is adding up what each
+   * pane costs). Both walk the same trees from the same roots, and both must ask per
+   * sample rather than hold a list - see strays.ts.
+   */
+  roots(): { id: string; pid: number }[] {
+    return [...this.sessions.entries()]
+      .map(([id, s]) => ({ id, pid: s.proc.pid }))
+      .filter((p) => typeof p.pid === 'number' && p.pid > 0)
   }
 
   list(): Session[] {

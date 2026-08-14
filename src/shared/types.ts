@@ -2,6 +2,7 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { Verdict } from './capacity'
+import type { UsageReport } from './usage'
 
 import type { DriveRun } from './agentic'
 // Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
@@ -1893,6 +1894,13 @@ export interface Api {
   onRemote(cb: (s: RemoteState) => void): () => void
   /** What this machine can still hold - see src/shared/capacity.ts. */
   onCapacity(cb: (v: Verdict) => void): () => void
+  /**
+   * What the panes are costing right now, measured rather than modelled - see
+   * src/shared/usage.ts. Pushed every few seconds while a window is on screen.
+   */
+  onUsage(cb: (r: UsageReport) => void): () => void
+  /** The last reading, for a window that opened between samples. Null before the first. */
+  usage(): Promise<UsageReport | null>
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending
