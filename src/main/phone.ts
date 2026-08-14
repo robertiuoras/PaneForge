@@ -211,6 +211,11 @@ export class PhoneServer {
       }
     }
     this.clients.clear()
+    // Ending the streams by hand does not run the per-client close path that normally
+    // notices the last one leaving, so a pty borrowed by a phone would stay bent to that
+    // phone's shape after serving was switched off entirely - there being no phone left
+    // to ever give it back.
+    this.deps.onIdle?.()
     const server = this.server
     this.server = null
     this.listening = 0

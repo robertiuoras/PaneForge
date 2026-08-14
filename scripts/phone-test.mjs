@@ -703,6 +703,32 @@ let cookie = ''
   await s3.stop()
 }
 
+// ---- switching serving off hands the ptys back ------------------------------------
+//
+// `onIdle` is what puts a pty borrowed by a phone back to the desk's shape, and it was
+// reached only through the per-client close path - the last stream leaving. Stopping the
+// server ends those streams by hand and clears the set, so that path never runs, and a
+// pane a phone had bent to 120x30 stayed 120x30 on a 57-row desk with no phone left in
+// existence to ever give it back. The tell is a CLI that addresses no row past 30 and a
+// screenful of empty pane under its composer.
+{
+  let idled = 0
+  const off = new PhoneServer({
+    staticDir,
+    code: () => 'ABC234',
+    secret: () => 'device-secret',
+    channels: { invoke: [], send: [], on: [] },
+    invoke: async () => null,
+    send: () => {},
+    onIdle: () => idled++
+  })
+  await off.start(port + 6, '127.0.0.1')
+  // `start` closes anything already listening, so measure the STOP, not the total.
+  const serving = idled
+  await off.stop()
+  ok(idled === serving + 1, 'switching serving off hands every borrowed pty back', String(idled - serving))
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(`phone: ${checks - failures}/${checks} checks passed`)
 process.exit(failures ? 1 : 0)
