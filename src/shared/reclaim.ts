@@ -54,12 +54,31 @@ export interface ReclaimConfig {
   minIdleMinutes: number
   /** How many to close per reading. The next reading decides again. */
   maxPerSweep: number
+  /**
+   * Close a pane nobody has typed into for this many minutes, whatever the machine's
+   * memory says. 0 is off, and off is the default.
+   *
+   * This is the one thing the paragraph above refuses to do on the desk you are sitting
+   * at, and the refusal still stands there: a pane idle six hours on a machine with room
+   * is costing nobody anything. What changes it is a machine nobody is sitting at - a
+   * second desk driven over the device link, which fills up with panes that were finished
+   * hours ago and has no person to close them. So the clock exists, it is off unless
+   * somebody sets it, and every refusal that keeps the pressure sweep timid is shared with
+   * it verbatim: never a pane that is working, starting, stalled or waiting for a person,
+   * never a mirror of some other machine's pty, never the focused pane, never the last one.
+   *
+   * Long by default when it is turned on at all: the cost of closing too early is somebody
+   * reopening from History, and the cost of never closing is a machine that is out of
+   * memory in the morning. 120 minutes is the number set on this desk's PC.
+   */
+  idleCloseMinutes: number
 }
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
-  maxPerSweep: 2
+  maxPerSweep: 2,
+  idleCloseMinutes: 0
 }
 
 export interface ReclaimPane {
@@ -119,6 +138,46 @@ export function reclaimPlan(
     idleMs: now - p.lastKeyboard,
     // An exited pane's process is already gone: closing it returns a buffer, not an agent.
     // Saying so keeps the log line honest about what was actually bought.
+    hadAgent: p.state !== 'exited'
+  }))
+}
+
+/**
+ * Which panes have simply been quiet too long, or an empty list.
+ *
+ * The clock the sweep above refuses to have, for the machine that has no person: same
+ * refusals, one different trigger, and off unless `idleCloseMinutes` says otherwise.
+ *
+ * `visible` is deliberately NOT a refusal here, and it is the only one dropped. It exists
+ * up there because closing something on somebody's screen while their machine is busy is
+ * theft; down here the clock has already established that nobody has typed into this pane
+ * for hours, and on a desk nobody is sitting at every pane in the grid is "on screen". Keep
+ * it and the feature can never fire on the machine it was built for.
+ */
+export function idleClosePlan(
+  panes: ReclaimPane[],
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0
+): Reclaim[] {
+  if (!cfg.enabled) return []
+  const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
+  if (!minutes) return []
+  if (!(cfg.maxPerSweep > 0)) return []
+  const minIdle = minutes * 60_000
+
+  const eligible = panes
+    .filter((p) => !p.focused && !p.remote && CLOSEABLE.has(p.state))
+    .filter((p) => now - p.lastKeyboard >= minIdle)
+    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+
+  // Same last-pane rule as the pressure sweep: an app that empties its own window has not
+  // saved anything, it has removed the reason the window is open.
+  const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
+  const room = Math.max(0, eligible.length - keepAtLeastOne)
+
+  return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
+    id: p.id,
+    idleMs: now - p.lastKeyboard,
     hadAgent: p.state !== 'exited'
   }))
 }

@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, reclaimedMb, DEFAULT_RECLAIM } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, reclaimedMb, DEFAULT_RECLAIM } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -129,6 +129,59 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const plan = reclaimPlan(gone, over, DEFAULT_RECLAIM, NOW)
   eq('an exited pane is closeable', plan[0].id, 'dead')
   eq('but frees no agent', reclaimedMb([plan[0]]), 0)
+}
+
+{
+  // The clock, for a machine with nobody at it. Off by default is the load-bearing half:
+  // the desk somebody is sitting at must behave exactly as it did before this existed.
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 120 }
+  const panes = [
+    pane({ id: 'a', lastKeyboard: NOW - 5 * HOUR }),
+    pane({ id: 'b', lastKeyboard: NOW - 3 * HOUR }),
+    pane({ id: 'fresh', lastKeyboard: NOW - 30 * 60_000 })
+  ]
+  eq('off unless somebody sets a number', idleClosePlan(panes, DEFAULT_RECLAIM, NOW).length, 0)
+  eq('and off when reclaim itself is off', idleClosePlan(panes, { ...CLOCKED, enabled: false }, NOW).length, 0)
+  eq('oldest quiet first, and only past the clock', ids(idleClosePlan(panes, CLOCKED, NOW)), 'a,b')
+  eq('a pane inside the window is left alone', ids(idleClosePlan([panes[2], pane({ id: 'k', lastKeyboard: NOW })], CLOCKED, NOW)), '')
+
+  // Every refusal the pressure sweep makes, this makes too - except `visible`, which is
+  // the one it cannot keep: on a desk nobody is sitting at, every pane in the grid is "on
+  // screen", and keeping it would mean the feature can never fire on the machine it was
+  // built for.
+  for (const state of ['needsYou', 'working', 'starting', 'stalled']) {
+    const p = [pane({ id: 'x', state, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'keep', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check(
+      `the clock never closes a pane that is ${state}`,
+      !idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'),
+      ids(idleClosePlan(p, CLOCKED, NOW))
+    )
+  }
+  const guarded = [
+    pane({ id: 'focused', focused: true, lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'mirror', remote: true, lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'seen', visible: true, lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'pad', lastKeyboard: NOW })
+  ]
+  eq(
+    'never the focused pane and never another device s pty - but a drawn one nobody has typed into for hours IS closed',
+    ids(idleClosePlan(guarded, CLOCKED, NOW)),
+    'seen'
+  )
+  eq('never the last pane', idleClosePlan([pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })], CLOCKED, NOW).length, 0)
+  eq(
+    'at most maxPerSweep at a time',
+    idleClosePlan(
+      [pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'b', lastKeyboard: NOW - 8 * HOUR }), pane({ id: 'c', lastKeyboard: NOW - 7 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })],
+      { ...CLOCKED, maxPerSweep: 1 },
+      NOW
+    ).length,
+    1
+  )
+  // A config written by an older build has no such field at all, and reading `undefined`
+  // as "close everything that is older than never" would be the worst possible default.
+  const legacy = { enabled: true, minIdleMinutes: 15, maxPerSweep: 2 }
+  eq('a config from before this feature closes nothing', idleClosePlan(panes, legacy, NOW).length, 0)
 }
 
 console.log(`reclaim: ${checks} checks passed`)

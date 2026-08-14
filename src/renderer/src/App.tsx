@@ -64,7 +64,7 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
-import { DEFAULT_RECLAIM, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
 import { fleetState } from '../../shared/fleet'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
@@ -1614,6 +1614,43 @@ export default function App(): JSX.Element {
     }
     console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
   }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
+
+  /**
+   * The same thing on a clock, for a desk with nobody at it.
+   *
+   * Off unless `reclaim.idleCloseMinutes` is set, which is the whole reason it is allowed
+   * to exist beside the paragraph above: the pressure sweep is what a machine somebody is
+   * using may do by itself, and this is what a machine driven from somewhere else may be
+   * TOLD to do. It runs on its own minute timer rather than off `sessions`, because the
+   * thing it is watching is time passing and nothing about a quiet pane changes to say so.
+   */
+  useEffect(() => {
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    if (!cfg.enabled || !(cfg.idleCloseMinutes > 0)) return
+    const sweep = (): void => {
+      const plan = idleClosePlan(
+        sessionsRef.current.map((s) => ({
+          id: s.id,
+          state: fleetState(s),
+          lastKeyboard: s.lastKeyboard,
+          focused: s.id === activeRef.current,
+          visible: false,
+          remote: !!s.remote
+        })),
+        cfg,
+        Date.now()
+      )
+      for (const p of plan) {
+        console.info(
+          `idle-close: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+            `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
+        )
+        void api.killSession(p.id)
+      }
+    }
+    const timer = window.setInterval(sweep, 60_000)
+    return () => window.clearInterval(timer)
+  }, [config?.reclaim])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
