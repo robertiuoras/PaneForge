@@ -19,10 +19,12 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { pickRelease } from '../shared/pickRelease'
 import type { UpdateState } from '../shared/types'
 import { lastShip } from './laneBoard'
 import {
   adoptStaged,
+  assetFor,
   canSwap,
   clearStaged,
   setMacUpdateLog,
@@ -438,9 +440,17 @@ function offerMac(version: string): void {
 let macStaging = ''
 
 /** The newest release this install's channel accepts, out of a releases API answer. */
-function pickRelease(json: unknown): string {
-  const rel = Array.isArray(json) ? json.find((r) => !(r as { draft?: boolean })?.draft) : json
-  return String((rel as { tag_name?: string })?.tag_name ?? '')
+function pick(json: unknown): string {
+  return pickRelease(json, assetFor)
+}
+
+/** `pick` over a JSON string, empty on anything unparseable. */
+function pickJson(body: string): string {
+  try {
+    return pick(JSON.parse(body))
+  } catch {
+    return ''
+  }
 }
 
 function publicLatestMacRelease(): Promise<string> {
@@ -468,8 +478,14 @@ function publicLatestMacRelease(): Promise<string> {
         })
         res.on('end', () => {
           try {
-            const tag = pickRelease(JSON.parse(body))
+            const json = JSON.parse(body)
+            const tag = pick(json)
             const version = tag.replace(/^v/, '')
+            // An answer we read fine that names nothing this platform can install is a
+            // fact, not a failure: every release in it is win-only. Resolving with the
+            // version we are already on reports "no update" and waits for the next
+            // release, instead of an error card and a retry that can only lose again.
+            if (!version && Array.isArray(json) && json.length) return resolve(have())
             if (!version) return reject(new Error('no tag_name in the releases API response'))
             resolve(version)
           } catch (e) {
@@ -487,12 +503,16 @@ function ghLatestMacRelease(): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'gh',
+      // No `--jq` on the dev path: the choice is `pickRelease`'s, which needs the assets
+      // list to skip a release with nothing this platform can install. A jq expression
+      // that answered "newest tag" is the bug it exists to stop, said in another language.
       devChannel
-        ? ['api', 'repos/robertiuoras/PaneForge/releases?per_page=10', '--jq', '[.[]|select(.draft|not)][0].tag_name']
+        ? ['api', 'repos/robertiuoras/PaneForge/releases?per_page=10']
         : ['api', 'repos/robertiuoras/PaneForge/releases/latest', '--jq', '.tag_name'],
-      { windowsHide: true, timeout: 15_000 },
+      { windowsHide: true, maxBuffer: 8 << 20, timeout: 15_000 },
       (err, out) => {
-        const version = err ? '' : out.trim().replace(/^v/, '')
+        const raw = err ? '' : devChannel ? pickJson(out) : out.trim()
+        const version = raw.replace(/^v/, '')
         if (version) resolve(version)
         else reject(err ?? new Error('no tag_name from the authenticated releases API'))
       }

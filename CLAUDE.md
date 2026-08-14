@@ -110,11 +110,17 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   `/releases/latest`, which GitHub keeps pointed at the newest PROMOTED release.
   Nothing reaches a stable app until a build is promoted — and promotion happens **by
   itself**, on the big-company channel shape (Chrome, VS Code): the newest dev build
-  auto-promotes once it has soaked `PF_PROMOTE_SOAK_MS` (3 days) with nothing shipped
-  on top of it, from the same minute timer as everything else (`autoPromote` in
-  `lane.mjs retry`). The quiet period IS the proof: dev-channel installs ran it that
-  long and nothing needed a fix; while churn continues, stable waits, and the survivor
-  carries every skipped version in one update. `node scripts/lane.mjs promote
+  that has been on the channel `PF_PROMOTE_SOAK_MS` (3 days) auto-promotes, from the
+  same minute timer as everything else (`autoPromote` in `lane.mjs retry`). The soak IS
+  the proof: dev-channel installs ran that build three days and nothing needed a fix,
+  and it carries every skipped version with it in one update. **The soak is that
+  build's own age, not a quiet period across the channel.** Requiring the NEWEST build
+  to sit untouched sounds stricter and really promises that stable never moves: this
+  repo ships most days, every release reset the clock, and on 2026-08-14 that had
+  produced 20 unpromoted dev builds with stable still on v0.8.32 — a Mac on stable
+  could not update out of a broken build no matter how often it restarted, because
+  there was never a newer stable one to find. `npm run test:promote` covers a soaked
+  build promoting with a younger one sitting on top of it. `node scripts/lane.mjs promote
   [version]` by hand is for "stable needs this now" (a bad build already reached
   stable) — never promote a build by hand on a green diff alone. Both paths refuse
   a one-legged release (either platform's feed missing) and a feed whose declared size
@@ -133,6 +139,15 @@ Install once, update from the app, for ever. **A user reinstalling PaneForge by 
 defect**, and the only bug class that has ever caused it here is one shape: a promise that
 never settles behind a flag saying "already working on it".
 
+- **A release this platform cannot install is skipped, not retried.** A release cut from
+  one machine publishes only that platform's assets (v0.8.61: `latest.yml` and the exe,
+  no mac zip). The dev channel took the newest tag on faith, `macUpdate` asked for a
+  `PaneForge-<v>-arm64.zip` that was never published, and the poll retried the same tag
+  for ever — an error card no restart could clear, because nothing in the loop ever
+  looked at the release BELOW it. `shared/pickRelease.ts` walks the list for the newest
+  release whose assets include the one `assetFor` will ask for; a list where NOTHING is
+  installable reports "no update" rather than an error, since that is a fact about the
+  releases and not a failure. `npm run test:pickrelease`.
 - **The recovery may not live inside the thing that can hang.** Settling every path in our
   own download code fixes one promise and leaves the shape; `electron-updater`'s check and
   download are not ours to settle at all. So a transient phase carries `phaseAt`, and
@@ -786,6 +801,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:notes` | release-note ranges and both template shapes |
+| `npm run test:pickrelease` | which release an install may take: the newest one carrying an asset THIS platform can install, so a win-only release is skipped rather than 404'd at for ever |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:pairask` | pairing with no code typed: the six digits agree between the two ends, and — the case the whole design exists for — a real relay in the middle makes them DISAGREE |
 | `npm run test:handoff` | a pane handed to the other machine whole, over a real link and real git: WIP pushed as `auto-sync:`, a 5 MB transcript chunked and reassembled byte-for-byte, `--resume` on the far end — and the refusals: a dirty far checkout, unpushed far commits, a folder outside the root |

@@ -19,6 +19,7 @@
     "smoke": "node scripts/smoke-pty.mjs",
     "test:updater": "node scripts/updater-test.mjs && node scripts/updater-wedge-test.mjs",
     "test:wedge": "node scripts/updater-wedge-test.mjs",
+    "test:pickrelease": "node scripts/pickrelease-test.mjs",
     "test:updatehold": "node scripts/update-hold-test.mjs",
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
