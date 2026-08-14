@@ -941,6 +941,50 @@ export interface PhoneConfig {
    * until somebody here presses Approve.
    */
   ask?: boolean
+  /**
+   * Require a passkey touch before a browser may type into a pane.
+   *
+   * Watching and typing are not the same risk and used to be the same permission: a signed-in
+   * phone could run commands on this machine for the life of its cookie. With this on, panes
+   * are still free to watch, and the first keystroke of an unlock window costs one Face ID
+   * touch - so a stolen cookie is a viewer, not a shell.
+   *
+   * Only ever armed over TLS: WebAuthn does not exist outside a secure context, so arming it
+   * on the plain-http LAN path would lock out the phones that cannot satisfy it. In practice
+   * that means it guards exactly the public path - see `armed()` in main/phone.ts.
+   */
+  typeGate?: boolean
+  /** passkeys enrolled here, one per authenticator. Forgetting one revokes it immediately. */
+  keys?: PhoneKey[]
+}
+
+/**
+ * One enrolled passkey. The public half only - there is nothing here worth stealing, which
+ * is the whole appeal of the primitive.
+ */
+export interface PhoneKey {
+  /** credential id, base64url - the string the browser sends back to identify itself */
+  id: string
+  /** the public key as a stringified JWK; `createPublicKey` takes this shape directly */
+  jwk: string
+  /** COSE algorithm: -7 ES256 (Apple platforms), -257 RS256 (Windows Hello) */
+  alg: number
+  /** ms epoch it was enrolled */
+  at: number
+  /** what the panel shows; a label this desk chose, never one the browser asserted */
+  label: string
+  /** last signature counter seen; 0 from an authenticator that does not keep one */
+  count: number
+}
+
+/**
+ * A passkey as the panel shows it. The public key is left behind deliberately - the window
+ * has no use for it, and a surface carries the smallest thing that answers the question.
+ */
+export interface PhoneKeyView {
+  id: string
+  label: string
+  at: number
 }
 
 /** One browser that was approved on this desk, and may come back without asking again. */
@@ -1058,6 +1102,10 @@ export interface PhoneState {
   asking: boolean
   /** the way in from outside this network, off unless asked for */
   tunnel: TunnelState
+  /** is a passkey touch required before a browser may type into a pane */
+  typeGate: boolean
+  /** the passkeys enrolled, so the panel can show them and take one away */
+  keys: PhoneKeyView[]
   /** why it is not up when it should be (a taken port) */
   error?: string
 }
@@ -1762,6 +1810,10 @@ export interface Api {
   forgetPhoneDevice(id: string): Promise<PhoneState>
   /** whether a browser may ask to be let in at all, instead of typing the code */
   setPhoneAsking(on: boolean): Promise<PhoneState>
+  /** Require a passkey touch before a browser may type. Desk-only: refused over HTTP. */
+  setPhoneTypeGate(on: boolean): Promise<PhoneState>
+  /** Remove one enrolled passkey, or every one with '*'. Desk-only: refused over HTTP. */
+  forgetPhoneKey(id: string): Promise<PhoneState>
   /** the count and the addresses change without anybody asking */
   onPhone(cb: (state: PhoneState) => void): () => void
 

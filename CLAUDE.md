@@ -266,6 +266,27 @@ channel of its own.
   pairing page and not one asset; five wrong codes locks that address for a minute. The
   cookie is `hmac(deviceId, code)` - derived, never stored - so rotating the code signs
   every phone out.
+- **Watching a pane and typing into one are different permissions** (`src/main/passkey.ts`).
+  With `phone.typeGate` on, a browser may watch freely but the first keystroke of each
+  15-minute window costs a passkey touch — Face ID, Windows Hello — so a stolen cookie is a
+  viewer rather than a shell. Three things about it are load-bearing and easy to undo by
+  accident:
+  - **The gate is on `/pf/send` and `/pf/call`, NEVER on `pty:write`.** The app types into
+    panes itself — `recover`'s queued "continue", the prompt `sessions:start` hands a new
+    pane — and those are raised in the main process, so a gate at the HTTP boundary exempts
+    them by construction. Move it nearer the pty and both break, silently. If it ever has to
+    move, the seam is one `from: 'user' | 'app'` parameter on `SessionManager.write`.
+  - **It arms only over TLS** (`x-forwarded-proto: https`, same loopback-only trust rule as
+    `addressOf`). WebAuthn does not exist outside a secure context, so arming on the
+    plain-http LAN path would lock out the phones that cannot satisfy it. `test:passkey`
+    pins this in both directions because it is the check most likely to silently invert.
+  - **A 423 refuses the whole batch before anything runs**, and the client re-queues it at
+    the front. Keystrokes are ordered: running the ungated half of a batch delivers a word
+    with letters missing.
+  `DESK_ONLY` in phone.ts refuses `phone:typeGate` and `phone:forgetKey` over HTTP with the
+  same answer as a channel that does not exist — a lock whose switch is reachable from the
+  thing it locks is not a lock. Note that **every other invoke channel in `surface.ts` is
+  phone-reachable**; desk-only is a property of the transport, not of the surface.
 - **The QR leads with an address a plain phone can reach.** `phoneUrls()` puts the LAN
   address first and the tailnet one after it: 100.64/10 answers only for a phone running
   Tailscale, and leading with it made the QR a dead link on every ordinary phone the

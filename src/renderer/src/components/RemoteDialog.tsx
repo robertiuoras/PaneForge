@@ -420,6 +420,36 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
               label="Let a browser ask to be let in"
               hint="It raises a card on this screen with four digits and the same four on the phone. Nothing is granted until you press Approve here. Off, and a phone has to type the code."
             />
+            <Switch
+              checked={state.typeGate}
+              onChange={(on) => void api.setPhoneTypeGate(on).then(setState)}
+              label="Ask for a passkey before typing"
+              hint="Watching a pane stays free; the first keystroke asks for Face ID or Windows Hello, then stays unlocked for fifteen minutes. Only applies to a phone coming in over the public address — on this network there is no way for a browser to prove a passkey, so nothing changes there."
+            />
+            {state.keys.length > 0 && (
+              <div className="dev-field dev-peers">
+                <span className="dev-key">Passkeys</span>
+                <ul className="peer-list">
+                  {state.keys.map((k) => (
+                    <li key={k.id} className="peer">
+                      <span className="peer-dot" aria-hidden="true" />
+                      <span className="peer-kind">{k.label}</span>
+                      <span className="peer-since">added {lastWords(k.at)}</span>
+                      <button
+                        className="ghost small"
+                        title="Remove this passkey. Anything it unlocked stops working now, not when the window runs out."
+                        onClick={() => {
+                          void api.forgetPhoneKey(k.id).then(setState)
+                          flash('Passkey removed. That device has to enrol again to type.')
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="dev-acts">
               <button
                 className="ghost small"

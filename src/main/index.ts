@@ -560,6 +560,15 @@ const phone = new PhoneServer({
     setConfig({ phone: { ...cfg.phone!, devices: list } })
   },
   canAsk: () => getConfig().phone?.ask !== false,
+  // The passkey gate's two halves, stored the same way and for the same reason: an enrolled
+  // authenticator has to survive a restart, and the counter has to move on with it or the
+  // clone check would refuse the real phone after the first update.
+  keys: () => getConfig().phone?.keys ?? [],
+  saveKeys: (list) => {
+    const cfg = getConfig()
+    setConfig({ phone: { ...cfg.phone!, keys: list } })
+  },
+  typeGate: () => getConfig().phone?.typeGate !== false,
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })
@@ -1611,8 +1620,36 @@ let laneSweepQueued = false
 // arriving or leaving updates Settings without anything polling.
 /** Every phone answer carries the tunnel too: one state, one repaint, no second poll. */
 function phoneState(): PhoneState {
-  return { ...phone.state(), tunnel: tunnel.state() }
+  const cfg = getConfig()
+  return {
+    ...phone.state(),
+    tunnel: tunnel.state(),
+    typeGate: cfg.phone?.typeGate !== false,
+    // The stored row minus its public key: the panel names it and takes it away, and
+    // nothing in the window has any use for the key itself.
+    keys: (cfg.phone?.keys ?? []).map((k) => ({ id: k.id, label: k.label, at: k.at }))
+  }
 }
+ipcMain.handle('phone:typeGate', (_e, on: boolean) => {
+  const cfg = getConfig()
+  setConfig({ phone: { ...cfg.phone!, typeGate: !!on } })
+  send('phone:changed', phoneState())
+  return phoneState()
+})
+/**
+ * Take a passkey away. `*` takes them all, matching how devices are signed out.
+ *
+ * Immediate, not eventual: the unlock cookie names the credential it was minted for, and
+ * `checkUnlock` refuses one whose key is no longer in the list - so a window that was open
+ * when this ran is shut by the next request, not by its expiry.
+ */
+ipcMain.handle('phone:forgetKey', (_e, id: string) => {
+  const cfg = getConfig()
+  const keys = id === '*' ? [] : (cfg.phone?.keys ?? []).filter((k) => k.id !== id)
+  setConfig({ phone: { ...cfg.phone!, keys } })
+  send('phone:changed', phoneState())
+  return phoneState()
+})
 ipcMain.handle('phone:state', () => phoneState())
 ipcMain.handle('phone:serve', async (_e, on: boolean) => {
   const cfg = getConfig()

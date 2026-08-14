@@ -90,6 +90,7 @@ const TESTS = [
   ['stash', 'stash-test.mjs'],
   ['onestash', 'one-stash-test.mjs'],
   ['phone', 'phone-test.mjs'],
+  ['passkey', 'passkey-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['tunnel', 'tunnel-test.mjs'],
   ['funnel', 'funnel-test.mjs'],

@@ -139,6 +139,8 @@ export const SURFACE: Surface = {
   answerPhoneAsk: ['invoke', 'phone:answerAsk'],
   forgetPhoneDevice: ['invoke', 'phone:forget'],
   setPhoneAsking: ['invoke', 'phone:asking'],
+  setPhoneTypeGate: ['invoke', 'phone:typeGate'],
+  forgetPhoneKey: ['invoke', 'phone:forgetKey'],
   onPhone: ['on', 'phone:changed'],
   remoteState: ['invoke', 'remote:state'],
   setRemoteHost: ['invoke', 'remote:host'],

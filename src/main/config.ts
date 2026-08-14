@@ -271,7 +271,18 @@ function defaults(): Config {
     // a browser a pane, and a pane runs commands on this machine.
     // `ask: true` is the ordinary way in and costs nothing while `on` is false: a browser
     // asking raises a card that grants nothing until somebody here presses Approve.
-    phone: { on: false, port: DEFAULT_PHONE_PORT, code: newPhoneCode(), devices: [], ask: true },
+    // `typeGate` defaults ON. It costs nothing on a desk that never leaves the LAN - it is
+    // armed only over TLS - so the only install it changes is one with a public address,
+    // which is exactly the one that should have it.
+    phone: {
+      on: false,
+      port: DEFAULT_PHONE_PORT,
+      code: newPhoneCode(),
+      devices: [],
+      ask: true,
+      typeGate: true,
+      keys: []
+    },
     theme: { ...DEFAULT_THEME },
     window: { width: 1500, height: 940, maximized: false }
   }
