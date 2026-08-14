@@ -12,6 +12,7 @@ import { EventEmitter } from 'node:events'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
+import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
@@ -38,6 +39,8 @@ export interface HostBackend {
   receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
+  /** files a guest wants put in front of one of THIS device’s panes */
+  attachFiles(files: AttachIn[]): AttachResult
   /** subscribe to pty output; returns an unsubscribe */
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
@@ -321,6 +324,14 @@ export class RemoteHost extends EventEmitter {
         case 'agents':
           void this.backend.agents().then((list) => conn.send({ t: 'agents', rid: m.rid, list }))
           return
+        case 'files': {
+          // The bytes are written here because here is where the pty is. A refusal is a
+          // sentence in the result rather than a `failed` frame: the caller is a person
+          // who just pasted something and wants to be told why, not a stack.
+          const files = Array.isArray(m.files) ? (m.files as AttachIn[]) : []
+          conn.send({ t: 'filesdone', rid: m.rid, result: this.backend.attachFiles(files) })
+          return
+        }
         case 'ping':
           conn.send({ t: 'pong' })
           return

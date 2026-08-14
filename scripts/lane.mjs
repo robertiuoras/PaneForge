@@ -2297,12 +2297,19 @@ const PROMOTE_POLL_MS = Number(process.env.PF_PROMOTE_POLL_MS ?? 60 * 60 * 1000)
 
 /**
  * Stable follows the big-company shape (Chrome, VS Code, Firefox): the dev channel
- * churns per release, stable takes batched, proven jumps. The promotion signal is a
- * QUIET PERIOD - the newest dev build has sat PROMOTE_SOAK_MS with nothing shipped on
- * top of it, which means dev-channel installs have run it that long and nothing needed
- * a fix. While churn continues stable waits; when it stops, the survivor carries
- * everything before it in one update. electron-updater downloads the full installer of
- * whatever /releases/latest names, so skipped versions cost a stable install nothing.
+ * churns per release, stable takes batched, proven jumps. The signal is a SOAK - the
+ * build being promoted has been on the dev channel PROMOTE_SOAK_MS, so dev installs ran
+ * it that long and nothing needed a fix. electron-updater downloads the full installer
+ * of whatever /releases/latest names, so the versions stable skips cost it nothing.
+ *
+ * The soak is that BUILD's age, not a quiet period across the channel. Requiring the
+ * NEWEST build to sit untouched for three days sounds stricter and is really a promise
+ * that stable never moves at all: something ships here most days, every release resets
+ * the clock, and the measurement on 2026-08-14 is what that produces - 20 unpromoted
+ * dev builds, stable still on v0.8.32, and a Mac that could not update itself out of a
+ * broken build because no restart and no poll was ever going to find a newer stable
+ * one. A superseded build is not automatically a bad build; the proof that a build is
+ * good is that it ran for three days, which this still requires of whatever it picks.
  *
  * Rides the same minute timer as everything else here, throttled to one releases
  * lookup per PROMOTE_POLL_MS (state.promoteAt), and hands the actual flip to
@@ -2319,7 +2326,9 @@ function autoPromote(state) {
   if (!repo) return null
   if (state.promoteAt && now() < state.promoteAt) return null
   state.promoteAt = now() + PROMOTE_POLL_MS
-  const list = runSafe('gh', ['api', `repos/${repo}/releases?per_page=5`], { timeout: 30_000 })
+  // 20, not 5: the ripe build can be well down the list after a run of dev releases, and
+  // a window that cannot see it reads as "nothing to promote" for ever.
+  const list = runSafe('gh', ['api', `repos/${repo}/releases?per_page=20`], { timeout: 30_000 })
   if (!list.ok) return { checked: true }
   let releases
   try {
@@ -2327,11 +2336,18 @@ function autoPromote(state) {
   } catch {
     return { checked: true }
   }
-  const newest = releases.find((r) => !r.draft)
-  if (!newest?.prerelease) return { checked: true }
-  const born = Date.parse(newest.published_at ?? '')
-  if (!Number.isFinite(born) || now() - born < PROMOTE_SOAK_MS) return { checked: true }
-  return { checked: true, tag: newest.tag_name, ...promote('') }
+  const live = releases.filter((r) => !r.draft)
+  // Already promoted at the top means stable is current: nothing to do.
+  if (!live[0]?.prerelease) return { checked: true }
+  // The newest build that has itself soaked. Newer builds on top of it do not block it -
+  // they are the next promotions, once they are three days old too.
+  const ripe = live.find((r) => {
+    if (!r.prerelease) return false
+    const born = Date.parse(r.published_at ?? '')
+    return Number.isFinite(born) && now() - born >= PROMOTE_SOAK_MS
+  })
+  if (!ripe) return { checked: true }
+  return { checked: true, tag: ripe.tag_name, ...promote(String(ripe.tag_name ?? '').replace(/^v/, '')) }
 }
 
 function status(session) {
@@ -2488,12 +2504,17 @@ function doctor() {
         say(
           `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable ? stable.tag_name : 'nothing'}.`
         )
-        const born = Date.parse(releases[0]?.published_at ?? '')
+        // The one that goes next is the OLDEST pending build, because the soak is that
+        // build's own age - newer ones ripen behind it rather than holding it back.
+        const next = releases.filter((r) => r.prerelease).slice(-1)[0] ?? releases[0]
+        const born = Date.parse(next?.published_at ?? '')
         const wait = Number.isFinite(born) ? Math.max(0, PROMOTE_SOAK_MS - (now() - born)) : null
         say(
           wait == null
-            ? '  The newest promotes to stable by itself once it has soaked; sooner by hand: node scripts/lane.mjs promote'
-            : `  The newest auto-promotes in ~${Math.ceil(wait / 3600000)}h if nothing newer ships; sooner by hand: node scripts/lane.mjs promote`
+            ? '  The oldest promotes to stable by itself once it has soaked; sooner by hand: node scripts/lane.mjs promote'
+            : wait === 0
+              ? `  ${next.tag_name} has soaked and promotes on the next poll; sooner by hand: node scripts/lane.mjs promote`
+              : `  ${next.tag_name} auto-promotes in ~${Math.ceil(wait / 3600000)}h; sooner by hand: node scripts/lane.mjs promote`
         )
       }
     } catch {

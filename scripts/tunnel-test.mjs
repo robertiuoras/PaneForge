@@ -25,6 +25,9 @@ import { buildSync } from 'esbuild'
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+// Same trap as phone-test: a bare absolute path in `import()` is read as a URL with the
+// scheme "c:" on Windows, so this whole suite crashed before its first check.
+import { pathToFileURL } from 'node:url'
 
 let failures = 0
 let checks = 0
@@ -45,7 +48,7 @@ buildSync({
   platform: 'node',
   logLevel: 'silent'
 })
-const { Tunnel, assetFor, downloadUrl, untarOne, sweepOrphans } = await import(bundle)
+const { Tunnel, assetFor, downloadUrl, untarOne, sweepOrphans } = await import(pathToFileURL(bundle).href)
 
 /** A stub cloudflared. `mode` decides which of the real program's endings it acts out. */
 function stub(mode) {
@@ -74,6 +77,16 @@ setInterval(() => {}, 1000)
   )
   chmodSync(file, 0o755)
   return file
+}
+
+// The stubs are shebang scripts and `Tunnel` spawns its binary directly, which Windows
+// cannot do: the spawn fails EFTYPE before the first check. A .cmd wrapper is not the way
+// out either - node refuses to spawn one without a shell. So this suite says so and stops,
+// rather than reporting a failure that is about the harness and not about the tunnel.
+// It runs for real on the Mac, which is the platform the tunnel ships on first.
+if (process.platform === 'win32') {
+  console.log('tunnel: skipped on Windows - the stub cloudflared is a POSIX shebang script (spawn EFTYPE)')
+  process.exit(0)
 }
 
 const nodeShim = (file) => {

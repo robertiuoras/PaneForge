@@ -252,11 +252,12 @@ const feed = (file, size) => `files:\n  - url: ${file}\n    size: ${size}\npath:
 
 // ---------------------------------------------------------------- auto-promote (retry timer)
 //
-// Stable follows the big-company channel shape: the newest dev build promotes ITSELF once
-// it has soaked PF_PROMOTE_SOAK_MS with nothing shipped on top of it. These drive the real
-// `lane.mjs retry` (the command the app's minute timer calls) and assert the four moments
-// that matter: a young build waits, a soaked build promotes, a soaked-but-broken build is
-// refused by the same checks a hand promotion gets, and the releases lookup is throttled.
+// Stable follows the big-company channel shape: a dev build promotes ITSELF once it has
+// been on the dev channel PF_PROMOTE_SOAK_MS. These drive the real `lane.mjs retry` (the
+// command the app's minute timer calls) and assert the moments that matter: a young build
+// waits, a soaked build promotes, a soaked build is NOT held back by younger ones on top
+// of it, a soaked-but-broken build is refused by the same checks a hand promotion gets,
+// and the releases lookup is throttled.
 
 /** Run `retry` for real. Repos here carry a tag matching package.json so autoship no-ops. */
 function retry(repo, scenario, envExtra = {}) {
@@ -286,7 +287,7 @@ function retry(repo, scenario, envExtra = {}) {
         .map((l) => JSON.parse(l))
     : []
   const edited = log.some((a) => a[0] === 'release' && a[1] === 'edit' && a.includes('--prerelease=false'))
-  const looked = log.some((a) => a[0] === 'api' && String(a[1] ?? '').includes('per_page=5'))
+  const looked = log.some((a) => a[0] === 'api' && /releases\?per_page=/.test(String(a[1] ?? '')))
   return { out, log, edited, looked }
 }
 
@@ -317,6 +318,20 @@ git(repoRetry, 'tag', 'v0.0.2')
 {
   const r = retry(repoRetry, goodRelease(soakedAt))
   ok('a dev build past the soak promotes by itself', r.edited && /Promoted v0\.0\.2 to stable/.test(r.out), r.out)
+}
+
+// 8b. THE ONE THIS RULE EXISTS FOR: a younger build on top does not hold back a build
+// that has already soaked. The old reading - "newest, and nothing shipped on top of it" -
+// meant a repo that releases most days never promoted anything at all: measured 2026-08-14
+// on this repo, 20 unpromoted dev builds with stable still on v0.8.32.
+{
+  const scenario = goodRelease(soakedAt)
+  scenario.releases = [
+    { tag_name: 'v0.0.3', draft: false, prerelease: true, published_at: new Date().toISOString() },
+    ...scenario.releases
+  ]
+  const r = retry(repoRetry, scenario)
+  ok('a soaked build promotes even with a younger one on top', r.edited && /Promoted v0\.0\.2 to stable/.test(r.out), r.out)
 }
 
 // 9. a soaked build that fails promote's own checks is refused, and says so

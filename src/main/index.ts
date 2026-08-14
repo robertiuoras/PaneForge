@@ -29,6 +29,8 @@ import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
+import { writeAttachments } from './attach'
+import type { AttachIn, AttachResult } from '../shared/attach'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
@@ -439,6 +441,16 @@ function createWindow(): void {
   win.on('focus', () => {
     win?.flashFrame(false)
     refreshRecents()
+    // A borrow that was never handed back is invisible until somebody drags the window,
+    // because the desk only sends a resize when ITS OWN measurement moves - and it never
+    // does: xterm still holds 157x57 while the pty sits at the phone's 120x30, so `fit()`
+    // computes the same numbers it already has and returns without a word. Measured on a
+    // live pane whose CLI addressed no row past 30 in a 57-row window: the space below the
+    // composer was screen the agent had never been told about. Coming back to the desk is
+    // a person at the desk, which is exactly who owns the size, so take it back here too
+    // rather than waiting for the phone to close politely. No-op unless something is
+    // actually borrowed.
+    manager.returnSizes()
     // Focus is the fastest answer there is to "is a game holding the display" - it is
     // not - so do not make a held update or a held window wait up to 15s for the poller
     // to work that out. Blur is checked too, for the other direction.
@@ -809,6 +821,7 @@ const remote = new Remote({
     }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
+  attachFiles: (files) => writeAttachments(files),
   onData: (cb) => {
     manager.on('data', cb)
     return () => manager.off('data', cb)
@@ -1892,6 +1905,37 @@ ipcMain.handle('clipboard:read', () => {
   }
 })
 ipcMain.handle('clipboard:fixtureActive', () => clipboardFixtureActive())
+
+/**
+ * Put files in front of a pane's agent - the paste and the drop that carry bytes.
+ *
+ * Routed by `remote.owns` like every other pane message, and for the reason that bug
+ * existed at all: the pty is on whichever machine opened it, so a mirrored pane's files
+ * have to be written THERE. Writing them here and typing the path is what handed an agent
+ * on the PC a screenshot path from a Mac.
+ */
+ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
+})
+
+/**
+ * The clipboard image, attached to a pane.
+ *
+ * The clipboard is read HERE - it belongs to the device the window is on - and only the
+ * bytes travel. `readImage` answers an empty image for text or for nothing at all, which
+ * is the caller's cue to let the raw ^V through to an agent that reads the clipboard by
+ * itself.
+ */
+ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> => {
+  const img = clipboard.readImage()
+  if (img.isEmpty()) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
+  const png = img.toPNG()
+  if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
+  const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
+})
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {

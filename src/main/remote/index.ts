@@ -24,6 +24,7 @@ import type {
   StartSessionRequest
 } from '../../shared/types'
 import type { AgentInfo } from '../../shared/agents'
+import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
@@ -178,6 +179,16 @@ export class Remote extends EventEmitter {
   /** The name a handoff commit mentions - the device's, or its id when unpaired. */
   peerName(device: string): string {
     return getConfig().remote.peers.find((p) => p.id === device)?.name || device
+  }
+
+  /** Save files on the device that owns a mirrored pane, and answer with ITS paths. */
+  attachOn(id: string, files: AttachIn[]): Promise<AttachResult> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.resolve({ paths: [], error: 'That device is not connected' })
+    return client
+      .attachFiles(cut.local, files)
+      .catch((err: Error) => ({ paths: [], error: err.message }))
   }
 
   agentsOn(device: string): Promise<AgentInfo[]> {

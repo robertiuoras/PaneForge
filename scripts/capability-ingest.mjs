@@ -354,11 +354,17 @@ function write(path, text) {
   writeFileSync(path, text, 'utf8')
 }
 
-const outcome = rawFindings.length === 0 && !run.question
-  ? 'failed'
-  : kept.length
-    ? 'completed'
-    : 'no-finding'
+// A run that opened no source and returned no finding did not research anything, whatever
+// its runner recorded. See `openedNothing` - the empty answer and the honest "nothing met
+// the bar" are the same JSON, and only the source count tells them apart.
+const noResearch = R.openedNothing(run.sources, rawFindings.length)
+const failedWhy = noResearch
+  ? 'no source was opened and no finding returned - the run answered without researching'
+  : rawFindings.length === 0 && !run.question
+    ? 'the run recorded neither a question nor a finding'
+    : ''
+
+const outcome = failedWhy ? 'failed' : kept.length ? 'completed' : 'no-finding'
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 
@@ -405,6 +411,7 @@ if (!dryRun && existsSync(indexScript)) {
 process.stdout.write(
   JSON.stringify({
     outcome,
+    ...(failedWhy ? { detail: failedWhy } : {}),
     run: runId,
     kept: kept.map((k) => ({ id: k.record.id, name: k.record.name, stage: C.stage(k.record) })),
     duplicates,
@@ -414,3 +421,7 @@ process.stdout.write(
     dryRun
   }) + '\n'
 )
+
+// Same contract as `fail()`: a failed run prints its receipt and exits non-zero, so a
+// scheduled caller that only checks the exit code still learns the pipeline is broken.
+if (outcome === 'failed') process.exit(1)

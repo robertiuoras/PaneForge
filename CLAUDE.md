@@ -110,11 +110,17 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   `/releases/latest`, which GitHub keeps pointed at the newest PROMOTED release.
   Nothing reaches a stable app until a build is promoted — and promotion happens **by
   itself**, on the big-company channel shape (Chrome, VS Code): the newest dev build
-  auto-promotes once it has soaked `PF_PROMOTE_SOAK_MS` (3 days) with nothing shipped
-  on top of it, from the same minute timer as everything else (`autoPromote` in
-  `lane.mjs retry`). The quiet period IS the proof: dev-channel installs ran it that
-  long and nothing needed a fix; while churn continues, stable waits, and the survivor
-  carries every skipped version in one update. `node scripts/lane.mjs promote
+  that has been on the channel `PF_PROMOTE_SOAK_MS` (3 days) auto-promotes, from the
+  same minute timer as everything else (`autoPromote` in `lane.mjs retry`). The soak IS
+  the proof: dev-channel installs ran that build three days and nothing needed a fix,
+  and it carries every skipped version with it in one update. **The soak is that
+  build's own age, not a quiet period across the channel.** Requiring the NEWEST build
+  to sit untouched sounds stricter and really promises that stable never moves: this
+  repo ships most days, every release reset the clock, and on 2026-08-14 that had
+  produced 20 unpromoted dev builds with stable still on v0.8.32 — a Mac on stable
+  could not update out of a broken build no matter how often it restarted, because
+  there was never a newer stable one to find. `npm run test:promote` covers a soaked
+  build promoting with a younger one sitting on top of it. `node scripts/lane.mjs promote
   [version]` by hand is for "stable needs this now" (a bad build already reached
   stable) — never promote a build by hand on a green diff alone. Both paths refuse
   a one-legged release (either platform's feed missing) and a feed whose declared size
@@ -133,6 +139,15 @@ Install once, update from the app, for ever. **A user reinstalling PaneForge by 
 defect**, and the only bug class that has ever caused it here is one shape: a promise that
 never settles behind a flag saying "already working on it".
 
+- **A release this platform cannot install is skipped, not retried.** A release cut from
+  one machine publishes only that platform's assets (v0.8.61: `latest.yml` and the exe,
+  no mac zip). The dev channel took the newest tag on faith, `macUpdate` asked for a
+  `PaneForge-<v>-arm64.zip` that was never published, and the poll retried the same tag
+  for ever — an error card no restart could clear, because nothing in the loop ever
+  looked at the release BELOW it. `shared/pickRelease.ts` walks the list for the newest
+  release whose assets include the one `assetFor` will ask for; a list where NOTHING is
+  installable reports "no update" rather than an error, since that is a fact about the
+  releases and not a failure. `npm run test:pickrelease`.
 - **The recovery may not live inside the thing that can hang.** Settling every path in our
   own download code fixes one promise and leaves the shape; `electron-updater`'s check and
   download are not ours to settle at all. So a transient phase carries `phaseAt`, and
@@ -526,6 +541,12 @@ modifier and why this one did too.
   separate lines of a box is refused, never guessed, because the newline and the frame are
   not `cols` characters. Mod+A highlights the whole input and hands the key back when there
   is nothing to select, so Ctrl+A stays a line editor's "start of line" in a plain shell.
+- **The click is swallowed only on its way to an AGENT.** These handlers are capture-phase
+  on the pane's host, and an unconditional `stopPropagation` there also robs xterm of the
+  mouseup it removes its own drag listeners from — so the selection kept following the
+  pointer with no button held. The stop is kept only while the CLI has mouse reporting on,
+  which is exactly when xterm has disabled its selection service and has nothing to leak.
+  `npm run test:stickyselect`.
 - Alt/Option-click still reaches other lines, still refuses more than `rowLimit` rows away,
   and is still the only path that can emit an up or a down OUTSIDE a box.
 - The clicked column is clamped to what is written on that row. Without it, a click in the
@@ -577,6 +598,35 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
   `400 … not supported when using Codex with a ChatGPT account` INSIDE a healthy-looking
   pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
   answering on a subscription login.
+
+## A picture goes in front of the agent
+
+Every agent here reads an image off the DISK, so "look at this screenshot" is a path typed
+at the prompt. The bytes are therefore written as a real file **on the machine that owns
+the pty**, and the path of that file is what is typed (`shared/attach.ts` for the naming,
+`main/attach.ts` for the disk, `pty:attach` / `pty:attachClipboard`).
+
+- **Forwarding a raw ^V was the old answer and it only ever worked twice over.** It needs
+  an agent that reads the OS clipboard itself - Claude Code does, Codex and the other
+  eleven do not - AND it needs that agent to be on the same machine as the clipboard. A
+  MIRRORED pane's is not, so the key reached across and read the wrong desk's clipboard.
+- **A path is only true on one machine.** A screenshot dragged onto a mirrored pane used to
+  type this desk's path at an agent running on the other one, which reads as a missing file
+  rather than as an error anybody can act on - that is the whole bug. A plain session id
+  still types the path it already has; `@device/id` and a browser (which has no path for a
+  dropped file at all) send the bytes over the link instead, and `attachOn` is answered with
+  a path that exists over there.
+- **The name is TEXT, never a path.** Only the basename survives, both separators, control
+  bytes and reserved punctuation gone - a drop can call itself `../../.ssh/authorized_keys`
+  and this function is the only thing between that and a write. The extension comes off the
+  MAGIC BYTES when they are recognised, because the name is the least trustworthy thing
+  about a drop: a clipboard image has none and a browser drag calls itself `download`.
+- 5 MB a batch, because base64 over the link's 8 MB frame is 4/3 of the size. A phone
+  screenshot is ~200 KB; the cap exists so a video dropped on a pane fails with a sentence
+  instead of killing the link. Nothing is submitted for you - the paths land in the input
+  box so they can be described first.
+- `npm run test:attach`. Not covered: pasting an image on the phone client, which has its
+  own composer rather than an xterm.
 
 ## What a pane costs is measured, not modelled
 
@@ -807,6 +857,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:notes` | release-note ranges and both template shapes |
+| `npm run test:pickrelease` | which release an install may take: the newest one carrying an asset THIS platform can install, so a win-only release is skipped rather than 404'd at for ever |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
 | `npm run test:pairask` | pairing with no code typed: the six digits agree between the two ends, and — the case the whole design exists for — a real relay in the middle makes them DISAGREE |
 | `npm run test:handoff` | a pane handed to the other machine whole, over a real link and real git: WIP pushed as `auto-sync:`, a 5 MB transcript chunked and reassembled byte-for-byte, `--resume` on the far end — and the refusals: a dirty far checkout, unpushed far commits, a folder outside the root |
@@ -828,7 +879,9 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:dispatchpane` | a dispatched run as a real pane, against a fake driver and real git: closes itself on success, STAYS on failure, a person's keystroke drops it ungated, an exited pty is a failure not a wait — and the report that leaves carries the gate's per-step verdicts, skipped included |
 | `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
+| `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
+| `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
@@ -924,6 +977,15 @@ by closing the pane. `npm run test:reclaim`.
   screen, one that is working or starting or stalled, or a mirror of another device's pty.
 - **The window is never emptied.** An app that closes its own last pane under memory
   pressure has removed the reason the window is open.
+- **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has
+  typed into for that long whatever the memory says; 0 is the default, so the paragraph
+  above still describes every desk that has not asked otherwise. It exists for the second
+  machine — a desk driven over the device link, which fills with finished panes and has no
+  person to close them. Every refusal above is shared verbatim except **visible**, which it
+  cannot keep: on a machine nobody is at, every pane in the grid is "on screen", and
+  protecting them means the feature can never fire where it was built to. `idleClosePlan`,
+  its own minute timer in `App.tsx` (time passing is the thing it watches, and nothing about
+  a quiet pane changes to announce it), `npm run test:reclaim`.
 
 ## Gotchas that look like mistakes
 

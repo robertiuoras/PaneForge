@@ -64,7 +64,7 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
-import { DEFAULT_RECLAIM, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
 import { fleetState } from '../../shared/fleet'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
@@ -1595,7 +1595,7 @@ export default function App(): JSX.Element {
       sessions.map((s) => ({
         id: s.id,
         state: fleetState(s),
-        lastOutput: s.lastOutput,
+        lastKeyboard: s.lastKeyboard,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote
@@ -1614,6 +1614,43 @@ export default function App(): JSX.Element {
     }
     console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
   }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
+
+  /**
+   * The same thing on a clock, for a desk with nobody at it.
+   *
+   * Off unless `reclaim.idleCloseMinutes` is set, which is the whole reason it is allowed
+   * to exist beside the paragraph above: the pressure sweep is what a machine somebody is
+   * using may do by itself, and this is what a machine driven from somewhere else may be
+   * TOLD to do. It runs on its own minute timer rather than off `sessions`, because the
+   * thing it is watching is time passing and nothing about a quiet pane changes to say so.
+   */
+  useEffect(() => {
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    if (!cfg.enabled || !(cfg.idleCloseMinutes > 0)) return
+    const sweep = (): void => {
+      const plan = idleClosePlan(
+        sessionsRef.current.map((s) => ({
+          id: s.id,
+          state: fleetState(s),
+          lastKeyboard: s.lastKeyboard,
+          focused: s.id === activeRef.current,
+          visible: false,
+          remote: !!s.remote
+        })),
+        cfg,
+        Date.now()
+      )
+      for (const p of plan) {
+        console.info(
+          `idle-close: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+            `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
+        )
+        void api.killSession(p.id)
+      }
+    }
+    const timer = window.setInterval(sweep, 60_000)
+    return () => window.clearInterval(timer)
+  }, [config?.reclaim])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
@@ -2820,6 +2857,30 @@ export default function App(): JSX.Element {
                         >
                           {paneNumber}
                         </span>
+                      </span>
+                    )}
+                    {/* Which MACHINE this pane's agent is running on, when it is not this
+                        one. The pane header has said so since mirroring shipped, and that
+                        is one click too far: the list is where you decide which pane to
+                        open, so the list is where "this one is not on this laptop" has to
+                        be readable.
+
+                        An icon and not a chip, and up here rather than on the line below.
+                        The sub-line is 190px and is already one fact short of what it is
+                        asked to carry - measured with card-fit-test at that width, the
+                        place chip and a lane chip together squeezed `.row-agent` to 0px
+                        and the card stopped saying which agent it was running. A device
+                        NAME is the longest string on either line (`DESKTOP-CMSUCM1`), so
+                        putting it there would cost the same fact again. The title line
+                        holds a key, a name and a right-aligned clock, and 14px between the
+                        key and the name is room it already has. The name is on the hover,
+                        with what mirroring does and does not move. */}
+                    {s.remote && (
+                      <span
+                        className="row-remote"
+                        title={`Running on ${s.remote.name}. Keystrokes go there; the agent, the folder and the transcript stay there too.`}
+                      >
+                        <RemoteIcon size={13} />
                       </span>
                     )}
                     {/* The whole place, on the name, so hiding the chip below (when it

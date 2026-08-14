@@ -346,6 +346,7 @@ export class SessionManager extends EventEmitter {
       model: req.model || undefined,
       status: 'starting',
       lastOutput: Date.now(),
+      lastKeyboard: Date.now(),
       createdAt: Date.now(),
       // A launch with a prompt is engaged from the start; a bare CLI is not doing
       // anything for you yet, so its first quiet moment is not "finished".
@@ -472,6 +473,7 @@ export class SessionManager extends EventEmitter {
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     this.emit('data', id, RESET)
     this.attach(live)
@@ -599,6 +601,7 @@ export class SessionManager extends EventEmitter {
     // running, and starting here is what makes the readout mean "since I asked".
     const submitted = data.includes('\r') || data.includes('\n')
     if (submitted) {
+      live.meta.lastKeyboard = Date.now()
       const slash = isSlashCommand(live.typed)
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a

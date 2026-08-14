@@ -100,7 +100,11 @@ function fixture(name) {
   check('it is a real worktree, not a bare folder', (inside.stdout ?? '').trim() === 'true')
   const head = gitSoft(lane, ['rev-parse', '--abbrev-ref', 'HEAD'])
   check('it is on the lane branch it was on before', head === 'lane-a', head || '(no checkout)')
-  check('the repo checkout still lists it', git(repo, ['worktree', 'list']).includes(lane))
+  // Slashes, not paths: on Windows `git worktree list` prints C:/Users/... while node
+  // built the path with backslashes, so a raw includes() reported the worktree missing
+  // when git had it listed the whole time.
+  const slash = (p) => p.replace(/\\/g, '/')
+  check('the repo checkout still lists it', slash(git(repo, ['worktree', 'list'])).includes(slash(lane)))
 }
 
 // ------------------------------------------------- the branch is gone too

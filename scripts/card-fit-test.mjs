@@ -47,7 +47,10 @@ if (!CHROME) {
 }
 
 /** The sidebar, at the width it really has, holding one card. */
-function page(rowSub) {
+function page(rowSub, remote = false) {
+  const mark = remote
+    ? '<span class="row-remote"><svg viewBox="0 0 16 16" width="13" height="13"></svg></span>'
+    : ''
   return `<!doctype html><meta charset="utf-8"><style>
   html,body{margin:0;background:#111;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px}
   ${css}
@@ -55,7 +58,7 @@ function page(rowSub) {
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span><span class="row-name">PaneForge</span><span class="elapsed">1m 20s</span></div>
+        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">PaneForge</span><span class="elapsed">1m 20s</span></div>
         <div class="row-sub">${rowSub}</div>
       </div>
       <button class="x">x</button>
@@ -81,7 +84,16 @@ const CASES = [
   // The one case that legitimately carries two: a chat editing one project while holding
   // some OTHER project's lane. Two different facts, so two chips - and the agent's name
   // still has to survive them.
-  { name: "holding another project's lane", sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK }
+  { name: "holding another project's lane", sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK },
+  // A pane whose agent is on the OTHER machine. The mark went on the title line rather
+  // than the sub-line precisely so it costs the sub-line nothing, and "costs nothing" is a
+  // claim about pixels - so the worst sub-line is measured again with the mark above it.
+  { name: 'mirrored from another device', sub: LOGO + AGENT + MODEL + LANE_PLACE + CLOCK, remote: true },
+  {
+    name: "mirrored, holding another project's lane",
+    sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK,
+    remote: true
+  }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
@@ -162,7 +174,7 @@ try {
   for (const c of CASES) {
     await send(
       'Page.navigate',
-      { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(page(c.sub)) },
+      { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(page(c.sub, c.remote)) },
       sessionId
     )
     // A navigate resolves before the document is laid out; the fonts are system ones, so
@@ -180,6 +192,12 @@ try {
         lane: cut(document.querySelector('.chip.pf-lane')),
         clock: cut(document.querySelector('.elapsed')),
         name: cut(document.querySelector('.row-name')),
+        // The remote mark, if the card carries one. Its width rather than a cut() reading:
+        // it has no text, and the only way it can fail is by being squeezed to nothing.
+        remote: (() => {
+          const el = document.querySelector('.row-remote')
+          return el ? el.getBoundingClientRect().width : null
+        })(),
         // Everything the line is really trying to draw, so an overflowing line is visible
         // as a number rather than inferred from one clipped child.
         wanted: [...sub.children].reduce((n, el) => n + el.scrollWidth, 0)
@@ -197,6 +215,12 @@ try {
     ok(fits(m.clock), `${c.name}: the clock is not cut off`, `${m.clock.w.toFixed(1)}px of ${m.clock.want}px`)
     ok(fits(m.name), `${c.name}: the pane's name is whole`, `${m.name.w.toFixed(1)}px of ${m.name.want}px`)
     ok(fits(m.place), `${c.name}: the place chip is whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
+    if (c.remote)
+      ok(
+        m.remote !== null && m.remote >= 13,
+        `${c.name}: the remote mark is drawn at full size`,
+        `${m.remote === null ? 'missing' : m.remote.toFixed(1) + 'px'}`
+      )
     console.log(
       `      card ${m.rowH.toFixed(0)}px, line ${m.sub.toFixed(0)}px in ${m.lines} row(s), wants ${m.wanted}px` +
         (m.place ? `, place ${m.place.w.toFixed(0)}/${m.place.want}` : '') +

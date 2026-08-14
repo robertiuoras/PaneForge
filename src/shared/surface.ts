@@ -83,6 +83,8 @@ export const SURFACE: Surface = {
   openExternal: ['send', 'shell:external'],
   copyText: ['send', 'clipboard:write'],
   readClipboard: ['invoke', 'clipboard:read'],
+  attachFiles: ['invoke', 'pty:attach'],
+  attachClipboardImage: ['invoke', 'pty:attachClipboard'],
   clipboardFixtureActive: ['invoke', 'clipboard:fixtureActive'],
   gitInfo: ['invoke', 'git:info'],
   diffFiles: ['invoke', 'git:diffFiles'],

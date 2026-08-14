@@ -1,6 +1,7 @@
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
+import type { AttachIn, AttachResult } from './attach'
 import type { Verdict } from './capacity'
 import type { RecoverConfig } from './recover'
 import type { ReclaimConfig } from './reclaim'
@@ -74,6 +75,8 @@ export interface Session {
   status: SessionStatus
   /** epoch ms of the most recent pty output */
   lastOutput: number
+  /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
+  lastKeyboard: number
   createdAt: number
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */
@@ -1606,6 +1609,22 @@ export interface Api {
   /** write to the OS clipboard (renderer has no navigator.clipboard under file://) */
   copyText(text: string): void
   readClipboard(): Promise<string>
+  /**
+   * Save files where the agent in `sessionId` can open them, and answer with the paths.
+   *
+   * The paths are on the machine that owns the pty, which is the whole point: a mirrored
+   * pane's agent runs on the other device, so the bytes go over the link and are written
+   * there. See `src/shared/attach.ts`.
+   */
+  attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
+  /**
+   * The same, for whatever image is on the clipboard of the device the window is on.
+   *
+   * `readClipboard` answers '' for an image, and forwarding a raw ^V only works for an
+   * agent that reads the clipboard itself AND runs on this machine. This works for every
+   * agent and for a mirrored pane.
+   */
+  attachClipboardImage(sessionId: string): Promise<AttachResult>
   /** True only for the private clipboard fixture used by the disposable Electron probe. */
   clipboardFixtureActive(): Promise<boolean>
   /** branch + dirty count for a folder; null when it is not a repo */
