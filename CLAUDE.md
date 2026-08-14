@@ -334,6 +334,21 @@ channel of its own.
     rename. Quitting kills it — it is not a pty, so `strays.ts` has never heard of it.
   - `npm run test:tunnel` drives all of it against a stub that prints what the real program
     prints, with every budget overridable by env.
+- **A phone's `100vh` is not its screen.** It is the LARGE viewport - the one you get with
+  the toolbars scrolled away - so `.app` at `100vh` laid the app out taller than the glass
+  and its last ~60px sat under Safari's bottom bar, taking the typing bar with it. That is
+  "it shows type to this pane, it needs to be moved up so you can tap on it".
+  `html.handheld .app` is `100dvh`, and the bar clears the home indicator by 8px on top of
+  the inset. Measured at 414x896: the input is 44px tall, ends 12px above the viewport,
+  and `elementFromPoint` at its centre returns the input.
+- **A phone re-wrapping a pane SCROLLS the old frame away; it may never clear it.**
+  `t.clear()` was in that path and it is why a pane opened on a phone was blank: the
+  buffer it dropped was the one `getBuffer` had replayed into that browser a beat earlier,
+  so every pane seeded its history and then deleted it 400ms later. A screenful of
+  newlines puts the mis-wrapped frame into the scrollback instead - where it can be read -
+  and the redraw paints the live frame under it. `test:phoneview` proves the history
+  survives AND that the re-wrap really happened (`__pf[id].rewraps()`): without the second
+  half the check passes by never having run.
 - **The desk owns a pane's shape; a phone borrows it.** One pty cannot be 50 columns and
   157 at once, and both windows fit their own screen and say so - so whoever spoke last
   won, and a phone that looked at a pane left the DESK drawing a full-width pane whose
@@ -414,6 +429,25 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
 - The sidebar has no `git status` of its own on purpose, so it may not assert "not a git
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
+
+## Copying a prompt, or the answer it got
+
+Two copy icons beside every prompt that is on screen: the prompt, and the reply that
+followed it. They are drawn for every VISIBLE turn, never for the hovered one.
+
+- **The hover version could not be pressed.** The pair is anchored to the row the turn
+  starts on, so reaching for it crosses rows belonging to the turn ABOVE - which is a
+  different turn, so the pair moved - and leaving the terminal element at all fired
+  `mouseleave` and took it away entirely. A button you have to chase is not a button.
+- Placement is `shared/turnCopy.ts` (`npm run test:turncopy`), fed by the same prompt
+  marks the rail keeps. Two prompts closer together than one pair is tall: the NEWER one
+  keeps the space, because it is the one being read, and the rail still reaches the older.
+- Icons rather than the words "Prompt / Reply": this is drawn once per turn rather than
+  once per pane, and eight labelled buttons down the side is a second sidebar. 17px for a
+  pointer, 30px for a finger, and `TURN_COPY_H` in `TerminalPane.tsx` is the height the
+  crowding rule uses - change it with the CSS.
+- The reply is the rows after the prompt up to the row before the next one. Off by one in
+  either direction and the paste is perfect and wrong.
 
 ## A click puts the cursor where you clicked
 
@@ -705,6 +739,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
 | `npm run test:dispatch` | the router that picks the agent, the model and the budget for an ask — and the four cases where the CHEAP tier must not be chosen: a repo that cannot check itself, an ask naming no file, repo-wide words, and a retry of something that already failed |
 | `npm run test:dispatchpane` | a dispatched run as a real pane, against a fake driver and real git: closes itself on success, STAYS on failure, a person's keystroke drops it ungated, an exited pty is a failure not a wait — and the report that leaves carries the gate's per-step verdicts, skipped included |
+| `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
