@@ -188,6 +188,8 @@ export const SURFACE: Surface = {
   paneBell: ['send', 'sessions:bell'],
   onRemote: ['on', 'remote:changed'],
   onCapacity: ['on', 'capacity:changed'],
+  onUsage: ['on', 'usage:changed'],
+  usage: ['invoke', 'usage:get'],
   onPaneReset: ['on', 'pane:reset'],
   onVoiceHotkey: ['on', 'voice:hotkey'],
   onRecents: ['on', 'recents:changed'],

@@ -31,6 +31,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
+  ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],

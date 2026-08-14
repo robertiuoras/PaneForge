@@ -848,6 +848,43 @@ The test's own lesson is worth keeping: it stubbed `spawnDetachedNoWindow` with 
 exact shape `consoles.ts` exists to avoid on this Windows build. It loads the real module now.
 A stub of the one line that is hard on this platform is a test that passes while the app leaks.
 
+## What a pane costs, measured
+
+`capacity.ts` already answered "can this desk hold another pane", from a model: 190 MB an
+agent, 7.2 MB a full scrollback, measured once and frozen. That model is right about the
+average and cannot answer the question a person actually asks when the fans come on, which
+is *which one of these four is eating my machine* - it reports all four at 190 MB while one
+of them holds a 1442 MB `next build`. So each pane title carries a measured chip, and the
+sidebar's Sessions row carries the desk's total. Four decisions worth keeping:
+
+- **The pane is its process TREE, not its pty.** The shell is a rounding error; the agent
+  and whatever the agent started are the cost. Same walk the stray sweeper does, one
+  difference: `treeOf` includes the root, because here the pty is part of the bill rather
+  than something to kill. Counting the pty alone loses the build entirely, which is the
+  single failure this feature exists to avoid - `usage-test.mjs` fails six ways if the walk
+  stops.
+- **CPU is a DIFFERENCE of cumulative counters, never a platform percentage.** macOS
+  `ps %cpu` is a decaying average over the process's whole life, so a pane that thrashed an
+  hour ago still reads hot, and Windows has no per-process percentage without a perf
+  counter that costs a second to read. `ps -o time=` and `UserModeTime + KernelModeTime`
+  are monotonic and mean the same thing everywhere. Two consequences: the first sample has
+  **no** CPU figure (null, not zero - a zero reads as a measurement), and a process first
+  seen mid-flight is capped at the interval, or a build that ran 30s before the sampler
+  noticed it reports as 3000% of a core for one tick and the readout is never trusted again.
+- **Nothing is measured while nobody is looking.** A full process table is ~380ms on this
+  M4 (665 processes) and more through PowerShell CIM. The sampler asks `BrowserWindow` for a
+  visible, un-minimised window before each tick and drops a tick that arrives while the
+  previous read is still out. A minimised app polling `ps` for ever is how an app gets blamed
+  for a warm laptop, and here it would be blaming itself.
+- **The app's own cost comes from `app.getAppMetrics()`**, not from the table: Electron
+  already knows its renderers, GPU and utility processes, and picking ours out of the
+  machine's other Electron processes is a guess. `percentCPUUsage` is already a share of one
+  core, the same unit the panes report, so the two add up honestly.
+
+Colour only when there is something to say (2 GB heavy, a full core hot); tabular figures,
+because a number rewritten every four seconds shifts the title beside it on every sample
+otherwise. `npm run test:usage`.
+
 ## A reopened pane comes back with what was on its screen
 
 Built 2026-08-07, and the reason it is written down is that it looked expensive and was not.

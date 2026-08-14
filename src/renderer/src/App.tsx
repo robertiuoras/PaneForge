@@ -61,6 +61,7 @@ import {
   trimPlan,
   type Verdict
 } from '../../shared/capacity'
+import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
 import { STRONG_MATCH } from '../../shared/promptKey'
@@ -1455,6 +1456,19 @@ export default function App(): JSX.Element {
    */
   const [capacity, setCapacity] = useState<Verdict | null>(null)
   useEffect(() => api.onCapacity(setCapacity), [])
+
+  /**
+   * What each pane is really costing, four seconds at a time (src/shared/usage.ts).
+   *
+   * Asked for once as well as subscribed to: the push only fires on the next sample, so a
+   * window that just opened would draw no figures for a few seconds and read as "nothing
+   * is running" rather than "not measured yet".
+   */
+  const [usage, setUsage] = useState<UsageReport | null>(null)
+  useEffect(() => {
+    void api.usage().then((u) => u && setUsage(u))
+    return api.onUsage(setUsage)
+  }, [])
   const depthRef = useRef(FULL_SCROLLBACK)
   useEffect(() => {
     if (!capacity) return
@@ -2548,6 +2562,24 @@ export default function App(): JSX.Element {
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
           <span className="section-tail">
+            {/* The desk's total, beside the pane count it belongs to: panes plus the app
+                itself, which is the figure that answers "what would quitting give me
+                back". The per-pane chips say which one to close; this says whether to
+                bother. Only once something is running - a total of "250 MB" over an
+                empty desk is a number about nothing. */}
+            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+              <span
+                className="badge res"
+                title={
+                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
+                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
+                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
+                }
+              >
+                {formatMb(usage.totalMb)}
+                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
+              </span>
+            )}
             {working > 0 && (
               <span className="badge run" title="Agents whose own footer says they are still running">
                 {working} working
@@ -2990,6 +3022,33 @@ export default function App(): JSX.Element {
                 </span>
               )}
               {s.role && <span className="chip role">{s.role}</span>}
+              {/* What this pane costs, measured off its pty's whole process tree - so a
+                  pane that started a build reports the build, which is the whole point.
+                  Memory always, CPU only above 1%: a row of live-looking 0% is the same
+                  noise as a status line that never changes. Absent for a mirrored pane,
+                  whose agent is a process on the other machine. */}
+              {usage?.panes[s.id] && (
+                <span
+                  className={
+                    'chip res' +
+                    ((usage.panes[s.id].cpuPct ?? 0) >= 90 ? ' hot' : '') +
+                    (usage.panes[s.id].rssMb >= 2048 ? ' heavy' : '')
+                  }
+                  title={
+                    `This pane holds ${formatMb(usage.panes[s.id].rssMb)} across ` +
+                    `${usage.panes[s.id].procs} process${usage.panes[s.id].procs === 1 ? '' : 'es'}` +
+                    (usage.panes[s.id].cpuPct === null
+                      ? ''
+                      : `, and is using ${usage.panes[s.id].cpuPct}% of one CPU core`) +
+                    '. The agent and anything it started are both counted.'
+                  }
+                >
+                  {formatMb(usage.panes[s.id].rssMb)}
+                  {formatCpu(usage.panes[s.id].cpuPct) && (
+                    <span className="res-cpu">{formatCpu(usage.panes[s.id].cpuPct)}</span>
+                  )}
+                </span>
+              )}
               {/* The worktree chip used to live here, beside a git badge that printed
                   `master`: two chips about one place, neither of which named the place.
                   Both are the badge's job now - it is the thing that already knows the

@@ -145,7 +145,8 @@
     "test:pairask": "node scripts/pair-ask-test.mjs",
     "test:phoneview": "node scripts/phone-view-test.mjs",
     "test:funnel": "node scripts/funnel-test.mjs",
-    "test:gist": "node scripts/gist-test.mjs"
+    "test:gist": "node scripts/gist-test.mjs",
+    "test:usage": "node scripts/usage-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
