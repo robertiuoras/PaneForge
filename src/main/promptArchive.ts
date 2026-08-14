@@ -327,6 +327,27 @@ export function recordPrompt(
 }
 
 /**
+ * The earliest ask typed in `project` inside a window, or null.
+ *
+ * The one caller is History, filling in "what was this session working on" for panes that
+ * closed before the app started recording that on the pane itself. Best-effort by
+ * construction: this archive is deduped by wording, so an ask repeated across two sessions
+ * carries only its FIRST use, and one under `MIN_PROMPT_TOKENS` was never archived at all.
+ * A missing answer is therefore normal, and it is returned as null rather than as a guess -
+ * a wrong sentence about which session to bring back is worse than no sentence.
+ */
+export function firstAskIn(project: string, from: number, to: number): string | null {
+  let best: { at: number; text: string } | null = null
+  for (const e of load().values()) {
+    if (e.o !== project) continue
+    const at = Date.parse(e.f)
+    if (!Number.isFinite(at) || at < from || at > to) continue
+    if (!best || at < best.at) best = { at, text: e.x }
+  }
+  return best?.text ?? null
+}
+
+/**
  * Say what an ask turned into.
  *
  * `out` has been null for every row this app has ever written, because until the goal

@@ -85,6 +85,8 @@ const TESTS = [
   ['phone', 'phone-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['tunnel', 'tunnel-test.mjs'],
+  ['funnel', 'funnel-test.mjs'],
+  ['gist', 'gist-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],

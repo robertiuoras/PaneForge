@@ -2583,7 +2583,17 @@ ipcMain.handle('prompt:prior', (_e, draft: string) => {
  * A pane's draft was submitted. Fire-and-forget: the renderer is mid-keystroke and has
  * nothing to do with the answer.
  */
-ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: string }) => {
+ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: string; id?: string }) => {
+  // Before the recall gate, and outside its try: History's one-line note is a different
+  // feature with a different switch, and "you have asked this before" being off is not a
+  // reason for a closed session to go back to being a folder name and a clock.
+  if (meta.id) {
+    try {
+      history.noteAsk(meta.id, draft)
+    } catch {
+      /* a note is a nicety, never the reason a pane stops working */
+    }
+  }
   if (!getConfig().promptRecall.enabled) return
   try {
     // The folder is turned into a project name here rather than in the renderer, because

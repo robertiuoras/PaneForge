@@ -1033,7 +1033,9 @@ export default function TerminalPane({
         // it. `line` rather than `text` - the flattened version is a rail label, and
         // matching wants the words that were actually sent. Anything too short to be an ask
         // is dropped on the other side (MIN_PROMPT_TOKENS), not here.
-        if (text.length > 1) api.promptUsed(line, { cwd: cwdRef.current })
+        // `id` so History can say what this session was working on - the same keystrokes,
+        // one more consumer, and the only feed that reads the same for every agent.
+        if (text.length > 1) api.promptUsed(line, { cwd: cwdRef.current, id: sessionId })
       }
     }
 

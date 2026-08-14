@@ -1920,6 +1920,9 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .hist-item { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); padding: 8px 10px; }
 .hist-head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .hist-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The one line saying what a session was for. Indented to the title above it and clipped
+   to one line: it is a way to recognise a row, not a thing to read. */
+.hist-gist { color: var(--text); font-size: 12px; padding: 3px 0 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-line { color: var(--muted); font: 11.5px/1.6 ui-monospace, Consolas, monospace; padding-left: 20px; user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-actions { display: flex; gap: 5px; margin-top: 6px; }
 .transcript { flex: 1; overflow: auto; margin: 10px 0; padding: 10px 12px; background: #06060a; border: 1px solid var(--line); border-radius: var(--r-sm); font: 11.5px/1.55 ui-monospace, Consolas, monospace; color: #c9c9d6; white-space: pre-wrap; user-select: text; }

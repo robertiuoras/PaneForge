@@ -520,6 +520,16 @@ export interface HistoryEntry {
   startedAt: number
   endedAt?: number
   bytes: number
+  /**
+   * What this session was asked to do, in one line - the first thing typed at the agent.
+   *
+   * The reason History is worth opening: a folder and a clock do not say which of eleven
+   * closed sessions is the one to bring back. Free by construction (see `shared/gist.ts`):
+   * it is keystrokes the app already relays, never a summary anything had to be paid for.
+   */
+  gist?: string
+  /** how many asks were submitted in it; 40 and 1 are different sessions to return to */
+  asks?: number
 }
 
 export interface HistoryHit {
@@ -939,6 +949,13 @@ export interface PhoneDevice {
   /** ms epoch it last held a live stream */
   seen: number
   /**
+   * What its browser calls itself, kept for ONE reason: so approving the same phone a
+   * second time replaces its row instead of adding another. Eight rows for three devices
+   * is what the list looked like before this, and a list nobody can read is a list where
+   * "sign this one out" stops being a thing anybody does.
+   */
+  ua?: string
+  /**
    * Its secret, 32 random bytes as hex. NEVER leaves the main process: `PhoneState`
    * carries `PhoneDeviceView`, which is this without the token.
    */
@@ -1000,6 +1017,17 @@ export interface TunnelState {
   phase: 'off' | 'fetching' | 'starting' | 'up'
   /** the https address, and only once it has really answered - never on the phase alone */
   url: string
+  /** which provider is carrying it; '' when nothing is up */
+  via?: 'tailscale' | 'cloudflare' | ''
+  /**
+   * Whether that address is the same one tomorrow.
+   *
+   * The whole difference between the two providers, and the only part of it a person
+   * needs told: a stable address can be added to a phone's home screen and signed into
+   * once, while a cloudflared quick tunnel mints a new hostname per run - a new origin,
+   * so a new cookie, so the approval card again on every launch.
+   */
+  stable?: boolean
   error?: string
 }
 
@@ -1790,7 +1818,7 @@ export interface Api {
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
   /** Record that a draft was actually sent. Fire-and-forget. */
-  promptUsed(draft: string, meta: { cwd?: string; agent?: string }): void
+  promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
   improveStatus(): Promise<ImproveStatus>
   /**
    * Improve a draft. Never submits anything and never writes to the pane: the result is

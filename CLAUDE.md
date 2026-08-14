@@ -314,6 +314,32 @@ channel of its own.
   a phone in this room and another for an address off the internet. The same function
   labels each offered address with what it reaches, so the panel can never promise
   "works anywhere" for an address the server would then mark "this network".
+- **A phone signs in ONCE, and what makes that true is the address, not the auth.** The
+  cookie is ten years, HttpOnly and revocable by name — and every one of those was already
+  true while phones were being re-approved on the desk every launch, because a cloudflared
+  quick tunnel mints a NEW hostname per run and a cookie belongs to an origin. So
+  `main/funnel.ts` is tried before cloudflared whenever the machine can: Tailscale Funnel
+  serves public HTTPS on `<machine>.<tailnet>.ts.net`, which is this machine's own name and
+  is the same string after a reboot, an update and a network change. Nothing is installed
+  on the phone (Funnel is the public internet, not the tailnet) and nothing is downloaded
+  on the desk. Measured: up in under a second against cloudflared's ~20s. Every refusal —
+  no Tailscale, `tailscaled` stopped, a tailnet without the funnel attribute, no HTTPS
+  certs — falls silently through to cloudflared, because the person flipping the switch
+  asked for a way in and not for a provider. `TunnelState.stable` is the one word the panel
+  needs; `funnel --bg` is a setting tailscaled keeps, not a child process, so `stop()` has
+  to say so or a public address outlives the app. `npm run test:funnel`.
+- **`SameSite=Lax`, never `Strict`.** Strict withholds the cookie on a cross-site
+  navigation, and every real way this address is opened is one: a QR scanned in the Camera
+  app, a link tapped in Messages, a bookmark from another app's browser. The desk then sees
+  no cookie, calls a signed-in phone a stranger and serves the pairing page. `Secure` is
+  added only when the request really arrived over TLS (`x-forwarded-proto`), since on plain
+  http over the LAN it is a cookie the browser stores and never sends back.
+- **One row per device, not one per approval.** A phone re-asks whenever its cookie is
+  gone, and appending each time is what made this desk's list nine rows for three phones —
+  at which point `Sign out`, which is per row, stops meaning anything. Approval replaces the
+  row with the same user-agent (the only thing about a browser that survives losing the
+  cookie) and keeps its original "signed in since"; a list written before that is collapsed
+  once on the way up, conservatively, by kind and place.
 - **A way in from anywhere is `cloudflared`, and the URL is not the claim.** `main/tunnel.ts`
   runs a Cloudflare quick tunnel so a phone on any network reaches this desk with no
   account, no VPN and nothing installed on the phone. Tailscale is the wrong answer to
@@ -594,6 +620,30 @@ that goes: a trimmed marker was on line 0 an instant earlier, and that is indist
 from a tag still sitting on the oldest line. `npm run test:markanchor`, whose control proves
 a bare marker really does die.
 
+## History says what each session was working on
+
+A folder name and a clock do not answer "which of these eleven do I bring back", so every
+row carries one line: the first thing that was typed at the agent, plus how many asks
+followed.
+
+- **It costs nothing.** No model, no tokens, no request. The line comes from keystrokes the
+  app already relays on their way to the pty — the same feed `promptArchive` is built from,
+  and for the same reason: it reads what was TYPED, so it works identically for Claude,
+  Codex and whatever ships next. `shared/gist.ts` is only the tidy-up.
+- **The FIRST ask, not the latest.** The opening ask is what a session was about; the
+  twentieth is a follow-up inside it ("now the other file") and reads as nothing once the
+  session is closed and its context is gone.
+- **Scraping the transcript was tried and abandoned on the evidence**: across this
+  machine's own pane logs, not one carried a recognisable prompt echo — a boxed composer is
+  redrawn character by character and interleaved with its own repaints, so what lands in
+  the log is not the sentence. A session that closed before the app recorded a line gets a
+  best-effort one from the prompt archive (same project, inside its own window) and
+  otherwise **no line at all**: a confident wrong sentence about which session to bring
+  back is worse than none.
+- It is written outside the prompt-recall gate — that switch is about "you have asked this
+  before", and turning it off is not a reason for History to go back to a folder and a
+  clock. `npm run test:gist`.
+
 ## The app remembers what has been asked
 
 `src/main/promptArchive.ts` answers one question — has this ask been made before — and it is
@@ -749,6 +799,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
 | `npm run test:panesize` | who owns a pane's shape when the desk and a phone are both drawing it: a phone BORROWS the pty's size, gives it back when it looks away, and can never undo a size the desk chose afterwards |
 | `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |
+| `npm run test:funnel` | the provider whose address never changes: which machine can be funnelled, which refusals mean "quietly use cloudflared" rather than "tell somebody something broke", that what tailscaled really published beats what was asked for, and that stopping SAYS so — nothing else ever will |
+| `npm run test:gist` | the one line History puts under a closed session: a pasted stack trace picks the sentence rather than the first frame, and nothing typed is nothing said rather than a guess |
 | `npm run test:qr` | the pairing QR, by DECODING it: format bits, zig-zag, de-interleave, every Reed-Solomon syndrome zero, payload back out — every version at every mask. Nothing less catches a symbol that is drawn perfectly and reads nowhere |
 | `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
 | `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |

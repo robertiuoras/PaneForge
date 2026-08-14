@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
+import { gistLine } from '@shared/gist'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -114,6 +115,14 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                   <span className="chip">{new Date(e.startedAt).toLocaleString()}</span>
                   <span className="chip">{Math.max(1, Math.round(e.bytes / 1024))} KB</span>
                 </div>
+                {/* What it was working on. Absent rather than guessed for a session that
+                    closed before the app recorded one - a wrong sentence about which
+                    session to bring back is worse than no sentence. */}
+                {e.gist && (
+                  <div className="hist-gist" title={e.gist}>
+                    {gistLine(e.gist, e.asks)}
+                  </div>
+                )}
                 <div className="hist-actions">
                   <button className="ghost small" onClick={() => onResume(e)}>
                     Open again

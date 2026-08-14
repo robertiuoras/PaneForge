@@ -22,7 +22,9 @@ import { app } from 'electron'
 // time, and two copies of "what counts as an escape sequence" drift in exactly the way
 // nobody notices - a transcript and its tee disagreeing about the same run.
 import { stripAnsi as strip } from '../shared/ansi'
+import { gistOf } from '../shared/gist'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
+import { firstAskIn } from './promptArchive'
 
 /** Stop one runaway pane filling the disk; the newest output is what matters. */
 const MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -64,6 +66,31 @@ export function recordStart(s: Session): void {
     writeFileSync(metaFile(s.id), JSON.stringify(entry), 'utf8')
   } catch {
     /* unwritable profile - history is a nicety, never fatal */
+  }
+}
+
+/**
+ * A prompt was submitted in this pane. The first one becomes the row's line in History.
+ *
+ * The FIRST rather than the latest on purpose: the opening ask is what a session was
+ * about, and the twentieth is a follow-up inside it ("now do the same for the other file")
+ * which reads as nothing at all once the session is closed and the context is gone.
+ *
+ * Written straight through rather than buffered like the transcript is: this is one small
+ * JSON file per submitted prompt, it only ever grows a counter after the first one, and a
+ * session whose app was killed must still have its line.
+ */
+export function noteAsk(id: string, prompt: string): void {
+  if (!enabled) return
+  const line = gistOf(prompt)
+  if (!line) return
+  try {
+    const entry = JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry
+    entry.asks = (entry.asks ?? 0) + 1
+    if (!entry.gist) entry.gist = line
+    writeFileSync(metaFile(id), JSON.stringify(entry), 'utf8')
+  } catch {
+    /* no metadata yet, or an unwritable profile: a note is a nicety, never fatal */
   }
 }
 
@@ -139,8 +166,34 @@ export function list(): HistoryEntry[] {
       })
       .filter((e): e is HistoryEntry => Boolean(e) && Boolean(e!.id))
       .sort((a, b) => b.startedAt - a.startedAt)
+      .map(backfill)
   } catch {
     return []
+  }
+}
+
+/**
+ * A line for a session that closed before the app recorded one.
+ *
+ * The prompt archive is the only other place on this machine that knows what was typed,
+ * and it is enough for this: an ask carries the project it was typed in and when it was
+ * first used, so the earliest one inside a session's own window is very probably its
+ * opening ask. Very probably, not certainly - two panes open on one repo at once would
+ * share, so the answer is marked as inferred and never written back to the metadata file.
+ *
+ * Deliberately NOT scraped from the transcript: measured across this machine's pane logs,
+ * no recognisable prompt echo survives a redrawn composer, so anything read out of the
+ * log would be a confident wrong sentence about which session to bring back.
+ */
+function backfill(e: HistoryEntry): HistoryEntry {
+  if (e.gist || !e.cwd) return e
+  try {
+    const project = e.cwd.split(/[\\/]/).filter(Boolean).pop() ?? ''
+    const to = e.endedAt ?? e.startedAt + 12 * 3600_000
+    const found = project ? firstAskIn(project, e.startedAt, to) : null
+    return found ? { ...e, gist: gistOf(found) } : e
+  } catch {
+    return e
   }
 }
 
