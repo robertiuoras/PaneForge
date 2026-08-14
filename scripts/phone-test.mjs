@@ -15,6 +15,10 @@ import { buildSync } from 'esbuild'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+// `import()` of a bare absolute path throws ERR_UNSUPPORTED_ESM_URL_SCHEME on Windows -
+// node reads the drive letter as a URL scheme ("protocol 'c:'"). This suite crashed on
+// every run on the PC because of that one line, so it has been reporting nothing at all.
+import { pathToFileURL } from 'node:url'
 import { readdirSync, readFileSync } from 'node:fs'
 
 let failures = 0
@@ -36,7 +40,7 @@ buildSync({
   platform: 'node',
   logLevel: 'silent'
 })
-const { PhoneServer, newPhoneCode, phoneUrls } = await import(bundle)
+const { PhoneServer, newPhoneCode, phoneUrls } = await import(pathToFileURL(bundle).href)
 
 // The renderer the server hands out, standing in for out/renderer.
 const staticDir = join(work, 'renderer')
@@ -418,7 +422,7 @@ let cookie = ''
     platform: 'node',
     logLevel: 'silent'
   })
-  const { originOf, deviceKind, reachWords, hostOf } = await import(netBundle)
+  const { originOf, deviceKind, reachWords, hostOf } = await import(pathToFileURL(netBundle).href)
 
   for (const [addr, want] of [
     ['127.0.0.1', 'this machine'],

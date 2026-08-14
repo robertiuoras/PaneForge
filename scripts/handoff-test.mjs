@@ -210,7 +210,14 @@ ok('a focused handoff leaves every other pane here', !killed.includes('s2'))
 
 const clone = join(receiverRoot, 'proj')
 ok('the repo was cloned under the receiving root', existsSync(join(clone, '.git')))
-ok('the dirty work travelled through the remote', existsSync(join(clone, 'new.txt')) && readFileSync(join(clone, 'app.js'), 'utf8') === 'one\ntwo\n')
+// Line endings are the checkout's business, not the handoff's: git on Windows writes
+// CRLF through core.autocrlf, so comparing the bytes raw failed here while the work had
+// travelled perfectly. What is being asserted is the CONTENT arriving.
+const lf = (s) => s.replace(/\r\n/g, '\n')
+ok(
+  'the dirty work travelled through the remote',
+  existsSync(join(clone, 'new.txt')) && lf(readFileSync(join(clone, 'app.js'), 'utf8')) === 'one\ntwo\n'
+)
 ok('the WIP commit is an auto-sync subject', git(clone, 'log', '--format=%s', '-1') === 'auto-sync: handoff to PC')
 ok('the sender repo is clean after the push', git(repo, 'status', '--porcelain') === '')
 
