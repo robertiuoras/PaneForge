@@ -140,12 +140,12 @@ const CHIP_W = 76
 const CHIP_H = 26
 
 /**
- * How tall one turn's pair of copy icons is, in pixels - two 17px buttons and the gap.
+ * How tall one turn's pair of copy icons is, in pixels - two 22px buttons and the gap.
  * It is a constant rather than a measurement because it decides which pairs are drawn at
  * all, and measuring would need them on screen first. `.turn-copy` in styles.css is these
  * numbers; change one and change both.
  */
-const TURN_COPY_H = 38
+const TURN_COPY_H = 48
 /** The same stack at finger size, which is what the `handheld` rules draw. */
 const TURN_COPY_H_TOUCH = 66
 
@@ -347,7 +347,18 @@ interface Mark {
    * needs. Refreshed every render; a marker keeps its own line right in between.
    */
   line: number
+  /** The rail's label: one line, flattened, capped at RAIL_LABEL_CHARS. */
   text: string
+  /**
+   * What was actually typed, whole - every line of it, at whatever length it was.
+   *
+   * `text` is a LABEL and cannot be the thing the copy button copies: it collapses the
+   * newlines of a multi-line prompt into spaces and stops at 400 characters, so "copy this
+   * prompt" handed back a one-line paraphrase of a long ask with the end missing, silently
+   * (measured: a 492-character prompt copied as exactly 400, cut mid-word). The rail wants
+   * the short form and the clipboard wants the whole one, so both are kept.
+   */
+  full: string
   at: number
 }
 
@@ -515,6 +526,17 @@ export default function TerminalPane({
   // Every prompt submitted to this pane, oldest first. State rather than a ref because the
   // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
   const [marks, setMarks] = useState<Mark[]>([])
+  /**
+   * Nothing has come out of this pty yet.
+   *
+   * An agent CLI is not instant and the pane it is starting in is a black rectangle until
+   * it prints its first byte: measured here, `claude` takes ~0.5s warm and ~4s on a cold
+   * start, against the 16-40ms this app spends spawning it. Nothing in that gap says a
+   * process was even started, so a slow launch and a broken one look identical - which is
+   * what "opening a terminal is too slow" is really reporting most of the time. A line
+   * saying it is starting costs nothing and turns dead into pending.
+   */
+  const [blank, setBlank] = useState(true)
   // How many buffer lines this pane spans (scrollback + screen). It is the denominator that
   // turns a marker's absolute line into a height on the rail, so it has to follow the buffer.
   const [total, setTotal] = useState(1)
@@ -1039,7 +1061,7 @@ export default function TerminalPane({
         changed: publish
       })
 
-    const addMark = (text: string): void => {
+    const addMark = (text: string, full: string): void => {
       // A prompt cannot have been sent above one that was sent before it, so the scan for
       // the box top is not allowed to walk past the last prompt's line.
       //
@@ -1057,7 +1079,7 @@ export default function TerminalPane({
       // scrollback, neither of which a plain line number could do.
       const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
-      const entry: Mark = { id: marker.id, marker, line: marker.line, text, at: Date.now() }
+      const entry: Mark = { id: marker.id, marker, line: marker.line, text, full, at: Date.now() }
       anchor(entry, marker)
       list.push(entry)
       // Past this many the tags are a solid bar and stop being aimable, so the oldest go.
@@ -1081,7 +1103,7 @@ export default function TerminalPane({
         const text = flatDraft(line, RAIL_LABEL_CHARS)
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.
-        if (text.length > 1) addMark(text)
+        if (text.length > 1) addMark(text, line)
         // The archive is fed here, on the way to the pty, which is why it works the same
         // for every agent: this sees what was typed, not what any particular CLI does with
         // it. `line` rather than `text` - the flattened version is a rail label, and
@@ -1096,10 +1118,23 @@ export default function TerminalPane({
     // The rail's scale changes as output arrives and as the view moves, but a write only
     // ever shifts a tag by a pixel or two - a setState per burst is not worth that.
     let lastTotal = 0
+    let tailSync: number | undefined
     const bumpTotal = (): void => {
       if (!list.length) return
       const now = Date.now()
-      if (now - lastTotal < 250) return
+      if (now - lastTotal < 250) {
+        // The dropped call still has to happen. Without this the LAST write of a burst and
+        // the LAST notch of a scroll are the two that never land, so the copy icons keep
+        // whatever geometry the second-to-last event left them with - which is the position
+        // of a row that has since moved, or off the pane entirely.
+        window.clearTimeout(tailSync)
+        tailSync = window.setTimeout(() => {
+          lastTotal = Date.now()
+          syncTotal()
+        }, 260)
+        return
+      }
+      window.clearTimeout(tailSync)
       lastTotal = now
       syncTotal()
     }
@@ -1711,6 +1746,7 @@ export default function TerminalPane({
       // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
       if (b) {
         sawOutput = true
+        setBlank(false)
         t.write(keep(b), () => t.scrollToBottom())
       }
     })
@@ -1810,6 +1846,7 @@ export default function TerminalPane({
       void api.getBuffer(sessionId).then((b) => {
         if (dead) return
         sawOutput = Boolean(b)
+        if (b) setBlank(false)
         pinned.current = true
         t.write(keep(b), () => t.scrollToBottom())
       })
@@ -1817,6 +1854,7 @@ export default function TerminalPane({
 
     const off = api.onData((id, data) => {
       if (id !== sessionId) return
+      if (!sawOutput) setBlank(false)
       sawOutput = true
       // Once per burst while output is flowing, and once more after it stops: the frame
       // that decides "finished or still working" is the last one drawn.
@@ -2113,6 +2151,7 @@ export default function TerminalPane({
       // Emptied first so the onDispose handlers find nothing to remove and skip publishing
       // into a component that is on its way out.
       dead = true
+      window.clearTimeout(tailSync)
       for (const m of list.splice(0)) m.marker.dispose()
       // Before dispose(), so the seat is free for whichever pane asks for it next -
       // t.dispose() takes the addon with it, but only this line gives up the budget.
@@ -2372,10 +2411,12 @@ export default function TerminalPane({
         geom,
         stackH,
         Math.max(0, total - 1)
-      ).map((c) => ({
-        ...c,
-        prompt: marks.find((m) => m.marker.line === c.row)?.text ?? ''
-      }))
+      ).map((c) => {
+        const m = marks.find((x) => x.marker.line === c.row)
+        // `full`, never `text`: the rail's label is flattened and capped, and copying that
+        // hands back a prompt with its line breaks gone and its tail missing.
+        return { ...c, key: m?.id ?? c.row, prompt: m?.full ?? m?.text ?? '' }
+      })
     : []
 
   /**
@@ -2460,6 +2501,11 @@ export default function TerminalPane({
       onDrop={onDrop}
     >
       <div className="xterm-host" ref={host} />
+      {/* Until the pty says something. Not a spinner and not a dialog - one dim line in a
+          pane that would otherwise be an empty black box for the seconds the CLI spends
+          starting up. It goes on the first byte, whether that byte is the agent's banner
+          or a replayed transcript. */}
+      {blank && !mirror && <div className="pane-booting">Starting…</div>}
       {finding && (
         <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
           <input
@@ -2534,7 +2580,10 @@ export default function TerminalPane({
           every prompt on screen rather than for one hovered turn, and eight "Prompt /
           Reply" buttons down the side of a pane is a second sidebar. */}
       {turnCopies.map((c) => (
-        <div className="turn-copy" key={c.row} style={{ top: c.top }}>
+        // Keyed on the MARK and not on the row: a marker's line moves whenever scrollback
+        // is trimmed, and a changed key unmounts the pair - which throws away the :hover
+        // and the half-finished click of the button somebody was reaching for.
+        <div className="turn-copy" key={c.key} style={{ top: c.top }}>
           <button
             title="Copy this prompt"
             aria-label="Copy this prompt"

@@ -505,9 +505,24 @@ followed it. They are drawn for every VISIBLE turn, never for the hovered one.
   marks the rail keeps. Two prompts closer together than one pair is tall: the NEWER one
   keeps the space, because it is the one being read, and the rail still reaches the older.
 - Icons rather than the words "Prompt / Reply": this is drawn once per turn rather than
-  once per pane, and eight labelled buttons down the side is a second sidebar. 17px for a
+  once per pane, and eight labelled buttons down the side is a second sidebar. 22px for a
   pointer, 30px for a finger, and `TURN_COPY_H` in `TerminalPane.tsx` is the height the
   crowding rule uses - change it with the CSS.
+- **A mark keeps two copies of the prompt, and the button copies the one that is not the
+  label.** `mark.text` is what the RAIL draws: flattened to one line and `.slice(0, 400)`.
+  Copying that is the shape of bug that never announces itself - a 492-character ask came
+  back as exactly 400 characters, cut mid-word, with the line breaks of a multi-line prompt
+  turned into spaces, and the receipt still said "Prompt copied". `mark.full` is what was
+  typed, whole, and is what the clipboard gets.
+- **Full strength as soon as the pointer is in the pane.** They were 0.22 idle and 0.6 with
+  the pointer in the pane, at 17px, over the agent's own output - which reads as "the icons
+  do not show up when I hover". Faint is for a pane nobody is pointing at.
+- **Keyed on the mark, never on the buffer row.** A marker's line moves when scrollback is
+  trimmed, and a changed React key unmounts the pair - taking the `:hover` and the
+  half-finished click of the button being reached for with it.
+- `npm run test:turncopyview` is the half `test:turncopy` cannot reach: it needs a window,
+  types a 492-character prompt through xterm's own input path, and reads the clipboard back
+  (`Emulation.setFocusEmulationEnabled`, so a minimized window can still be asked).
 - The reply is the rows after the prompt up to the row before the next one. Off by one in
   either direction and the paste is perfect and wrong.
 
@@ -598,6 +613,22 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
   `400 … not supported when using Codex with a ChatGPT account` INSIDE a healthy-looking
   pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
   answering on a subscription login.
+
+## A pane that is still starting says so
+
+Measured on this Mac, 2026-08-15: `sessions:start` returns in **16-40ms**, and the first
+byte out of the pty arrives at **~0.5s** for a warm `claude` and **~4.2s** on a cold one -
+against 400-460ms for the same binary spawned into a bare pty outside the app, so the app's
+own share of "opening a terminal is slow" is the 40ms and nothing else. Six panes started
+in one burst all had their first byte by 1.9s; staggering them by 400ms made it *worse*
+(4.7s), so `restorePanes` starting the desk in one tick stays as it is.
+
+What was wrong is that nothing said any of it: a pane is a black rectangle until the CLI
+prints, so a four-second cold start and a launch that failed look identical. `blank` in
+`TerminalPane.tsx` draws one dim `Starting…` line until the first byte - the agent's own
+banner or a replayed transcript, whichever comes first. No spinner: it is on screen for
+half a second in the ordinary case, and a looping decoration is what `test:anim` exists to
+refuse.
 
 ## A picture goes in front of the agent
 
@@ -915,7 +946,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:improveview`, and `test:phoneview` (a real headless Chrome at
+`test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized), and
+`test:phoneview` (a real headless Chrome at
 414x896 against that copy — it skips out loud with no Chrome and no server).
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,

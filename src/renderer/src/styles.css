@@ -1096,6 +1096,15 @@ body.sizing * { user-select: none !important; }
 }
 .sel-copy:hover { background: var(--accent); color: var(--accent-on); }
 
+/* A pane whose pty has not printed anything yet. No animation: this sits on screen for
+   half a second in the ordinary case, and a looping decoration that costs a GPU core is
+   exactly what the anim test exists to refuse. */
+.pane-booting {
+  position: absolute; left: 12px; top: 10px; z-index: 6;
+  color: var(--muted); font-size: 12px; letter-spacing: 0.2px;
+  pointer-events: none;
+}
+
 /* One turn's two copy icons: the prompt, and the answer it got. Drawn for every prompt on
    screen at the row it was sent on, in the gutter left of the marker rail, so reaching for
    one is a straight move to a button that is already there - see the comment on `geom` in
@@ -1103,18 +1112,23 @@ body.sizing * { user-select: none !important; }
 
    Faint until the pointer is in the pane, for the same reason the mic float is: they live
    on top of the agent's output and must not compete with it. TURN_COPY_H in TerminalPane
-   .tsx is the height of this stack - two 17px buttons and the 4px gap - and it decides
+   .tsx is the height of this stack - two 22px buttons and the 4px gap - and it decides
    which pairs are drawn at all, so change it with these numbers. */
 .turn-copy {
   position: absolute; right: 40px; z-index: 10;
   display: flex; flex-direction: column; gap: 4px;
-  opacity: 0.22;
+  opacity: 0.35;
   transition: opacity var(--fast);
 }
-.pane:hover .turn-copy { opacity: 0.6; }
-.turn-copy:hover { opacity: 1; }
+/* Full strength as soon as the pointer is in the pane, not 0.6. Measured on a live pane:
+   a 17px icon at 0.22 over the agent's own output is not a control anybody can see they
+   are allowed to press, and the middle step meant reaching for one was still aiming at
+   something faint - "the icons are not showing up when I hover over it". Faint is for a
+   pane nobody is pointing at; the moment there IS a pointer in the pane, they are real
+   buttons. */
+.pane:hover .turn-copy { opacity: 1; }
 .turn-copy button {
-  width: 17px; height: 17px;
+  width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0;
   background: var(--surface-3); color: var(--muted);
