@@ -2859,6 +2859,30 @@ export default function App(): JSX.Element {
                         </span>
                       </span>
                     )}
+                    {/* Which MACHINE this pane's agent is running on, when it is not this
+                        one. The pane header has said so since mirroring shipped, and that
+                        is one click too far: the list is where you decide which pane to
+                        open, so the list is where "this one is not on this laptop" has to
+                        be readable.
+
+                        An icon and not a chip, and up here rather than on the line below.
+                        The sub-line is 190px and is already one fact short of what it is
+                        asked to carry - measured with card-fit-test at that width, the
+                        place chip and a lane chip together squeezed `.row-agent` to 0px
+                        and the card stopped saying which agent it was running. A device
+                        NAME is the longest string on either line (`DESKTOP-CMSUCM1`), so
+                        putting it there would cost the same fact again. The title line
+                        holds a key, a name and a right-aligned clock, and 14px between the
+                        key and the name is room it already has. The name is on the hover,
+                        with what mirroring does and does not move. */}
+                    {s.remote && (
+                      <span
+                        className="row-remote"
+                        title={`Running on ${s.remote.name}. Keystrokes go there; the agent, the folder and the transcript stay there too.`}
+                      >
+                        <RemoteIcon size={13} />
+                      </span>
+                    )}
                     {/* The whole place, on the name, so hiding the chip below (when it
                         would only repeat this name) loses no fact - the folder, the
                         branch and the pane number are all still one hover away. */}

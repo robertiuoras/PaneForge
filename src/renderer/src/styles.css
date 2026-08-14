@@ -406,6 +406,11 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    on one line to the eye; the name keeps its own ellipsis as a flex item that may shrink. */
 .row-title.has-key { display: flex; align-items: center; min-width: 0; }
 .row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "This pane's agent is on the other machine." `flex: none` for the same reason the clock
+   has it: it is 13px wide and shrinking it to 9 says nothing, where the name beside it has
+   an ellipsis and loses a character honestly. The accent is what separates it at a glance
+   from the key on its left, which is the same size and the same weight. */
+.row-remote { flex: none; display: inline-flex; align-items: center; margin-right: 5px; color: var(--accent); opacity: 0.85; }
 /* Pushed to the far end of the title line, and never squeezed: the name beside it has an
    ellipsis and this does not - "1m 2" is a wrong number, where "PaneFo…" is a short name. */
 .row-title .elapsed, .row-title .chip.dead { margin-left: auto; flex: none; }
