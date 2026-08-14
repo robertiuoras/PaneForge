@@ -43,6 +43,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import type { TunnelState } from '../shared/types'
+import { Funnel, type FunnelDeps } from './funnel'
 
 /**
  * Every budget is overridable by env for the same reason `updater.ts` does it: the cases
@@ -123,6 +124,12 @@ export interface TunnelDeps {
   probe?(url: string): Promise<boolean>
   /** answers "does public DNS carry this name yet", without touching the system resolver */
   resolve?(host: string): Promise<boolean>
+  /**
+   * The provider that is tried FIRST, because its address never changes. Passing
+   * `{ binary: '' }` is how a test - or a machine without Tailscale - gets the
+   * cloudflared path it used to be the only one of.
+   */
+  funnel?: FunnelDeps
 }
 
 export class Tunnel {
@@ -134,13 +141,22 @@ export class Tunnel {
   private stopping = false
   /** the one download in flight, shared so prefetch and start never race two writers */
   private fetching: Promise<string> | null = null
+  private funnel: Funnel
+  private via: TunnelState['via'] = ''
 
-  constructor(private deps: TunnelDeps) {}
+  constructor(private deps: TunnelDeps) {
+    this.funnel = new Funnel(deps.funnel ?? {})
+  }
 
   state(): TunnelState {
+    const up = this.phase === 'up'
     return {
       phase: this.phase,
-      url: this.phase === 'up' ? this.url : '',
+      url: up ? this.url : '',
+      via: up ? this.via : '',
+      // The one fact the panel needs in words: an address that never changes is one a
+      // phone can be signed into once and for good, and a random one is not.
+      stable: up && this.via === 'tailscale',
       error: this.lastError || undefined
     }
   }
@@ -175,6 +191,14 @@ export class Tunnel {
     if (this.busy()) return this.state()
     await this.stop()
     this.stopping = false
+    this.note('starting')
+
+    // Tailscale Funnel first, always, when this machine can do it: same public HTTPS,
+    // nothing installed on the phone, no 20 MB download - and, the reason it leads, an
+    // address that is the same one tomorrow. A random address per launch is a new origin
+    // per launch, and an origin is what a signed-in phone's cookie belongs to.
+    const stable = await this.tryFunnel(port)
+    if (stable || this.stopping) return this.state()
 
     let binary = this.deps.binary || this.deps.onPath || ''
     if (!binary) {
@@ -194,6 +218,41 @@ export class Tunnel {
 
     this.note('starting')
     return await this.run(binary, port)
+  }
+
+  /**
+   * True when the machine's own permanent address is now serving this port.
+   *
+   * Silent on every refusal. A tailnet without the funnel attribute, no Tailscale at
+   * all, a stopped tailscaled: none of those are things the person who flipped a switch
+   * called "a way in from anywhere" asked about, and every one of them has cloudflared
+   * waiting behind it. The only thing that is reported is a funnel that claimed to start
+   * and then did not answer, because that one would otherwise be an address in the panel
+   * that nothing reaches.
+   */
+  private async tryFunnel(port: number): Promise<boolean> {
+    const started = await this.funnel.start(port).catch(() => ({ url: '', denied: true, error: '' }))
+    if (!started.url) return false
+    if (this.stopping) {
+      await this.funnel.stop()
+      return false
+    }
+    // Probed exactly like the quick tunnel is, and for the same reason: the address
+    // existing is not the address answering. No DNS gate, because a `.ts.net` name is
+    // published long before this app asks - the NXDOMAIN trap this file documents is a
+    // property of `*.trycloudflare.com` being minted per run, which is the very thing
+    // this provider exists not to do.
+    const serving = await this.waitUntilServing(started.url, true)
+    if (this.stopping) return false
+    if (!serving) {
+      await this.funnel.stop()
+      this.lastError = ''
+      return false
+    }
+    this.url = started.url
+    this.via = 'tailscale'
+    this.note('up')
+    return true
   }
 
   private async run(binary: string, port: number): Promise<TunnelState> {
@@ -280,7 +339,7 @@ export class Tunnel {
    * exist yet leaves a cached NXDOMAIN behind, and after that the machine will keep
    * answering "no such host" for a tunnel that is already serving everybody else.
    */
-  private async waitUntilServing(url: string): Promise<boolean> {
+  private async waitUntilServing(url: string, published = false): Promise<boolean> {
     const probe = this.deps.probe ?? defaultProbe
     // A stubbed probe touches no resolver, so it needs no gate; the real one does. The
     // gate asks 1.1.1.1 over DoH — which bypasses the system resolver's cache entirely —
@@ -288,7 +347,8 @@ export class Tunnel {
     // straight after `Registered` was the residue of the NXDOMAIN trap this file already
     // documents: the record appears 8-13s later, so the FIRST system lookup cached the
     // NXDOMAIN and the probe then failed for 40s against a tunnel that was serving.
-    const resolve = this.deps.resolve ?? (this.deps.probe ? alwaysThere : defaultResolve)
+    const resolve =
+      this.deps.resolve ?? (published || this.deps.probe ? alwaysThere : defaultResolve)
     const host = url.replace(/^https?:\/\//, '')
     const deadline = Date.now() + PROBE_BUDGET_MS
     const resolveBy = Math.min(deadline, Date.now() + RESOLVE_BUDGET_MS)
@@ -375,6 +435,11 @@ export class Tunnel {
     this.stopping = true
     this.kill()
     this.url = ''
+    // Not a child process: `funnel --bg` is a setting tailscaled keeps, so nothing here
+    // dying takes it down. Said unconditionally rather than only when `via` was tailscale,
+    // because the state that most needs clearing is the one a crashed run left behind.
+    if (this.via === 'tailscale' || !this.via) await this.funnel.stop().catch(() => {})
+    this.via = ''
     if (this.phase !== 'off') this.note('off')
   }
 }

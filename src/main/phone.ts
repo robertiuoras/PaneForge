@@ -137,9 +137,38 @@ export class PhoneServer {
 
   constructor(private deps: PhoneDeps) {}
 
+  /**
+   * Collapse a device list that was written before approvals were deduplicated.
+   *
+   * Nine rows for three phones is what this desk's own config held, and it is not a
+   * cosmetic problem: `Sign out` is per row, so a list nobody can read is a list where
+   * revoking a device stops being a thing anybody does. Two rules, both conservative:
+   * legacy rows (no user-agent to match on) that agree about what KIND of device they are
+   * and which side of the front door they came from are one device, newest kept - and a
+   * row that was approved over a day ago and has never once connected was not a device at
+   * all. Anything with a user-agent, and anything that has ever been seen, is left alone.
+   */
+  private tidyDevices(): void {
+    const list = this.deps.devices?.() ?? []
+    if (!list.length) return
+    const dayOld = Date.now() - 86_400_000
+    const keep: PhoneDevice[] = []
+    for (const d of [...list].sort((a, b) => (b.seen || b.at) - (a.seen || a.at))) {
+      if (d.ua) {
+        keep.push(d)
+        continue
+      }
+      if (!d.seen && d.at < dayOld) continue
+      if (keep.some((k) => !k.ua && k.kind === d.kind && k.origin === d.origin)) continue
+      keep.push(d)
+    }
+    if (keep.length !== list.length) this.deps.saveDevices?.(keep)
+  }
+
   /** Start answering. Resolves once the port is really bound, or with `error` set. */
   async start(port: number, bind = '0.0.0.0'): Promise<Omit<PhoneState, 'tunnel'>> {
     await this.stop()
+    this.tidyDevices()
     this.lastError = ''
     const server = createServer((req, res) => {
       void this.route(req, res).catch((err) => {
@@ -249,15 +278,32 @@ export class PhoneServer {
     ask.answered = ok ? 'yes' : 'no'
     if (ok) {
       const list = this.deps.devices?.() ?? []
+      // One row per device, not one per approval. The same phone asks again whenever its
+      // cookie is gone - a cleared browser, a private tab, and until the address was made
+      // stable, every single restart of the app - and appending each time is what turned
+      // this list into eight rows for three phones. Matched on the user-agent because it
+      // is the only thing about a browser that survives losing the cookie; an address is
+      // not (a phone changes network) and neither is anything the phone could be asked to
+      // remember, since the reason it is here is that it remembered nothing.
+      // A row written before this app knew to record a user-agent has nothing exact to
+      // match on, so it is collapsed on the two things it does carry - what kind of device
+      // it is and which side of the front door it came from. That is deliberately loose:
+      // it converges the pile of legacy duplicates as each phone next signs in, and the
+      // worst it can do is sign out an older phone of the same make, which asks again.
+      const same = (d: PhoneDevice): boolean =>
+        d.ua ? d.ua === ask.ua : d.kind === ask.kind && d.origin === ask.origin
       this.deps.saveDevices?.([
-        ...list,
+        ...list.filter((d) => !same(d)),
         {
           id: ask.id,
           kind: ask.kind,
           address: ask.address,
           origin: ask.origin,
-          at: Date.now(),
-          seen: 0,
+          // Kept from the row it replaces: "signed in since" is a fact about the device,
+          // and re-approving after a cleared cookie did not make it a new phone.
+          at: list.find(same)?.at ?? Date.now(),
+          seen: list.find(same)?.seen ?? 0,
+          ua: ask.ua,
           token: ask.token
         }
       ])
@@ -345,7 +391,7 @@ export class PhoneServer {
     this.deps.onChange?.()
     res.writeHead(200, {
       'content-type': 'application/json',
-      'set-cookie': `pf=${ask.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_DAYS * 86400}`
+      'set-cookie': cookieFor(req, ask.token)
     })
     res.end('{"state":"yes"}')
   }
@@ -421,7 +467,7 @@ export class PhoneServer {
     this.tries.delete(who)
     res.writeHead(200, {
       'content-type': 'application/json',
-      'set-cookie': `pf=${this.token()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_DAYS * 86400}`
+      'set-cookie': cookieFor(req, this.token())
     })
     res.end('{"ok":true}')
   }
@@ -437,10 +483,19 @@ export class PhoneServer {
     const device = this.who(req)?.device ?? ''
     if (device) {
       // "Last seen" is the stream, not the request: a device that opened the page and
-      // walked away is not one that is watching.
+      // walked away is not one that is watching. The ADDRESS is refreshed with it, because
+      // the row is read as a place - "a phone in this room" and "a phone off the internet"
+      // are different sentences - and the address it was approved from months ago is not
+      // where it is now.
       const list = this.deps.devices?.() ?? []
       const now = Date.now()
-      this.deps.saveDevices?.(list.map((d) => (d.id === device ? { ...d, seen: now } : d)))
+      this.deps.saveDevices?.(
+        list.map((d) =>
+          d.id === device
+            ? { ...d, seen: now, address, origin: originOf(address), ua: d.ua || String(req.headers['user-agent'] ?? '') }
+            : d
+        )
+      )
     }
     const client: Client = {
       res,
@@ -638,6 +693,33 @@ function sameCode(typed: string, real: string): boolean {
   const b = Buffer.from(clean(real))
   if (!b.length || a.length !== b.length) return false
   return timingSafeEqual(a, b)
+}
+
+/**
+ * The Set-Cookie that keeps a phone signed in, and the two details that decide whether it
+ * really does.
+ *
+ * - **`SameSite=Lax`, not `Strict`.** Strict withholds the cookie on a CROSS-SITE
+ *   navigation, and every way this address is actually opened is one: a QR scanned in the
+ *   Camera app, a link tapped in Messages or Notes, a bookmark opened from another app's
+ *   in-app browser. The desk then sees a request with no cookie, decides this browser has
+ *   never been here, and serves the pairing page - so a phone that WAS signed in asks to
+ *   be let in again, and the sign-in that was working looked broken. Lax sends it on
+ *   top-level navigations, which is exactly that case, and still withholds it from
+ *   cross-site POSTs and subresources, which is what the flag is for.
+ * - **`Secure` only when the request arrived over TLS.** Behind Funnel or the tunnel that
+ *   is `x-forwarded-proto: https`, and a Secure cookie is what stops the same token being
+ *   sent in clear if the LAN address is ever opened. On plain http over the LAN, marking
+ *   it Secure would mean the browser stores a cookie it will never send back - a phone
+ *   that signs in successfully and is asked again on the very next request.
+ */
+function cookieFor(req: IncomingMessage, token: string): string {
+  const proto = header(req, 'x-forwarded-proto').split(',')[0].trim().toLowerCase()
+  const tls = proto === 'https' || (req.socket as { encrypted?: boolean }).encrypted === true
+  return (
+    `pf=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_DAYS * 86400}` +
+    (tls ? '; Secure' : '')
+  )
 }
 
 /**

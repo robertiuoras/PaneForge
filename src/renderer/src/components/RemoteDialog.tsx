@@ -105,7 +105,7 @@ function PhoneTunnel({
           disabled={working}
           onChange={(on) => void api.setPhoneTunnel(on).then(setState)}
           label="Reachable from outside this network"
-          hint="Opens a Cloudflare tunnel and gives this desk a public https address that works on any network, with no account and nothing to install on the phone. Your panes travel through Cloudflare, who can see them. The pairing code becomes the only lock, so switching this on makes it a longer one and signs every phone out."
+          hint="Gives this desk a public https address that works on any network, with nothing to install on the phone. Tailscale Funnel is used when this machine can - its address is this machine's own name and never changes, so a phone signs in once and stays in. Otherwise a Cloudflare quick tunnel, whose address is new every launch and whose edge can see what is typed into a pane. Either way the pairing code becomes the only lock, so switching this on makes it a longer one."
         />
         {/* A phase is never the claim. `up` is set by a real request against the real
             address coming back with this desk's own bytes - see main/tunnel.ts. */}
@@ -119,8 +119,21 @@ function PhoneTunnel({
           <div className="dev-addrs">
             <span className="dev-addr-row">
               <code className="dev-addr">{t.url}</code>
-              <span className="dev-reach">works anywhere</span>
+              {/* The difference between the two providers, in the only words that matter
+                  to somebody holding a phone: whether this address is worth putting on a
+                  home screen. A cloudflared hostname is minted per run, so the phone is
+                  signed out by the next launch however long its cookie says it is good
+                  for; a Funnel address is this machine's name and outlives everything. */}
+              <span className="dev-reach">
+                {t.stable ? 'works anywhere · this address never changes' : 'works anywhere'}
+              </span>
             </span>
+            {!t.stable && (
+              <span className="hint">
+                A new address every launch, so phones sign in again each time. Turn Funnel on
+                in Tailscale for one that sticks.
+              </span>
+            )}
           </div>
         )}
         {t.error && <div className="dev-error">{t.error}</div>}

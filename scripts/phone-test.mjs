@@ -76,10 +76,10 @@ const base = `http://127.0.0.1:${port}`
 async function get(path, cookie) {
   return await fetch(base + path, { headers: cookie ? { cookie } : {}, redirect: 'manual' })
 }
-async function post(path, body, cookie) {
+async function post(path, body, cookie, extra) {
   return await fetch(base + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
+    headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}), ...(extra ?? {}) },
     body: typeof body === 'string' ? body : JSON.stringify(body)
   })
 }
@@ -119,7 +119,21 @@ let cookie = ''
   const setCookie = right.headers.get('set-cookie') ?? ''
   ok(/^pf=[a-f0-9]{64};/.test(setCookie), 'cookie is a 32-byte digest', setCookie.slice(0, 20))
   ok(setCookie.includes('HttpOnly'), 'cookie is HttpOnly')
-  ok(setCookie.includes('SameSite=Strict'), 'cookie is SameSite=Strict')
+  // Lax, NOT Strict. Strict withholds the cookie on a cross-site navigation, and every
+  // real way this address is opened is one - a QR scanned in the Camera app, a link tapped
+  // in Messages, a bookmark from another app's browser. The desk then sees no cookie, calls
+  // the phone a stranger and serves the pairing page, which is a signed-in device being
+  // asked to sign in again.
+  ok(setCookie.includes('SameSite=Lax'), 'cookie is SameSite=Lax so a scanned link carries it')
+  ok(!setCookie.includes('SameSite=Strict'), 'and not Strict')
+  ok(!setCookie.includes('Secure'), 'no Secure over plain http, or it is a cookie never sent back')
+  const overTls = await post('/pf/pair', { code: 'abc 234' }, undefined, {
+    'x-forwarded-proto': 'https'
+  })
+  ok(
+    (overTls.headers.get('set-cookie') ?? '').includes('Secure'),
+    'behind the tunnel, where it IS https, the cookie is Secure'
+  )
   cookie = setCookie.split(';')[0]
 
   // Five wrong ones from this address and it stops answering for a minute.
@@ -489,6 +503,38 @@ let cookie = ''
   const ask = async () => await fetch(at + '/pf/ask', { method: 'POST' })
   const poll = async (id) => await (await fetch(`${at}/pf/ask?id=${encodeURIComponent(id)}`)).json()
 
+  // A list written before approvals were deduplicated is tidied on the way up. The rows
+  // this desk really held: nine, for three phones. Anything with a user-agent, or that has
+  // ever connected, is left exactly as it is.
+  {
+    const before = [
+      { id: 'a', kind: 'iPhone', origin: 'internet', address: '2401::1', at: 1, seen: 5, token: 'a'.repeat(64) },
+      { id: 'b', kind: 'iPhone', origin: 'internet', address: '2401::2', at: 2, seen: 9, token: 'b'.repeat(64) },
+      { id: 'c', kind: 'Mac', origin: 'this network', address: '10.0.0.2', at: 3, seen: 4, token: 'c'.repeat(64) },
+      { id: 'd', kind: 'Windows', origin: 'internet', address: '18.206.218.73', at: 4, seen: 0, token: 'd'.repeat(64) },
+      { id: 'e', kind: 'iPhone', origin: 'internet', address: '2401::3', at: Date.now(), seen: 0, ua: 'Mozilla/5.0 (iPhone)', token: 'e'.repeat(64) }
+    ]
+    let held = before
+    const tidy = new PhoneServer({
+      staticDir,
+      code: () => 'ABC234',
+      secret: () => 'device-secret',
+      channels: { invoke: [], send: [], on: [] },
+      invoke: async () => null,
+      send: () => {},
+      devices: () => held,
+      saveDevices: (l) => (held = l)
+    })
+    const tidyPort = port + 5
+    await tidy.start(tidyPort, '127.0.0.1')
+    const ids = held.map((d) => d.id).sort().join(',')
+    ok(ids === 'b,c,e', 'legacy duplicates collapse to one row per kind and place', ids)
+    ok(held.find((d) => d.id === 'b')?.seen === 9, 'and the one kept is the one last seen')
+    ok(!held.some((d) => d.id === 'd'), 'a row approved a day ago that never connected is dropped')
+    ok(held.some((d) => d.id === 'e'), 'a row with a user-agent is never touched')
+    await tidy.stop()
+  }
+
   const first = await ask()
   ok(first.status === 200, 'a browser may ask to be let in', String(first.status))
   const req = await first.json()
@@ -505,15 +551,37 @@ let cookie = ''
   const grant = done.headers.get('set-cookie') ?? ''
   ok((await done.clone().json()).state === 'yes', 'approved, and the phone is told so')
   ok(/^pf=[a-f0-9]{64};/.test(grant), 'the cookie arrives on the poll, the only door back')
-  ok(grant.includes('HttpOnly') && grant.includes('SameSite=Strict'), 'and is locked down')
+  ok(grant.includes('HttpOnly') && grant.includes('SameSite=Lax'), 'and is locked down')
   ok(devices.length === 1, 'the device is remembered, so it comes back signed in')
   ok(devices[0].token.length === 64 && grant.includes(devices[0].token), 'with its own secret')
   ok(!JSON.stringify(s2.state().devices).includes(devices[0].token), 'never shown to any window')
   ok(s2.state().ask === null, 'and the card is gone')
 
-  const mine = grant.split(';')[0]
+  let mine = grant.split(';')[0]
   const page = await fetch(at + '/', { headers: { cookie: mine } })
   ok((await page.text()).includes('THE-REAL-UI'), 'that cookie is the whole app')
+
+  // One row per DEVICE, not one per approval. The same phone asks again whenever its
+  // cookie is gone - a cleared browser, a private tab, and until the public address was
+  // made stable, every restart of the app - and appending each time is what turned this
+  // list into eight rows for three phones, at which point signing one out stopped meaning
+  // anything. Matched on the user-agent: it is the only thing about a browser that
+  // survives losing the cookie.
+  const wasAt = devices[0].at
+  const req2 = await (await ask()).json()
+  s2.answerAsk(true)
+  const grant2 = (await fetch(`${at}/pf/ask?id=${encodeURIComponent(req2.id)}`)).headers.get(
+    'set-cookie'
+  )
+  ok(devices.length === 1, 'approving the same phone twice is still one row', String(devices.length))
+  ok(devices[0].at === wasAt, 'and "signed in since" is when it FIRST was, not just now')
+  const stale = await fetch(at + '/', { headers: { cookie: mine } })
+  ok(!(await stale.text()).includes('THE-REAL-UI'), 'the token it replaced stops working')
+  mine = (grant2 ?? '').split(';')[0]
+  ok(
+    (await (await fetch(at + '/', { headers: { cookie: mine } })).text()).includes('THE-REAL-UI'),
+    'and the new one is the whole app'
+  )
 
   // A named public hostname must not turn one user's approved phone into a key for a
   // different PaneForge installation. Each desk keeps its own device list and root

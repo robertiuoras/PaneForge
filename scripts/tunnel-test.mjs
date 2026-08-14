@@ -88,6 +88,10 @@ const nodeShim = (file) => {
   const seen = []
   const t = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('ok')),
     probe: async () => true,
     onChange: (s) => seen.push(s.phase)
@@ -115,6 +119,10 @@ const nodeShim = (file) => {
   let asked = 0
   const t = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('ok')),
     probe: async () => {
       asked++
@@ -151,6 +159,10 @@ const nodeShim = (file) => {
   }, 300)
   const t = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('ok')),
     resolve: async () => {
       order.push(there ? 'resolved' : 'asked-early')
@@ -176,6 +188,10 @@ const nodeShim = (file) => {
   // And a DoH endpoint that never answers yes gives up at its budget and probes anyway.
   const stuck = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('ok')),
     resolve: async () => false,
     probe: async () => true,
@@ -196,6 +212,10 @@ const nodeShim = (file) => {
 {
   const quiet = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('silent')),
     probe: async () => true
   })
@@ -206,6 +226,10 @@ const nodeShim = (file) => {
 
   const died = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: nodeShim(stub('die')),
     probe: async () => true
   })
@@ -221,6 +245,10 @@ const nodeShim = (file) => {
 {
   const t = new Tunnel({
     dir: join(work, 'bin'),
+    // The stable provider is tried first in the app; these cases are about the OTHER one,
+    // so it is switched off by name. Without this every check here would pass or fail on
+    // whether the machine running the suite happens to be on a funnel-capable tailnet.
+    funnel: { binary: '' },
     binary: join(work, 'no-such-program'),
     probe: async () => true
   })
