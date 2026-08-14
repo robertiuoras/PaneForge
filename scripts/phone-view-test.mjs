@@ -339,6 +339,51 @@ try {
   ok(pane.back?.shown === true && pane.back.h >= 34, 'the way back is a finger-sized chip', JSON.stringify(pane.back))
   ok(pane.hit === 'chip', 'and nothing is drawn over it', String(pane.hit))
 
+  // The app may never be taller than the glass. A phone browser's `100vh` is the LARGE
+  // viewport - the one with the toolbars scrolled away - so `.app` at `100vh` put its last
+  // ~60px, and the typing bar with them, under Safari's bottom bar. This headless Chrome
+  // has no toolbar, so vh and dvh agree here and the numbers alone cannot fail; what it
+  // pins is that the rule is still `dvh` and that nothing overflows the viewport.
+  const fits = await evaluate(`(() => {
+    const app = document.querySelector('.app')
+    const bar = document.querySelector('.handheld-type input')
+    const r = bar?.getBoundingClientRect()
+    const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+    return {
+      rule: getComputedStyle(app).getPropertyValue('height'),
+      appH: Math.round(app.getBoundingClientRect().height),
+      innerH: innerHeight,
+      visualH: Math.round(window.visualViewport?.height ?? innerHeight),
+      barBottom: r ? Math.round(r.bottom) : null,
+      barH: r ? Math.round(r.height) : null,
+      tappable: hit === bar
+    }
+  })()`)
+  ok(fits.appH <= fits.visualH, 'the app is no taller than the viewport it is drawn in', JSON.stringify(fits))
+  // The one check that can actually fail in a browser with no toolbar: the declaration
+  // itself. `100vh` here is the bug, and it measures identically to the fix in headless.
+  const decl = await evaluate(`(() => {
+    let found = null
+    for (const sheet of document.styleSheets) {
+      let rules
+      try { rules = sheet.cssRules } catch { continue }
+      for (const rule of rules) {
+        for (const inner of rule.cssRules ?? []) {
+          if (inner.selectorText === 'html.handheld .app') found = inner.style.height
+        }
+      }
+    }
+    return found
+  })()`)
+  ok(decl === '100dvh', 'html.handheld .app is sized in dvh, not vh', String(decl))
+  ok(fits.barH >= 44, 'the typing bar is a finger-sized target', String(fits.barH))
+  ok(
+    fits.barBottom !== null && fits.barBottom <= fits.visualH - 4,
+    'and it ends inside the viewport rather than under a toolbar',
+    JSON.stringify(fits)
+  )
+  ok(fits.tappable === true, 'a tap at its centre reaches the input', String(fits.tappable))
+
   // ---- 7. and what the pane came back WITH ------------------------------------
   // The pane opened at this phone's width, which is not the desk's, so the pty is resized
   // and the pane re-wraps. That path used to answer by calling `t.clear()` - which drops
