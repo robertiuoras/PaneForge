@@ -2133,6 +2133,22 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .peer-since { flex: none; }
 .peer-tailnet .peer-dot { background: var(--acc); }
 .peer-internet .peer-dot { background: var(--warn, #f0a868); }
+/* ---- a device that stopped looking like itself ----
+   The wrap is on the marked row ONLY. `.peer` is a single flex line whose `since` and
+   `Sign out` are pushed over with `margin-left: auto`, and turning wrapping on for every
+   row would let a long address drop them onto a second line on a narrow panel - a layout
+   change to every desk, paid for by a case almost none of them will ever hit. */
+.peer-marked { flex-wrap: wrap; }
+.peer-marked .peer-dot { background: var(--danger); border-color: transparent; }
+.peer-mark {
+  flex-basis: 100%; margin: 3px 0 0; padding: 5px 7px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  border-radius: 5px; font-size: 11px; line-height: 1.45;
+  color: var(--text); background: color-mix(in oklab, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--danger) 34%, transparent);
+}
+.peer-mark-when { color: var(--muted); flex: none; }
+.peer-mark .ghost.small { margin-left: auto; flex: none; }
 /* ---- pairing by asking ----
    The six digits are the authentication, so they are drawn like the thing being read out
    loud: big, monospaced, split 3+3 the way anybody reads a number off a screen. Both the

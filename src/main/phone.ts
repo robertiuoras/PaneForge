@@ -44,6 +44,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
+import { markFor } from '../shared/deviceWatch'
 import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
@@ -86,7 +87,7 @@ const ASK_WINDOW_MS = 10 * 60_000
  * transports, and a channel that is desk-only is a property of the TRANSPORT, not of the
  * surface. The window keeps reaching these through ipcMain exactly as before.
  */
-const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey'])
+const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey', 'phone:clearMark'])
 
 /**
  * The channels a browser may not reach without a passkey touch.
@@ -382,6 +383,40 @@ export class PhoneServer {
    * once, because `who()` looks the token up in this list on every single request, and its
    * stream is ended rather than left drawing a desk it is no longer allowed to see.
    */
+  /**
+   * Notice that a signed-in device has stopped looking like itself, and keep it on the row.
+   *
+   * The long-lived cookie is the point of the feature - a phone that has to be re-approved
+   * at the desk is the manual step this whole path exists to delete - so the answer to "it
+   * lasts ten years" is that a copy of it should be VISIBLE rather than that it should
+   * expire. Nothing here refuses the request: see the header of `shared/deviceWatch.ts` for
+   * why a watcher that revokes on suspicion is worse than no watcher at all.
+   *
+   * An existing mark is never overwritten by a quieter one and never cleared by an ordinary
+   * arrival - only `clearMark` on the desk takes it off. A warning that a later, innocent
+   * request wipes out is a warning nobody ever sees, because the browser holding the stolen
+   * cookie is making requests too.
+   */
+  private noticeArrival(device: string, address: string, ua: string): void {
+    const list = this.deps.devices?.() ?? []
+    const known = list.find((d) => d.id === device)
+    if (!known || known.mark) return
+    const elsewhere = [...this.clients]
+      .filter((c) => c.alive && c.device === device)
+      .map((c) => c.origin)
+    const mark = markFor(known, { address, origin: originOf(address), ua, at: Date.now() }, elsewhere)
+    if (!mark) return
+    this.deps.saveDevices?.(list.map((d) => (d.id === device ? { ...d, mark } : d)))
+    this.deps.onChange?.()
+  }
+
+  /** "That was me." Desk-only, and it takes the mark off without touching the sign-in. */
+  clearMark(id: string): void {
+    const list = this.deps.devices?.() ?? []
+    this.deps.saveDevices?.(list.map((d) => (d.id === id || id === '*' ? { ...d, mark: null } : d)))
+    this.deps.onChange?.()
+  }
+
   forgetDevice(id: string): void {
     const list = this.deps.devices?.() ?? []
     this.deps.saveDevices?.(id === '*' ? [] : list.filter((d) => d.id !== id))
@@ -553,6 +588,11 @@ export class PhoneServer {
     const address = addressOf(req)
     const device = this.who(req)?.device ?? ''
     if (device) {
+      // Before the row is overwritten with where it is NOW, ask whether what just arrived
+      // still looks like the thing that was approved. It has to happen here rather than on
+      // every request because the answer needs the old address and the old user-agent, and
+      // this is the last moment they exist. Advisory only: `markFor` never refuses.
+      this.noticeArrival(device, address, String(req.headers['user-agent'] ?? ''))
       // "Last seen" is the stream, not the request: a device that opened the page and
       // walked away is not one that is watching. The ADDRESS is refreshed with it, because
       // the row is read as a place - "a phone in this room" and "a phone off the internet"

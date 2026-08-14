@@ -138,6 +138,7 @@ export const SURFACE: Surface = {
   setPhoneTunnel: ['invoke', 'phone:tunnel'],
   answerPhoneAsk: ['invoke', 'phone:answerAsk'],
   forgetPhoneDevice: ['invoke', 'phone:forget'],
+  clearPhoneMark: ['invoke', 'phone:clearMark'],
   setPhoneAsking: ['invoke', 'phone:asking'],
   setPhoneTypeGate: ['invoke', 'phone:typeGate'],
   forgetPhoneKey: ['invoke', 'phone:forgetKey'],

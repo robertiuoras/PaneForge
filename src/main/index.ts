@@ -1717,6 +1717,15 @@ ipcMain.handle('phone:forget', (_e, id: string) => {
   phone.forgetDevice(String(id ?? ''))
   return phoneState()
 })
+/**
+ * Desk-only, and that is the whole point: a browser that can dismiss the warning raised
+ * ABOUT it has not been warned about. `DESK_ONLY` in phone.ts refuses this over HTTP with
+ * the same answer as a channel that does not exist.
+ */
+ipcMain.handle('phone:clearMark', (_e, id: string) => {
+  phone.clearMark(String(id ?? ''))
+  return phoneState()
+})
 ipcMain.handle('phone:asking', (_e, on: boolean) => {
   const cfg = getConfig()
   setConfig({ phone: { ...cfg.phone!, ask: !!on } })

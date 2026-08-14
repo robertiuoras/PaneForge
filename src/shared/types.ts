@@ -15,6 +15,7 @@ import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
 // Same type-level-only cycle as goals: handoff.ts imports Session from here.
 import type { HandoffItem } from './handoff'
+import type { DeviceMark } from './deviceWatch'
 import type { Improvement } from './promptSchema'
 import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
@@ -1008,6 +1009,13 @@ export interface PhoneDevice {
    */
   ua?: string
   /**
+   * What was noticed the last time this token arrived looking like somebody else, and null
+   * once it has been read and dismissed on the desk. Advisory only - nothing in the server
+   * refuses a request because of it, because a watcher that revokes on suspicion locks the
+   * owner out from a train. See `shared/deviceWatch.ts`.
+   */
+  mark?: DeviceMark | null
+  /**
    * Its secret, 32 random bytes as hex. NEVER leaves the main process: `PhoneState`
    * carries `PhoneDeviceView`, which is this without the token.
    */
@@ -1808,6 +1816,11 @@ export interface Api {
   answerPhoneAsk(ok: boolean): Promise<PhoneState>
   /** sign one approved device out. Its cookie stops working at once. */
   forgetPhoneDevice(id: string): Promise<PhoneState>
+  /**
+   * Dismiss what was noticed about one device - "that was me". Desk-only: refused over
+   * HTTP, because a warning a stolen cookie can clear about ITSELF is not a warning.
+   */
+  clearPhoneMark(id: string): Promise<PhoneState>
   /** whether a browser may ask to be let in at all, instead of typing the code */
   setPhoneAsking(on: boolean): Promise<PhoneState>
   /** Require a passkey touch before a browser may type. Desk-only: refused over HTTP. */

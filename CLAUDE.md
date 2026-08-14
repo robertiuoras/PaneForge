@@ -370,6 +370,24 @@ channel of its own.
   no cookie, calls a signed-in phone a stranger and serves the pairing page. `Secure` is
   added only when the request really arrived over TLS (`x-forwarded-proto`), since on plain
   http over the LAN it is a cookie the browser stores and never sends back.
+- **The cookie lasts ten years, so a copy of it has to be VISIBLE.** Expiring it is the
+  wrong answer twice over: a phone that loses its cookie needs somebody standing at the
+  desk to approve it again, which is the manual step this whole path exists to delete. So
+  `shared/deviceWatch.ts` watches instead, and it never refuses a request — a watcher that
+  revokes on suspicion locks Robert out from a train, which is the failure that makes the
+  feature not worth having. It marks the row; `Sign out` is still a press.
+  - **A signal that fires on ordinary life is not a signal.** A phone leaving the house
+    changes its address and its origin every day, so a changed PLACE is recorded and never
+    alarmed on. What is left is the two things a phone does not do by itself: turn into a
+    different browser (compared on a version-stripped `uaShape`, because an iOS upgrade
+    rewrites the numbers and marking every device the morning after a release is how a
+    warning stops being read), and hold a live stream from two origins at once — one
+    sign-in is one browser, so that is a copied cookie even when the user-agent matches.
+  - **An existing mark is never overwritten and never cleared by an ordinary arrival.**
+    The browser holding the stolen cookie is making requests too, so a later innocent one
+    wiping the mark means nobody ever sees it. `phone:clearMark` is the only eraser and it
+    is in `DESK_ONLY`: a warning a stolen cookie can dismiss about ITSELF is not a warning.
+  - `npm run test:devicewatch`, whose load-bearing half is the negative cases.
 - **One row per device, not one per approval.** A phone re-asks whenever its cookie is
   gone, and appending each time is what made this desk's list nine rows for three phones —
   at which point `Sign out`, which is per row, stops meaning anything. Approval replaces the
@@ -897,6 +915,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:devicewatch` | noticing that a ten-year cookie has been copied — and, the half that decides whether anybody ever reads a mark, that a phone leaving the house, an iOS version bump, a reloaded tab and a row with no stored user-agent all say NOTHING |
 | `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |

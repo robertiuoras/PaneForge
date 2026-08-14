@@ -45,6 +45,7 @@
     "test:conceal": "node scripts/conceal-test.mjs",
     "test:voice": "node scripts/voice-test.mjs",
     "test:place": "node scripts/place-test.mjs",
+    "test:devicewatch": "node scripts/device-watch-test.mjs",
     "test:projects": "node scripts/projects-test.mjs",
     "test:cardfit": "node scripts/card-fit-test.mjs",
     "test:fleet": "node scripts/fleet-test.mjs",

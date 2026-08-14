@@ -190,7 +190,12 @@ function PhoneDevices({
       {devices.length || anon.length ? (
         <ul className="peer-list">
           {devices.map((d) => (
-            <li key={d.id} className={`peer peer-${d.origin.replace(/\s+/g, '-')}`}>
+            <li
+              key={d.id}
+              className={
+                `peer peer-${d.origin.replace(/\s+/g, '-')}` + (d.mark ? ' peer-marked' : '')
+              }
+            >
               <span className={'peer-dot' + (d.live ? ' live' : '')} aria-hidden="true" />
               <span className="peer-kind">{d.kind}</span>
               <code className="peer-addr">{d.address}</code>
@@ -206,6 +211,27 @@ function PhoneDevices({
               >
                 Sign out
               </button>
+              {/*
+                The sentence sits UNDER the row rather than inside it because it is the one
+                thing here somebody has to read rather than scan, and the row is already at
+                its width. `Sign out` above is the action; this only explains it.
+              */}
+              {d.mark && (
+                <p className="peer-mark">
+                  <span className="peer-mark-when">{sinceWords(d.mark.at)}</span>
+                  {d.mark.words}
+                  <button
+                    className="ghost small"
+                    title="Dismiss this. The device stays signed in."
+                    onClick={() => {
+                      void api.clearPhoneMark(d.id).then(setState)
+                      flash('Dismissed. That device is still signed in.')
+                    }}
+                  >
+                    That was me
+                  </button>
+                </p>
+              )}
             </li>
           ))}
           {anon.map((p) => (
