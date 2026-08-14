@@ -1279,6 +1279,12 @@ export interface Config {
    * the folder, which is only safe when one of them is read-only.
    */
   autoLane: boolean
+  /**
+   * When this machine is out of memory, start the next pane on a paired device instead.
+   * Only fires when the capacity policy already says so AND that device has the same
+   * project - never silently, and never onto a machine that cannot open the folder.
+   */
+  offloadWhenFull: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /**

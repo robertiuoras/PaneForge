@@ -57,8 +57,11 @@ import TerminalPane, {
 } from './components/TerminalPane'
 import {
   FULL_SCROLLBACK,
+  offloadTarget,
+  projectNameOf,
   savingMb,
   trimPlan,
+  type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
 import { DEFAULT_RECLAIM, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
@@ -901,9 +904,83 @@ export default function App(): JSX.Element {
     return `Into ${describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 }).full}`
   }, [voice.target, activeId, sessions])
 
+  // Declared up here rather than beside the trim effect that also reads it: the launch
+  // path below has to know whether this machine is full BEFORE it starts anything.
+  const [capacity, setCapacity] = useState<Verdict | null>(null)
+  useEffect(() => api.onCapacity(setCapacity), [])
+
+  /**
+   * Send what this machine cannot afford to a paired device, and hand back the rest.
+   *
+   * The capacity verdict has said "the paired device can take the next one" in the
+   * sentence on screen since the feature landed, and nothing acted on it - so the advice
+   * was a chore handed to the person at the exact moment the machine was too busy to be
+   * pleasant to use. The decision itself is in shared/capacity.ts where it can be tested
+   * without filling a real machine's RAM; this only does the asking and the telling.
+   *
+   * A pane that moved MUST say so. A session that appears on another machine without a
+   * word is the same failure as one that never started: the person goes looking for it.
+   */
+  const offloadReqs = useCallback(
+    async (reqs: StartSessionRequest[]): Promise<StartSessionRequest[]> => {
+      if (!capacity?.offload || config?.offloadWhenFull === false) return reqs
+      let candidates: OffloadCandidate[]
+      try {
+        const state = await api.remoteState()
+        const online = state.peers.filter((p) => p.status === 'online')
+        if (!online.length) return reqs
+        candidates = await Promise.all(
+          online.map(async (p) => ({
+            device: p.id,
+            deviceName: p.name,
+            online: true,
+            // What THAT machine calls its projects, and where they live over there.
+            projects: await api.remoteProjects(p.id).catch(() => [] as { name: string; path: string }[])
+          }))
+        )
+      } catch {
+        // A peer that cannot be asked is a peer that cannot be used. Everything stays here.
+        return reqs
+      }
+      const local: StartSessionRequest[] = []
+      const sent: string[] = []
+      for (const req of reqs) {
+        const target = offloadTarget(capacity, candidates, projectNameOf(req.cwd))
+        if (!target) {
+          local.push(req)
+          continue
+        }
+        try {
+          await api.startRemote(target.device, { ...req, cwd: target.cwd })
+          sent.push(target.deviceName)
+        } catch {
+          // The remote start is the one that may fail for reasons this machine cannot see.
+          // Falling back to local is always safe: it is what would have happened anyway.
+          local.push(req)
+        }
+      }
+      if (sent.length) {
+        const names = [...new Set(sent)].join(', ')
+        flash(
+          `This machine is full - started ${sent.length} pane${sent.length === 1 ? '' : 's'} on ${names}.`
+        )
+      }
+      return local
+    },
+    [capacity, config, flash]
+  )
+
   const start = useCallback(
     async (reqs: StartSessionRequest[]) => {
       setPicking(false)
+      const wanted = reqs
+      reqs = await offloadReqs(reqs)
+      if (!reqs.length) {
+        // Everything went to a peer. Still remember the model, or the next launch forgets
+        // what was picked purely because the machine happened to be busy.
+        rememberModel(wanted[0]?.agent, wanted[0]?.model)
+        return
+      }
       const started = await api.startSessions(reqs)
       if (started.length) setActiveId(started[started.length - 1].id)
       if (started.length < reqs.length) flash('Some folders could not be opened.')
@@ -918,7 +995,7 @@ export default function App(): JSX.Element {
       }
       rememberModel(reqs[0]?.agent, reqs[0]?.model)
     },
-    [flash, rememberModel]
+    [flash, rememberModel, offloadReqs]
   )
 
   const launchPreset = useCallback(
@@ -1456,9 +1533,6 @@ export default function App(): JSX.Element {
    * destroy that with no undo and no message. Off-screen panes go first; a visible but
    * unfocused pane only once the kernel says critical.
    */
-  const [capacity, setCapacity] = useState<Verdict | null>(null)
-  useEffect(() => api.onCapacity(setCapacity), [])
-
   /**
    * What each pane is really costing, four seconds at a time (src/shared/usage.ts).
    *
@@ -1471,6 +1545,7 @@ export default function App(): JSX.Element {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
   }, [])
+
   const depthRef = useRef(FULL_SCROLLBACK)
   useEffect(() => {
     if (!capacity) return

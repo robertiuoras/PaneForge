@@ -26,7 +26,7 @@ const src = readFileSync(join(here, '..', 'src', 'shared', 'capacity.ts'), 'utf8
 const js = src
   .replace(/^export type .*$/gm, '')
   .replace(/^export interface [\s\S]*?^}$/gm, '')
-  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
+  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|Offload|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
   .replace(/<[A-Za-z]+(\[\])?>/g, '')
 const dir = join(tmpdir(), 'paneforge-capacity-test')
 rmSync(dir, { recursive: true, force: true })
@@ -41,7 +41,9 @@ const {
   SESSION_MB,
   BUFFER_MB_PER_1K,
   FULL_SCROLLBACK,
-  TRIMMED_SCROLLBACK
+  TRIMMED_SCROLLBACK,
+  offloadTarget,
+  projectNameOf
 } = await import('file://' + mod.replace(/\\/g, '/'))
 
 let failed = 0
@@ -160,6 +162,48 @@ ok('zero panes under critical pressure still says over',
 ok('a tiny machine does not produce a negative room count',
   assess({ totalMb: 512, pressure: 'normal', localPanes: 4 }).roomFor === 0)
 ok('an empty pane list plans nothing', trimPlan([], crit).length === 0)
+
+
+// ------------------------------------------------- where the next pane should start
+//
+// `offload` was computed and consumed by nothing for as long as the feature existed, so
+// these cover the executing half. Every refusal here is a real failure that reached a
+// user: a pane started on a path the other machine does not have opens nothing.
+
+const PEER = (o = {}) => ({
+  device: 'pc-1',
+  deviceName: 'DESKTOP-CMSUCM1',
+  online: true,
+  projects: [{ name: 'toolstash', path: 'C:\\Users\\Gamer\\Desktop\\Projects\\toolstash' }],
+  ...o
+})
+const full = assess(machine({ pressure: 'critical', localPanes: 6, peerAvailable: true }))
+const roomy = assess(machine({ pressure: 'normal', localPanes: 1, peerAvailable: true }))
+
+ok('a full machine with a peer that has the project offloads', !!offloadTarget(full, [PEER()], 'toolstash'))
+ok(
+  'and it starts on THAT machine\'s path, never this one\'s',
+  offloadTarget(full, [PEER()], 'toolstash')?.cwd === 'C:\\Users\\Gamer\\Desktop\\Projects\\toolstash',
+  offloadTarget(full, [PEER()], 'toolstash')?.cwd
+)
+ok('a machine with room keeps its own panes', offloadTarget(roomy, [PEER()], 'toolstash') === null)
+ok(
+  'a peer that does not have the project is never used',
+  offloadTarget(full, [PEER()], 'secondtonone') === null
+)
+ok('an offline peer is never used', offloadTarget(full, [PEER({ online: false })], 'toolstash') === null)
+ok('no peers at all is not an offload', offloadTarget(full, [], 'toolstash') === null)
+ok('the setting turns it off outright', offloadTarget(full, [PEER()], 'toolstash', false) === null)
+ok('an empty project name never matches', offloadTarget(full, [PEER({ projects: [{ name: '', path: 'C:\\x' }] })], '') === null)
+ok(
+  'the first online peer that has it wins',
+  offloadTarget(full, [PEER({ online: false }), PEER({ device: 'pc-2', deviceName: 'Second' })], 'toolstash')?.device === 'pc-2'
+)
+
+ok('a posix path yields its project name', projectNameOf('/Users/robertiuoras/Projects/toolstash') === 'toolstash')
+ok('a windows path yields the same name', projectNameOf('C:\\Users\\Gamer\\Desktop\\Projects\\toolstash') === 'toolstash')
+ok('a trailing separator does not produce an empty name', projectNameOf('/Users/rob/Projects/toolstash/') === 'toolstash')
+ok('a nameless path is not a match', projectNameOf('/') === '')
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

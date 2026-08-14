@@ -219,6 +219,10 @@ function defaults(): Config {
     saveHistory: true,
     historyDays: 30,
     autoLane: true,
+    // On, because the alternative is thrashing: the capacity verdict only asks for this
+    // once panes here already cost more than the machine has, and the launch says out
+    // loud where the pane went. Off keeps every pane local whatever the machine is doing.
+    offloadWhenFull: true,
     voice: { enabled: true, model: 'base', language: 'auto', engine: 'auto' },
     // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
     // nothing and nothing runs until a person clicks - which is what made off-by-default
