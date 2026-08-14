@@ -48,6 +48,27 @@ export const TERMINAL: readonly ResearchOutcome[] = [
 /** Outcomes a person has to see. The rest are noise on a dashboard. */
 export const NOTIFY: readonly ResearchOutcome[] = ['failed', 'needs-human']
 
+/**
+ * Did the run open nothing and return nothing?
+ *
+ * `no-finding` is a CONCLUSION: sources were read and none of them cleared the bar. A run
+ * that opened zero sources and returned zero findings concluded nothing - it returned
+ * early, because a tool was refused, an answer was truncated, or the model answered from
+ * memory in twenty seconds. Both shapes serialise to the same near-empty JSON, so without
+ * this check the broken one is filed as a success and the question is never asked again.
+ *
+ * The measured case is run `2026-08-15-current-frontend-framework-capabilities`, which
+ * came back in 26s with `tokens: 0`, `sources: []`, `findings: []` and was recorded `done`.
+ * A failure must be loud and must not share a shape with a good outcome.
+ */
+export function openedNothing(
+  sources: readonly { opened?: boolean }[] | undefined,
+  findingCount: number
+): boolean {
+  const opened = (sources ?? []).filter((s) => s?.opened === true).length
+  return opened === 0 && findingCount === 0
+}
+
 export interface ResearchBudget {
   /** Wall clock. A run that has not concluded by here is `deferred`, not killed silently. */
   ms: number

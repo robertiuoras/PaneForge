@@ -14,7 +14,8 @@
 //   node scripts/research-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -327,6 +328,76 @@ check(
     licence: 'MIT', cost: 'free', status: 'draft', confidence: 'low', lastVerified: iso(0)
   }).ok
 )
+
+// ---------------------------------------------------------------------------
+// a run that answered without researching
+// ---------------------------------------------------------------------------
+//
+// The fixture below is the REAL output of scheduled run
+// 2026-08-15-current-frontend-framework-capabilities, byte for byte: 26 seconds, zero
+// tokens, zero sources, zero findings, recorded `done` by the runner. A hand-written stub
+// would have carried a `sources` array out of habit and proved nothing.
+
+console.log('\n--- a run that opened nothing ---')
+
+const emptyRun = {
+  run: {
+    id: '2026-08-15-current-frontend-framework-capabilities',
+    date: '2026-08-15',
+    theme: 'current frontend framework capabilities',
+    question: 'Which browser features we currently polyfill are now baseline across all three engines?',
+    tokens: 0,
+    sources: []
+  },
+  findings: []
+}
+
+check('an empty answer with a question is still no research', R.openedNothing(emptyRun.run.sources, emptyRun.findings.length))
+check('a missing sources array counts as opening nothing', R.openedNothing(undefined, 0))
+check(
+  'a source that was listed but never opened does not count as research',
+  R.openedNothing([{ url: 'https://example.com', opened: false }], 0)
+)
+check(
+  'one opened source and no finding is an honest no-finding, not a failure',
+  R.openedNothing([{ url: 'https://example.com', opened: true }], 0) === false
+)
+check(
+  'a finding without a recorded source is judged by the gate, not by this check',
+  R.openedNothing([], 1) === false
+)
+
+// End to end through the real gate: the receipt must say `failed`, and the exit code must
+// be non-zero, or a 3am caller that only checks one of the two files it as a success.
+const ingestPath = join(root, 'scripts', 'capability-ingest.mjs')
+const runFile = join(work, 'empty-run.json')
+writeFileSync(runFile, JSON.stringify(emptyRun), 'utf8')
+let receipt = {}
+let exitCode = 0
+try {
+  const out = execFileSync(process.execPath, [ingestPath, '--run', runFile, '--dry-run'], { encoding: 'utf8' })
+  receipt = JSON.parse(out)
+} catch (e) {
+  exitCode = e.status ?? 1
+  receipt = JSON.parse(String(e.stdout ?? '{}'))
+}
+check('the gate calls it failed, not no-finding', receipt.outcome === 'failed', `got ${receipt.outcome}`)
+check('the receipt says why', /without researching/.test(String(receipt.detail)), String(receipt.detail))
+check('the exit code is non-zero', exitCode !== 0, `exit ${exitCode}`)
+
+// The other half of the same rule: a run that DID open a source and kept nothing must
+// still be a success, or the pipeline learns to lower its bar to look busy.
+const honestFile = join(work, 'honest-run.json')
+writeFileSync(
+  honestFile,
+  JSON.stringify({
+    run: { ...emptyRun.run, id: 'honest-run', sources: [{ ...officialSource }], tokens: 4000 },
+    findings: []
+  }),
+  'utf8'
+)
+const honest = JSON.parse(execFileSync(process.execPath, [ingestPath, '--run', honestFile, '--dry-run'], { encoding: 'utf8' }))
+check('read four pages and kept nothing is still no-finding', honest.outcome === 'no-finding', `got ${honest.outcome}`)
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
 process.exit(failed ? 1 : 0)

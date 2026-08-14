@@ -26,7 +26,7 @@ import { app } from 'electron'
 import type { Capability } from '../shared/capability'
 import { nextReviewDate, parseCapability, stage } from '../shared/capability'
 import type { Finding, ResearchOutcome, ResearchSource } from '../shared/research'
-import { EVIDENCE_CLASSES, INTERACTIVE_BUDGET, LEAD_CLASSES, coveredBy, parseFinding } from '../shared/research'
+import { EVIDENCE_CLASSES, INTERACTIVE_BUDGET, LEAD_CLASSES, coveredBy, openedNothing, parseFinding } from '../shared/research'
 import { extractJson } from '../shared/promptSchema'
 import type { ImproveEngine } from './improve'
 import { cancelRun, runCli } from './improve'
@@ -232,16 +232,21 @@ export async function research(input: ResearchInput): Promise<ResearchReport> {
   }
 
   const stored = store(keep, runId, today)
-  const outcome: ResearchOutcome = stored.length ? 'completed' : 'no-finding'
+  // Opening nothing and returning nothing is not `no-finding` - it is a run that answered
+  // without researching, and it must not share an outcome with an honest empty result.
+  const noResearch = openedNothing(sources, raw.length)
+  const outcome: ResearchOutcome = stored.length ? 'completed' : noResearch ? 'failed' : 'no-finding'
 
   return {
     ok: true,
     outcome,
     detail: stored.length
       ? `${stored.length} new, unverified. Nothing was installed.`
-      : rejected.length
-        ? `nothing met the bar - ${rejected.length} finding(s) rejected`
-        : 'no durable finding',
+      : noResearch
+        ? 'no source was opened and no finding returned - the run answered without researching'
+        : rejected.length
+          ? `nothing met the bar - ${rejected.length} finding(s) rejected`
+          : 'no durable finding',
     kept: stored.map((c) => ({
       id: c.id,
       name: c.name,
