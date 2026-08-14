@@ -56,7 +56,10 @@ if (!DESK || !ZONE || !EMAILS.length) {
   process.exit(1)
 }
 
-const HOSTNAME = `${DESK}.${SUB}.${ZONE}`
+// `--subdomain ''` is a legitimate ask - it means "put this desk straight under the zone" -
+// and joining blindly produced `panes..taskdriver.ai`, which Cloudflare accepts into an
+// Access application and which nothing will ever resolve.
+const HOSTNAME = [DESK, SUB, ZONE].filter(Boolean).join('.')
 
 /**
  * The Access-scoped token is looked for FIRST and separately.
@@ -84,11 +87,11 @@ function token() {
 
 const TOKEN = token()
 
-async function cf(path, init = {}) {
+async function call(path, init, bearer) {
   const res = await fetch(API + path, {
     ...init,
     headers: {
-      authorization: `Bearer ${TOKEN.token}`,
+      authorization: `Bearer ${bearer}`,
       'content-type': 'application/json',
       ...(init.headers ?? {})
     }
@@ -96,6 +99,41 @@ async function cf(path, init = {}) {
   const body = await res.json().catch(() => ({ success: false, errors: [{ message: 'not JSON' }] }))
   return { status: res.status, ok: !!body.success, result: body.result, errors: body.errors ?? [] }
 }
+
+async function cf(path, init = {}) {
+  return await call(path, init, TOKEN.token)
+}
+
+/**
+ * DNS, and DNS only, may fall back to the other token on the machine.
+ *
+ * Cloudflare's account-owned tokens (`cfat_`) can hold every Access and Tunnel permission and
+ * still be unable to read a zone's DNS records, because zone permissions live on a different
+ * axis - measured here 2026-08-14 on a token the dashboard called full access. Rather than
+ * stall the whole run on that, the LAST and least dangerous step is allowed to try the older
+ * zone-scoped token.
+ *
+ * This is not the fallback the header warns against. That one would have used a weaker token
+ * for the guard and a stronger one for the door; this runs after Access is already in place,
+ * and a DNS record with no Access app in front is the thing that cannot happen here because
+ * the Access step is upstream of it and fatal.
+ */
+async function dns(path, init = {}) {
+  const first = await cf(path, init)
+  if (first.ok || !isAuth(first)) return first
+  let other = ''
+  try {
+    other = readFileSync(join(homedir(), '.config/cloudflare/token'), 'utf8').trim()
+  } catch {
+    return first
+  }
+  if (!other || other === TOKEN.token) return first
+  const second = await call(path, init, other)
+  if (second.ok) say('  (used ~/.config/cloudflare/token for DNS - the Access token has no zone scope)')
+  return second.ok ? second : first
+}
+
+const isAuth = (r) => r.errors.some((e) => e.code === 10000 || /authentication/i.test(String(e.message)))
 
 const say = (s) => console.log(s)
 const plan = (s) => console.log(APPLY ? `  ${s}` : `  WOULD ${s}`)
@@ -116,9 +154,23 @@ function die(what, r, scope = '') {
 
 // ---- 1. who we are ------------------------------------------------------------------
 
+/**
+ * "Is this token any good" is NOT `/user/tokens/verify`.
+ *
+ * That endpoint only knows USER-owned tokens. An account-owned one (the `cfat_` prefix, which
+ * is what the dashboard mints now) answers it with a flat `1000: Invalid API Token` while
+ * being perfectly valid for every account and zone call - measured 2026-08-14, and it stopped
+ * this script dead on a token that could do the entire job. So the fallback is the real
+ * question: can it list the accounts we are about to work in.
+ */
 const verify = await cf('/user/tokens/verify')
-if (!verify.ok) die('token verify', verify)
-say(`token: valid (${TOKEN.from})`)
+if (verify.ok) {
+  say(`token: valid, user-owned (${TOKEN.from})`)
+} else {
+  const accounts = await cf('/accounts')
+  if (!accounts.ok) die('token verify', accounts, 'Account: Account Settings: Read')
+  say(`token: valid, account-owned (${TOKEN.from})`)
+}
 
 const zones = await cf(`/zones?name=${encodeURIComponent(ZONE)}`)
 if (!zones.ok || !zones.result?.length) die(`looking up zone ${ZONE}`, zones, 'Zone: Zone: Read')
@@ -205,7 +257,9 @@ if (app) {
 // ---- 3. the tunnel, only now --------------------------------------------------------
 
 say('\nTunnel')
-const name = `paneforge-${DESK}`
+// Overridable: a desk provisioned by hand may already own a tunnel under another name, and
+// deriving it from --desk would quietly build a SECOND tunnel next to the working one.
+const name = flag('tunnel', `paneforge-${DESK}`)
 const list = await cf(`/accounts/${ACCOUNT}/cfd_tunnel?name=${encodeURIComponent(name)}&is_deleted=false`)
 if (!list.ok) die('listing tunnels', list, 'Account: Cloudflare Tunnel: Edit')
 let tunnel = (list.result ?? [])[0]
@@ -249,7 +303,7 @@ if (tunnel) {
 // ---- 4. DNS -------------------------------------------------------------------------
 
 say('\nDNS')
-const recs = await cf(`/zones/${zone.id}/dns_records?name=${encodeURIComponent(HOSTNAME)}`)
+const recs = await dns(`/zones/${zone.id}/dns_records?name=${encodeURIComponent(HOSTNAME)}`)
 if (!recs.ok) die('listing DNS records', recs, 'Zone: DNS: Edit')
 const want = tunnel ? `${tunnel.id}.cfargotunnel.com` : '<tunnel-id>.cfargotunnel.com'
 const rec = (recs.result ?? [])[0]
@@ -258,7 +312,7 @@ if (rec && rec.content === want) {
 } else if (rec) {
   plan(`repoint the existing CNAME from ${rec.content} to ${want}`)
   if (APPLY) {
-    const up = await cf(`/zones/${zone.id}/dns_records/${rec.id}`, {
+    const up = await dns(`/zones/${zone.id}/dns_records/${rec.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ content: want, proxied: true })
     })
@@ -268,7 +322,7 @@ if (rec && rec.content === want) {
 } else {
   plan(`create CNAME ${HOSTNAME} -> ${want} (proxied)`)
   if (APPLY) {
-    const made = await cf(`/zones/${zone.id}/dns_records`, {
+    const made = await dns(`/zones/${zone.id}/dns_records`, {
       method: 'POST',
       body: JSON.stringify({ type: 'CNAME', name: HOSTNAME, content: want, proxied: true })
     })
