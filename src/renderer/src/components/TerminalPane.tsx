@@ -1347,6 +1347,31 @@ export default function TerminalPane({
     }
 
     /**
+     * Swallow a click ON ITS WAY TO THE AGENT, and only then.
+     *
+     * A highlight that appeared with no button held down, and then followed the pointer
+     * around the pane, was this: the click-to-move handlers below run in the CAPTURE phase
+     * on the pane's host element and used to call `stopPropagation` unconditionally.
+     * xterm's selection service registers its `mousemove` and `mouseup` on the DOCUMENT
+     * when a mousedown starts a selection (`_addMouseDownListeners`) and takes them off
+     * again in its `mouseup` listener - which is a bubble-phase listener on the document,
+     * so a capture-phase `stopPropagation` up here means it never runs. The mousemove
+     * listener then stays attached for the life of the pane, and every later mouse
+     * MOVEMENT extends the selection xterm still believes is being dragged.
+     *
+     * The stop is there to keep a CLI with mouse reporting on from acting on the same
+     * click, and that is the one case where it costs nothing: with mouse reporting on,
+     * xterm has disabled its own selection (`Terminal.ts`, on protocol change), so
+     * `handleMouseDown` returned before registering anything and there is nothing to
+     * leak. In a pane that is NOT grabbing the mouse there is no agent to protect the
+     * click from and xterm's own bookkeeping is the only thing listening, so it is left
+     * alone. `preventDefault` still stops the browser's own drag-select either way.
+     */
+    const stopForAgent = (e: MouseEvent): void => {
+      if (mouseGrabbed()) e.stopPropagation()
+    }
+
+    /**
      * A bare click puts the cursor where you clicked, as long as it stays on the line
      * being typed.
      *
@@ -1517,7 +1542,7 @@ export default function TerminalPane({
         })
         if (!boxKeys) return
         e.preventDefault()
-        e.stopPropagation()
+        stopForAgent(e)
         api.write(sessionId, boxKeys)
         return
       }
@@ -1533,7 +1558,7 @@ export default function TerminalPane({
       })
       if (!keys) return
       e.preventDefault()
-      e.stopPropagation()
+      stopForAgent(e)
       api.write(sessionId, keys)
     }
 
