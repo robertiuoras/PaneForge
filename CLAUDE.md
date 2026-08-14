@@ -520,6 +520,12 @@ modifier and why this one did too.
   separate lines of a box is refused, never guessed, because the newline and the frame are
   not `cols` characters. Mod+A highlights the whole input and hands the key back when there
   is nothing to select, so Ctrl+A stays a line editor's "start of line" in a plain shell.
+- **The click is swallowed only on its way to an AGENT.** These handlers are capture-phase
+  on the pane's host, and an unconditional `stopPropagation` there also robs xterm of the
+  mouseup it removes its own drag listeners from — so the selection kept following the
+  pointer with no button held. The stop is kept only while the CLI has mouse reporting on,
+  which is exactly when xterm has disabled its selection service and has nothing to leak.
+  `npm run test:stickyselect`.
 - Alt/Option-click still reaches other lines, still refuses more than `rowLimit` rows away,
   and is still the only path that can emit an up or a down OUTSIDE a box.
 - The clicked column is clamped to what is written on that row. Without it, a click in the
@@ -852,6 +858,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:dispatchpane` | a dispatched run as a real pane, against a fake driver and real git: closes itself on success, STAYS on failure, a person's keystroke drops it ungated, an exited pty is a failure not a wait — and the report that leaves carries the gate's per-step verdicts, skipped included |
 | `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
+| `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
@@ -949,6 +956,15 @@ by closing the pane. `npm run test:reclaim`.
   screen, one that is working or starting or stalled, or a mirror of another device's pty.
 - **The window is never emptied.** An app that closes its own last pane under memory
   pressure has removed the reason the window is open.
+- **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has
+  typed into for that long whatever the memory says; 0 is the default, so the paragraph
+  above still describes every desk that has not asked otherwise. It exists for the second
+  machine — a desk driven over the device link, which fills with finished panes and has no
+  person to close them. Every refusal above is shared verbatim except **visible**, which it
+  cannot keep: on a machine nobody is at, every pane in the grid is "on screen", and
+  protecting them means the feature can never fire where it was built to. `idleClosePlan`,
+  its own minute timer in `App.tsx` (time passing is the thing it watches, and nothing about
+  a quiet pane changes to announce it), `npm run test:reclaim`.
 
 ## Gotchas that look like mistakes
 
