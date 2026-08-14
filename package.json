@@ -65,6 +65,7 @@
     "test:railclick": "node scripts/rail-click-test.mjs",
     "test:railplace": "node scripts/rail-place-test.mjs",
     "test:cursorclick": "node scripts/cursor-click-test.mjs",
+    "test:attach": "node scripts/attach-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",

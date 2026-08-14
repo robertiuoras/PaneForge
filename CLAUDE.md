@@ -572,6 +572,35 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
   pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
   answering on a subscription login.
 
+## A picture goes in front of the agent
+
+Every agent here reads an image off the DISK, so "look at this screenshot" is a path typed
+at the prompt. The bytes are therefore written as a real file **on the machine that owns
+the pty**, and the path of that file is what is typed (`shared/attach.ts` for the naming,
+`main/attach.ts` for the disk, `pty:attach` / `pty:attachClipboard`).
+
+- **Forwarding a raw ^V was the old answer and it only ever worked twice over.** It needs
+  an agent that reads the OS clipboard itself - Claude Code does, Codex and the other
+  eleven do not - AND it needs that agent to be on the same machine as the clipboard. A
+  MIRRORED pane's is not, so the key reached across and read the wrong desk's clipboard.
+- **A path is only true on one machine.** A screenshot dragged onto a mirrored pane used to
+  type this desk's path at an agent running on the other one, which reads as a missing file
+  rather than as an error anybody can act on - that is the whole bug. A plain session id
+  still types the path it already has; `@device/id` and a browser (which has no path for a
+  dropped file at all) send the bytes over the link instead, and `attachOn` is answered with
+  a path that exists over there.
+- **The name is TEXT, never a path.** Only the basename survives, both separators, control
+  bytes and reserved punctuation gone - a drop can call itself `../../.ssh/authorized_keys`
+  and this function is the only thing between that and a write. The extension comes off the
+  MAGIC BYTES when they are recognised, because the name is the least trustworthy thing
+  about a drop: a clipboard image has none and a browser drag calls itself `download`.
+- 5 MB a batch, because base64 over the link's 8 MB frame is 4/3 of the size. A phone
+  screenshot is ~200 KB; the cap exists so a video dropped on a pane fails with a sentence
+  instead of killing the link. Nothing is submitted for you - the paths land in the input
+  box so they can be described first.
+- `npm run test:attach`. Not covered: pasting an image on the phone client, which has its
+  own composer rather than an xterm.
+
 ## What a pane costs is measured, not modelled
 
 `capacity.ts` models a pane at 190 MB and answers "is there room for another". The chip in
@@ -824,6 +853,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
+| `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |

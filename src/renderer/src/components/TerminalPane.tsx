@@ -3,6 +3,7 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
+import type { AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import {
@@ -365,6 +366,27 @@ function quote(p: string): string {
   return /[\s'"]/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p
 }
 
+/** Ctrl+V as a byte, for the agents that read the OS clipboard themselves. */
+const RAW_PASTE = String.fromCharCode(0x16)
+
+/** The one refusal that means "nothing to attach" rather than "something went wrong". */
+const NO_IMAGE = 'No image on the clipboard'
+
+/**
+ * Bytes as base64, in chunks.
+ *
+ * `String.fromCharCode(...bytes)` on a whole 2 MB screenshot is a two-million-argument
+ * call, which throws RangeError on every engine here. 32 KB at a time is well under it.
+ */
+function base64(bytes: Uint8Array): string {
+  let s = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(s)
+}
+
 /**
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
@@ -541,6 +563,39 @@ export default function TerminalPane({
   } | null>(null)
   const toast = useRef(onToast)
   toast.current = onToast
+
+  /**
+   * Put saved attachments at the prompt, quoted, with a trailing space.
+   *
+   * Written to the pty rather than pasted, and nothing is sent for you: the paths land in
+   * the input box so the thing being attached can be described first.
+   */
+  const typePaths = (paths: string[]): void => {
+    if (!paths.length) return
+    api.write(sessionId, paths.map(quote).join(' ') + ' ')
+    term.current?.focus()
+  }
+
+  /**
+   * Hand files to the machine this pane's pty is on, and type the paths it answers with.
+   *
+   * The bytes travel rather than the path because a path is only true on one machine: a
+   * screenshot dragged onto a MIRRORED pane used to type a path from this desk at an
+   * agent running on the other one, which reads as a missing file and not as an error
+   * anybody can act on.
+   */
+  const sendFiles = async (files: File[]): Promise<void> => {
+    const payload: AttachIn[] = []
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (!bytes.length) continue
+      payload.push({ name: file.name, data: base64(bytes) })
+    }
+    if (!payload.length) return
+    const res = await api.attachFiles(sessionId, payload)
+    if (res.error) toast.current?.(res.error)
+    typePaths(res.paths)
+  }
 
   const syncTotal = (): void => {
     const t = term.current
@@ -1129,10 +1184,24 @@ export default function TerminalPane({
           t.paste(text)
           return
         }
-        // No text usually means an image on the clipboard. Claude Code reads the OS
-        // clipboard itself when it sees a raw ^V, so forward the key rather than
-        // swallowing it - otherwise pasting screenshots stops working.
-        api.write(sessionId, '\x16')
+        // No text usually means an image. It is saved as a file on the machine that owns
+        // this pty and the PATH is what gets typed, because forwarding a raw ^V only
+        // works for an agent that reads the OS clipboard itself - Claude Code does, Codex
+        // and the other eleven do not - and only when the agent is on the same machine as
+        // the clipboard, which a mirrored pane's agent is not.
+        void api.attachClipboardImage(sessionId).then((res) => {
+          if (res.paths.length) {
+            typePaths(res.paths)
+            return
+          }
+          // A refusal that is about the clipboard being empty is not a refusal: let the
+          // key through so an agent that reads it for itself still gets its chance.
+          if (res.error && res.error !== NO_IMAGE) {
+            toast.current?.(res.error)
+            return
+          }
+          api.write(sessionId, RAW_PASTE)
+        })
       })
     }
 
@@ -2160,12 +2229,19 @@ export default function TerminalPane({
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
     setDropping(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((file) => api.pathForFile(file))
-      .filter(Boolean)
-    if (!paths.length) return
-    api.write(sessionId, paths.map(quote).join(' ') + ' ')
-    term.current?.focus()
+    const files = Array.from(e.dataTransfer.files)
+    if (!files.length) return
+    const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
+    // A path is only true on one machine. This pane's is this one when the id is a plain
+    // one, so the file is already where the agent can open it and nothing needs copying.
+    // A MIRRORED pane (`@device/id`) runs its agent elsewhere, and a browser has no path
+    // for a dropped file at all - both send the bytes and are answered with a path that
+    // exists over there.
+    if (paths.length === files.length && !sessionId.startsWith('@')) {
+      typePaths(paths)
+      return
+    }
+    void sendFiles(files)
   }
 
   /**

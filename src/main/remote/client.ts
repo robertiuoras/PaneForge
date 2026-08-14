@@ -21,6 +21,7 @@ import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
+import type { AttachIn, AttachResult } from '../../shared/attach'
 import {
   HANDOFF_ASK_MS,
   HANDOFF_CHUNK,
@@ -200,6 +201,17 @@ export class RemoteClient extends EventEmitter {
     return this.ask<AgentInfo[]>({ t: 'agents' })
   }
 
+  /**
+   * Save files beside a mirrored pane, on the device that owns it.
+   *
+   * The bytes go over rather than the path, because the path is the thing that does not
+   * survive the crossing: a screenshot on this desk is at a location the other machine has
+   * never had. Capped well under the link's frame by `tooBig` before it gets here.
+   */
+  attachFiles(localId: string, files: AttachIn[]): Promise<AttachResult> {
+    return this.ask<AttachResult>({ t: 'files', id: localId, files })
+  }
+
   async startSession(req: StartSessionRequest): Promise<Session> {
     const s = await this.ask<Session>({ t: 'start', req })
     // A pane opened from here is one this device asked for, so it is mirrored without
@@ -349,6 +361,9 @@ export class RemoteClient extends EventEmitter {
         return
       case 'agents':
         this.settle(m, m.list)
+        return
+      case 'filesdone':
+        this.settle(m, m.result)
         return
       case 'failed': {
         const p = this.pending.get(Number(m.rid));

@@ -34,6 +34,7 @@ const TESTS = [
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
+  ['attach', 'attach-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
