@@ -39,6 +39,7 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
+  ['recover', 'recover-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],

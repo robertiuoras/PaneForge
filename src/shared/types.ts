@@ -2,6 +2,7 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { Verdict } from './capacity'
+import type { RecoverConfig } from './recover'
 import type { UsageReport } from './usage'
 
 import type { DriveRun } from './agentic'
@@ -1296,6 +1297,11 @@ export interface Config {
   dispatch: { reportUrl: string; reportKey: string }
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
+  /**
+   * Finish a turn the transport cut in half, without being asked - see shared/recover.ts.
+   * Optional so a config written by an older build still loads; `getConfig` fills it in.
+   */
+  recover?: RecoverConfig
   /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
