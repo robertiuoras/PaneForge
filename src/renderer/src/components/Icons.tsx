@@ -123,6 +123,36 @@ export function TrashIcon(p: IconProps): JSX.Element {
   )
 }
 
+/**
+ * Copy, drawn as the two stacked squares every app uses for it.
+ *
+ * Deliberately the ordinary glyph rather than something of this app's own: it sits on top
+ * of an agent's output where there is no room for a label, so the only thing that can say
+ * what it does is a shape the eye already knows.
+ */
+export function CopyIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" />
+      <path d="M10.6 3.4a1.6 1.6 0 0 0-1.6-1H4a1.6 1.6 0 0 0-1.6 1.6v5a1.6 1.6 0 0 0 1 1.6" />
+    </Svg>
+  )
+}
+
+/**
+ * Copy the reply: the same two squares with a return arrow into them, because the pair of
+ * buttons is read as a pair and the difference between them has to be the drawing.
+ */
+export function CopyReplyIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" />
+      <path d="M4.2 3v2.2a1.4 1.4 0 0 0 1.4 1.4h1.2" opacity="0.8" />
+      <path d="M6 5.2 7.2 6.6 6 8" opacity="0.8" />
+    </Svg>
+  )
+}
+
 /** Live link, drawn as a signal. Used on the pane badge of a mirrored session. */
 export function LinkIcon(p: IconProps): JSX.Element {
   return (

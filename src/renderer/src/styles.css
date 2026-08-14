@@ -118,7 +118,12 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 
    Everything here is dark to the desktop build: at 1500x940 not one selector matches. */
 @media (max-width: 720px) {
-  html.handheld .app { grid-template-columns: 1fr; }
+  /* `100vh` on a phone browser is the LARGE viewport - the one you get with the toolbars
+     scrolled away - so the app was laid out taller than the screen and its last ~60px sat
+     underneath Safari's bottom bar. Everything pinned to the bottom of a pane went with
+     it, which is the typing bar that could not be tapped. `100dvh` is the viewport as it
+     is right now, toolbars included, and it is what the list already used. */
+  html.handheld .app { grid-template-columns: 1fr; height: 100dvh; }
   /* One of the two is display:none rather than translated off screen: an xterm that is
      laid out at 0px wide reflows its buffer to one column and does not come back. */
   html.handheld .sidebar { display: none; }
@@ -178,7 +183,10 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
     position: absolute;
     left: 4px;
     right: 4px;
-    bottom: max(4px, env(safe-area-inset-bottom));
+    /* Clear of the home indicator AND of the browser's own bottom bar, which overlaps the
+       last few pixels of the viewport while it is being scrolled away. 4px put the input
+       under a thumb that was aiming at it. */
+    bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
     z-index: 40;
     display: flex;
     gap: 6px;
@@ -206,7 +214,7 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
     font: 600 15px/1 inherit;
   }
   /* The bar sits over the terminal's last lines otherwise. */
-  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 56px; }
+  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 68px; }
 
   /* ---- the pane's own header, at 414px --------------------------------------
      Measured before this block, on a real 414px phone viewport: the row wanted 458px
@@ -1060,25 +1068,40 @@ body.sizing * { user-select: none !important; }
 }
 .sel-copy:hover { background: var(--accent); color: var(--accent-on); }
 
-/* The turn's own two buttons, pinned to the right edge of the pane at the top of whatever
-   turn the pointer is in. Faint until the pointer is near them, for the same reason the
-   mic float is: they live on top of the agent's output and must not compete with it. */
+/* One turn's two copy icons: the prompt, and the answer it got. Drawn for every prompt on
+   screen at the row it was sent on, in the gutter left of the marker rail, so reaching for
+   one is a straight move to a button that is already there - see the comment on `geom` in
+   TerminalPane.tsx for what the hover version cost.
+
+   Faint until the pointer is in the pane, for the same reason the mic float is: they live
+   on top of the agent's output and must not compete with it. TURN_COPY_H in TerminalPane
+   .tsx is the height of this stack - two 17px buttons and the 4px gap - and it decides
+   which pairs are drawn at all, so change it with these numbers. */
 .turn-copy {
-  position: absolute; right: 24px; z-index: 10;
-  display: flex; gap: 4px;
-  opacity: 0.34;
+  position: absolute; right: 40px; z-index: 10;
+  display: flex; flex-direction: column; gap: 4px;
+  opacity: 0.22;
   transition: opacity var(--fast);
 }
-.pane:hover .turn-copy { opacity: 0.72; }
+.pane:hover .turn-copy { opacity: 0.6; }
 .turn-copy:hover { opacity: 1; }
 .turn-copy button {
+  width: 17px; height: 17px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
   background: var(--surface-3); color: var(--muted);
   border: 1px solid var(--line-strong); border-radius: var(--r-sm);
-  padding: 2px 8px; font-size: 10.5px; line-height: 1.5; cursor: pointer;
+  cursor: pointer;
   box-shadow: var(--shadow);
   transition: color var(--fast), border-color var(--fast), background var(--fast);
 }
 .turn-copy button:hover { color: var(--text); border-color: var(--accent); }
+/* A finger needs 44px and the icons are 17px, so on a phone the pair is a bigger target
+   and always at full strength: there is no pointer to hover with. */
+@media (max-width: 720px) {
+  html.handheld .turn-copy { opacity: 0.75; right: 44px; gap: 6px; }
+  html.handheld .turn-copy button { width: 30px; height: 30px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .sel-copy { animation: none; }
 }

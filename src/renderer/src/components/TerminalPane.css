@@ -208,36 +208,3 @@
   cursor: pointer;
 }
 .find-step:hover { color: var(--text); border-color: var(--line-strong); }
-
-/* Block copy buttons for agent replies */
-.block-copy-chip {
-  font-size: 12px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.block-copy-chip button {
-  padding: 4px 8px;
-  margin: 0 2px;
-  background: rgba(100, 200, 255, 0.2);
-  border: 1px solid rgba(100, 200, 255, 0.4);
-  color: #64c8ff;
-  border-radius: 3px;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 11px;
-  white-space: nowrap;
-  transition: background-color 150ms ease, border-color 150ms ease;
-}
-
-.block-copy-chip button:hover {
-  background: rgba(100, 200, 255, 0.3);
-  border-color: rgba(100, 200, 255, 0.6);
-}
-
-.block-copy-chip button:active {
-  transform: scale(0.95);
-}

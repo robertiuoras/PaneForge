@@ -338,6 +338,53 @@ try {
   ok(pane.cols >= 40, 'which is a usable terminal, not 16 columns', `${pane.cols} cols`)
   ok(pane.back?.shown === true && pane.back.h >= 34, 'the way back is a finger-sized chip', JSON.stringify(pane.back))
   ok(pane.hit === 'chip', 'and nothing is drawn over it', String(pane.hit))
+
+  // ---- 7. and what the pane came back WITH ------------------------------------
+  // The pane opened at this phone's width, which is not the desk's, so the pty is resized
+  // and the pane re-wraps. That path used to answer by calling `t.clear()` - which drops
+  // the buffer `getBuffer` had just replayed into this browser, so a pane opened on a
+  // phone showed an empty screen and nothing else ("the chat history in terminal doesnt
+  // work on mobile, its not showing anything"). It is pushed into the scrollback now.
+  //
+  // The desk's own buffer is the reference, not anything this test typed: what the bug
+  // destroyed was the history from BEFORE the phone connected, and a live echo typed
+  // afterwards repopulates the pane and hides it. Waited out past the 400ms the re-wrap
+  // path is scheduled on.
+  await sleep(1800)
+  // Samples rather than one line: xterm re-wraps as the columns change, so a long line
+  // from the desk can arrive split across two rows and read as missing when it is there.
+  // Short slices out of the OLDEST half of the desk's buffer - the part that existed
+  // before this browser did - and any one of them surviving is the pane keeping its
+  // history. With the wipe back in place, none of them do.
+  const samples = await evaluate(`(async () => {
+    const raw = await window.api.getBuffer(${JSON.stringify(wrote)})
+    // eslint-disable-next-line no-control-regex
+    const plain = String(raw).replace(/\\x1b\\[[0-9;?]*[A-Za-z]/g, '')
+    const lines = plain.split(/\\r?\\n/).map((l) => l.trim()).filter((l) => l.length >= 14)
+    return lines.slice(0, Math.max(1, Math.floor(lines.length / 2))).slice(-8).map((l) => l.slice(0, 14))
+  })()`)
+  const kept = await evaluate(`(() => {
+    const h = Object.values(window.__pf ?? {})[0]
+    const t = h?.term
+    if (!t) return { lines: 0, text: '', rewraps: 0 }
+    const buf = t.buffer.active
+    let text = ''
+    for (let y = 0; y < buf.length; y++) text += buf.getLine(y)?.translateToString(true) + '\\n'
+    return { lines: text.trim().split('\\n').length, text, rewraps: h.rewraps?.() ?? 0 }
+  })()`)
+  // Without this the check above can pass by never having happened.
+  ok((kept.rewraps ?? 0) >= 1, 'the phone really did re-wrap the pane', String(kept.rewraps))
+  if (!samples?.length) {
+    console.log('  (the desk pane has printed nothing quotable - scrollback check skipped)')
+  } else {
+    const found = samples.filter((x) => String(kept.text ?? '').includes(x))
+    ok(
+      found.length > 0,
+      'the pane keeps the history it was opened with, through the phone re-wrap',
+      `0 of ${samples.length} samples survived, e.g. ${JSON.stringify(samples[0])}`
+    )
+  }
+  ok((kept.lines ?? 0) > 1, 'so it is not an empty terminal', String(kept.lines))
 } finally {
   // A CDP browser left open against a live server is the 17 GB mistake; close it.
   await send('Target.closeTarget', { targetId }).catch(() => {})

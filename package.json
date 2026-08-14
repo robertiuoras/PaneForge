@@ -70,6 +70,7 @@
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
     "test:markanchor": "node scripts/mark-anchor-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
+    "test:turncopy": "node scripts/turncopy-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",

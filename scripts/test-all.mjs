@@ -38,6 +38,7 @@ const TESTS = [
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
+  ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
