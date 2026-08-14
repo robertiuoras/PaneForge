@@ -2528,6 +2528,17 @@ export default function App(): JSX.Element {
           onHelp={() => setLaneHelp(true)}
         />
 
+        {/* What the machine can still hold, in the one place a person is already looking
+            when they are about to open another pane. Only when it is NOT ok: a line that
+            is always there is a line nobody reads, and on a healthy desk there is nothing
+            to say. The wording carries the numbers (see capacity.ts) because "low memory"
+            with no figure is the message that got the app blamed for the browsers. */}
+        {capacity && capacity.level !== 'ok' && (
+          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
+            {capacity.advice}
+          </div>
+        )}
+
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
