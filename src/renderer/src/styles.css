@@ -123,7 +123,7 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
      underneath Safari's bottom bar. Everything pinned to the bottom of a pane went with
      it, which is the typing bar that could not be tapped. `100dvh` is the viewport as it
      is right now, toolbars included, and it is what the list already used. */
-  html.handheld .app { grid-template-columns: 1fr; height: 100vh; }
+  html.handheld .app { grid-template-columns: 1fr; height: 100dvh; }
   /* One of the two is display:none rather than translated off screen: an xterm that is
      laid out at 0px wide reflows its buffer to one column and does not come back. */
   html.handheld .sidebar { display: none; }
