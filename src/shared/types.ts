@@ -1,6 +1,8 @@
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
+import type { Verdict } from './capacity'
+
 import type { DriveRun } from './agentic'
 // Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
 // `Goal` from there, which is a cycle at the type level only and no import at runtime.
@@ -1889,6 +1891,8 @@ export interface Api {
   paneBell(id: string): void
   /** hosting, pairing or discovery changed */
   onRemote(cb: (s: RemoteState) => void): () => void
+  /** What this machine can still hold - see src/shared/capacity.ts. */
+  onCapacity(cb: (v: Verdict) => void): () => void
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending

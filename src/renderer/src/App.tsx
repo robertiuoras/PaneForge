@@ -55,6 +55,12 @@ import TerminalPane, {
   paneRepair,
   syncedPanes
 } from './components/TerminalPane'
+import {
+  FULL_SCROLLBACK,
+  savingMb,
+  trimPlan,
+  type Verdict
+} from '../../shared/capacity'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
 import { STRONG_MATCH } from '../../shared/promptKey'
@@ -1430,6 +1436,52 @@ export default function App(): JSX.Element {
       ),
     [grid, zoom, sessions, activeId]
   )
+
+  /**
+   * Giving back scrollback when the machine has run out of memory.
+   *
+   * Every pane stays mounted for as long as it exists (see the grid below), which is what
+   * makes tab switching instant and is also what makes a full desk expensive: measured
+   * 2026-08-14 with @xterm/headless, a pane holding the shipped 20000 lines costs 7.2 MB
+   * of heap and the growth is linear - 91 MB across twelve panes. Small next to the
+   * ~190 MB agent behind each pane, which is why this is the SECOND thing that happens
+   * under pressure and never the first, but it is the part the app can give back
+   * instantly and without killing anything.
+   *
+   * The pane being read is never trimmed, at any pressure. Scrollback is the record of
+   * what an agent did, and quietly shortening the one somebody is looking at would
+   * destroy that with no undo and no message. Off-screen panes go first; a visible but
+   * unfocused pane only once the kernel says critical.
+   */
+  const [capacity, setCapacity] = useState<Verdict | null>(null)
+  useEffect(() => api.onCapacity(setCapacity), [])
+  const depthRef = useRef(FULL_SCROLLBACK)
+  useEffect(() => {
+    if (!capacity) return
+    const refs = sessions.map((s) => ({
+      id: s.id,
+      focused: s.id === activeId,
+      visible: visibleIds.has(s.id)
+    }))
+    const trims = trimPlan(refs, capacity, depthRef.current)
+    if (!trims.length) return
+    let applied = 0
+    for (const t of trims) {
+      const term = paneTerms.get(t.id)
+      // A pane whose terminal has not been created yet gets the depth when it is: the
+      // constructor reads the same FULL_SCROLLBACK, and the next change re-plans anyway.
+      if (!term) continue
+      term.options.scrollback = t.scrollback
+      applied++
+    }
+    // One depth for all trimmed panes, so the next plan can tell what it is undoing.
+    depthRef.current = trims[trims.length - 1].scrollback
+    if (applied) {
+      console.info(
+        `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB`
+      )
+    }
+  }, [capacity, sessions, activeId, visibleIds])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
