@@ -22,6 +22,7 @@
 import type { Api } from '@shared/types'
 import { buildApi, type Transport } from '@shared/surface'
 import { decodeWire, encodeWire } from '@shared/wireJson'
+import { unlock } from './passkeyClient'
 
 /** How long the stream may be silent before it is treated as gone. Server pings at 15s. */
 const STALE_MS = 45_000
@@ -85,7 +86,7 @@ class HttpTransport implements Transport {
     })
   }
 
-  async invoke(channel: string, args: unknown[]): Promise<unknown> {
+  async invoke(channel: string, args: unknown[], retried = false): Promise<unknown> {
     // Anything already typed goes first: `write` then `sessions:buffer` must not swap.
     await this.flush()
     const id = this.nextId++
@@ -98,7 +99,14 @@ class HttpTransport implements Transport {
       location.reload()
       throw new Error('not paired')
     }
-    const body = decodeWire(await res.text()) as { value?: unknown; error?: string }
+    const body = decodeWire(await res.text()) as { value?: unknown; error?: string; locked?: boolean }
+    // The typing gate. Answered in the envelope rather than as a status, because this reply
+    // has an id the caller is waiting on. One retry and no more: if the touch was cancelled
+    // the honest outcome is the error, not a second sheet.
+    if (body.locked) {
+      if (retried || !(await unlock())) throw new Error('locked')
+      return await this.invoke(channel, args, true)
+    }
     if (body.error) throw new Error(body.error)
     return body.value
   }
@@ -126,16 +134,32 @@ class HttpTransport implements Transport {
     this.flushing = true
     const calls = this.queue
     this.queue = []
+    let locked = false
     try {
-      await fetch('/pf/send', {
+      const res = await fetch('/pf/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: encodeWire({ calls })
       })
+      // 423 means the desk ran NOTHING in this batch - it refuses the whole thing rather
+      // than the gated calls inside it. So the batch goes back on the FRONT of the queue,
+      // ahead of anything typed since, and is re-sent intact once the touch lands. Dropping
+      // it would deliver a word with letters missing; keeping order matters as much here as
+      // it does on the way out.
+      if (res.status === 423) {
+        this.queue = [...calls, ...this.queue]
+        locked = true
+      }
     } catch {
       /* a dropped batch is a keystroke lost, not a broken app - the next one is sent */
     } finally {
       this.flushing = false
+    }
+    if (locked) {
+      // A refused touch drops the batch on purpose: the user said no, and holding their
+      // keystrokes to replay at some later unlock would type them at a moment they did not
+      // choose. `unlock()` is shared, so a burst of refused batches raises one sheet.
+      if (!(await unlock())) this.queue = this.queue.filter((c) => !calls.includes(c))
     }
     if (this.queue.length) await this.flush()
   }

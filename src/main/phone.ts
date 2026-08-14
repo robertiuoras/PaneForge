@@ -30,6 +30,16 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import {
+  CHALLENGE_MS,
+  UNLOCK_MS,
+  checkUnlock,
+  mintUnlock,
+  newChallenge,
+  verifyAssertion,
+  verifyRegistration,
+  type StoredKey
+} from './passkey'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { networkInterfaces } from 'node:os'
@@ -63,6 +73,45 @@ const ASK_MS = 120_000
  *  expensive to be shown twenty of. */
 const ASK_LIMIT = 5
 const ASK_WINDOW_MS = 10 * 60_000
+
+/**
+ * Channels that exist for the window only, and are refused over HTTP whatever the cookie.
+ *
+ * A lock whose own switch is reachable from the thing it locks is not a lock. Both of these
+ * are ways to make the typing gate stop applying - turning it off outright, or emptying the
+ * list of keys it checks against - so they belong to somebody sitting at the desk, which is
+ * the one place a passkey cannot be demanded because there is nobody remote to demand it of.
+ *
+ * `surfaceChannels()` is deliberately not the place for this: it is one list shared by both
+ * transports, and a channel that is desk-only is a property of the TRANSPORT, not of the
+ * surface. The window keeps reaching these through ipcMain exactly as before.
+ */
+const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey'])
+
+/**
+ * The channels a browser may not reach without a passkey touch.
+ *
+ * The line is "can this cause code to run on this desk", not "does this change something".
+ * Resizing a pane and reading its buffer are how a phone WATCHES, and gating those would
+ * make the gate fire constantly for nothing. Typing, starting, restarting, killing, piping
+ * and opening things in the shell are the ones where a stolen cookie turns into a command.
+ *
+ * Every one of these is reachable ONLY over the HTTP surface. The app's own writes - the
+ * "continue" that `recover` queues, the prompt `sessions:start` hands a new pane - are
+ * raised in the main process and never pass through here, so they are exempt by
+ * construction rather than by a flag.
+ */
+const GATED_SEND = new Set(['pty:write', 'shell:reveal', 'shell:external'])
+const GATED_INVOKE = new Set([
+  'sessions:start',
+  'sessions:startMany',
+  'sessions:restart',
+  'sessions:switchAgent',
+  'sessions:kill',
+  'sessions:pipe',
+  'sessions:swarm',
+  'sessions:split'
+])
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -103,6 +152,16 @@ export interface PhoneDeps {
   saveDevices?(list: PhoneDevice[]): void
   /** may a browser ask to be let in, rather than typing the code */
   canAsk?(): boolean
+  /** passkeys enrolled on this desk, read fresh for the same reason `code` is */
+  keys?(): StoredKey[]
+  /** a passkey was enrolled, or its counter moved on: persist the new list */
+  saveKeys?(list: StoredKey[]): void
+  /**
+   * Is the typing gate on at all. Off means the surface behaves exactly as it did before
+   * passkeys existed - which is what a desk with no public address wants, and what an
+   * existing install gets until somebody turns it on.
+   */
+  typeGate?(): boolean
   /** the last watching browser has gone: give back anything a phone was holding */
   onIdle?(): void
 }
@@ -130,6 +189,8 @@ export class PhoneServer {
     | null = null
   private askTries = new Map<string, { n: number; since: number }>()
   private nextAsk = 1
+  /** challenges handed out and not yet answered, with the moment they stop being valid */
+  private challenges = new Map<string, number>()
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
@@ -166,7 +227,7 @@ export class PhoneServer {
   }
 
   /** Start answering. Resolves once the port is really bound, or with `error` set. */
-  async start(port: number, bind = '0.0.0.0'): Promise<Omit<PhoneState, 'tunnel'>> {
+  async start(port: number, bind = '0.0.0.0'): Promise<Omit<PhoneState, 'tunnel' | 'typeGate' | 'keys'>> {
     await this.stop()
     this.tidyDevices()
     this.lastError = ''
@@ -234,7 +295,7 @@ export class PhoneServer {
    * panel redraws - so a server that has never heard of cloudflared stays testable on its
    * own, and there is one repaint rather than two.
    */
-  state(): Omit<PhoneState, 'tunnel'> {
+  state(): Omit<PhoneState, 'tunnel' | 'typeGate' | 'keys'> {
     const port = this.listening || 0
     const live = new Set([...this.clients].map((c) => c.device).filter(Boolean))
     return {
@@ -443,6 +504,11 @@ export class PhoneServer {
       return this.pairPage(res)
     }
     if (path === '/pf/events') return this.events(req, res)
+    // The passkey gate. All three are behind `authed` on purpose: enrolling a key is a
+    // thing a signed-in phone does, not a way to become one.
+    if (path === '/pf/key/state') return this.keyState(req, res)
+    if (path === '/pf/key/enrol' && req.method === 'POST') return await this.keyEnrol(req, res)
+    if (path === '/pf/key/unlock' && req.method === 'POST') return await this.keyUnlock(req, res)
     if (path === '/pf/call' && req.method === 'POST') return await this.call(req, res)
     if (path === '/pf/send' && req.method === 'POST') return await this.fire(req, res)
     return this.static(path, res)
@@ -526,8 +592,15 @@ export class PhoneServer {
     const msg = await this.readWire<{ id?: number; channel?: string; args?: unknown[] }>(req, res)
     if (!msg) return
     const { id = 0, channel = '', args = [] } = msg
-    if (!this.deps.channels.invoke.includes(channel)) {
+    if (!this.deps.channels.invoke.includes(channel) || DESK_ONLY.has(channel)) {
+      // Deliberately the same answer for both: a browser learning which channels exist but
+      // are refused is a map of what to attack next.
       return this.json(res, 400, { id, error: `unknown channel ${channel}` })
+    }
+    // Answered inside the envelope rather than as a 423, because `call` has a reply the
+    // client is already waiting on and an HTTP status would lose the id it belongs to.
+    if (GATED_INVOKE.has(channel) && !this.unlocked(req)) {
+      return this.json(res, 200, { id, error: 'locked', locked: true })
     }
     try {
       const value = await this.deps.invoke(channel, args)
@@ -540,8 +613,16 @@ export class PhoneServer {
   private async fire(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const msg = await this.readWire<{ calls?: { channel: string; args: unknown[] }[] }>(req, res)
     if (!msg) return
+    const calls = msg.calls ?? []
+    // Refused as a WHOLE batch, before a single call is made, and never call-by-call. These
+    // are keystrokes in order: dropping the gated ones and running the rest would deliver a
+    // word with letters missing, and dropping them silently is worse still. 423 is the one
+    // status the client retries after unlocking, so the batch it holds is re-sent intact.
+    if (calls.some((c) => GATED_SEND.has(c.channel)) && !this.unlocked(req)) {
+      return this.plain(res, 423, 'locked')
+    }
     // A batch, because typing is one of these per keystroke and they must stay in order.
-    for (const c of msg.calls ?? []) {
+    for (const c of calls) {
       if (!this.deps.channels.send.includes(c.channel)) continue
       try {
         this.deps.send(c.channel, c.args ?? [])
@@ -575,6 +656,140 @@ export class PhoneServer {
       'cache-control': file.endsWith('index.html') ? 'no-store' : 'max-age=86400'
     })
     createReadStream(file).pipe(res)
+  }
+
+  // ---- the passkey gate ------------------------------------------------------
+
+  /**
+   * Is the gate armed for THIS request? Three things have to be true, and each one of them
+   * is a case that would otherwise be broken rather than protected:
+   *
+   * - the setting is on at all;
+   * - the request arrived over TLS, because `navigator.credentials` does not exist outside
+   *   a secure context - arming over plain http would lock out a phone that has no way to
+   *   satisfy the gate, which is a phone on the LAN, which is the common case;
+   * - it did not come from this machine. `pf-ctl` and the window itself are already inside
+   *   the trust boundary: they can read the pairing code out of config.json.
+   */
+  private armed(req: IncomingMessage): boolean {
+    if (!this.deps.typeGate?.()) return false
+    if (!isTls(req)) return false
+    return originOf(addressOf(req)) !== 'this machine'
+  }
+
+  /** True when this request may reach a gated channel - including when nothing is gated. */
+  private unlocked(req: IncomingMessage): boolean {
+    if (!this.armed(req)) return true
+    const cookie = /(?:^|;\s*)pfu=([^;]+)/.exec(req.headers.cookie ?? '')
+    if (!cookie) return false
+    return checkUnlock(this.gateSecret(), decodeURIComponent(cookie[1]), this.deps.keys?.() ?? [])
+  }
+
+  /**
+   * The key the unlock cookie is signed with. Deliberately derived from the pairing code as
+   * well as the device secret: rotating the code is the one lever that is already understood
+   * to sign everything out, and an unlock window that survived a rotation would be a hole in
+   * exactly the response somebody reaches for when they think they have been broken into.
+   */
+  private gateSecret(): string {
+    return createHmac('sha256', this.deps.secret()).update(`gate|${this.deps.code()}`).digest('hex')
+  }
+
+  /** A challenge is good once, and only for the couple of minutes after it is handed out. */
+  private issueChallenge(): string {
+    const now = Date.now()
+    for (const [c, until] of this.challenges) if (until <= now) this.challenges.delete(c)
+    const challenge = newChallenge()
+    this.challenges.set(challenge, now + CHALLENGE_MS)
+    return challenge
+  }
+
+  private takeChallenge(challenge: string): boolean {
+    const until = this.challenges.get(challenge)
+    this.challenges.delete(challenge)
+    return !!until && until > Date.now()
+  }
+
+  /**
+   * What the browser needs to build a WebAuthn call: who we are to it, whether it has to
+   * bother at all, and a fresh challenge.
+   *
+   * `rpId` is the host without its port - a relying party id is a domain, and including the
+   * port makes every assertion fail with an error that says nothing useful.
+   */
+  private keyState(req: IncomingMessage, res: ServerResponse): void {
+    const host = String(req.headers.host ?? '').split(':')[0]
+    const keys = this.deps.keys?.() ?? []
+    this.json(res, 200, {
+      armed: this.armed(req),
+      unlocked: this.unlocked(req),
+      rpId: host,
+      origin: `https://${String(req.headers.host ?? '')}`,
+      // Only ids, never the keys themselves: this is what `allowCredentials` needs and
+      // nothing on the phone has any use for a public key.
+      ids: keys.map((k) => k.id),
+      challenge: this.issueChallenge()
+    })
+  }
+
+  private async keyEnrol(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!body) return
+    try {
+      if (!this.takeChallenge(String(body.challenge ?? ''))) throw new Error('stale challenge')
+      const key = verifyRegistration(
+        { clientDataJSON: body.clientDataJSON, attestationObject: body.attestationObject, label: body.label },
+        this.expect(req, String(body.challenge))
+      )
+      const keys = (this.deps.keys?.() ?? []).filter((k) => k.id !== key.id)
+      this.deps.saveKeys?.([...keys, key])
+      // Enrolling IS a verified touch - the authenticator just checked the human - so the
+      // window opens here rather than making them do it twice in a row.
+      this.unlockRes(req, res, key.id)
+    } catch (err) {
+      this.plain(res, 400, err instanceof Error ? err.message : 'enrolment refused')
+    }
+  }
+
+  private async keyUnlock(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!body) return
+    try {
+      if (!this.takeChallenge(String(body.challenge ?? ''))) throw new Error('stale challenge')
+      const keys = this.deps.keys?.() ?? []
+      const moved = verifyAssertion(
+        {
+          id: String(body.id ?? ''),
+          clientDataJSON: body.clientDataJSON,
+          authenticatorData: body.authenticatorData,
+          signature: body.signature
+        },
+        this.expect(req, String(body.challenge)),
+        keys
+      )
+      this.deps.saveKeys?.(keys.map((k) => (k.id === moved.id ? moved : k)))
+      this.unlockRes(req, res, moved.id)
+    } catch (err) {
+      this.plain(res, 403, err instanceof Error ? err.message : 'refused')
+    }
+  }
+
+  private expect(req: IncomingMessage, challenge: string): { challenge: string; rpId: string; origin: string } {
+    const host = String(req.headers.host ?? '')
+    return { challenge, rpId: host.split(':')[0], origin: `https://${host}` }
+  }
+
+  private unlockRes(req: IncomingMessage, res: ServerResponse, credId: string): void {
+    const cookie =
+      `pfu=${mintUnlock(this.gateSecret(), credId)}; Path=/; HttpOnly; SameSite=Lax; ` +
+      `Max-Age=${Math.floor(UNLOCK_MS / 1000)}` +
+      (isTls(req) ? '; Secure' : '')
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      'set-cookie': cookie
+    })
+    res.end(JSON.stringify({ ok: true, until: Date.now() + UNLOCK_MS }))
   }
 
   // ---- plumbing --------------------------------------------------------------
@@ -714,12 +929,22 @@ function sameCode(typed: string, real: string): boolean {
  *   that signs in successfully and is asked again on the very next request.
  */
 function cookieFor(req: IncomingMessage, token: string): string {
-  const proto = header(req, 'x-forwarded-proto').split(',')[0].trim().toLowerCase()
-  const tls = proto === 'https' || (req.socket as { encrypted?: boolean }).encrypted === true
+  const tls = isTls(req)
   return (
     `pf=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_DAYS * 86400}` +
     (tls ? '; Secure' : '')
   )
+}
+
+/**
+ * Did this request arrive over TLS? Only a proxy can tell us - the socket here is always
+ * plain http, because cloudflared and Funnel both terminate TLS and re-issue locally. Same
+ * trust rule as `addressOf`: a header is believed because the one hop in front of us is one
+ * we put there ourselves.
+ */
+function isTls(req: IncomingMessage): boolean {
+  const proto = header(req, 'x-forwarded-proto').split(',')[0].trim().toLowerCase()
+  return proto === 'https' || (req.socket as { encrypted?: boolean }).encrypted === true
 }
 
 /**
