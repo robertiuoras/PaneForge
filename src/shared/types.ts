@@ -75,6 +75,8 @@ export interface Session {
   status: SessionStatus
   /** epoch ms of the most recent pty output */
   lastOutput: number
+  /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
+  lastKeyboard: number
   createdAt: number
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */

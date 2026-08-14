@@ -47,8 +47,9 @@ export interface ReclaimConfig {
   /**
    * How long a pane must have been quiet before it may be closed, in minutes.
    *
-   * An hour. Long enough that it cannot catch somebody who stepped away from a pane they
-   * are mid-thought on, short enough to still be holding the panes that pile up over a day.
+   * Measured from lastKeyboard (user input), not pty output (which repaints for status updates).
+   * 15 minutes is short enough to reclaim under pressure without losing recent work, and long
+   * enough to avoid closing a pane somebody is actively thinking about.
    */
   minIdleMinutes: number
   /** How many to close per reading. The next reading decides again. */
@@ -57,15 +58,15 @@ export interface ReclaimConfig {
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
-  minIdleMinutes: 60,
+  minIdleMinutes: 15,
   maxPerSweep: 2
 }
 
 export interface ReclaimPane {
   id: string
   state: FleetState
-  /** Epoch ms of this pane's most recent output. */
-  lastOutput: number
+  /** Epoch ms of this pane's most recent user input (better idle signal than pty output, which repaints). */
+  lastKeyboard: number
   /** The pane being read. Never closed, at any pressure. */
   focused: boolean
   /** Drawn in the grid right now. Never closed - it is on somebody's screen. */
@@ -103,10 +104,10 @@ export function reclaimPlan(
 
   const eligible = panes
     .filter((p) => !p.focused && !p.visible && !p.remote && CLOSEABLE.has(p.state))
-    .filter((p) => now - p.lastOutput >= minIdle)
+    .filter((p) => now - p.lastKeyboard >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
     // morning is the safer one to close than the one that finished a minute ago.
-    .sort((a, b) => a.lastOutput - b.lastOutput)
+    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
 
   // Never the last pane. An app that empties its own window under memory pressure has
   // not solved the problem, it has removed the reason the window is open.
@@ -115,7 +116,7 @@ export function reclaimPlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - p.lastOutput,
+    idleMs: now - p.lastKeyboard,
     // An exited pane's process is already gone: closing it returns a buffer, not an agent.
     // Saying so keeps the log line honest about what was actually bought.
     hadAgent: p.state !== 'exited'

@@ -1595,7 +1595,7 @@ export default function App(): JSX.Element {
       sessions.map((s) => ({
         id: s.id,
         state: fleetState(s),
-        lastOutput: s.lastOutput,
+        lastKeyboard: s.lastKeyboard,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote

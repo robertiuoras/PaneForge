@@ -48,7 +48,7 @@ const ok = { ...over, level: 'ok', roomFor: 4, trim: false }
 const pane = (o) => ({
   id: 'p',
   state: 'ready',
-  lastOutput: NOW - 3 * HOUR,
+  lastKeyboard: NOW - 3 * HOUR,
   focused: false,
   visible: false,
   remote: false,
@@ -107,10 +107,10 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 
 {
   // Idle time is a tie-break, not the trigger - but it is still a floor.
-  const fresh = [pane({ id: 'a', lastOutput: NOW - 5 * 60_000 }), pane({ id: 'b', lastOutput: NOW })]
-  eq('a pane quiet for five minutes is not stale', reclaimPlan(fresh, over, DEFAULT_RECLAIM, NOW).length, 0)
-  const justOver = [pane({ id: 'a', lastOutput: NOW - 61 * 60_000 }), pane({ id: 'b' })]
-  check('one just past the hour is', reclaimPlan(justOver, over, DEFAULT_RECLAIM, NOW).length > 0)
+  const fresh = [pane({ id: 'a', lastKeyboard: NOW - 10 * 60_000 }), pane({ id: 'b', lastKeyboard: NOW })]
+  eq('a pane quiet for ten minutes is not stale', reclaimPlan(fresh, over, DEFAULT_RECLAIM, NOW).length, 0)
+  const justOver = [pane({ id: 'a', lastKeyboard: NOW - 16 * 60_000 }), pane({ id: 'b' })]
+  check('one just past fifteen minutes is', reclaimPlan(justOver, over, DEFAULT_RECLAIM, NOW).length > 0)
 }
 
 {
