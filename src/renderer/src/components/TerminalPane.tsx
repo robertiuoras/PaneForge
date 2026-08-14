@@ -18,7 +18,7 @@ import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../sha
 import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { inputEnd, inputStart, sameBox } from '../../../shared/promptBox'
+import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -944,21 +944,19 @@ export default function TerminalPane({
      * shell, finds nothing and keeps the old anchor, which is already right there.
      */
     const PROMPT_BOX_SCAN = 40
-    // A run of box-drawing characters, which is what these CLIs frame a prompt with -
-    // `────` in Claude Code's current build, `╭───╮` in the rounded ones. Anchored at the
-    // start so a line of text that merely contains one cannot match.
-    const BOX_RULE = /^[─-╿]{4}[─-╿\s]*$/
     const promptBoxTop = (maxUp: number): number => {
       const b = t.buffer.active
-      for (let up = 1; up <= Math.min(PROMPT_BOX_SCAN, maxUp); up++) {
+      const rows: string[] = []
+      for (let up = 0; up <= Math.min(PROMPT_BOX_SCAN, maxUp); up++) {
         const y = b.cursorY - up
-        if (y < 0) return 0
+        if (y < 0) break
         const line = b.getLine(b.baseY + y)
-        if (!line) return 0
-        const s = line.translateToString(true).trim()
-        if (s.length >= 8 && BOX_RULE.test(s)) return up
+        if (!line) break
+        rows.push(line.translateToString(true))
       }
-      return 0
+      // The rule itself is `shared/promptBox.ts` so it can be checked against real panes'
+      // rows with no window - which is what caught Codex drawing no rule at all.
+      return promptTop(rows)
     }
 
     /**

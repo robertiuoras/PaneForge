@@ -52,6 +52,55 @@ export function sameBox(a: string, b: string): boolean {
   return fa >= 0 && fa === frameAt(b)
 }
 
+/**
+ * How many rows above the cursor the composer starts, or 0 when this pane draws none.
+ *
+ * A prompt tag is anchored to the TOP of what was typed, because the cursor at submit time
+ * sits on the last row of it and a long prompt would otherwise tag a line several rows
+ * below its own first word. The top is found rather than estimated: the composer's own rule
+ * is still on screen at submit time.
+ *
+ * The trap is that a rule is not automatically the composer's. Measured in a live Codex
+ * pane (v0.146.0, `scripts/prompt-box-test.mjs` carries the rows): Codex draws its input as
+ * a bare `› what you typed` with NO rule above it, and the nearest box-drawing line is the
+ * BOTTOM of the startup banner six rows further up, with two blank rows and a tip in
+ * between. Walking to it anchored every Codex prompt six to twenty-one rows too high - and
+ * a tag that lands on line 0 is dropped by `markAnchor`'s trim rule at the next repaint,
+ * which is "Codex shows no prompt tags" as reported.
+ *
+ * So the walk stops at anything that is plainly NOT the composer:
+ *
+ *   - a bottom rule or corner (`╰ ╯ └ ┘ ┴`) closes a box that was drawn above this one;
+ *   - two blank rows in a row are the gap between the transcript and the composer.
+ *
+ * Claude Code, whose composer IS a rule directly above the prompt row, is untouched: it
+ * matches on the first row of the walk. A pane that draws no composer at all - a shell -
+ * finds nothing and the tag stays on the cursor's own row, which is already right.
+ */
+export function promptTop(rows: string[], maxUp = rows.length): number {
+  let blanks = 0
+  for (let up = 1; up < Math.min(rows.length, maxUp + 1); up++) {
+    const s = (rows[up] ?? '').trim()
+    if (!s) {
+      if (++blanks >= 2) return 0
+      continue
+    }
+    blanks = 0
+    if (BOTTOM_RULE.test(s)) return 0
+    if (s.length >= 8 && TOP_RULE.test(s)) return up
+  }
+  return 0
+}
+
+/**
+ * A run of box-drawing characters, which is what these CLIs frame a prompt with - `────` in
+ * Claude Code's current build, `╭───╮` in the rounded ones. Anchored at the start so a line
+ * of text that merely contains one cannot match.
+ */
+const TOP_RULE = /^[─-╿]{4}[─-╿\s]*$/
+/** The same, but closing a box: whatever it belongs to is above the composer, not in it. */
+const BOTTOM_RULE = /^[╰╯└┘┴┸┺┷┻╧╩]/
+
 /** The prompt markers a CLI draws between the frame and what you typed. */
 const MARKERS = ['>', '❯', '›', '»', '$', '#', '%']
 

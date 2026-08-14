@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { boxedRow, frameAt, sameBox, inputStart, inputEnd } = createRequire(import.meta.url)(outfile)
+const { boxedRow, frameAt, sameBox, inputStart, inputEnd, promptTop } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -97,6 +97,61 @@ eq('an unframed line ends at its last character', inputEnd(ZSH), ZSH.length)
 // The two together are what a select-all sends, so they may never cross.
 for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']) {
   check(`start never runs past end (${JSON.stringify(row.slice(0, 12))})`, inputStart(row) <= inputEnd(row) || inputEnd(row) === 0)
+}
+
+// --- where the composer starts, walking up from the cursor -------------------------
+//
+// Rows as they really were on screen at submit time, read straight out of live panes over
+// CDP (Codex v0.146.0, Claude Code v2.1.232). rows[0] is the cursor's own row and rows[N]
+// is N rows above it.
+{
+  // Claude Code: the composer IS a rule directly above what you typed.
+  const claude = [
+    '❯ say the word blue',
+    '──────────────────────────────────────────────────',
+    '',
+    '',
+    '▘▘ ▝▝    ~/Projects/PaneForge'
+  ]
+  eq('Claude Code’s composer is one row up', promptTop(claude), 1)
+
+  // A prompt long enough to wrap onto several rows still tags its FIRST row.
+  const long = [
+    '  and then run the tests',
+    '❯ fix the badge on the sidebar card',
+    '──────────────────────────────────────────────────',
+    'some earlier output'
+  ]
+  eq('a multi-row draft tags the top of itself', promptTop(long), 2)
+
+  // Codex draws no rule above its prompt at all. The nearest box-drawing line is the
+  // BOTTOM of the startup banner, six rows up with a tip and two blanks in between -
+  // anchoring there put the tag on the banner, and on line 0 it was dropped outright.
+  const codex = [
+    '› say the word blue',
+    '',
+    '',
+    'inference with increased plan usage.',
+    'Tip: New Use /fast to enable our fastest',
+    '',
+    '╰────────────────────────────────────────────────╯',
+    '│ permissions: YOLO mode                         │',
+    '│ directory:   ~/Projects/PaneForge              │',
+    '╭────────────────────────────────────────────────╮'
+  ]
+  eq('Codex tags the row the prompt is on', promptTop(codex), 0)
+
+  // Each half of that refusal on its own, so a change that drops one still fails.
+  eq(
+    'a closed box above the composer stops the walk',
+    promptTop(['› typed', '╰──────────────────╯', '╭──────────────────╮']),
+    0
+  )
+  eq('two blank rows are the gap below the transcript', promptTop(['› typed', '', '', '─────────────────────']), 0)
+  eq('a shell, which draws no composer at all', promptTop([BASH, 'total 24', 'drwxr-xr-x  4 robert']), 0)
+  // The bound the caller passes is the last prompt's line: a tag can never be anchored
+  // above the prompt that was sent before it.
+  eq('the walk is bounded by the caller', promptTop(claude, 0), 0)
 }
 
 console.log(`prompt box: ${checks} checks passed`)
