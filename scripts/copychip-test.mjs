@@ -43,38 +43,58 @@ const box = { cellW: 8, cellH: 18, width: 1256, height: 900, viewportY: 0, chipW
 eq('empty selection has no chip', chipSpot({ x: 4, y: 3 }, { x: 4, y: 3 }, box), null)
 
 {
-  // Ends at column 20 of row 3, so it points just past column 19 and one row down.
+  // Beside the START of the highlight, on the line ABOVE it: shortest reach from anywhere
+  // in the selection, and covering nothing that was just highlighted.
   const s = chipSpot({ x: 2, y: 3 }, { x: 20, y: 3 }, box)
-  eq('chip sits past the last selected cell', s, { left: 20 * 8 + 6, top: 4 * 18 + 4 })
+  eq('chip sits above the first selected line', s, { left: 2 * 8, top: 3 * 18 - 26 - 4 })
 }
 
 {
-  // A selection that wrapped ends at column 0 of the next row; the cell to point at is the
-  // END of the row above, not column -1 of this one.
-  const s = chipSpot({ x: 2, y: 3 }, { x: 0, y: 4 }, box)
-  ok('a wrapped end points at the row above', s.top === 4 * 18 + 4)
-  ok('a wrapped end is not off the left edge', s.left >= 0)
+  // The load-bearing one, and the whole point of the change. A ten-line selection puts the
+  // chip at the top of it, not at the far end the finger would have to travel back to.
+  const s = chipSpot({ x: 2, y: 3 }, { x: 30, y: 13 }, box)
+  ok('a multi-line selection is anchored to its first line', s.top < 3 * 18)
+  ok('and nowhere near the last line', 13 * 18 - s.top > 9 * 18)
+}
+
+{
+  // A drag upwards hands the cells over end-first; the first LINE is still the anchor.
+  const up = chipSpot({ x: 30, y: 13 }, { x: 2, y: 3 }, box)
+  const down = chipSpot({ x: 2, y: 3 }, { x: 30, y: 13 }, box)
+  eq('dragging upwards lands in the same place', up, down)
 }
 
 {
   // Off the right edge: pulled in, never allowed to hang out of the pane.
-  const s = chipSpot({ x: 2, y: 3 }, { x: 157, y: 3 }, box)
+  const s = chipSpot({ x: 156, y: 3 }, { x: 157, y: 3 }, box)
   ok('chip stays inside the right edge', s.left + box.chipW <= box.width)
 }
 
 {
-  // The load-bearing one. A selection ending on the LAST row would put the chip below the
-  // pane; clamping it flat would park it on the composer. It flips above instead.
-  const last = { ...box, viewportY: 0 }
-  const s = chipSpot({ x: 2, y: 49 }, { x: 30, y: 49 }, last)
-  ok('a chip on the last row flips above the line', s.top < 49 * 18)
-  ok('and is still inside the pane', s.top >= 0 && s.top + last.chipH <= last.height)
+  // Nothing above the top row, so it drops under the first line rather than off the pane.
+  const s = chipSpot({ x: 2, y: 0 }, { x: 30, y: 4 }, box)
+  ok('a selection starting on the top row puts the chip below the line', s.top >= 18)
+  ok('and it is still inside the pane', s.top >= 0 && s.top + box.chipH <= box.height)
+}
+
+{
+  // The composer is the row that must stay visible: never clamped flat to the bottom.
+  const s = chipSpot({ x: 2, y: 49 }, { x: 30, y: 49 }, box)
+  ok('a chip on the last row is above the line', s.top < 49 * 18)
+  ok('and is inside the pane', s.top >= 0 && s.top + box.chipH <= box.height)
 }
 
 {
   // Scrolled: the row is absolute, the chip is in pane pixels.
   const s = chipSpot({ x: 2, y: 1003 }, { x: 30, y: 1003 }, { ...box, viewportY: 1000 })
-  eq('a scrolled selection is placed by viewport row', s.top, 4 * 18 + 4)
+  eq('a scrolled selection is placed by viewport row', s.top, 3 * 18 - 26 - 4)
+}
+
+{
+  // A long selection whose START has scrolled off the top keeps its chip on screen, at the
+  // top of what is visible - a chip clamped to an invisible row points at nothing.
+  const s = chipSpot({ x: 2, y: 990 }, { x: 30, y: 1010 }, { ...box, viewportY: 1000 })
+  ok('a start above the viewport is drawn on screen', s.top >= 0 && s.top + box.chipH <= box.height)
 }
 
 // --- which turn a row belongs to -------------------------------------------

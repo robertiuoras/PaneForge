@@ -6,8 +6,8 @@
  *
  * The first is the SELECTION chip: a highlight in a pty is not a DOM range, so there is no
  * element to hang a button off. All there is is a start cell and an end cell, and the chip
- * has to sit near the end of the drag - where the finger let go and where the eye already
- * is - without leaving the pane and without covering the last line of what was selected.
+ * has to sit beside the FIRST line of the highlight - the shortest reach from anywhere in
+ * the selection - without leaving the pane and without covering what was selected.
  *
  * The second is the BLOCK: an agent's reply has no markup either, so the only thing that
  * says where one turn ends and the next begins is the prompt markers the rail already
@@ -38,29 +38,38 @@ export interface ChipBox {
 /**
  * Where to draw the chip for a selection running `from` -> `to`.
  *
- * Below and just right of the last selected cell, which is where a drag ends and where
- * nothing has been read yet. When that would go off an edge the chip flips to the other
- * side of the cell rather than being clamped flat against the border: a chip pinned to the
- * bottom edge covers the composer, which is the one row of a pane that must stay visible.
+ * Directly ABOVE the FIRST selected line, left-aligned with where the highlight starts.
+ * The end of the drag was the obvious anchor and it is the wrong one: the finger has to
+ * travel the whole length of the selection to get back to it, and on a multi-line highlight
+ * that is most of the pane. The start of the selection is where the eye already is, and
+ * above the line rather than below it means the chip never covers the text that was just
+ * highlighted.
+ *
+ * No room above (the selection starts on the top row) is the one case it drops BELOW the
+ * first line - still beside the start, never the far end. A chip that would leave the
+ * bottom of the pane is pulled back in, because the composer is the one row that must stay
+ * visible.
  *
  * Returns null for an empty selection - there is nothing to copy and nothing to point at.
  */
 export function chipSpot(from: Cell, to: Cell, box: ChipBox): { left: number; top: number } | null {
   if (from.x === to.x && from.y === to.y) return null
-  // xterm reports the end column as one PAST the last selected cell, and a selection that
-  // wrapped ends at column 0 of the next row. Either way the cell to point at is the one
-  // before it, and on a wrap that is the end of the row above.
-  const endX = to.x > 0 ? to.x - 1 : Math.max(0, box.width / box.cellW - 1)
-  const endY = to.x > 0 ? to.y : to.y - 1
-  const row = endY - box.viewportY
+  // A selection is reported start-before-end in buffer order, but a drag upwards can hand
+  // them over the other way round, so take the earlier cell as the first line rather than
+  // trusting the order.
+  const first = to.y < from.y || (to.y === from.y && to.x < from.x) ? to : from
+  const rows = Math.max(1, Math.floor(box.height / box.cellH))
+  // The highlight can begin above the viewport on a scrolled pane; the chip still belongs
+  // on screen, at the top of what is visible, rather than clamped to a row nobody can see.
+  const row = Math.min(rows - 1, Math.max(0, first.y - box.viewportY))
 
-  let left = (endX + 1) * box.cellW + 6
-  let top = (row + 1) * box.cellH + 4
+  let left = first.x * box.cellW
   if (left + box.chipW > box.width) left = box.width - box.chipW - 6
   if (left < 0) left = 0
-  // Flip above the line rather than clamp: see above.
-  if (top + box.chipH > box.height) top = row * box.cellH - box.chipH - 4
-  if (top < 0) top = 0
+  let top = row * box.cellH - box.chipH - 4
+  // Nothing above the first row: drop under it, still beside the start.
+  if (top < 0) top = (row + 1) * box.cellH + 4
+  if (top + box.chipH > box.height) top = Math.max(0, box.height - box.chipH - 4)
   return { left: Math.round(left), top: Math.round(top) }
 }
 

@@ -647,9 +647,13 @@ export default function TerminalPane({
       setSelChip(null)
       return
     }
+    // Gone only when the WHOLE highlight is off screen. The chip is anchored to the first
+    // line now, so keying the test on that row alone would take the button away from a long
+    // selection whose start has scrolled off the top while most of it is still in view.
     const rowsOnScreen = t.rows
     const endRow = pos.end.y - box.viewportY
-    if (endRow < -1 || endRow > rowsOnScreen) {
+    const startRow = pos.start.y - box.viewportY
+    if (endRow < -1 || startRow > rowsOnScreen) {
       setSelChip(null)
       return
     }
@@ -2390,6 +2394,11 @@ export default function TerminalPane({
       {selChip && (
         <button
           className="sel-copy"
+          // The coordinates were computed and then thrown away: `.sel-copy` is absolute with
+          // no left/top, so it fell to its static position - the pane's top-left corner -
+          // and stayed there whatever was highlighted. Every measurement below is what makes
+          // the button land beside the selection at all.
+          style={{ left: selChip.left, top: selChip.top }}
           title="Copy the highlighted text"
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
