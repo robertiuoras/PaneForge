@@ -305,6 +305,16 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
    waiting broke "3 working" across two lines and stood the header at 36.6px instead of
    its usual 22 (measured). */
 .section-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The memory notice. Amber for tight, red for over - and deliberately quiet type: this
+   appears while the machine is already struggling, and a loud banner on a laptop that is
+   merely busy would be the app crying wolf. It is absent entirely when there is nothing
+   to say, so anything visible here is worth reading. */
+.capacity { font-size: 10px; line-height: 1.35; padding: 6px 8px; margin: 0 2px 6px;
+  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--muted); }
+.capacity.tight { border-left-color: var(--warn); }
+.capacity.over { border-left-color: var(--danger); color: var(--danger); }
 .section-btn { padding: 2px 4px; display: inline-flex; align-items: center; line-height: 1; }
 .device-filter { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; padding: 0 2px; }
 .device-filter select { min-width: 0; flex: 1; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 6px; font: inherit; }

@@ -198,6 +198,8 @@ import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
+import { assess, type Pressure } from '../shared/capacity'
+import { totalMb, watchPressure } from './memory'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
@@ -829,7 +831,50 @@ remote.on('sessions', () => {
   send('sessions:changed', allSessions())
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
-remote.on('changed', (state: RemoteState) => send('remote:changed', state))
+remote.on('changed', (state: RemoteState) => {
+  send('remote:changed', state)
+  publishCapacity()
+})
+
+/**
+ * What this machine can still hold, pushed to the renderer whenever it changes.
+ *
+ * The app used to have no opinion about this at all - `freemem`, `totalmem` and
+ * `pressure` appeared nowhere in the source - so a desk that ran out of memory looked
+ * like an app that had got slow. Measured 2026-08-14 on an M4/16 GB with six panes open:
+ * load average 105.77 while 32.73% of the CPU was IDLE, 6.3 GB in the compressor. The
+ * panes were not the cost (PaneForge held 248 MB of it); the agents inside them were, at
+ * ~190 MB each, and the builds those agents started were worse - one alone held 1442 MB.
+ *
+ * So this reports a verdict rather than a reading, and the renderer acts on it by
+ * trimming the scrollback of panes nobody is looking at. `startOn` already lets a pane
+ * run on a paired device, which is the real answer when a machine is full, so the
+ * verdict says when to offer it.
+ */
+function publishCapacity(): void {
+  const mirrored = remote.sessions().length
+  const peers = remote.state().peers.filter((p) => p.status === 'online').length
+  send(
+    'capacity:changed',
+    assess({
+      totalMb: totalMb(),
+      pressure: lastPressure,
+      localPanes: manager.list().length,
+      remotePanes: mirrored,
+      peerAvailable: peers > 0
+    })
+  )
+}
+
+let lastPressure: Pressure = 'normal'
+// Only fires on a CHANGE of level, so this is a handful of messages in a session rather
+// than one every 15 seconds. Pane counts move far more often than pressure does, hence
+// the extra publish calls where sessions and peers change.
+const stopPressure = watchPressure((p) => {
+  lastPressure = p
+  publishCapacity()
+})
+manager.on('sessions', () => publishCapacity())
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
@@ -3222,6 +3267,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
   presence.dispose()
+  stopPressure()
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.
   flushRecents()

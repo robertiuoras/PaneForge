@@ -3,6 +3,7 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import {
   applyKey,
@@ -707,7 +708,7 @@ export default function TerminalPane({
       fontSize,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 20000,
+      scrollback: FULL_SCROLLBACK,
       theme: themeRef.current ?? {
         background: '#0c0c10',
         foreground: '#e6e6e6',
