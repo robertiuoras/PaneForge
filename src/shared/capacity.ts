@@ -312,6 +312,16 @@ export type OffloadPlan = OffloadAnswer | 'ask'
 /** An answer kept for a while, so a busy stretch is not one dialog per pane. */
 export interface OffloadStick {
   answer: OffloadAnswer
+  /**
+   * The device the answer was given ABOUT.
+   *
+   * "Yes, send it to the PC" is not "yes, send it anywhere". Two paired devices and two
+   * projects is enough for a remembered answer about one machine to move a pane onto a
+   * machine nobody was asked about - which is the silent move this whole feature exists
+   * to stop, wearing the user's own approval. A remembered "keep it here" carries no
+   * device: it is a statement about THIS desk and holds whoever was offering.
+   */
+  device: string
   /** ms epoch after which the question is asked again */
   until: number
 }
@@ -324,8 +334,13 @@ export interface OffloadStick {
  */
 export const OFFLOAD_STICK_MS = 10 * 60_000
 
-export function stickFor(answer: OffloadAnswer, now: number, ms = OFFLOAD_STICK_MS): OffloadStick {
-  return { answer, until: now + ms }
+export function stickFor(
+  answer: OffloadAnswer,
+  device: string,
+  now: number,
+  ms = OFFLOAD_STICK_MS
+): OffloadStick {
+  return { answer, device, until: now + ms }
 }
 
 /**
@@ -348,7 +363,13 @@ export function offloadPlan(
   now: number
 ): OffloadPlan {
   if (!target) return 'local'
-  if (stick && stick.until > now) return stick.answer
+  // A stuck answer is an answer to a QUESTION. With asking turned off no question was
+  // put, so the setting decides and a leftover answer from before the switch was flipped
+  // may not quietly outvote it.
+  if (ask && stick && stick.until > now) {
+    if (stick.answer === 'local') return 'local'
+    if (stick.device === target.device) return 'remote'
+  }
   return ask ? 'ask' : 'remote'
 }
 
