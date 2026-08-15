@@ -1157,9 +1157,31 @@ function adoptable(state, id) {
  * to the next chat as a working checkout, which then failed on its first git command.
  * PaneForge-a sat in exactly that state, and `claim` answered `"fresh": true` about it
  * (2026-08-02).
+ *
+ * And a checkout is not the same thing as a checkout OF THIS REPOSITORY. `--is-inside-work-tree`
+ * was the whole test, so a separate CLONE of the same remote sitting at `<repo>-c` answered
+ * yes and was adopted as lane c. Nothing errors and nothing says anything: the lane's commits
+ * go into the other clone's object database while every ref decision here - `aheadOf`,
+ * `drainLane`, the ready-mark check, `shippable` - reads THIS repo's refs, so the lane simply
+ * never has anything to release, for ever. Measured on taskdriver.ai 2026-08-15, where
+ * `taskdriver.ai-c` was a full clone on `lane-c` and doctor reported it as a held lane.
+ *
+ * The object database is the identity, never the path: a real worktree shares MAIN's
+ * `--git-common-dir` and a clone has its own. That path is printed relative to the command's
+ * cwd, so it is resolved against the folder it was asked about rather than trusted as written.
  */
+function repoOf(dir) {
+  const r = gitSafe(dir, 'rev-parse', '--git-common-dir')
+  if (!r.ok || !r.out) return null
+  return resolve(dir, r.out).toLowerCase()
+}
+/** MAIN's object database. Asked once - it cannot change while this process runs. */
+let ownRepo
 function isWorktree(dir) {
-  return gitSafe(dir, 'rev-parse', '--is-inside-work-tree').out === 'true'
+  if (gitSafe(dir, 'rev-parse', '--is-inside-work-tree').out !== 'true') return false
+  ownRepo ??= repoOf(MAIN)
+  const theirs = repoOf(dir)
+  return Boolean(ownRepo && theirs && ownRepo === theirs)
 }
 
 function ensureWorktree(id) {
@@ -1183,9 +1205,17 @@ function ensureWorktree(id) {
         /* unreadable is its own answer below */
       }
       if (left.length) {
+        // A folder that IS a checkout, of some other repository, is the one case where
+        // "not a git worktree and is not empty" reads as nonsense - it looks like a
+        // perfectly good lane to anybody standing in it. Name what it really is.
+        const foreign = gitSafe(dir, 'rev-parse', '--is-inside-work-tree').out === 'true'
         throw new Error(
-          `lane ${id}'s folder is not a git worktree and is not empty (${left.slice(0, 5).join(', ')}). ` +
-            `Check what is in ${dir}, move it out, and it rebuilds itself.`
+          foreign
+            ? `lane ${id}'s folder is a separate clone, not a worktree of this checkout. Commits made ` +
+              `there are invisible to ${basename(MAIN)} and nothing will ever merge or release them. ` +
+              `Move ${dir} out of the way (or push its work to the remote first) and the lane rebuilds itself.`
+            : `lane ${id}'s folder is not a git worktree and is not empty (${left.slice(0, 5).join(', ')}). ` +
+              `Check what is in ${dir}, move it out, and it rebuilds itself.`
         )
       }
     }
@@ -2695,6 +2725,16 @@ function status(session) {
         // Claimed by a chat whose own project is a different repo - it stood here.
         visitor: Boolean(state.lanes[id]?.visitor),
         from: state.lanes[id]?.cwd ?? null,
+        // When the HOLD was last refreshed - a heartbeat bumped by that chat's turns
+        // ending, so it says how long ago the chat was last alive rather than anything
+        // about work. Without it every hold reads the same: taskdriver.ai printed five
+        // lanes "held by a chat" for two live chats and three that had been gone for
+        // hours, and nothing on the machine could tell them apart (2026-08-15). Null when
+        // nobody holds the lane. `touchedAt` below is the other half - when work moved.
+        seenAt: state.lanes[id] ? (state.lanes[id].seen ?? state.lanes[id].claimed ?? null) : null,
+        // The folder is there and is not a checkout of this repository - a leftover, or a
+        // separate clone squatting on the lane's path. Nothing here merges or releases it.
+        broken: Boolean(w.broken),
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
         // Enough for a hook (or PaneForge) to say "this one is stuck, and here is who
@@ -2736,6 +2776,20 @@ function status(session) {
  * `Toolstash-w2` sat beside `Toolstash-a` for days after git had stopped knowing about it,
  * and nothing on the machine would ever have mentioned it.
  */
+/**
+ * How long ago, for a person reading a list.
+ *
+ * Minutes stop being readable somewhere around an hour and a half - "341m ago" is a number
+ * to do arithmetic on rather than an answer - and the whole point of printing an age here
+ * is that "5h" and "3m" must not look alike at a glance.
+ */
+function ago(at) {
+  const m = Math.max(0, Math.round((now() - at) / 60000))
+  if (m < 90) return `${m}m`
+  const h = m / 60
+  return h < 36 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`
+}
+
 function doctor() {
   const s = status(null)
   const out = []
@@ -2757,20 +2811,32 @@ function doctor() {
     const what = []
     if (l.heldBy)
       what.push(
-        l.tentative
+        (l.tentative
           ? 'reserved by a chat that has not written here'
           : l.parked
             ? `held by a chat whose turn ended ${Math.round((now() - l.parked) / 60000)}m ago - taken over the moment anyone needs it`
             : l.visitor
               ? 'held by a visiting chat from another project'
-              : 'held by a chat'
+              : 'held by a chat') +
+          // A hold with no age on it reads as a person typing, whatever its real age, and
+          // that is the whole reason this list was unreadable: three of taskdriver.ai's
+          // five holds had been dead for hours and said exactly what the two live ones
+          // said. `parked` already carries its own clock, so it is not repeated there.
+          (l.parked || l.seenAt == null ? '' : `, last heard from ${ago(l.seenAt)} ago`)
+      )
+    if (l.broken)
+      what.push(
+        `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
     if (l.dirty) what.push('uncommitted edits')
     if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
     if (l.ready) what.push('finished, waiting for the next release')
     if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
     say(`  ${l.lane.padEnd(5)} ${l.branch.padEnd(10)} ${what.length ? what.join('; ') : 'empty'}`)
-    say(`        ${l.dir}`)
+    // A path that is not there is not an address. A lane can be held before its folder is
+    // ever made (the folders are cut on first use), and printing the path anyway sent
+    // whoever read this looking for a directory that has never existed.
+    say(l.exists ? `        ${l.dir}` : `        no folder yet - it is made the first time that chat writes here`)
   }
   const spare = s.lanes.length - live.length
   if (spare > 0) say(`  ${spare} more lane${spare === 1 ? '' : 's'} free - their folders are only made when handed out.`)

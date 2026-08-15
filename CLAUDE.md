@@ -989,6 +989,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:install` | quitting takes the install pty's whole process tree |
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
+| `npm run test:laneforeign` | a folder at a lane's path that is a checkout of a DIFFERENT repository: it is named and refused rather than adopted, and its commits are left alone. The load-bearing half is the control that the clone really does pass the old `--is-inside-work-tree` test, without which the case is never reproduced |
 | `npm run test:lanepeers` | the arithmetic of a claim on the other desk: what a ref name may carry, and the negatives that decide whether the check is worth having — a desk never blocks itself, a claim nobody refreshed stops counting, and a letter lane is never anybody else's business |
 | `npm run test:lanedevice` | the same thing with the plumbing attached: a real bare repo, two real clones, one told it is another machine. The second desk is sent to a letter rather than onto the shared branch, the trunk comes back the instant a chat ends, and the release lock is refused at the SERVER — with the two mechanisms that looked right and were not (the shared branch tip, and `--force-with-lease`) kept as controls |
 | `npm run test:notes` | release-note ranges and both template shapes |
