@@ -973,6 +973,9 @@ export default function App(): JSX.Element {
    * is one of those in Settings.
    */
   const offloadStick = useRef<OffloadStick | null>(null)
+  /** The offload question currently on screen, so a second launch waits rather than
+   * replacing its callbacks and stranding the first launch's promise for ever. */
+  const offloadAsking = useRef<Promise<unknown> | null>(null)
 
   const offloadReqs = useCallback(
     async (reqs: StartSessionRequest[]): Promise<StartSessionRequest[]> => {
@@ -1003,6 +1006,14 @@ export default function App(): JSX.Element {
       }))
       const movable = pairs.filter((p) => p.target)
       if (!movable.length) return reqs
+      // ONE device per question, and the question names it. A launch whose panes belong
+      // to different projects can have two different peers offering, and a dialog saying
+      // "Start 3 panes on Gamer-PC?" that then puts one of them on a second machine has
+      // been answered about something the person was never shown. Panes for the other
+      // device stay here; this machine being full is a poor reason to move a pane onto a
+      // machine nobody agreed to.
+      const device = movable[0].target?.device
+      const forDevice = movable.filter((p) => p.target?.device === device)
       const plan = offloadPlan(
         movable[0].target,
         config?.offloadAsk !== false,
@@ -1014,36 +1025,59 @@ export default function App(): JSX.Element {
         // One question for the whole launch. Asked per pane, opening three panes at once
         // is three dialogs about the same machine being full.
         const name = movable[0].target?.deviceName ?? 'the paired device'
-        const many = movable.length > 1 ? `${movable.length} panes` : 'this pane'
-        const answered = await new Promise<{ answer: 'remote' | 'local'; remember: boolean }>(
-          (resolve) => {
-            setAsk({
-              title: `Start ${many} on ${name}?`,
-              body:
-                `This machine is out of memory - panes here hold about ${capacity.usedMb} MB ` +
-                `and another one costs about ${capacity.nextPaneMb} MB. ${name} has the same ` +
-                `project and can run it; you keep watching it from here. Keeping it here is ` +
-                `fine if this is the checkout you are working in - it will just be slower.`,
-              confirmLabel: `Start on ${name}`,
-              cancelLabel: 'Keep it here',
-              check: { label: `Remember for ${Math.round(OFFLOAD_STICK_MS / 60000)} minutes` },
-              onConfirm: (_v, checked) => {
-                setAsk(null)
-                resolve({ answer: 'remote', remember: checked })
-              },
-              onCancel: (checked) => resolve({ answer: 'local', remember: checked })
-            })
-          }
+        const many = forDevice.length > 1 ? `${forDevice.length} panes` : 'this pane'
+        // Two launches can be in flight - a second folder opened, or the command palette
+        // run while this dialog is up - and `ask` holds ONE question. Without this the
+        // second `setAsk` replaces the first dialog's callbacks, the first promise is
+        // never resolved and that batch of panes never starts, silently. Whoever is
+        // second waits for the answer and then re-reads the plan, which is usually a
+        // remembered answer and no second dialog at all.
+        while (offloadAsking.current) await offloadAsking.current.catch(() => undefined)
+        const replan = offloadPlan(
+          movable[0].target,
+          config?.offloadAsk !== false,
+          offloadStick.current,
+          Date.now()
         )
-        offloadStick.current = answered.remember
-          ? stickFor(answered.answer, Date.now())
-          : null
+        if (replan === 'local') return reqs
+        let answered = { answer: 'remote' as 'remote' | 'local', remember: false }
+        if (replan === 'ask') {
+          const question = new Promise<{ answer: 'remote' | 'local'; remember: boolean }>(
+            (resolve) => {
+              setAsk({
+                title: `Start ${many} on ${name}?`,
+                body:
+                  `This machine is out of memory - panes here hold about ${capacity.usedMb} MB ` +
+                  `and another one costs about ${capacity.nextPaneMb} MB. ${name} has the same ` +
+                  `project and can run it; you keep watching it from here. Keeping it here is ` +
+                  `fine if this is the checkout you are working in - it will just be slower.`,
+                confirmLabel: `Start on ${name}`,
+                cancelLabel: 'Keep it here',
+                check: { label: `Remember for ${Math.round(OFFLOAD_STICK_MS / 60000)} minutes` },
+                onConfirm: (_v, checked) => {
+                  setAsk(null)
+                  resolve({ answer: 'remote', remember: checked })
+                },
+                onCancel: (checked) => resolve({ answer: 'local', remember: checked })
+              })
+            }
+          )
+          offloadAsking.current = question
+          try {
+            answered = await question
+          } finally {
+            offloadAsking.current = null
+          }
+          offloadStick.current = answered.remember
+            ? stickFor(answered.answer, device ?? '', Date.now())
+            : null
+        }
         if (answered.answer === 'local') return reqs
       }
       const local: StartSessionRequest[] = []
       const sent: string[] = []
       for (const { req, target } of pairs) {
-        if (!target) {
+        if (!target || target.device !== device) {
           local.push(req)
           continue
         }

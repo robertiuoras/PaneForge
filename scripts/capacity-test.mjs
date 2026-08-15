@@ -216,23 +216,38 @@ ok('asking on by default puts it on screen', offloadPlan(TARGET, true, null, NOW
 ok('asking off keeps the old silent move', offloadPlan(TARGET, false, null, NOW) === 'remote')
 ok(
   'a remembered "keep it here" is obeyed, and is not the same as no peer',
-  offloadPlan(TARGET, true, stickFor('local', NOW), NOW + 60_000) === 'local'
+  offloadPlan(TARGET, true, stickFor('local', 'pc', NOW), NOW + 60_000) === 'local'
 )
 ok(
   'a remembered "send it" stops asking',
-  offloadPlan(TARGET, true, stickFor('remote', NOW), NOW + 60_000) === 'remote'
+  offloadPlan(TARGET, true, stickFor('remote', 'pc', NOW), NOW + 60_000) === 'remote'
 )
 ok(
   'and it expires - the burst is over, so the question comes back',
-  offloadPlan(TARGET, true, stickFor('remote', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'ask'
-)
-ok(
-  'an expired answer with asking off still moves it',
-  offloadPlan(TARGET, false, stickFor('local', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'remote'
+  offloadPlan(TARGET, true, stickFor('remote', 'pc', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'ask'
 )
 ok(
   'a remembered "send it" with nowhere to send it is still local',
-  offloadPlan(null, true, stickFor('remote', NOW), NOW + 1) === 'local'
+  offloadPlan(null, true, stickFor('remote', 'pc', NOW), NOW + 1) === 'local'
+)
+
+// The three below are the review's confirmed findings, each kept as a case: every one of
+// them moved a pane somewhere the person had not been shown, wearing their own approval.
+ok(
+  'a "yes" about one device does not authorise a second one',
+  offloadPlan({ ...TARGET, device: 'laptop-2', deviceName: 'Other' }, true, stickFor('remote', 'pc', NOW), NOW + 60_000) === 'ask'
+)
+ok(
+  'a "keep it here" carries no device - it is about this desk',
+  offloadPlan({ ...TARGET, device: 'laptop-2' }, true, stickFor('local', 'pc', NOW), NOW + 60_000) === 'local'
+)
+ok(
+  'with asking switched off the setting wins, not an answer from before it was',
+  offloadPlan(TARGET, false, stickFor('local', 'pc', NOW), NOW + 60_000) === 'remote'
+)
+ok(
+  'an expired answer with asking off still moves it',
+  offloadPlan(TARGET, false, stickFor('local', 'pc', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'remote'
 )
 ok('the window is ten minutes', OFFLOAD_STICK_MS === 600_000, OFFLOAD_STICK_MS)
 
