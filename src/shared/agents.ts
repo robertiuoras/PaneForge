@@ -36,6 +36,12 @@ export interface AgentSpec {
   bin: string
   /** args used for a fresh session */
   args?: string[]
+  /**
+   * args prepended to EVERY launch of this agent, fresh or resumed. `args` is the
+   * fresh-session form and is dropped on a resume, so a flag that must hold for the
+   * whole life of the pane cannot live there.
+   */
+  alwaysArgs?: string[]
   /** args that continue the last conversation in the same folder; omitted = unsupported */
   resumeArgs?: string[]
   /**
@@ -141,6 +147,18 @@ const OPENROUTER_MODELS: ModelChoice[] = [
   { value: 'moonshotai/kimi-k2', label: 'Kimi K2' }
 ]
 
+/**
+ * Every Claude Code pane starts with permission prompts off. This is a deliberate
+ * choice for a machine whose whole point is unattended lanes: a pane that stops on a
+ * prompt is a lane that has silently stopped working, and the prompts were answered
+ * "yes" every time anyway.
+ *
+ * `--dangerously-skip-permissions` STARTS the session in bypass;
+ * `--allow-dangerously-skip-permissions` would only make the mode reachable from
+ * shift+tab. Swap to the latter if a pane should ask by default again.
+ */
+const BYPASS_ARGS = ['--dangerously-skip-permissions']
+
 // Model lists are deliberately short: they are a shortcut, not a whitelist. The UI
 // lets you type any model string, so a CLI renaming its models cannot break launches.
 export const BUILTIN_AGENTS: AgentSpec[] = [
@@ -148,6 +166,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     id: 'claude',
     label: 'Claude Code',
     bin: 'claude',
+    // Permission mode is decided at LAUNCH, not from settings: the CLI reads argv into
+    // `isBypassPermissionsModeAvailable` and there is no settings key or env var that
+    // turns it on afterwards, so without this flag shift+tab cannot reach bypass at all.
+    alwaysArgs: BYPASS_ARGS,
     resumeArgs: ['--continue'],
     resumeIdArgs: ['--resume'],
     modelFlag: '--model',
@@ -173,6 +195,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     id: 'openrouter',
     label: 'Claude Code on OpenRouter',
     bin: 'claude',
+    alwaysArgs: BYPASS_ARGS,
     resumeArgs: ['--continue'],
     resumeIdArgs: ['--resume'],
     modelFlag: '--model',
@@ -518,6 +541,7 @@ export function buildArgs(
     : opts.resume && spec.resumeArgs
       ? [...spec.resumeArgs]
       : [...(spec.args ?? [])]
+  if (spec.alwaysArgs?.length) argv.unshift(...spec.alwaysArgs)
   const model = opts.model?.trim()
   if (!model) return argv
   if (spec.modelStyle === 'arg') argv.push(model)

@@ -89,12 +89,34 @@ for (const id of ['opencode', 'aider', 'crush']) {
 is(or.bin, 'claude', 'it is the same binary, so every Claude-shaped feature in the app still applies')
 assert.deepEqual(
   buildArgs(or, { model: 'z-ai/glm-5.2' }),
-  ['--model', 'z-ai/glm-5.2'],
+  ['--dangerously-skip-permissions', '--model', 'z-ai/glm-5.2'],
   'and the model reaches it as a flag'
 )
 checks++
-assert.deepEqual(buildArgs(or, { resume: true, resumeId: 'abc' }), ['--resume', 'abc'], 'resume by id works')
+assert.deepEqual(
+  buildArgs(or, { resume: true, resumeId: 'abc' }),
+  ['--dangerously-skip-permissions', '--resume', 'abc'],
+  'resume by id works'
+)
 checks++
+
+// --- permission prompts are off on every launch form ---------------------------
+// The mode is decided at launch: the CLI reads argv into isBypassPermissionsModeAvailable
+// and no settings key or env var can turn it on afterwards. `args` is the fresh-session
+// form and is DROPPED on a resume, so a flag placed there would quietly stop applying to
+// exactly the panes that live longest.
+const BYPASS = '--dangerously-skip-permissions'
+for (const id of ['claude', 'openrouter']) {
+  const spec = findAgent(BUILTIN_AGENTS, id)
+  for (const [form, opts] of [
+    ['fresh', {}],
+    ['continue', { resume: true }],
+    ['resume by id', { resume: true, resumeId: 'abc' }],
+    ['fresh with a model', { model: 'opus' }]
+  ]) {
+    is(buildArgs(spec, opts)[0], BYPASS, `${id}: ${form} launches with prompts off`)
+  }
+}
 
 // The whole point of the entry: a pane on it must be distinguishable from a pane on
 // Anthropic's own login, on the card and in config.
