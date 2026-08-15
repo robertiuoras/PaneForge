@@ -158,7 +158,10 @@
     "test:usage": "node scripts/usage-test.mjs",
     "test:turncopyview": "node scripts/turn-copy-view-test.mjs",
     "test:lanepeers": "node scripts/lane-peers-test.mjs",
-    "test:lanedevice": "node scripts/lane-device-test.mjs"
+    "test:lanedevice": "node scripts/lane-device-test.mjs",
+    "typecheck:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run typecheck",
+    "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test",
+    "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
