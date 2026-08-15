@@ -246,6 +246,79 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
      selector LOSES to it - measured: the folder and editor buttons were still drawn at
      36x36 and Close was still off the edge. */
   html.handheld .pt-actions .icon.desk-only { display: none; }
+
+  /* ...and hiding what a phone cannot use was still not enough. Measured at 414px with
+     that block in force: the header wanted 486px of the 404 it had, the restart, Fix and
+     Close buttons were drawn from x=417 to x=491 - past the right edge, unreachable, with
+     nothing to scroll them back - and `.pt-name` had been squeezed to 0px paying for them.
+     Five 36px targets, a 150px agent picker and an 86px branch badge do not fit in 404px
+     however they are trimmed, so the row stops trying: it keeps only what says WHICH pane
+     this is, and every action goes behind the one ⋯ button into `.pane-menu`.
+     Carried on `.pane-title` so it out-specifies the 36px sizing rule above. */
+  html.handheld .pane-title .pt-actions > *:not(.pt-more) { display: none; }
+  html.handheld .pt-more { font-size: 19px; line-height: 1; }
+
+  /* The sheet itself: the ordinary phone action sheet, which is what a hand expects. Rows
+     are the full width with a word on them, because the thing being fixed is a column of
+     27x23 glyphs nobody could name or hit. */
+  .pane-menu-back {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: flex-end;
+    background: #00000066;
+  }
+  .pane-menu {
+    width: 100%;
+    max-height: 88dvh;
+    overflow-y: auto;
+    padding: 6px 8px max(10px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    background: var(--surface-2);
+  }
+  .pane-menu-head {
+    padding: 10px 12px 8px;
+    color: var(--muted);
+    font: 600 12.5px/1.2 inherit;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pane-menu-extra { padding: 0 8px 8px; }
+  .pane-menu-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 52px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text);
+    font: 500 15px/1.25 inherit;
+    text-align: left;
+  }
+  .pane-menu-row:active { background: var(--surface-3); }
+  .pane-menu-row.danger { color: var(--danger, #ff6b6b); }
+  .pane-menu-row.cancel {
+    justify-content: center;
+    margin-top: 4px;
+    background: var(--surface);
+    font-weight: 600;
+  }
+  .pmr-icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    font-size: 15px;
+  }
+  .pmr-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .pmr-hint { color: var(--muted); font: 400 12px/1.3 inherit; }
 }
 
 /* ---- sidebar ---- */

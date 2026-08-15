@@ -33,6 +33,11 @@ function flag(name, fallback) {
 const port = flag('--port', process.env.PF_PORT ?? '9333')
 const height = Number(flag('--height', 0))
 const width = Number(flag('--width', 0))
+// A phone is not only a narrow window: half of what this app does differently on one is
+// decided by `pointer: coarse` and by touch events existing, neither of which a device
+// metrics override supplies. --touch turns both on, so a check like "does the terminal
+// still raise a second keyboard" can be asked of the real window instead of a phone.
+const touch = args.includes('--touch') && args.splice(args.indexOf('--touch'), 1)
 const file = flag('--file', '')
 const urlMatch = flag('--url', '')
 const expression = file ? readFileSync(file, 'utf8') : args.join(' ')
@@ -105,12 +110,23 @@ function send(method, params) {
 }
 await new Promise((res) => ws.addEventListener('open', res, { once: true }))
 
+if (touch) {
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+  await send('Emulation.setEmulatedMedia', {
+    features: [
+      { name: 'pointer', value: 'coarse' },
+      { name: 'any-pointer', value: 'coarse' },
+      { name: 'hover', value: 'none' }
+    ]
+  })
+}
+
 if (height || width) {
   await send('Emulation.setDeviceMetricsOverride', {
     width: width || 1000,
     height: height || 700,
     deviceScaleFactor: 0,
-    mobile: false
+    mobile: !!touch
   })
   // React has to lay out against the new size before anything is worth measuring.
   await new Promise((r) => setTimeout(r, 500))
@@ -120,6 +136,10 @@ const out = await send('Runtime.evaluate', { expression, awaitPromise: true, ret
 // Always put the metrics back: a left-over override makes the next person's window
 // look broken in a way nothing in the app explains.
 if (height || width) await send('Emulation.clearDeviceMetricsOverride')
+if (touch) {
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false })
+  await send('Emulation.setEmulatedMedia', { features: [] })
+}
 
 if (out.exceptionDetails) {
   console.error(out.exceptionDetails.exception?.description ?? JSON.stringify(out.exceptionDetails))

@@ -24,6 +24,7 @@ import ConfirmDialog from './components/ConfirmDialog'
 import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
+import { PaneMenu } from './components/PaneMenu'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
@@ -241,6 +242,8 @@ export default function App(): JSX.Element {
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
   const [handoff, setHandoff] = useState<{ ids: string[]; title: string } | null>(null)
+  /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
+  const [paneMenu, setPaneMenu] = useState<string | null>(null)
   const [fleet, setFleet] = useState(false)
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
@@ -3364,14 +3367,34 @@ export default function App(): JSX.Element {
               ) : null}
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
-                <AgentPicker
-                  small
-                  agents={agents}
-                  agent={s.agent}
-                  model={s.model ?? ''}
-                  onInstalled={() => void api.listAgents().then(setAgents)}
-                  onChange={(a, m) => switchAgent(s, a, m)}
-                />
+                {/* The header is 404px on a phone and this picker alone is ~150 of it, so
+                    on a touch-sized screen it moves into the ⋯ sheet with the actions -
+                    where it is a labelled control rather than the reason Close is drawn
+                    off the edge of the screen. */}
+                {!handheld.handheld && (
+                  <AgentPicker
+                    small
+                    agents={agents}
+                    agent={s.agent}
+                    model={s.model ?? ''}
+                    onInstalled={() => void api.listAgents().then(setAgents)}
+                    onChange={(a, m) => switchAgent(s, a, m)}
+                  />
+                )}
+                {/* One target instead of six. Everything below is still rendered on a
+                    desktop window; on a phone the sheet is the only way to any of it. */}
+                {handheld.handheld && (
+                  <button
+                    className="icon pt-more"
+                    aria-label={`Actions for ${s.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPaneMenu(s.id)
+                    }}
+                  >
+                    ⋯
+                  </button>
+                )}
                 {/* Beside the runner and its model, because it is the same question asked
                     one step further out - WHERE this agent runs - and not another icon in
                     the row of six that all act on the pane in front of you. */}
@@ -3782,6 +3805,75 @@ export default function App(): JSX.Element {
       {laneHelp && (
         <LaneHelp onClose={() => setLaneHelp(false)} boards={laneBoards} sessions={sessions} />
       )}
+      {/* The pane header's six actions, at finger size. Rendered here rather than inside
+          the pane so the sheet is over the whole screen and not clipped by it. */}
+      {(() => {
+        const s = paneMenu ? sessions.find((x) => x.id === paneMenu) : null
+        if (!s) return null
+        const shut = (): void => setPaneMenu(null)
+        return (
+          <PaneMenu
+            title={s.title}
+            onClose={shut}
+            extra={
+              <AgentPicker
+                agents={agents}
+                agent={s.agent}
+                model={s.model ?? ''}
+                onInstalled={() => void api.listAgents().then(setAgents)}
+                onChange={(a, m) => switchAgent(s, a, m)}
+              />
+            }
+            actions={[
+              {
+                key: 'copy',
+                label: 'Copy output',
+                hint: 'the whole terminal',
+                icon: '⧉',
+                run: () => copyPaneOutput(s)
+              },
+              ...(grid
+                ? [
+                    {
+                      key: 'zoom',
+                      label: zoom === s.id ? 'Back to the grid' : 'Zoom this pane',
+                      icon: zoom === s.id ? '⤡' : '⤢',
+                      run: () => toggleZoom(s.id)
+                    }
+                  ]
+                : []),
+              {
+                key: 'fix',
+                label: 'Fix the display',
+                hint: 'refit and repaint, keeping the run',
+                icon: '⌗',
+                run: () => fixUi(s.id)
+              },
+              {
+                key: 'restart',
+                label: 'Restart agent',
+                icon: '⟳',
+                run: () => void api.restartSession(s.id)
+              },
+              {
+                key: 'clear',
+                label: 'Clear',
+                hint: 'runs /clear; the run keeps going, its memory does not',
+                icon: <TrashIcon size={14} />,
+                danger: true,
+                run: () => clearPane(s)
+              },
+              {
+                key: 'close',
+                label: 'Close pane',
+                icon: '✕',
+                danger: true,
+                run: () => close(s.id)
+              }
+            ]}
+          />
+        )
+      })()}
       {ask && (
         <ConfirmDialog
           title={ask.title}
