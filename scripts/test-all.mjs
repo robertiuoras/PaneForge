@@ -70,6 +70,10 @@ const TESTS = [
   ['dispatchpane', 'dispatch-pane-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
+  // Cheap, and the pair covers the two halves that fail differently: the arithmetic of a
+  // cross-device claim, and the git plumbing that carries it (2.4s, real repositories).
+  ['lanepeers', 'lane-peers-test.mjs'],
+  ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],

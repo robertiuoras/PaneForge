@@ -56,8 +56,23 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { hostname } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
 import { mergeImportConflicts } from './lane-merge.mjs'
+import {
+  CLAIM_NS,
+  LOCK_REF,
+  RELEASE_SLOT,
+  claimRef,
+  heldByPeer,
+  lockIsStale,
+  needsRefresh,
+  ownedRefs,
+  parseClaims,
+  peerWords,
+  refSafe,
+  supersededRefs
+} from './lane-peers.mjs'
 import { bumpFor, hasChanges, nextVersion, notes, smallOnly } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -422,9 +437,12 @@ function read() {
     s.conflicts ??= {}
     s.release ??= null
     s.lastShip ??= null
+    // What THIS device last told the other one, so a turn ending can tell whether a
+    // refresh is due without asking the network on every turn.
+    s.peer ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null }
+    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, peer: null }
   }
 }
 
@@ -434,6 +452,241 @@ function write(state) {
   const tmp = `${STATE}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8')
   renameSync(tmp, STATE)
+}
+
+// ---------------------------------------------------------------------------
+// The other machine.
+//
+// Everything above this line is one desk's ledger, inside one `.git`, and that is the
+// right shape for all of it but the trunk - see the header of scripts/lane-peers.mjs for
+// which two things really collide across devices and why the letters do not.
+//
+// Three rules hold for every line below:
+//
+//   - **It never blocks a chat.** A repo with no origin, an origin that is unreachable, a
+//     laptop on a train: every one of those falls straight through to the behaviour this
+//     file had before any of it existed. A lane claim that waits on the network is a
+//     prompt that waits on the network.
+//   - **It costs nothing on the ordinary path.** A chat re-claiming the lane it already
+//     holds returns long before here. Only handing out the TRUNK to a chat that does not
+//     have it asks origin anything, and only a turn ending more than REFRESH_MS after the
+//     last one pushes.
+//   - **Our own device is never consulted through the remote.** The local ledger knows
+//     about dirty worktrees and parked turns; a ref name does not.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which desk this is. The hostname, because it is the one name that is stable across a
+ * reboot, an update and a network change, and because it is what a person reading
+ * `doctor` on the other machine will recognise. Sanitised for a ref name, and a hostname
+ * that survives none of that sanitising (all punctuation) simply turns the feature off
+ * here rather than publishing a claim under a name that collides with somebody else's.
+ */
+const DEVICE = refSafe(process.env.PF_DEVICE || hostname(), 40)
+
+/** Repos with no remote never had lanes to share, and have no channel to share them on. */
+let originKnown
+function hasOrigin() {
+  if (originKnown === undefined) originKnown = Boolean(DEVICE) && gitSafe(MAIN, 'remote', 'get-url', 'origin').ok
+  return originKnown
+}
+
+/**
+ * Every device's claims, read in ONE `ls-remote`.
+ *
+ * No fetch and no object transferred: the claim is the ref's NAME. `null` means we could
+ * not ask - never an empty list, because "nobody holds the trunk" and "origin did not
+ * answer" lead to opposite decisions and must not share a shape.
+ */
+let refsCache
+function peerRefs() {
+  if (refsCache !== undefined) return refsCache
+  if (!hasOrigin()) return (refsCache = null)
+  const r = gitSafe(MAIN, 'ls-remote', 'origin', `${CLAIM_NS}/*`)
+  refsCache = r.ok
+    ? r.out
+        .split('\n')
+        .map((l) => l.split('\t')[1]?.trim())
+        .filter(Boolean)
+    : null
+  return refsCache
+}
+
+/** A commit origin already has, so publishing a claim transfers no objects at all. */
+function remoteTip() {
+  for (const rev of [`refs/remotes/origin/${MB}`, 'HEAD']) {
+    const r = gitSafe(MAIN, 'rev-parse', rev)
+    if (r.ok && /^[0-9a-f]{40}$/.test(r.out.trim())) return r.out.trim()
+  }
+  return null
+}
+
+function pushRefs(specs) {
+  if (!specs.length) return false
+  return gitSafe(MAIN, 'push', '--quiet', 'origin', ...specs).ok
+}
+
+/**
+ * Say that this device holds `slot`, and take our own older names for it down.
+ *
+ * Create-then-delete rather than force-update, because the time is in the name: an update
+ * would leave the old name behind and a peer would read this device as holding the trunk
+ * at two different times. What we publish is mirrored into the local ledger (`state.peer`)
+ * so a turn ending can decide whether a refresh is due without asking the network.
+ */
+function publishClaim(state, slot, session) {
+  if (!hasOrigin()) return null
+  const tip = remoteTip()
+  if (!tip) return null
+  const at = now()
+  const ref = claimRef({ device: DEVICE, slot, session, at })
+  if (!ref) return null
+  // One round trip: the new name goes up and the name it replaces comes down together.
+  // The name being replaced is the one we wrote down last time, so the ordinary refresh
+  // never asks the remote what it is holding - that read is what made a publishing turn
+  // end cost 3.0s against GitHub, where a push plus a delete costs 1.3s.
+  const known = state.peer?.slot === slot && state.peer.ref && state.peer.ref !== ref ? [`:${state.peer.ref}`] : []
+  if (!pushRefs([`--force`, `${tip}:${ref}`, ...known])) return null
+  state.peer = { ref, slot, session, at }
+  // Only when we have no record of our own - a ledger that was deleted, a first publish
+  // after an upgrade - is the remote asked to list what this device left behind.
+  if (!known.length) {
+    const stale = supersededRefs(peerRefs() ?? [], { device: DEVICE, slot, keep: ref })
+    if (stale.length) pushRefs(stale.map((r) => `:${r}`))
+  }
+  refsCache = undefined
+  return state.peer
+}
+
+/** Give back what this device published for a session. Failure is silent: it ages out. */
+function dropPublished(state, session) {
+  if (state.peer && (!session || state.peer.session === session)) state.peer = null
+  if (!hasOrigin()) return
+  const mine = ownedRefs(peerRefs() ?? [], { device: DEVICE, session })
+  if (mine.length) {
+    pushRefs(mine.map((r) => `:${r}`))
+    refsCache = undefined
+  }
+}
+
+/**
+ * Take the cross-device release lock, or say who has it.
+ *
+ * `state.release` already stops two chats on THIS machine from cutting a version at once,
+ * and it cannot see the other desk at all - two machines releasing the same minute is two
+ * tags, two GitHub releases and the one-legged feed this repo has shipped for real.
+ *
+ * The lock is a plain, NON-forced push of a ref whose name never changes, pointing at a
+ * commit **only this device could have made**. Both halves of that are load-bearing, and
+ * the obvious version of it does not work:
+ *
+ *   - Reading the ref and then deciding has a window in the middle that both devices fit
+ *     inside. The push has to BE the decision, so that the server does the comparing.
+ *   - Pushing the branch tip, which is what this first did, is not a decision at all:
+ *     both desks are at the same commit, and pushing the sha a ref already holds is a
+ *     no-op that SUCCEEDS. Measured against a real bare repo (`test:lanedevice`, case 5):
+ *     the second desk "took" a lock the first one was holding, every time.
+ *   - `--force-with-lease=<ref>:` reads like the fix and is not one. The lease is checked
+ *     against the pusher's OWN remote-tracking ref, and a desk that has never heard of
+ *     this ref believes it absent - so it passed the lease and took the lock too.
+ *
+ * An orphan commit over an empty tree, carrying this device's name and the clock, is a
+ * sha no other machine will produce. The remote's ref then points at a history the other
+ * desk's commit is not a descendant of, its push is a non-fast-forward, and git refuses
+ * it without being asked to compare anything. The holder re-pushing its own sha is still
+ * the no-op it should be.
+ *
+ * The winner immediately publishes a timestamped claim beside it, which is the only way a
+ * later run can tell a release that is still running from a lock left behind by a machine
+ * that was shut down mid-release.
+ *
+ * Every failure here returns `ok` - a release that cannot reach origin is a release this
+ * repo has always cut anyway, and turning an unreachable remote into a stuck release
+ * would be a worse bug than the one being fixed.
+ */
+function lockToken() {
+  // An identity is not configured in every checkout, and `commit-tree` will not run
+  // without one. Supplying it here keeps the lock working in a repo that has never had a
+  // commit made from this machine, rather than silently falling through to no lock.
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'paneforge',
+    GIT_AUTHOR_EMAIL: 'paneforge@localhost',
+    GIT_COMMITTER_NAME: 'paneforge',
+    GIT_COMMITTER_EMAIL: 'paneforge@localhost'
+  }
+  const run = (input, ...args) => {
+    try {
+      return execFileSync('git', args, {
+        cwd: MAIN,
+        encoding: 'utf8',
+        input,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: GIT_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        env
+      }).trim()
+    } catch {
+      return null
+    }
+  }
+  const tree = run('', 'mktree')
+  if (!tree) return null
+  const sha = run('', 'commit-tree', tree, '-m', `paneforge release lock ${DEVICE} ${now()} ${process.pid}`)
+  return /^[0-9a-f]{40}$/.test(sha ?? '') ? sha : null
+}
+
+function takeReleaseLock(state, session) {
+  if (!hasOrigin()) return { ok: true, held: false }
+  const tip = lockToken()
+  if (!tip) return { ok: true, held: false }
+  let got = gitSafe(MAIN, 'push', '--quiet', 'origin', `${tip}:${LOCK_REF}`).ok
+  if (!got) {
+    // Somebody holds it. Only a lock with no live claim beside it is cleared, and then
+    // only once - a second failure means a real release started in between, which is
+    // exactly the outcome this is for.
+    const refs = peerRefs()
+    if (refs && lockIsStale(refs, { now: now() })) {
+      pushRefs([`:${LOCK_REF}`])
+      refsCache = undefined
+      got = gitSafe(MAIN, 'push', '--quiet', 'origin', `${tip}:${LOCK_REF}`).ok
+    }
+  }
+  if (!got) {
+    const who = peerHolding(RELEASE_SLOT)
+    return {
+      ok: false,
+      held: false,
+      reason: who
+        ? `${peerWords(who, { now: now() })} is cutting a release for this repo right now. The work here goes out with it or with the next one - do not ship again.`
+        : 'another device is cutting a release for this repo right now. Do not ship again.'
+    }
+  }
+  publishClaim(state, RELEASE_SLOT, session ?? 'release')
+  return { ok: true, held: true }
+}
+
+/** Give the lock back. Left behind, it clears itself after LOCK_STALE_MS. */
+function dropReleaseLock(state, session) {
+  if (!hasOrigin()) return
+  pushRefs([`:${LOCK_REF}`])
+  refsCache = undefined
+  const mine = ownedRefs(peerRefs() ?? [], { device: DEVICE, session: null }).filter((r) =>
+    parseClaims([r])[0] && parseClaims([r])[0].slot === RELEASE_SLOT
+  )
+  if (mine.length) {
+    pushRefs(mine.map((r) => `:${r}`))
+    refsCache = undefined
+  }
+  if (state.peer?.slot === RELEASE_SLOT) state.peer = null
+  void session
+}
+
+/** Is another desk holding this slot right now, and unmistakably still alive. */
+function peerHolding(slot) {
+  const refs = peerRefs()
+  if (!refs) return null
+  return heldByPeer(refs, { device: DEVICE, slot, now: now() })
 }
 
 /**
@@ -540,7 +793,15 @@ function park(session) {
     c.parked = now()
     parked.push(id)
   }
-  if (parked.length || reaped) write(state)
+  // A turn ending is the heartbeat. Only the trunk is ever published, and only once the
+  // last thing we said is old enough that the other desk is about to stop believing it -
+  // so an ordinary turn pushes nothing and a chat that works all afternoon keeps its
+  // claim alive without anybody typing a command.
+  const holdsTrunk = state.lanes.main?.session === session
+  if (holdsTrunk && needsRefresh(state.peer?.slot === 'main' ? state.peer : null, { now: now() }))
+    publishClaim(state, 'main', session)
+  else if (!holdsTrunk && state.peer?.slot === 'main' && state.peer.session === session) dropPublished(state, session)
+  write(state)
   return { parked }
 }
 
@@ -1167,6 +1428,28 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       free = idle[0]
     }
   }
+  // The other desk. `main` is the one lane that is not this machine's alone - it IS the
+  // shared branch - so a chat about to be handed it asks whether the other device is
+  // already sitting there. A letter lane never asks: `lane-a` here and `lane-a` there are
+  // two local-only branches in two folders on two disks, and coordinating them would buy
+  // a network round trip per prompt and prevent nothing.
+  //
+  // Being sent to a letter costs this chat a worktree and a merge at the end, which is
+  // exactly what a second chat on THIS machine already pays. Being handed a trunk another
+  // desk is committing to costs everybody a tangled push.
+  let peerTrunk = null
+  if (free === 'main' && !state.ready.main && !state.conflicts.main) {
+    peerTrunk = peerHolding('main')
+    if (peerTrunk) {
+      const spare = order.find((id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id])
+      // No letter left is not a reason to refuse a chat a checkout: the local ledger is
+      // still the authority on this machine, and a shared trunk that is reported is a far
+      // smaller problem than a chat that cannot start. The word travels either way -
+      // `claim` returns it, and `doctor` prints it.
+      if (spare) free = spare
+    }
+  }
+
   if (!free) {
     // Every lane is held by a live session. Better to say so than to hand out a
     // checkout two chats are already sharing.
@@ -1191,11 +1474,17 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     ...(tentative ? { tentative: true } : {}),
     ...(visitor ? { visitor: true } : {})
   }
+  // Taking the trunk is the only thing worth telling the other desk about, and it is told
+  // at the moment it becomes true rather than on a timer.
+  if (free === 'main') publishClaim(state, 'main', session)
   write(state)
   return {
     lane: free,
     dir,
     branch: laneBranch(free),
+    // Named, not just flagged: an agent that is told only "you were moved" reports a bug.
+    peerTrunk: peerTrunk ? { device: peerTrunk.device, words: peerWords(peerTrunk, { now: now() }) } : null,
+    sharedTrunk: Boolean(peerTrunk) && free === 'main',
     // The branch the lane MERGES INTO, which is not its own: a caller that said
     // "merges into ${branch}" told a chat in lane-a that its work merged into lane-a.
     mainBranch: MB,
@@ -1719,6 +2008,10 @@ function ready(session, wanted) {
 
 function releaseClaim(session) {
   const state = reap(read())
+  // The chat is going. Whatever this device told the other one on its behalf stops being
+  // true now rather than in PEER_STALE_MS - otherwise the desk that ends its day first
+  // holds the trunk against the other one for the next 45 minutes.
+  dropPublished(state, session)
   // Outside the loop below on purpose: adopting somebody else's conflict does not give a
   // chat a lane, so a chat can be holding a claim and no lane at all. Ending gives back
   // both.
@@ -1796,6 +2089,13 @@ function ship(kind, session) {
       reason: `another chat started a release ${Math.round((now() - state.release.at) / 1000)}s ago. Your merged work is in it. Do not ship again.`
     }
   }
+  // The same question the line above asks, asked of the OTHER desk. It goes after the
+  // local check so a second chat on this machine still gets the local sentence (which
+  // knows more), and before anything is merged or committed - a release that discovers
+  // the other machine won halfway through has already moved lanes onto the trunk.
+  const lock = takeReleaseLock(state, session)
+  if (!lock.ok) return { shipped: false, reason: lock.reason }
+
   state.release = { session: session ?? 'unknown', at: now() }
   write(state)
 
@@ -1966,6 +2266,16 @@ function ship(kind, session) {
       write(s)
     }
     throw e
+  } finally {
+    // Both ways out, including the throw above: a lock that outlives its release blocks
+    // the other desk until it goes stale, and the whole point of holding it was to be the
+    // one device cutting THIS version. It is not the local `state.release`, which the
+    // catch above clears on its own schedule.
+    if (lock.held) {
+      const s = read()
+      dropReleaseLock(s, session)
+      write(s)
+    }
   }
 }
 
@@ -2465,6 +2775,30 @@ function doctor() {
   const spare = s.lanes.length - live.length
   if (spare > 0) say(`  ${spare} more lane${spare === 1 ? '' : 's'} free - their folders are only made when handed out.`)
   say()
+
+  // The other desk. Only ever printed when there is something to print: a one-machine
+  // repo must not grow a section telling it every day that it is alone.
+  {
+    const refs = peerRefs()
+    if (refs === null && hasOrigin()) {
+      say('OTHER DEVICES')
+      say('  Could not reach origin, so this desk cannot tell whether another one holds the trunk.')
+      say('  Lanes still work exactly as they did before; only the cross-device check is skipped.')
+      say()
+    } else if (refs) {
+      const others = parseClaims(refs).filter((c) => c.device !== DEVICE && now() - c.at <= 45 * 60 * 1000)
+      if (others.length) {
+        say('OTHER DEVICES')
+        for (const c of others)
+          say(
+            c.slot === RELEASE_SLOT
+              ? `  ${peerWords(c, { now: now() })} is cutting a release.`
+              : `  ${peerWords(c, { now: now() })} holds the ${c.slot} checkout. Chats here are sent to a letter lane instead.`
+          )
+        say()
+      }
+    }
+  }
 
   say('RELEASE')
   if (s.release) say(`  A release started ${Math.round((now() - s.release.at) / 60000)}m ago and is still running.`)

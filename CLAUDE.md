@@ -55,6 +55,55 @@ a conflicted merge — it is the one state no other chat is allowed to touch.
 `npm run test:lanes` covers the engine, the sweep that deletes worktrees, lane ownership,
 and the any-repo contract (a repo that never asked for releases must never cut a version).
 
+## Two desks, one repository
+
+The ledger above is one machine's: `<repo>/.git/paneforge-lanes.json`, never pushed and
+never fetched. That is right for nearly all of it. A letter lane is a worktree on a branch
+(`lane-a`) that is **local scratch** and is never pushed either, so this desk's `lane-a`
+and the other desk's `lane-a` are two unrelated branches in two folders on two disks. They
+cannot collide, and coordinating them would cost a network round trip per prompt to
+prevent nothing.
+
+Exactly two things collide across devices, and both are the trunk. `main` is not a lane
+like the others - it IS the repository, on the branch everybody shares - so two desks
+holding it are two chats pushing one branch with neither ledger able to see the other.
+And two desks cutting a release is two tags, two GitHub releases and the one-legged feed
+this repo has already shipped once.
+
+- **A claim is carried by the ref NAME**, under `refs/paneforge/claims/<device>/<slot>/
+  <session>/<millis>`, pointing at a commit origin already has. Reading every device is then
+  one `ls-remote` with no fetch and not one object transferred, which is what lets this sit
+  in front of a lane claim. Measured against this repo's real origin: a re-claim (the path
+  that runs on every prompt) is **0.09-0.11s and touches the network not at all**, because
+  a chat that already holds its lane returns long before any of this.
+- **Only the trunk asks, and only a chat that does not already have it.** A letter lane
+  never publishes and never reads. `PEER_STALE_MS` is 45 minutes: a desk that was switched
+  off must not hold the trunk against the desk that is switched on.
+- **The heartbeat is a turn ending**, not a timer, and only once the last thing published
+  is older than `REFRESH_MS` (10 min) - so an ordinary turn end pushes nothing (0.11s) and
+  a publishing one costs 2.17s. It sends the new name up and the name it replaces down in
+  ONE push; asking the remote which name to retire is what made that 3.0s.
+- **A chat ending gives the trunk back at once**, rather than leaving the other desk
+  blocked for the 45 minutes it would take to go stale.
+- **The release lock is decided by the SERVER, not by a read.** `refs/paneforge/lock/
+  release` is created by a plain, non-forced push of an **orphan commit carrying this
+  device's name** - a sha no other machine produces - so the other desk's push is a
+  non-fast-forward that git refuses on its own. Read-then-decide has a window both desks
+  fit inside. Two versions of this were wrong and both are kept as cases in the test:
+  pushing the branch tip is a no-op that SUCCEEDS (both desks are on the same commit, so
+  the lock handed itself to everybody), and `--force-with-lease=<ref>:` checks the lease
+  against the *pusher's own* remote-tracking ref, so a desk that has never heard of the ref
+  believes it absent and takes the lock too. A lock with no timestamped claim beside it is
+  one a killed machine left behind, and is cleared.
+- **Nothing here may ever block a chat.** No origin, an unreachable origin, a laptop on a
+  train: every one falls through to exactly the behaviour this repo had before any of it
+  existed. A repo with no remote never asks anybody anything. If the check cannot run,
+  `doctor` says so rather than reporting an empty answer as "nobody holds it" - which is
+  why `peerRefs()` returns `null` and not `[]`.
+- `PF_DEVICE` overrides the hostname, which is the only thing that lets one machine play
+  two in a test. `npm run test:lanepeers` is the arithmetic; `npm run test:lanedevice` is
+  the plumbing, against a real bare repo and two real clones.
+
 ## Releasing happens by itself
 
 One command, and it is not a release:
@@ -905,6 +954,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:install` | quitting takes the install pty's whole process tree |
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
+| `npm run test:lanepeers` | the arithmetic of a claim on the other desk: what a ref name may carry, and the negatives that decide whether the check is worth having — a desk never blocks itself, a claim nobody refreshed stops counting, and a letter lane is never anybody else's business |
+| `npm run test:lanedevice` | the same thing with the plumbing attached: a real bare repo, two real clones, one told it is another machine. The second desk is sent to a letter rather than onto the shared branch, the trunk comes back the instant a chat ends, and the release lock is refused at the SERVER — with the two mechanisms that looked right and were not (the shared branch tip, and `--force-with-lease`) kept as controls |
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:pickrelease` | which release an install may take: the newest one carrying an asset THIS platform can install, so a win-only release is skipped rather than 404'd at for ever |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
