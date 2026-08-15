@@ -502,6 +502,41 @@ channel of its own.
   off the edge entirely and Clear and Fix were 27x23 and 30x19 against a 44px finger. The
   path goes (the list said it), the folder and editor buttons go (`desk-only` - they open a
   window on the machine you are not holding), and what is left is 36px.
+- **...and that was not enough, so the header stopped carrying actions at all.** With those
+  hidden it still measured 486px of content in a 404px box: restart, Fix and Close drawn from
+  x=417 to x=491, past the right edge with nothing to scroll them back, and `.pt-name` squeezed
+  to **0px** paying for them - "can't drag menu where the clear button is and can't see on the
+  right side all options". Five 36px targets, a ~150px agent picker and an 86px branch badge do
+  not go into 404 however they are trimmed. The row now keeps only what says WHICH pane this is
+  and every action moves behind one ⋯ into `PaneMenu.tsx`, the ordinary phone action sheet:
+  full-width rows with a WORD on them, >=52px, destructive ones last. After: scrollWidth 404
+  against clientWidth 404, and the name is back. `probe.mjs --touch` is what makes any of this
+  checkable - half of what this app does on a phone is decided by `pointer: coarse`, which a
+  device-metrics override does not supply.
+- **A phone turned sideways is still a phone.** The handheld rule was width-only, so an iPhone
+  in landscape (932x430) got the 282px sidebar beside a pane - a layout holding neither the Back
+  chip nor the swipe, which is why "swipe left doesn't always work" was true in one orientation
+  and not the other. `HANDHELD_QUERY` also matches a coarse pointer under 520px tall: a handset
+  in landscape and nothing else, since a tablet held sideways is 820px tall. Same string in
+  `styles.css`, and a copy that drifts is a layout with no rules.
+- **The phone's own Back goes back to the list**, not out of the page: opening a pane pushes one
+  history entry, `popstate` returns, and the chip unwinds that same entry so the stack cannot
+  grow a step per pane opened.
+- **The swipe back arms anywhere in the pane, never at the left edge.** That edge is the one
+  strip a phone browser has already taken for its OWN back gesture, so the app was listening for
+  the swipe it was least likely to be handed. It fires on clearly sideways and clearly more
+  sideways than up (`dx > 60, dy < 70, dx > dy * 1.6`); a terminal's own scrolling is vertical,
+  so there is nothing to take from it.
+- **One composer, not two.** xterm's helper textarea is a text field to a phone, so tapping the
+  terminal raised the keyboard with its own caret beside the app's typing bar. On a coarse
+  pointer that textarea keeps its keydown handling (a paired hardware keyboard still types) and
+  gives up being a field: `readOnly`, `inputMode: none`, out of the tab order. Gated on
+  `pointer: coarse` and NOT on the handheld width - a narrow desktop window's terminal must stay
+  typeable.
+- **The typing bar autocorrects.** It was written as a stand-in for that textarea and inherited
+  its `autoCorrect="off"`, which is right for bytes going straight to a pty and wrong here:
+  nothing leaves the bar until Send, so the substitution has already happened before any byte
+  moves, and what is typed there is a sentence to an agent, not a shell command.
 - **A tap opens a pane on the first press.** A finger is never still, and a mobile browser
   throws the `click` away the moment it decides the gesture was a scroll - so the first tap
   was spent proving it was a tap. A touch that did not become a drag opens the row from
