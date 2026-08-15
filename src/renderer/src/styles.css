@@ -966,6 +966,19 @@ html.app-blurred .lane-row.stuck::before { animation: none; opacity: 1; }
   animation: laneBreath 2.8s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) { .lane-tag.busy { animation: none; } }
+/* Which desk the lane is on. Quiet by default - on a one-machine desk it is the same word
+   on every row and must not compete with the state - and lit when it is the OTHER machine,
+   which is the case a reader has to act on differently (nothing here can free it). */
+.lane-device {
+  flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--muted); border: 1px solid transparent; border-radius: 5px; padding: 1px 4px;
+  max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lane-device.away {
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+  background: color-mix(in srgb, var(--info) 10%, transparent);
+}
 .lane-fix { flex: none; padding: 2px 8px; font-size: 10.5px; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }

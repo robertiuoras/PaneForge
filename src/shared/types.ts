@@ -299,6 +299,22 @@ export interface LaneBoardEntry {
   adoptable: boolean
   /** chat that took the conflict over, when one has */
   resolver: string | null
+  /**
+   * The desk the holding chat is sitting at, spelled the way lane.mjs publishes claims
+   * (the sanitised hostname, or `PF_DEVICE`). A lane read out of THIS machine's ledger is
+   * this machine's by construction - that file lives in a local `.git` and no other device
+   * writes it - so it is filled in from `LaneBoard.device` when the record predates the
+   * field. Null only where the hostname sanitises away to nothing, which is the same case
+   * that turns cross-device claims off entirely.
+   */
+  device: string | null
+  /**
+   * This row is a claim ANOTHER device published on the shared remote, not a lane in this
+   * machine's ledger. Nothing local may act on it: there is no worktree here to hand out,
+   * its chat is not a chat on this machine, and giving it back (`goneLanes`) would free a
+   * checkout somebody is typing in at the other desk.
+   */
+  peer: boolean
 }
 
 /**
@@ -339,6 +355,8 @@ export type LaneMergeResult =
 export interface LaneBoard {
   repo: string
   lanes: LaneBoardEntry[]
+  /** This desk, in the same spelling lane.mjs publishes claims under. */
+  device: string | null
   /** epoch ms a release started, when one is running */
   releasing: number | null
   lastShip: { version: string; at: number; lanes: string[] } | null

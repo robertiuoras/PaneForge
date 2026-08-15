@@ -440,13 +440,26 @@ function read() {
     // What THIS device last told the other one, so a turn ending can tell whether a
     // refresh is due without asking the network on every turn.
     s.peer ??= null
+    // What the OTHER devices last said, kept so a reader that must not touch the network
+    // can still answer "who has the trunk". See the note in write().
+    s.peers ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, peer: null }
+    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, peer: null, peers: null }
   }
 }
 
 function write(state) {
+  // Whatever origin told us this process, written down on the way past.
+  //
+  // The app draws the lane strip every five seconds from this file and nothing else - no
+  // git, no child process - which is the whole reason the strip is cheap enough to poll.
+  // So the one fact it could never show was the one that only origin knows: that the trunk
+  // is held at the OTHER desk. An `ls-remote` on a five-second timer is not an option, and
+  // this costs nothing: `peerRefs` is already cached per process, so nothing new is asked
+  // of the network - the answer is simply no longer thrown away when the process exits.
+  // Each claim carries its own timestamp, so a cache nobody refreshes ages out by itself.
+  if (Array.isArray(refsCache)) state.peers = { at: now(), refs: refsCache }
   // Write-then-rename: two hooks can fire at the same moment from two chats, and a
   // half-written state file would strand every lane at once.
   const tmp = `${STATE}.${process.pid}.tmp`
@@ -1499,6 +1512,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   state.lanes[free] = {
     session,
     cwd: cwd ?? null,
+    // Which desk. Redundant inside this file - it is one machine's ledger - and not
+    // redundant once the app draws several ledgers and a peer's published claims in one
+    // list, where every row needs to be able to say where it is.
+    device: DEVICE,
     claimed: now(),
     seen: now(),
     ...(tentative ? { tentative: true } : {}),
