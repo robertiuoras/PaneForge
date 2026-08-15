@@ -808,22 +808,26 @@ torn across two chunks from the pty, so there is one per pane and every write si
 `npm run test:scrollclear` drives a real headless xterm and its control case proves a plain
 terminal loses the lines.
 
-- **Then Claude Code stopped sending either of them, and the whole thing quietly became a
-  no-op.** Measured 2026-08-13 over this machine's live pane logs: v2.1.229 emits ZERO `2J`
-  and ZERO `3J` in 4 MB. It erases a row at a time instead — `ESC[H ESC[2K` then
-  `(ESC[1B ESC[2K)` once per row — which blanks the visible screen in place, and a blanked
-  line is never pushed into the scrollback the way a scrolled one is. So the last screenful
-  of the conversation was destroyed and the banner redrawn over the top of it, with
-  everything older still there: history right up to a hole where the last turn was.
-- **That erase-per-row is also its ordinary repaint** — 60 of them in one session log, only
-  two of them a clear. Rewriting every one would push a duplicate screenful into the
-  scrollback sixty times, so the wipe is kept only when the user has just ASKED for one:
-  `keep.arm()`, called from the pane when a submitted line matches `clearsScreen` (`/clear`,
-  `/compact`, `/new`, `/reset`), spent on the first wipe that follows and lapsed after 10s.
-  The intent comes from the keystrokes the app is relaying anyway, never from guessing which
-  repaint is which. The arming also widens the carry — a chunk may be part-way through the
-  15-byte opener — and that longer hold is armed-only, because a chunk ending in `ESC [ H` is
-  ordinary cursor traffic that must not wait for a byte that may be a frame away.
+- **Then Claude Code stopped sending either of them, twice, and the answer stopped being a
+  rewrite at all.** Measured 2026-08-13: v2.1.229 emits ZERO `2J` and ZERO `3J` in 4 MB and
+  erases a row at a time instead (`ESC[H ESC[2K` then `(ESC[1B ESC[2K)` per row), which
+  blanks the screen in place — a blanked line is never pushed into the scrollback the way a
+  scrolled one is. Measured 2026-08-15 at the banner v2.1.233 draws for `/clear`, the whole
+  clear is `ESC[53D ESC[4B \r ESC[6A` and then the banner: **a cursor-up and an overdraw,
+  with no erase of any kind to catch** (the nearest erase-per-row was 12,590 bytes earlier
+  and belonged to an ordinary repaint). That is "the claude avatar hides the previous
+  output" — the last turn is painted over where it sat and nothing reaches the scrollback.
+- **So the pane keeps the screen itself, before the CLI has emitted a byte.** `keep.arm()`
+  is called when a submitted line matches `clearsScreen` (`/clear`, `/compact`, `/new`,
+  `/reset`) and RETURNS the scroll — the screen pushed into the scrollback and the cursor
+  homed — which the pane writes on the spot. Whatever the CLI does next it does to a blank
+  screen, so this needs to know nothing about any CLI and cannot go dead the next release;
+  homing the cursor is what puts the banner back at the top rather than under forty blank
+  rows. The intent still comes from keystrokes the app is relaying anyway, never from
+  guessing which repaint is a clear — that guess is what the erase-per-row detection was,
+  and it was silently a no-op the release after it shipped. The `2J`/`3J` rewrite stays for
+  a CLI that clears unasked, and stands down for 10s after an armed scroll so a `2J` that
+  follows one cannot file a screenful of blanks in front of the turn being kept.
 
 **And a prompt tag survives the CLI repainting over it.** The rail's tags are xterm markers,
 and xterm disposes every marker on a row that `CSI J` blanks (`eraseInDisplay` →
@@ -1045,7 +1049,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:macdownload` | every way a mac download can end — none of them a hang |
 | `npm run test:wedge` | that no hung promise can leave the updater needing a person |
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
-| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — both shapes it has had (`CSI 2 J`, and the erase-per-row Claude Code sends now), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm |
+| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — all three shapes it has had (`CSI 2 J`, the erase-per-row, and the bare `ESC[6A` overdraw v2.1.233 sends, which erases nothing at all), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm with a control per shape proving a plain terminal loses it |
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |

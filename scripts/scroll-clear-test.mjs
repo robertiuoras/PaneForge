@@ -145,42 +145,51 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
   }
 }
 
-// --- the erase-per-row wipe ----------------------------------------------------------
-// What Claude Code v2.1.229 really sends. Measured off this machine's pane logs: no `2J`
-// and no `3J` anywhere in 4 MB, and 60 of these instead - which is the point of the
-// arming, because 58 of the 60 are ordinary repaints that must be left alone.
+// --- what a clear really looks like now ------------------------------------------------
+// Two shapes measured off this machine's pane logs, neither of which can be caught by
+// looking at the bytes:
+//
+//   v2.1.229: an erase-per-row full repaint - and 58 of the 60 in one session log are
+//             ordinary repaints, so rewriting them is not an option either;
+//   v2.1.233: `ESC[6A` and the banner drawn straight over the last turn. No erase at all.
+//
+// So `arm()` does the keeping itself, off the submitted line, before the CLI says a word.
 const wipe = (rows) => '\x1b[H\x1b[2K' + '\x1b[1B\x1b[2K'.repeat(rows) + '\x1b[1B\x1b[H'
 {
   const k = keeper(10)
   eq('an unarmed repaint is passed through untouched', k(wipe(10)), wipe(10))
+  eq('and so is a cursor-up overdraw, which is all v2.1.233 sends', k('\x1b[6Ax'), '\x1b[6Ax')
 }
 {
   const k = keeper(10)
-  k.arm()
-  const out = k(`x${wipe(10)}banner`)
-  check('an armed wipe is preceded by a scroll', out.includes('\x1b[10;1H'), JSON.stringify(out.slice(0, 60)))
-  eq('one newline per row on screen', (out.match(/\r\n/g) ?? []).length, 10)
-  check('the wipe itself still runs', out.includes(wipe(10)))
-  check('and it comes after the scroll', out.indexOf('\x1b[10;1H') < out.indexOf(wipe(10)))
-  check('nothing around it is lost', out.startsWith('x') && out.endsWith('banner'))
-  const again = k(wipe(10))
-  eq('the arming is spent on the first wipe, not every repaint after it', again, wipe(10))
+  const away = k.arm()
+  check('arming hands the pane a scroll to write', away.startsWith('\x1b[10;1H'), JSON.stringify(away))
+  eq('one newline per row on screen', (away.match(/\r\n/g) ?? []).length, 10)
+  check('and homes the cursor, so the banner is drawn at the top', away.endsWith('\x1b[1;1H'))
 }
 {
-  // Armed, and the CLI never wipes: the arming has to lapse rather than sit waiting to
-  // fire on some repaint minutes later.
+  // The alternate screen has no scrollback to keep and clears constantly.
+  const k = keeper(10, true)
+  eq('nothing is scrolled on the alternate screen', k.arm(), '')
+}
+{
+  // The screen is blank by the time the CLI reacts, so its own wipe is left alone: a
+  // second scroll would file a screenful of blank rows in front of the turn being kept.
+  const k = keeper(10)
+  k.arm()
+  eq('the CLI’s own repaint after an armed clear is untouched', k(wipe(10)), wipe(10))
+  eq('and so is a 2J that follows one', k('\x1b[2Jx'), '\x1b[2Jx')
+  eq('while 3J is dropped whatever else is true', k('\x1b[3Jy'), 'y')
+}
+{
+  // Armed and then left alone: the stand-down has to lapse rather than leave an
+  // unasked-for clear minutes later destroying the screen.
   let now = 0
   const k = keepScrollback(() => 10, () => false, () => now)
   k.arm()
   now = 10_001
-  eq('a stale arming lapses', k(wipe(10)), wipe(10))
-}
-{
-  const k = keeper(10)
-  k.arm()
-  eq('a torn wipe is held back', k('a\x1b[H\x1b[2K\x1b[1B'), 'a')
-  const rest = k('\x1b[2K\x1b[1B\x1b[2K\x1b[1B\x1b[H')
-  check('and rewritten once the rest arrives', rest.includes('\x1b[10;1H'), JSON.stringify(rest))
+  const out = k('\x1b[2J')
+  check('a stale arming lapses and the rewrite is back', out.includes('\x1b[10;1H'), JSON.stringify(out))
 }
 {
   const k = keeper(10)
@@ -211,25 +220,44 @@ eq('nor does a path that starts with a slash', clearsScreen('/etc/hosts is wrong
       return all.join('\n')
     }
 
-    const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
-    const k = keepScrollback(() => term.rows, () => term.buffer.active.type === 'alternate')
-    for (let i = 1; i <= rows; i++) await write(term, k(`turn ${i}\r\n`))
-    k.arm()
-    await write(term, k(wipe(rows)))
-    await write(term, k('Claude Code v2.1.229'))
-    const text = await lines(term)
-    check('the wiped screen is still in the buffer', text.includes('turn 1'), text.slice(0, 200))
-    check('all of it, not the tail', text.includes('turn 9') && text.includes('turn 10'))
-    check('and the banner is on a clean screen below it', text.includes('Claude Code v2.1.229'))
+    for (const [name, clear, lost] of [
+      // v2.1.229's erase-per-row, and v2.1.233's cursor-up-and-overdraw - which erases
+      // nothing, so no rewrite of any kind could ever have caught it.
+      // The third entry is the line a PLAIN terminal loses to that clear: the whole
+      // screenful for the wipe, and the one row the overdraw lands on for the other.
+      ['an erase-per-row wipe', wipe(rows), 'turn 10'],
+      ['a bare cursor-up overdraw', '\x1b[6A', 'turn 5']
+    ]) {
+      const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+      const k = keepScrollback(() => term.rows, () => term.buffer.active.type === 'alternate')
+      for (let i = 1; i <= rows; i++) await write(term, k(`turn ${i}\r\n`))
+      await write(term, k.arm())
+      await write(term, k(clear))
+      await write(term, k('Claude Code v2.1.233'))
+      const text = await lines(term)
+      check(`${name}: the cleared screen is still in the buffer`, text.includes('turn 1'), text.slice(0, 200))
+      check(`${name}: all of it, not the tail`, text.includes('turn 9') && text.includes('turn 10'))
+      check(`${name}: and the banner is there`, text.includes('Claude Code v2.1.233'))
+      const screen = []
+      for (let y = term.buffer.active.baseY; y < term.buffer.active.baseY + rows; y++) {
+        screen.push(term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+      }
+      check(
+        `${name}: and nothing of the old turn is left on screen`,
+        !screen.join('\n').includes('turn '),
+        JSON.stringify(screen)
+      )
+      check(`${name}: the banner is at the top of it`, screen[0].includes('Claude Code v2.1.233'), JSON.stringify(screen[0]))
 
-    // The control. This is the bug as reported: the last screenful of the conversation
-    // gone, and the banner drawn from row 1 over the top of where it was.
-    const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
-    for (let i = 1; i <= rows; i++) await write(bare, `turn ${i}\r\n`)
-    await write(bare, wipe(rows))
-    await write(bare, 'Claude Code v2.1.229')
-    const left = await lines(bare)
-    check('a plain terminal loses it, which is the bug', !left.includes('turn 10'), left.slice(0, 200))
+      // The control. This is the bug as reported, and the second shape is the one that
+      // made the old rewrite a no-op: the last screenful gone, the banner over the top.
+      const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+      for (let i = 1; i <= rows; i++) await write(bare, `turn ${i}\r\n`)
+      await write(bare, clear)
+      await write(bare, 'Claude Code v2.1.233')
+      const left = await lines(bare)
+      check(`${name}: a plain terminal loses ${lost}, which is the bug`, !left.includes(lost), left.slice(0, 200))
+    }
   }
 }
 

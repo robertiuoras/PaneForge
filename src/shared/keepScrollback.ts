@@ -27,48 +27,51 @@
 //
 // ---------------------------------------------------------------------------------------
 //
-// And then Claude Code stopped sending either of them. Measured 2026-08-13 over this
-// machine's live pane logs: v2.1.229 emits ZERO `2J` and ZERO `3J` in 4 MB of output, so
-// everything above was a no-op and `/clear` was eating the last screenful again. What it
-// sends instead is an erase-per-row:
+// And then Claude Code stopped sending either of them, and the answer stopped being a
+// rewrite at all.
 //
-//   ESC[H ESC[2K  (ESC[1B ESC[2K)x56  ESC[1B ESC[H  <redraw>
+// Measured 2026-08-13 over this machine's live pane logs: v2.1.229 emits ZERO `2J` and
+// ZERO `3J` in 4 MB of output. The version after it went further. Measured 2026-08-15 in
+// this desk's own log, at the banner v2.1.233 draws for `/clear`, the whole clear is:
 //
-// 56 being the pane's height. That wipes the visible screen in place - an erased line is
-// simply blanked, it is never pushed into the scrollback the way a scrolled one is - so
-// the last screenful of the conversation is destroyed and the banner is redrawn from row
-// 1 over the top of it. Everything OLDER survives, which is why the pane looks like it
-// kept its history right up to a hole where the last turn was.
+//   ESC[53D ESC[4B \r ESC[6A  ▐▛███▜▌ Claude Code v2.1.233 …
 //
-// The catch is that this is Claude Code's ordinary full repaint, not its clear: 60 of them
-// in one session log. Rewriting every one into a scroll would push a duplicate screenful
-// into the scrollback sixty times. So the wipe is only kept when the user has just asked
-// for one - `arm()`, called from the pane when a line like `/clear` is submitted, and
-// spent on the first wipe that follows. That is intent, measured off the keystrokes the
-// app is relaying anyway, rather than a guess about which repaint is which.
+// A cursor-up and an overdraw. No erase of any kind - not `2J`, not `3J`, and not the
+// erase-per-row this file was taught to catch (the nearest one of those was 12,590 bytes
+// earlier and belonged to an ordinary repaint). So the banner is painted straight over the
+// rows the last turn was on, those rows are destroyed in place, and NOTHING is pushed into
+// the scrollback: "the claude avatar hides the previous output". A guard keyed on the
+// bytes a vendor happens to send goes silently dead the release after it is written, which
+// is the second time in three days that has happened here.
+//
+// So the preservation no longer waits to be told. `arm()` - called from the pane the
+// moment a line like `/clear` is SUBMITTED, off keystrokes the app is relaying anyway -
+// returns the scroll itself, and the pane writes it before the CLI has emitted a byte.
+// Whatever the CLI does next (a wipe, an erase-per-row, a cursor-up and an overdraw, or
+// something that ships next month) it does to a screen that is already blank, with the
+// conversation one wheel-notch up. It needs to know nothing about any CLI.
+//
+// `ESC[1;1H` at the end, rather than a save/restore: the CLI's redraw is relative to where
+// it left the cursor, so leaving it near the bottom draws the banner near the bottom under
+// forty blank rows. Homing it first is what puts the banner back at the top of a blank
+// screen, which is what a clear has always looked like.
+//
+// The `2J`/`3J` rewrite below stays for a CLI that clears without being asked, and is
+// stood down for the moment after an armed scroll: the screen is already blank and
+// rewriting the `2J` that follows would push a screenful of blank rows into the scrollback
+// in front of the thing being kept.
 
-/** The rows-erased-one-at-a-time wipe, from its start: home, erase, then one row down. */
-const WIPE_OPEN = '\x1b[H\x1b[2K\x1b[1B\x1b[2K'
-/** How long an armed clear waits for the CLI to do the wiping. */
+/** How long an armed clear stands the rewrite below down for. */
 const ARM_MS = 10_000
 
-/** The sequences a chunk may be part-way through, longest first. */
-const NEEDLES = [WIPE_OPEN, '\x1b[2J', '\x1b[3J']
+/** The sequences a chunk may be part-way through. */
+const NEEDLES = ['\x1b[2J', '\x1b[3J']
 /** The most bytes a sequence this cares about can be part-way through. */
-const MAX_PARTIAL = WIPE_OPEN.length - 1
+const MAX_PARTIAL = 3
 
-/**
- * Could `tail` be the start of one of them, with the rest still to come?
- *
- * The long needle is only worth waiting for while a clear is armed. A chunk ending in
- * `ESC [ H` is ordinary cursor traffic and holding it back for a byte that may not come
- * for another frame would show as the pane lagging its own agent.
- */
-function partial(tail: string, armed: boolean): boolean {
-  for (const n of NEEDLES) {
-    if (n === WIPE_OPEN && !armed) continue
-    if (tail.length < n.length && n.startsWith(tail)) return true
-  }
+/** Could `tail` be the start of one of them, with the rest still to come? */
+function partial(tail: string): boolean {
+  for (const n of NEEDLES) if (tail.length < n.length && n.startsWith(tail)) return true
   return false
 }
 
@@ -81,10 +84,13 @@ export interface ScrollKeeper {
   /** The bytes to write to the terminal for this chunk. */
   (chunk: string): string
   /**
-   * The user just asked for the screen to be cleared. The next full-screen wipe keeps
-   * what it wipes; every other repaint is left alone.
+   * The user just asked for the screen to be cleared.
+   *
+   * @returns the bytes the pane must write to the terminal NOW, ahead of anything the CLI
+   *   says: the screen scrolled into the scrollback and the cursor put at the top of the
+   *   blank one it leaves. Empty on the alternate screen, which has no scrollback to keep.
    */
-  arm(now?: number): void
+  arm(now?: number): string
 }
 
 /**
@@ -99,47 +105,46 @@ export function keepScrollback(
 ): ScrollKeeper {
   let carry = ''
   let armedAt = 0
+  // `CSI <rows> ; 1 H` then one newline per row: the newlines scroll, and a scroll is what
+  // puts a line into the scrollback rather than deleting it. `\r` keeps the cursor at
+  // column 1 on the way.
+  const scrollAway = (): string => {
+    const height = Math.max(1, rows())
+    return `\x1b[${height};1H` + '\r\n'.repeat(height)
+  }
   const keeper = (chunk: string): string => {
     const s = carry + chunk
     carry = ''
-    const armed = armedAt > 0 && clock() - armedAt < ARM_MS
-    if (!armed) armedAt = 0
     // Hold back only a genuine partial: anything else that ends in ESC is passed through,
     // because a lone ESC is a real key and waiting for a second byte that never comes
     // would stall the pane.
     let body = s
     for (let n = Math.min(MAX_PARTIAL, s.length); n > 0; n--) {
-      if (partial(s.slice(s.length - n), armed)) {
+      if (partial(s.slice(s.length - n))) {
         carry = s.slice(s.length - n)
         body = s.slice(0, s.length - n)
         break
       }
     }
-    const wipe = armed ? body.indexOf(WIPE_OPEN) : -1
-    if (wipe < 0 && !body.includes('\x1b[2J') && !body.includes('\x1b[3J')) return body
+    if (!body.includes('\x1b[2J') && !body.includes('\x1b[3J')) return body
     if (alternate()) return body
-    const height = Math.max(1, rows())
-    // `CSI <rows> ; 1 H` then one newline per row: the newlines scroll, and a scroll is
-    // what puts a line into the scrollback. `\r` keeps the cursor at column 1 on the way.
-    //
+    // `3J` is the one that destroys the scrollback, and nothing in a session wants that.
+    // It goes whether or not this clear was asked for.
+    const out = body.split('\x1b[3J').join('')
+    // Just after an armed clear the screen is blank already, so a `2J` is left to blank it
+    // again: rewriting it would file a screenful of blank rows in front of the turn being
+    // kept.
+    if (armedAt > 0 && clock() - armedAt < ARM_MS) return out
+    armedAt = 0
     // Wrapped in save/restore because a real `2J` does NOT move the cursor - it blanks the
     // screen around it. Restoring lands on the same row and column, which is now blank,
     // which is exactly what the sequence promised.
-    const scroll = '\x1b7' + `\x1b[${height};1H` + '\r\n'.repeat(height) + '\x1b8'
-    let out = body.split('\x1b[3J').join('').split('\x1b[2J').join(scroll)
-    if (wipe >= 0) {
-      // Scroll the screen away FIRST and let the wipe run over the blank rows it leaves.
-      // Rewriting the erases themselves would have to model where the CLI's cursor is on
-      // every one of the fifty-odd rows; putting the whole screen into the scrollback in
-      // front of them needs to know nothing about the rows at all.
-      const at = out.indexOf(WIPE_OPEN)
-      out = out.slice(0, at) + scroll + out.slice(at)
-      armedAt = 0
-    }
-    return out
+    return out.split('\x1b[2J').join('\x1b7' + scrollAway() + '\x1b8')
   }
-  keeper.arm = (now = clock()): void => {
+  keeper.arm = (now = clock()): string => {
+    if (alternate()) return ''
     armedAt = now
+    return scrollAway() + '\x1b[1;1H'
   }
   return keeper
 }

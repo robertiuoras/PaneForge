@@ -1125,10 +1125,15 @@ export default function TerminalPane({
       pending = r.state
       publishDraft(sessionId, r.state)
       for (const line of r.submitted) {
-        // `/clear` and friends are the one moment a full-screen wipe means "throw the
-        // conversation off the screen" rather than "repaint it". Claude Code does both
-        // with the same bytes, so the intent has to come from here - see keepScrollback.
-        if (clearsScreen(line)) keep.arm()
+        // `/clear` and friends are the one moment the screen is meant to be thrown away
+        // rather than repainted, and this is the only place that knows it: Claude Code
+        // v2.1.233 clears by drawing its banner straight over the last turn, with no erase
+        // of any kind to notice. So the screen is scrolled into the scrollback HERE, ahead
+        // of the CLI's first byte - see keepScrollback.
+        if (clearsScreen(line)) {
+          const away = keep.arm()
+          if (away) t.write(away)
+        }
         const text = flatDraft(line, RAIL_LABEL_CHARS)
         // A bare Enter is a confirmation or an accepted menu item, and a lone character is
         // a menu key. Tagging either would bury the real prompts.
