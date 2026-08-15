@@ -72,6 +72,21 @@ export interface AgentSpec {
   note?: string
   /** where to read more; opened in the browser from Settings */
   docs?: string
+  /**
+   * Environment the pty is started with, on top of the app's own.
+   *
+   * This is what makes a provider an entry in this catalogue rather than a branch in
+   * the spawn path: every one of these CLIs is pointed at a different model by env
+   * vars and nothing else, so "Claude Code on GLM" is a spec with two variables set
+   * and the same binary as "Claude Code".
+   *
+   * A value of exactly `${OPENROUTER_KEY}` is filled in from Settings by
+   * `resolveEnv`, which DROPS the variable when the key is blank rather than passing
+   * the placeholder through - an agent that authenticates with the literal string
+   * `${OPENROUTER_KEY}` fails as a 401 inside a healthy-looking pane, which is the
+   * one failure nobody can act on.
+   */
+  env?: Record<string, string>
   /** true for entries the user added in Settings */
   custom?: boolean
 }
@@ -102,6 +117,30 @@ const CLAUDE_MODELS: ModelChoice[] = [
   { value: 'haiku', label: 'haiku (alias)' }
 ]
 
+/** The placeholder an agent's `env` uses to ask for the OpenRouter key from Settings. */
+export const OPENROUTER_KEY_VAR = '${OPENROUTER_KEY}'
+
+/** OpenRouter's own address, and the one it answers the Anthropic Messages API on. */
+export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
+
+// A shortcut list, same as every other one here - OpenRouter carries hundreds of ids
+// and any of them can be typed. These are the ones worth reaching for by name: GLM is
+// what this entry was added for, and the rest are the other cheap long-context models
+// that answer on the same key.
+//
+// Measured against openrouter.ai/api/v1/models on 2026-08-15. Prices are per million
+// input tokens and are in the hint because the whole point of this entry is that a
+// pane can cost a fiftieth of what the same pane costs on a frontier model.
+const OPENROUTER_MODELS: ModelChoice[] = [
+  { value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: '$1.19/M · 1M context' },
+  { value: 'z-ai/glm-5', label: 'GLM 5', hint: '$0.60/M' },
+  { value: 'z-ai/glm-4.7', label: 'GLM 4.7', hint: '$0.40/M' },
+  { value: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', hint: '$0.06/M · fastest' },
+  { value: 'deepseek/deepseek-chat', label: 'DeepSeek' },
+  { value: 'qwen/qwen3-coder', label: 'Qwen3 Coder' },
+  { value: 'moonshotai/kimi-k2', label: 'Kimi K2' }
+]
+
 // Model lists are deliberately short: they are a shortcut, not a whitelist. The UI
 // lets you type any model string, so a CLI renaming its models cannot break launches.
 export const BUILTIN_AGENTS: AgentSpec[] = [
@@ -118,6 +157,40 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     note: 'Anthropic subscription or API key',
     docs: 'https://docs.claude.com/en/docs/claude-code'
+  },
+  {
+    // Claude Code with two environment variables changed, which is all it takes:
+    // OpenRouter answers the Anthropic Messages API at /api/v1/messages (probed
+    // 2026-08-15 - it returns Anthropic's own `authentication_error` shape rather
+    // than a 404, which is how you tell a real implementation from a rewrite of the
+    // chat-completions endpoint). So the pane, the resume, the transcript and every
+    // feature in this app that reads a Claude pane keep working, and the model
+    // underneath is GLM.
+    //
+    // It is a separate id rather than a switch on `claude` on purpose: the two have
+    // different conversation histories, different costs and different failure modes,
+    // and a pane must say which one it is on its card.
+    id: 'openrouter',
+    label: 'Claude Code on OpenRouter',
+    bin: 'claude',
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
+    modelFlag: '--model',
+    models: OPENROUTER_MODELS,
+    env: {
+      ANTHROPIC_BASE_URL: OPENROUTER_BASE,
+      ANTHROPIC_AUTH_TOKEN: OPENROUTER_KEY_VAR,
+      // Without this the CLI keeps talking to Anthropic's own telemetry and consent
+      // endpoints with a token they have never heard of, which is a stream of
+      // failures in a pane whose actual turns are fine.
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    },
+    color: '#8b5cf6',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
+    free: true,
+    note: 'One OpenRouter key, any model on it - GLM, DeepSeek, Qwen, Kimi. Paste the key in Settings.',
+    docs: 'https://openrouter.ai/docs/community/claude-code'
   },
   {
     id: 'codex',
@@ -222,7 +295,15 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     bin: 'opencode',
     resumeArgs: ['--continue'],
     modelFlag: '--model',
-    models: ['anthropic/claude-sonnet-5', 'openai/gpt-5.1-codex', 'google/gemini-2.5-pro'],
+    models: [
+      'anthropic/claude-sonnet-5',
+      'openai/gpt-5.1-codex',
+      'google/gemini-2.5-pro',
+      { value: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2 (OpenRouter)' }
+    ],
+    // Its OpenRouter provider reads this and nothing else, so one key in Settings
+    // reaches every CLI here that speaks OpenRouter.
+    env: { OPENROUTER_API_KEY: OPENROUTER_KEY_VAR },
     color: '#fbbf24',
     install: 'npm i -g opencode-ai',
     uninstall: 'npm rm -g opencode-ai',
@@ -235,6 +316,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     label: 'Crush',
     bin: 'crush',
     modelFlag: '--model',
+    env: { OPENROUTER_API_KEY: OPENROUTER_KEY_VAR },
     color: '#f97316',
     install: 'npm i -g @charmland/crush',
     uninstall: 'npm rm -g @charmland/crush',
@@ -270,7 +352,14 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     label: 'Aider',
     bin: 'aider',
     modelFlag: '--model',
-    models: ['sonnet', 'gpt-5', 'gemini/gemini-2.5-pro', 'ollama/qwen2.5-coder'],
+    models: [
+      'sonnet',
+      'gpt-5',
+      'gemini/gemini-2.5-pro',
+      'ollama/qwen2.5-coder',
+      { value: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2 (OpenRouter)' }
+    ],
+    env: { OPENROUTER_API_KEY: OPENROUTER_KEY_VAR },
     color: '#34d399',
     install: 'python -m pip install aider-install && aider-install',
     uninstall: 'python -m pip uninstall -y aider-install aider-chat',
@@ -382,6 +471,40 @@ export function modelHint(m: ModelChoice): string | undefined {
 export function agentModelLabel(agent: Pick<AgentSpec, 'models'> | undefined, value: string): string {
   const choice = agent?.models?.find((m) => modelValue(m) === value)
   return choice ? modelLabel(choice) : value
+}
+
+/** The keys Settings holds, by the placeholder they answer. */
+export interface AgentKeys {
+  openrouter?: string
+}
+
+/**
+ * The extra environment one agent's pty gets, with the key placeholders filled in.
+ *
+ * A variable whose value is a placeholder and whose key is blank is DROPPED, never
+ * passed through. A CLI given `ANTHROPIC_AUTH_TOKEN=${OPENROUTER_KEY}` authenticates
+ * with that literal string and fails as a 401 several seconds into a pane that looks
+ * perfectly healthy; dropped, it falls back to whatever login the machine already has
+ * and says so in its own words on the first line.
+ */
+export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(spec.env ?? {})) {
+    if (v === OPENROUTER_KEY_VAR) {
+      const key = keys.openrouter?.trim()
+      if (key) out[k] = key
+      continue
+    }
+    out[k] = v
+  }
+  return out
+}
+
+/** Whether this agent cannot run at all until a key is pasted into Settings. */
+export function needsOpenRouterKey(spec: AgentSpec): boolean {
+  // Only the entries whose AUTH is the key, not the ones that merely pass it along:
+  // opencode and aider work on their own logins and take OpenRouter as one option.
+  return spec.env?.ANTHROPIC_AUTH_TOKEN === OPENROUTER_KEY_VAR
 }
 
 /** Full argv for one launch: resume form or fresh form, plus the model. */
