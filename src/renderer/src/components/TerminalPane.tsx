@@ -812,6 +812,35 @@ export default function TerminalPane({
     fit.current = f
 
     /**
+     * One composer on a touch screen, not two.
+     *
+     * xterm keeps a hidden textarea to receive keystrokes, and a phone treats it as a text
+     * field: tapping the terminal raises the keyboard with its own caret and its own
+     * accessory bar, beside the typing bar this app draws at the bottom of the pane. Two
+     * places to type into one pane, and only one of them composes a line before sending it
+     * - that is "there's 2 chat box for prompt".
+     *
+     * So on a touch screen the textarea keeps its keydown handling (a paired hardware
+     * keyboard still types straight into the pty) and gives up being a text field:
+     * `readOnly` and `inputMode: none` are what stop iOS raising the keyboard for it, and
+     * it is out of the tab order so nothing lands on it by accident. The bar at the bottom
+     * is then the only thing that opens a keyboard, and it still has its Send button.
+     *
+     * `pointer: coarse` and NOT the handheld width: a narrow desktop window is handheld
+     * too and its terminal must stay typeable.
+     */
+    const coarse = window.matchMedia('(pointer: coarse)')
+    const oneComposer = (): void => {
+      const ta = t.textarea
+      if (!ta) return
+      ta.readOnly = coarse.matches
+      ta.inputMode = coarse.matches ? 'none' : ''
+      ta.tabIndex = coarse.matches ? -1 : 0
+    }
+    oneComposer()
+    coarse.addEventListener('change', oneComposer)
+
+    /**
      * Paths an agent printed become links that reveal the file in Explorer or Finder.
      *
      * The pane is a pty, so there is no markup to hang a link off: the only thing to work
@@ -2118,6 +2147,7 @@ export default function TerminalPane({
     return () => {
       off()
       offReset()
+      coarse.removeEventListener('change', oneComposer)
       ro.disconnect()
       window.clearTimeout(settle)
       window.clearTimeout(settle2)
