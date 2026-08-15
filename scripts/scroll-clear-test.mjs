@@ -226,7 +226,11 @@ eq('nor does a path that starts with a slash', clearsScreen('/etc/hosts is wrong
       // The third entry is the line a PLAIN terminal loses to that clear: the whole
       // screenful for the wipe, and the one row the overdraw lands on for the other.
       ['an erase-per-row wipe', wipe(rows), 'turn 10'],
-      ['a bare cursor-up overdraw', '\x1b[6A', 'turn 5']
+      // Byte for byte what v2.1.233 sends, copied out of this machine's pane log rather
+      // than shortened to the cursor-up that carries the meaning: the two moves before it
+      // are what decides which row the banner lands on, and a fixture that drops them is
+      // not the shape of the real thing.
+      ['a bare cursor-up overdraw', '\x1b[53D\x1b[4B\r\x1b[6A', 'turn 5']
     ]) {
       const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
       const k = keepScrollback(() => term.rows, () => term.buffer.active.type === 'alternate')
