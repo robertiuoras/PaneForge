@@ -92,7 +92,20 @@ jobs:
           # installs resolve /releases/latest, which skips prereleases, so nothing
           # reaches them until `lane.mjs promote` flips this flag off by hand.
           gh release view "v$version" >/dev/null 2>&1 || gh release create "v$version" --prerelease --latest=false --title "$version" --notes ""
-          gh release upload "v$version" "${files[@]}" --clobber
+          # Retried, because the failure here is GitHub's and not ours: v0.8.83 uploaded
+          # five mac assets and died on `HTTP 504: We couldn't respond to your request in
+          # time` on the last one, which failed the whole release for a version that had
+          # already built. `--clobber` makes a repeat harmless, so the only thing missing
+          # was another go.
+          upload() {
+            for try in 1 2 3; do
+              if gh release upload "v$version" "$@" --clobber; then return 0; fi
+              echo "upload attempt $try failed; retrying in $((try * 20))s"
+              sleep $((try * 20))
+            done
+            return 1
+          }
+          upload "${files[@]}"
 
       # electron-builder's own asset names carry the version, so a link to one dies
       # at the next release. Upload a second copy of each installer under a fixed
@@ -119,7 +132,13 @@ jobs:
           done
           if [ "$found" = 0 ]; then echo "no build artifacts matched $version"; exit 1; fi
           ls -l stable
-          gh release upload "v$version" stable/* --clobber
+          # Same transient 504 exposure as the step above, same answer.
+          for try in 1 2 3; do
+            if gh release upload "v$version" stable/* --clobber; then break; fi
+            if [ "$try" = 3 ]; then exit 1; fi
+            echo "upload attempt $try failed; retrying in $((try * 20))s"
+            sleep $((try * 20))
+          done
 
   # One job, after both builds, so the release page itself tells a first-time
   # visitor which of the nine files they want - and what changed since the last
