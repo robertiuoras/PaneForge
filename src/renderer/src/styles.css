@@ -116,8 +116,14 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
    if the classes are somehow left behind. See "A phone is not a small desktop" in
    docs/design-notes.md.
 
+   The second half of the query is a phone turned sideways: 932x430 is wider than 720 and
+   is still a phone, and with the two-column layout there is neither a Back chip nor a
+   swipe to get back to the list. A touch screen AND a viewport under 520px tall is a
+   handset in landscape and nothing else - a tablet held sideways is 820px tall. It has to
+   stay the same string as `HANDHELD_QUERY` in handheld.ts, which writes the classes.
+
    Everything here is dark to the desktop build: at 1500x940 not one selector matches. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
   /* `100vh` on a phone browser is the LARGE viewport - the one you get with the toolbars
      scrolled away - so the app was laid out taller than the screen and its last ~60px sat
      underneath Safari's bottom bar. Everything pinned to the bottom of a pane went with
@@ -1213,7 +1219,7 @@ body.sizing * { user-select: none !important; }
 .turn-copy button:hover { color: var(--text); border-color: var(--accent); }
 /* A finger needs 44px and the icons are 17px, so on a phone the pair is a bigger target
    and always at full strength: there is no pointer to hover with. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
   html.handheld .turn-copy { opacity: 0.75; right: 44px; gap: 6px; }
   html.handheld .turn-copy button { width: 30px; height: 30px; }
 }

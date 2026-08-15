@@ -22,6 +22,17 @@ import { isPhoneClient } from './client'
 /** Below this the sidebar and the panes take turns. Matches the `@media` in styles.css. */
 export const HANDHELD_MAX = 720
 
+/**
+ * ...and a phone turned sideways is still a phone. An iPhone in landscape is 932x430, so
+ * a width-only rule handed it the 282px sidebar and a pane beside it - and with the
+ * sidebar showing there is no Back chip and no swipe, which is "swipe left doesn't always
+ * work": it worked in portrait and nothing existed to work in landscape. The second half
+ * asks for a touch screen AND a short viewport, so a tablet held sideways (820px tall) and
+ * every desktop window keep the two-column layout. Kept as ONE string because
+ * `styles.css` matches on it too and a copy that drifts is a layout with no rules.
+ */
+export const HANDHELD_QUERY = `(max-width: ${HANDHELD_MAX}px), (pointer: coarse) and (max-height: 520px)`
+
 export interface Handheld {
   /** the screen is taking turns */
   handheld: boolean
@@ -37,14 +48,14 @@ export interface Handheld {
  */
 export function useHandheld(activeId: string | null): Handheld {
   const [handheld, setHandheld] = useState(
-    () => typeof window !== 'undefined' && window.innerWidth <= HANDHELD_MAX
+    () => typeof window !== 'undefined' && window.matchMedia(HANDHELD_QUERY).matches
   )
   // Open on the list: the first question on a phone is "what is running", never "type
   // into pane 3". A pane opened after that keeps the screen until Back is pressed.
   const [listOpen, setListOpen] = useState(true)
 
   useEffect(() => {
-    const query = window.matchMedia(`(max-width: ${HANDHELD_MAX}px)`)
+    const query = window.matchMedia(HANDHELD_QUERY)
     const sync = (): void => setHandheld(query.matches)
     sync()
     query.addEventListener('change', sync)
@@ -66,6 +77,24 @@ export function useHandheld(activeId: string | null): Handheld {
     if (activeId && !restore) setListOpen(false)
   }, [activeId, seen])
 
+  /**
+   * The phone's OWN Back - its button, and the swipe every other app on the device answers
+   * - goes back to the list instead of leaving the page.
+   *
+   * A pane taking the screen is a navigation as far as the person holding it is concerned,
+   * and nothing in the URL said so: back left the app entirely, from a pane, with no
+   * warning. So opening a pane pushes one history entry and `popstate` is Back. The chip
+   * calls `history.back()` when it is standing on that entry, so both routes are the same
+   * one move and the stack cannot grow a step per pane opened.
+   */
+  useEffect(() => {
+    if (!handheld || listOpen) return
+    history.pushState({ pfPane: true }, '')
+    const pop = (): void => setListOpen(true)
+    window.addEventListener('popstate', pop)
+    return () => window.removeEventListener('popstate', pop)
+  }, [handheld, listOpen])
+
   useEffect(() => {
     const root = document.documentElement
     root.classList.toggle('handheld', handheld)
@@ -84,7 +113,11 @@ export function useHandheld(activeId: string | null): Handheld {
    * nothing, so only a phone speaks up.
    */
   const showList = useCallback(() => {
-    setListOpen(true)
+    // Standing on the entry the pane pushed, so unwinding it is the same move the phone's
+    // own Back makes; `popstate` is what sets the state in that case. Pressing the chip
+    // and pressing the phone's Back must not leave the history stack in two shapes.
+    if (history.state?.pfPane) history.back()
+    else setListOpen(true)
     if (isPhoneClient()) window.api.returnSize()
   }, [])
 
