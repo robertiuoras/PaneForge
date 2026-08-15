@@ -58,11 +58,15 @@ import TerminalPane, {
 } from './components/TerminalPane'
 import {
   FULL_SCROLLBACK,
+  OFFLOAD_STICK_MS,
+  offloadPlan,
   offloadTarget,
   projectNameOf,
   savingMb,
+  stickFor,
   trimPlan,
   type OffloadCandidate,
+  type OffloadStick,
   type Verdict
 } from '../../shared/capacity'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
@@ -187,7 +191,11 @@ interface AskState {
   confirmLabel?: string
   danger?: boolean
   input?: { placeholder?: string; defaultValue?: string }
-  onConfirm: (value: string) => void
+  check?: { label: string }
+  cancelLabel?: string
+  onConfirm: (value: string, checked: boolean) => void
+  /** Only for a question whose two answers are both real choices. Esc means cancel. */
+  onCancel?: (checked: boolean) => void
 }
 
 export default function App(): JSX.Element {
@@ -956,6 +964,16 @@ export default function App(): JSX.Element {
    * A pane that moved MUST say so. A session that appears on another machine without a
    * word is the same failure as one that never started: the person goes looking for it.
    */
+  /**
+   * The last answer to "start it over there?", while it still holds.
+   *
+   * A ref rather than state: nothing on screen reads it, and re-rendering the whole app
+   * because a ten-minute window opened is work for nothing. It deliberately does not
+   * outlive the window - a launch policy that survives a restart is a setting, and there
+   * is one of those in Settings.
+   */
+  const offloadStick = useRef<OffloadStick | null>(null)
+
   const offloadReqs = useCallback(
     async (reqs: StartSessionRequest[]): Promise<StartSessionRequest[]> => {
       if (!capacity?.offload || config?.offloadWhenFull === false) return reqs
@@ -977,10 +995,54 @@ export default function App(): JSX.Element {
         // A peer that cannot be asked is a peer that cannot be used. Everything stays here.
         return reqs
       }
+      // Pair every request with the device that could take it BEFORE anything is asked:
+      // a question about a move that has nowhere to go is a question with one answer.
+      const pairs = reqs.map((req) => ({
+        req,
+        target: offloadTarget(capacity, candidates, projectNameOf(req.cwd))
+      }))
+      const movable = pairs.filter((p) => p.target)
+      if (!movable.length) return reqs
+      const plan = offloadPlan(
+        movable[0].target,
+        config?.offloadAsk !== false,
+        offloadStick.current,
+        Date.now()
+      )
+      if (plan === 'local') return reqs
+      if (plan === 'ask') {
+        // One question for the whole launch. Asked per pane, opening three panes at once
+        // is three dialogs about the same machine being full.
+        const name = movable[0].target?.deviceName ?? 'the paired device'
+        const many = movable.length > 1 ? `${movable.length} panes` : 'this pane'
+        const answered = await new Promise<{ answer: 'remote' | 'local'; remember: boolean }>(
+          (resolve) => {
+            setAsk({
+              title: `Start ${many} on ${name}?`,
+              body:
+                `This machine is out of memory - panes here hold about ${capacity.usedMb} MB ` +
+                `and another one costs about ${capacity.nextPaneMb} MB. ${name} has the same ` +
+                `project and can run it; you keep watching it from here. Keeping it here is ` +
+                `fine if this is the checkout you are working in - it will just be slower.`,
+              confirmLabel: `Start on ${name}`,
+              cancelLabel: 'Keep it here',
+              check: { label: `Remember for ${Math.round(OFFLOAD_STICK_MS / 60000)} minutes` },
+              onConfirm: (_v, checked) => {
+                setAsk(null)
+                resolve({ answer: 'remote', remember: checked })
+              },
+              onCancel: (checked) => resolve({ answer: 'local', remember: checked })
+            })
+          }
+        )
+        offloadStick.current = answered.remember
+          ? stickFor(answered.answer, Date.now())
+          : null
+        if (answered.answer === 'local') return reqs
+      }
       const local: StartSessionRequest[] = []
       const sent: string[] = []
-      for (const req of reqs) {
-        const target = offloadTarget(capacity, candidates, projectNameOf(req.cwd))
+      for (const { req, target } of pairs) {
         if (!target) {
           local.push(req)
           continue
@@ -3919,10 +3981,15 @@ export default function App(): JSX.Element {
           title={ask.title}
           body={ask.body}
           confirmLabel={ask.confirmLabel}
+          cancelLabel={ask.cancelLabel}
           danger={ask.danger}
           input={ask.input}
+          check={ask.check}
           onConfirm={ask.onConfirm}
-          onCancel={() => setAsk(null)}
+          onCancel={(checked) => {
+            setAsk(null)
+            ask.onCancel?.(checked)
+          }}
         />
       )}
       {(shelfInWindow || shelfSearching) && (

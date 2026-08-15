@@ -303,6 +303,55 @@ export function offloadTarget(
   return null
 }
 
+/** What a person answered when the launch asked where the pane should go. */
+export type OffloadAnswer = 'remote' | 'local'
+
+/** ...and what the launch does: the two answers, or put the question on screen. */
+export type OffloadPlan = OffloadAnswer | 'ask'
+
+/** An answer kept for a while, so a busy stretch is not one dialog per pane. */
+export interface OffloadStick {
+  answer: OffloadAnswer
+  /** ms epoch after which the question is asked again */
+  until: number
+}
+
+/**
+ * How long an answer holds. Ten minutes because the thing it is answering about is a
+ * burst - a few panes opened in a row while the machine is already full - and not a
+ * setting. Anything longer and a choice made once quietly becomes the policy; anything
+ * shorter and opening three panes asks three times, which is the nag this replaces.
+ */
+export const OFFLOAD_STICK_MS = 10 * 60_000
+
+export function stickFor(answer: OffloadAnswer, now: number, ms = OFFLOAD_STICK_MS): OffloadStick {
+  return { answer, until: now + ms }
+}
+
+/**
+ * Where the launch goes, and whether the person is asked at all.
+ *
+ * `offloadTarget` decides whether a peer COULD take the pane. This decides who says so.
+ * Until this existed the launch moved the pane on its own and printed a sentence after
+ * the fact, which is right for a machine that is thrashing and wrong for the person who
+ * wanted THIS pane on THIS desk - the files are here, the browser is here, and a pane
+ * that landed on the other machine has to be handed back by hand.
+ *
+ * A stuck answer beats the question, and never beats "there is nowhere to send it": a
+ * remembered `remote` with no online peer holding the project is still local.
+ */
+export function offloadPlan(
+  target: Offload | null,
+  /** config: ask before moving, rather than moving and saying so */
+  ask: boolean,
+  stick: OffloadStick | null,
+  now: number
+): OffloadPlan {
+  if (!target) return 'local'
+  if (stick && stick.until > now) return stick.answer
+  return ask ? 'ask' : 'remote'
+}
+
 /**
  * The project name a path belongs to, on either platform's separator.
  *

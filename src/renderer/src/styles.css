@@ -1631,6 +1631,11 @@ body.sizing * { user-select: none !important; }
 .dialog.confirm { width: 440px; gap: 14px; }
 .dialog.confirm .dialog-head strong { font-size: 15px; }
 .confirm-body { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+/* "Remember this answer" under a question that will be asked again in a minute. Sits
+   with the body rather than in the button row: it changes what the answer MEANS, and a
+   tick box between two buttons reads as a third button. */
+.confirm-check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.confirm-check input { accent-color: var(--acc); width: 14px; height: 14px; }
 .dialog.confirm .dialog-row { justify-content: flex-end; }
 button.primary.danger {
   background: linear-gradient(180deg, #5c2b34, #45222a);

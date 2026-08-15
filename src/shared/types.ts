@@ -1350,6 +1350,16 @@ export interface Config {
    * project - never silently, and never onto a machine that cannot open the folder.
    */
   offloadWhenFull: boolean
+  /**
+   * Ask before it does, rather than moving the pane and saying so afterwards.
+   *
+   * On, because where a pane runs is a decision with a reason this machine cannot see:
+   * the checkout being edited, the browser pointed at its dev server, the person sitting
+   * in front of it. The dialog recommends the paired device (it is the one that fixes the
+   * memory), and an answer holds for ten minutes so a burst of launches asks once. Off
+   * restores the silent move.
+   */
+  offloadAsk: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /**

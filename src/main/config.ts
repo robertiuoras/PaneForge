@@ -224,6 +224,9 @@ function defaults(): Config {
     // once panes here already cost more than the machine has, and the launch says out
     // loud where the pane went. Off keeps every pane local whatever the machine is doing.
     offloadWhenFull: true,
+    // Ask rather than move. See the field's note in shared/types.ts: the machine knows it
+    // is full, it does not know that this pane is the one being worked in.
+    offloadAsk: true,
     voice: { enabled: true, model: 'base', language: 'auto', engine: 'auto' },
     // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
     // nothing and nothing runs until a person clicks - which is what made off-by-default

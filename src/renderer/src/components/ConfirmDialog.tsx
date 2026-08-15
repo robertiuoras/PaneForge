@@ -16,8 +16,14 @@ interface Props {
   danger?: boolean
   /** turns this into a prompt; the value comes back through onConfirm */
   input?: { label?: string; placeholder?: string; defaultValue?: string }
-  onConfirm: (value: string) => void
-  onCancel: () => void
+  /**
+   * One tick box under the body, for a question whose answer may be worth keeping.
+   * Its state comes back through BOTH buttons: "remember this" applies to a no as much
+   * as to a yes, and a box that only survives the primary button teaches the opposite.
+   */
+  check?: { label: string; defaultChecked?: boolean }
+  onConfirm: (value: string, checked: boolean) => void
+  onCancel: (checked: boolean) => void
 }
 
 export default function ConfirmDialog({
@@ -27,10 +33,12 @@ export default function ConfirmDialog({
   cancelLabel = 'Cancel',
   danger,
   input,
+  check,
   onConfirm,
   onCancel
 }: Props): JSX.Element {
   const [value, setValue] = useState(input?.defaultValue ?? '')
+  const [checked, setChecked] = useState(Boolean(check?.defaultChecked))
   const field = useRef<HTMLInputElement>(null)
   const ok = useRef<HTMLButtonElement>(null)
 
@@ -43,19 +51,20 @@ export default function ConfirmDialog({
 
   const confirm = (): void => {
     if (input && !value.trim()) return
-    onConfirm(value.trim())
+    onConfirm(value.trim(), checked)
   }
+  const cancel = (): void => onCancel(checked)
 
   return (
     <div
       className="overlay confirm-overlay"
-      onMouseDown={onCancel}
+      onMouseDown={cancel}
       // Captured here so the app's global Escape does not also close the dialog
       // underneath this one.
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()
-          onCancel()
+          cancel()
         }
         if (e.key === 'Enter') {
           e.stopPropagation()
@@ -77,8 +86,18 @@ export default function ConfirmDialog({
             onChange={(e) => setValue(e.target.value)}
           />
         )}
+        {check && (
+          <label className="confirm-check">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+            />
+            <span>{check.label}</span>
+          </label>
+        )}
         <div className="dialog-row">
-          <button className="ghost" onClick={onCancel}>
+          <button className="ghost" onClick={cancel}>
             {cancelLabel}
           </button>
           <button

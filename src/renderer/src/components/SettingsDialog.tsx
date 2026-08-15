@@ -410,6 +410,12 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   hint="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
                 />
                 <Switch
+                  checked={config.offloadAsk !== false}
+                  onChange={(v) => onChange({ offloadAsk: v })}
+                  label="Ask first, rather than moving it"
+                  hint="A pane is moved for a reason this machine can see - it is out of memory - and kept here for one it cannot: the checkout you are editing, the dev server your browser is pointed at, the fact that you are sitting in front of this screen. So the launch asks, recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off moves it silently and tells you afterwards."
+                />
+                <Switch
                   checked={config.driveUnattended !== false}
                   onChange={(v) => onChange({ driveUnattended: v })}
                   label="Let a driven lane run unattended"

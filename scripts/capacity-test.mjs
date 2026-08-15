@@ -26,7 +26,7 @@ const src = readFileSync(join(here, '..', 'src', 'shared', 'capacity.ts'), 'utf8
 const js = src
   .replace(/^export type .*$/gm, '')
   .replace(/^export interface [\s\S]*?^}$/gm, '')
-  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|Offload|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
+  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|OffloadAnswer|OffloadStick|OffloadPlan|Offload|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
   .replace(/<[A-Za-z]+(\[\])?>/g, '')
 const dir = join(tmpdir(), 'paneforge-capacity-test')
 rmSync(dir, { recursive: true, force: true })
@@ -43,6 +43,9 @@ const {
   FULL_SCROLLBACK,
   TRIMMED_SCROLLBACK,
   offloadTarget,
+  offloadPlan,
+  stickFor,
+  OFFLOAD_STICK_MS,
   projectNameOf
 } = await import('file://' + mod.replace(/\\/g, '/'))
 
@@ -199,6 +202,39 @@ ok(
   'the first online peer that has it wins',
   offloadTarget(full, [PEER({ online: false }), PEER({ device: 'pc-2', deviceName: 'Second' })], 'toolstash')?.device === 'pc-2'
 )
+
+// ------------------------------------------------------- who decides where it starts
+//
+// The move itself was already right; what was missing was the person. Every case below
+// is one where getting it wrong costs something real: a pane silently on the other
+// machine (the files being edited are HERE), or a dialog on every launch of a busy hour.
+const TARGET = { device: 'pc', deviceName: 'Gamer-PC', cwd: 'C:\\x' }
+const NOW = 1_000_000
+
+ok('nowhere to send it is never a question', offloadPlan(null, true, null, NOW) === 'local')
+ok('asking on by default puts it on screen', offloadPlan(TARGET, true, null, NOW) === 'ask')
+ok('asking off keeps the old silent move', offloadPlan(TARGET, false, null, NOW) === 'remote')
+ok(
+  'a remembered "keep it here" is obeyed, and is not the same as no peer',
+  offloadPlan(TARGET, true, stickFor('local', NOW), NOW + 60_000) === 'local'
+)
+ok(
+  'a remembered "send it" stops asking',
+  offloadPlan(TARGET, true, stickFor('remote', NOW), NOW + 60_000) === 'remote'
+)
+ok(
+  'and it expires - the burst is over, so the question comes back',
+  offloadPlan(TARGET, true, stickFor('remote', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'ask'
+)
+ok(
+  'an expired answer with asking off still moves it',
+  offloadPlan(TARGET, false, stickFor('local', NOW), NOW + OFFLOAD_STICK_MS + 1) === 'remote'
+)
+ok(
+  'a remembered "send it" with nowhere to send it is still local',
+  offloadPlan(null, true, stickFor('remote', NOW), NOW + 1) === 'local'
+)
+ok('the window is ten minutes', OFFLOAD_STICK_MS === 600_000, OFFLOAD_STICK_MS)
 
 ok('a posix path yields its project name', projectNameOf('/Users/robertiuoras/Projects/toolstash') === 'toolstash')
 ok('a windows path yields the same name', projectNameOf('C:\\Users\\Gamer\\Desktop\\Projects\\toolstash') === 'toolstash')
