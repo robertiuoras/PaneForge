@@ -26,14 +26,22 @@ export function HandheldType({ id }: { id: string }): JSX.Element {
         setText('')
       }}
     >
+      {/* Autocorrect, capitalisation and the spelling underline are all ON, which is the
+          opposite of what a terminal input usually wants and is right here: what is typed
+          into this bar is a sentence to an agent, not a shell command - the CLIs on the
+          other end read English. They were off because this input was first written as a
+          stand-in for xterm's hidden textarea, where every keystroke goes straight to the
+          pty and a phone's substitutions would corrupt a command mid-word; nothing leaves
+          this bar until Send is pressed, so the correction has already happened by the
+          time any byte moves. `enterKeyHint` still labels the return key Send. */}
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Type to this pane…"
         aria-label="Type to this pane"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
+        autoCapitalize="sentences"
+        autoCorrect="on"
+        spellCheck={true}
         enterKeyHint="send"
       />
       <button type="submit" aria-label="Send">
