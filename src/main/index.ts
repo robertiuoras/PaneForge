@@ -2587,6 +2587,28 @@ ipcMain.handle('game:status', () => gameStatus())
 // Asked once on load: the page can come up either before or after the window is shown,
 // so the push alone is a race the page loses on a cold start.
 ipcMain.handle('app:visibleNow', () => !!win && !win.isMinimized() && win.isVisible())
+/**
+ * The renderer's idle clock ran out - see shared/idlequit.ts for every refusal that had
+ * to pass first.
+ *
+ * The marker is the whole reason this is not just `app.quit()`: a scheduled keep-alive
+ * task reopens PaneForge whenever it is not running, which would undo an intentional
+ * quit within minutes and make the feature look broken rather than absent. The task reads
+ * this file, so a crash (no marker) still gets restarted and a deliberate quit does not.
+ * The desk snapshot that `window-all-closed` writes is what brings the panes back.
+ */
+ipcMain.handle('app:quitIdle', (_e, reason: string) => {
+  console.info(`idle-quit: quitting - ${reason}`)
+  try {
+    writeFileSync(
+      join(app.getPath('userData'), 'idle-quit.flag'),
+      JSON.stringify({ at: Date.now(), reason })
+    )
+  } catch {
+    // A marker we could not write only costs a keep-alive relaunch. Quitting still wins.
+  }
+  app.quit()
+})
 /** The Settings switch, kept out of the config write path so it applies instantly. */
 ipcMain.handle('game:manual', (_e, on: boolean) => {
   const next = setConfig({ gameMode: { ...getConfig().gameMode, manual: on } })
@@ -3159,6 +3181,13 @@ app.whenReady().then(() => {
     if (!file) return new Response('', { status: 404 })
     return net.fetch(pathToFileURL(file).toString(), { headers: req.headers, method: req.method })
   })
+  // The app is open again, so the "closed on purpose" marker is stale: clear it, or the
+  // keep-alive task would refuse to restart this copy after a genuine crash.
+  try {
+    unlinkSync(join(app.getPath('userData'), 'idle-quit.flag'))
+  } catch {
+    // Not there is the normal case.
+  }
   const cfg = getConfig()
   // First line of this process's story: the one that was missing when an update came
   // back and nobody could tell whether it had.

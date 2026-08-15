@@ -43,6 +43,7 @@ const TESTS = [
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
+  ['idlequit', 'idlequit-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],

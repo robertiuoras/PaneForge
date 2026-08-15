@@ -72,6 +72,7 @@
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
+    "test:idlequit": "node scripts/idlequit-test.mjs",
     "test:promptsubmit": "node scripts/prompt-submit-test.mjs",
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",

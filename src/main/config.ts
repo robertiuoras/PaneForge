@@ -256,6 +256,9 @@ function defaults(): Config {
     // a pane that is working or waiting for a person. Closing keeps the History row, the
     // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
     reclaim: DEFAULT_RECLAIM,
+    // Off by default. Quitting the app takes every pane with it, so it ships as a number
+    // somebody has to set rather than a behaviour that arrives with an update.
+    idleQuitMinutes: 0,
     // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
