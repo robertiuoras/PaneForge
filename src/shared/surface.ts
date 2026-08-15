@@ -53,6 +53,7 @@ export const SURFACE: Surface = {
   write: ['send', 'pty:write'],
   resize: ['send', 'pty:resize'],
   returnSize: ['send', 'pty:return'],
+  paneVisibility: ['send', 'pty:visible'],
   redraw: ['send', 'pty:redraw'],
   setBusy: ['send', 'sessions:busy'],
   startSwarm: ['invoke', 'sessions:swarm'],

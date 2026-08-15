@@ -1583,6 +1583,16 @@ export interface Api {
   resize(id: string, cols: number, rows: number, borrowed?: boolean): void
   /** the phone has stopped looking: every borrowed pty goes back to the desk's shape */
   returnSize(): void
+  /**
+   * Which panes this client currently has on screen.
+   *
+   * A hint, and only ever a performance one: output for a pane nobody is looking
+   * at is gathered for longer before it is sent (see `dataPump.ts`), which is most
+   * of the IPC traffic on a desk with several panes open. Every byte still arrives,
+   * in order, and a pane named here is flushed at once - so being wrong about this
+   * costs a tenth of a second of staleness on a pane that is off screen anyway.
+   */
+  paneVisibility(ids: string[]): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
   /**

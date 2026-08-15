@@ -101,5 +101,79 @@ const check = (label, ok) => {
   check('an empty chunk sends nothing', sent.length === 0)
 }
 
+// --- 6. A pane nobody is looking at is gathered for longer. ---------------------
+{
+  const sent = []
+  const pump = new DataPump((id, data) => sent.push([id, data]))
+  pump.setVisible(['a'])
+  pump.push('a', 'seen')
+  pump.push('b', 'unseen')
+  await sleep(40)
+  check('the visible pane went out on the fast tick', sent.length === 1 && sent[0][0] === 'a')
+  check('the hidden pane is still waiting', pump.waiting === 'unseen'.length)
+  await sleep(110)
+  check('and goes out on the slow one', sent.length === 2 && sent[1][0] === 'b')
+  check('with its bytes intact', sent[1][1] === 'unseen')
+}
+
+// --- 7. Coming back on screen never shows a stale frame. ------------------------
+{
+  const sent = []
+  const pump = new DataPump((id, data) => sent.push([id, data]))
+  pump.setVisible(['a'])
+  pump.push('b', 'while you were away')
+  await sleep(20)
+  check('nothing sent yet for the hidden pane', sent.length === 0)
+  pump.setVisible(['b'])
+  check('claiming it visible flushes it at once', sent.length === 1 && sent[0][1] === 'while you were away')
+}
+
+// --- 8. A steadily printing pane still flushes on time. ------------------------
+// The deadline belongs to the oldest byte waiting. Keyed on the newest, a pane
+// printing every few ms would push its own flush forward for ever.
+{
+  const sent = []
+  const pump = new DataPump((id, data) => sent.push([id, data]))
+  const t0 = Date.now()
+  const timer = setInterval(() => pump.push('a', '.'), 2)
+  await sleep(40)
+  clearInterval(timer)
+  check('a steady stream is not starved', sent.length > 0)
+  check('and the first message came within a frame', sent.length > 0 && Date.now() - t0 < 60)
+}
+
+// --- 9. What this actually saves: a real desk, one pane on screen. --------------
+// The measured load (7,359 chunks/sec, median 41 bytes) across six panes, one of
+// them being read. Message counts, not a claim.
+{
+  const count = (visible) => {
+    let n = 0
+    const pump = new DataPump(() => n++)
+    if (visible) pump.setVisible(['p0'])
+    // One second of the measured rate, spread over six panes, replayed against a
+    // clock the pump reads for real - so the ticks are counted the way they fire.
+    const per = Math.round(7359 / 6)
+    let now = Date.now()
+    const realNow = Date.now
+    for (let i = 0; i < per; i++) {
+      Date.now = () => now
+      for (let p = 0; p < 6; p++) pump.push(`p${p}`, 'x'.repeat(41))
+      // Fire whatever tick the wall clock would have fired by here.
+      now += 1000 / per
+      Date.now = () => now
+      pump.tick?.()
+    }
+    Date.now = realNow
+    return n
+  }
+  // tick() is private in TS but present at runtime; if it ever goes, this reads 0
+  // messages and the check below fails rather than passing quietly.
+  const before = count(false)
+  const after = count(true)
+  console.log(`     six panes, one second: ${before} messages -> ${after} with visibility`)
+  check('the measurement ran at all', before > 20)
+  check(`hidden panes cost less (${before} -> ${after})`, after < before * 0.6)
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall pump checks passed')
 process.exit(failures ? 1 : 0)

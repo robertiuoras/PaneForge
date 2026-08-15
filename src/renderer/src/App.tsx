@@ -1545,6 +1545,16 @@ export default function App(): JSX.Element {
   )
 
   /**
+   * Tell main which panes are on screen, so output for the others is gathered for
+   * longer before it is sent (dataPump.ts). Only this side knows: a pane stays
+   * mounted for its whole life, so nothing in main can tell a pane being read from
+   * one behind a tab. A hint only - see `paneVisibility`.
+   */
+  useEffect(() => {
+    window.api.paneVisibility([...visibleIds])
+  }, [visibleIds])
+
+  /**
    * Giving back scrollback when the machine has run out of memory.
    *
    * Every pane stays mounted for as long as it exists (see the grid below), which is what

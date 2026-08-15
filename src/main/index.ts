@@ -1157,6 +1157,20 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?:
  * in, and before this nothing ever undid it - see `resize` in sessions.ts.
  */
 ipcMain.on('pty:return', () => manager.returnSizes())
+/**
+ * Which panes are on screen, per client, so the pump can gather a background pane's
+ * output for longer (dataPump.ts). The desk and a phone are two screens showing two
+ * different panes, so what the pump is told is their UNION: either one looking at a
+ * pane makes it visible. A phone's call arrives through `ipcTap`, whose stand-in event
+ * reports a destroyed sender - that is what tells the two apart.
+ */
+const visibleBy = new Map<string, string[]>()
+ipcMain.on('pty:visible', (e, ids: string[]) => {
+  const sender = (e as { sender?: { isDestroyed?: () => boolean } } | undefined)?.sender
+  const from = sender?.isDestroyed?.() ? 'phone' : 'desk'
+  visibleBy.set(from, Array.isArray(ids) ? ids.filter((x) => typeof x === 'string') : [])
+  pump.setVisible([...new Set([...visibleBy.values()].flat())])
+})
 ipcMain.on('pty:redraw', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)
 )
