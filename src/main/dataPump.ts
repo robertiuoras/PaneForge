@@ -52,16 +52,43 @@ const HIDDEN_FLUSH_MS = 100
  */
 const MAX_PENDING = 64 * 1024
 
+/**
+ * How long one client's claim about what is on its screen counts for.
+ *
+ * A claim EXPIRES rather than being deleted, because the one thing a client
+ * cannot be relied on to do is say goodbye: a phone that is closed, locked, put
+ * in a pocket or driven out of range sends nothing, and a claim that outlives it
+ * would keep panes marked visible for the life of the process - silently undoing
+ * the whole saving. So a live client re-states its claim on a timer well inside
+ * this window (`VISIBILITY_REFRESH_MS` in the renderer), and a client that has
+ * gone quiet simply stops counting.
+ */
+const CLAIM_TTL_MS = 90_000
+
+/**
+ * The most panes one client may claim. A claim arrives over HTTP from a paired
+ * phone, so its size is not ours to trust; nobody has 200 panes open.
+ */
+const MAX_CLAIM = 200
+
 export class DataPump {
   private pending = new Map<string, { data: string; due: number }>()
   private timer: ReturnType<typeof setTimeout> | null = null
   private timerDue = 0
   /**
-   * Which panes are on screen, as last claimed by a client. `null` means nobody
-   * has said yet, and then every pane is treated as visible: a pump that has not
-   * been told anything must behave exactly as it did before this existed.
+   * What each client last said was on ITS screen, with when it said it.
+   *
+   * Per client, because the desk and every phone are separate screens: keying
+   * them together means the second phone to speak erases the first one's panes,
+   * and a phone that closed keeps the desk's answer wrong for ever. An empty map
+   * means nobody has said anything, and then every pane is treated as visible - a
+   * pump that has not been told anything behaves exactly as it did before any of
+   * this existed.
    */
-  private visible: Set<string> | null = null
+  private claims = new Map<string, { ids: Set<string>; at: number }>()
+  /** The union of live claims, recomputed at most once a second. */
+  private union: Set<string> | null = null
+  private unionAt = 0
 
   /**
    * @param sink what to actually send. Called once per pane per flush, with the
@@ -70,20 +97,42 @@ export class DataPump {
   constructor(private readonly sink: (id: string, data: string) => void) {}
 
   /**
-   * The panes a client says are on screen. The union of every client - the desk
-   * window and a phone are two screens and either one showing a pane makes it
-   * visible - is the caller's business, not this file's.
+   * One client saying which panes are on its screen. `client` is that client's own
+   * id - the desk window and each phone are different screens and either one
+   * showing a pane makes it visible.
    *
-   * Anything already waiting for a pane that just became visible goes out now,
-   * so switching to a pane never shows a frame that is up to HIDDEN_FLUSH_MS old.
+   * Anything already waiting for a pane that just became visible goes out now, so
+   * switching to a pane never shows a frame that is up to HIDDEN_FLUSH_MS old.
    */
-  setVisible(ids: string[]): void {
-    this.visible = new Set(ids)
-    for (const id of ids) this.flushOne(id)
+  setVisible(client: string, ids: string[]): void {
+    const kept = ids.filter((id) => typeof id === 'string').slice(0, MAX_CLAIM)
+    this.claims.set(client, { ids: new Set(kept), at: Date.now() })
+    this.union = null
+    for (const id of kept) this.flushOne(id)
+  }
+
+  /** Live claims only, folded together. `null` when nobody is claiming anything. */
+  private visible(): Set<string> | null {
+    const now = Date.now()
+    if (this.union !== null && now - this.unionAt < 1000) return this.union
+    const out = new Set<string>()
+    let any = false
+    for (const [client, c] of this.claims) {
+      if (now - c.at > CLAIM_TTL_MS) {
+        this.claims.delete(client)
+        continue
+      }
+      any = true
+      for (const id of c.ids) out.add(id)
+    }
+    this.unionAt = now
+    this.union = any ? out : null
+    return this.union
   }
 
   private windowFor(id: string): number {
-    return this.visible === null || this.visible.has(id) ? FLUSH_MS : HIDDEN_FLUSH_MS
+    const vis = this.visible()
+    return vis === null || vis.has(id) ? FLUSH_MS : HIDDEN_FLUSH_MS
   }
 
   push(id: string, data: string): void {

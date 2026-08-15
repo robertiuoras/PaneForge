@@ -105,7 +105,7 @@ const check = (label, ok) => {
 {
   const sent = []
   const pump = new DataPump((id, data) => sent.push([id, data]))
-  pump.setVisible(['a'])
+  pump.setVisible('desk', ['a'])
   pump.push('a', 'seen')
   pump.push('b', 'unseen')
   await sleep(40)
@@ -120,12 +120,64 @@ const check = (label, ok) => {
 {
   const sent = []
   const pump = new DataPump((id, data) => sent.push([id, data]))
-  pump.setVisible(['a'])
+  pump.setVisible('desk', ['a'])
   pump.push('b', 'while you were away')
   await sleep(20)
   check('nothing sent yet for the hidden pane', sent.length === 0)
-  pump.setVisible(['b'])
+  pump.setVisible('desk', ['b'])
   check('claiming it visible flushes it at once', sent.length === 1 && sent[0][1] === 'while you were away')
+}
+
+// --- 7b. Two screens, and neither erases the other. -----------------------------
+// The desk and each phone are separate screens: keyed together, the second one to
+// speak takes the first one's panes away and its pane starts stuttering.
+{
+  const sent = []
+  const pump = new DataPump((id, data) => sent.push([id, data]))
+  pump.setVisible('desk', ['a'])
+  pump.setVisible('phone1', ['b'])
+  pump.setVisible('phone2', ['c'])
+  pump.push('a', 'A')
+  pump.push('b', 'B')
+  pump.push('c', 'C')
+  pump.push('d', 'D')
+  await sleep(40)
+  const fast = sent.map(([id]) => id).sort().join('')
+  check('every screen keeps its own pane on the fast tick', fast === 'abc')
+  check('the pane nobody has on screen is still waiting', pump.waiting === 1)
+}
+
+// --- 7c. A screen that goes away without saying so stops counting. --------------
+// A phone that is closed, locked or out of range never sends a parting message, so
+// a claim that did not expire would keep its panes fast for the life of the process.
+{
+  const sent = []
+  const pump = new DataPump((id, data) => sent.push([id, data]))
+  const realNow = Date.now
+  try {
+    pump.setVisible('desk', ['a'])
+    pump.setVisible('phone', ['b'])
+    // Two minutes later the phone has said nothing since. The desk is still talking.
+    const later = realNow() + 120_000
+    Date.now = () => later
+    pump.setVisible('desk', ['a'])
+    pump.push('b', 'nobody is watching this')
+    check('the dead claim no longer buys a fast tick', pump.waiting === 'nobody is watching this'.length)
+    // Its deadline was written against the fake clock, so flushing is what proves the
+    // bytes are intact rather than waiting for a tick 120s in the future.
+    pump.flush()
+    check('and the bytes are still exactly right', sent.length === 1 && sent[0][1] === 'nobody is watching this')
+  } finally {
+    Date.now = realNow
+  }
+}
+
+// --- 7d. A claim from a paired phone is not trusted for its size. ---------------
+{
+  const pump = new DataPump(() => {})
+  pump.setVisible('phone', Array.from({ length: 5000 }, (_, i) => `p${i}`))
+  pump.push('p4999', 'past the cap')
+  check('a huge claim is cut to the cap, not stored whole', pump.waiting === 'past the cap'.length)
 }
 
 // --- 8. A steadily printing pane still flushes on time. ------------------------
@@ -149,21 +201,26 @@ const check = (label, ok) => {
   const count = (visible) => {
     let n = 0
     const pump = new DataPump(() => n++)
-    if (visible) pump.setVisible(['p0'])
+    if (visible) pump.setVisible('desk', ['p0'])
     // One second of the measured rate, spread over six panes, replayed against a
     // clock the pump reads for real - so the ticks are counted the way they fire.
     const per = Math.round(7359 / 6)
     let now = Date.now()
     const realNow = Date.now
-    for (let i = 0; i < per; i++) {
-      Date.now = () => now
-      for (let p = 0; p < 6; p++) pump.push(`p${p}`, 'x'.repeat(41))
-      // Fire whatever tick the wall clock would have fired by here.
-      now += 1000 / per
-      Date.now = () => now
-      pump.tick?.()
+    // finally, not a line after the loop: a throw in here would otherwise leave the
+    // fake clock installed for every check below it.
+    try {
+      for (let i = 0; i < per; i++) {
+        Date.now = () => now
+        for (let p = 0; p < 6; p++) pump.push(`p${p}`, 'x'.repeat(41))
+        // Fire whatever tick the wall clock would have fired by here.
+        now += 1000 / per
+        Date.now = () => now
+        pump.tick?.()
+      }
+    } finally {
+      Date.now = realNow
     }
-    Date.now = realNow
     return n
   }
   // tick() is private in TS but present at runtime; if it ever goes, this reads 0

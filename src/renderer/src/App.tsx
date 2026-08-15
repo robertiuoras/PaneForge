@@ -121,6 +121,14 @@ const api = window.api
 
 /** How long a card stays lit after its turn ends - long enough to look, short enough
  *  that a room of finished panes is not a wall of glowing cards. */
+/**
+ * How often this client re-states which panes are on its screen. Well inside the
+ * pump's `CLAIM_TTL_MS` (90s), so an ordinary refresh is never late enough to make
+ * the desk's own panes look hidden - and a client that has gone away expires within
+ * one and a half minutes rather than never.
+ */
+const VISIBILITY_REFRESH_MS = 30_000
+
 const DONE_GLOW_MS = 5200
 
 /** How far a press has to travel before it is a drag rather than a click. Measured on
@@ -1549,10 +1557,21 @@ export default function App(): JSX.Element {
    * longer before it is sent (dataPump.ts). Only this side knows: a pane stays
    * mounted for its whole life, so nothing in main can tell a pane being read from
    * one behind a tab. A hint only - see `paneVisibility`.
+   *
+   * Re-stated on a timer as well as on every change, because the claim expires on
+   * the other side - which is what makes a phone that was closed, locked or carried
+   * out of range stop counting without ever having to say goodbye. Nothing is sent
+   * before there is a pane to talk about: an empty claim at mount would mark the
+   * whole desk hidden for the moment before the session list arrives.
    */
+  const clientId = useRef(`c${Math.random().toString(36).slice(2)}`)
   useEffect(() => {
-    window.api.paneVisibility([...visibleIds])
-  }, [visibleIds])
+    if (!sessions.length) return
+    const say = (): void => window.api.paneVisibility(clientId.current, [...visibleIds])
+    say()
+    const t = setInterval(say, VISIBILITY_REFRESH_MS)
+    return () => clearInterval(t)
+  }, [visibleIds, sessions.length])
 
   /**
    * Giving back scrollback when the machine has run out of memory.

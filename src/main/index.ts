@@ -1158,18 +1158,20 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?:
  */
 ipcMain.on('pty:return', () => manager.returnSizes())
 /**
- * Which panes are on screen, per client, so the pump can gather a background pane's
- * output for longer (dataPump.ts). The desk and a phone are two screens showing two
- * different panes, so what the pump is told is their UNION: either one looking at a
- * pane makes it visible. A phone's call arrives through `ipcTap`, whose stand-in event
- * reports a destroyed sender - that is what tells the two apart.
+ * Which panes are on screen, so the pump can gather a background pane's output for
+ * longer (dataPump.ts). Every screen watching this desk says for itself and carries
+ * its OWN id - the desk window and each phone are different screens, and either one
+ * showing a pane makes it visible. Identity comes from the client rather than from
+ * anything about the transport: a phone's call arrives through `ipcTap` with a
+ * stand-in event, so main cannot tell two phones apart, and telling them apart is
+ * exactly what stops the second one erasing the first one's panes.
+ *
+ * A claim expires (see `CLAIM_TTL_MS`), so a phone that was closed, locked or driven
+ * out of range stops counting on its own. Nothing here needs a disconnect.
  */
-const visibleBy = new Map<string, string[]>()
-ipcMain.on('pty:visible', (e, ids: string[]) => {
-  const sender = (e as { sender?: { isDestroyed?: () => boolean } } | undefined)?.sender
-  const from = sender?.isDestroyed?.() ? 'phone' : 'desk'
-  visibleBy.set(from, Array.isArray(ids) ? ids.filter((x) => typeof x === 'string') : [])
-  pump.setVisible([...new Set([...visibleBy.values()].flat())])
+ipcMain.on('pty:visible', (_e, client: string, ids: string[]) => {
+  if (typeof client !== 'string' || !client || !Array.isArray(ids)) return
+  pump.setVisible(client, ids)
 })
 ipcMain.on('pty:redraw', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)

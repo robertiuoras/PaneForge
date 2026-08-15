@@ -1584,15 +1584,19 @@ export interface Api {
   /** the phone has stopped looking: every borrowed pty goes back to the desk's shape */
   returnSize(): void
   /**
-   * Which panes this client currently has on screen.
+   * Which panes this client currently has on screen, and who this client is.
    *
    * A hint, and only ever a performance one: output for a pane nobody is looking
    * at is gathered for longer before it is sent (see `dataPump.ts`), which is most
    * of the IPC traffic on a desk with several panes open. Every byte still arrives,
    * in order, and a pane named here is flushed at once - so being wrong about this
    * costs a tenth of a second of staleness on a pane that is off screen anyway.
+   *
+   * `client` is this window's or browser's own id, and it is what keeps two phones
+   * from erasing each other. Re-state the claim on a timer: it expires, which is the
+   * only thing that copes with a screen that goes away without saying so.
    */
-  paneVisibility(ids: string[]): void
+  paneVisibility(client: string, ids: string[]): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
   /**
