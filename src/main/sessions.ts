@@ -20,7 +20,7 @@ import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { killPaneStrays, trackStrays } from './strays'
 import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
-import { buildArgs } from '../shared/agents'
+import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
@@ -1005,7 +1005,11 @@ export class SessionManager extends EventEmitter {
       cwd: req.cwd,
       // A lane's own PORT belongs to the pane, not to the app: it must not leak
       // into a session started in the original folder afterwards.
-      env: { ...agentEnv(), ...(req.laneEnv ?? {}) }
+      //
+      // The agent's own env sits between the two: it is what makes this agent this
+      // agent (the OpenRouter base URL and key), so it beats whatever the app was
+      // launched with, and a lane's variables still beat it.
+      env: { ...agentEnv(), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
     })
   }
 
@@ -1349,6 +1353,11 @@ function isTyping(data: string): boolean {
   if (!data || data.startsWith('\x1b')) return false
   // Anything that is not a control byte counts, so accented and CJK input works.
   return data === '\r' || data === '\n' || /[^\x00-\x1f\x7f]/.test(data)
+}
+
+/** The provider keys Settings holds, read fresh so pasting one reaches the next pane. */
+function agentKeys(): { openrouter: string } {
+  return { openrouter: getConfig().openrouterKey ?? '' }
 }
 
 function agentEnv(): Record<string, string> {

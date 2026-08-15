@@ -1151,6 +1151,12 @@ export interface Config {
   defaultModels: Record<string, string>
   /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
   customAgents: AgentSpec[]
+  /**
+   * OpenRouter key, handed to every agent whose `env` asks for it. '' = none, and an
+   * agent that authenticates with it is then started with the variable absent rather
+   * than empty - see `resolveEnv`.
+   */
+  openrouterKey: string
   /** terminal font size, shared by every pane */
   fontSize: number
   /** a mouse selection in a pane goes straight to the clipboard */

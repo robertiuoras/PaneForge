@@ -727,6 +727,28 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </div>
                   ))}
                 </div>
+                <div className="setting">
+                  <label>OpenRouter key</label>
+                  {/*
+                    A password field because this is read over somebody's shoulder in a
+                    room, not because it is secret from the machine - it is in config.json
+                    beside the pairing code, same as every other credential here.
+                  */}
+                  <input
+                    type="password"
+                    className="search"
+                    placeholder="sk-or-..."
+                    value={config.openrouterKey}
+                    onChange={(e) => onChange({ openrouterKey: e.target.value })}
+                  />
+                  <span className="hint">
+                    Runs Claude Code, opencode, Crush and Aider on GLM, DeepSeek, Qwen or Kimi. Left
+                    blank, those agents start on whatever login this machine already has.{' '}
+                    <button className="ghost small" onClick={() => api.openExternal('https://openrouter.ai/keys')}>
+                      Get a key
+                    </button>
+                  </span>
+                </div>
                 <div className="setting-row">
                   <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>

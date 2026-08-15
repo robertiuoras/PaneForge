@@ -166,6 +166,7 @@ function defaults(): Config {
     defaultAgent: 'claude',
     defaultModels: {},
     customAgents: [],
+    openrouterKey: '',
     fontSize: 13,
     copyOnSelect: true,
     clickMovesCursor: true,

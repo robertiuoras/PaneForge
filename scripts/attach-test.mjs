@@ -10,7 +10,15 @@
 //
 //   node scripts/attach-test.mjs
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -159,7 +167,10 @@ ok(S.tooBig(small) === '', 'an ordinary screenshot is not refused')
 
 // --------------------------------------------------------------------------- the disk
 const dir = M.attachDir()
-ok(dir.startsWith(userData + sep), 'attachments live under userData', dir)
+// Through realpath on both sides: on a Mac `tmpdir()` is `/var/folders/...`, which is a
+// symlink to `/private/var/folders/...`, and the app resolves it. A raw prefix test
+// failed here for reasons that have nothing to do with where the file was written.
+ok(realpathSync(dir).startsWith(realpathSync(userData) + sep), 'attachments live under userData', dir)
 
 const wrote = M.writeAttachments(small, AT)
 ok(wrote.paths.length === 1 && !wrote.error, 'a screenshot is saved', JSON.stringify(wrote))
