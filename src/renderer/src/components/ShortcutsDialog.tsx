@@ -207,6 +207,13 @@ const TOPICS: Topic[] = [
           &quot;Lanes elsewhere&quot; list is only the ones no open pane accounts for, so on an
           ordinary day it is not on screen at all.
         </p>
+        <p>
+          Elsewhere can mean another machine. Every row names the desk it is on, and a desk
+          that is not this one is highlighted: that checkout is being typed in over there,
+          so nothing here will free it or hand it to a pane. The trunk is the only lane two
+          machines ever argue about - letter lanes are local scratch on each disk - which is
+          why a second machine claiming the repo is sent to a letter instead.
+        </p>
       </>
     )
   },

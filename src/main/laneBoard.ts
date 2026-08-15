@@ -15,7 +15,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
 
@@ -35,6 +35,74 @@ const ADOPT_MS = 45 * 60 * 1000
 /** The state file changes at most a few times a minute; polling is cheap but not free. */
 const TTL = 4000
 
+/**
+ * This desk, spelled the way scripts/lane.mjs spells it (`refSafe` in lane-peers.mjs).
+ *
+ * Copied rather than imported: lane-peers.mjs is plain ESM that the engine loads from a
+ * checkout, and this file is compiled on its own by the lane tests with no bundler and no
+ * path alias. Five lines of regex are cheaper than that coupling, and lane-device-test.mjs
+ * asserts the two spellings agree so they cannot drift apart in silence.
+ */
+const DEVICE =
+  String(process.env.PF_DEVICE || hostname())
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '') || null
+
+/** Matches CLAIM_NS and PEER_STALE_MS in scripts/lane-peers.mjs. */
+const CLAIM_NS = 'refs/paneforge/claims'
+const PEER_STALE_MS = 45 * 60 * 1000
+
+interface PeerClaim {
+  device: string
+  slot: string
+  session: string
+  at: number
+}
+
+/**
+ * One published claim, `refs/paneforge/claims/<device>/<slot>/<session>/<millis>`.
+ *
+ * Anything that is not exactly that shape is dropped rather than guessed at, for the same
+ * reason lane-peers.mjs drops it: the namespace sits on a shared remote, so a ref from a
+ * future version - or from something else entirely - must never be drawn as somebody
+ * holding a checkout.
+ */
+function parseClaim(ref: string): PeerClaim | null {
+  if (typeof ref !== 'string' || !ref.startsWith(`${CLAIM_NS}/`)) return null
+  const parts = ref.slice(CLAIM_NS.length + 1).split('/')
+  if (parts.length !== 4) return null
+  const [device, slot, session, ts] = parts
+  if (!device || !slot || !session || !/^\d+$/.test(ts)) return null
+  const at = Number(ts)
+  if (!Number.isFinite(at) || at <= 0) return null
+  return { device, slot, session, at }
+}
+
+/**
+ * The newest live claim per slot from a desk that is NOT this one, keyed by slot.
+ *
+ * Our own desk is never read back through the remote: the local ledger already answers for
+ * this machine and answers better - it knows about parked turns and dirty worktrees, and a
+ * published ref knows neither. Staleness is judged on each claim's own timestamp rather
+ * than on when the cache was written, so a cache nobody has refreshed for an hour empties
+ * out on its own instead of drawing a desk that went home.
+ */
+function peerClaims(state: RawState, now: number): Map<string, PeerClaim> {
+  const best = new Map<string, PeerClaim>()
+  for (const ref of state.peers?.refs ?? []) {
+    const c = parseClaim(ref)
+    if (!c) continue
+    if (DEVICE && c.device === DEVICE) continue
+    if (now - c.at > PEER_STALE_MS) continue
+    const prev = best.get(c.slot)
+    if (!prev || c.at > prev.at) best.set(c.slot, c)
+  }
+  return best
+}
+
 interface RawLane {
   session?: string
   cwd?: string | null
@@ -42,6 +110,8 @@ interface RawLane {
   seen?: number
   /** Reserved by a chat that only mentioned PaneForge and has not written in the lane. */
   tentative?: boolean
+  /** The desk that claimed it, written since lane.mjs started stamping claims. */
+  device?: string
 }
 interface RawConflict {
   at?: number
@@ -56,6 +126,13 @@ interface RawState {
   conflicts?: Record<string, RawConflict>
   release?: { session: string; at: number } | null
   lastShip?: { version: string; at: number; lanes: string[] } | null
+  /**
+   * What the OTHER desks last told this one, cached by lane.mjs whenever it already had a
+   * reason to ask origin. Read here off the same disk read as everything else: the strip
+   * polls every five seconds and an `ls-remote` on that timer would put the network on the
+   * critical path of drawing a sidebar.
+   */
+  peers?: { at: number; refs: string[] } | null
 }
 
 /** How often the app is willing to ask lane.mjs to re-try; its own throttle is longer. */
@@ -447,6 +524,9 @@ export function attachLaneOwners(board: LaneBoard | null, panes: LanePane[]): La
 }
 
 function ownerOf(lane: LaneBoardEntry, panes: LanePane[], taken: Set<string>): string | null {
+  // Another desk's claim can never be a pane in this window, and letting it try would let
+  // a chat id resumed on both machines put that row on a local card.
+  if (lane.peer) return null
   if (lane.session) {
     // More than one pane can carry the same conversation id - a chat resumed into a second
     // checkout, or three panes seeded from one transcript - and `find` then handed the lane
@@ -501,6 +581,10 @@ const GONE_MS = 15 * 60 * 1000
  */
 export function goneLanes(board: LaneBoard | null, living: Set<string>, now = Date.now()): string[] {
   return (board?.lanes ?? [])
+    // A peer row is another desk's checkout. Its chat is alive on that machine and is in
+    // no pane here by definition, so every test below would pass and this would run
+    // `lane.mjs release` on a lane somebody is typing in at the other desk.
+    .filter((l) => !l.peer)
     .filter((l) => l.held && l.session && !l.ownerPane && !living.has(l.session))
     .filter((l) => now - l.seen > GONE_MS)
     .map((l) => l.session as string)
@@ -693,13 +777,45 @@ function readRepo(main: string): LaneBoard | null {
       // taken over by any other chat, which is the thing worth telling a human. A live
       // resolver owns it on the same terms, so it is not adoptable while one is fresh.
       adoptable: Boolean(conflict) && !resolver && (!held || now - seen > ADOPT_MS),
-      resolver
+      resolver,
+      // This file IS one desk's ledger - it lives in a local `.git` and no other machine
+      // writes it - so a record with no stamp on it is this desk's, not an unknown one.
+      device: held?.device ?? DEVICE,
+      peer: false
+    })
+  }
+
+  // What the ledger above structurally cannot hold: a checkout the OTHER desk is in.
+  //
+  // Only the trunk is published (letters never collide across devices - see the header of
+  // scripts/lane-peers.mjs), so in practice this is one row saying the Mac has master. It
+  // is also exactly the row Robert asked about: `main` appeared under "lanes elsewhere"
+  // with nothing on it saying where elsewhere was, because the answer was another machine
+  // and this window had never been told.
+  for (const c of peerClaims(state, now).values()) {
+    if (!pool.includes(c.slot)) continue
+    lanes.push({
+      lane: c.slot,
+      dir: laneDir(main, c.slot),
+      branch: c.slot === 'main' ? mb : `lane-${c.slot}`,
+      from: null,
+      session: c.session,
+      ownerPane: null,
+      held: true,
+      seen: c.at,
+      ready: false,
+      conflicted: false,
+      adoptable: false,
+      resolver: null,
+      device: c.device,
+      peer: true
     })
   }
 
   return {
     repo: main,
     lanes,
+    device: DEVICE,
     releasing: state.release?.at ?? null,
     lastShip: state.lastShip ?? null
   }

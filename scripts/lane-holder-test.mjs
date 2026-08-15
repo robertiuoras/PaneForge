@@ -144,7 +144,7 @@ buildSync({
   outfile: join(out, 'laneWords.mjs')
 })
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { holderName, laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } = await import(
+const { deviceTip, holderName, laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } = await import(
   pathToFileURL(join(out, 'laneWords.mjs')).href
 )
 
@@ -192,6 +192,34 @@ ok(
   laneState(anonymous, false, NOW + 60_000)
 )
 ok('a hold with neither is still described', laneState(entry({}), false, NOW + 60_000) === 'a chat has it, busy now')
+
+// A claim the OTHER machine published. There is no folder to name and its chat id belongs
+// to a conversation this desk has never hosted, so eight characters of hex would be the
+// least useful thing on the row. The desk IS the answer.
+const otherDesk = entry({
+  lane: 'main',
+  branch: 'master',
+  session: '4f0b2c19-77aa-4d1e-9c2e-0f7e5a3b1d84',
+  peer: true,
+  device: 'mac-nbn'
+})
+ok(
+  'a lane held at the other desk is named by the desk',
+  laneState(otherDesk, false, NOW + 4 * 60_000) === 'mac-nbn has it, busy now',
+  laneState(otherDesk, false, NOW + 4 * 60_000)
+)
+ok(
+  'and the tag beside it says nothing here can free it',
+  deviceTip(otherDesk, 'desktop-cmsucm1').includes('another machine') &&
+    deviceTip(otherDesk, 'desktop-cmsucm1').includes('typed in over there'),
+  deviceTip(otherDesk, 'desktop-cmsucm1')
+)
+ok(
+  'while this desk’s own lane is tagged without a warning',
+  deviceTip(entry({ device: 'desktop-cmsucm1' }), 'desktop-cmsucm1') === 'On this machine (desktop-cmsucm1).',
+  deviceTip(entry({ device: 'desktop-cmsucm1' }), 'desktop-cmsucm1')
+)
+ok('a record with no desk on it says nothing at all', deviceTip(entry({}), 'desktop-cmsucm1') === '')
 
 // The pane's own chip is the one place naming the holder is noise: it is telling itself.
 ok('a pane is not told who it is', laneState(fromTaskdriver, true, NOW + 60_000) === 'busy now')

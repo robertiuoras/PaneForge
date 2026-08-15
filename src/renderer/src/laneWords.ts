@@ -90,8 +90,30 @@ export function laneChipLabel(lane: LaneBoardEntry, paneProject?: string): strin
  */
 export function holderName(lane: LaneBoardEntry, pane?: number): string {
   if (pane) return paneRef(pane)
+  // A claim published by the other desk. There is no folder to name and its session id is
+  // eight characters of a chat this machine has never hosted, so the desk IS the answer -
+  // "mac-nbn has it" is the sentence the row existed to say and never could.
+  if (lane.peer && lane.device) return lane.device
   if (lane.from) return `${folderName(lane.from)}'s chat`
   return lane.session ? `chat ${lane.session.slice(0, 8)}` : 'a chat'
+}
+
+/**
+ * The desk a lane is on, for the tag beside it.
+ *
+ * Printed on every row that knows, not only the foreign ones. Showing it only when it
+ * disagrees means "no tag" carries the fact instead - and no tag is also what an old
+ * record with no stamp on it looks like, so the reader cannot tell "here" from "nobody
+ * wrote it down". The report was the plain version of that: "why shows main lanes
+ * elsewhere, can we say which device".
+ */
+export function deviceTip(lane: LaneBoardEntry, here?: string | null): string {
+  if (!lane.device) return ''
+  if (here && lane.device === here) return `On this machine (${lane.device}).`
+  return (
+    `On ${lane.device}, another machine sharing this repo's remote.\n` +
+    'Nothing here can free it - that checkout is being typed in over there.'
+  )
 }
 
 /** A hold is "now" for five minutes after the chat was last heard from. */

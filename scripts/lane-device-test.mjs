@@ -23,7 +23,7 @@
  *   node scripts/lane-device-test.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -124,6 +124,19 @@ console.log('\n2. the other desk is not handed the same trunk')
   eq(got.peerTrunk?.device, 'desk-one', 'and it is told WHICH machine has the trunk, not merely that it moved')
   ok(/desk-one/.test(JSON.stringify(got.peerTrunk)), 'by name, so a person can go and look')
   eq(got.sharedTrunk, false, 'nothing is sharing the trunk')
+
+  // What the APP can see of any of this. The lane strip redraws every five seconds from
+  // the state file alone - no git, no child process - so before this it could only ever
+  // say "a chat has it" about a checkout on the other side of the house. The engine
+  // already asked origin to answer the two checks above; the answer is now written down
+  // on the way past, which costs no extra request and is the only reason a window with no
+  // network budget can name the desk.
+  const seen = JSON.parse(readFileSync(join(pc, '.git', 'paneforge-lanes.json'), 'utf8'))
+  eq(seen.lanes[got.lane]?.device, 'desk-two', 'a lane record names the desk that claimed it')
+  ok(
+    (seen.peers?.refs ?? []).some((r) => r.includes('/desk-one/main/mac-1/')),
+    'and what the OTHER desk published is cached where the app reads, not thrown away with the process'
+  )
 }
 
 console.log('\n3. this desk is never blocked by itself, and a letter is never coordinated')

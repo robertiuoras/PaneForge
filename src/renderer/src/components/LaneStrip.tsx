@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
-import { laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } from '../laneWords'
+import {
+  deviceTip,
+  laneBusy,
+  laneChipLabel,
+  laneLabel,
+  laneProject,
+  laneState,
+  laneTip
+} from '../laneWords'
 
 const api = window.api
 
@@ -189,7 +197,11 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
   // are listed, not just one winner's - each row already names its project (laneLabel),
   // so one flat list still reads unambiguously.
   const orphans = boards.flatMap((b) =>
-    b.lanes.filter((l) => !laneOwner(l, sessions)).map((l) => ({ repo: b.repo, lane: l }))
+    b.lanes
+      .filter((l) => !laneOwner(l, sessions))
+      // `here` travels with the row because a board is one machine's reading of one repo,
+      // and a row may be about the other machine - see LaneRow's device tag.
+      .map((l) => ({ repo: b.repo, lane: l, here: b.device }))
   )
   if (!orphans.length) return null
   const stuck = orphans.filter((o) => o.lane.conflicted).length
@@ -217,8 +229,17 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
         </button>
       </div>
       <div className="lanes">
+        {/* The device is part of the key: both desks can hold `main` of one repo at once
+            (lane.mjs calls it a shared trunk), which is two rows for one lane letter. */}
         {orphans.map((o) => (
-          <LaneRow key={`${o.repo}:${o.lane.lane}`} lane={o.lane} repo={o.repo} sessions={sessions} onFocus={onFocus} />
+          <LaneRow
+            key={`${o.repo}:${o.lane.lane}:${o.lane.device ?? ''}`}
+            lane={o.lane}
+            repo={o.repo}
+            here={o.here}
+            sessions={sessions}
+            onFocus={onFocus}
+          />
         ))}
       </div>
     </>
@@ -228,11 +249,14 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
 function LaneRow({
   lane,
   repo,
+  here,
   sessions,
   onFocus
 }: {
   lane: LaneBoardEntry
   repo: string
+  /** the machine this window is running on, to tell "here" from "the other desk" */
+  here: string | null
   sessions: Session[]
   onFocus: (id: string) => void
 }): JSX.Element {
@@ -285,7 +309,15 @@ function LaneRow({
           {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
         </div>
       </div>
-      {lane.conflicted && !lane.resolver && (
+      {lane.device && (
+        <span
+          className={'lane-device' + (here && lane.device !== here ? ' away' : '')}
+          title={deviceTip(lane, here)}
+        >
+          {lane.device}
+        </span>
+      )}
+      {lane.conflicted && !lane.resolver && !lane.peer && (
         <button className="ghost small lane-fix" onClick={handOver} title="Hand the job to a pane now">
           fix
         </button>
