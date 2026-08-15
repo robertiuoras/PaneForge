@@ -1374,6 +1374,13 @@ export interface Config {
    */
   reclaim?: ReclaimConfig
   /**
+   * Quit the WHOLE app after this many minutes with no input - see shared/idlequit.ts.
+   * 0 (the default) is off. Distinct from `reclaim`, which closes single panes: this
+   * closes the window and ends the process, so it refuses on a focused window, on any
+   * pane that is working/starting/stalled, and on any pane another device is driving.
+   */
+  idleQuitMinutes?: number
+  /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
    */
@@ -1554,6 +1561,12 @@ export interface Api {
    */
   reorderSessions(ids: string[]): void
   killSession(id: string): Promise<void>
+  /**
+   * Quit the app because nobody has used it for a while. The renderer owns the clock
+   * (it is the side that knows about keyboard input and focus); main only obeys, and
+   * leaves the marker that stops the keep-alive task reopening what was closed on purpose.
+   */
+  quitIdle(reason: string): Promise<void>
   write(id: string, data: string): void
   /** send the same line to every live session */
   /**

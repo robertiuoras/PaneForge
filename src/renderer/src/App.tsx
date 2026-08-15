@@ -66,6 +66,7 @@ import {
 } from '../../shared/capacity'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
 import { fleetState } from '../../shared/fleet'
+import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import ImproveSheet, { type SheetState } from './components/ImproveSheet'
 import { looksFinished, looksSplittable } from '../../shared/draft'
@@ -295,6 +296,29 @@ export default function App(): JSX.Element {
   // every keystroke and must not re-subscribe each time the session list changes.
   const sessionsRef = useRef<Session[]>([])
   sessionsRef.current = sessions
+  /**
+   * Last input anywhere in the app that did NOT go into a pane's pty - a click, a drag,
+   * the shelf, a settings toggle. Only the idle-quit clock reads it; without it, reading
+   * the fleet board or watching a build scroll past looks identical to being out.
+   */
+  const lastAppInputRef = useRef<number>(Date.now())
+  useEffect(() => {
+    const touch = (): void => {
+      lastAppInputRef.current = Date.now()
+    }
+    // Capture phase, because a pane's own handlers stop plenty of these from bubbling.
+    const opts = { capture: true, passive: true } as const
+    for (const ev of ['pointerdown', 'keydown', 'wheel'] as const) {
+      window.addEventListener(ev, touch, opts)
+    }
+    window.addEventListener('focus', touch)
+    return () => {
+      for (const ev of ['pointerdown', 'keydown', 'wheel'] as const) {
+        window.removeEventListener(ev, touch, opts)
+      }
+      window.removeEventListener('focus', touch)
+    }
+  }, [])
 
   /**
    * The keyboard belongs to the pane you are working in, and finds its own way back there.
@@ -1651,6 +1675,37 @@ export default function App(): JSX.Element {
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
   }, [config?.reclaim])
+
+  /**
+   * The same clock for the whole app: quit when nobody has used PaneForge for a while.
+   *
+   * Robert's reason is resources - an Electron window and a few live ptys do not need to
+   * be open all night. The refusals live in shared/idlequit.ts and are tested there; this
+   * only supplies the two signals the renderer is the sole owner of, focus and input that
+   * did not go into a pane. `lastAppInputRef` is a ref rather than state on purpose: it is
+   * written on every click and keystroke, and re-rendering the grid for that would cost
+   * more than the feature saves.
+   */
+  useEffect(() => {
+    const minutes = config?.idleQuitMinutes ?? 0
+    if (!(minutes > 0)) return
+    const tick = (): void => {
+      const v = idleQuitVerdict({
+        panes: sessionsRef.current.map((s) => ({
+          state: fleetState(s),
+          lastKeyboard: s.lastKeyboard,
+          remote: !!s.remote
+        })),
+        minutes,
+        focused: document.hasFocus(),
+        lastAppInput: lastAppInputRef.current,
+        now: Date.now()
+      })
+      if (v.quit) void api.quitIdle(v.reason)
+    }
+    const timer = window.setInterval(tick, 60_000)
+    return () => window.clearInterval(timer)
+  }, [config?.idleQuitMinutes])
 
   // Which of the five arrangements the grid is in. Anything unknown on disk - a config
   // from a later build, a hand-edited file - reads as tiled rather than as no grid at all.
