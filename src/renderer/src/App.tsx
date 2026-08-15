@@ -3139,14 +3139,25 @@ export default function App(): JSX.Element {
         onTouchStart={(e) => {
           if (!handheld.handheld || handheld.listOpen) return
           const t = e.touches[0]
-          swipeFrom.current = t.clientX <= 28 ? { x: t.clientX, y: t.clientY } : null
+          // Anywhere in the pane, not the left 28px. That edge is the one strip of the
+          // screen a phone browser has already taken for its OWN back gesture, so the
+          // swipe this app was listening for was the swipe it was least likely to be
+          // given - "swipe left doesn't always work". A gesture starting further in is
+          // nobody else's, and the pane underneath has no horizontal scroll to lose:
+          // a terminal scrolls up and down.
+          swipeFrom.current = { x: t.clientX, y: t.clientY }
         }}
         onTouchEnd={(e) => {
           const from = swipeFrom.current
           swipeFrom.current = null
           if (!from) return
           const t = e.changedTouches[0]
-          if (t.clientX - from.x > 60 && Math.abs(t.clientY - from.y) < 50) handheld.showList()
+          const dx = t.clientX - from.x
+          const dy = Math.abs(t.clientY - from.y)
+          // Clearly sideways, and clearly more sideways than up: a drift-heavy diagonal is
+          // somebody scrolling the buffer, and closing the pane under them is worse than
+          // making them swipe again.
+          if (dx > 60 && dy < 70 && dx > dy * 1.6) handheld.showList()
         }}
         className={'panes' + (tiled ? ' grid' : '')}
         style={
