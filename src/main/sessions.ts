@@ -816,7 +816,21 @@ export class SessionManager extends EventEmitter {
     // Answering is engaging with the pane, the same as typing in it: the turn that
     // follows is one somebody asked for, so it may ring when it ends.
     live.meta.engaged = true
-    keys.forEach((k, i) => setTimeout(() => this.sessions.get(id) && this.write(id, k), i * CHOOSE_GAP_MS))
+    // Re-checked before EVERY key, not only before the first one.
+    //
+    // The keys are spread over a few hundred milliseconds, and the question can end
+    // inside that window - the agent answers, the pane reports busy, and `ask` is
+    // cleared. A closure that only asks whether the session still exists then writes
+    // the remaining arrows into whatever replaced the chooser: a composer, where an
+    // up-arrow is the previous command and the return submits it. Checking the session
+    // was never the guard; being on the SAME question is.
+    keys.forEach((k, i) =>
+      setTimeout(() => {
+        const now = this.sessions.get(id)
+        if (!now || !sameAsk(now.meta.ask, ask)) return
+        this.write(id, k)
+      }, i * CHOOSE_GAP_MS)
+    )
     return true
   }
 

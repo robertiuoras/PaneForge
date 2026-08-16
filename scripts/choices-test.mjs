@@ -247,5 +247,17 @@ ok('moving the arrow is still the same question', () => {
   assert.ok(sameAsk(readAsk(RESUME), moved), 'a moved cursor must not re-notify')
 })
 
+// The keys are spread over a few hundred ms and the question can end inside that
+// window - the agent answers, the pane reports busy, `ask` is cleared. Both senders
+// (SessionManager.choose and the mirrored path in main/index.ts) re-check with
+// `sameAsk` before EVERY key rather than only before the first, so this is the
+// arithmetic that decides whether the remaining arrows are dropped.
+ok('a question that was replaced mid-answer stops the rest of the keys', () => {
+  const first = readAsk(ASK_WIDGET)
+  const replaced = readAsk(RESUME)
+  assert.ok(!sameAsk(first, replaced), 'a different question must not look like the same one')
+  assert.ok(!sameAsk(first, null), 'and a question that went away must not either')
+})
+
 rmSync(out, { recursive: true, force: true })
 console.log(`\nchoices: ${n} checks passed`)
