@@ -15,7 +15,7 @@ import {
   sign as signWith
 } from 'node:crypto'
 import { buildSync } from 'esbuild'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // A Windows bundle path is `C:/...`, which is not a legal ESM specifier - `import()`
@@ -566,6 +566,64 @@ let enrolCredId
 
 await server.stop()
 ok(!server.running, 'the gate test server stopped cleanly')
+
+// ---- 12. every invoke channel is CLASSIFIED, not ungated by omission ----------------
+//
+// GATED_INVOKE is a denylist: a channel that nobody thought about is reachable over HTTP
+// with a cookie and no passkey. That is how `admin:enable` - which registers the scheduled
+// task that relaunches this app ELEVATED with no UAC prompt - sat outside the gate, and how
+// `pty:choose` did before it. Nothing in the types or the tests said a word either time.
+//
+// So the rule is now written down: every channel in surface.ts's invoke list is gated,
+// desk-only, or on the reviewed-safe list below. Adding a channel without deciding which
+// fails this test. The safe list is deliberately explicit and deliberately long - reading
+// it is the review. Anything that writes to disk, installs, elevates, opens a program or
+// types into a pane does NOT belong on it.
+{
+  const surfaceSrc = readFileSync('src/shared/surface.ts', 'utf8')
+  const phoneSrc = readFileSync('src/main/phone.ts', 'utf8')
+  const channels = [...surfaceSrc.matchAll(/\['invoke', '([^']+)'\]/g)].map((m) => m[1])
+  const setLiteral = (name) => {
+    const m = new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\)`).exec(phoneSrc)
+    return new Set(m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [])
+  }
+  const gated = setLiteral('GATED_INVOKE')
+  const deskOnly = setLiteral('DESK_ONLY')
+  ok(channels.length > 50, 'the surface channel list was actually parsed', String(channels.length))
+  ok(gated.has('admin:enable') && gated.has('admin:disable'), 'elevation is behind the passkey')
+  ok(gated.has('pty:choose'), 'answering a question is still behind the passkey')
+
+  // Reviewed 2026-08-16: reads, watches, and state a phone needs to draw a screen.
+  const REVIEWED_SAFE = new Set([
+    'projects:list', 'projects:route', 'sessions:list', 'sessions:rename', 'app:quitIdle',
+    'sessions:buffer', 'sessions:log', 'sessions:planSplit', 'drive:start', 'drive:stop',
+    'drive:stopAll', 'drive:list', 'drive:clear', 'goal:add', 'goal:list', 'goal:cancel',
+    'goal:retry', 'goal:remove', 'goal:clear', 'config:get', 'config:set', 'config:pickRoot',
+    'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename', 'discord:status',
+    'shell:pathKind', 'shell:editor', 'clipboard:read', 'pty:attach', 'pty:attachClipboard',
+    'clipboard:fixtureActive', 'git:info', 'git:diffFiles', 'git:diffPatch', 'lanes:board',
+    'lanes:work', 'lanes:merge', 'admin:status', 'app:profile', 'agents:install',
+    'agents:uninstall', 'agents:locate', 'update:state', 'update:check', 'update:install',
+    'game:status', 'app:visibleNow', 'game:manual', 'restore:pending', 'board:get',
+    'board:tasks', 'board:memory', 'history:list', 'history:search', 'history:read',
+    'history:delete', 'recents:list', 'recents:search', 'recents:text', 'stash:add',
+    'stash:pick', 'phone:state', 'phone:serve', 'phone:port', 'phone:rotate', 'phone:tunnel',
+    'phone:answerAsk', 'phone:forget', 'phone:asking', 'remote:state', 'remote:host',
+    'remote:port', 'remote:rotate', 'remote:rename', 'remote:pair', 'remote:invite',
+    'remote:pairText', 'remote:pairClipboard', 'remote:clipboardInvite', 'remote:ask',
+    'remote:answer', 'remote:cancelAsk', 'remote:pairByAsking', 'remote:forget',
+    'remote:connect', 'remote:scan', 'remote:watch', 'remote:projects', 'remote:agents',
+    'remote:start', 'remote:handoff', 'prompt:prior', 'improve:status', 'improve:run',
+    'improve:answer', 'research:run', 'improve:apply', 'voice:status', 'voice:transcribe',
+    'voice:install', 'usage:get'
+  ])
+  const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
+  ok(
+    unclassified.length === 0,
+    'no invoke channel is ungated merely because nobody classified it',
+    `unclassified: ${unclassified.join(', ')} - add each to GATED_INVOKE, DESK_ONLY, or REVIEWED_SAFE here`
+  )
+}
 
 rmSync(work, { recursive: true, force: true })
 console.log(`passkey: ${checks - failures}/${checks} checks passed`)

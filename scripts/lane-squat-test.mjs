@@ -79,6 +79,12 @@ const claim = (session, cwd, prefer) => {
   }
 }
 const release = (session) => lane('release', '--session', session)
+const held = () => new Set(Object.keys(JSON.parse(readFileSync(statePath, 'utf8')).lanes))
+const patchState = (fn) => {
+  const s = JSON.parse(readFileSync(statePath, 'utf8'))
+  fn(s)
+  writeFileSync(statePath, JSON.stringify(s, null, 2) + '\n', 'utf8')
+}
 
 // ---------------------------------------------------------------- the real sequence
 
@@ -112,11 +118,36 @@ ok('a chat in the repo root is handed a letter lane', root2.lane && root2.lane !
 ok('and holding it from the repo root is not squatting', root2.standingIn === null, JSON.stringify(root2.standingIn))
 release('rootchat')
 
+// ---------------------------------------------------------------- a preference does not beat a squat
+
+// A preference exists to protect work in the folder a chat is standing in. A folder ANOTHER
+// chat is standing in protects nothing - honouring it just moves the collision one lane over.
+// (Adversarial review of the first version of this fix, 2026-08-16: the prefer branch was
+// checked before the squat filter and went straight past it.)
+release('s3')
+const s3b = claim('s3b', laneDir('a'), 'a') // asks for the lane s2's shell is still in
+ok('a squatted preference is refused while anything else is free', s3b.lane !== 'a', JSON.stringify(s3b.lane))
+ok('and the chat is told where it is really standing', s3b.standingIn === 'a', JSON.stringify(s3b.standingIn))
+release('s3b')
+
+// A lane marked ready is a worse place to land than a clean one - but a SQUATTED clean lane
+// is worse than both, because it is two chats in one folder rather than one odd-looking
+// prompt. Unsquatted always wins, whatever else is true of it.
+const ready = ['b', 'c'].find((id) => !held().has(id))
+patchState((s) => {
+  s.ready[ready] = { at: Date.now(), by: 'someone' }
+})
+const s3c = claim('s3c', join(root, 'elsewhere'))
+ok('a ready-but-unsquatted lane is taken before a clean squatted one', s3c.lane === ready, JSON.stringify(s3c.lane))
+release('s3c')
+patchState((s) => {
+  delete s.ready[ready]
+})
+
 // ---------------------------------------------------------------- it is a reorder, not a ban
 
 // Everything but the squatted lane is taken: a chat still gets a checkout rather than a
 // refusal, because no checkout at all is worse than a shared one - and it is told.
-const held = () => new Set(Object.keys(JSON.parse(readFileSync(statePath, 'utf8')).lanes))
 let fill = 0
 for (const id of ['main', 'b', 'c']) if (!held().has(id)) claim(`filler${fill++}`, laneDir(id), id)
 ok('everything except the squatted lane is now held', [...held()].sort().join('') === 'bcmain', [...held()].join(','))
