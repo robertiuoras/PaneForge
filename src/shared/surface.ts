@@ -47,6 +47,7 @@ export const SURFACE: Surface = {
   killSession: ['invoke', 'sessions:kill'],
   quitIdle: ['invoke', 'app:quitIdle'],
   getBuffer: ['invoke', 'sessions:buffer'],
+  paneLog: ['invoke', 'sessions:log'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],
   clearAttention: ['send', 'sessions:attention-clear'],
@@ -234,6 +235,16 @@ export interface Transport {
 export function buildApi(transport: Transport, local: Partial<Api> = {}): Api {
   const api = {} as Record<string, unknown>
   for (const [name, entry] of Object.entries(SURFACE) as [string, SurfaceEntry][]) {
+    // A transport may answer a method ITSELF rather than sending it, and the clipboard is
+    // why: `copyText` over HTTP wrote to the clipboard of the machine at the other end of
+    // the wire - the desk - so every copy made on a phone landed on a device the person
+    // was not holding. The channel stays declared above (this is still one list, and the
+    // desk still uses it); a transport that has a better local answer supplies it here.
+    const override = (local as Record<string, unknown>)[name]
+    if (override && entry[0] !== 'on') {
+      api[name] = override
+      continue
+    }
     if (entry[0] === 'local') {
       api[name] = (local as Record<string, unknown>)[name] ?? ((): string => '')
       continue

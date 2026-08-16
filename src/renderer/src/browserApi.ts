@@ -174,7 +174,55 @@ export async function installBrowserApi(): Promise<void> {
   const api: Api = buildApi(transport, {
     // A browser has no path for a dropped file, and an empty string is what the desktop
     // answers when it cannot resolve one either.
-    pathForFile: () => ''
+    pathForFile: () => '',
+    /**
+     * The clipboard is the PHONE's, never the desk's.
+     *
+     * `copyText` is an ordinary channel, so over this transport it ran
+     * `clipboard.writeText` in the main process - on the machine you are not holding.
+     * Every copy made from a phone (the pane's "Copy output", a selection, a prompt)
+     * silently landed on the Mac's clipboard and the phone's stayed as it was, which is
+     * "I can't copy text from the output on mobile": the button worked, the bytes went
+     * to the wrong device. A browser has its own clipboard and this is the one call that
+     * must not cross the wire.
+     *
+     * `navigator.clipboard` needs a secure context, which the tunnel and Funnel paths
+     * give and plain http over the LAN does not, so the fallback is the old
+     * `execCommand('copy')` over an off-screen textarea - deprecated, still the only
+     * thing that works on http, and it needs the user gesture that a copy button is.
+     */
+    copyText: (text: string) => {
+      if (!text) return
+      void (async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          return
+        } catch {
+          /* insecure context, or permission refused - fall through */
+        }
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.setAttribute('readonly', '')
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none'
+        document.body.appendChild(ta)
+        ta.select()
+        ta.setSelectionRange(0, text.length)
+        try {
+          document.execCommand('copy')
+        } catch {
+          /* nothing else to try; the text is still selectable in the sheet */
+        }
+        ta.remove()
+      })()
+    },
+    /** ...and the same the other way: a paste on the phone is the phone's clipboard. */
+    readClipboard: async () => {
+      try {
+        return await navigator.clipboard.readText()
+      } catch {
+        return ''
+      }
+    }
   })
   ;(window as unknown as { api: Api }).api = api
   // This copy of the UI is a browser on somebody's phone, not the desk. A few things are
