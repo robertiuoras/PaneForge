@@ -716,6 +716,45 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
   pane, so the prompt is burned with nothing done. `agents.ts` lists only ids measured
   answering on a subscription login.
 
+## An agent's question is a row of buttons
+
+A CLI that asks "which of these?" stops until somebody arrows to a row and presses
+return. At the desk that is two seconds; away from it, it is the rest of the run - the
+pane goes idle and green and looks exactly like one that finished. `shared/choices.ts`
+reads the chooser off the pane's own frame, so it covers every CLI here rather than
+whichever one has a hook.
+
+- **The reading is narrow because the expensive failure is a FALSE question**, not a
+  missed one: buttons drawn over a numbered list in an answer would type arrow keys into
+  a composer holding somebody's draft. Three things must all be true - the CLI's own
+  `Enter to select` / `Enter to confirm` footer, options numbered 1..N with no gaps, and
+  exactly one row carrying the arrow. Both positive fixtures in `npm run test:choices`
+  are real frames off this machine's pane logs, because the AskUserQuestion widget puts a
+  paragraph under each option and the built-in resume prompt does not - a parser written
+  against either alone reads the other as no question at all.
+- **Arrows and a return, never the digit.** A chooser that only reads the arrows ignores
+  a digit silently, and the two are indistinguishable from the frame. Spaced
+  `CHOOSE_GAP_MS` apart for the same reason `queuePrompt` sends its return separately: a
+  burst in one write reaches a widget that has not redrawn between the keys.
+- **It counts from where the arrow is NOW**, so the frame is re-reported when the
+  selection moves (`askSignature` includes it). Without that, somebody arrowing at the
+  desk leaves a phone's button picking a row the distance they moved it away. A press
+  against a question the pane has left is REFUSED, never walked from a stale position.
+- **The reading is on the SESSION, not in the pane**, because the surfaces that are not
+  the desk are the point: the phone client draws the same buttons and `pty:choose` is
+  reachable over the phone server. A mirrored pane is answered by writes over the link,
+  keyed off the frame that came with the session list.
+- `scripts/pf-telegram.mjs` posts a question to Telegram with one button per option.
+  **It is post-only by default and that is load-bearing**: a bot token has exactly one
+  long-poller, and a second does not share the updates, it STEALS them and breaks the
+  first with `409 Conflict` - measured against the live bot on the first run. Taps arrive
+  by being handed to a loopback endpoint; `--poll` is opt-in and only correct for a token
+  nothing else reads.
+- `npm run test:choices`. The load-bearing assertion is on the BYTE
+  (`charCodeAt(0) === 27`): the first version of that test lost its escape in the same
+  edit the source did, so `'[B' === '[B'` passed while the app would have typed the
+  letters into a chooser.
+
 ## A pane that is still starting says so
 
 Measured on this Mac, 2026-08-15: `sessions:start` returns in **16-40ms**, and the first
@@ -1024,6 +1063,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
+| `npm run test:choices` | reading a live question off a pane's frame and the keys that answer it: two real captured chooser shapes, and the negatives that decide whether it is safe to draw buttons at all - a numbered list in an answer, one somebody quoted back at the agent, a gap in the numbering, and no selection arrow. Plus the byte-level check that the arrows really are escape sequences, because the first version of this file lost its escape in the same edit the source did and passed |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
 | `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
