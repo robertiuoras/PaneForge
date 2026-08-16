@@ -17,7 +17,7 @@
 // the resize observer watches pixels and no pixel had moved. Measured with the guard
 // removed: deskTerm 67x40, pty 157x56.
 import { spawn } from 'node:child_process'
-import { mkdtempSync, existsSync } from 'node:fs'
+import { mkdtempSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -108,9 +108,13 @@ const deskEval = async (expression) => {
   return res.result.value
 }
 
+// A LOCAL pane that nothing is currently holding. `s[0]` would happily pick a mirror, or
+// one an earlier run left borrowed, and then the first assertion fails for a reason that
+// has nothing to do with what is being tested.
 const id = await deskEval(`(async () => {
   const s = await window.api.listSessions()
-  if (s.length) return s[0].id
+  const free = s.find(x => !x.remote && !x.borrowed)
+  if (free) return free.id
   const started = await window.api.startSession({ cwd: ${JSON.stringify(process.cwd())}, agent: 'shell' })
   return typeof started === 'string' ? started : started.id
 })()`)
@@ -152,6 +156,16 @@ for (let i = 0; i < 60 && !phoneUrl; i++) {
   }
   if (!phoneUrl) await sleep(200)
 }
+// The desk has this guard; without the same one here `connect(undefined)` throws BEFORE
+// the try below, so the finally never runs - and what the finally does is kill Chrome. A
+// CDP timeout would then leave a headless browser alive with a temp profile per run, which
+// on this machine is the 17 GB incident in CLAUDE.md.
+if (!phoneUrl) {
+  console.log('borrow cycle: SKIPPED - Chrome never opened its debugging port')
+  chrome.kill()
+  rmSync(profile, { recursive: true, force: true })
+  process.exit(0)
+}
 const phone = await connect(phoneUrl)
 const { targetId } = await phone.send('Target.createTarget', { url: base + '/#' + code })
 const { sessionId } = await phone.send('Target.attachToTarget', { targetId, flatten: true })
@@ -181,12 +195,32 @@ try {
     // Read AFTER React has re-rendered, not in the tick the click was dispatched in -
     // the class is still handheld-list at that point and the check reads as a failure
     // while the pane is opening perfectly well.
-    return new Promise((r) => setTimeout(() => r(document.documentElement.className), 800))
+    return new Promise((r) =>
+      setTimeout(
+        () =>
+          r({
+            cls: document.documentElement.className,
+            // WHICH pane opened. The row taken above is the first in DOM order, which is
+            // this session's only while the list holds one; saying so here turns a
+            // wrong-row run into a named failure instead of a mystery in the assertions
+            // further down.
+            panes: Object.keys(window.__pf ?? {})
+          }),
+        800
+      )
+    )
   })()`)
   ok(
-    typeof opened === 'string' && opened.includes('handheld') && !opened.includes('handheld-list'),
+    typeof opened?.cls === 'string' &&
+      opened.cls.includes('handheld') &&
+      !opened.cls.includes('handheld-list'),
     'the phone opened a pane and the pane has the screen',
-    String(opened)
+    JSON.stringify(opened)
+  )
+  ok(
+    Array.isArray(opened?.panes) && opened.panes.includes(id),
+    'and it is the pane this test is about',
+    `wanted ${id}, drew ${JSON.stringify(opened?.panes)}`
   )
   await sleep(3000)
   const during = await shape('while the phone holds it:')
@@ -206,6 +240,16 @@ try {
   phone.ws.close()
   chrome.kill()
   desk.ws.close()
+  // The profile too - a temp directory per run is how a probe run a dozen times while a
+  // fix is iterated on turns into gigabytes nobody goes looking for. After a beat, and
+  // never fatally: `kill()` returns before the process has gone, so removing the tree
+  // straight away races Chrome's last writes and throws ENOTEMPTY on a run that PASSED.
+  await sleep(600)
+  try {
+    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch {
+    /* Chrome is still letting go of it; the next boot's tmp sweep gets it */
+  }
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good')
