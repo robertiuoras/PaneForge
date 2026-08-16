@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.84",
+  "version": "0.8.85",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -206,7 +206,7 @@
           "lane-merge.mjs",
           "test-app.mjs",
           "release-notes.mjs",
-        "pf-telegram.mjs"
+          "pf-telegram.mjs"
         ]
       }
     ],
