@@ -728,6 +728,21 @@ export class SessionManager extends EventEmitter {
   resize(id: string, cols: number, rows: number, borrowed = false): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
+    // A DESK resize arriving while a phone is holding this pane is remembered, not
+    // obeyed. "The desk wins on the spot" was written for a borrow that had OUTLIVED the
+    // phone, and the desk does not only resize when somebody drags the window: showing a
+    // pane, toggling the grid, opening a dialog and the window's own layout all refit and
+    // land here. Each one snapped the pty back to 157 columns underneath a phone that was
+    // still drawing it at 50, and a CLI's repaint is cursor-up-and-overwrite arithmetic
+    // done in the width it thinks it has - so every "thinking" frame missed the line it
+    // meant to paint over and landed under the last one instead. That is "the output is
+    // very buggy on mobile, it spams the Claude thinking info". The borrow ends the way
+    // it always did: `returnSizes`, when the phone looks away or its stream closes.
+    if (!borrowed && s.borrowed) {
+      s.deskCols = Math.max(cols, 20)
+      s.deskRows = Math.max(rows, 5)
+      return
+    }
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
     if (borrowed) {
@@ -740,9 +755,15 @@ export class SessionManager extends EventEmitter {
     // Carried on the session itself so a device mirroring this pane can draw it at the
     // size it actually is. Only pushed when the numbers moved: a window drag is dozens
     // of these a second and they mostly land on the same cell count.
-    if (s.meta.cols !== s.cols || s.meta.rows !== s.rows) {
+    //
+    // `borrowed` rides with them, because the desk needs to know it is not the one
+    // deciding: drawn at its own width against a 50-column pty it wraps every line, which
+    // is the same soup on the other screen. A pane whose size is borrowed is drawn at the
+    // pty's grid instead.
+    if (s.meta.cols !== s.cols || s.meta.rows !== s.rows || s.meta.borrowed !== s.borrowed) {
       s.meta.cols = s.cols
       s.meta.rows = s.rows
+      s.meta.borrowed = s.borrowed
       this.emitSessions()
     }
     // Showing a pane refits it and lands here; the CLI repaints in response.
@@ -766,7 +787,15 @@ export class SessionManager extends EventEmitter {
     for (const [id, s] of this.sessions) {
       if (!s.borrowed) continue
       s.borrowed = false
-      if (s.cols === s.deskCols && s.rows === s.deskRows) continue
+      if (s.cols === s.deskCols && s.rows === s.deskRows) {
+        // Same numbers, but the desk is drawing this pane as a borrowed one until it is
+        // told otherwise - so the flag still has to travel even when nothing resizes.
+        if (s.meta.borrowed) {
+          s.meta.borrowed = false
+          this.emitSessions()
+        }
+        continue
+      }
       this.resize(id, s.deskCols, s.deskRows)
       this.redraw(id)
     }

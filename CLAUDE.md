@@ -463,6 +463,51 @@ channel of its own.
     rename. Quitting kills it — it is not a pty, so `strays.ts` has never heard of it.
   - `npm run test:tunnel` drives all of it against a stub that prints what the real program
     prints, with every budget overridable by env.
+- **A copy made on the phone is the PHONE's clipboard.** `copyText` is an ordinary channel,
+  so over HTTP it ran `clipboard.writeText` in the main process - on the desk. Every copy
+  from a phone (a pane's "Copy output", a selection, a prompt) landed on the Mac and the
+  phone's clipboard never moved, which reads as "I can't copy text from the output on
+  mobile": the button worked, the bytes went to the wrong machine. `buildApi` now lets a
+  transport answer a method ITSELF, and `browserApi.ts` answers this one and
+  `readClipboard` locally - `navigator.clipboard`, falling back to the `execCommand`
+  textarea on the plain-http LAN path, where there is no secure context. Still one list:
+  the channel is still declared in `surface.ts` and the desk still uses it.
+- **A finger cannot select a canvas, so the output is also served as TEXT.** xterm draws to
+  a canvas and implements selection on MOUSE events; a finger dragged across it is a
+  scroll, so no gesture on a phone could pick out a line of an answer. `TextSheet.tsx` is
+  the pane's output as a `<pre>` - native selection, native loupe, one Copy all - and it is
+  where the DEPTH problem is answered too: the live replay is capped at 400 KB
+  (`BUFFER_LIMIT`), which for an agent whose "thinking" line repaints many times a second
+  is minutes rather than turns, so a phone could not reach what the desk still had in its
+  terminal. `paneLog` (`sessions:log`) reads the transcript off disk instead, up to 8 MB.
+  **Rendered, never stripped**: `strip()` would put every repaint frame on its own line -
+  the "it spams the thinking info" complaint written down as a document - so the bytes go
+  through a real xterm off-screen at the pane's own width and its BUFFER is what is shown.
+  Measured at 414x896: 400,000 bytes live against 529,160 characters / 20,008 lines in the
+  sheet, all of it selectable.
+- **A text field is the one place selection must survive `body { user-select: none }`.**
+  That rule inherits, and WebKit takes it literally: on iOS a field under an inherited
+  `-webkit-user-select: none` still types but will not raise the caret loupe, place the
+  caret mid-word, or select a word on a double tap. That is "let me select in the prompt
+  and change it - I can't even edit it on mobile". Both spellings, on every input and
+  textarea.
+- **...and the keys a phone keyboard does not have are drawn.** Once words are in the CLI's
+  own input box they belong to the pty, and every way of changing them - caret left, rub
+  out, escape - is a key that keyboard has no room for, so the bar could add to a prompt
+  and never edit one. `HandheldType` draws ⌫ ← → ↑ ↓ esc at 44px, as bytes (`DEL` 0x7f for
+  backspace, which is what a terminal sends). Tapping the terminal already moves the CLI's
+  cursor; these are the rest.
+- **A desk resize may not snap the pty out from under a phone.** The desk OWNS the size and
+  a phone BORROWS it - but "the desk takes it back on the spot" was written for a borrow
+  that had outlived the phone, and the desk does not only resize when a window is dragged:
+  showing a pane, toggling the grid and the window's own layout all refit and land in
+  `resize`. Each one pulled the pty back to 157 columns underneath a phone drawing 50, and
+  a CLI repaints by counting rows in the width it believes it has - so every "thinking"
+  frame landed under the last one instead of over it. That is "the output is very buggy on
+  mobile, it spams the Claude thinking info". A desk resize during a borrow is now
+  REMEMBERED (`deskCols/deskRows`) and applied when the phone lets go; the desk draws the
+  borrowed grid meanwhile (`grid` on `TerminalPane`, the same fit a mirror uses, without a
+  mirror's other refusals). `npm run test:panesize`.
 - **A phone's `100vh` is not its screen.** It is the LARGE viewport - the one you get with
   the toolbars scrolled away - so `.app` at `100vh` laid the app out taller than the glass
   and its last ~60px sat under Safari's bottom bar, taking the typing bar with it. That is

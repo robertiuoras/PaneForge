@@ -104,15 +104,23 @@ ok(live.borrowed !== true, 'and clears the debt')
 manager.returnSizes()
 ok(shape() === '157x57', 'returning twice changes nothing', shape())
 
-// ---- 4. the person at the desk always wins ---------------------------------------
-// The case that would rot in silence: a phone borrows, then the window is resized by
-// hand, then something calls the return. The desk's own number is the one that stands -
-// a snap back to 157 there would resize a window the user had just made smaller.
+// ---- 4. a desk resize while the phone is still holding it -------------------------
+// It is REMEMBERED, not obeyed - and the older rule ("the desk takes ownership back on
+// the spot") is what made an agent's output unreadable on a phone. The desk does not only
+// resize when a window is dragged: showing a pane, toggling the grid and the window's own
+// layout all refit and land here, and each one snapped the pty back to 157 columns under
+// a phone still drawing 50. A CLI repaints by counting rows in the width it believes it
+// has, so every "thinking" frame then landed under the last one instead of over it.
 manager.resize(id, 50, 49, true)
 manager.resize(id, 100, 40)
-ok(live.borrowed !== true, 'a desk resize takes ownership back from a phone')
+ok(shape() === '50x49', 'a desk resize does not snap the pty out from under a phone', shape())
+ok(live.borrowed === true, 'the phone still holds it')
+ok(live.deskCols === 100 && live.deskRows === 40, 'and the desk size is what was remembered')
+// ...and the reason that rule existed still holds: the number the desk last chose is the
+// one it gets back, never the stale one from before it was resized.
 manager.returnSizes()
-ok(shape() === '100x40', 'so a later return cannot undo what the desk chose', shape())
+ok(shape() === '100x40', 'a return gives back what the desk chose last', shape())
+ok(live.borrowed !== true, 'and clears the debt')
 
 // ---- 5. an exited pane is not resized ---------------------------------------------
 const before = sizes.length

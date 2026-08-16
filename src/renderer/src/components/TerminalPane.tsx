@@ -69,6 +69,18 @@ interface Props {
    */
   mirror?: { cols: number; rows: number } | null
   /**
+   * Fit to THIS grid instead of to the window, while the pty stays ours.
+   *
+   * A phone borrows a local pane's size, and while it is holding it the desk may not
+   * bend the pty back: the CLI's repaint is cursor-arithmetic in the width it believes
+   * it has, so a pty snapped to 157 columns underneath a phone drawing 50 puts every
+   * "thinking" frame on a new line instead of over the last one. So the desk draws the
+   * borrowed grid, shrinking its font the way a mirror does - and unlike `mirror`, it
+   * keeps everything that is true of a local pane: the busy reading, the clipboard, the
+   * attach paths.
+   */
+  grid?: { cols: number; rows: number } | null
+  /**
    * The four colours the terminal's own chrome is drawn in, from the app's theme.
    *
    * Handed over as strings because xterm renders to a canvas and cannot read a CSS
@@ -435,6 +447,7 @@ export default function TerminalPane({
   clickMovesCursor,
   autoFixUi,
   mirror = null,
+  grid = null,
   termTheme,
   ask = null,
   onToast
@@ -469,6 +482,8 @@ export default function TerminalPane({
   // reconnecting changes these numbers without the pane being rebuilt.
   const mirrorRef = useRef(mirror)
   mirrorRef.current = mirror
+  const gridRef = useRef(grid)
+  gridRef.current = grid
   const fontRef = useRef(fontSize)
   fontRef.current = fontSize
   // Same reason as the font: the terminal is built once per session, and changing the
@@ -495,6 +510,12 @@ export default function TerminalPane({
   const reshape = (t: Terminal, f: FitAddon): boolean => {
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
+    // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
+    // the font to it - and no resize is reported, because reporting one is exactly what
+    // used to pull the pty out from under the phone.
+    const g = gridRef.current
+    if (g && !isPhoneClient() && g.cols > 0 && g.rows > 0)
+      return mirrorFit(t, f, pinned.current, g, fontRef.current)
     const changed = refit(t, f, pinned.current)
     // A phone BORROWS the pty's shape rather than owning it. One pty cannot be 50 columns
     // for a phone and 157 for the window it is also drawn in, and before this the phone
@@ -2299,8 +2320,11 @@ export default function TerminalPane({
     if (!t) return
     // A mirror owns its own font size - it is derived from the host's grid, not set -
     // so the setting is only the ceiling it may not exceed. reshape() applies that.
-    if (!mirror && t.options.fontSize === fontSize) return
-    if (!mirror) t.options.fontSize = fontSize
+    // Same for a pane whose size a phone is holding: the font is derived from that grid
+    // while the borrow lasts, and goes back to the setting when the phone lets go.
+    const derived = Boolean(mirror) || Boolean(grid && !isPhoneClient())
+    if (!derived && t.options.fontSize === fontSize) return
+    if (!derived) t.options.fontSize = fontSize
     try {
       if (fit.current) reshape(t, fit.current)
       // Fewer or more rows means a different scale for the rail.
@@ -2310,7 +2334,7 @@ export default function TerminalPane({
     }
     // mirror is in the list so a device reconnecting at a different size reshapes
     // the pane instead of leaving it drawn at the grid it had before the drop.
-  }, [fontSize, sessionId, mirror?.cols, mirror?.rows])
+  }, [fontSize, sessionId, mirror?.cols, mirror?.rows, grid?.cols, grid?.rows])
 
   // Re-fit when this pane becomes visible again: the terminal was not measurable
   // while hidden, so its cols/rows can be stale.
