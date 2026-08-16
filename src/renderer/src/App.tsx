@@ -25,6 +25,7 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
@@ -260,6 +261,8 @@ export default function App(): JSX.Element {
   const [handoff, setHandoff] = useState<{ ids: string[]; title: string } | null>(null)
   /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
+  /** the pane whose output is being read as text (and therefore selected with a finger) */
+  const [textPane, setTextPane] = useState<string | null>(null)
   const [fleet, setFleet] = useState(false)
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
@@ -3660,6 +3663,13 @@ export default function App(): JSX.Element {
               // A mirrored pane is drawn at the far machine's grid, not fitted to this
               // window: two devices cannot both own one terminal's size.
               mirror={s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // ...and a LOCAL pane a phone is currently holding is drawn the same way,
+              // at the pty's grid rather than at this window's width. The pty cannot be
+              // both shapes, the phone is the screen being looked at, and a desk drawing
+              // 157 columns into a 50-column pty wraps every line of the agent's frame.
+              // Not `mirror`: this pane's pty is still ours, and everything else a mirror
+              // implies (no busy reading, no local clipboard) is wrong for it.
+              grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
             />
             {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
@@ -3944,6 +3954,21 @@ export default function App(): JSX.Element {
       {laneHelp && (
         <LaneHelp onClose={() => setLaneHelp(false)} boards={laneBoards} sessions={sessions} />
       )}
+      {/* A pane's output as selectable text. Over the whole screen, for the same reason
+          the action sheet is: what it is for is reading, and a phone's pane is 404px. */}
+      {(() => {
+        const s = textPane ? sessions.find((x) => x.id === textPane) : null
+        if (!s) return null
+        return (
+          <TextSheet
+            sessionId={s.id}
+            title={s.title}
+            cols={s.cols || 80}
+            onToast={flash}
+            onClose={() => setTextPane(null)}
+          />
+        )
+      })()}
       {/* The pane header's six actions, at finger size. Rendered here rather than inside
           the pane so the sheet is over the whole screen and not clipped by it. */}
       {(() => {
@@ -3970,6 +3995,13 @@ export default function App(): JSX.Element {
                 hint: 'the whole terminal',
                 icon: '⧉',
                 run: () => copyPaneOutput(s)
+              },
+              {
+                key: 'text',
+                label: 'Select text',
+                hint: 'read it back, pick out a line, copy it',
+                icon: '≡',
+                run: () => setTextPane(s.id)
               },
               ...(grid
                 ? [

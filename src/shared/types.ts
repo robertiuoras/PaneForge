@@ -124,6 +124,12 @@ export interface Session {
   cols?: number
   rows?: number
   /**
+   * A phone is holding this pane's size, so `cols`/`rows` above are ITS shape and not
+   * this window's. The desk draws a borrowed pane at that grid rather than at its own
+   * width - two windows cannot both decide, and the one being looked at wins.
+   */
+  borrowed?: boolean
+  /**
    * This pane's agent runs on another machine and is mirrored here. The id is
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
    * resizes and closes are routed back over the link by the main process.
@@ -1651,6 +1657,19 @@ export interface Api {
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
+  /**
+   * Further back than `getBuffer` can reach: the last `bytes` of this pane's transcript,
+   * ANSI and all, straight off the log on disk.
+   *
+   * The live replay is capped at 400 KB because it is held in memory for every pane, and
+   * on a phone that cap is most of the problem: an agent's "thinking" animation is
+   * thousands of repaint frames, so 400 KB of a working Claude pane is a couple of
+   * minutes and everything said before it is unreachable there - the desk still has it
+   * only because its terminal accumulated the lines live. The log on disk holds up to
+   * 8 MB per pane, so this is where "I can't see the output before a certain point" is
+   * answered. Raw, not stripped: it is rendered through a terminal at the other end.
+   */
+  paneLog(id: string, bytes?: number): Promise<string>
   /**
    * Start teeing this pane's output to a file, or stop the one that is running.
    *

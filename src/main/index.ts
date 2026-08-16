@@ -1021,6 +1021,20 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
 /**
+ * The same pane, further back than the in-memory replay reaches - off its transcript.
+ *
+ * A mirrored pane's transcript is written on the machine that owns the pty, so there is
+ * nothing here to read and the live replay is the whole of what this device has. Answered
+ * with the buffer rather than with an error: the caller wants as much of this pane as can
+ * be had, and "as much as exists here" is the honest answer to that.
+ */
+ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
+  remote.owns(id)
+    ? remote.buffer(id)
+    : history.tail(id, Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)) ||
+      manager.buffer(id)
+)
+/**
  * Tee a pane's output to a file while it runs (tmux's `pipe-pane`), or stop.
  *
  * The save dialog is only ever reached from a click, which is what makes it allowed
