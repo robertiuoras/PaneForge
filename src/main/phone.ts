@@ -102,7 +102,20 @@ const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey', 'phone:clearMark
  * raised in the main process and never pass through here, so they are exempt by
  * construction rather than by a flag.
  */
-const GATED_SEND = new Set(['pty:write', 'shell:reveal', 'shell:external'])
+const GATED_SEND = new Set([
+  'pty:write',
+  'shell:reveal',
+  'shell:external',
+  // Same rule as the invoke side, and the same omission: these are fire-and-forget, so a
+  // stolen cookie gets no answer back - it does not need one. `app:relaunchAsAdmin` restarts
+  // this app ELEVATED, `game:installAnyway` runs the installer now instead of when the desk
+  // is idle, `restore:answer` accepts the offer that re-opens a deskful of panes (each one a
+  // process), and `stash:reveal` opens a file manager here exactly as `shell:reveal` does.
+  'app:relaunchAsAdmin',
+  'game:installAnyway',
+  'restore:answer',
+  'stash:reveal'
+])
 const GATED_INVOKE = new Set([
   'sessions:start',
   'sessions:startMany',
@@ -124,7 +137,68 @@ const GATED_INVOKE = new Set([
   // is gated too: turning the task off is not dangerous, but leaving it ungated lets a
   // stolen cookie flip the setting Robert reads on screen to decide whether he is elevated.
   'admin:enable',
-  'admin:disable'
+  'admin:disable',
+
+  // --- runs a process on this desk ------------------------------------------------------
+  // Each of these ends in something spawned here: a supervisor driving panes, an agent CLI
+  // invoked with a prompt, a package manager, an editor, an installer. `improve:run` and
+  // `research:run` read as text tools from the phone, but both shell out to an agent CLI
+  // with tool access in a real working directory, which is the same class of thing as
+  // `sessions:start`. `pty:attach*` inserts a path into a live pane, which is typing.
+  'drive:start',
+  'drive:stopAll',
+  'goal:add',
+  'goal:retry',
+  'sessions:planSplit',
+  'improve:run',
+  'improve:apply',
+  'research:run',
+  'shell:editor',
+  'pty:attach',
+  'pty:attachClipboard',
+  'agents:install',
+  'agents:uninstall',
+  'update:install',
+  'voice:install',
+  'lanes:merge',
+  // Runs on ANOTHER desk, which is worse rather than better: the passkey enrolled here is
+  // the only thing between a stolen cookie and a session on a machine whose own gate was
+  // never asked.
+  'remote:start',
+  'remote:handoff',
+
+  // --- changes who may reach this desk --------------------------------------------------
+  // The lock's own perimeter. `config:set` is here because the config carries agent commands
+  // and the projects root, so a write to it decides what `sessions:start` will run. The
+  // pairing and tunnel channels each hand out a way in, so a cookie that could use them
+  // would not need to stay stolen - it could mint its own access and outlive the rotation.
+  'config:set',
+  'phone:serve',
+  'phone:port',
+  'phone:rotate',
+  'phone:tunnel',
+  'phone:answerAsk',
+  'phone:forget',
+  'phone:asking',
+  'remote:host',
+  'remote:port',
+  'remote:rotate',
+  'remote:pair',
+  'remote:pairText',
+  'remote:pairClipboard',
+  'remote:invite',
+  'remote:clipboardInvite',
+  'remote:answer',
+  'remote:pairByAsking',
+  'remote:forget',
+  'remote:connect',
+
+  // --- takes something away, or reads what was never on screen --------------------------
+  // `history:delete` is the one irreversible read-side channel. `clipboard:read` returns the
+  // DESK's clipboard, which is where a password manager's paste lives for thirty seconds: a
+  // phone reading it is the feature, a cookie polling it is exfiltration.
+  'history:delete',
+  'clipboard:read'
 ])
 
 const TYPES: Record<string, string> = {

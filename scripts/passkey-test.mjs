@@ -567,7 +567,7 @@ let enrolCredId
 await server.stop()
 ok(!server.running, 'the gate test server stopped cleanly')
 
-// ---- 12. every invoke channel is CLASSIFIED, not ungated by omission ----------------
+// ---- 12. every channel is CLASSIFIED, not ungated by omission -----------------------
 //
 // GATED_INVOKE is a denylist: a channel that nobody thought about is reachable over HTTP
 // with a cookie and no passkey. That is how `admin:enable` - which registers the scheduled
@@ -582,10 +582,19 @@ ok(!server.running, 'the gate test server stopped cleanly')
 {
   const surfaceSrc = readFileSync('src/shared/surface.ts', 'utf8')
   const phoneSrc = readFileSync('src/main/phone.ts', 'utf8')
-  const channels = [...surfaceSrc.matchAll(/\['invoke', '([^']+)'\]/g)].map((m) => m[1])
+  // Not `'\]` at the end: an invoke entry may carry literal arguments the bridge adds
+  // itself (`listAgents: ['invoke', 'agents:list', true]`), and requiring the bracket
+  // skipped exactly those - so the one channel with a fixed argument was never classified
+  // by the test that exists to make sure every channel is.
+  const channels = [...surfaceSrc.matchAll(/\['invoke', '([^']+)'/g)].map((m) => m[1])
+  const sends = [...surfaceSrc.matchAll(/\['send', '([^']+)'/g)].map((m) => m[1])
   const setLiteral = (name) => {
     const m = new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\)`).exec(phoneSrc)
-    return new Set(m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [])
+    // Comments stripped BEFORE the quotes are read. One apostrophe in a comment - "the
+    // lock's own perimeter" - pairs with the next real quote and silently swallows every
+    // channel after it, which read here as "these are not gated" while the code gated them.
+    const body = m ? m[1].replace(/\/\/[^\n]*/g, '') : ''
+    return new Set([...body.matchAll(/'([^']+)'/g)].map((x) => x[1]))
   }
   const gated = setLiteral('GATED_INVOKE')
   const deskOnly = setLiteral('DESK_ONLY')
@@ -593,35 +602,68 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gated.has('admin:enable') && gated.has('admin:disable'), 'elevation is behind the passkey')
   ok(gated.has('pty:choose'), 'answering a question is still behind the passkey')
 
-  // Reviewed 2026-08-16: reads, watches, and state a phone needs to draw a screen.
+  // The three classes the gate now recognises, spelled out so a reader can check them:
+  //  - runs a process here (drive:start, improve:run, agents:install, shell:editor, ...)
+  //  - changes who may reach here (config:set, the phone:* switches, every remote:* pairing)
+  //  - is irreversible or reads what was never on the phone's screen (history:delete,
+  //    clipboard:read - the DESK's clipboard, where a password manager's paste lives)
+  ok(gated.has('drive:start') && gated.has('goal:add'), 'the autonomous drivers are gated')
+  ok(gated.has('improve:run') && gated.has('research:run'), 'the agent-CLI runs are gated')
+  ok(gated.has('agents:install') && gated.has('update:install'), 'installers are gated')
+  ok(gated.has('config:set'), 'the config that decides what start runs is gated')
+  ok(gated.has('phone:tunnel') && gated.has('remote:pair'), 'the ways in are gated')
+  ok(gated.has('clipboard:read') && gated.has('history:delete'), 'exfil and deletion are gated')
+
+  // Reviewed 2026-08-16: reads, watches, and the state a phone needs to draw a screen.
+  // `board:tasks`/`board:memory` write, but only to the board's own notes - they cannot
+  // start anything and cannot delete a transcript. `voice:transcribe` spawns whisper on an
+  // uploaded blob: a process, but one that burns this desk's CPU and returns text, with
+  // nothing on the far side to steal. Everything else here is a read.
   const REVIEWED_SAFE = new Set([
-    'projects:list', 'projects:route', 'sessions:list', 'sessions:rename', 'app:quitIdle',
-    'sessions:buffer', 'sessions:log', 'sessions:planSplit', 'drive:start', 'drive:stop',
-    'drive:stopAll', 'drive:list', 'drive:clear', 'goal:add', 'goal:list', 'goal:cancel',
-    'goal:retry', 'goal:remove', 'goal:clear', 'config:get', 'config:set', 'config:pickRoot',
-    'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename', 'discord:status',
-    'shell:pathKind', 'shell:editor', 'clipboard:read', 'pty:attach', 'pty:attachClipboard',
-    'clipboard:fixtureActive', 'git:info', 'git:diffFiles', 'git:diffPatch', 'lanes:board',
-    'lanes:work', 'lanes:merge', 'admin:status', 'app:profile', 'agents:install',
-    'agents:uninstall', 'agents:locate', 'update:state', 'update:check', 'update:install',
-    'game:status', 'app:visibleNow', 'game:manual', 'restore:pending', 'board:get',
-    'board:tasks', 'board:memory', 'history:list', 'history:search', 'history:read',
-    'history:delete', 'recents:list', 'recents:search', 'recents:text', 'stash:add',
-    'stash:pick', 'phone:state', 'phone:serve', 'phone:port', 'phone:rotate', 'phone:tunnel',
-    'phone:answerAsk', 'phone:forget', 'phone:asking', 'remote:state', 'remote:host',
-    'remote:port', 'remote:rotate', 'remote:rename', 'remote:pair', 'remote:invite',
-    'remote:pairText', 'remote:pairClipboard', 'remote:clipboardInvite', 'remote:ask',
-    'remote:answer', 'remote:cancelAsk', 'remote:pairByAsking', 'remote:forget',
-    'remote:connect', 'remote:scan', 'remote:watch', 'remote:projects', 'remote:agents',
-    'remote:start', 'remote:handoff', 'prompt:prior', 'improve:status', 'improve:run',
-    'improve:answer', 'research:run', 'improve:apply', 'voice:status', 'voice:transcribe',
-    'voice:install', 'usage:get'
+    'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
+    'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
+    'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
+    'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',
+    'discord:status', 'shell:pathKind', 'clipboard:fixtureActive', 'git:info',
+    'git:diffFiles', 'git:diffPatch', 'lanes:board', 'lanes:work', 'admin:status',
+    'app:profile', 'agents:locate', 'update:state', 'update:check', 'game:status',
+    'app:visibleNow', 'game:manual', 'restore:pending', 'board:get', 'board:tasks',
+    'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
+    'recents:search', 'recents:text', 'stash:add', 'stash:pick', 'phone:state',
+    'remote:state', 'remote:rename', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
+    'remote:watch', 'remote:projects', 'remote:agents', 'prompt:prior', 'improve:status',
+    'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
   ok(
     unclassified.length === 0,
     'no invoke channel is ungated merely because nobody classified it',
     `unclassified: ${unclassified.join(', ')} - add each to GATED_INVOKE, DESK_ONLY, or REVIEWED_SAFE here`
+  )
+  // A channel in both lists is a review that contradicts itself, and the code wins silently.
+  const bothWays = [...gated].filter((c) => REVIEWED_SAFE.has(c))
+  ok(bothWays.length === 0, 'no channel is both gated and reviewed-safe', bothWays.join(', '))
+
+  // The SEND side has the same hole and had never been checked at all: a send answers
+  // nothing, so an attacker using one does not care that the reply is `{ ok: true }`.
+  const gatedSend = setLiteral('GATED_SEND')
+  ok(gatedSend.has('app:relaunchAsAdmin'), 'relaunching elevated is behind the passkey')
+  ok(gatedSend.has('restore:answer'), 'accepting a deskful of panes is behind the passkey')
+  // Reviewed 2026-08-16: pane geometry, visibility, bells and the stash's own text - the
+  // things a phone touches constantly and none of which start anything.
+  const REVIEWED_SAFE_SEND = new Set([
+    'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:visible',
+    'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
+    'recents:drag', 'recents:remove', 'recents:clear', 'recents:inWindow', 'shelf:toggle',
+    'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell'
+  ])
+  const unclassifiedSend = sends.filter(
+    (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)
+  )
+  ok(
+    unclassifiedSend.length === 0,
+    'no send channel is ungated merely because nobody classified it',
+    `unclassified: ${unclassifiedSend.join(', ')} - add each to GATED_SEND, DESK_ONLY, or REVIEWED_SAFE_SEND here`
   )
 }
 
