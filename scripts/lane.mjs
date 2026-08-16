@@ -1475,7 +1475,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Same idea for a visitor with no preference at all: hand out letters first, `main`
   // only when it is the last checkout left.
   const order = visitor ? [...POOL.filter((id) => id !== 'main'), ...POOL.filter((id) => id === 'main')] : POOL
-  const spare = order.filter((id) => !state.lanes[id])
+  // A conflicted lane is not spare, whoever is or is not holding it: the last-resort
+  // `spare[0]` below skips the chooser entirely, so filtering here is what makes "never
+  // hand out a conflict" true on every path rather than on most of them.
+  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id])
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
   // A hold records the chat's own cwd, and that is not always the lane it was given:
@@ -1494,15 +1497,26 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // the folder their shell is in is two chats writing one worktree. Anything unsquatted is
   // taken before anything squatted, whatever else is true of it.
   const squatted = squattedLanes(state, session)
+  // A CONFLICTED lane is never handed out, at any tier. `ready` is a soft cost - the new
+  // chat lands on somebody's shipped-but-unreleased commits and its pane reads odd for one
+  // prompt - but a conflict is a half-finished merge somebody is expected to come back to,
+  // and CLAUDE.md says it is the one state no other chat may touch. Tier 2 tested only for
+  // a squat, so the "anything unsquatted beats anything squatted" rule quietly promoted a
+  // conflicted lane over a clean squatted one. It is reachable with no holder at all:
+  // `releaseClaim` calls `noteConflict` and then deletes the lane, and `reap` only clears a
+  // conflict for a branch that is no longer ahead of master - which a real conflict is.
   const pick = (ids) =>
     ids.find((id) => !squatted.has(id) && !state.ready[id] && !state.conflicts[id]) ??
-    ids.find((id) => !squatted.has(id)) ??
+    ids.find((id) => !squatted.has(id) && !state.conflicts[id]) ??
     ids.find((id) => !state.ready[id] && !state.conflicts[id])
   // A preference is a chat protecting work in the folder it is standing in - but a folder
   // ANOTHER chat is also standing in protects nothing, it just moves the collision one lane
   // over. So a squatted preference is honoured only when there is no unsquatted lane left,
   // which is the same rule the pool itself follows.
-  const wanted = prefer && !state.lanes[prefer] ? prefer : null
+  // Same rule as `pick`, and it has to be repeated here because `wanted` is the one path
+  // that goes AROUND the chooser: a chat standing in `<repo>-a` asks for lane a by name,
+  // and honouring that while a is mid-conflict hands it exactly what the tiers refuse.
+  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] ? prefer : null
   let free = (wanted && !squatted.has(wanted) ? wanted : null) ?? pick(spare) ?? wanted ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
@@ -1588,7 +1602,12 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // Every lane is held by a live session. Better to say so than to hand out a
     // checkout two chats are already sharing.
     const held = Object.entries(state.lanes).map(([id, c]) => `${id} (${c.cwd ?? '?'})`)
-    throw new Error(`all lanes busy: ${held.join(', ')}`)
+    // Conflicted lanes are named separately, because "busy" reads as "wait" while a
+    // conflict reads as "somebody has to run `lane.mjs resolve`" - and a chat refused a
+    // checkout with no idea why goes and works somewhere it should not.
+    const stuck = Object.keys(state.conflicts).filter((id) => POOL.includes(id))
+    const why = stuck.length ? `${held.join(', ')}; conflicted: ${stuck.join(', ')}` : held.join(', ')
+    throw new Error(`all lanes busy: ${why}`)
   }
 
   const dir = ensureWorktree(free)
