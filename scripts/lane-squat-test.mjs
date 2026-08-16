@@ -144,6 +144,46 @@ patchState((s) => {
   delete s.ready[ready]
 })
 
+// ---------------------------------------------------------------- a conflict is never handed out
+
+// A ready lane is a soft cost; a CONFLICTED one is the single state CLAUDE.md says no other
+// chat may touch, and it was reachable with no holder at all. `releaseClaim` calls
+// `noteConflict` and then deletes the lane, and `reap` only clears a conflict whose branch
+// is no longer ahead of master - which a real conflict is - so the record outlives the chat.
+// The chooser's second tier then tested only for a squat, so "anything unsquatted wins"
+// promoted the conflicted lane over every clean squatted one. (Adversarial review of the
+// squat fix, 2026-08-16: the tier that lost the conflict check was the one this file added.)
+const stuck = ['b', 'c'].find((id) => !held().has(id))
+const stuckOwner = claim('stuckowner', laneDir(stuck), stuck)
+ok('the lane about to be conflicted was actually claimed', stuckOwner.lane === stuck, JSON.stringify(stuckOwner))
+// A REAL conflict, not a recorded one: `claim` runs `retryConflicts` first, so a record
+// whose merge would now succeed is resolved and handed out - correctly. Both sides have to
+// touch the same line for the record to survive the retry.
+writeFileSync(join(laneDir(stuck), 'app.js'), 'console.log("lane")\n', 'utf8')
+git(laneDir(stuck), 'add', '-A')
+git(laneDir(stuck), 'commit', '-qm', 'work that does not merge')
+writeFileSync(join(repo, 'app.js'), 'console.log("master")\n', 'utf8')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'master moved the same line')
+// Exactly the state `releaseClaim` leaves behind: a conflict recorded, the holder gone,
+// and a lane branch still ahead of master so nothing reaps the record.
+patchState((s) => {
+  delete s.lanes[stuck]
+  s.conflicts[stuck] = { at: Date.now(), since: Date.now(), detail: 'conflicts with master', by: 'stuckowner' }
+})
+const c1 = claim('c1', join(root, 'elsewhere'))
+ok('a conflicted lane is not handed to the next chat', c1.lane !== stuck, JSON.stringify(c1))
+release('c1')
+const c2 = claim('c2', laneDir(stuck), stuck) // and asking for it BY NAME does not get it either
+ok('a conflicted lane is refused even when asked for by name', c2.lane !== stuck, JSON.stringify(c2))
+release('c2')
+// Put the lane back to an ordinary one for the sections below: the branch stops diverging,
+// so nothing re-records the conflict on the next claim.
+git(laneDir(stuck), 'reset', '--hard', 'master')
+patchState((s) => {
+  delete s.conflicts[stuck]
+})
+
 // ---------------------------------------------------------------- it is a reorder, not a ban
 
 // Everything but the squatted lane is taken: a chat still gets a checkout rather than a

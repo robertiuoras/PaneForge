@@ -755,7 +755,12 @@ export class PhoneServer {
     }
     // A batch, because typing is one of these per keystroke and they must stay in order.
     for (const c of calls) {
-      if (!this.deps.channels.send.includes(c.channel)) continue
+      // `call` refuses DESK_ONLY and this loop did not, so the two handlers disagreed about
+      // what the HTTP surface is allowed to reach. No send is desk-only today, which is
+      // exactly why it went unnoticed: the first one added would have been reachable from a
+      // browser with nothing saying so. Skipped rather than 400-ing the batch, same as an
+      // unknown channel - a browser learning which channels are refused is a map.
+      if (!this.deps.channels.send.includes(c.channel) || DESK_ONLY.has(c.channel)) continue
       try {
         this.deps.send(c.channel, c.args ?? [])
       } catch {
