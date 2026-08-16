@@ -31,7 +31,7 @@ import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
 import type { AttachIn, AttachResult } from '../shared/attach'
-import { CHOOSE_GAP_MS, keysForChoice } from '../shared/choices'
+import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
@@ -1955,7 +1955,16 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
   const ask = remote.sessions().find((s) => s.id === id)?.ask
   const keys = ask ? keysForChoice(ask, n) : null
   if (!keys) return false
-  keys.forEach((k, i) => setTimeout(() => remote.send(id, { t: 'write', data: k }), i * CHOOSE_GAP_MS))
+  // Re-read before every key, exactly as `SessionManager.choose` does: the question can
+  // end inside the few hundred ms these are spread over, and the rest of the arrows
+  // would then land in whatever replaced the chooser.
+  keys.forEach((k, i) =>
+    setTimeout(() => {
+      const still = remote.sessions().find((s) => s.id === id)?.ask
+      if (!sameAsk(still, ask)) return
+      remote.send(id, { t: 'write', data: k })
+    }, i * CHOOSE_GAP_MS)
+  )
   return true
 })
 

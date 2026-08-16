@@ -111,7 +111,12 @@ const GATED_INVOKE = new Set([
   'sessions:kill',
   'sessions:pipe',
   'sessions:swarm',
-  'sessions:split'
+  'sessions:split',
+  // Answering a question IS typing - it sends arrows and a return into the pane. It
+  // arrives as an `invoke` rather than through `pty:write`, so leaving it out of this
+  // set was a door straight past the gate: a stolen cookie could pick "1. Yes, run it"
+  // on any permission prompt on screen without a passkey touch.
+  'pty:choose'
 ])
 
 const TYPES: Record<string, string> = {

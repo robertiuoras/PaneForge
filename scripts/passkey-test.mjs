@@ -335,7 +335,7 @@ const server = new PhoneServer({
   code: () => code,
   secret: () => 'device-secret',
   channels: {
-    invoke: ['sessions:list', 'sessions:start'],
+    invoke: ['sessions:list', 'sessions:start', 'pty:choose'],
     send: ['pty:write', 'pty:resize'],
     on: []
   },
@@ -447,6 +447,26 @@ const cookie = (extra) => [pf, extra].filter(Boolean).join('; ')
   const body = await call.json()
   ok(body.locked === true, 'and the envelope says locked:true', JSON.stringify(body))
   ok(invoked.length === before, 'and the real handler was never invoked')
+}
+
+// ---- 10b. answering a QUESTION is typing, and is gated ------------------------------
+//
+// `pty:choose` sends arrows and a return into a pane, but it arrives as an `invoke`
+// rather than through `pty:write` - so it slipped past the gate list entirely and a
+// stolen cookie could press "1. Yes, run it" on any permission prompt on screen. The
+// check is by behaviour rather than by reading the set, because the set is what was
+// wrong: what matters is that the CALL does not reach the handler while locked.
+{
+  const before = invoked.length
+  const call = await post(
+    '/pf/call',
+    { id: 43, channel: 'pty:choose', args: ['s1-whatever', 1] },
+    { cookie: cookie(), ...TUNNEL }
+  )
+  ok(call.status === 200, 'answering a question while locked is a 200 envelope', String(call.status))
+  const body = await call.json()
+  ok(body.locked === true, 'and it is LOCKED - a question is typing, whatever channel it rides', JSON.stringify(body))
+  ok(invoked.length === before, 'and no keystroke reached the pane')
 }
 
 // ---- 11. enrolment, and a challenge that is good exactly once ----------------------
