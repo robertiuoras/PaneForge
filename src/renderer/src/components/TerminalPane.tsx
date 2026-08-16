@@ -17,7 +17,7 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
-import { clearsScreen, keepScrollback } from '../../../shared/keepScrollback'
+import { keepScrollback, mayClearScreen } from '../../../shared/keepScrollback'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
@@ -850,7 +850,18 @@ export default function TerminalPane({
      */
     const keep = keepScrollback(
       () => t.rows,
-      () => t.buffer.active.type === 'alternate'
+      () => t.buffer.active.type === 'alternate',
+      Date.now,
+      // How much of the screen is worth filing. Everything under the last written row is
+      // blank, and scrolling those rows only puts a screenful of nothing into the
+      // scrollback in front of the turn being kept.
+      () => {
+        const b = t.buffer.active
+        for (let y = t.rows - 1; y >= 0; y--) {
+          if (b.getLine(b.baseY + y)?.translateToString(true).trim()) return y + 1
+        }
+        return 0
+      }
     )
     const f = new FitAddon()
     t.loadAddon(f)
@@ -1176,8 +1187,10 @@ export default function TerminalPane({
         // rather than repainted, and this is the only place that knows it: Claude Code
         // v2.1.233 clears by drawing its banner straight over the last turn, with no erase
         // of any kind to notice. So the screen is scrolled into the scrollback HERE, ahead
-        // of the CLI's first byte - see keepScrollback.
-        if (clearsScreen(line)) {
+        // of the CLI's first byte - see keepScrollback. `mayClearScreen` rather than
+        // `clearsScreen`, because what was typed is not what was sent: `/cle` plus Enter
+        // runs the `/clear` the CLI's own menu had highlighted.
+        if (mayClearScreen(line)) {
           const away = keep.arm()
           if (away) t.write(away)
         }

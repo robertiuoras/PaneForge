@@ -80,6 +80,38 @@ export function clearsScreen(line: string): boolean {
   return /^\/(clear|compact|new|reset)\b/i.test(line.trim())
 }
 
+/** The commands that throw the screen away, without their slash. */
+const CLEARERS = ['clear', 'compact', 'new', 'reset']
+
+/**
+ * Could this submitted line have been a clear, once the CLI's own completion menu had its
+ * say?
+ *
+ * `clearsScreen` reads the line as it was TYPED, and that is not what was sent: typing
+ * `/cle` opens Claude Code's command menu with `/clear` highlighted and Enter runs the
+ * highlighted row, so the pane sees four characters that match nothing and the banner is
+ * then drawn straight over the last turn. Measured in a real pane on this machine:
+ * `/clear` typed whole keeps the previous answer (2 marker rows before, 2 after), the same
+ * clear picked from the menu after typing `/cle` destroys it (2 before, 0 after).
+ *
+ * So a slash token that is a PREFIX of one of those commands arms as well. The two
+ * mistakes are not the same size: a miss destroys the turn somebody was reading, and a
+ * false arm scrolls a screen that is about to be repainted anyway - the output is in the
+ * scrollback either way, which is what the whole file is for. `/co` therefore arms (it is
+ * `/compact`'s prefix) even though the menu may have been showing `/code-review`.
+ *
+ * Anything with an argument after it is read literally - by then the menu is gone and the
+ * words are the command.
+ */
+export function mayClearScreen(line: string): boolean {
+  const t = line.trim()
+  if (clearsScreen(t)) return true
+  const m = /^\/([a-z-]*)$/i.exec(t)
+  if (!m) return false
+  const typed = m[1].toLowerCase()
+  return CLEARERS.some((c) => c.startsWith(typed))
+}
+
 export interface ScrollKeeper {
   /** The bytes to write to the terminal for this chunk. */
   (chunk: string): string
@@ -97,11 +129,16 @@ export interface ScrollKeeper {
  * @param rows how tall the pane is, asked for at the moment a clear arrives - a pane is
  *   resized constantly and a stale height either loses lines or pads the scrollback.
  * @param alternate whether the terminal is on the alternate screen right now.
+ * @param used how many rows from the top of the screen hold anything, defaulting to all of
+ *   them. Scrolling only those is what keeps a false arm cheap and keeps a screenful of
+ *   blank rows out of the scrollback in front of the turn being kept: the rows below the
+ *   last written one are blank already, so scrolling them buys nothing and files nothing.
  */
 export function keepScrollback(
   rows: () => number,
   alternate: () => boolean,
-  clock: () => number = Date.now
+  clock: () => number = Date.now,
+  used: () => number = rows
 ): ScrollKeeper {
   let carry = ''
   let armedAt = 0
@@ -110,7 +147,9 @@ export function keepScrollback(
   // column 1 on the way.
   const scrollAway = (): string => {
     const height = Math.max(1, rows())
-    return `\x1b[${height};1H` + '\r\n'.repeat(height)
+    const lines = Math.max(0, Math.min(height, Math.ceil(used())))
+    if (!lines) return `\x1b[${height};1H`
+    return `\x1b[${height};1H` + '\r\n'.repeat(lines)
   }
   const keeper = (chunk: string): string => {
     const s = carry + chunk

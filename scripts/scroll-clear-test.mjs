@@ -34,7 +34,7 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { keepScrollback, clearsScreen } = require_(outfile)
+const { keepScrollback, clearsScreen, mayClearScreen } = require_(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -200,6 +200,46 @@ eq('so does compact', clearsScreen('  /compact  '), true)
 eq('and codex’s new', clearsScreen('/new'), true)
 eq('an ordinary prompt does not', clearsScreen('clear the cache in redis'), false)
 eq('nor does a path that starts with a slash', clearsScreen('/etc/hosts is wrong'), false)
+
+// --- what was typed is not what was sent ----------------------------------------------
+// Measured in a real pane against a real Claude Code v2.1.233 on this machine: `/clear`
+// typed whole keeps the previous answer (2 marker rows before the clear, 2 after), while
+// the same clear picked off the CLI's completion menu after typing `/cle` destroys it
+// (2 before, 0 after) - four characters that match nothing, no arm, banner drawn over the
+// last turn. So a slash token that is a PREFIX of one of these arms too.
+eq('a clear typed whole still arms', mayClearScreen('/clear'), true)
+eq('and one picked from the menu after four letters', mayClearScreen('/cle'), true)
+eq('and after one', mayClearScreen('/c'), true)
+eq('and a bare slash, where every command is on the menu', mayClearScreen('/'), true)
+eq('/co arms as /compact’s prefix, wrongly at worst', mayClearScreen('/co'), true)
+// The other side of it. A false arm costs a scroll of a screen about to be repainted; a
+// miss costs the turn somebody was reading. Neither is a reason to arm on everything.
+eq('a whole command that is not one of them does not', mayClearScreen('/code-review'), false)
+eq('nor does a different one', mayClearScreen('/doctor'), false)
+eq('nor a slash command with an argument', mayClearScreen('/model opus'), false)
+eq('nor an ordinary ask', mayClearScreen('can you clear the cache'), false)
+eq('nor a path', mayClearScreen('/etc/hosts is wrong'), false)
+
+// --- only the rows that hold something are filed --------------------------------------
+// The screen ends blank either way: the rows below the last written one were blank before
+// the scroll. Scrolling them anyway is what put a screenful of nothing into the scrollback
+// in front of the turn being kept - and a false arm from the prefix rule above would do it
+// on an otherwise ordinary command.
+{
+  const k = keepScrollback(() => 40, () => false, () => 0, () => 6)
+  const away = k.arm()
+  eq('one newline per WRITTEN row', (away.match(/\r\n/g) ?? []).length, 6)
+  check('still from the bottom row', away.startsWith('\x1b[40;1H'), JSON.stringify(away))
+  check('and still homed afterwards', away.endsWith('\x1b[1;1H'))
+}
+{
+  const k = keepScrollback(() => 40, () => false, () => 0, () => 0)
+  eq('a blank screen files nothing', (k.arm().match(/\r\n/g) ?? []).length, 0)
+}
+{
+  const k = keepScrollback(() => 10, () => false, () => 0, () => 99)
+  eq('and a reading taller than the pane is capped at it', (k.arm().match(/\r\n/g) ?? []).length, 10)
+}
 
 // --- the erase-per-row wipe, in a real terminal ---------------------------------------
 {

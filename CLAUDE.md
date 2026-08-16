@@ -902,14 +902,28 @@ terminal loses the lines.
   and belonged to an ordinary repaint). That is "the claude avatar hides the previous
   output" — the last turn is painted over where it sat and nothing reaches the scrollback.
 - **So the pane keeps the screen itself, before the CLI has emitted a byte.** `keep.arm()`
-  is called when a submitted line matches `clearsScreen` (`/clear`, `/compact`, `/new`,
+  is called when a submitted line matches `mayClearScreen` (`/clear`, `/compact`, `/new`,
   `/reset`) and RETURNS the scroll — the screen pushed into the scrollback and the cursor
   homed — which the pane writes on the spot. Whatever the CLI does next it does to a blank
   screen, so this needs to know nothing about any CLI and cannot go dead the next release;
   homing the cursor is what puts the banner back at the top rather than under forty blank
   rows. The intent still comes from keystrokes the app is relaying anyway, never from
   guessing which repaint is a clear — that guess is what the erase-per-row detection was,
-  and it was silently a no-op the release after it shipped. The `2J`/`3J` rewrite stays for
+  and it was silently a no-op the release after it shipped.
+- **What was TYPED is not what was SENT, and reading the line literally missed half the
+  clears.** Typing `/cle` opens the CLI's own command menu with `/clear` highlighted and
+  Enter runs the highlighted row, so the pane saw four characters matching nothing, never
+  armed, and the banner was drawn over the last turn exactly as before. Measured in a real
+  pane: `/clear` typed whole keeps the previous answer (2 marker rows before, 2 after), the
+  same clear picked from the menu after `/cle` destroys it (2 before, 0 after). So
+  `mayClearScreen` arms on a bare slash TOKEN that is a prefix of one of those commands as
+  well - the two mistakes are not the same size, since a miss destroys the turn somebody is
+  reading and a false arm only scrolls a screen the CLI is about to repaint. `/co` arms as
+  `/compact`'s prefix even when the menu was showing `/code-review`; a command typed whole
+  (`/doctor`) and one carrying an argument (`/model opus`) are read literally and do not.
+  What makes a false arm cheap is that only the rows holding something are filed: the pane
+  passes `used()` and the scroll is that many newlines, not a screenful.
+- The `2J`/`3J` rewrite stays for
   a CLI that clears unasked, and stands down for 10s after an armed scroll so a `2J` that
   follows one cannot file a screenful of blanks in front of the turn being kept.
 
