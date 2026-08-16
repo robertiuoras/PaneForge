@@ -112,6 +112,33 @@ export function mayClearScreen(line: string): boolean {
   return CLEARERS.some((c) => c.startsWith(typed))
 }
 
+/** As much of a terminal as counting the written rows needs. */
+export interface ScreenReader {
+  rows: number
+  buffer: {
+    active: {
+      baseY: number
+      getLine(y: number): { translateToString(trim?: boolean): string } | undefined
+    }
+  }
+}
+
+/**
+ * How many rows from the top of the screen hold anything.
+ *
+ * Exported rather than written inline in the pane because a test that keeps its own copy
+ * of this walk proves nothing about the one that ships: the stubbed `used()` values below
+ * cannot catch an off-by-one here, and this is the number that decides how much of the
+ * screen is filed.
+ */
+export function writtenRows(t: ScreenReader): number {
+  const b = t.buffer.active
+  for (let y = t.rows - 1; y >= 0; y--) {
+    if (b.getLine(b.baseY + y)?.translateToString(true).trim()) return y + 1
+  }
+  return 0
+}
+
 export interface ScrollKeeper {
   /** The bytes to write to the terminal for this chunk. */
   (chunk: string): string

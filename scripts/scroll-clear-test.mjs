@@ -34,7 +34,7 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { keepScrollback, clearsScreen, mayClearScreen } = require_(outfile)
+const { keepScrollback, clearsScreen, mayClearScreen, writtenRows } = require_(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -302,6 +302,76 @@ eq('nor a path', mayClearScreen('/etc/hosts is wrong'), false)
       const left = await lines(bare)
       check(`${name}: a plain terminal loses ${lost}, which is the bug`, !left.includes(lost), left.slice(0, 200))
     }
+  }
+}
+
+// --- the reading the pane really passes, against a real buffer -------------------------
+// The stubs above are arithmetic: they cannot catch an off-by-one in the walk that counts
+// the written rows, and a walk copied into this file would prove nothing about the one the
+// pane ships. So `writtenRows` is exported and driven here against a real xterm, and the
+// whole path is exercised the way a person triggers it: `/cle` picked off the CLI's
+// completion menu, which is the case that was destroying the screen.
+{
+  let Terminal
+  try {
+    ;({ Terminal } = require_('@xterm/headless'))
+  } catch {
+    /* already reported above */
+  }
+  if (Terminal) {
+    const rows = 10
+    const write = (t, s) => new Promise((r) => t.write(s, r))
+    const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    const k = keepScrollback(
+      () => term.rows,
+      () => term.buffer.active.type === 'alternate',
+      Date.now,
+      () => writtenRows(term)
+    )
+    eq('a blank screen has nothing written on it', writtenRows(term), 0)
+    for (const line of ['turn 1', 'turn 2', 'the answer worth keeping']) await write(term, k(`${line}\r\n`))
+    eq('three written rows and the cursor on the fourth', writtenRows(term), 3)
+
+    check('and the menu pick arms', mayClearScreen('/cle'))
+    const away = k.arm()
+    eq('so three rows are filed, not a screenful', (away.match(/\r\n/g) ?? []).length, 3)
+    await write(term, away)
+    // v2.1.233's clear, byte for byte, then the banner over whatever it lands on.
+    await write(term, k('\x1b[53D\x1b[4B\r\x1b[6A'))
+    await write(term, k('Claude Code v2.1.233'))
+
+    const all = []
+    for (let y = 0; y < term.buffer.active.length; y++) {
+      all.push(term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+    }
+    check('the answer survived the menu-picked clear', all.join('\n').includes('the answer worth keeping'), JSON.stringify(all))
+    const screen = all.slice(term.buffer.active.baseY, term.buffer.active.baseY + rows)
+    check('the screen is the banner and nothing else', !screen.join('\n').includes('turn '), JSON.stringify(screen))
+    // The point of counting: what is above the kept turn is the turn before it, not a
+    // screenful of blank rows the scroll invented.
+    const kept = all.findIndex((l) => l.includes('the answer worth keeping'))
+    check('and nothing blank was filed in front of it', all[kept - 1].includes('turn 2'), JSON.stringify(all.slice(0, kept + 1)))
+
+    // The control, on the same shipped walk: exact-match-only would not have armed here,
+    // and this is the screen that leaves.
+    const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    for (const line of ['turn 1', 'turn 2', 'the answer worth keeping']) await write(bare, `${line}\r\n`)
+    await write(bare, '\x1b[53D\x1b[4B\r\x1b[6A')
+    await write(bare, 'Claude Code v2.1.233')
+    const left = []
+    for (let y = 0; y < bare.buffer.active.length; y++) {
+      left.push(bare.buffer.active.getLine(y)?.translateToString(true) ?? '')
+    }
+    // Which row the banner lands on is the CLI's arithmetic, not ours - four down and six
+    // up from a cursor on row 4 is row 2 here, and the last turn on a full screen. Either
+    // way the row is destroyed in place with nothing pushed into the scrollback, and that
+    // is the bug: on the armed run above, every one of these rows is still readable.
+    check(
+      'an unarmed pane loses the row the banner lands on, which is the bug',
+      !left.join('\n').includes('turn 2'),
+      JSON.stringify(left.slice(0, 6))
+    )
+    check('and nothing of it reached the scrollback', bare.buffer.active.baseY === 0)
   }
 }
 
