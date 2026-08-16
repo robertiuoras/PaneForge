@@ -484,6 +484,9 @@ export default function TerminalPane({
   mirrorRef.current = mirror
   const gridRef = useRef(grid)
   gridRef.current = grid
+  /** whether this pane's shape was last drawn from somebody else's grid - see the font
+   *  effect, which must refit when that stops being true even if the font does not move */
+  const wasDerived = useRef(false)
   const fontRef = useRef(fontSize)
   fontRef.current = fontSize
   // Same reason as the font: the terminal is built once per session, and changing the
@@ -2323,7 +2326,17 @@ export default function TerminalPane({
     // Same for a pane whose size a phone is holding: the font is derived from that grid
     // while the borrow lasts, and goes back to the setting when the phone lets go.
     const derived = Boolean(mirror) || Boolean(grid && !isPhoneClient())
-    if (!derived && t.options.fontSize === fontSize) return
+    // The font not needing to move is NOT a reason to skip the refit when the pane has
+    // just stopped being drawn at somebody else's grid. `mirrorFit` shrinks the font to
+    // fit that grid, and the number it lands on is regularly the setting itself - a 50
+    // column grid in a wide pane at 12pt asks for 12pt - so the early return below fired
+    // on release and the terminal was left at 50x49 while the window (and, once the
+    // borrow is given back, the pty) is 157x57. Every line then wraps a third of the way
+    // across with nothing left to notice: the resize observer watches pixels, and no
+    // pixel moved. So a release always reshapes.
+    const released = wasDerived.current && !derived
+    wasDerived.current = derived
+    if (!derived && !released && t.options.fontSize === fontSize) return
     if (!derived) t.options.fontSize = fontSize
     try {
       if (fit.current) reshape(t, fit.current)
