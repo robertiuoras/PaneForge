@@ -47,6 +47,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   statSync,
@@ -1318,6 +1319,69 @@ function excludeModules(dir) {
 
 // ---------------------------------------------------------------- commands
 
+/**
+ * One folder, one spelling. A hold's `cwd` is whatever a chat's hook passed in and a lane's
+ * dir is built here, so the two arrive with different separators, cases and trailing slashes.
+ */
+const samePath = (p) => {
+  let t = resolve(String(p ?? ''))
+  // Symlinks, not spelling, are what actually bite here: on macOS the temp root and
+  // `/var` are links, so one side of the comparison arrives as `/var/...` and the other as
+  // `/private/var/...` and two names for one folder read as two folders. A path that is
+  // not on disk keeps the name it was given - that is still the best answer available.
+  try {
+    t = realpathSync(t)
+  } catch {
+    /* not on disk (a lane not built yet, a cwd that has since gone) */
+  }
+  return t.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+const inside = (at, dir) => Boolean(dir) && (at === dir || at.startsWith(dir + '/'))
+
+/**
+ * The lanes some OTHER chat is physically standing in, whichever lane that chat was given.
+ *
+ * The whole point is the mismatch: a hold knows the folder its chat is in (`cwd`) and the
+ * lane it owns, and when those disagree the chat's SHELL is what decides which files get
+ * written. So the folder, not the ledger row, is what makes a lane unsafe to hand out.
+ */
+function squattedLanes(state, session) {
+  const out = new Set()
+  for (const [id, c] of Object.entries(state.lanes)) {
+    if (!c.cwd || c.session === session) continue
+    const at = samePath(c.cwd)
+    for (const other of POOL) {
+      // A chat standing in its own lane is exactly what is supposed to happen.
+      if (other === id) continue
+      // `main` is the repository itself, which is where nearly every chat STARTS: it opens
+      // in the repo, is handed a letter lane, and is told in prose to work in the worktree.
+      // Counting that as squatting would mark `main` unsafe in almost every session - the
+      // cheapest lane, the one with no worktree to pay for - and it is already covered:
+      // the write guard refuses an edit in a checkout this chat does not hold. Only
+      // standing in ANOTHER LETTER LANE's folder is the anomaly this is for.
+      if (other === 'main') continue
+      if (inside(at, samePath(laneDir(other)))) out.add(other)
+    }
+  }
+  return out
+}
+
+/**
+ * Which lane's checkout this chat is STANDING in, when it is not the one it holds.
+ *
+ * `null` for the normal case - the chat is in its own lane, or nowhere near any of them.
+ * A chat in a SUBDIRECTORY of a checkout counts as being in it, because that is where its
+ * relative paths land.
+ */
+function squatOf(cwd, id) {
+  if (!cwd) return null
+  const at = samePath(cwd)
+  if (inside(at, samePath(laneDir(id)))) return null
+  // `main` deliberately excluded, for the reason squattedLanes gives: a chat standing in
+  // the repository it was opened in is the normal case, not a warning.
+  return POOL.find((other) => other !== 'main' && inside(at, samePath(laneDir(other)))) ?? null
+}
+
 function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (!session) throw new Error('claim needs --session')
   const state = reap(read())
@@ -1383,7 +1447,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
         release: RELEASE,
         own: OWN,
         fresh: false,
-        tentative: Boolean(c.tentative)
+        tentative: Boolean(c.tentative),
+        standingIn: squatOf(cwd ?? c.cwd, id)
       }
     }
   }
@@ -1411,10 +1476,25 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // only when it is the last checkout left.
   const order = visitor ? [...POOL.filter((id) => id !== 'main'), ...POOL.filter((id) => id === 'main')] : POOL
   const spare = order.filter((id) => !state.lanes[id])
-  let free =
-    (prefer && !state.lanes[prefer] ? prefer : null) ??
-    spare.find((id) => !state.ready[id] && !state.conflicts[id]) ??
-    spare[0]
+  // A lane whose FOLDER another chat is standing in is the last one to hand out.
+  //
+  // A hold records the chat's own cwd, and that is not always the lane it was given:
+  // nothing moves a running shell. A chat sitting in `<repo>-a` that asks for lane a and is
+  // refused (a was taken) is sent to lane b - and stays standing in `<repo>-a`. Hand lane a
+  // to the next chat and two chats are pointed at one worktree, which is precisely the
+  // failure lanes exist to prevent, with each of them told in prose that the folder is
+  // theirs. Measured on `assistant` 2026-08-16: chat 0ea5827a held lane b from
+  // `assistant-a`, and the next chat was handed lane a and told to work in `assistant-a`.
+  //
+  // A chat standing in its OWN lane is not a squatter, and this only ever REORDERS the
+  // pool: a squatted lane is still handed out when it is the last one left, because a chat
+  // with no checkout at all is worse than a shared one - and the hook says so out loud.
+  const squatted = squattedLanes(state, session)
+  const pick = (ids) =>
+    ids.find((id) => !state.ready[id] && !state.conflicts[id] && !squatted.has(id)) ??
+    ids.find((id) => !state.ready[id] && !state.conflicts[id]) ??
+    ids.find((id) => !squatted.has(id))
+  let free = (prefer && !state.lanes[prefer] ? prefer : null) ?? pick(spare) ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
   // lane a solo chat belongs in is the one lane whose holder sitting on it costs somebody
@@ -1484,7 +1564,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (free === 'main' && !state.ready.main && !state.conflicts.main) {
     peerTrunk = peerHolding('main')
     if (peerTrunk) {
-      const spare = order.find((id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id])
+      const spare =
+        order.find(
+          (id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id] && !squatted.has(id)
+        ) ?? order.find((id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id])
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
@@ -1541,7 +1624,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     own: OWN,
     fresh: true,
     healed,
-    tentative
+    tentative,
+    // The lane this chat's SHELL is standing in, when that is not the lane it was given.
+    // Nothing here can move a running shell, so the only defence is saying it out loud.
+    standingIn: squatOf(cwd, free)
   }
 }
 
