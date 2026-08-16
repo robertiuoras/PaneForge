@@ -3650,6 +3650,9 @@ export default function App(): JSX.Element {
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
               termTheme={termColors}
+              // The question this pane is sitting on, read in the main process so the
+              // desk, a phone and a bot are all answering the same reading of it.
+              ask={s.ask}
               // A copy out of a pane is silent by construction - the clipboard gives no
               // feedback - so the pane says so in the window's own toast rather than
               // growing a second one of its own.

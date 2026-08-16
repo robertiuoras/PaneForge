@@ -37,6 +37,7 @@ const TESTS = [
   ['stickyselect', 'sticky-select-test.mjs'],
   ['attach', 'attach-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['choices', 'choices-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],

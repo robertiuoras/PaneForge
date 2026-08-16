@@ -70,6 +70,7 @@
     "test:stickyselect": "node scripts/sticky-select-test.mjs",
     "test:attach": "node scripts/attach-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
+    "test:choices": "node scripts/choices-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:idlequit": "node scripts/idlequit-test.mjs",

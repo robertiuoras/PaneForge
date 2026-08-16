@@ -1188,6 +1188,55 @@ body.sizing * { user-select: none !important; }
 }
 .sel-copy:hover { background: var(--accent); color: var(--accent-on); }
 
+/* The agent asked a question, so its answers are buttons across the bottom of the pane.
+   Over the pane rather than under it: adding a row would resize the pty every time a CLI
+   asked something, and a SIGWINCH mid-chooser is what makes a widget redraw over its own
+   frame. It sits above the composer's own rows, which is where the eye already is.
+
+   No animation anywhere in here - it appears when an agent stops and waits, which is
+   exactly when somebody is looking at another window, and a pulsing row on an idle pane
+   is what test:anim exists to refuse. */
+.pane-ask {
+  position: absolute; z-index: 10;
+  left: 8px; right: 8px; bottom: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2); border: 1px solid var(--accent);
+  border-radius: 10px; box-shadow: var(--shadow);
+}
+.pane-ask-q {
+  color: var(--text); font-size: 12px; line-height: 1.35;
+  /* Two lines and no more: the question is on screen a few rows above in full, and this
+     is a label on a row of buttons, not a second copy of the transcript. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pane-ask-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pane-ask-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px; min-height: 30px;
+  background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: 12px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pane-ask-btn:hover { border-color: var(--accent); }
+/* The row the CLI's own arrow is on. Pressing it confirms rather than moves, so it is
+   marked as where you already are and not as a recommendation. */
+.pane-ask-btn.on { border-color: var(--accent); color: var(--accent-text); }
+.pane-ask-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; border-radius: 4px;
+  background: var(--surface-1); color: var(--muted);
+  font-size: 10px;
+}
+/* A finger, not a pointer: 30px is a comfortable target for a mouse and a miss for a
+   thumb, and answering from the phone is most of why this exists. */
+@media (pointer: coarse) {
+  .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
+}
+
 /* A pane whose pty has not printed anything yet. No animation: this sits on screen for
    half a second in the ordinary case, and a looping decoration that costs a GPU core is
    exactly what the anim test exists to refuse. */

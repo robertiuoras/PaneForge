@@ -22,6 +22,7 @@ import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
+import { CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
@@ -794,6 +795,32 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Answer the question on a pane by number.
+   *
+   * Arrows and a return, spaced out, never the digit and never one write - the reasons
+   * are in `shared/choices.ts` and in `queuePrompt` above respectively: a chooser that
+   * only reads the arrows ignores a digit silently, and a burst of keys in one write
+   * arrives at a widget that has not finished redrawing between them.
+   *
+   * It refuses rather than guesses when the pane is not on that question any anymore.
+   * A button on a phone is pressed seconds after the frame it was drawn from, and in
+   * that gap somebody at the desk may have answered it - at which point the keys would
+   * land in a composer, as an arrow through history and a return that submits it.
+   */
+  choose(id: string, n: number): boolean {
+    const live = this.sessions.get(id)
+    const ask = live?.meta.ask
+    if (!live || !ask) return false
+    const keys = keysForChoice(ask, n)
+    if (!keys) return false
+    // Answering is engaging with the pane, the same as typing in it: the turn that
+    // follows is one somebody asked for, so it may ring when it ends.
+    live.meta.engaged = true
+    keys.forEach((k, i) => setTimeout(() => this.sessions.get(id) && this.write(id, k), i * CHOOSE_GAP_MS))
+    return true
+  }
+
+  /**
    * The renderer's read of whether the agent's own UI still says it is running. Panes
    * repeat it every second or so, so the deadline it sets expires by itself if the pane
    * goes away.
@@ -806,6 +833,17 @@ export class SessionManager extends EventEmitter {
     // turn boundaries are knowable, and the bell stops trusting the quiet clock alone.
     if (busy) s.sawFooter = true
     else if (tail) s.lastTail = tail
+    // A question and a running agent are never on screen together - ASK_PROMPT outranks
+    // every busy footer in `readsBusy` - so a busy pane has no question by construction
+    // and clearing it here is the whole of "the question went away". The frame arrives
+    // only with a `false`, which is exactly when one can be live.
+    const wasAsk = s.meta.ask
+    const ask = busy ? null : readAsk(tail)
+    s.meta.ask = ask ?? undefined
+    // The arrow moving is a change worth emitting (it is what `chooseOption` counts
+    // from) but is NOT a new question, so it must not be treated as one by anything
+    // that notifies. Callers compare with `sameAsk`.
+    if (!sameAsk(wasAsk, ask) || wasAsk?.selected !== ask?.selected) this.emitSessions()
     // Deadline rather than a flag, and a short one: the pane re-states a true reading
     // every two minutes while the agent is running, so three minutes of silence from
     // the pane means the pane is gone, not that the turn is still going. The old ten
