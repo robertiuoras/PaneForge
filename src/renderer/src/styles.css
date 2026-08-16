@@ -56,6 +56,20 @@ body {
 
 button, input { font: inherit; }
 
+/* A text field is the one place in this app where selecting text is the whole point.
+   `body` above turns selection off - right for a desktop chrome that is not a document -
+   and it INHERITS into inputs, where WebKit takes it literally: on iOS a field under an
+   inherited `-webkit-user-select: none` still accepts typing but will not raise the
+   caret loupe, will not let a tap place the caret mid-word and will not select a word on
+   a double tap. That is "let me select in the prompt and change it, I can't even edit it
+   on mobile" - the phone's typing bar was append-only for anything already typed. Both
+   spellings, because the inherited one is the -webkit- property on that engine. */
+textarea,
+input:where(:not([type='checkbox'], [type='radio'], [type='range'])) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Text fields had no base style at all, so every one that did not carry a class of
    its own (`.search`, `.rename`, the palette's) rendered as a native Windows field:
    white background, black text, a 2px grey 3D border, on a #0a0a0d dialog. Verified
@@ -219,8 +233,35 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
     color: var(--surface);
     font: 600 15px/1 inherit;
   }
-  /* The bar sits over the terminal's last lines otherwise. */
-  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 68px; }
+  /* The keys a phone keyboard does not have, sitting on top of the typing bar. Same 44px
+     finger target as everything else here, and the row scrolls sideways rather than
+     wrapping - it is six keys today and a wrapped second row would move the bar. */
+  .handheld-keys {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: calc(max(12px, env(safe-area-inset-bottom) + 8px) + 50px);
+    z-index: 40;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .handheld-keys::-webkit-scrollbar { display: none; }
+  .handheld-keys button {
+    flex: 1 0 auto;
+    min-width: 44px;
+    /* 44px, the same finger target as everything else on this screen. */
+    min-height: 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: 500 15px/1 inherit;
+  }
+  .handheld-keys button:active { background: var(--accent-dim); }
+  /* The bar sits over the terminal's last lines otherwise - and now the key row does too. */
+  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 112px; }
 
   /* ---- the pane's own header, at 414px --------------------------------------
      Measured before this block, on a real 414px phone viewport: the row wanted 458px
@@ -2113,6 +2154,41 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .hist-gist { color: var(--text); font-size: 12px; padding: 3px 0 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-line { color: var(--muted); font: 11.5px/1.6 ui-monospace, Consolas, monospace; padding-left: 20px; user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-actions { display: flex; gap: 5px; margin-top: 6px; }
+/* ---- a pane's output as selectable text ------------------------------------
+   The one surface in the app whose job is selecting: xterm draws to a canvas, and a
+   finger dragged over a canvas is a scroll, so on a phone there was no gesture that could
+   pick out a line. Full-screen because that is what it is for - reading back what the
+   agent said - and because a phone's pane is 404px wide. */
+.text-sheet-back {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: stretch;
+  /* Flat colour, no blur: a backdrop-filter over a pane re-filters a live terminal
+     canvas every frame, which `npm run test:overlayfilter` refuses on sight. */
+  background: #000000bf;
+}
+.text-sheet {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  margin: max(8px, env(safe-area-inset-top)) 8px max(8px, calc(env(safe-area-inset-bottom) + 4px));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.text-sheet-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); background: var(--surface-2);
+}
+.tsh-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tsh-btn {
+  flex: none; min-height: 40px; padding: 0 14px; border-radius: 9px;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--text);
+}
+.tsh-btn:disabled { opacity: 0.5; }
+.text-sheet-body {
+  flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
+  font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; -webkit-user-select: text;
+}
+.text-sheet-foot { padding: 6px 12px 8px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); }
+
 .transcript { flex: 1; overflow: auto; margin: 10px 0; padding: 10px 12px; background: #06060a; border: 1px solid var(--line); border-radius: var(--r-sm); font: 11.5px/1.55 ui-monospace, Consolas, monospace; color: #c9c9d6; white-space: pre-wrap; user-select: text; }
 
 /* The update card sits above everything, bottom-right, and is the only thing in
