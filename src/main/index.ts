@@ -31,6 +31,7 @@ import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
 import type { AttachIn, AttachResult } from '../shared/attach'
+import { CHOOSE_GAP_MS, keysForChoice } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
@@ -1939,6 +1940,25 @@ ipcMain.handle('clipboard:fixtureActive', () => clipboardFixtureActive())
  * have to be written THERE. Writing them here and typing the path is what handed an agent
  * on the PC a screenshot path from a Mac.
  */
+/**
+ * Answer a pane's question by number, from a button anywhere - this window, a phone, or
+ * a bot posting over the phone server.
+ *
+ * A MIRRORED pane is answered the same way a keystroke reaches one: the far end owns the
+ * pty, and its own window is what read the question in the first place, so the arrows go
+ * over the link as ordinary writes. The keys are derived HERE from the frame that came
+ * with the session list, so a stale button on this side is refused by `keysForChoice`
+ * rather than typed into whatever replaced the chooser.
+ */
+ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
+  if (!remote.owns(id)) return manager.choose(id, n)
+  const ask = remote.sessions().find((s) => s.id === id)?.ask
+  const keys = ask ? keysForChoice(ask, n) : null
+  if (!keys) return false
+  keys.forEach((k, i) => setTimeout(() => remote.send(id, { t: 'write', data: k }), i * CHOOSE_GAP_MS))
+  return true
+})
+
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
   if (remote.owns(id)) return remote.attachOn(id, files)
   return Promise.resolve(writeAttachments(files))

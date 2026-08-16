@@ -65,6 +65,8 @@ export interface Project {
  */
 import type { TurnClock } from './busy'
 export type { TurnClock }
+import type { PaneAsk } from './choices'
+export type { PaneAsk }
 
 export interface Session {
   id: string
@@ -88,6 +90,15 @@ export interface Session {
    * has finished nothing, so it must not raise attention or chime.
    */
   engaged?: boolean
+  /**
+   * The question this pane is sitting on, when it is sitting on one.
+   *
+   * Read off the pane's own frame by `shared/choices.ts`, so it works for every CLI
+   * here rather than for whichever one has a hook. It is on the session rather than in
+   * the pane's own state because the whole point is the surfaces that are not the desk:
+   * a phone draws the same buttons, and a bot over the phone server can answer one.
+   */
+  ask?: PaneAsk
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -1685,6 +1696,14 @@ export interface Api {
    * pane's agent runs on the other device, so the bytes go over the link and are written
    * there. See `src/shared/attach.ts`.
    */
+  /**
+   * Answer the question on a pane by number, as if somebody had arrowed to it.
+   *
+   * The number is the one the CLI printed. It resolves false when the pane is not on
+   * that question any more - a chooser that has been answered from the desk in the
+   * meantime must not have a stale button press land on whatever replaced it.
+   */
+  chooseOption(sessionId: string, n: number): Promise<boolean>
   attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
   /**
    * The same, for whatever image is on the clipboard of the device the window is on.

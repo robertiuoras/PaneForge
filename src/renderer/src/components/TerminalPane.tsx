@@ -6,6 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
+import { askSignature, type PaneAsk } from '../../../shared/choices'
 import {
   applyKey,
   scrollFor,
@@ -83,6 +84,14 @@ interface Props {
     selectionForeground: string
     selectionInactiveBackground: string
   }
+  /**
+   * The question this pane is sitting on, if it is sitting on one.
+   *
+   * Read in the main process off the frame this pane reported (`shared/choices.ts`), not
+   * here: the same reading has to reach a phone and a bot, and a second one computed in
+   * the renderer could only ever disagree with the first.
+   */
+  ask?: PaneAsk | null
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
 }
@@ -327,6 +336,19 @@ function screenText(t: Terminal, rows: number): string {
 const BUSY_ROWS = 16
 
 /**
+ * How far up the frame a live QUESTION can start, which is much further than a footer.
+ *
+ * Deliberately a second number rather than a bigger BUSY_ROWS: the busy read must stay
+ * on the last thing painted, because a `esc to interrupt` printed during a boot stays in
+ * the buffer and a wider window reports a pane as working long after it went quiet. A
+ * chooser is the opposite shape - Claude Code's AskUserQuestion draws a question, six
+ * options and a paragraph under each, which is past 30 rows before the footer that
+ * proves it is live. Read only when the pane is IDLE, so the wider translate costs
+ * nothing during a turn.
+ */
+const ASK_ROWS = 44
+
+/**
  * How often a pane re-states that it is still busy. The main process holds "busy" as a
  * deadline rather than a flag, so silence eventually reads as finished - which is the right
  * default for a pane that crashed or was closed, and wrong for a turn that is simply taking
@@ -414,6 +436,7 @@ export default function TerminalPane({
   autoFixUi,
   mirror = null,
   termTheme,
+  ask = null,
   onToast
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
@@ -1801,6 +1824,8 @@ export default function TerminalPane({
     let lastReport = 0
     // First tick that read "not running" while we were reporting busy. See below.
     let offSince = 0
+    // The last question this pane reported, arrow position included. See checkBusy.
+    let lastAsk = ''
     let settle2: number | undefined
     const checkBusy = (): void => {
       if (!sawOutput) return
@@ -1861,12 +1886,23 @@ export default function TerminalPane({
       // a turn boundary the app read wrong is only corrected on the next one of these.
       const clock = now ? readsElapsedMs(text, true) : null
       const restate = clock ? 15_000 : BUSY_RESTATE
-      if (now === busy && !(now && at - lastReport > restate)) return
+      // A question's own frame, wide enough to hold the whole chooser. Only while the
+      // pane is idle - a chooser and a running agent are never on screen together, and
+      // this is the one place a wider translate would be paid for every tick of a turn.
+      const wide = now ? '' : screenText(t, ASK_ROWS)
+      // The SELECTION is part of the signature, not only the question. Answering walks
+      // the arrow from where it is now, so a person who arrowed at the desk while a
+      // phone was looking at the same pane would otherwise have the phone's button pick
+      // the wrong row - silently, and only ever by the distance they moved it.
+      const sig = wide ? askSignature(wide) : ''
+      if (now === busy && sig === lastAsk && !(now && at - lastReport > restate)) return
       busy = now
+      lastAsk = sig
       lastReport = at
       // The frame goes with a `false` only: that is the reading that can ring the bell,
-      // and it is the one worth being able to read back afterwards.
-      api.setBusy(sessionId, now, now ? undefined : text, clock ?? undefined)
+      // and it is the one worth being able to read back afterwards. It is the wide one,
+      // so the main process can read a question out of it for the phone and the bot.
+      api.setBusy(sessionId, now, now ? undefined : wide, clock ?? undefined)
     }
 
     /**
@@ -2737,6 +2773,39 @@ export default function TerminalPane({
         </div>
       )}
       {dropping && <div className="drop-hint">Drop files to put their paths in the prompt</div>}
+      {/* The agent asked something with answers on it, so the answers are buttons.
+          Drawn over the bottom of the pane rather than in the header: the question is
+          on screen a few rows above, and an answer belongs beside what it answers. The
+          row the CLI's own arrow is on is marked, so pressing the one already selected
+          reads as confirming rather than as choosing something else - and on a phone,
+          where there are no arrow keys at all, this is the only way to answer without
+          going and finding the machine. `shared/choices.ts` decides what a question is;
+          this only draws it. */}
+      {ask && (
+        <div className="pane-ask">
+          {ask.question && <div className="pane-ask-q">{ask.question}</div>}
+          <div className="pane-ask-row">
+            {ask.options.map((o) => (
+              <button
+                key={o.n}
+                className={'pane-ask-btn' + (o.n === ask.selected ? ' on' : '')}
+                title={`${o.n}. ${o.label}`}
+                onClick={() => {
+                  void api.chooseOption(sessionId, o.n).then((ok) => {
+                    // A refusal is the pane having moved on - answered at the desk while
+                    // this was on screen. Saying nothing there would leave somebody
+                    // believing they had answered it.
+                    if (!ok) onToast?.('That question is gone - the pane moved on')
+                  })
+                }}
+              >
+                <span className="pane-ask-n">{o.n}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

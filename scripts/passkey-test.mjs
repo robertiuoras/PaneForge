@@ -18,6 +18,11 @@ import { buildSync } from 'esbuild'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+// A Windows bundle path is `C:/...`, which is not a legal ESM specifier - `import()`
+// throws ERR_UNSUPPORTED_ESM_URL_SCHEME before a single check runs. Every other suite
+// here already wraps it; this one shipped without and had therefore never once run on
+// this platform.
+import { pathToFileURL } from 'node:url'
 
 let failures = 0
 let checks = 0
@@ -61,7 +66,7 @@ const {
   mintUnlock,
   verifyAssertion,
   verifyRegistration
-} = await import(passkeyBundle)
+} = await import(pathToFileURL(passkeyBundle).href)
 
 // ==================================================================================
 // A tiny CBOR *writer* - the mirror image of the reader in passkey.ts. Same coverage:
@@ -319,7 +324,7 @@ buildSync({
   platform: 'node',
   logLevel: 'silent'
 })
-const { PhoneServer } = await import(phoneBundle)
+const { PhoneServer } = await import(pathToFileURL(phoneBundle).href)
 
 let keys = []
 const invoked = []
@@ -544,4 +549,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
 
 rmSync(work, { recursive: true, force: true })
 console.log(`passkey: ${checks - failures}/${checks} checks passed`)
-process.exit(failures ? 1 : 0)
+// Not process.exit() on the spot. On Windows that races libuv's teardown of a handle
+// this run already asked to close - the whole suite passes, prints 49/49, and then
+// aborts with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` and exit 127,
+// which the runner can only read as a failed suite. Setting the code and letting node
+// exit when its loop is empty is the same outcome without the race.
+process.exitCode = failures ? 1 : 0
