@@ -116,7 +116,15 @@ const GATED_INVOKE = new Set([
   // arrives as an `invoke` rather than through `pty:write`, so leaving it out of this
   // set was a door straight past the gate: a stolen cookie could pick "1. Yes, run it"
   // on any permission prompt on screen without a passkey touch.
-  'pty:choose'
+  'pty:choose',
+  // Elevation. `admin:enable` registers the scheduled task that relaunches this app
+  // ELEVATED with no UAC prompt (index.ts, enableAdminMode) - the single biggest thing a
+  // cookie could buy on this desk, and it sat outside the gate because the rule was read
+  // as "does it type into a pane" rather than "can it cause code to run here". `disable`
+  // is gated too: turning the task off is not dangerous, but leaving it ungated lets a
+  // stolen cookie flip the setting Robert reads on screen to decide whether he is elevated.
+  'admin:enable',
+  'admin:disable'
 ])
 
 const TYPES: Record<string, string> = {
