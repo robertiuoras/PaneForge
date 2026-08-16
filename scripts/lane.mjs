@@ -1489,12 +1489,21 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // A chat standing in its OWN lane is not a squatter, and this only ever REORDERS the
   // pool: a squatted lane is still handed out when it is the last one left, because a chat
   // with no checkout at all is worse than a shared one - and the hook says so out loud.
+  // Squat beats readiness in this order, and the order is the whole point: landing on
+  // somebody else's shipped-but-unreleased commits reads oddly for one prompt, landing in
+  // the folder their shell is in is two chats writing one worktree. Anything unsquatted is
+  // taken before anything squatted, whatever else is true of it.
   const squatted = squattedLanes(state, session)
   const pick = (ids) =>
-    ids.find((id) => !state.ready[id] && !state.conflicts[id] && !squatted.has(id)) ??
-    ids.find((id) => !state.ready[id] && !state.conflicts[id]) ??
-    ids.find((id) => !squatted.has(id))
-  let free = (prefer && !state.lanes[prefer] ? prefer : null) ?? pick(spare) ?? spare[0]
+    ids.find((id) => !squatted.has(id) && !state.ready[id] && !state.conflicts[id]) ??
+    ids.find((id) => !squatted.has(id)) ??
+    ids.find((id) => !state.ready[id] && !state.conflicts[id])
+  // A preference is a chat protecting work in the folder it is standing in - but a folder
+  // ANOTHER chat is also standing in protects nothing, it just moves the collision one lane
+  // over. So a squatted preference is honoured only when there is no unsquatted lane left,
+  // which is the same rule the pool itself follows.
+  const wanted = prefer && !state.lanes[prefer] ? prefer : null
+  let free = (wanted && !squatted.has(wanted) ? wanted : null) ?? pick(spare) ?? wanted ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
   // lane a solo chat belongs in is the one lane whose holder sitting on it costs somebody
@@ -1564,10 +1573,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (free === 'main' && !state.ready.main && !state.conflicts.main) {
     peerTrunk = peerHolding('main')
     if (peerTrunk) {
-      const spare =
-        order.find(
-          (id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id] && !squatted.has(id)
-        ) ?? order.find((id) => id !== 'main' && !state.lanes[id] && !state.ready[id] && !state.conflicts[id])
+      // Same chooser as the pool above, so there is one definition of "a lane worth
+      // handing out" rather than a second one here that nothing exercises.
+      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id]))
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
