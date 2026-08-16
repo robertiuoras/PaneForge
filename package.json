@@ -163,7 +163,8 @@
     "test:lanedevice": "node scripts/lane-device-test.mjs",
     "typecheck:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run typecheck",
     "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test",
-    "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build"
+    "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build",
+    "test:borrow": "node scripts/borrow-cycle-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
