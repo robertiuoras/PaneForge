@@ -170,7 +170,15 @@ export function heldByTip(lane: LaneBoardEntry, pane?: number): string {
 
 export function laneTip(lane: LaneBoardEntry, pane?: number): string {
   const held = heldByTip(lane, pane)
-  const where = `${laneLabel(lane)}\n${lane.dir} (${lane.branch})`
+  // A peer row is a claim on the other machine's trunk, and the two lines a normal row
+  // shows are both this machine's: `dir` is where OUR checkout of that repo would be and
+  // `branch` is what OUR .git/HEAD calls the trunk. Printing them under a row that names
+  // another desk reads as that desk's path and that desk's branch, and the claim carries
+  // neither - `refs/paneforge/claims/<device>/<slot>/<session>/<millis>` has no room for
+  // them. So the row says the true thing it does know and stops there.
+  const where = lane.peer
+    ? `${laneLabel(lane)}\nThe trunk, on ${lane.device ?? 'another machine'}`
+    : `${laneLabel(lane)}\n${lane.dir} (${lane.branch})`
   if (!lane.conflicted) return `${where}${held ? `\n${held}` : ''}`
   return (
     `${where}\nWill not merge: ${lane.conflictDetail ?? 'see the lane'}\n` +

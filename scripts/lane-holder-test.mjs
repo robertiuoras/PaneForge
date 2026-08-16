@@ -220,6 +220,19 @@ ok(
   deviceTip(entry({ device: 'desktop-cmsucm1' }), 'desktop-cmsucm1')
 )
 ok('a record with no desk on it says nothing at all', deviceTip(entry({}), 'desktop-cmsucm1') === '')
+// The tooltip may not borrow this machine's answers for a row about another one: `dir` is
+// where OUR copy of that repo would live and `branch` is what OUR HEAD calls the trunk,
+// and a published claim carries neither.
+ok(
+  'the tooltip for another desk does not print a local path as if it were theirs',
+  !laneTip(otherDesk).includes(otherDesk.dir),
+  laneTip(otherDesk)
+)
+ok(
+  'and says plainly which machine the trunk is on',
+  laneTip(otherDesk).includes('The trunk, on mac-nbn'),
+  laneTip(otherDesk)
+)
 
 // The pane's own chip is the one place naming the holder is noise: it is telling itself.
 ok('a pane is not told who it is', laneState(fromTaskdriver, true, NOW + 60_000) === 'busy now')
