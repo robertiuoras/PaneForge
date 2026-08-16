@@ -205,7 +205,8 @@
           "lane-hook.mjs",
           "lane-merge.mjs",
           "test-app.mjs",
-          "release-notes.mjs"
+          "release-notes.mjs",
+        "pf-telegram.mjs"
         ]
       }
     ],
