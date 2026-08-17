@@ -74,7 +74,7 @@ import {
   refSafe,
   supersededRefs
 } from './lane-peers.mjs'
-import { bumpFor, hasChanges, nextVersion, notes, smallOnly } from './release-notes.mjs'
+import { bumpFor, hasChanges, nextVersion, notes, smallOnly, unpublished, versionTags } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -3016,6 +3016,22 @@ function doctor() {
   if (s.lastShip)
     say(`  Last ${s.lastShip.version ? `release: v${s.lastShip.version}` : 'merge'}, ${Math.round((now() - s.lastShip.at) / 60000)}m ago.`)
 
+  // What the next release page will NOT say, although the commit changed the app. The
+  // notes drop every subject that is not feat/fix/perf and say nothing about it, so a
+  // real fix worded as a sentence publishes a page reading "see the commit history"
+  // (v0.8.92). This is the last moment the subject can still be reworded, so it is
+  // named here and nowhere else - the published page is never guessed at.
+  if (RELEASE === 'version') {
+    const ranges = [versionTags(MAIN)[0] ? `${versionTags(MAIN)[0]}..${MB}` : MB]
+    for (const l of s.lanes) if (l.ahead > 0 && l.branch !== MB) ranges.push(`${MB}..${l.branch}`)
+    const missed = [...new Set(ranges.flatMap((r) => unpublished(MAIN, r)))]
+    if (missed.length) {
+      say(`  ${missed.length === 1 ? 'This change' : 'These changes'} touched the app and will NOT appear on the release page:`)
+      for (const m of missed) say(`    ${m}`)
+      say('  The page carries feat:/fix:/perf: subjects only. Reword the commit before it ships.')
+    }
+  }
+
   // What the dev channel is holding that stable installs have not seen. One API call,
   // only in doctor - status must stay offline - and a gh that cannot answer says nothing:
   // an absent fact is not a known-empty channel.
@@ -3030,9 +3046,24 @@ function doctor() {
         pending.push(r.tag_name)
       }
       if (pending.length) {
-        const stable = releases.find((r) => !r.prerelease)
+        // A page of 20 that is ALL prereleases means the newest stable is off the end of
+        // it, not that there isn't one - and "stable installs are on nothing" is a
+        // frightening sentence to read when a stable release exists and is merely old.
+        // /releases/latest is the same thing a stable install resolves, so ask it rather
+        // than inferring an absence from a window that ran out.
+        let stable = releases.find((r) => !r.prerelease)
+        if (!stable) {
+          const one = runSafe('gh', ['api', `repos/${repo}/releases/latest`], { timeout: 15_000 })
+          if (one.ok) {
+            try {
+              stable = JSON.parse(one.out)
+            } catch {
+              /* unreadable - fall through to the honest "cannot tell" wording below */
+            }
+          }
+        }
         say(
-          `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable ? stable.tag_name : 'nothing'}.`
+          `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable?.tag_name ?? 'a release this could not read'}.`
         )
         // The one that goes next is the OLDEST pending build, because the soak is that
         // build's own age - newer ones ripen behind it rather than holding it back.

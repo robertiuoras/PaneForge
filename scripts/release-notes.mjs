@@ -99,6 +99,43 @@ export function subjects(repo, range) {
     .filter((s) => s && !DROP.test(s))
 }
 
+/**
+ * The changes this release page will NOT carry although they changed the app.
+ *
+ * `changeLog` publishes `feat:`, `fix:` and `perf:` and drops everything else, which is
+ * right for the audience and silent about its own misses: v0.8.92 carried one commit,
+ * `Fix browser image drags by fetching URIs instead of pasting URL strings`, which is
+ * exactly what a reader deciding whether to update wants - and because the subject had
+ * no conventional prefix the page said "see the commit history" instead. Nothing looked
+ * wrong: the generator behaved as written, the release published, the notes test passed.
+ *
+ * So the miss is reported rather than guessed at. A subject is only worth naming when it
+ * touched `src/` - a commit against a script, a doc or a test is not what the drop rule
+ * is losing - and this NEVER changes what is published: rewriting the subject into a
+ * heading would put a guess on a public page, and the fix is to word the commit as
+ * `fix:` before it ships, which is the one moment `doctor` can still say so.
+ */
+export function unpublished(repo, range) {
+  // %x00 in front of each subject, so the file names that follow a commit are told from
+  // the next commit's subject without a second call per commit.
+  const out = gitSafe(repo, ['log', '--no-merges', '--format=%x00%s', '--name-only', range])
+  if (!out) return []
+  const missed = []
+  for (const block of out.split('\0')) {
+    const [subject, ...rest] = block.split('\n')
+    const s = (subject ?? '').trim()
+    if (!s || DROP.test(s)) continue
+    // A `docs:` or `test:` subject touching src/ is dropped ON PURPOSE and is not a
+    // miss - naming those is how this report becomes noise nobody reads (measured: the
+    // first version of it flagged an ordinary docs commit against this repo's own
+    // history). Only a subject with NO conventional prefix at all is the defect, since
+    // that is the one whose author was describing a change and got no heading for it.
+    if (parse(s).type !== null) continue
+    if (rest.some((f) => f.trim().startsWith('src/'))) missed.push(s)
+  }
+  return missed
+}
+
 /** `fix(lanes): a dead chat's lane...` -> { type, scope, text } */
 export function parse(subject) {
   const m = /^([a-z]+)(?:\(([^)]+)\))?!?:\s*(.+)$/.exec(subject)

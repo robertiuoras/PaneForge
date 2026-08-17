@@ -228,6 +228,62 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
   rmSync(small, { recursive: true, force: true })
 }
 
+// What the page will NOT say. `changeLog` publishing only feat/fix/perf is right and is
+// silent about its own misses: v0.8.92 shipped `Fix browser image drags by fetching URIs
+// instead of pasting URL strings`, a real user-visible fix worded as a sentence, and the
+// release page said "see the commit history". The negatives are the load-bearing half -
+// a report that names every doc and test commit is one nobody reads.
+{
+  const { unpublished } = await import('./release-notes.mjs')
+  const miss = mkdtempSync(join(tmpdir(), 'pf-miss-'))
+  const mgit = (...args) =>
+    execFileSync('git', ['-C', miss, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  mgit('init', '-b', 'master')
+  mgit('config', 'user.email', 'test@example.com')
+  mgit('config', 'user.name', 'Test')
+  mgit('config', 'commit.gpgsign', 'false')
+  mkdirSync(join(miss, 'src'))
+  mkdirSync(join(miss, 'scripts'))
+  let k = 0
+  const put = (subject, dir) => {
+    writeFileSync(join(miss, dir, `f${k++}.ts`), subject)
+    mgit('add', '-A')
+    mgit('commit', '-m', subject)
+  }
+
+  put('feat: something published', 'src')
+  mgit('tag', 'v0.1.0')
+
+  put('Fix browser image drags by fetching URIs instead of pasting URL strings', 'src')
+  check(
+    'a sentence-subject change to the app is named',
+    unpublished(miss, 'v0.1.0..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.0..HEAD'))
+  )
+
+  put('fix: this one does reach the page', 'src')
+  put('docs: written for the next session in this repo', 'src')
+  put('test: a red case for the above', 'src')
+  put('auto-sync: mid-feature backup', 'scripts')
+  put('a sentence, but only about a script', 'scripts')
+  put('release: v0.1.1', 'src')
+  put('merge lane b', 'src')
+  check(
+    'and nothing else is',
+    unpublished(miss, 'v0.1.0..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.0..HEAD'))
+  )
+  // It reports, it never rewrites: the published page is the same either way.
+  check(
+    'the page itself is untouched by any of this',
+    !changeLog(miss, '0.1.1').includes('browser image drags'),
+    changeLog(miss, '0.1.1')
+  )
+  check('a range git cannot read says nothing', unpublished(miss, 'v9.9.9..HEAD').length === 0)
+
+  rmSync(miss, { recursive: true, force: true })
+}
+
 rmSync(root, { recursive: true, force: true })
 
 if (failures) {
