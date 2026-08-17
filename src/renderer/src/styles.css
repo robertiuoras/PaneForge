@@ -517,6 +517,22 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
   border-radius: 2px; background: var(--warn); animation: pulse 1.8s ease-in-out infinite;
 }
+/* A pane sitting on a question, in the one colour nothing else in this list uses.
+   Amber (`attn`) means "it went quiet while you were looking elsewhere" and is a nudge;
+   this is a stop - the run is not finished, it is waiting on a person, and every other
+   reading in the app calls that pane idle. The word "asks you" is on the card's title line
+   and the question itself is on its hover: the blue lane glow that was removed from this
+   card was removed for being a colour with nothing to read, not for being a colour.
+   Only opacity moves (anim-cost-test.mjs), on the 2px bar and not on the card. */
+.row.asking { background: #ff8f8f12; box-shadow: inset 0 0 0 1px #ff8f8f3d; }
+.row.asking::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
+}
+.chip.asks { color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c; flex: none; margin-left: auto; }
+/* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
+   beside it rather than pushing it off the end. */
+.row-title .chip.asks + .elapsed, .row-title .chip.asks + .chip.dead { margin-left: 6px; }
 .row.preset { background: #ffffff07; }
 .row-text { flex: 1; min-width: 0; }
 .row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -883,6 +899,56 @@ html.app-blurred .elapsed::after { animation: none; }
 
 /* The lane's own dialog: the state of the checkout, then why a merge will not run. */
 .lane-dialog-sub { margin-top: 6px; }
+/* The lane card, once it stopped being two numbers and a button.
+   `min(560px, …)` rather than the confirm default: the plain-words paragraph and the copy
+   rows both read as prose, and prose in a 380px box wraps every four words. */
+/* `.dialog.confirm` sets a width of its own further down the file, and an equal-specificity
+   rule that loses is a rule that does nothing: measured at 433px with `.lane-dialog {…}`
+   alone, which is a 33-word paragraph wrapping every four words. Both class names, so this
+   one wins by being more specific rather than by being later. Capped in height for the same
+   reason the copy list scrolls: a project with four checkouts must not push the buttons off
+   the bottom of the window. */
+.dialog.confirm.lane-dialog {
+  width: min(560px, calc(100vw - 48px)); max-height: calc(100vh - 96px);
+  display: flex; flex-direction: column;
+}
+.dialog.confirm.lane-dialog .confirm-body { flex: 0 1 auto; min-height: 0; }
+.dialog.confirm.lane-dialog .dialog-row { flex: none; }
+/* The help button was a 150px pill on a 433px card, which is a third of the header spent on
+   a footnote. It is a link now: same target, same words, no box. */
+.lane-dialog .lane-what { padding: 0; border: 0; background: none; font-size: 11.5px; text-decoration: underline; text-underline-offset: 3px; }
+.lane-plain { color: var(--fg); line-height: 1.55; }
+.lane-plain code, .lane-git code { font-size: 11.5px; color: var(--muted); }
+.lane-git { margin-top: 10px; }
+.lane-git .lane-dialog-sub { margin-top: 0; display: block; }
+/* Every other copy of this project, one row each. A list, so it scrolls rather than
+   growing the dialog past the window on a project with four checkouts. */
+.lane-copies { border-top: 1px solid var(--line); padding-top: 10px; max-height: 34vh; overflow-y: auto; }
+.lane-copies-title { color: var(--muted); font-size: 11px; text-transform: none; margin-bottom: 6px; }
+.lane-copy {
+  display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: var(--r);
+  border: 1px solid transparent;
+}
+.lane-copy[role='button'] { cursor: pointer; }
+.lane-copy[role='button']:hover { background: var(--surface-3); border-color: var(--line); }
+.lane-copy.self { background: #ffffff08; border-color: var(--line); }
+.lane-copy-tag {
+  flex: none; min-width: 34px; text-align: center; padding: 1px 5px; border-radius: 4px;
+  font-size: 10.5px; color: var(--muted); background: var(--surface-3); border: 1px solid var(--line);
+}
+.lane-copy.busy .lane-copy-tag { color: var(--accent-text); border-color: var(--accent-dim); }
+.lane-copy.done .lane-copy-tag { color: var(--ok); }
+.lane-copy.stuck .lane-copy-tag { color: var(--danger); }
+.lane-copy-text { min-width: 0; flex: 1; }
+.lane-copy-title { color: var(--fg); font-size: 12px; }
+.lane-copy-held { color: var(--muted); }
+/* Two lines at most: a commit subject is a sentence and clipping it to one line is how a
+   summary stops being one, but four lines of somebody else's commit message is the list
+   losing its shape. */
+.lane-copy-sub {
+  color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
 .lane-dialog-warn { margin-top: 6px; color: var(--danger); }
 .lane-dialog-said { margin-top: 8px; color: var(--fg); }
 
@@ -1183,6 +1249,15 @@ body.sizing * { user-select: none !important; }
   content: ''; position: absolute; inset: 4px; pointer-events: none;
   border: 1.5px dashed color-mix(in srgb, var(--agent) 70%, transparent);
   border-radius: var(--r); background: color-mix(in srgb, var(--agent) 8%, transparent);
+}
+/* ...and the same fact on the pane itself, for a grid where the card is off to the side.
+   A static ring, because this one is drawn over an agent's output all the while the
+   question is up and a breathing border over live text is the thing anim-cost-test.mjs
+   exists to refuse. The buttons themselves (shared/choices.ts) are the action; this is
+   only what makes the pane findable from across the room. */
+.xterm-wrap.asking::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: var(--r);
+  box-shadow: inset 0 0 0 1.5px #ff8f8f66, inset 0 0 22px #ff8f8f1f;
 }
 .drop-hint {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);

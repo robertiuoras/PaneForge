@@ -202,6 +202,40 @@ ok(
   'and the ones it leaves are the newest'
 )
 
+// ---------------------------------------------------------------------------
+// A drop that carried URIs and no File objects.
+//
+// This is the shape that had no code at all: macOS hands a screenshot dragged off its own
+// preview thumbnail as `text/uri-list` with `file:///…` in it, the pane's dragover only
+// accepted `Files`, so Chromium's default action typed the URL into xterm as a sentence.
+// The agent got `file:///var/folders/…/Screenshot%2520….png` - an attachment shaped like
+// a link, which nothing here can open.
+
+ok(
+  S.pathFromFileUri('file:///Users/r/Screenshot%202026-08-17%20at%2017.48.55.png') ===
+    '/Users/r/Screenshot 2026-08-17 at 17.48.55.png',
+  'a file: URI comes back percent-decoded'
+)
+ok(S.pathFromFileUri('file:///C:/Users/r/a.png') === 'C:\\Users\\r\\a.png', 'and as a Windows path')
+ok(
+  S.pathFromFileUri('file://server/share/a.png') === '\\\\server\\share\\a.png',
+  'a host becomes a UNC path'
+)
+ok(S.pathFromFileUri('file://localhost/Users/r/a.png') === '/Users/r/a.png', 'localhost is this machine')
+ok(S.pathFromFileUri('https://x.test/a.png') === '', 'an http URI is not a path')
+ok(S.pathFromFileUri('a sentence somebody dragged') === '', 'and neither is dragged text')
+
+const split = S.splitDropUris(
+  '# a uri-list may carry comments\nfile:///Users/r/a%20b.png\nhttps://x.test/i.png\nmailto:nobody@x.test\n\n'
+)
+ok(split.paths.length === 1 && split.paths[0] === '/Users/r/a b.png', 'the file goes to the path list')
+ok(split.uris.length === 1 && split.uris[0] === 'https://x.test/i.png', 'the http one goes to be fetched')
+ok(
+  S.splitDropUris('just some words').paths.length === 0 &&
+    S.splitDropUris('just some words').uris.length === 0,
+  'a plain text drag is claimed by neither - it stays Chromium own paste'
+)
+
 console.log('')
 console.log(fail.length ? `FAILED ${fail.length}` : 'all attach checks passed')
 process.exit(fail.length ? 1 : 0)
