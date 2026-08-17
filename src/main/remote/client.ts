@@ -36,8 +36,25 @@ import { OutBuffer } from '../outBuffer'
 const BUFFER_LIMIT = 400_000
 /** Reconnect backoff: quick at first, then out of the way. */
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
-/** A silent link is a dead link; the ping proves the socket, not the agent. */
-const PING_MS = 15_000
+/**
+ * A silent link is a dead link; the ping proves the socket, not the agent.
+ *
+ * Overridable only so the dead-link test can run in seconds instead of a minute.
+ */
+const PING_MS = Number(process.env.PF_PING_MS) || 15_000
+/**
+ * How long the far end may say nothing before the link counts as dead.
+ *
+ * A ping is only half a liveness check - it is worth nothing unless something watches
+ * for the answer. A TCP connection whose path disappears (Wi-Fi swap, the VPN dropping,
+ * the other machine sleeping, a NAT idle eviction) is closed by nobody: no FIN, no RST,
+ * and writes keep succeeding into the OS buffer for minutes. Without this deadline the
+ * device stays `online` for as long as that lasts and its mirrored panes simply stop
+ * moving, which reads as the far end having died mid-turn when it is still running.
+ *
+ * Three missed beats, so one lost packet or a busy moment is not a disconnect.
+ */
+const DEAD_MS = PING_MS * 3
 
 export type PeerStatus = 'off' | 'connecting' | 'online' | 'error'
 
@@ -74,6 +91,8 @@ export class RemoteClient extends EventEmitter {
   private ping: NodeJS.Timeout | null = null
   private rid = 0
   private pending = new Map<number, { ok: (v: unknown) => void; no: (e: Error) => void }>()
+  /** epoch ms the far end last said anything at all - see DEAD_MS. */
+  private heard = 0
 
   constructor(
     public peer: RemotePeer,
@@ -273,6 +292,9 @@ export class RemoteClient extends EventEmitter {
     socket.setTimeout(12_000, () => socket.destroy(new Error('No answer from that device')))
     socket.once('connect', () => {
       socket.setTimeout(0)
+      // OS-level backstop under the DEAD_MS check: probes a silent path even while this
+      // side has nothing to send, so a half-open socket eventually errors on its own.
+      socket.setKeepAlive(true, PING_MS)
       void this.handshake(socket)
     })
     socket.once('error', (err: NodeJS.ErrnoException) => {
@@ -312,12 +334,27 @@ export class RemoteClient extends EventEmitter {
       this.teardown('error', why === 'closed' ? 'That device went away' : why)
       this.retry()
     })
-    this.ping = setInterval(() => conn.send({ t: 'ping' }), PING_MS)
+    this.heard = Date.now()
+    this.ping = setInterval(() => {
+      // Check BEFORE sending: a link that has answered nothing for three beats is gone,
+      // and one more ping into it proves nothing. Destroying the socket is what turns a
+      // silently frozen mirror back into a visible 'reconnecting', because `gone` fires
+      // the same teardown+retry a clean disconnect does.
+      if (Date.now() - this.heard > DEAD_MS) {
+        this.teardown('error', 'That device stopped answering')
+        this.retry()
+        return
+      }
+      conn.send({ t: 'ping' })
+    }, PING_MS)
     this.ping.unref()
     this.setStatus('online', '')
   }
 
   private receive(m: Msg): void {
+    // Anything at all counts as proof of life, `pong` included - it falls through the
+    // switch below unhandled, and this stamp is the whole reason the host sends it.
+    this.heard = Date.now()
     switch (m.t) {
       case 'sessions': {
         this.available = (m.list as Session[]) ?? []

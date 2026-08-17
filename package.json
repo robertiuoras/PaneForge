@@ -61,6 +61,7 @@
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
+    "test:deadlink": "node scripts/deadlink-test.mjs",
     "test:handoff": "node scripts/handoff-test.mjs && node scripts/handoff-notify-test.mjs",
     "test:handoffnotify": "node scripts/handoff-notify-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
