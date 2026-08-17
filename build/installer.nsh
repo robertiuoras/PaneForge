@@ -32,10 +32,17 @@
   ; version's uninstaller during an ordinary update. A shortcut that vanishes after an
   ; update reads as "the app uninstalled itself". Both are inside the block now, and the app
   ; puts a missing shortcut back on launch anyway (src/main/winShortcut.ts).
-  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableGone_${__LINE__}
+  ; LogicLib, not a jump and not a label. `+N` is what caused the bug above, and the first
+  ; attempt at fixing it - a label named with ${__LINE__} - failed the Windows build
+  ; outright: inside a macro that token expands to `239.1.11`, and an NSIS label may not
+  ; contain a dot ("could not resolve label portableGone_239.1.11 in uninstall section").
+  ; A label would also have to be unique across BOTH insertions of this macro. ${If} has
+  ; neither problem and says what it means; electron-builder already includes LogicLib in
+  ; the installer and the uninstaller.
+  ${If} ${FileExists} "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe"
     RMDir /r "$LOCALAPPDATA\Programs\PaneForge"
     Delete "$DESKTOP\PaneForge.lnk"
-  portableGone_${__LINE__}:
+  ${EndIf}
 !macroend
 
 !macro customInit
