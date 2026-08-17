@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -421,6 +422,32 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   label="Let a driven lane run unattended"
                   hint="Drive starts a coding CLI with its permission prompt turned off - Claude with --permission-mode bypassPermissions, Codex with --full-auto, Gemini and Qwen with --yolo - because an agent that stops to ask nobody is an agent that hangs until its budget kills it. What it may touch is a worktree the app made, on a branch nothing merges by itself. Off refuses to start or queue a driven run at all, and says which flag it refused; panes you launch yourself are unaffected and still ask."
                 />
+                <Switch
+                  checked={config.autoAnswer?.enabled === true}
+                  onChange={(v) =>
+                    onChange({
+                      autoAnswer: { ...DEFAULT_AUTO_ANSWER, ...config.autoAnswer, enabled: v }
+                    })
+                  }
+                  label="Answer an agent's question for me when the answer is obvious"
+                  hint="A CLI that asks 'may I do this?' stops until somebody presses return, and at the desk that press is usually a formality. This reads the options and presses the one that plainly means go on - a single 'Yes'-shaped answer and nothing else. It never picks an option that widens permission ('and don't ask again'), never picks one that stops or asks for a sentence back, and leaves anything with no obvious answer on screen as buttons. A question is only answered after it has sat still for a moment, so you can still reach it first, and only once - a press that does not take is left alone rather than repeated."
+                />
+                {config.autoAnswer?.enabled === true && (
+                  <Switch
+                    checked={config.autoAnswer?.anyQuestion === true}
+                    onChange={(v) =>
+                      onChange({
+                        autoAnswer: {
+                          ...DEFAULT_AUTO_ANSWER,
+                          ...config.autoAnswer,
+                          anyQuestion: v
+                        }
+                      })
+                    }
+                    label="...and take the CLI's own default for the rest"
+                    hint="A question with several real answers ('which of these three shapes?') is a decision you are being asked to make, so by default it waits for you. On, the app takes the row the CLI's own arrow is already on - its preference, not one invented here - and keeps the run moving. The two refusals above still hold."
+                  />
+                )}
                 <Switch
                   checked={config.confirmClose}
                   onChange={(v) => onChange({ confirmClose: v })}

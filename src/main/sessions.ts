@@ -22,7 +22,8 @@ import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
-import { CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
+import { askKeyOf, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
@@ -218,6 +219,25 @@ interface Live {
   recoverSeen: number
   /** Auto-continues sent in a row on this pane. Reset by any turn that ends whole. */
   recoverTries: number
+  /**
+   * When the question now on this pane's screen was first seen, and what it was.
+   *
+   * The signature carries where the arrow is (`askSignature`), so a person arrowing at
+   * the desk restarts the clock rather than having the answer pressed out from under
+   * them mid-move. Zero means there is no question.
+   */
+  askSince: number
+  askSig: string
+  /**
+   * The same question WITHOUT the arrow (`askKeyOf`), which is what "have I already
+   * pressed this one" has to be asked of: the arrow moves as our own keys land, so a
+   * signature carrying it calls the question being answered a new question.
+   */
+  askKey: string
+  /** Questions answered by `autoAnswer` in a row on this pane, the last one, and when. */
+  autoRun: number
+  autoKey: string
+  autoAt: number
   /** The frame the pane was looking at when it last said the turn was over. Diagnostics. */
   lastTail: string
   /**
@@ -375,6 +395,12 @@ export class SessionManager extends EventEmitter {
       sawFooter: false,
       recoverSeen: 0,
       recoverTries: 0,
+      askSince: 0,
+      askSig: '',
+      askKey: '',
+      autoRun: 0,
+      autoKey: '',
+      autoAt: 0,
       lastTail: '',
       typed: '',
       slashAt: 0,
@@ -883,6 +909,29 @@ export class SessionManager extends EventEmitter {
     const wasAsk = s.meta.ask
     const ask = busy ? null : readAsk(tail)
     s.meta.ask = ask ?? undefined
+    // The question's own clock, for `autoAnswer`. The signature includes the arrow, so
+    // moving it at the desk restarts the wait rather than having a press land from the
+    // position somebody just moved away from. A pane with no question resets the run
+    // counter: what that counter guards against is one question being answered over and
+    // over, not a session that asks a lot of them.
+    const sig = ask ? askSignature(tail) : ''
+    if (sig !== s.askSig) {
+      s.askSig = sig
+      s.askSince = sig ? now : 0
+    }
+    s.askKey = askKeyOf(ask)
+    // The run counter is given back by the pane going BUSY, and by nothing else.
+    //
+    // "No question on screen" is the wrong signal for it: a chooser mid-repaint reads as
+    // no question for one frame, so resetting there hands the budget back several times
+    // during a single question and `maxRun` stops bounding anything. A busy pane means
+    // the agent took an answer and went back to work, which is the only evidence that
+    // these presses are getting somewhere.
+    if (busy) {
+      s.autoRun = 0
+      s.autoKey = ''
+      s.autoAt = 0
+    }
     // The arrow moving is a change worth emitting (it is what `chooseOption` counts
     // from) but is NOT a new question, so it must not be treated as one by anything
     // that notifies. Callers compare with `sameAsk`.
@@ -1263,6 +1312,34 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(live.meta.id, found.text)
   }
 
+  /**
+   * Press the obvious answer to the question on this pane, if there is one.
+   *
+   * The decision is `shared/autoAnswer.ts` and the keystrokes are `choose`, which already
+   * re-checks the question before EVERY key - so a question answered at the desk in the
+   * gap cannot have the rest of an auto-answer's arrows land in a composer.
+   *
+   * Everything here is the timing half. A question is answered only once it has sat
+   * unchanged for `waitMs` (the window in which a person who disagrees can reach it), and
+   * only once per signature: a press that does not take leaves the same question on screen,
+   * and pressing again every second is the app arguing with a widget.
+   */
+  private sweepAutoAnswer(live: Live): void {
+    const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
+    const ask = live.meta.ask
+    if (!ask) return
+    if (!dueForAuto(live, cfg, Date.now())) return
+    const pick = pickAnswer(ask, cfg)
+    if (!pick) return
+    live.autoKey = live.askKey
+    live.autoAt = Date.now()
+    live.autoRun++
+    console.info(
+      `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`
+    )
+    this.choose(live.meta.id, pick.n)
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -1307,6 +1384,12 @@ export class SessionManager extends EventEmitter {
       ) {
         this.sweepRecover(live)
       }
+
+      // A question with an obvious answer, pressed rather than waited on. Here rather
+      // than where the question is READ, for the same reason as recover: the frame
+      // arrives many times a second while the CLI redraws its chooser, and the wait this
+      // needs is measured from when the question settled, not from when it was painted.
+      if (live.meta.ask) this.sweepAutoAnswer(live)
       // Raised once per quiet stretch, never re-raised until output resumes and
       // goes quiet again. A CLI that has only painted its own welcome screen is
       // quiet, not done: `engaged` keeps a fresh pane from claiming to be waiting

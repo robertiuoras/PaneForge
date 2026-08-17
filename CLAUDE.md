@@ -800,6 +800,45 @@ whichever one has a hook.
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
   letters into a chooser.
 
+## ...and a question with an obvious answer is answered
+
+Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those
+questions are the CLI asking whether it may do the thing it was just told to do, and the
+person presses return. `shared/autoAnswer.ts` presses it instead — off by default
+(Settings → "Answer an agent's question for me when the answer is obvious"), because every
+question it goes through is one a CLI chose to ask and arriving switched on with an update
+would answer a permission prompt on a desk that never asked for that.
+
+- **The refusals are the feature.** Exactly ONE option leading with a yes-shaped word is
+  answered. Two are a choice between them; none is a decision somebody is being asked to
+  make. An option that WIDENS permission (`don't ask again`, the bare word `always`) is
+  never reachable in either mode — it is the one press that cannot be undone by noticing a
+  second later — and neither is one that stops or answers with a question of its own
+  (`No, tell Claude what to do differently` leaves the CLI holding an empty composer, so a
+  pane that was merely waiting is now waiting AND has lost its question).
+- `anyQuestion` is the wider setting and it takes **the CLI's own default**, the row its
+  arrow is already on, rather than inventing a preference. The two refusals above still
+  hold over it.
+- **The timing is `dueForAuto`, and it takes TWO signatures of the same question on
+  purpose.** A press waits until the frame has sat unchanged for `waitMs` (1.2s — the
+  window in which somebody who disagrees can reach the pane) and that signature includes
+  where the arrow is, so moving it at the desk restarts the wait. But "have I already
+  pressed this one" may NOT be asked of that signature: our own keys move the arrow, so a
+  press restarts its own settle clock and a second sequence interleaves with the first,
+  arrows landing between each other and the wrong row committed. `askKeyOf` is the
+  question's identity with the arrow left out, one press per identity, plus a
+  `PRESS_COOLDOWN_MS` floor of 4s so nothing can be pressed while its own keys are still
+  landing.
+- **`maxRun` is given back by the pane going BUSY, and by nothing else.** A chooser
+  mid-repaint reads as no question for one frame, so returning the budget on "no question
+  on screen" hands it back several times during a single question and the cap bounds
+  nothing. A busy pane is the only evidence that an answer went in and work resumed.
+- The keys go through `choose`, which re-checks the question before every one of them.
+- `npm run test:autoanswer` — 21 checks, weight in the negatives: every wording of "and
+  stop asking me" (not the two strings this desk has captured), the timing behaviourally
+  over a fake clock, and source assertions on the STATE the guards read, because a test
+  that only matches the comparison lets the assignment making it true be deleted.
+
 ## A pane that is still starting says so
 
 Measured on this Mac, 2026-08-15: `sessions:start` returns in **16-40ms**, and the first

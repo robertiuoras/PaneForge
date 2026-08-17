@@ -10,6 +10,7 @@ import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_RECLAIM } from '../shared/reclaim'
+import { DEFAULT_AUTO_ANSWER } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
@@ -255,6 +256,10 @@ function defaults(): Config {
     // pane that is idle with an unfinished answer on it, and it stops after three in a row.
     // Off by default would ship a feature whose entire value is that nobody has to notice.
     recover: DEFAULT_RECOVER,
+    // Off. Every question it would press through is one a CLI chose to ask - most often
+    // "may I edit this file" - so shipping it on would answer a permission prompt on a
+    // desk whose owner never asked for that. Settings turns it on in one line.
+    autoAnswer: DEFAULT_AUTO_ANSWER,
     // On, but it only ever acts on a machine the kernel says is out of memory, and never on
     // a pane that is working or waiting for a person. Closing keeps the History row, the
     // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
@@ -314,6 +319,11 @@ export function getConfig(): Config {
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
       recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
+      autoAnswer: {
+        ...DEFAULT_AUTO_ANSWER,
+        ...(base.autoAnswer ?? {}),
+        ...(raw.autoAnswer ?? {})
+      },
       reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
       dispatch: { ...base.dispatch, ...(raw.dispatch ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
