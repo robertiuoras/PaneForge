@@ -1229,6 +1229,36 @@ by closing the pane. `npm run test:reclaim`.
   its own minute timer in `App.tsx` (time passing is the thing it watches, and nothing about
   a quiet pane changes to announce it), `npm run test:reclaim`.
 
+**And a restore is the one moment N agents start in a single tick.** Everything above
+gives memory back a pane at a time; the restore dialog was handing it out six at a time
+with every box ticked, which on 2026-08-17 produced a desk that came back and would not
+accept a keystroke (16 GB, kernel pressure 2, six `claude` CLIs at ~197 MB apiece before
+any of them compiled anything). `restorePlan` in `shared/capacity.ts` decides how many
+start ticked: everything at normal pressure, **two** at warn, **one** at critical, and
+never zero while there is a pane to offer — same rule as the window never being emptied.
+The numbers are small on purpose and that is only safe because nothing is lost: an
+unticked pane keeps its conversation and its screen and is one click away in History. It
+is a **preselect, never a cap** — a restore somebody wants whole is theirs to tick. The
+reading comes from `readPressure()` at the moment the offer is built, not from
+`lastPressure`, which on a cold launch has not necessarily sampled yet and would report
+`normal` on exactly the launch this exists for. The silent paths (an update restart,
+`restoreAfterRestart: 'always'`) are deliberately untouched: capping them would drop panes
+with nobody asked. `npm run test:capacity`, red-proofed against the warn branch.
+
+## Why the app quit
+
+Electron never says what triggered a quit, and on 2026-08-17 "why did PaneForge close by
+itself" could not be answered from anything on the machine: the exit line and the mac swap
+script proved only that the quit went through `before-quit` rather than through the last
+window closing. So every path that quits on purpose now names itself — `quitting(...)` in
+`main/index.ts`, from the single-instance loser, the unopened test copy, the handoff
+receiver, the idle clock, an update install and the admin relaunch — and `before-quit`
+writes that name to `updater.log` with the pane count. A quit that leaves it empty logs
+`nothing in the app asked - Cmd-Q, the app menu, or a signal from the OS`, which is the
+answer that was missing: Chromium turns a SIGTERM into exactly this shape of graceful
+shutdown, so "nothing in the app asked" and "the window was closed" are different facts
+and the log now separates them.
+
 ## Gotchas that look like mistakes
 
 - `package.json` `description` is the bare word "PaneForge" — electron-builder writes it

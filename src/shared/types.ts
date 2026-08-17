@@ -1487,6 +1487,14 @@ export interface RestoreOffer {
   at: number
   /** false means the last run ended in a crash or a power cut */
   clean: boolean
+  /**
+   * How many of `panes` start ticked. Fewer than all of them when the machine is already
+   * short of memory: restoring is the one moment N agent CLIs start in one tick, and that
+   * is what "six panes came back and I cannot type" was. A preselect, never a cap.
+   */
+  fits: number
+  /** Why fewer than all are ticked. Empty when everything fits. */
+  memoryNote: string
 }
 
 export interface RestoreAnswer {

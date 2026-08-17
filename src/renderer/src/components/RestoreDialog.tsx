@@ -22,10 +22,18 @@ interface Props {
 }
 
 export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: Props): JSX.Element {
-  // Everything that can actually be reopened starts ticked: the common answer is
-  // "all of it", and a pane whose folder or agent is gone cannot be started at all.
+  // Everything that can actually be reopened starts ticked - the common answer is
+  // "all of it", and a pane whose folder or agent is gone cannot be started at all -
+  // EXCEPT on a machine already short of memory, where main sends a smaller `fits`.
+  // Restoring is the one moment N agent CLIs start in a single tick, and six of them
+  // on a laptop at pressure 2 is the desk that comes back unable to take a keystroke.
+  // Nothing is lost by ticking fewer: the rest keep their conversation and their screen
+  // and are one click away in History. Still a preselect - every box is still yours.
   const [ticked, setTicked] = useState<string[]>(() =>
-    offer.panes.filter((p) => !p.gone).map((p) => p.id)
+    offer.panes
+      .filter((p) => !p.gone)
+      .slice(0, Math.max(1, offer.fits ?? Number.MAX_SAFE_INTEGER))
+      .map((p) => p.id)
   )
   const [always, setAlways] = useState(false)
   const restore = useRef<HTMLButtonElement>(null)
@@ -90,6 +98,8 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
             </div>
           ))}
         </div>
+
+        {offer.memoryNote && <div className="confirm-body">{offer.memoryNote}</div>}
 
         {offer.extra.length > 0 && (
           <div className="confirm-body">

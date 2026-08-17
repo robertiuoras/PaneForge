@@ -373,6 +373,63 @@ export function offloadPlan(
   return ask ? 'ask' : 'remote'
 }
 
+/** What a launch may bring back from the saved desk, and why it is fewer than all of it. */
+export interface RestorePlan {
+  /** How many of the saved panes are ticked to start. Never 0 while there is one to offer. */
+  fits: number
+  /** The sentence under the list. Empty when everything fits and nothing needs saying. */
+  note: string
+}
+
+/**
+ * How much of the last desk to bring back at once.
+ *
+ * Restoring is the one moment the app starts N agent CLIs in a single tick, and each one
+ * is ~190 MB before it has compiled anything (measured on this desk: one `next build`
+ * worker held 1442 MB on its own). On a machine the kernel is already reclaiming from,
+ * six of them at once is the difference between a desk and a laptop that will not accept
+ * a keystroke - reported here on 2026-08-17, at pressure 2, with six panes restored.
+ *
+ * So the pressure reading decides, and it decides small. The budget arithmetic is not the
+ * binding constraint on the machines this happens to: a quarter of 16 GB divides into ~19
+ * panes, which is not an answer anybody could use. What makes a small number safe rather
+ * than lossy is that nothing is lost - the panes left unticked keep their conversation and
+ * their screen, and come back from History with one click each.
+ *
+ * It is a PRESELECT, never a cap: the list is ticked this way and the person may tick the
+ * rest. A restore they asked for whole is theirs to have.
+ */
+export function restorePlan(saved: number, m: Machine): RestorePlan {
+  const offered = Math.max(0, saved)
+  if (offered <= 1) return { fits: offered, note: '' }
+  const v = assess({ ...m, localPanes: m.localPanes })
+  const each = v.nextPaneMb
+
+  if (m.pressure === 'critical') {
+    return {
+      fits: 1,
+      note: `This machine is out of memory right now, and each pane brings back an agent costing ~${each} MB. One is ticked; the rest are in History whenever you want them.`,
+    }
+  }
+  if (m.pressure === 'warn') {
+    return {
+      fits: Math.min(offered, 2),
+      note: `Memory is tight - each pane brings back an agent costing ~${each} MB, and starting ${offered} at once is what makes typing lag. The rest are in History, one click each.`,
+    }
+  }
+  // Not under pressure: the only limit left is the arithmetic, and on any machine that
+  // saved this many panes it will not bite. Said plainly rather than silently applied.
+  const room = v.roomFor ?? offered
+  const fits = Math.max(1, Math.min(offered, room))
+  return {
+    fits,
+    note:
+      fits < offered
+        ? `${offered} panes would hold about ${offered * each} MB of this machine's ${Math.round(m.totalMb / 1024)} GB. ${fits} are ticked; the rest are in History.`
+        : '',
+  }
+}
+
 /**
  * The project name a path belongs to, on either platform's separator.
  *
