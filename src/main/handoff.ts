@@ -26,10 +26,20 @@ import {
   type HandoffRepo,
   type HandoffResult
 } from '../shared/handoff'
+import { queuedNote } from '../shared/autoHandoff'
+import type { DevServer } from '../shared/devServers'
 import type { Session, StartSessionRequest } from '../shared/types'
 
 /** How much screen goes with the pane. Same order as the pane's own buffer cap. */
 const TAIL_BYTES = 200_000
+
+/**
+ * Re-checked here even though the sender checked it.
+ *
+ * The sender is another machine, so everything it says is a claim. This is the only thing
+ * between a payload and a script name being spoken into a shell on this desk.
+ */
+const SCRIPT = /^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,39}$/
 
 function git(cwd: string, args: string[], timeout = 60_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -79,6 +89,19 @@ export interface SendDeps {
   transcriptFileFor(cwd: string, resumeId: string): string | null
   deliver(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   deviceName(device: string): string
+  /**
+   * Whether this pane is mid-turn, or sitting on a question it drew on screen.
+   *
+   * A handoff kills the pty, and a pty killed mid-turn takes the answer being written with
+   * it - the far end resumes from a transcript holding only what the CLI already flushed.
+   * So a busy pane is handed to `queue` instead of moved, and moves when its turn ends.
+   * Absent means "never busy", which is the behaviour this had before the queue existed.
+   */
+  busy?(s: Session): boolean
+  /** Take this pane, to be moved to `device` once it goes quiet. */
+  queue?(id: string, device: string, closeReceiverWhenDone: boolean): void
+  /** The dev servers this pane has running, as script names its repo really has. */
+  devServersOf?(id: string, cwd: string): Promise<{ servers: DevServer[]; notes: string[] }>
 }
 
 /**
@@ -93,9 +116,24 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
     .filter((s) => !s.id.startsWith('@') && s.status !== 'exited')
     .filter((s) => wanted.size === 0 || wanted.has(s.id))
   const out: HandoffItem[] = []
+  const closeAfter = request.closeReceiverWhenDone === true
   for (const pane of panes) {
+    // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
+    // out loud that an unfinished answer is expendable.
+    if (request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
+      deps.queue(pane.id, device, closeAfter)
+      out.push({
+        id: pane.id,
+        title: pane.title,
+        ok: false,
+        pending: true,
+        error: queuedNote(deps.deviceName(device)),
+        notes: []
+      })
+      continue
+    }
     try {
-      out.push(await sendOne(deps, device, pane, request.closeReceiverWhenDone === true))
+      out.push(await sendOne(deps, device, pane, closeAfter))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -112,13 +150,27 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   if (typeof repo === 'string') return { id: pane.id, title: pane.title, ok: false, error: repo, notes }
   if (!repo) notes.push('Not a git repo - only the pane moved, not code')
 
+  // Read BEFORE the pane is killed: the tree is the only record of what it was running,
+  // and `kill()` takes the whole tree with it.
+  let dev: DevServer[] = []
+  if (deps.devServersOf) {
+    try {
+      const found = await deps.devServersOf(pane.id, pane.cwd)
+      dev = found.servers
+      notes.push(...found.notes)
+    } catch {
+      /* a locked-down process table is a missing note, never a failed handoff */
+    }
+  }
+
   let file: Buffer | null = null
   const payload: HandoffPayload = {
     spec,
     senderRoot: deps.root(),
     repo: repo ?? undefined,
     tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
-    closeReceiverWhenDone: closeReceiverWhenDone || undefined
+    closeReceiverWhenDone: closeReceiverWhenDone || undefined,
+    dev: dev.length ? dev : undefined
   }
   if (spec.resumeId) {
     const path = deps.transcriptFileFor(pane.cwd, spec.resumeId)
@@ -191,6 +243,14 @@ export interface ReceiveDeps {
   historyDir(): string
   /** where this machine's Claude CLI keeps transcripts for a folder */
   claudeProjectDir(cwd: string): string
+  /**
+   * Start a dev server the sender had running, in the pane's folder here.
+   *
+   * Given a SCRIPT NAME, never a command: the command is rebuilt from this machine's own
+   * package.json and lockfile, so a payload can only ever name something the repo's own
+   * author wrote. Returns the note to report, or null when it started cleanly.
+   */
+  startDev?(dir: string, script: string): string | null
 }
 
 /**
@@ -248,6 +308,21 @@ export async function receiveHandoff(
   }
 
   const session = await deps.start(req)
+
+  // After the agent's pane, and only after: a dev server is what the pane was working ON,
+  // and a failure to start one may not cost the handoff the pane it just completed.
+  for (const d of payload.dev ?? []) {
+    if (!SCRIPT.test(d.script)) {
+      notes.push(`Refused a dev server name from the wire: ${JSON.stringify(d.script).slice(0, 40)}`)
+      continue
+    }
+    try {
+      const note = deps.startDev?.(req.cwd, d.script)
+      notes.push(note ?? `Restarted the dev server here: run ${d.script}`)
+    } catch (err) {
+      notes.push(`Could not restart ${d.script}: ${(err as Error).message}`)
+    }
+  }
   return { ok: true, session, notes }
 }
 

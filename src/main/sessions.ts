@@ -1048,6 +1048,23 @@ export class SessionManager extends EventEmitter {
     return live.meta.piping
   }
 
+  /**
+   * Paint a pane as on its way to another device, or take the paint off.
+   *
+   * Set the moment a move starts and cleared on every way out of one, including a refusal.
+   * Two things read it: the pane, which should say it is leaving before it does, and
+   * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
+   * the same memory and lose the work, since the far end is about to resume from it.
+   */
+  setHandingOff(id: string, on: boolean): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    if (!!s.meta.handingOff === on) return
+    if (on) s.meta.handingOff = true
+    else delete s.meta.handingOff
+    this.emitSessions()
+  }
+
   kill(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return

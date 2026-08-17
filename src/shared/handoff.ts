@@ -9,6 +9,7 @@
 // The sender then closes its pane; the mirror of the new one arrives through
 // the existing session stream, so the desk that handed off keeps watching.
 
+import type { DevServer } from './devServers'
 import type { Session, StartSessionRequest } from './types'
 
 /** How the receiver gets the code: the repo's own remote, never bytes on this link. */
@@ -33,12 +34,30 @@ export interface HandoffPayload {
   tail?: string
   /** close the receiver only after this transferred pane ends and nothing else runs there */
   closeReceiverWhenDone?: boolean
+  /**
+   * The dev servers this pane had running, as package.json SCRIPT names.
+   *
+   * Never a command line. The receiver builds the command from its own package.json and
+   * its own lockfile, so the worst a payload can name is a script that repo's own author
+   * wrote - see `shared/devServers.ts` for why the observed argv is the wrong thing to
+   * move (a hard-coded port, and a node_modules the far end may not have).
+   */
+  dev?: DevServer[]
 }
 
 /** What the handoff chooser is allowed to move. No ids is the deliberate bulk action. */
 export interface HandoffRequest {
   ids?: string[]
   closeReceiverWhenDone?: boolean
+  /**
+   * A pane that is mid-turn is queued and moved when the turn ends, rather than refused.
+   *
+   * Default. The alternative - moving it now - kills the pty mid-answer, and the far end
+   * resumes from a transcript that only holds turns the CLI has already flushed, so the
+   * answer being written is simply lost. Set false only where the caller has already
+   * decided the turn does not matter.
+   */
+  waitForTurn?: boolean
 }
 
 export interface HandoffResult {
@@ -56,6 +75,14 @@ export interface HandoffItem {
   ok: boolean
   error?: string
   notes: string[]
+  /**
+   * Not moved yet and not refused: the pane was mid-turn and is queued.
+   *
+   * `ok` stays false because nothing has travelled - a report that said yes here would be
+   * the "typed but never sent" shape of lie, where the screen agrees and the machine has
+   * not done the thing.
+   */
+  pending?: boolean
 }
 
 /**

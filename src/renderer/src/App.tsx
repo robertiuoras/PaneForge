@@ -71,6 +71,7 @@ import {
   type Verdict
 } from '../../shared/capacity'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import { autoHandoffPlan, movable as handoffMovable, DEFAULT_AUTO_HANDOFF } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
@@ -1743,6 +1744,106 @@ export default function App(): JSX.Element {
    * Runs beside the trim rather than inside it: they answer to the same reading but they
    * are not the same promise, and the trim must keep working if this is switched off.
    */
+  /**
+   * ...and the rung ABOVE closing: move the pane to the machine that has room.
+   *
+   * Same reading, same refusals, one better answer. `reclaim` gives the memory back by
+   * ending the work; a handoff gives the memory back and the work carries on over there,
+   * with its conversation, its branch and its screen. So this runs first and marks what it
+   * takes (`handingOff`), which is the flag the sweep below refuses to close.
+   *
+   * The peers are asked only once something is actually eligible: `remoteProjects` is a
+   * round trip per device over the link, and a machine under memory pressure is the last
+   * place to spend one finding out there was nothing to move.
+   */
+  const handoffBlocked = useRef<Record<string, number>>({})
+  const handoffSweeping = useRef(false)
+  const sweepHandoff = useCallback(() => {
+    const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+    if (!capacity || capacity.level === 'ok' || !cfg.enabled || handoffSweeping.current) return
+    const now = Date.now()
+    const panes = sessionsRef.current.map((s) => ({
+      id: s.id,
+      state: fleetState(s),
+      lastKeyboard: s.lastKeyboard,
+      focused: s.id === activeRef.current,
+      visible: visibleIds.has(s.id),
+      remote: !!s.remote,
+      handingOff: !!s.handingOff,
+      // A live question is drawn on a screen and lives in no transcript: resuming over
+      // there comes back with the question gone and nobody asked. Never moved.
+      asking: !!s.ask || !!s.bell,
+      projectName: projectNameOf(s.cwd)
+    }))
+    const worthAsking = panes.some(
+      (p) =>
+        !p.focused &&
+        !p.visible &&
+        !p.remote &&
+        !p.handingOff &&
+        handoffMovable(p) &&
+        now - p.lastKeyboard >= Math.max(0, cfg.minIdleMinutes) * 60_000 &&
+        !((handoffBlocked.current[p.id] ?? 0) > now)
+    )
+    if (!worthAsking) return
+    handoffSweeping.current = true
+    void (async () => {
+      try {
+        const state = await api.remoteState()
+        const online = state.peers.filter((p) => p.status === 'online')
+        if (!online.length) return
+        const candidates = await Promise.all(
+          online.map(async (p) => ({
+            device: p.id,
+            deviceName: p.name,
+            online: true,
+            projects: await api
+              .remoteProjects(p.id)
+              .catch(() => [] as { name: string; path: string }[])
+          }))
+        )
+        const plan = autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, Date.now())
+        for (const move of plan) {
+          console.info(
+            `capacity: ${capacity.level}, moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
+          )
+          const items = await api.handoffToDevice(move.device, [move.id], false, true)
+          const item = items[0]
+          if (item?.ok) {
+            console.info(`handoff: ${move.id} is now running on ${move.deviceName}`)
+          } else {
+            // A repo that cannot be pushed will not become pushable in fifteen seconds, and
+            // retrying it every reading is how an automatic thing becomes noise.
+            handoffBlocked.current[move.id] = Date.now() + Math.max(1, cfg.cooldownMinutes) * 60_000
+            // ...and drop the ones that have served their time. A cooldown map on a desk
+            // that runs for weeks is a leak nobody would ever see: it is only ever read
+            // through `> now`, so an expired entry changes no decision and simply stays.
+            for (const [id, until] of Object.entries(handoffBlocked.current)) {
+              if (until <= Date.now()) delete handoffBlocked.current[id]
+            }
+            console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
+          }
+        }
+      } catch {
+        /* a peer that cannot be asked is a peer that cannot be used - the sweep below still runs */
+      } finally {
+        handoffSweeping.current = false
+      }
+    })()
+  }, [capacity, visibleIds, config?.autoHandoff])
+
+  // Twice: on a reading changing, and on a clock. A desk that is full and quiet emits no
+  // session events at all - which is exactly the desk this exists for, and the one a
+  // change-driven effect would never sweep.
+  useEffect(() => {
+    sweepHandoff()
+    const timer = window.setInterval(sweepHandoff, 60_000)
+    return () => window.clearInterval(timer)
+    // Deliberately NOT `sessions`: that changes on every byte a pane prints, and an
+    // interval re-armed on every change is an interval that never fires. The reading
+    // (`capacity`) re-arms it, and everything else is read fresh through `sessionsRef`.
+  }, [sweepHandoff])
+
   useEffect(() => {
     if (!capacity) return
     const cfg = config?.reclaim ?? DEFAULT_RECLAIM
@@ -1753,7 +1854,10 @@ export default function App(): JSX.Element {
         lastKeyboard: s.lastKeyboard,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
-        remote: !!s.remote
+        remote: !!s.remote,
+        // A pane already on its way to the other machine is not this sweep's to close:
+        // the same memory comes back either way, and closing it loses the move.
+        handingOff: !!s.handingOff
       })),
       capacity,
       cfg,
@@ -1790,7 +1894,8 @@ export default function App(): JSX.Element {
           lastKeyboard: s.lastKeyboard,
           focused: s.id === activeRef.current,
           visible: false,
-          remote: !!s.remote
+          remote: !!s.remote,
+          handingOff: !!s.handingOff
         })),
         cfg,
         Date.now()
@@ -3114,7 +3219,19 @@ export default function App(): JSX.Element {
                         asks you
                       </span>
                     )}
-                    {s.status === 'exited' ? (
+                    {/* A pane on its way out says so, and says it here for the same reason
+                        the chip above is here: the sub-line has no room and this is
+                        transient - it takes the clock's place for the few seconds a move
+                        lasts, or for as long as a queued pane's turn runs. It cannot appear
+                        beside "asks you": a pane holding a question is never moved. */}
+                    {s.handingOff ? (
+                      <span
+                        className="chip"
+                        title="Moving to a paired device. A pane mid-turn goes as soon as its turn ends; nothing is killed to make it happen."
+                      >
+                        moving
+                      </span>
+                    ) : s.status === 'exited' ? (
                       <span className="chip dead">exited {s.exitCode ?? ''}</span>
                     ) : s.runSince ? (
                       <Elapsed since={s.runSince} title="This turn" />

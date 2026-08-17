@@ -121,7 +121,10 @@ import {
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
-import { handoffReceiverCanQuit } from '../shared/handoff'
+import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
+import { HandoffQueue } from './handoffQueue'
+import { devServersOf, localDevCommand } from './devServers'
+import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
   clearDesk,
   MAX_DESK_AGE_MS,
@@ -909,7 +912,8 @@ const remote = new Remote({
         place: (req) => laneFor(req),
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
-        claudeProjectDir: projectDir
+        claudeProjectDir: projectDir,
+        startDev: (dir, script) => startDevServer(dir, script)
       },
       payload,
       file
@@ -1977,8 +1981,46 @@ ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
 // Handing panes the OTHER way: this machine's live panes move to that device and
 // keep going there. The push happens before anything is killed here, and a pane
 // whose handoff fails stays open - see main/handoff.ts.
-ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean) =>
-  sendHandoff(
+/**
+ * Mid-turn, from the pty's point of view: an answer is being written, or a question is on
+ * screen waiting for somebody. Either one makes killing the pane destructive, and a
+ * handoff ends in a kill.
+ */
+function paneBusy(s: Session): boolean {
+  return (
+    s.status === 'working' ||
+    s.status === 'starting' ||
+    s.stalledSince !== undefined ||
+    !!s.bell ||
+    !!s.ask
+  )
+}
+
+/**
+ * Start a dev server a handoff brought over, in a pane of its own.
+ *
+ * The command is rebuilt HERE from this machine's package.json and lockfile - the payload
+ * only ever named a script. It goes into an ordinary `shell` pane rather than being
+ * spawned invisibly, so it is on screen, it is killed with the pane, and `strays.ts`
+ * already knows how to sweep whatever it leaves behind.
+ */
+function startDevServer(dir: string, script: string): string | null {
+  const cmd = localDevCommand(dir, script)
+  if (!cmd) return `Dev server not restarted - this machine's copy has no "${script}" script`
+  void manager.start({ cwd: dir, agent: 'shell', title: `dev: ${script}`, prompt: cmd })
+  // What is TRUE at this point is that a pane exists with that command typed into it.
+  // Whether the server came up is decided seconds later inside that shell - a port
+  // already taken over here is an EADDRINUSE nothing on this side of the pty ever sees.
+  // Saying "restarted" would be a success message shaped exactly like the failure, which
+  // is the one thing a report may never be; the pane is on screen, so it can be looked at.
+  return `Started a pane running ${cmd} - check it came up (a port in use here would not)`
+}
+
+/** One place both the button and the queue go through, so they cannot drift apart. */
+function runHandoff(device: string, request: HandoffRequest): Promise<HandoffItem[]> {
+  const wanted = request.ids ?? []
+  for (const id of wanted) manager.setHandingOff(id, true)
+  return sendHandoff(
     {
       root: projectsRoot,
       list: () => manager.list(),
@@ -1987,15 +2029,56 @@ ipcMain.handle('remote:handoff', (_e, device: string, ids?: string[], closeRecei
       tailOf: (id, bytes) => history.tail(id, bytes),
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
-      deviceName: (dev) => remote.peerName(dev)
+      deviceName: (dev) => remote.peerName(dev),
+      busy: paneBusy,
+      queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      devServersOf: (id, cwd) => {
+        const root = manager.roots().find((r) => r.id === id)
+        return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [] })
+      }
     },
-    String(device),
-    {
+    device,
+    request
+  ).then((items) => {
+    // The mark survives only where something is still going to happen to the pane: a
+    // queued one keeps it, and everything else - moved, refused, or never started - has
+    // it taken off, or reclaim would never touch that pane again.
+    for (const item of items) if (!item.pending) manager.setHandingOff(item.id, false)
+    return items
+  })
+}
+
+/**
+ * The queue that makes a mid-turn handoff mean "as soon as the turn ends" rather than
+ * "the turn is lost". Nothing here kills anything: see main/handoffQueue.ts.
+ */
+const handoffQueue = new HandoffQueue({
+  list: () => manager.list(),
+  busy: paneBusy,
+  send: (id, device, closeAfter) =>
+    runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false }),
+  mark: (id, on) => manager.setHandingOff(id, on),
+  deviceName: (dev) => remote.peerName(dev),
+  config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
+  log: (line) => console.info(line)
+})
+
+ipcMain.handle(
+  'remote:handoff',
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) =>
+    runHandoff(String(device), {
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
-      closeReceiverWhenDone: closeReceiverWhenDone === true
-    }
-  )
+      closeReceiverWhenDone: closeReceiverWhenDone === true,
+      waitForTurn: waitForTurn !== false
+    })
 )
+ipcMain.handle('remote:handoffPending', () =>
+  handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
+)
+ipcMain.handle('remote:handoffCancel', (_e, id: string) => {
+  handoffQueue.drop(String(id))
+  return true
+})
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the

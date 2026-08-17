@@ -232,8 +232,19 @@ try {
   }
   chrome.kill()
   await sleep(300)
-  rmSync(profile, { recursive: true, force: true })
-  rmSync(tmp, { recursive: true, force: true })
+  // Chrome keeps writing its profile for a moment after the kill, so a single rm races it
+  // and throws ENOTEMPTY - which failed the whole run AFTER its one assertion had passed.
+  // A tidy-up may never be the reason a test reports red.
+  for (const dir of [profile, tmp]) {
+    for (let i = 0; i < 5; i++) {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+        break
+      } catch {
+        await sleep(200)
+      }
+    }
+  }
 }
 
 console.log(failures ? `\n${failures} of ${checks} failed` : `\nall ${checks} sticky-select checks passed`)

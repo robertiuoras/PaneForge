@@ -92,6 +92,15 @@ export interface ReclaimPane {
   visible: boolean
   /** Another device's pty, mirrored here. Closing it frees no agent on this machine. */
   remote: boolean
+  /**
+   * Already on its way to another device - see shared/autoHandoff.ts.
+   *
+   * Closing it would be the same memory saved and the work lost: the move is mid-flight,
+   * so the far end is about to start the pane this one would have been reopened from.
+   * Moving beats closing whenever both are available, which is why the ladder puts the
+   * handoff sweep above this one.
+   */
+  handingOff?: boolean
 }
 
 export interface Reclaim {
@@ -122,7 +131,7 @@ export function reclaimPlan(
   const minIdle = Math.max(0, cfg.minIdleMinutes) * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.visible && !p.remote && CLOSEABLE.has(p.state))
+    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
     .filter((p) => now - p.lastKeyboard >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
     // morning is the safer one to close than the one that finished a minute ago.
@@ -166,7 +175,7 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && CLOSEABLE.has(p.state))
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
     .filter((p) => now - p.lastKeyboard >= minIdle)
     .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
 

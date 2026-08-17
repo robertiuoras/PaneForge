@@ -1242,6 +1242,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
+| `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
+| `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
@@ -1334,6 +1336,65 @@ reading comes from `readPressure()` at the moment the offer is built, not from
 `normal` on exactly the launch this exists for. The silent paths (an update restart,
 `restoreAfterRestart: 'always'`) are deliberately untouched: capping them would drop panes
 with nobody asked. `npm run test:capacity`, red-proofed against the warn branch.
+
+## ...and before it closes one, it tries to move it
+
+Closing a finished pane gives the memory back and stops the work. A paired device sitting
+idle is the better answer, and every piece of it already existed: `Hand off` moves a pane
+whole, `offloadTarget` already knew which peer could take a project. Nothing joined them,
+so the app's only automatic answer to a full machine was the destructive one. The ladder is
+now four rungs, each firing only where the one above it did not solve it: trim scrollback
+(~5%) → start the NEXT pane over there → **move a finished pane over there** → close it.
+`shared/autoHandoff.ts` is rung three; `npm run test:autohandoff`.
+
+- **A pane mid-turn is queued, never killed.** A handoff ends in `kill()`, and a pty killed
+  mid-answer loses that answer for good: the far end resumes from the transcript file, which
+  holds only turns the CLI has already flushed. Refusing a busy pane would be honest and
+  useless, since the pane worth moving is usually the one working - so `main/handoffQueue.ts`
+  holds it and moves it the instant the turn ends. That is what "hand it off mid-turn" means
+  here. A pane that never goes quiet **expires** after `waitMinutes` and stays, said out
+  loud; nothing is ever killed to make the queue progress.
+- **A pane holding a question is never moved, queued or otherwise.** The chooser is drawn on
+  a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
+  question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the
+  best moment to move a pane and a live question is the one moment that must not be.
+- Every other refusal is `reclaim.ts`'s, verbatim: pressure is the trigger and never a
+  clock, the focused pane and anything on screen are left alone, a mirror is somebody else's
+  pty, and the window is never emptied. A failed move puts that pane on a `cooldownMinutes`
+  hold - a repo that cannot be pushed will not become pushable in fifteen seconds.
+- **`handingOff` is on the Session, and `reclaim.ts` refuses it.** Without it the closing
+  sweep and the moving sweep race over the same pane, and closing wins by being faster: the
+  same memory back, the work lost. Every exit from a move clears it, refusals included, or
+  that pane is one nothing will ever touch again.
+- The sweep runs in the renderer beside `reclaim` (it needs `visibleIds`, which main does
+  not have) **and on a 60s clock**: a desk that is full and quiet emits no session events,
+  and that is precisely the desk this exists for.
+
+**And the dev server travels with it.** `kill()` takes the pty's whole tree, so `npm run
+dev` died here and nothing over there brought it back - a pane arriving at a project whose
+server is not running reads as the handoff half working. `shared/devServers.ts`,
+`npm run test:devservers`.
+
+- **The server is routinely not a descendant of the pane.** Measured here 2026-08-17:
+  `node <repo>/node_modules/next/dist/bin/next dev -p 3009` was on **ppid 1**, its npm parent
+  long exited, so a walk down the pty's tree finds nothing. A process is attributed by the
+  tree OR by its command line naming a path inside the pane's repo, and the second is what
+  catches the case that matters.
+- **What is running is not what would be typed**, so the observed argv is not what travels.
+  Nobody types that line; they type `npm run dev`, and the port came out of the script.
+  Re-issuing it hard-codes a port that is taken over there and runs a binary out of a
+  `node_modules` the receiver may not have. So an observed process is turned back into a
+  package.json **script name**, and the receiver rebuilds the command from its own
+  package.json and its own lockfile.
+- **The payload therefore cannot name a command, only a script**, re-validated against
+  `SCRIPT_NAME` on arrival because a check made on the other machine is a claim. The worst a
+  malicious payload can reach is a script that repo's own author wrote. It lands in an
+  ordinary `shell` pane - on screen, killed with the pane, already swept by `strays.ts`.
+- **An ambiguous match is dropped and named**, never guessed: a tool matching two scripts
+  (neither called `dev`) reports which two. `npm run build` and `npm test` are not dev
+  scripts and never travel - re-running those on the far end repeats work at best.
+- Only long-running script names travel: `DEV_SCRIPT` is `dev|start|serve|watch|preview`,
+  with or without a `:suffix`.
 
 ## Why the app quit
 

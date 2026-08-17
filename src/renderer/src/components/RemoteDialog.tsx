@@ -549,8 +549,17 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
     try {
       const items = await api.handoffToDevice(id, handoff?.ids, Boolean(handoff))
       const ok = items.filter((i) => i.ok).length
-      const bad = items.filter((i) => !i.ok)
+      // Queued is neither moved nor refused, and saying "moved" about a pane still running
+      // here is the shape of lie this app keeps having to un-tell. It gets its own sentence.
+      const held = items.filter((i) => i.pending)
+      const bad = items.filter((i) => !i.ok && !i.pending)
       if (items.length === 0) flash('No local panes to hand off')
+      else if (bad.length === 0 && held.length)
+        flash(
+          ok
+            ? `Moved ${ok} to ${name}. ${held.length} still working - ${held.length === 1 ? 'it goes' : 'they go'} as soon as the turn ends.`
+            : `${held.length === 1 ? 'That pane is' : `${held.length} panes are`} mid-turn - ${held.length === 1 ? 'it moves' : 'they move'} to ${name} as soon as the turn ends. Nothing was interrupted.`
+        )
       else if (bad.length === 0)
         flash(
           handoff
