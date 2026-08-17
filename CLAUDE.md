@@ -969,6 +969,21 @@ the conversation and not one line of the screen.
   cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
   after it. `npm run test:scrollback`.
 
+**And the prompt tags come back with it.** The rail is built from KEYSTROKES on their way
+to the pty, which is what makes it work for every agent - and it is why a reopened pane had
+none: a restore replays bytes, nobody typed anything, `feedDraft` never fires. The app
+restarts itself for every update, so most panes on a desk carried no tags at all, and "the
+tag to scroll to my prompt does nothing" is usually "there is no tag". What can be recovered
+is the CLI's own echo: measured in a live Claude Code pane, a submitted prompt is drawn on
+its own line as `❯ <text>`, on the same buffer line the marker had anchored to (26 and 26).
+`seedMarks` scans the replayed buffer for those and registers a marker on each, once, and
+only while the rail is empty. **`❯` only, deliberately not `>`** - that starts a quoted line,
+a diff line, a shell prompt and a markdown blockquote in an ANSWER, and burying six real
+tags under thirty quoted ones is how a rail stops being read; an agent whose echo this does
+not recognise is left exactly as it was. A rebuilt tag carries no time (`at: 0`), so
+`markLabel` prints the text alone rather than inventing a clock reading.
+`npm run test:promptecho`.
+
 **And `/clear` no longer takes the previous turn with it.** A CLI clearing its screen sends
 `CSI 2 J` *and* `CSI 3 J`, and the second deletes this window's scrollback — measured across
 the 128 pane logs on this machine: 73 of each, always paired, and no other erase-in-display
@@ -1246,6 +1261,9 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
 | `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
+| `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back — and the three refusals, of which the load-bearing one is a `npm run try` copy out of `dist\win-unpacked`: a Desktop shortcut pointing at a folder the next build deletes looks fine until it is pressed |
+| `npm run test:winfeed` | which release the Windows dev channel may point its feed at: the mac-only build skipped, the walk stopping at the first hit, and NOTHING installable resolving to nothing rather than to the newest anyway |
+| `npm run test:promptecho` | reading a submitted prompt back out of a restored pane's own output, so a reopened pane gets its rail tags back — with the negatives that keep the rail readable: a `>` quote in an answer, a diff, a shell prompt, and the live composer drawing the same marker inside its box |
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
@@ -1408,6 +1426,50 @@ server is not running reads as the handoff half working. `shared/devServers.ts`,
   scripts and never travel - re-running those on the far end repeats work at best.
 - Only long-running script names travel: `DEV_SCRIPT` is `dev|start|serve|watch|preview`,
   with or without a `:suffix`.
+
+## What Windows loses between restarts
+
+Two of them, neither announcing itself, and both read as the app being broken.
+
+- **The Desktop shortcut.** `build/installer.nsh` deleted `$DESKTOP\PaneForge.lnk` on every
+  run: `IfFileExists ... 0 +2` skips exactly ONE instruction, so the guard covered the RMDir
+  of the portable copy and left the Delete unconditional — and the macro runs from
+  `customInit` AND from `customUnInstall`, which is the old version's uninstaller during an
+  ordinary update. The guard is fixed, but a guard in the installer can only cover the
+  installer, so **the app puts a missing shortcut back on launch** (`main/winShortcut.ts`,
+  decision in `shared/winShortcut.ts`). It never rewrites one that is there — admin mode
+  repoints these, and rewriting would undo it silently — and it never claims the Desktop
+  from a `npm run try` copy, whose folder the next build deletes.
+- **The login entry.** `setLoginItemSettings` was only called when the SETTING changed, so
+  the HKCU Run value was written once and never checked again. That is "it does not reopen
+  after a restart" with the switch still reading On. Re-applied from config on every launch,
+  and only when it disagrees.
+
+Both are logged to `updater.log` (`windows ...`), because the answer to "why is there no
+shortcut" has to be readable after the fact. `npm run test:winshortcut`.
+
+## The Windows dev channel picks its own release
+
+Measured on the PC 2026-08-18, and the two failures end at one error card.
+`GET /repos/robertiuoras/PaneForge/releases` answers **200 with an empty array** —
+anonymously AND with the gh CLI token — while `gh release list` (GraphQL) lists everything;
+that array is what electron-updater's dev channel chooses from, so its provider gets
+`undefined` and throws `Cannot read properties of undefined (reading 'assets')`. And when
+the list does answer, the newest release is often one this platform cannot install: a build
+cut from the Mac publishes `latest-mac.yml` and two arm64 archives and nothing else, so the
+updater asks for `latest.yml` in that tag and throws `Cannot find latest.yml in the release`
+on every poll for ever — nothing in its loop looks at the release BELOW the newest.
+`pickRelease` answers the second one for the Mac and cannot be reused, because it reads the
+same broken list.
+
+So the dev channel stops asking GitHub's API to choose. Tags come from `gh release list`,
+each is asked directly whether it carries a `latest.yml` (one request against the public
+download URL — no token, no API), and the feed is pinned to the first that does with the
+**generic** provider, which reads exactly the file we just proved is there. There is then no
+list to be empty and no prerelease flag to interpret, so `allowPrerelease` is stood down
+under a live pin. Every failure — no `gh`, no network, nothing installable — leaves the feed
+exactly as it was. `PF_NO_WIN_PIN` exists only so `test:blindlist` stays about the blind
+list. `npm run test:winfeed`.
 
 ## Why the app quit
 
