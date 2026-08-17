@@ -74,6 +74,7 @@ import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../
 import {
   autoHandoffPlan,
   idleOffloadPlan,
+  offloadMinutes,
   movable as handoffMovable,
   DEFAULT_AUTO_HANDOFF,
   type AutoHandoff,
@@ -1771,6 +1772,12 @@ export default function App(): JSX.Element {
    * than closed over: these run on a timer, and a desk that is full and quiet emits no
    * session events at all.
    */
+  // Through a ref, so `handoffPanes` is stable. It is read inside two intervals, and a
+  // callback that changes identity whenever the grid is toggled re-arms the timer built on
+  // it - the clock sweep does not consult `visible` at all, so that would be a 60s counter
+  // reset by something it has no opinion about.
+  const visibleRef = useRef(visibleIds)
+  visibleRef.current = visibleIds
   const handoffPanes = useCallback(
     (): AutoPane[] =>
       sessionsRef.current.map((s) => ({
@@ -1778,7 +1785,7 @@ export default function App(): JSX.Element {
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
         focused: s.id === activeRef.current,
-        visible: visibleIds.has(s.id),
+        visible: visibleRef.current.has(s.id),
         remote: !!s.remote,
         handingOff: !!s.handingOff,
         // A live question is drawn on a screen and lives in no transcript: resuming over
@@ -1786,7 +1793,7 @@ export default function App(): JSX.Element {
         asking: !!s.ask || !!s.bell,
         projectName: projectNameOf(s.cwd)
       })),
-    [visibleIds]
+    []
   )
 
   /**
@@ -1807,6 +1814,13 @@ export default function App(): JSX.Element {
     ) => {
       if (handoffSweeping.current) return
       handoffSweeping.current = true
+      // Prune here rather than only after a failure. The cooldown map is written when a
+      // move is refused and was swept in the same branch, so one failure on a desk that
+      // then runs for weeks without another left its entry for ever - harmless (it is only
+      // read through `> now`) and still a map that only grows.
+      for (const [id, until] of Object.entries(handoffBlocked.current)) {
+        if (until <= Date.now()) delete handoffBlocked.current[id]
+      }
       void (async () => {
         try {
           const state = await api.remoteState()
@@ -1835,12 +1849,6 @@ export default function App(): JSX.Element {
               // A repo that cannot be pushed will not become pushable in fifteen seconds,
               // and retrying it every reading is how an automatic thing becomes noise.
               handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
-              // ...and drop the ones that have served their time. A cooldown map on a desk
-              // that runs for weeks is a leak nobody would ever see: it is only ever read
-              // through `> now`, so an expired entry changes no decision and simply stays.
-              for (const [id, until] of Object.entries(handoffBlocked.current)) {
-                if (until <= Date.now()) delete handoffBlocked.current[id]
-              }
               console.info(
                 `handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`
               )
@@ -1901,10 +1909,19 @@ export default function App(): JSX.Element {
    * `reclaim.idleCloseMinutes` exactly: its own minute timer, because the thing it watches
    * is time passing and nothing about a quiet pane changes to announce it.
    */
+  const handoffCfgRef = useRef(DEFAULT_AUTO_HANDOFF)
+  handoffCfgRef.current = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+  const offloadOn = (config?.autoHandoff?.enabled ?? true) ? offloadMinutes(handoffCfgRef.current) : 0
   useEffect(() => {
-    const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
-    if (!cfg.enabled || !(cfg.offloadIdleMinutes > 0)) return
+    if (!offloadOn) return
     const sweep = (): void => {
+      // Read through the ref, never through a dependency. Every config broadcast from main
+      // is a fresh object - a setting anywhere in the dialog gives `config.autoHandoff` a
+      // new identity - and an interval re-armed on each of those is an interval that never
+      // reaches 60s. Only the two numbers this effect actually branches on are dependencies.
+      const cfg = handoffCfgRef.current
+      const minutes = offloadMinutes(cfg)
+      if (!cfg.enabled || !minutes) return
       const now = Date.now()
       const panes = handoffPanes()
       const worthAsking = panes.some(
@@ -1913,20 +1930,20 @@ export default function App(): JSX.Element {
           !p.remote &&
           !p.handingOff &&
           handoffMovable(p) &&
-          now - p.lastKeyboard >= cfg.offloadIdleMinutes * 60_000 &&
+          now - p.lastKeyboard >= minutes * 60_000 &&
           !((handoffBlocked.current[p.id] ?? 0) > now)
       )
       if (!worthAsking) return
       runHandoffs(
         panes,
         (candidates, at) => idleOffloadPlan(panes, candidates, cfg, handoffBlocked.current, at),
-        `idle-offload: quiet ${cfg.offloadIdleMinutes} min`,
+        `idle-offload: quiet ${minutes} min`,
         cfg.cooldownMinutes
       )
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
-  }, [handoffPanes, runHandoffs, config?.autoHandoff])
+  }, [handoffPanes, runHandoffs, offloadOn])
 
   useEffect(() => {
     if (!capacity) return

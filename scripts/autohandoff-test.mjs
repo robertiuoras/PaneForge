@@ -36,6 +36,7 @@ const {
   movable,
   queueVerdict,
   queuedNote,
+  offloadMinutes,
   DEFAULT_AUTO_HANDOFF,
   IDLE_OFFLOAD_MINUTES
 } = createRequire(import.meta.url)(outfile)
@@ -268,6 +269,24 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   }
 
   check('the switch turns it on to something longer than the pressure sweep waits', IDLE_OFFLOAD_MINUTES > DEFAULT_AUTO_HANDOFF.minIdleMinutes)
+
+  // The value comes off config.json and, since `pf-ctl call config:set` exists, off a
+  // script - so TypeScript is not standing between it and this code. Every non-number is
+  // OFF, never a threshold arrived at by coercion: `true > 0` is true and `true * 60_000`
+  // is one minute, which would turn a switch somebody wrote as a boolean into "move
+  // anything quiet for sixty seconds" - the opposite of the conservative default.
+  for (const bad of [true, '30', '', null, undefined, NaN, Infinity, -5, 0, {}]) {
+    eq(`offloadIdleMinutes ${JSON.stringify(bad) ?? String(bad)} is off, not a threshold`, offloadMinutes({ offloadIdleMinutes: bad }), 0)
+  }
+  eq('a real number is taken as given', offloadMinutes({ offloadIdleMinutes: 45 }), 45)
+  {
+    const panes = [pane({ id: 'x', lastKeyboard: NOW - 2 * MIN, visible: true }), pane({ id: 'keep', lastKeyboard: NOW - 2 * MIN })]
+    eq(
+      'a boolean offloadIdleMinutes moves nothing, rather than everything quiet for a minute',
+      idleOffloadPlan(panes, peers, { ...on, offloadIdleMinutes: true }, {}, NOW).length,
+      0
+    )
+  }
 }
 
 console.log(`autohandoff: ${checks} checks passed`)

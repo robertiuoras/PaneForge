@@ -101,6 +101,20 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
  */
 export const IDLE_OFFLOAD_MINUTES = 30
 
+/**
+ * How long the clock waits, or 0 for off. The ONE reader of `offloadIdleMinutes`.
+ *
+ * A plain `> 0` is not enough here and TypeScript does not cover it: this value comes off
+ * config.json and, since `pf-ctl call config:set` exists, off a script. `true > 0` is true
+ * and `true * 60_000` is one minute, so a switch written as a boolean by hand would silently
+ * turn into "move anything quiet for a minute" - the opposite of the conservative default,
+ * arrived at through a value nobody typed as a number.
+ */
+export function offloadMinutes(cfg: Pick<AutoHandoffConfig, 'offloadIdleMinutes'>): number {
+  const m = cfg.offloadIdleMinutes
+  return typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : 0
+}
+
 export interface AutoPane {
   id: string
   state: FleetState
@@ -203,7 +217,7 @@ export function idleOffloadPlan(
   now = 0
 ): AutoHandoff[] {
   if (!cfg.enabled) return []
-  const minutes = Math.max(0, cfg.offloadIdleMinutes ?? 0)
+  const minutes = offloadMinutes(cfg)
   if (!minutes) return []
   if (!(cfg.maxPerSweep > 0)) return []
   return pick(panes, peers, cfg, blocked, now, minutes, false)
