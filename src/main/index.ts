@@ -2008,7 +2008,12 @@ function startDevServer(dir: string, script: string): string | null {
   const cmd = localDevCommand(dir, script)
   if (!cmd) return `Dev server not restarted - this machine's copy has no "${script}" script`
   void manager.start({ cwd: dir, agent: 'shell', title: `dev: ${script}`, prompt: cmd })
-  return `Restarted the dev server here: ${cmd}`
+  // What is TRUE at this point is that a pane exists with that command typed into it.
+  // Whether the server came up is decided seconds later inside that shell - a port
+  // already taken over here is an EADDRINUSE nothing on this side of the pty ever sees.
+  // Saying "restarted" would be a success message shaped exactly like the failure, which
+  // is the one thing a report may never be; the pane is on screen, so it can be looked at.
+  return `Started a pane running ${cmd} - check it came up (a port in use here would not)`
 }
 
 /** One place both the button and the queue go through, so they cannot drift apart. */

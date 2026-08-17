@@ -1815,6 +1815,12 @@ export default function App(): JSX.Element {
             // A repo that cannot be pushed will not become pushable in fifteen seconds, and
             // retrying it every reading is how an automatic thing becomes noise.
             handoffBlocked.current[move.id] = Date.now() + Math.max(1, cfg.cooldownMinutes) * 60_000
+            // ...and drop the ones that have served their time. A cooldown map on a desk
+            // that runs for weeks is a leak nobody would ever see: it is only ever read
+            // through `> now`, so an expired entry changes no decision and simply stays.
+            for (const [id, until] of Object.entries(handoffBlocked.current)) {
+              if (until <= Date.now()) delete handoffBlocked.current[id]
+            }
             console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
           }
         }
