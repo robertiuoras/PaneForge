@@ -49,6 +49,20 @@ Per-repo config is `.lanes.json` in the repo root, every field optional:
 
 `release` defaults to `"merge"` everywhere except here (merge finished lanes into the
 repo's branch and push, never cut a version). This repo's `.lanes.json` says `"version"`.
+**The lane chip opens the answer to "what is all this", not just to "merge?".** `LaneDialog`
+leads with a plain sentence about folders (the git line `lane-a → main` is below it, for the
+reader who wants it) and then lists **every copy of that project on this machine** - the trunk
+and each lane - with who has it (a pane number, which is also the Ctrl key that switches
+there, and the row switches on a press) and **what it is doing**: the files it has
+uncommitted right now and its newest commit's subject, both free and already in the
+repository. That list is why two chips on one card (`main checkout`, `lane a`, `lane b`) read
+as one pane holding two lanes: they are separate copies of one project and nothing said so.
+It is built from BOTH sources on purpose - `lane.mjs`'s ledger, and the panes in this window -
+because a lane the app made itself (`main/lanes.ts`, on the second pane in one project) has no
+ledger row at all, which a probe hit as an empty list. `laneDoing` in `renderer/src/laneWords.ts`
+is the words and is pinned by `npm run test:lanes`' holder test; a lane with neither commits
+nor edits says nothing rather than inventing a sentence about somebody else's work.
+
 A repo with no remote, and `claude-memory`, never get lanes. Never leave a lane sitting in
 a conflicted merge — it is the one state no other chat is allowed to touch.
 
@@ -804,6 +818,20 @@ whichever one has a hook.
   first with `409 Conflict` - measured against the live bot on the first run. Taps arrive
   by being handed to a loopback endpoint; `--poll` is opt-in and only correct for a token
   nothing else reads.
+- **A question is also RED, and it also leaves the machine.** Every idle reading in the app
+  says yes about a pane that is only quiet because it is owed an answer, so the card and the
+  pane itself glow red while `Session.ask` is set (`.row.asking` / `.xterm-wrap.asking`) and
+  the card's title line carries the word `asks you` with the question on its hover - the blue
+  lane glow that was removed from that card was removed for being a colour with nothing to
+  read, not for being a colour. The same moment posts the question to Telegram
+  (`main/askNotify.ts`, from the new `ask` event on SessionManager, Settings → "Send a pane's
+  question to Telegram"): `scripts/pf-telegram.mjs` is the half that turns a TAP into
+  `pty:choose` and nothing on this machine ever started it, so the message had never once
+  arrived. It posts and stops - no `getUpdates`, because a bot token has exactly one
+  long-poller and a second one steals the updates rather than sharing them. Silent with no
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (environment or `~/.claude/usage-notify.env`), one
+  message per question (`sameAsk`, so arrowing through the options sends nothing), and never
+  for a mirror - that pane's own machine is raising it too. `npm run test:asknotify`.
 - `npm run test:choices`. The load-bearing assertion is on the BYTE
   (`charCodeAt(0) === 27`): the first version of that test lost its escape in the same
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
@@ -890,6 +918,19 @@ the pty**, and the path of that file is what is typed (`shared/attach.ts` for th
   screenshot is ~200 KB; the cap exists so a video dropped on a pane fails with a sentence
   instead of killing the link. Nothing is submitted for you - the paths land in the input
   box so they can be described first.
+- **A dropped file arrives in TWO shapes and only one of them was ever claimed.** The
+  pane's `dragover` accepted a drag whose `types` held `Files`, and a macOS screenshot
+  dragged off its own preview thumbnail (and a browser image drag) carries `text/uri-list`
+  with no File object at all - so nothing called `preventDefault`, no `drop` event was
+  delivered here, and Chromium's default action typed the URL into xterm's helper textarea.
+  What reached the agent was `file:///var/folders/…/Screenshot%20….png`: a link shaped like
+  an attachment, which no agent here can open, reported as "I dropped a screenshot and it
+  is not adding as an image, it is still a URL link". `splitDropUris` (`shared/attach.ts`)
+  turns a `file://` URI back into the path it is - percent-decoded, Windows' extra leading
+  slash gone, a host kept as a UNC path - and an http(s)/data one still goes off to be
+  fetched. `text/plain` is deliberately NOT claimed: a dragged word is Chromium's own paste
+  into the terminal and is worth keeping. Verified in a real window: a uri-list-only drop
+  now claims both events and the pane's log holds the decoded path and no `file:///`.
 - `npm run test:attach`. Not covered: pasting an image on the phone client, which has its
   own composer rather than an xterm.
 
@@ -1170,6 +1211,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
+| `npm run test:asknotify` | a pane's question on its way to a phone: the message names the pane and keeps the CLI's own numbering, a machine with no bot credentials sends nothing and says so rather than throwing inside a pty read, and the post never asks for updates - which would steal `pf-telegram.mjs`'s poller |
 | `npm run test:choices` | reading a live question off a pane's frame and the keys that answer it: two real captured chooser shapes, and the negatives that decide whether it is safe to draw buttons at all - a numbered list in an answer, one somebody quoted back at the agent, a gap in the numbering, and no selection arrow. Plus the byte-level check that the arrows really are escape sequences, because the first version of this file lost its escape in the same edit the source did and passed |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
