@@ -177,6 +177,12 @@ function check({ dev, status, body, hang }) {
     stdio: 'pipe',
     env: {
       ...process.env,
+      // This file is about devListBlind. On Windows the dev-channel FEED PIN sits in front
+      // of it (updater.ts pinWinDevFeed) and would answer every case here before the list
+      // was ever consulted, so the checks would pass while proving nothing. The pin has its
+      // own test - npm run test:winfeed for the choice, and the walk was replayed against
+      // the real releases when it was written.
+      PF_NO_WIN_PIN: '1',
       CASE_DEV: dev ? '1' : '0',
       CASE_STATUS: String(status),
       CASE_BODY: body,

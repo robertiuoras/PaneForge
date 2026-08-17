@@ -67,6 +67,13 @@ assert.equal(
 assert.equal(idleQuitVerdict(input({ panes: [pane({ state: 'needsYou' })] })).quit, true, 'needsYou must not veto')
 assert.equal(idleQuitVerdict(input({ panes: [pane({ state: 'exited' })] })).quit, true, 'exited must not veto')
 
+// ...but a LIVE question is, and the pair above is what makes that check worth having: a
+// chooser is drawn on a screen and lives in no transcript, so quitting loses the question
+// itself. Both panes read `needsYou`; only the asking one may veto.
+const asking = idleQuitVerdict(input({ panes: [pane({ state: 'needsYou', asking: true })] }))
+assert.equal(asking.quit, false, 'a pane holding a question must veto the quit')
+assert.match(asking.reason, /holding a question/)
+
 // The clock: one busy-with-input pane holds the whole app open.
 assert.equal(
   idleQuitVerdict(input({ panes: [pane(), pane({ lastKeyboard: NOW - 2 * MIN })] })).quit,

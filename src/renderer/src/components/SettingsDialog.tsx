@@ -46,7 +46,7 @@ import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
 // Hints below name shortcuts; on a Mac those live on Cmd, so print them through this.
-import { isMac, keyLabel } from '../platform'
+import { isMac, isWindows, keyLabel } from '../platform'
 
 const api = window.api
 
@@ -491,7 +491,16 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   checked={config.launchAtLogin}
                   onChange={(v) => onChange({ launchAtLogin: v })}
                   label="Start PaneForge when the computer starts"
+                  hint="Re-applied on every launch, not only when this is switched. The Windows Run entry is exactly the kind of thing an installer or a cleanup tool removes, and its absence reads as 'it did not reopen after a restart' with this switch still showing On."
                 />
+                {isWindows && (
+                  <Switch
+                    checked={config.desktopShortcut !== false}
+                    onChange={(v) => onChange({ desktopShortcut: v })}
+                    label="Keep a PaneForge shortcut on the Desktop"
+                    hint="A launch that finds the shortcut missing puts it back. Our own installer used to delete it on every update, and Windows' maintenance task removes desktop shortcuts it decides are broken - either way the app looks uninstalled. An existing shortcut is never rewritten."
+                  />
+                )}
                 <Switch
                   checked={config.saveHistory}
                   onChange={(v) => onChange({ saveHistory: v })}

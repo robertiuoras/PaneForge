@@ -213,6 +213,10 @@ function defaults(): Config {
     // for anyone who wants the question back.
     confirmClose: false,
     launchAtLogin: false,
+    // Windows only, and on by default: the Desktop shortcut is the only thing on this desk
+    // that opens PaneForge, so a launch that finds it missing puts it back. Off means "I
+    // deleted it on purpose" - see src/shared/winShortcut.ts for what deletes it.
+    desktopShortcut: true,
     adminMode: false,
     autoUpdate: true,
     // Stable channel. Every automatic release is cut as a GitHub prerelease first, and

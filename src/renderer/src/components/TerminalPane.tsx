@@ -22,6 +22,7 @@ import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
+import { promptEcho } from '../../../shared/promptEcho'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { placeTurnCopies } from '../../../shared/turnCopy'
@@ -401,6 +402,10 @@ interface Mark {
  * "what did I ask at 14:32" is how you find a prompt again hours into a run.
  */
 function markLabel(m: Mark): string {
+  // 0 is a tag rebuilt from a restored pane's own output (seedMarks): the text is known
+  // and the clock is not. A confident wrong time on a prompt is worse than no time - it is
+  // what somebody uses to decide which tag to press.
+  if (!m.at) return m.text
   const time = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const text = m.text.length > 160 ? m.text.slice(0, 159) + '…' : m.text
   return time + '  ' + text
@@ -1143,6 +1148,51 @@ export default function TerminalPane({
         changed: publish
       })
 
+    /**
+     * Rebuild the rail for a pane that came back from disk.
+     *
+     * The tags are made from keystrokes, so a REPLAYED conversation has none - and since
+     * the app restarts itself for every update, that is most panes on this desk most of
+     * the time. The CLI's own echo of each submitted prompt is still in the bytes that were
+     * replayed, so it is read back out (shared/promptEcho.ts) and a marker registered on
+     * the line it was found on.
+     *
+     * Only when the rail is empty: a pane that has been typed into owns its own tags, and
+     * this must never add a second tag for a prompt that already has one. `at` is 0 because
+     * the time it was sent is genuinely not known here - `markLabel` prints the text alone
+     * rather than inventing a clock reading.
+     */
+    const seedMarks = (): void => {
+      if (list.length) return
+      const b = t.buffer.active
+      const cursor = b.baseY + b.cursorY
+      const found: { line: number; text: string }[] = []
+      for (let i = 0; i < cursor; i++) {
+        const text = promptEcho(b.getLine(i)?.translateToString(true) ?? '')
+        if (text) found.push({ line: i, text })
+      }
+      // Same cap as the live rail, and the same end of the list: past this many the tags
+      // are a solid bar, and the newest are the ones being looked for.
+      for (const f of found.slice(-MARK_CAP)) {
+        const marker = t.registerMarker(f.line - cursor)
+        if (!marker) continue
+        const entry: Mark = {
+          id: marker.id,
+          marker,
+          line: marker.line,
+          text: flatDraft(f.text, RAIL_LABEL_CHARS),
+          full: f.text,
+          at: 0
+        }
+        anchor(entry, marker)
+        list.push(entry)
+      }
+      if (list.length) {
+        publish()
+        syncTotal()
+      }
+    }
+
     const addMark = (text: string, full: string): void => {
       // A prompt cannot have been sent above one that was sent before it, so the scan for
       // the box top is not allowed to walk past the last prompt's line.
@@ -1836,7 +1886,12 @@ export default function TerminalPane({
       if (b) {
         sawOutput = true
         setBlank(false)
-        t.write(keep(b), () => t.scrollToBottom())
+        t.write(keep(b), () => {
+          t.scrollToBottom()
+          // The replay IS the conversation this pane is being reopened into, so its
+          // prompts get their tags back. See seedMarks.
+          seedMarks()
+        })
       }
     })
 
