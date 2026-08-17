@@ -40,10 +40,20 @@ const HEADINGS = [
   ['fix', 'Fixed'],
   ['perf', 'Faster']
 ]
+const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b/i
+
 // `auto-sync` is the mid-feature backup subject - it exists precisely to commit work that
 // is not a change anybody is announcing, and it is not a defect in the wording either, so
 // `unpublished` must not name it. Three of them touch src/ in this repo's history.
-const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b|^auto-sync\b/i
+//
+// It is NOT in DROP, deliberately. DROP feeds `subjects()`, which feeds `changeLog`,
+// `bumpFor` and `smallOnly` - and `smallOnly` returns false on an EMPTY subject list, so
+// adding it there flipped a range of nothing but backups from "small, wait for company"
+// to "release now", which is the exact opposite of what an auto-sync commit means.
+// Publishing was never affected (the hyphen means `parse` reads no type either way);
+// the release TIMING was, silently. A rule that only one caller wants belongs to that
+// caller.
+const NOT_A_CHANGE = /^auto-sync\b/i
 
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], {
@@ -127,7 +137,7 @@ export function unpublished(repo, range) {
   for (const block of out.split('\0')) {
     const [subject, ...rest] = block.split('\n')
     const s = (subject ?? '').trim()
-    if (!s || DROP.test(s)) continue
+    if (!s || DROP.test(s) || NOT_A_CHANGE.test(s)) continue
     // A `docs:` or `test:` subject touching src/ is dropped ON PURPOSE and is not a
     // miss - naming those is how this report becomes noise nobody reads (measured: the
     // first version of it flagged an ordinary docs commit against this repo's own

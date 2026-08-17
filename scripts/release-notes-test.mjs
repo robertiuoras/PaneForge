@@ -225,6 +225,15 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
   put('fix: one line, but nine hundred of them', 900)
   check('and neither is a fix: that rewrites the file', smallOnly(small) === false)
 
+  // An `auto-sync` batch is mid-feature backup and must keep WAITING, not release on the
+  // ordinary window. `unpublished` wants to ignore those subjects and briefly did it by
+  // adding them to the shared DROP - which empties `subjects()`, and an empty list is
+  // `smallOnly === false`, i.e. "not small, ship it". The rule now lives in `unpublished`
+  // alone; this is the case that goes red if it moves back.
+  sgit('tag', 'v0.1.2')
+  put('auto-sync: mid-feature backup', 5)
+  check('a range of nothing but backups is still small, so it waits', smallOnly(small) === true)
+
   rmSync(small, { recursive: true, force: true })
 }
 
