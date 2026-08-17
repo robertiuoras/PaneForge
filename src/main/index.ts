@@ -297,6 +297,11 @@ function quitting(cause: string): void {
 }
 /** The words for the log line, including the case where nothing in the app fired. */
 function quitReason(): string {
+  // A signal is deliberately NOT separated out here, and it was tried: Chromium takes
+  // SIGTERM below the JS layer, so `process.on('SIGTERM', ...)` in the main process never
+  // runs - measured by SIGTERMing a test copy, which wrote this exact line with the
+  // handler installed. `pkill`, a launchd job and Cmd-Q are one case from in here, and
+  // saying so is better than a sentence that only names the fingers.
   return quitCause || 'nothing in the app asked - Cmd-Q, the app menu, or a signal from the OS'
 }
 
