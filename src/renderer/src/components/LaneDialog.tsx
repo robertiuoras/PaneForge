@@ -191,7 +191,12 @@ export default function LaneDialog({
     return () => {
       live = false
     }
-  }, [work?.repo, board?.lanes.length, sessions.length, cwd])
+    // Keyed on the FOLDERS, not on `sessions.length`: a count is unchanged when one pane
+    // closes and another opens between two polls, so the new folder was never read and its
+    // row sat on "reading…" for as long as the dialog was open. Not the array either - the
+    // sessions broadcast hands a fresh one every second and every field on it moves (output
+    // clocks, run timers), which would re-run seven git commands per lane per second.
+  }, [work?.repo, board?.lanes.map((l) => l.dir).join('|'), sessions.map((s) => s.cwd).join('|'), cwd])
 
   /**
    * Escape closes it, like every other dialog in the app.

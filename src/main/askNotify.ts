@@ -50,13 +50,25 @@ interface Creds {
 
 let cached: Creds | null | undefined
 
-/** Read once per run: this is a file a person edits between launches, not between panes. */
+/**
+ * Read once per run: this is a file a person edits between launches, not between panes.
+ *
+ * The environment wins over the file, deliberately and for one reason: `pf-telegram.mjs`
+ * resolves them in exactly that order, and two paths to one bot that disagree about which
+ * credential is authoritative is worse than either order. The cost is real and is why this
+ * says which source it used out loud - an edit to the file does nothing while a shell
+ * variable is set, and that is invisible otherwise.
+ */
 export function telegramCreds(): Creds | null {
   if (cached !== undefined) return cached
   const file = envFile()
   const token = process.env.TELEGRAM_BOT_TOKEN ?? file.TELEGRAM_BOT_TOKEN ?? ''
   const chat = process.env.TELEGRAM_CHAT_ID ?? file.TELEGRAM_CHAT_ID ?? ''
   cached = token && chat ? { token, chat } : null
+  if (cached && process.env.TELEGRAM_BOT_TOKEN && file.TELEGRAM_BOT_TOKEN)
+    console.log(
+      'telegram: TELEGRAM_BOT_TOKEN is set in the environment AND in the env file - the environment wins, so file edits will not take effect until it is unset'
+    )
   return cached
 }
 

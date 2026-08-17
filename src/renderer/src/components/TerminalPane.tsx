@@ -2492,7 +2492,14 @@ export default function TerminalPane({
     // held) and needs nothing fetched, while an http(s)/data one has to be fetched before
     // an agent can open anything.
     const uriList = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
-    if (!uriList) return
+    // The dragover claimed this drag because `types` advertised a uri-list, so returning
+    // quietly here is the app swallowing a drop it took responsibility for - and the drop
+    // that reaches this line is one where `types` said one thing and `getData` gave
+    // nothing. Silence would read as the same bug this whole change fixed.
+    if (!uriList) {
+      toast.current?.('That drag carried no file and no link the pane could read.')
+      return
+    }
 
     const { paths: dropped, uris } = splitDropUris(uriList)
     if (dropped.length) {
