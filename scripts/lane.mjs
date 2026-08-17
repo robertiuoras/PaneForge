@@ -3022,7 +3022,10 @@ function doctor() {
   // (v0.8.92). This is the last moment the subject can still be reworded, so it is
   // named here and nowhere else - the published page is never guessed at.
   if (RELEASE === 'version') {
-    const ranges = [versionTags(MAIN)[0] ? `${versionTags(MAIN)[0]}..${MB}` : MB]
+    // Read once: two calls are two `git tag --list` runs, and a tag landing between them
+    // builds the range against a tag the condition never saw.
+    const newest = versionTags(MAIN)[0]
+    const ranges = [newest ? `${newest}..${MB}` : MB]
     for (const l of s.lanes) if (l.ahead > 0 && l.branch !== MB) ranges.push(`${MB}..${l.branch}`)
     const missed = [...new Set(ranges.flatMap((r) => unpublished(MAIN, r)))]
     if (missed.length) {
@@ -3052,18 +3055,23 @@ function doctor() {
         // /releases/latest is the same thing a stable install resolves, so ask it rather
         // than inferring an absence from a window that ran out.
         let stable = releases.find((r) => !r.prerelease)
+        // Three different endings, and collapsing any two of them is the bug this repo
+        // keeps re-committing: a 404 is the KNOWN answer "there has never been a stable
+        // release", while a timeout or an unauthenticated gh is "this desk cannot tell".
+        // Printing the same sentence for both is a degraded reading becoming a claim.
+        let why = null
         if (!stable) {
           const one = runSafe('gh', ['api', `repos/${repo}/releases/latest`], { timeout: 15_000 })
           if (one.ok) {
             try {
               stable = JSON.parse(one.out)
             } catch {
-              /* unreadable - fall through to the honest "cannot tell" wording below */
+              why = 'a release this could not read'
             }
-          }
+          } else why = /\b404\b|not found/i.test(one.out) ? 'nothing - there is no stable release yet' : 'a release this desk could not reach GitHub to name'
         }
         say(
-          `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable?.tag_name ?? 'a release this could not read'}.`
+          `  Dev channel: ${pending.join(', ')} not yet promoted - stable installs are on ${stable?.tag_name ?? why ?? 'a release this could not read'}.`
         )
         // The one that goes next is the OLDEST pending build, because the soak is that
         // build's own age - newer ones ripen behind it rather than holding it back.

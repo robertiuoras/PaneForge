@@ -131,7 +131,20 @@ export function subjects(repo, range) {
 export function unpublished(repo, range) {
   // %x00 in front of each subject, so the file names that follow a commit are told from
   // the next commit's subject without a second call per commit.
-  const out = gitSafe(repo, ['log', '--no-merges', '--format=%x00%s', '--name-only', range])
+  //
+  // `core.quotepath=false` because git's default wraps any path with a non-ASCII or
+  // control character in double quotes - `"src/café.ts"` - and a quoted name does not
+  // start with `src/`, so the commit is silently NOT reported. This report exists
+  // because a silent drop cost a release page; it may not have a silent drop of its own.
+  const out = gitSafe(repo, [
+    '-c',
+    'core.quotepath=false',
+    'log',
+    '--no-merges',
+    '--format=%x00%s',
+    '--name-only',
+    range
+  ])
   if (!out) return []
   const missed = []
   for (const block of out.split('\0')) {
@@ -144,7 +157,10 @@ export function unpublished(repo, range) {
     // history). Only a subject with NO conventional prefix at all is the defect, since
     // that is the one whose author was describing a change and got no heading for it.
     if (parse(s).type !== null) continue
-    if (rest.some((f) => f.trim().startsWith('src/'))) missed.push(s)
+    // Even with quotepath off, git still quotes a path holding a quote, a backslash or a
+    // newline. The opening `"` is all that has to come off for the membership test - the
+    // escapes inside it are somebody else's problem, this only asks WHERE the file is.
+    if (rest.some((f) => f.trim().replace(/^"/, '').startsWith('src/'))) missed.push(s)
   }
   return missed
 }

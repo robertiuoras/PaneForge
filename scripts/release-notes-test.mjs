@@ -293,6 +293,19 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
   )
   check('a range git cannot read says nothing', unpublished(miss, 'v9.9.9..HEAD').length === 0)
 
+  // git's default core.quotepath wraps a path holding a non-ASCII character in double
+  // quotes, and `"src/café.ts"` does not start with `src/` - so the commit was dropped
+  // by the very report whose job is to catch a silent drop.
+  mgit('tag', 'v0.1.2')
+  writeFileSync(join(miss, 'src', 'café.ts'), 'accented')
+  mgit('add', '-A')
+  mgit('commit', '-m', 'Fix the accented file, worded as a sentence')
+  check(
+    'a path git quotes is still seen as src/',
+    unpublished(miss, 'v0.1.2..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.2..HEAD'))
+  )
+
   rmSync(miss, { recursive: true, force: true })
 }
 
