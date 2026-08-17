@@ -7,6 +7,11 @@
 // a keystroke the terminal wants. On Windows and Linux it is Ctrl, as it has always been.
 
 export const isMac = navigator.userAgent.includes('Mac')
+// Read off the UA like `isMac`, so a phone looking at a Windows desk reports its own
+// platform and hides a switch that only means something at the desk. That is the right
+// way round for a Desktop shortcut, and the wrong way round for anything a phone should
+// be able to change - check before reusing it.
+export const isWindows = navigator.userAgent.includes('Windows')
 
 /** True when this event carries the app's command modifier for this platform. */
 export function modKey(e: { ctrlKey: boolean; metaKey: boolean }): boolean {

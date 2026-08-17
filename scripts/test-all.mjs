@@ -49,6 +49,7 @@ const TESTS = [
   ['devservers', 'devservers-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
+  ['winshortcut', 'winshortcut-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],

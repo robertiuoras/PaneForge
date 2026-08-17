@@ -1374,6 +1374,8 @@ export interface Config {
   /** ask before closing a session that is still running */
   confirmClose: boolean
   launchAtLogin: boolean
+  /** Windows: put the Desktop shortcut back when a launch finds it missing. */
+  desktopShortcut?: boolean
   /** launch elevated with no UAC prompt via the registered scheduled task */
   adminMode: boolean
   /** check GitHub releases in the background and offer the update */

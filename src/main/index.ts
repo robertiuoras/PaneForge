@@ -49,6 +49,7 @@ import { attachLaneOwners, laneBoards, laneReclaim, laneRetry } from './laneBoar
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
+import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
 import { cancelImprove, improve, resolveEngine, runCli } from './improve'
 import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
 import { cancelResearch, research } from './researchRun'
@@ -3469,6 +3470,13 @@ app.whenReady().then(() => {
   // First line of this process's story: the one that was missing when an update came
   // back and nobody could tell whether it had.
   updateLog('launch', `v${app.getVersion()}`, `pid ${process.pid}`, `start=${startMode()}`, `+${bootMs()}ms`)
+  // Two things Windows loses between restarts and neither of them announces itself: the
+  // Desktop shortcut (which is the only way this desk opens the app) and the login entry
+  // (whose absence reads as "it did not reopen"). Both are re-asserted from config here
+  // rather than only when a setting is changed, because both are deleted by software that
+  // has never heard of PaneForge. See src/main/winShortcut.ts.
+  ensureDesktopShortcut(cfg.desktopShortcut !== false, (line) => updateLog('windows', line))
+  syncLaunchAtLogin(!!cfg.launchAtLogin, (line) => updateLog('windows', line))
   // Lanes only ever worked on the machine they were hand-wired on. Installing the hooks
   // here is what makes several chats safe to run against one project for anybody else -
   // and repoints them when an upgrade moves the app. It never throws and never overrides
