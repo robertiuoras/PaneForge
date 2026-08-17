@@ -73,11 +73,13 @@ export interface PresenceCounts {
   appStart: number
 }
 
-/** The one field of a pane the presence reads, so a caller can pass anything shaped like one. */
+/** The few fields of a pane the presence reads, so a caller can pass anything shaped like one. */
 export interface PresenceSession {
   status: string
   cwd: string
   runSince?: number
+  /** used only to drop a pane that arrived twice; a pane without one is always kept */
+  id?: string
 }
 
 /**
@@ -102,7 +104,20 @@ export function folderName(cwd: string): string {
  * entry is an Electron module no test can load.
  */
 export function countPresence(sessions: PresenceSession[], appStart: number): PresenceCounts {
-  const live = sessions.filter((s) => s.status !== 'exited')
+  // The desk is now two lists stitched together, and the numbers are the one part of
+  // this that was NOT protected against a pane arriving in both: the name list has
+  // always deduped, so a pane counted twice would inflate the fraction while leaving
+  // the projects line looking right - the shape of a bug nobody reads as one.
+  const seen = new Set<string>()
+  const live: PresenceSession[] = []
+  for (const s of sessions) {
+    if (s.status === 'exited') continue
+    if (s.id) {
+      if (seen.has(s.id)) continue
+      seen.add(s.id)
+    }
+    live.push(s)
+  }
   const running = live.filter((s) => s.status === 'working')
   const names: string[] = []
   for (const s of running) {
@@ -302,7 +317,9 @@ export function renderLine(tpl: string, c: PresenceCounts): string {
  */
 export function buildActivity(
   c: PresenceCounts,
-  style: DiscordStyle = DEFAULT_DISCORD_STYLE
+  style: DiscordStyle = DEFAULT_DISCORD_STYLE,
+  /** test seam; the app never passes it */
+  now: number = Date.now()
 ): Record<string, unknown> | null {
   if (c.total <= 0) return null
   const running = c.running > 0
@@ -321,7 +338,13 @@ export function buildActivity(
   if (state) activity.state = state
   activity.assets = { large_image: PRESENCE_IMAGE, large_text: PRESENCE_IMAGE_TEXT }
   if (style.elapsed) {
-    activity.timestamps = { start: running ? (c.oldestRunSince ?? c.appStart) : c.appStart }
+    // Discord counts UP from this stamp, so a start in the future is not a small error -
+    // it renders as a negative or absurd clock on the profile. Since the desk started
+    // including mirrored panes, `oldestRunSince` can be the OTHER machine's clock, and
+    // two machines are never exactly in step. Clamp rather than drop: a turn that began
+    // a moment ago is the truth being approximated, and no timer at all would be worse.
+    const started = running ? (c.oldestRunSince ?? c.appStart) : c.appStart
+    activity.timestamps = { start: Math.min(started, now) }
   }
   const button = buildButton(style)
   if (button) activity.buttons = [button]

@@ -461,6 +461,61 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('counts: an empty desk is empty, not one blank name', countPresence([], 1).total === 0)
   check('folderName: trailing separator does not yield an empty name', folderName('C:\\Projects\\foo\\') === 'foo')
   check('folderName: a posix path still works', folderName('/a/b/c') === 'c')
+
+  // A pane in both halves of the desk. The name list has always deduped, so an inflated
+  // fraction would sit next to a projects line that looked perfectly right.
+  const twice = countPresence(
+    [
+      { id: 's4', status: 'working', cwd: '/p/foo', runSince: 100 },
+      { id: 's4', status: 'working', cwd: '/p/foo', runSince: 100 },
+      { id: 's5', status: 'idle', cwd: '/p/bar' }
+    ],
+    1
+  )
+  check('counts: a pane that arrives twice is one pane', twice.running === 1 && twice.total === 2, JSON.stringify(twice))
+  const noIds = countPresence(
+    [
+      { status: 'working', cwd: '/p/foo' },
+      { status: 'working', cwd: '/p/foo' }
+    ],
+    1
+  )
+  check('counts: without ids nothing is deduped away', noIds.running === 2)
+
+  // Every running turn started before this app did, so there is no stamp to date the
+  // clock from. The elapsed timer has to fall back, not read as "started at 1970".
+  const noStamps = countPresence(
+    [
+      { status: 'working', cwd: '/p/foo' },
+      { status: 'working', cwd: '/p/bar' }
+    ],
+    4242
+  )
+  check('counts: no run stamps at all leaves the clock unset', noStamps.oldestRunSince === undefined, String(noStamps.oldestRunSince))
+  const fallback = buildActivity(noStamps, { ...DEFAULT_DISCORD_STYLE, elapsed: true }, 9000)
+  check('elapsed: with no run stamp the clock falls back to app start', fallback.timestamps.start === 4242, JSON.stringify(fallback.timestamps))
+
+  // The other machine's clock is ahead of this one. Discord counts UP from the stamp,
+  // so an unclamped future start renders as a negative or absurd timer.
+  const skewed = countPresence([{ status: 'working', cwd: '/p/foo', runSince: 10_000 }], 1)
+  const clamped = buildActivity(skewed, { ...DEFAULT_DISCORD_STYLE, elapsed: true }, 5_000)
+  check(
+    'elapsed: a mirrored run stamp from a fast clock is clamped to now',
+    clamped.timestamps.start === 5_000,
+    JSON.stringify(clamped.timestamps)
+  )
+  const sane = buildActivity(countPresence([{ status: 'working', cwd: '/p/foo', runSince: 3_000 }], 1), { ...DEFAULT_DISCORD_STYLE, elapsed: true }, 5_000)
+  check('elapsed: an ordinary run stamp is left alone', sane.timestamps.start === 3_000, JSON.stringify(sane.timestamps))
+
+  // 'starting' is a real production status (types.ts) and is not a running turn.
+  const booting = countPresence(
+    [
+      { status: 'starting', cwd: '/p/foo' },
+      { status: 'working', cwd: '/p/bar' }
+    ],
+    1
+  )
+  check('counts: a pane still booting its CLI is on the desk but not running', booting.running === 1 && booting.total === 2)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')
