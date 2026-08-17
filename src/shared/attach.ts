@@ -186,6 +186,19 @@ export function pathFromFileUri(uri: string): string {
     // A stray `%` that is not an escape - the raw text is still a better guess than nothing.
     path = rest
   }
+  // A decoded path carrying a CONTROL byte is refused, never repaired.
+  //
+  // `%0A` decodes to a real newline, and the path is typed at a pty through `quote`, which
+  // escapes double quotes and nothing else - so `file:///tmp/foo%0Abar.txt` would hand the
+  // agent a torn line, with whatever follows the newline read as a command of its own. The
+  // written-file path has always been safe here (`attachName` strips control bytes and
+  // reserved punctuation), and this path is the one that types WITHOUT writing, so it needed
+  // its own answer. Refusing rather than stripping, because a stripped path names a file that
+  // does not exist: the drop then says nothing was readable, which is true.
+  for (const ch of path) {
+    const c = ch.charCodeAt(0)
+    if (c < 0x20 || c === 0x7f) return ''
+  }
   if (host) return `\\\\${host}${path.replace(/\//g, '\\')}`
   // `file:///C:/x` is `C:\x`; on POSIX the leading slash is the path.
   if (/^\/[a-zA-Z]:[\\/]/.test(path)) return path.slice(1).replace(/\//g, '\\')

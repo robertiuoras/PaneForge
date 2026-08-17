@@ -105,6 +105,27 @@ const commit = (cwd, file, text, msg) => {
   check('an untracked file makes a lane non-empty', (await lw.laneWork(lane))?.empty === false)
   rmSync(join(lane, 'scratch.txt'))
 
+  // What the lane dialog PRINTS about a lane, which is a name git does not hand over plainly.
+  // `--porcelain` quotes any path with a space in it (`core.quotepath`, on by default) and
+  // escapes a non-ASCII one as octal, so the dialog drew `"file with spaces.txt"` - quotes
+  // included - until this read switched to `-z`. Relayed from the lane-b chat's review.
+  writeFileSync(join(lane, 'file with spaces.txt'), 'wip\n')
+  writeFileSync(join(lane, 'café.txt'), 'wip\n')
+  const named = await lw.laneWork(lane)
+  check(
+    'a path with a space is named without git quoting it',
+    named?.touching.includes('file with spaces.txt'),
+    JSON.stringify(named?.touching)
+  )
+  check(
+    'and a non-ASCII name is not octal escapes',
+    named?.touching.includes('café.txt'),
+    JSON.stringify(named?.touching)
+  )
+  check('the count and the names agree', named?.dirty === 2, JSON.stringify(named?.touching))
+  rmSync(join(lane, 'file with spaces.txt'))
+  rmSync(join(lane, 'café.txt'))
+
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
   const ahead = (await lw.laneWork(lane))
   check('a commit in the lane counts as ahead', ahead?.ahead === 1 && ahead?.empty === false)

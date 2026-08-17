@@ -150,20 +150,35 @@ async function dirtyCount(cwd: string): Promise<number> {
   return (await dirtyFiles(cwd)).length
 }
 
-/** The uncommitted paths, as git spells them. One `status` for both the count and the names. */
+/**
+ * The uncommitted paths, as git spells them. One `status` for both the count and the names.
+ *
+ * `-z`, and that is the load-bearing part. Plain `--porcelain` QUOTES any path with a space
+ * or a non-ASCII byte in it (`core.quotepath` is on by default), so `"file with spaces.txt"`
+ * came back with its quotes attached and was drawn in the lane dialog that way - and a
+ * non-ASCII name came back as octal escapes. `-z` is NUL-separated and unquoted by
+ * construction, which is why every other reader in this repo uses it (`main/diff.ts`, and
+ * `test:diff` pins the records) rather than trying to undo the quoting afterwards.
+ *
+ * A rename is two entries: the new path, then the old one, in that order. The new one is the
+ * file that exists, so the pair is consumed together and only that half is kept.
+ */
 async function dirtyFiles(cwd: string): Promise<string[]> {
-  const r = await gitOut(cwd, ['status', '--porcelain'])
+  const r = await gitOut(cwd, ['status', '--porcelain', '-z'])
   if (!r.ok || !r.out) return []
-  return r.out
-    .split(/\r?\n/)
-    .filter(Boolean)
-    // `XY path`, and a rename is `R  old -> new`: the new name is the one that exists.
-    .map((line) => {
-      const path = line.slice(3).trim()
-      const arrow = path.indexOf(' -> ')
-      return arrow === -1 ? path : path.slice(arrow + 4)
-    })
-    .filter(Boolean)
+  const parts = r.out.split('\0').filter((p) => p.length > 0)
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i]
+    // `XY path`: two status letters and a space.
+    const status = entry.slice(0, 2)
+    const path = entry.slice(3)
+    if (!path) continue
+    out.push(path)
+    // R/C carry their source as the NEXT record, which is not a changed file of its own.
+    if (status.includes('R') || status.includes('C')) i++
+  }
+  return out
 }
 
 /**

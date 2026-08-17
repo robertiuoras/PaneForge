@@ -222,6 +222,14 @@ ok(
   'a host becomes a UNC path'
 )
 ok(S.pathFromFileUri('file://localhost/Users/r/a.png') === '/Users/r/a.png', 'localhost is this machine')
+// A decoded control byte is refused outright. `%0A` is a real newline, the path is typed at a
+// pty through `quote` (which escapes double quotes and nothing else), so this would hand the
+// agent a torn line with the tail read as its own command. Stripping would name a file that
+// does not exist, so it is refused and the drop says nothing was readable.
+ok(S.pathFromFileUri('file:///tmp/foo%0Abar.txt') === '', 'a decoded newline is refused, not typed')
+ok(S.pathFromFileUri('file:///tmp/foo%0D%0Arm%20-rf.txt') === '', 'and so is a CRLF')
+ok(S.pathFromFileUri('file:///tmp/a%09b.txt') === '', 'and a tab')
+ok(S.splitDropUris('file:///tmp/foo%0Abar.txt').paths.length === 0, 'so the drop carries no path')
 ok(S.pathFromFileUri('https://x.test/a.png') === '', 'an http URI is not a path')
 ok(S.pathFromFileUri('a sentence somebody dragged') === '', 'and neither is dragged text')
 
