@@ -19,6 +19,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -97,7 +98,30 @@ const CASES = [
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
-const cdpPort = 9446
+
+/**
+ * A port the OS says is free, not a number written into the file.
+ *
+ * Two lane worktrees running `npm test` at once is the ordinary case here, and a fixed port
+ * means the second one gets a Chrome that never binds and then "Chrome never opened its
+ * debugging port" - which reads as a broken card, not as a busy port. Same as
+ * scripts/confirm-fit-test.mjs; `PF_CARDFIT_PORT` pins it when something outside needs to
+ * attach.
+ */
+async function freePort() {
+  const fixed = Number(process.env.PF_CARDFIT_PORT)
+  if (Number.isFinite(fixed) && fixed > 0) return fixed
+  return await new Promise((resolve, reject) => {
+    const s = createServer()
+    s.on('error', reject)
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address()
+      s.close(() => resolve(port))
+    })
+  })
+}
+
+const cdpPort = await freePort()
 const chrome = spawn(
   CHROME,
   [
@@ -113,10 +137,23 @@ const chrome = spawn(
   { stdio: 'ignore' }
 )
 
+// `existsSync` above proves the file is there, not that it can be RUN. A binary with no
+// execute bit fails asynchronously, and an unhandled 'error' event kills this process with
+// no line saying so.
+let spawnFailed = null
+chrome.on('error', (err) => {
+  spawnFailed = err
+})
+let chromeExit = null
+chrome.on('exit', (code, signal) => {
+  chromeExit = signal ? `killed by ${signal}` : `exited with code ${code}`
+})
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function browserSocket() {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 40; i++) {
+    if (spawnFailed) throw new Error(`Chrome could not be started: ${spawnFailed.message}`)
     try {
       const info = await (await fetch(`http://127.0.0.1:${cdpPort}/json/version`)).json()
       if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl
@@ -125,7 +162,10 @@ async function browserSocket() {
     }
     await sleep(200)
   }
-  throw new Error('Chrome never opened its debugging port')
+  throw new Error(
+    `Chrome never opened its debugging port ${cdpPort}` +
+      (chromeExit ? ` - it ${chromeExit}` : ' - it is still running, so the port is likely in use')
+  )
 }
 
 function client(ws) {

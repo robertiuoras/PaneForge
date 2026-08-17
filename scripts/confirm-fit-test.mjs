@@ -34,6 +34,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,8 +70,16 @@ const OFFLOAD_BODY =
   `here. Keeping it here is fine if this is the checkout you are working in - it will just ` +
   `be slower.`
 
-/** ConfirmDialog.tsx's own markup, at the width it really has. */
-function page({ body, check = true }) {
+/**
+ * ConfirmDialog.tsx's own markup, at the width it really has.
+ *
+ * Every optional part is optional HERE too, and in the same direction: the component draws
+ * the body, the input and the tick box each only when it was given one, so a fixture that
+ * draws them unconditionally is measuring a dialog the app cannot produce. That is the
+ * failure mode a hand-written fixture has by default - see the technique-library entry the
+ * global notes keep on it - and the cheapest guard is to mirror the conditionals.
+ */
+function page({ body, check = true, checkLabel = 'Remember for 10 minutes', input = false }) {
   return `<!doctype html><meta charset="utf-8"><style>
   html,body{margin:0;background:#111;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px}
   ${css}
@@ -78,8 +87,9 @@ function page({ body, check = true }) {
   <div class="app"><div class="overlay confirm-overlay">
     <div class="dialog confirm">
       <div class="dialog-head"><strong>Start this pane on ${DEVICE}?</strong></div>
-      <div class="confirm-body">${body}</div>
-      ${check ? '<label class="confirm-check"><input type="checkbox"><span>Remember for 10 minutes</span></label>' : ''}
+      ${body ? `<div class="confirm-body">${body}</div>` : ''}
+      ${input ? '<input class="search" placeholder="a new name for this folder">' : ''}
+      ${check ? `<label class="confirm-check"><input type="checkbox"><span>${checkLabel}</span></label>` : ''}
       <div class="dialog-row">
         <button class="ghost">Keep it here</button>
         <button class="primary">Start on ${DEVICE}</button>
@@ -92,12 +102,44 @@ const CASES = [
   { name: 'the offload question', body: OFFLOAD_BODY },
   { name: 'a one-line question', body: 'Close this pane?' },
   { name: 'no tick box', body: OFFLOAD_BODY, check: false },
+  // The tick box's words come from `OFFLOAD_STICK_MS` and the label is not this file's to
+  // know, so the length is varied rather than pinned: what must survive is the LAYOUT, at
+  // any wording the constant can produce.
+  { name: 'a tick box whose label wraps', body: OFFLOAD_BODY, checkLabel: 'Remember this answer for the next 120 minutes on every project this desk is holding' },
+  // ConfirmDialog also does duty as the app's prompt box (`input`), where the same shell
+  // rules apply to a row that now has a text field above it.
+  { name: 'a prompt with a text field', body: 'What should this folder be called?', input: true, check: false },
+  { name: 'no body at all', body: '' },
   // The control: a body far taller than the window, so the dialog really scrolls.
   { name: 'a body taller than the window', body: OFFLOAD_BODY.repeat(14), scrolls: true }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-confirmfit-'))
-const cdpPort = 9447
+
+/**
+ * A port the OS says is free, rather than a number written into the file.
+ *
+ * A fixed port cannot be run twice at once, and two lane worktrees running `npm test` is
+ * the ordinary case here - the second one gets a Chrome that never binds and then the
+ * misleading "Chrome never opened its debugging port", which reads as a broken test rather
+ * than as a busy port. `listen(0)` hands back one the kernel has just confirmed free; the
+ * gap between closing and Chrome binding is a race in theory and is why `PF_CONFIRM_PORT`
+ * exists, but a fixed port loses that race 100% of the time against a second lane.
+ */
+async function freePort() {
+  const fixed = Number(process.env.PF_CONFIRM_PORT)
+  if (Number.isFinite(fixed) && fixed > 0) return fixed
+  return await new Promise((resolve, reject) => {
+    const s = createServer()
+    s.on('error', reject)
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address()
+      s.close(() => resolve(port))
+    })
+  })
+}
+
+const cdpPort = await freePort()
 const chrome = spawn(
   CHROME,
   [
@@ -113,10 +155,25 @@ const chrome = spawn(
   { stdio: 'ignore' }
 )
 
+// `existsSync` proves the file is there, not that it can be run. A binary with no execute
+// bit, or a spawn that fails on resource exhaustion, emits this asynchronously - and an
+// unhandled 'error' event kills the process with no line saying which of the two it was.
+let spawnFailed = null
+chrome.on('error', (err) => {
+  spawnFailed = err
+})
+// Same for a Chrome that starts and then exits: the port never opens and the honest reason
+// is the exit code, not a timeout.
+let chromeExit = null
+chrome.on('exit', (code, signal) => {
+  chromeExit = signal ? `killed by ${signal}` : `exited with code ${code}`
+})
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function browserSocket() {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 40; i++) {
+    if (spawnFailed) throw new Error(`Chrome could not be started: ${spawnFailed.message}`)
     try {
       const info = await (await fetch(`http://127.0.0.1:${cdpPort}/json/version`)).json()
       if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl
@@ -125,7 +182,10 @@ async function browserSocket() {
     }
     await sleep(200)
   }
-  throw new Error('Chrome never opened its debugging port')
+  throw new Error(
+    `Chrome never opened its debugging port ${cdpPort}` +
+      (chromeExit ? ` - it ${chromeExit}` : ' - it is still running, so the port is likely in use')
+  )
 }
 
 function client(ws) {
@@ -144,9 +204,12 @@ function client(ws) {
       const id = next++
       pending.set(id, { resolve, reject })
       ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+      // 10s, not 20: this runs inside `npm test`, which a driven lane waits on, and the
+      // browser wait above can already spend 8s before the first command is sent. Nothing
+      // here is slow when it works - the whole suite of cases is under two seconds.
       setTimeout(
         () => pending.has(id) && (pending.delete(id), reject(new Error(`${method} timed out`))),
-        20_000
+        10_000
       )
     })
 }
@@ -181,7 +244,11 @@ try {
     const m = await evaluate(`(() => {
       const r = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null }
       const d = r('.dialog.confirm'), g = r('.ghost'), p = r('.primary')
-      const above = r('.confirm-check') || r('.confirm-body')
+      // Whatever the dialog really drew last before the buttons, rather than a guess at
+      // which optional part is present: the input, the tick box and the body are each
+      // conditional, so naming one is how a case quietly stops measuring anything.
+      const row = document.querySelector('.dialog-row')
+      const above = row.previousElementSibling.getBoundingClientRect()
       const el = document.querySelector('.dialog.confirm')
       // Scrolled to the very top is the worst case for a pinned footer: everything the
       // sticky is for happens there, and nowhere else.
