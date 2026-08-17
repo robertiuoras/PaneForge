@@ -607,6 +607,26 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  /**
+   * Hand a pane a job to do: type the text into its composer and press Enter for real.
+   *
+   * The same machinery a launch prompt uses (`queuePrompt`), exposed because a lane
+   * hand-over is the identical problem arriving later in a pane's life. LaneStrip used to
+   * do it itself with one `write(id, text + '\r')`, which is exactly the shape that was
+   * measured failing on 2026-08-11: the CR is the last byte of a paste rather than a
+   * keystroke, so the paragraph sits in the prompt box and the chat waits for a human to
+   * press Enter. Robert found one of these on 2026-08-17 - the conflicted-lane job was in
+   * his box, unsent - which is what this method exists to stop.
+   *
+   * Nothing about this is specific to startup: it waits for an idle composer, writes the
+   * text, sends the return SEPARATELY a beat later, and re-sends it if the pane is still
+   * sitting idle afterwards.
+   */
+  sendPrompt(id: string, text: string): void {
+    if (!this.sessions.has(id)) return
+    this.queuePrompt(id, text)
+  }
+
   write(id: string, data: string): void {
     const live = this.sessions.get(id)
     if (!live) return

@@ -1673,6 +1673,17 @@ export interface Api {
    */
   quitIdle(reason: string): Promise<void>
   write(id: string, data: string): void
+  /**
+   * Put a job in a pane's prompt box and press Enter, properly.
+   *
+   * `write(id, text + '\r')` does NOT submit: the CLIs here run with bracketed paste on,
+   * so a burst that size arrives as pasted text and the trailing return is one more
+   * character of it. The text then sits in the composer waiting for a person. This goes
+   * through the main process, which waits for an idle composer, sends the return as its
+   * own keystroke, and re-sends it if the pane is still idle after (sessions.ts
+   * `queuePrompt`). Use it for anything the app hands a chat unattended.
+   */
+  sendPrompt(id: string, text: string): void
   /** send the same line to every live session */
   /**
    * `borrowed` is a phone saying "this is my screen's size, not the desk's". One pty

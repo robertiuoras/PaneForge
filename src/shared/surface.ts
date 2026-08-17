@@ -52,6 +52,7 @@ export const SURFACE: Surface = {
   reorderSessions: ['send', 'sessions:reorder'],
   clearAttention: ['send', 'sessions:attention-clear'],
   write: ['send', 'pty:write'],
+  sendPrompt: ['send', 'pty:prompt'],
   resize: ['send', 'pty:resize'],
   returnSize: ['send', 'pty:return'],
   paneVisibility: ['send', 'pty:visible'],

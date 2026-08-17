@@ -146,6 +146,32 @@ const bareProc = manager.sessions.get(bare.id).proc
 await sleep(400)
 ok(bareProc.writes.length === 0, 'a pane opened without a prompt is left alone', JSON.stringify(bareProc.writes))
 
+// 6. The same discipline for a job handed to a pane that is already running - a lane
+//    hand-over, which is this failure arriving later in a pane's life. LaneStrip wrote
+//    `text + '\r'` itself and Robert found the conflicted-lane job sitting unsent in his
+//    prompt box on 2026-08-17; `sendPrompt` is the fix and this is what makes it stay one.
+const JOB = 'taskdriver.ai lane f is conflicted, so its finished work is left out of every release.'
+manager.sendPrompt(bare.id, JOB)
+bareProc.say(COMPOSER)
+await sleep(500)
+const jobWrite = bareProc.writes.find((w) => w.includes('lane f is conflicted')) ?? ''
+ok(Boolean(jobWrite), 'a job handed to a live pane is typed into it', JSON.stringify(bareProc.writes))
+ok(
+  Boolean(jobWrite) && !jobWrite.endsWith('\r'),
+  'the job is not written with the return glued on',
+  JSON.stringify(jobWrite.slice(-12))
+)
+ok(
+  bareProc.writes.filter((w) => w === '\r').length >= 1,
+  'and the return is pressed for it, as its own keystroke',
+  JSON.stringify(bareProc.writes)
+)
+
+// 7. An id that is not a live pane is a no-op, not a crash: a lane's chat can exit
+//    between the strip deciding to hand the job over and this call landing.
+manager.sendPrompt('no-such-pane', JOB)
+ok(true, 'sendPrompt on a dead id does not throw')
+
 manager.killAll?.()
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')

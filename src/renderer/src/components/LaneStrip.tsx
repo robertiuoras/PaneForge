@@ -189,7 +189,14 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
           (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
         if (!target || target.status === 'working') continue
         handed.current.add(key)
-        api.write(target.id, fixPrompt(lane, board.repo) + '\r')
+        // Not `write(text + '\r')`. That is the shape measured failing on 2026-08-11 for
+        // launch prompts and found failing here on 2026-08-17: the CLIs run with bracketed
+        // paste on, so a paragraph written to the pty arrives as pasted text and the CR
+        // glued to its end is one more character of the paste, not Enter. The job then sits
+        // in the chat's prompt box until a person notices and presses Enter - which is the
+        // whole point of an automatic hand-over, missed. `sendPrompt` waits for an idle
+        // composer, then sends the return as its own keystroke and confirms it took.
+        api.sendPrompt(target.id, fixPrompt(lane, board.repo))
       }
   }, [boards, sessions])
 
