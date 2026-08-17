@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
+import { DEFAULT_AUTO_HANDOFF } from '@shared/autoHandoff'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -415,6 +416,16 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   onChange={(v) => onChange({ offloadAsk: v })}
                   label="Ask first, rather than moving it"
                   hint="A pane is moved for a reason this machine can see - it is out of memory - and kept here for one it cannot: the checkout you are editing, the dev server your browser is pointed at, the fact that you are sitting in front of this screen. So the launch asks, recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off moves it silently and tells you afterwards."
+                />
+                <Switch
+                  checked={config.autoHandoff?.enabled !== false}
+                  onChange={(v) =>
+                    onChange({
+                      autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
+                    })
+                  }
+                  label="Move a finished pane to a paired device when this machine is full"
+                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. Only once the machine is genuinely out of memory, only a pane nobody is looking at that has been quiet for ten minutes, and only to a device that is online and has the same project. A pane mid-turn is never moved - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
                 />
                 <Switch
                   checked={config.driveUnattended !== false}

@@ -166,6 +166,9 @@ const GATED_INVOKE = new Set([
   // never asked.
   'remote:start',
   'remote:handoff',
+  // Cancelling a queued move destroys nothing, but it decides where a pane runs, which is
+  // the same authority as starting one. Same class as its opposite, for one touch.
+  'remote:handoffCancel',
 
   // --- changes who may reach this desk --------------------------------------------------
   // The lock's own perimeter. `config:set` is here because the config carries agent commands

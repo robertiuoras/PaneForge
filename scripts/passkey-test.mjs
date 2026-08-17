@@ -631,7 +631,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
     'recents:search', 'recents:text', 'stash:add', 'stash:pick', 'phone:state',
     'remote:state', 'remote:rename', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
-    'remote:watch', 'remote:projects', 'remote:agents', 'prompt:prior', 'improve:status',
+    'remote:watch', 'remote:projects', 'remote:agents', 'remote:handoffPending',
+    'prompt:prior', 'improve:status',
     'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))

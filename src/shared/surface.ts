@@ -169,6 +169,8 @@ export const SURFACE: Surface = {
   remoteAgents: ['invoke', 'remote:agents'],
   startRemote: ['invoke', 'remote:start'],
   handoffToDevice: ['invoke', 'remote:handoff'],
+  handoffPending: ['invoke', 'remote:handoffPending'],
+  cancelHandoff: ['invoke', 'remote:handoffCancel'],
   priorPrompt: ['invoke', 'prompt:prior'],
   promptUsed: ['send', 'prompt:used'],
   improveStatus: ['invoke', 'improve:status'],

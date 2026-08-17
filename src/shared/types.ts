@@ -5,6 +5,7 @@ import type { AttachIn, AttachResult } from './attach'
 import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
 import type { RecoverConfig } from './recover'
+import type { AutoHandoffConfig } from './autoHandoff'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
 
@@ -130,6 +131,15 @@ export interface Session {
    * width - two windows cannot both decide, and the one being looked at wins.
    */
   borrowed?: boolean
+  /**
+   * This pane is on its way to another device, or waiting for its turn to end so it can be.
+   *
+   * On the session rather than in the sender, because two other things have to see it: the
+   * pane draws it (a pane about to disappear should say so before it does), and
+   * `reclaim.ts` refuses to close it - a pane closed out from under a move in flight is a
+   * handoff that reports success about a pane that is no longer there.
+   */
+  handingOff?: boolean
   /**
    * This pane's agent runs on another machine and is mirrored here. The id is
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
@@ -1431,6 +1441,12 @@ export interface Config {
    */
   reclaim?: ReclaimConfig
   /**
+   * Move finished panes to a paired device when this machine runs out of memory, rather
+   * than closing them - see shared/autoHandoff.ts. Sits above `reclaim` on the same
+   * ladder: closing is what happens when there is nowhere to move a pane to.
+   */
+  autoHandoff?: AutoHandoffConfig
+  /**
    * Quit the WHOLE app after this many minutes with no input - see shared/idlequit.ts.
    * 0 (the default) is off. Distinct from `reclaim`, which closes single panes: this
    * closes the window and ends the process, so it refuses on a focused window, on any
@@ -2030,7 +2046,17 @@ export interface Api {
    * screen over the link. Each pane closes here only once its replacement is
    * running there; the report says per pane what carried and what refused.
    */
-  handoffToDevice(device: string, ids?: string[], closeReceiverWhenDone?: boolean): Promise<HandoffItem[]>
+  handoffToDevice(
+    device: string,
+    ids?: string[],
+    closeReceiverWhenDone?: boolean,
+    /** false moves a pane mid-turn and loses the answer being written. Default true. */
+    waitForTurn?: boolean
+  ): Promise<HandoffItem[]>
+  /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
+  handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
+  /** Stop waiting on one. The pane stays here, unmarked. */
+  cancelHandoff(id: string): Promise<boolean>
 
   /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
