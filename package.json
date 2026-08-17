@@ -165,7 +165,8 @@
     "typecheck:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run typecheck",
     "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test",
     "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build",
-    "test:borrow": "node scripts/borrow-cycle-test.mjs"
+    "test:borrow": "node scripts/borrow-cycle-test.mjs",
+    "test:shipimports": "node scripts/ship-imports-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -205,6 +206,7 @@
         "filter": [
           "lane.mjs",
           "lane-hook.mjs",
+          "lane-peers.mjs",
           "lane-merge.mjs",
           "test-app.mjs",
           "release-notes.mjs",
