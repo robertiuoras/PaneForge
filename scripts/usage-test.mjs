@@ -44,7 +44,7 @@ if (from < 0 || to < from) {
 const parsers = join(dir, 'parsers.ts')
 // `UsageRow` survives only in annotations, which are stripped, so the slice needs no import.
 writeFileSync(parsers, mainSrc.slice(from, to), 'utf8')
-const { parseWindows, parsePosix, parseCpuTime } = await import(
+const { parseWindows, parsePosix, parseCpuTime, parseTopMem, mergeFootprint } = await import(
   'file://' + parsers.replace(/\\/g, '/')
 )
 
@@ -151,6 +151,67 @@ ok('and the noise line is dropped', !posix.some((r) => !Number.isFinite(r.cpuMs)
 const win = parseWindows(['100 1 4000 5120', '101 100 8000 750000', 'not a row', ''].join('\r\n'))
 ok('windows rows parse', win.length === 2, JSON.stringify(win))
 ok('windows carries pre-converted KB and ms', win[1].rssKb === 8000 && win[1].cpuMs === 750_000)
+
+// -------------------------------------------------- the macOS memory column is not RSS
+
+// `top -l 1 -stats pid,mem` prints a unit suffix and sometimes a growth marker. Every shape
+// below has been seen on this desk; a parser that reads the digits and ignores the letter
+// reports a 1.2 GB renderer as 1 KB.
+const mem = parseTopMem(
+  [
+    'Processes: 574 total, 3 running',
+    'PhysMem: 15G used (3449M wired, 3703M compressor), 458M unused.',
+    'PID    MEM',
+    '97657  1228M',
+    '60944  578M ',
+    '76065  13M+',
+    '76085  4096K',
+    '11215  1.2G',
+    '99999  -',
+    ''
+  ].join('\n')
+)
+ok('megabytes', mem.get(97657) === 1228 * 1024, mem.get(97657))
+ok('a trailing growth marker is not part of the number', mem.get(76065) === 13 * 1024, mem.get(76065))
+ok('kilobytes stay kilobytes', mem.get(76085) === 4096, mem.get(76085))
+ok('gigabytes, fractional', mem.get(11215) === Math.round(1.2 * 1048576), mem.get(11215))
+ok('a row with no reading is left out, not zeroed', !mem.has(99999))
+ok('the header lines are not processes', !mem.has(574) && !mem.has(15))
+
+const merged = mergeFootprint(
+  [row(100, 1, 4_000, 0), row(102, 101, 134_832, 20_000)],
+  new Map([[102, 592_000]])
+)
+ok('a pid with a footprint reading uses it', merged[1].rssKb === 592_000, merged[1].rssKb)
+ok('a pid without one keeps its RSS rather than vanishing', merged[0].rssKb === 4_000)
+ok('an empty map changes nothing', mergeFootprint(merged, new Map())[1].rssKb === 592_000)
+ok('the rows are not mutated in place', merged !== undefined && desk[2].rssKb === 190_000)
+
+// The control, and the reason any of this exists: on a real Mac the two numbers DISAGREE,
+// and RSS is the smaller one. Without this the parser could be perfect over a fixture while
+// the app kept reporting half of what the machine is holding.
+if (process.platform === 'darwin') {
+  const { execFileSync } = await import('node:child_process')
+  const read = (cmd, args) => {
+    try {
+      return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    } catch {
+      return ''
+    }
+  }
+  const live = parseTopMem(read('top', ['-l', '1', '-stats', 'pid,mem']))
+  const rss = parsePosix(read('ps', ['-Ao', 'pid=,ppid=,rss=,time=']))
+  ok('a real top is readable', live.size > 20, `${live.size} rows`)
+  const both = rss.filter((r) => live.has(r.pid) && r.rssKb > 50_000)
+  const bigger = both.filter((r) => live.get(r.pid) > r.rssKb * 1.2)
+  ok(
+    'and its memory column is bigger than RSS on real processes',
+    both.length === 0 || bigger.length > 0,
+    `${bigger.length} of ${both.length} big processes read higher than their RSS`
+  )
+} else {
+  console.log('skip  the live macOS control (not darwin)')
+}
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

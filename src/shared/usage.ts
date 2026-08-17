@@ -20,7 +20,15 @@
 export interface UsageRow {
   pid: number
   ppid: number
-  /** Resident set size in KB - what `ps` and `WorkingSetSize` both report. */
+  /**
+   * What this process costs in physical memory, in KB.
+   *
+   * `WorkingSetSize` on Windows, and on macOS the `phys_footprint` figure `top` prints
+   * rather than `ps -o rss=` - a compressed page has left the resident set and has not
+   * left the machine, and on this desk that gap was a factor of 2 across the agents and
+   * 19 on one renderer. `main/usage.ts` does the swap; the name is kept because a row is
+   * still one process's memory and every consumer treats it as such.
+   */
   rssKb: number
   /**
    * Cumulative CPU time in MILLISECONDS since the process started.

@@ -87,11 +87,79 @@ export function parsePosix(text: string): UsageRow[] {
   return out
 }
 
+/**
+ * macOS: `pid  mem` out of `top -l 1 -stats pid,mem`, in KB.
+ *
+ * `ps -o rss=` is the WRONG number on this platform and by a factor nobody would guess.
+ * macOS compresses idle pages: a compressed page leaves the resident set but still costs
+ * physical RAM, and it is `phys_footprint` - not RSS - that the kernel's memory-pressure
+ * math and the "your system has run out of application memory" panel are computed from.
+ * Measured on this desk 2026-08-17, six Claude Code CLIs: RSS said 1739 MB, footprint said
+ * 3283 MB. One PaneForge renderer read 64 MB resident against 1225 MB of footprint, a
+ * factor of 19. So the chip that exists to answer "which of these is eating my machine"
+ * was quietly answering with about half the truth, and the half it left out is the half
+ * the OS objects to.
+ *
+ * `top` rather than `footprint`, which is per-process and costs ~40ms each - a hundred
+ * processes a tick is not a readout, it is a second job. One `top -l 1` is ~0.7s for the
+ * whole table and prints exactly the footprint figure (578M/1228M/444M against footprint's
+ * 578/1225/448 on the same pids, same minute).
+ *
+ * Values carry a unit suffix and sometimes a `+`/`-` growth marker: `578M`, `35M+`, `4096K`,
+ * `1.2G`. A row that does not parse is left out, which leaves that pid on its RSS.
+ */
+export function parseTopMem(text: string): Map<number, number> {
+  const out = new Map<number, number>()
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+([\d.]+)([BKMG])[+-]?\s*$/)
+    if (!m) continue
+    const pid = Number(m[1])
+    const size = Number(m[2])
+    if (!pid || !Number.isFinite(size)) continue
+    const kb =
+      m[3] === 'B' ? size / 1024 : m[3] === 'K' ? size : m[3] === 'M' ? size * 1024 : size * 1048576
+    out.set(pid, Math.round(kb))
+  }
+  return out
+}
+
+/**
+ * Rows with `rssKb` replaced by the footprint reading wherever there is one.
+ *
+ * A pid `top` did not report - it started between the two reads, or the whole probe failed -
+ * keeps its RSS rather than dropping out. An undercount for one process is a smaller lie
+ * than a pane that vanishes from the readout.
+ */
+export function mergeFootprint(rows: UsageRow[], mem: Map<number, number>): UsageRow[] {
+  if (!mem.size) return rows
+  return rows.map((r) => {
+    const kb = mem.get(r.pid)
+    return kb === undefined ? r : { ...r, rssKb: kb }
+  })
+}
+
 /** One process table, asynchronously. An empty array is a failed probe, never a zero desk. */
-export function snapshot(done: (rows: UsageRow[]) => void): void {
+export function snapshot(
+  done: (rows: UsageRow[], mem?: Map<number, number>) => void
+): void {
   const finish = (err: unknown, stdout: string): void => {
     if (err || !stdout) return done([])
-    done(WIN ? parseWindows(stdout) : parsePosix(stdout))
+    if (WIN) return done(parseWindows(stdout))
+    const rows = parsePosix(stdout)
+    if (process.platform !== 'darwin' || !rows.length) return done(rows)
+    // The topology and the CPU counters come from `ps`; only the memory column is replaced.
+    // A `top` that fails, times out or prints nothing hands back an empty map, and the desk
+    // is reported on RSS exactly as it was before any of this existed.
+    execFile(
+      'top',
+      ['-l', '1', '-stats', 'pid,mem'],
+      { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 },
+      (topErr, topOut) => {
+        if (topErr || !topOut) return done(rows)
+        const mem = parseTopMem(topOut)
+        done(mergeFootprint(rows, mem), mem)
+      }
+    )
   }
   try {
     if (WIN) {
@@ -121,14 +189,21 @@ export function snapshot(done: (rows: UsageRow[]) => void): void {
  *
  * `percentCPUUsage` is already a share of one core per process, which is the same unit
  * shared/usage.ts uses for the panes, so the two add up honestly.
+ *
+ * Memory is the same trap as the panes and worse: `workingSetSize` is Chromium's resident
+ * set, and a renderer measured here read 64 MB resident against 1225 MB of footprint. So
+ * when the sampler has a footprint table in hand, our OWN pids are looked up in it too -
+ * `getAppMetrics()` carries each process's pid, which is what makes that possible without
+ * guessing which of the machine's Electron processes are ours. No table, and it falls back
+ * to what Electron said.
  */
-export function appCost(): { mb: number; cpuPct: number } {
+export function appCost(mem?: Map<number, number>): { mb: number; cpuPct: number } {
   try {
     const metrics = app.getAppMetrics()
     let kb = 0
     let cpu = 0
     for (const m of metrics) {
-      kb += m.memory?.workingSetSize ?? 0
+      kb += mem?.get(m.pid) ?? m.memory?.workingSetSize ?? 0
       cpu += m.cpu?.percentCPUUsage ?? 0
     }
     return { mb: Math.round(kb / 1024), cpuPct: Math.round(cpu) }
@@ -179,14 +254,14 @@ export function trackUsage(
     }
     busy = true
     const at = Date.now()
-    snapshot((rows) => {
+    snapshot((rows, mem) => {
       busy = false
       if (!rows.length) return
       const elapsed = lastAt ? at - lastAt : 0
       const { panes, cpuNow } = summarise(rows, live, previous, elapsed)
       previous = cpuNow
       lastAt = at
-      const own = appCost()
+      const own = appCost(mem)
       onReport(report(panes, own.mb, own.cpuPct, machineMb()))
     })
   }
