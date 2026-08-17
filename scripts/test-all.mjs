@@ -51,6 +51,7 @@ const TESTS = [
   ['idlequit', 'idlequit-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
   ['promptecho', 'promptecho-test.mjs'],
+  ['winfeed', 'winfeed-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],

@@ -20,6 +20,7 @@ import { get } from 'node:https'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { pickRelease } from '../shared/pickRelease'
+import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
 import { lastShip } from './laneBoard'
 import {
@@ -435,8 +436,11 @@ function ghTags(): Promise<string[]> {
   return new Promise((resolve) => {
     execFile(
       'gh',
-      ['release', 'list', '--limit', String(WIN_PIN_DEPTH), '--json', 'tagName', '--jq', '.[].tagName'],
-      { cwd: app.getAppPath(), windowsHide: true, timeout: 20_000 },
+      // `--repo`, never the working directory: a packaged app's cwd is wherever Windows
+      // started it from, and a `gh` that has to infer the repo from a folder answers about
+      // whatever repo it lands in - or nothing at all.
+      ['release', 'list', '--repo', 'robertiuoras/PaneForge', '--limit', String(WIN_PIN_DEPTH), '--json', 'tagName', '--jq', '.[].tagName'],
+      { windowsHide: true, timeout: 20_000 },
       (err, out) => resolve(err ? [] : out.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.startsWith('v')))
     )
   })
@@ -472,16 +476,13 @@ async function winDevTag(): Promise<string> {
   if (Date.now() - winPinAt < WIN_PIN_MS) return winPinTag
   winPinAt = Date.now()
   const tags = await ghTags()
-  for (const tag of tags) {
-    if (await hasWinFeed(tag)) {
-      if (tag !== winPinTag) log('feed', `dev channel pinned to ${tag} (newest release with a latest.yml)`)
-      winPinTag = tag
-      return tag
-    }
+  const tag = await pickWinTag(tags, hasWinFeed)
+  if (tag && tag !== winPinTag) log('feed', `dev channel pinned to ${tag} (newest release with a latest.yml)`)
+  if (!tag && tags.length) {
+    log('feed', `no release in the last ${tags.length} carries a latest.yml - leaving the feed alone`)
   }
-  if (tags.length) log('feed', `no release in the last ${tags.length} carries a latest.yml - leaving the feed alone`)
-  winPinTag = ''
-  return ''
+  winPinTag = tag
+  return tag
 }
 
 /**
@@ -492,6 +493,10 @@ async function winDevTag(): Promise<string> {
  */
 async function pinWinDevFeed(u: Updater): Promise<boolean> {
   if (process.platform !== 'win32') return false
+  // The one switch that turns this off: `npm run test:blindlist` drives the real module
+  // against a stub updater and is about devListBlind, which the pin would otherwise stand
+  // in front of. Nothing in a shipped app sets it.
+  if (process.env.PF_NO_WIN_PIN) return false
   if (!devChannel) {
     // Back to the ordinary feed the moment the dev switch goes off, or a stable install
     // would keep taking the last dev build this pin resolved.
