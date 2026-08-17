@@ -24,9 +24,18 @@
 !macro removePortable
   ; Only the portable layout: the NSIS install lives under `claude-orchestrator` and is
   ; handled by the built-in uninstall of the previous version.
-  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 +2
+  ;
+  ; The Delete USED TO SIT OUTSIDE THIS GUARD, and that is a bug worth naming: `IfFileExists
+  ; ... 0 +2` skips exactly one instruction, so it covered the RMDir and nothing else. The
+  ; Desktop shortcut was therefore deleted on every run of this installer, portable copy or
+  ; not - and this macro runs from `customInit` AND from `customUnInstall`, which is the old
+  ; version's uninstaller during an ordinary update. A shortcut that vanishes after an
+  ; update reads as "the app uninstalled itself". Both are inside the block now, and the app
+  ; puts a missing shortcut back on launch anyway (src/main/winShortcut.ts).
+  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableGone_${__LINE__}
     RMDir /r "$LOCALAPPDATA\Programs\PaneForge"
-  Delete "$DESKTOP\PaneForge.lnk"
+    Delete "$DESKTOP\PaneForge.lnk"
+  portableGone_${__LINE__}:
 !macroend
 
 !macro customInit
