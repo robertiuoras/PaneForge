@@ -104,6 +104,9 @@ const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey', 'phone:clearMark
  */
 const GATED_SEND = new Set([
   'pty:write',
+  // Strictly more than `pty:write`: it types text into a pane AND presses Enter for it, so
+  // a stolen cookie needs no second call to make the agent act.
+  'pty:prompt',
   'shell:reveal',
   'shell:external',
   // Same rule as the invoke side, and the same omission: these are fire-and-forget, so a

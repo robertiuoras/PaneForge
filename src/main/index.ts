@@ -1202,6 +1202,22 @@ ipcMain.on('pty:write', (_e, id: string, data: string) => {
   manager.write(id, data)
 })
 
+// A job the APP hands a chat, not bytes a person typed: the text goes in and the return is
+// pressed for real. Never `notePaneInput` - that means a person took a dispatched pane
+// over, and this is the opposite.
+ipcMain.on('pty:prompt', (_e, id: string, text: string) => {
+  if (!text) return
+  if (remote.owns(id)) {
+    // The link has no prompt op, so this is the separate-keystroke half only: two
+    // messages rather than one write with the CR glued on. Timing on the other machine
+    // is that machine's own composer, which this side cannot read.
+    remote.send(id, { t: 'write', data: text })
+    setTimeout(() => remote.send(id, { t: 'write', data: '\r' }), 600)
+    return
+  }
+  manager.sendPrompt(id, text)
+})
+
 /** What each pane has typed since its last Enter - only ever used to spot `/clear`. */
 const typedLine = new Map<string, string>()
 
@@ -1445,7 +1461,11 @@ const dispatchPanes: PaneDriver = {
     const s = manager.start(started)
     return { id: s.id, cwd: started.cwd, branch: await currentBranch(started.cwd) }
   },
-  type: (id, text) => manager.write(id, `${text}\r`),
+  // The supervisor's retry brief goes into a pane that is already running, unattended, so
+  // it needs the same submit discipline as a launch prompt: `write(text + '\r')` leaves the
+  // brief in the composer with nobody to press Enter (measured 2026-08-11 for launch
+  // prompts, found again in the lane hand-over on 2026-08-17).
+  type: (id, text) => manager.sendPrompt(id, text),
   close: (id) => manager.kill(id),
   alive: (id) => {
     const s = manager.list().find((x) => x.id === id)
