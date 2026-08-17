@@ -26,7 +26,7 @@ const src = readFileSync(join(here, '..', 'src', 'shared', 'capacity.ts'), 'utf8
 const js = src
   .replace(/^export type .*$/gm, '')
   .replace(/^export interface [\s\S]*?^}$/gm, '')
-  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|OffloadAnswer|OffloadStick|OffloadPlan|Offload|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
+  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|OffloadAnswer|OffloadStick|OffloadPlan|Offload|RestorePlan|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
   .replace(/<[A-Za-z]+(\[\])?>/g, '')
 const dir = join(tmpdir(), 'paneforge-capacity-test')
 rmSync(dir, { recursive: true, force: true })
@@ -44,6 +44,7 @@ const {
   TRIMMED_SCROLLBACK,
   offloadTarget,
   offloadPlan,
+  restorePlan,
   stickFor,
   OFFLOAD_STICK_MS,
   projectNameOf
@@ -255,6 +256,40 @@ ok('a posix path yields its project name', projectNameOf('/Users/robertiuoras/Pr
 ok('a windows path yields the same name', projectNameOf('C:\\Users\\Gamer\\Desktop\\Projects\\toolstash') === 'toolstash')
 ok('a trailing separator does not produce an empty name', projectNameOf('/Users/rob/Projects/toolstash/') === 'toolstash')
 ok('a nameless path is not a match', projectNameOf('/') === '')
+
+// --- what a launch brings back ---------------------------------------------
+//
+// The reported failure this exists for: six panes restored onto a 16 GB laptop the kernel
+// was already reclaiming from, and the desk came back unable to accept a keystroke. Every
+// negative below is the half that decides whether the feature is worth having - a restore
+// that quietly returns nothing, or one that nags a machine with room, are both worse than
+// the bug.
+const COLD = (pressure) => ({ totalMb: 16 * GB, pressure, localPanes: 0 })
+
+ok('a healthy machine gets its whole desk back', restorePlan(6, COLD('normal')).fits === 6)
+ok('and is told nothing, because there is nothing to say', restorePlan(6, COLD('normal')).note === '')
+ok('at warn the desk comes back two at a time', restorePlan(6, COLD('warn')).fits === 2)
+ok('at critical, one', restorePlan(6, COLD('critical')).fits === 1)
+ok(
+  'a machine under pressure says why, with the cost of a pane in it',
+  /MB/.test(restorePlan(6, COLD('warn')).note) && /History/.test(restorePlan(6, COLD('warn')).note),
+  restorePlan(6, COLD('warn')).note
+)
+// The window is never emptied - same rule reclaim.ts keeps. An app that restores nothing
+// has removed the reason it was reopened, and the person cannot tell it from a lost desk.
+ok('never zero, at any pressure', restorePlan(4, COLD('critical')).fits >= 1)
+ok('one saved pane is one restored pane, whatever the kernel says', restorePlan(1, COLD('critical')).fits === 1)
+ok('an empty desk asks for nothing', restorePlan(0, COLD('critical')).fits === 0)
+ok('and says nothing about a desk it cannot restore', restorePlan(1, COLD('critical')).note === '')
+ok(
+  'it never offers more than were saved',
+  restorePlan(2, COLD('normal')).fits === 2 && restorePlan(2, COLD('warn')).fits === 2
+)
+ok(
+  'panes already open count against the room for more',
+  restorePlan(6, { totalMb: 4 * GB, pressure: 'normal', localPanes: 4 }).fits <
+    restorePlan(6, { totalMb: 4 * GB, pressure: 'normal', localPanes: 0 }).fits
+)
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

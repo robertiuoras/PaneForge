@@ -201,9 +201,9 @@ import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
-import { assess, type Pressure } from '../shared/capacity'
+import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
-import { totalMb, watchPressure } from './memory'
+import { readPressure, totalMb, watchPressure } from './memory'
 import { trackUsage } from './usage'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
@@ -279,7 +279,29 @@ const profile = initProfile()
  */
 const launchRequest = parseOpenArgs(process.argv)
 
+/*
+ * Who asked the app to leave.
+ *
+ * 2026-08-17, "why was PaneForge closed automatically": no log on the machine could
+ * answer it. The exit was recorded (`exit installing the staged mac update on quit`) and
+ * the swap script ran, which proves the quit went through `before-quit` rather than
+ * through the last window closing - and that was the whole of the evidence. Electron
+ * never says what triggered a quit, so every path that quits ON PURPOSE names itself
+ * here, and a quit that leaves this empty was a Cmd-Q, the app menu, or a signal from
+ * the OS. Naming the absence is the point: "nothing in the app asked" is an answer, and
+ * it is the one that was missing.
+ */
+let quitCause = ''
+function quitting(cause: string): void {
+  if (!quitCause) quitCause = cause
+}
+/** The words for the log line, including the case where nothing in the app fired. */
+function quitReason(): string {
+  return quitCause || 'nothing in the app asked - Cmd-Q, the app menu, or a signal from the OS'
+}
+
 if (!app.requestSingleInstanceLock(launchRequest)) {
+  quitting('another copy already holds the single-instance lock')
   app.quit()
 } else {
   app.on('second-instance', (_e, argv, _cwd, extra) => {
@@ -490,6 +512,7 @@ function createWindow(): void {
   if (profile && mode === 'minimized') {
     const idleQuit = setTimeout(() => {
       console.log('Test copy was never opened - closing itself so it does not linger.')
+      quitting('an unopened test copy timed itself out')
       app.quit()
     }, 30 * 60_000)
     // Not the `show` event: the launch itself calls showInactive() before minimizing,
@@ -662,6 +685,7 @@ let closingAfterHandoff = false
 function closeReceiverWhenClear(): void {
   if (closingAfterHandoff || !handoffReceiverCanQuit(closeAfterHandoff, manager.list())) return
   closingAfterHandoff = true
+  quitting('handoff receiver - every transferred pane has ended')
   app.quit()
 }
 
@@ -2325,6 +2349,7 @@ ipcMain.on('app:relaunchAsAdmin', () => {
   }
   // Same reasoning as the update restart: the elevated copy is already starting, so
   // getting this one out of the way quickly is the whole user-visible difference.
+  quitting('relaunching as administrator')
   rememberBounds()
   manager.shutdown()
   hardExit()
@@ -2495,6 +2520,7 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
 function doInstall(): void {
   if (installStarted) return
   installStarted = true
+  quitting('installing an update')
 
   // Get off the screen FIRST. Everything below is unavoidable work - snapshotting the
   // workspace, flushing transcripts, killing N ptys - and on Windows it adds up to a
@@ -2666,6 +2692,7 @@ ipcMain.handle('app:quitIdle', (_e, reason: string) => {
   } catch {
     // A marker we could not write only costs a keep-alive relaunch. Quitting still wins.
   }
+  quitting(`idle - ${reason}`)
   app.quit()
 })
 /** The Settings switch, kept out of the config write path so it applies instantly. */
@@ -3175,11 +3202,22 @@ function offerRestore(): void {
     return
   }
   const all = desk.specs.map(describe)
+  const panes = all.slice(0, MAX_RESTORE)
+  // Read here rather than off `lastPressure`: this runs during boot, before the sampler
+  // has necessarily had its first tick, and a stale `normal` would tick every pane on the
+  // one launch where that is the whole complaint.
+  const plan = restorePlan(panes.filter((p) => !p.gone).length, {
+    totalMb: totalMb(),
+    pressure: readPressure(),
+    localPanes: manager.list().length
+  })
   offer = {
-    panes: all.slice(0, MAX_RESTORE),
+    panes,
     extra: all.slice(MAX_RESTORE),
     at: desk.at,
-    clean: desk.clean
+    clean: desk.clean,
+    fits: plan.fits,
+    memoryNote: plan.note
   }
   // Until the question is answered the desk stands, even though the app currently
   // has no panes: an unanswered offer must survive a second restart, and a mis-click
@@ -3375,6 +3413,7 @@ app.whenReady().then(() => {
 // Agents are child processes of this app: leaving them running after the window
 // closes would strand invisible `claude` processes holding file locks.
 app.on('window-all-closed', () => {
+  quitting('the last window was closed')
   // Before shutdown(), which is what kills the panes this is a record of.
   saveDeskOnExit(manager.snapshot())
   // Guests get their sockets closed rather than left to time out, so the other
@@ -3427,7 +3466,11 @@ function installStagedMacUpdateOnQuit(): void {
 }
 
 function hardExit(): void {
-  updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
+  updateLog(
+    'exit',
+    installStarted ? 'handing over to the installer' : 'window closed',
+    `- ${quitReason()}`
+  )
   installStagedMacUpdateOnQuit()
   // The exit that does NOT go through before-quit, so it needs its own line: a driven
   // agent is detached and in its own process group, and nothing below reaches it.
@@ -3443,6 +3486,10 @@ function hardExit(): void {
 }
 
 app.on('before-quit', () => {
+  // Written FIRST, before anything below can throw: the whole value of this line is that
+  // it exists for a quit nobody in the app asked for, which is the one that gets reported
+  // as "it closed by itself".
+  updateLog('quit', quitReason(), `${manager.list().length} pane(s) open`)
   // Quitting by any other route than the last window closing - the tray, Cmd-Q, the
   // OS asking everyone to leave before a restart. Same record, same order: the desk
   // is written while the panes are still alive to be read.
