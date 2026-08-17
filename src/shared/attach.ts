@@ -148,6 +148,77 @@ export function pruneList(names: string[], keep = ATTACH_KEEP): string[] {
   return ours.length <= keep ? [] : ours.slice(0, ours.length - keep)
 }
 
+/**
+ * A dropped `file://` URI as a path on the machine the drop happened on, or '' when the
+ * URI is not one.
+ *
+ * This is the half of a drop that had no code at all, and the gap was silent: macOS hands
+ * a screenshot dragged from its own preview thumbnail (and Finder hands a file dragged
+ * with the Option key) as `text/uri-list` carrying `file:///…` and NO `File` object, so
+ * the pane's dragover - which only accepted a drop when `types` held `Files` - never
+ * claimed the drag, Chromium ran its default action, and the URL was typed into xterm's
+ * helper textarea as text. What reached the agent was the sentence
+ * `file:///var/folders/…/Screenshot%202026-08-17%20at%2017.48.55.png`, which is a link
+ * shaped like an attachment: it looks handled and no agent here can open it.
+ *
+ * Percent-decoded (a screenshot's name is full of `%20`), and Windows' extra leading slash
+ * before a drive letter removed. A `file://host/share` URI keeps its host as a UNC path,
+ * which is what Windows means by it; `localhost` is spelled out in URIs and means this
+ * machine, so it is dropped rather than turned into `\\localhost\…`.
+ */
+export function pathFromFileUri(uri: string): string {
+  const raw = String(uri ?? '').trim()
+  if (!/^file:\/\//i.test(raw)) return ''
+  let rest = raw.slice('file://'.length)
+  // Strip a query/fragment nothing on disk has, then decode.
+  rest = rest.replace(/[?#].*$/, '')
+  let host = ''
+  if (!rest.startsWith('/')) {
+    const cut = rest.indexOf('/')
+    host = cut === -1 ? rest : rest.slice(0, cut)
+    rest = cut === -1 ? '' : rest.slice(cut)
+    if (/^localhost$/i.test(host)) host = ''
+  }
+  let path = ''
+  try {
+    path = decodeURIComponent(rest)
+  } catch {
+    // A stray `%` that is not an escape - the raw text is still a better guess than nothing.
+    path = rest
+  }
+  if (host) return `\\\\${host}${path.replace(/\//g, '\\')}`
+  // `file:///C:/x` is `C:\x`; on POSIX the leading slash is the path.
+  if (/^\/[a-zA-Z]:[\\/]/.test(path)) return path.slice(1).replace(/\//g, '\\')
+  return path
+}
+
+/**
+ * Split what a drop's `text/uri-list` carried into the two things a pane does with them:
+ * files already on this disk (typed as a path, nothing copied), and remote or inline URIs
+ * whose bytes have to be fetched first.
+ *
+ * Anything else - a dragged word, a `mailto:`, a bare sentence - is left out entirely
+ * rather than passed on as text: a drop is "put this in front of the agent", and a drag of
+ * plain text is Chromium's own paste, which still works because the pane never claims that
+ * drag.
+ */
+export function splitDropUris(list: string): { paths: string[]; uris: string[] } {
+  const paths: string[] = []
+  const uris: string[] = []
+  for (const line of String(list ?? '').split(/\r?\n/)) {
+    const uri = line.trim()
+    // A uri-list may carry comment lines, by its own spec.
+    if (!uri || uri.startsWith('#')) continue
+    const path = pathFromFileUri(uri)
+    if (path) {
+      paths.push(path)
+      continue
+    }
+    if (/^(https?:|data:)/i.test(uri)) uris.push(uri)
+  }
+  return { paths, uris }
+}
+
 /** Total size of a batch, from the base64 without decoding it. */
 export function batchBytes(files: AttachIn[]): number {
   let total = 0

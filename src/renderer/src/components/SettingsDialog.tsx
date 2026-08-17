@@ -345,6 +345,12 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   hint="Plays even while PaneForge is focused - a pane you are not reading can still finish. Which sound it makes, and the sound for the other two alerts, is on the Sounds tab."
                 />
                 <Switch
+                  checked={config.telegramAsk}
+                  onChange={(v) => onChange({ telegramAsk: v })}
+                  label="Send a pane's question to Telegram"
+                  hint="A question stops the run until somebody presses a row, and the pane looks finished while it waits - so this one alert leaves the machine. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent. Message only: answering is still a press here or on the phone."
+                />
+                <Switch
                   checked={config.bellAlert}
                   onChange={(v) => onChange({ bellAlert: v })}
                   label="Say something when a pane rings its bell"

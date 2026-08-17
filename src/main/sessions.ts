@@ -936,6 +936,12 @@ export class SessionManager extends EventEmitter {
     // from) but is NOT a new question, so it must not be treated as one by anything
     // that notifies. Callers compare with `sameAsk`.
     if (!sameAsk(wasAsk, ask) || wasAsk?.selected !== ask?.selected) this.emitSessions()
+    // A question that was not there a frame ago, once, on the way in. Only a NEW one
+    // (`sameAsk` ignores where the arrow is), so arrowing through the options at the desk
+    // cannot send a second message about the same question - and the wording of that guard
+    // matters more than it looks: the arrow moving comes through this same path several
+    // times per question.
+    if (ask && !sameAsk(wasAsk, ask)) this.emit('ask', s.meta)
     // Deadline rather than a flag, and a short one: the pane re-states a true reading
     // every two minutes while the agent is running, so three minutes of silence from
     // the pane means the pane is gone, not that the turn is still going. The old ten

@@ -369,6 +369,22 @@ export interface LaneWork {
   baseDirty: boolean
   /** nothing worth keeping: no commits of its own, nothing uncommitted */
   empty: boolean
+  /**
+   * The newest commit on this lane's branch, as its subject line - and the files it has
+   * uncommitted right now.
+   *
+   * "3 commits not in main · 2 uncommitted files" answers how MUCH is in a lane and says
+   * nothing at all about WHAT, which is the question actually being asked when somebody
+   * opens a lane they did not open themselves ("see other lanes and what they are working
+   * on"). A commit subject and a couple of filenames are the only answer available for
+   * free: both are already in the repository, neither needs a model, and a lane whose chat
+   * is not a pane in this window has nothing else to say for itself.
+   */
+  subject: string | null
+  /** epoch ms of that commit */
+  at: number | null
+  /** up to four uncommitted paths, lane-relative, as `git status` spells them */
+  touching: string[]
 }
 
 export type LaneMergeResult =
@@ -1225,6 +1241,14 @@ export interface Config {
   notifyOnIdle: boolean
   /** soft chime when a session finishes its turn or asks you something */
   soundOnIdle: boolean
+  /**
+   * Send a pane's question to Telegram, so an answer is not waiting on somebody being at
+   * this desk. Off by construction on a machine with no bot credentials (`main/askNotify.ts`
+   * reads `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the environment or from
+   * `~/.claude/usage-notify.env`); this switch is for turning it off on a machine that has
+   * them. Message only - answering is still a press, here or on the phone client.
+   */
+  telegramAsk: boolean
   /**
    * Minutes a RUNNING turn may print nothing before the pane says it is stuck. Silence
    * at an idle prompt never counts - that is just a pane you are not using. 0 is off.

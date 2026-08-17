@@ -147,9 +147,41 @@ async function head(cwd: string): Promise<string> {
 }
 
 async function dirtyCount(cwd: string): Promise<number> {
+  return (await dirtyFiles(cwd)).length
+}
+
+/** The uncommitted paths, as git spells them. One `status` for both the count and the names. */
+async function dirtyFiles(cwd: string): Promise<string[]> {
   const r = await gitOut(cwd, ['status', '--porcelain'])
-  if (!r.ok || !r.out) return 0
-  return r.out.split(/\r?\n/).filter(Boolean).length
+  if (!r.ok || !r.out) return []
+  return r.out
+    .split(/\r?\n/)
+    .filter(Boolean)
+    // `XY path`, and a rename is `R  old -> new`: the new name is the one that exists.
+    .map((line) => {
+      const path = line.slice(3).trim()
+      const arrow = path.indexOf(' -> ')
+      return arrow === -1 ? path : path.slice(arrow + 4)
+    })
+    .filter(Boolean)
+}
+
+/**
+ * The newest commit on this checkout, as a subject and a time.
+ *
+ * Read with `--no-walk` off HEAD, so it costs one object read and cannot be slowed by a
+ * long history. An empty repository (no commit yet) answers with nothing rather than
+ * failing the whole reading - a lane made a minute ago is the ordinary case for this.
+ */
+async function lastCommit(cwd: string): Promise<{ subject: string | null; at: number | null }> {
+  const r = await gitOut(cwd, ['log', '-1', '--no-walk', '--format=%s%x00%ct'], 10000)
+  if (!r.ok || !r.out) return { subject: null, at: null }
+  const [subject, ct] = r.out.split('\0')
+  const secs = Number(ct)
+  return {
+    subject: subject?.trim() ? subject.trim() : null,
+    at: Number.isFinite(secs) && secs > 0 ? secs * 1000 : null
+  }
 }
 
 /**
@@ -217,7 +249,12 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
 
   const counted = await gitOut(dir, ['rev-list', '--count', `${base}..HEAD`])
   const ahead = counted.ok ? Number(counted.out) || 0 : 0
-  const [dirty, baseDirty] = await Promise.all([dirtyCount(dir), dirtyCount(repo)])
+  const [touching, baseDirty, last] = await Promise.all([
+    dirtyFiles(dir),
+    dirtyCount(repo),
+    lastCommit(dir)
+  ])
+  const dirty = touching.length
   return {
     lane,
     dir: resolve(dir),
@@ -229,7 +266,10 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
     // Only worth computing when there is something to merge.
     conflicts: ahead > 0 ? await conflictFiles(repo, base, branch) : [],
     baseDirty: baseDirty > 0,
-    empty: ahead === 0 && dirty === 0
+    empty: ahead === 0 && dirty === 0,
+    subject: last.subject,
+    at: last.at,
+    touching: touching.slice(0, 4)
   }
 }
 

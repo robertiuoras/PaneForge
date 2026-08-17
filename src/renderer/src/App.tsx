@@ -3075,6 +3075,11 @@ export default function App(): JSX.Element {
                 'row' +
                 (s.id === activeId ? ' active' : '') +
                 (s.attention ? ' attn' : '') +
+                // Red, and only for a live question (`shared/choices.ts` reads it off the
+                // pane's own frame, so it covers every CLI here). It carries the "asks you"
+                // chip on the title line - see the note there for why a ring never travels
+                // without a word.
+                (s.ask ? ' asking' : '') +
                 (justDone.includes(s.id) ? ' just-done' : '') +
                 (dragId === s.id ? ' dragging' : '')
                 // There WAS a blue ring around the whole card here, for a pane that held a
@@ -3185,10 +3190,34 @@ export default function App(): JSX.Element {
                         clock is where every mail client has put one for thirty years.
                         Counts only while the agent is working: a clock that ran from
                         launch ticked through an idle night and read as "still busy". */}
-                    {/* A pane on its way out says so, and says it HERE rather than on the
-                        sub-line: that line is already 214px of facts in 190px (test:cardfit),
-                        and this one is transient - it takes the clock's place for the few
-                        seconds a move lasts, or for as long as a queued pane's turn runs. */}
+                    {/* A question on screen is the one quiet pane that is quiet because it
+                        is owed something, and every "is it idle" reading in the app says
+                        yes about it - so it looked exactly like a pane that finished. The
+                        card glows red (`asking` below) and this is the word that glow is
+                        allowed to have: the ring on its own is what made the old blue lane
+                        glow "confusing", so the colour never travels without a word and a
+                        hover carrying the question itself.
+
+                        On the TITLE line, not the sub-line: the sub-line already wanted
+                        214px of 190px on a lane card (card-fit-test.mjs) and this line has
+                        room to spare. */}
+                    {s.ask && (
+                      <span
+                        className="chip asks"
+                        title={
+                          `${s.ask.question}\n\n` +
+                          s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
+                          '\n\nNothing runs until this is answered. Open the pane and press one.'
+                        }
+                      >
+                        asks you
+                      </span>
+                    )}
+                    {/* A pane on its way out says so, and says it here for the same reason
+                        the chip above is here: the sub-line has no room and this is
+                        transient - it takes the clock's place for the few seconds a move
+                        lasts, or for as long as a queued pane's turn runs. It cannot appear
+                        beside "asks you": a pane holding a question is never moved. */}
                     {s.handingOff ? (
                       <span
                         className="chip"
@@ -4031,6 +4060,15 @@ export default function App(): JSX.Element {
       {laneCwd && (
         <LaneDialog
           cwd={laneCwd}
+          // The lanes this window already polls, so the dialog can list the OTHER copies
+          // of the project without a poll of its own - see LaneDialog's own note.
+          boards={laneBoards}
+          sessions={sessions}
+          onFocus={(id) => {
+            setActiveId(id)
+            handheld.showPane()
+            setLaneCwd(null)
+          }}
           onClose={() => setLaneCwd(null)}
           onHelp={() => setLaneHelp(true)}
           onReview={() => {

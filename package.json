@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.96",
+  "version": "0.8.97",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -72,6 +72,7 @@
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:autoanswer": "node scripts/auto-answer-test.mjs",
     "test:choices": "node scripts/choices-test.mjs",
+    "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",

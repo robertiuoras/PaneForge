@@ -30,6 +30,7 @@ import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config
 import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
+import { askMessage, postAsk, telegramCreds } from './askNotify'
 import type { AttachIn, AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
@@ -777,6 +778,7 @@ function presenceCounts(): PresenceCounts {
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
+manager.on('ask', (s: Session) => raiseAsk(s))
 
 /**
  * A running turn that has said nothing for minutes, and a terminal bell.
@@ -797,6 +799,42 @@ function raiseStalled(s: Session): void {
   new Notification({
     title: `${s.title} has gone quiet`,
     body: `Still running after ${mins || 1} min with nothing printed. It may be stuck or waiting.`,
+    silent: true
+  })
+    .on('click', () => focusWindow(true))
+    .show()
+}
+
+/**
+ * A pane is sitting on a question.
+ *
+ * Different from `raiseAttention` in the one way that matters: that one says "finished or
+ * needs input", and this one KNOWS which. A question stops the run until somebody presses
+ * a row, and every idle reading in the app calls that pane finished - so this is the one
+ * alert worth sending off the machine, and it goes to Telegram (askNotify.ts) as well as
+ * to the desk. The pane and its card also turn red, which is the part that works with no
+ * credentials at all.
+ *
+ * The taskbar flash and the toast keep the app's manners: nothing while a game is on
+ * screen, nothing while the window is focused. The Telegram message does NOT - a phone in
+ * a pocket is the whole point, and the desk being focused says nothing about somebody
+ * being at it. It is skipped for a mirror: that pane's own machine is raising it too, and
+ * two messages for one question is how a notification stops being read.
+ */
+function raiseAsk(s: Session): void {
+  if (!s.remote && getConfig().telegramAsk) {
+    void postAsk(askMessage(s.title, s.ask!, undefined)).then((sent) => {
+      if (!sent && telegramCreds())
+        console.log(`telegram: could not post the question from ${s.title}`)
+    })
+  }
+  if (!getConfig().notifyOnIdle || isGameActive()) return
+  if (!alive() || win!.isFocused()) return
+  win!.flashFrame(true)
+  if (!Notification.isSupported()) return
+  new Notification({
+    title: `${s.title} is asking you something`,
+    body: s.ask?.question?.slice(0, 180) ?? 'It is waiting on an answer.',
     silent: true
   })
     .on('click', () => focusWindow(true))

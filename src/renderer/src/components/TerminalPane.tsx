@@ -3,7 +3,7 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import type { AttachIn } from '../../../shared/attach'
+import { splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
@@ -2486,14 +2486,36 @@ export default function TerminalPane({
       return
     }
 
-    // No File objects - check for text/uri-list (browser drag of an image/media)
+    // No File objects - the drag carried only a list of URIs. Two kinds arrive here and
+    // they are answered differently: a `file://` one is already a path on this disk (a
+    // macOS screenshot dragged off its own preview thumbnail, a Finder drag with Option
+    // held) and needs nothing fetched, while an http(s)/data one has to be fetched before
+    // an agent can open anything.
     const uriList = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
-    if (!uriList) return
+    // The dragover claimed this drag because `types` advertised a uri-list, so returning
+    // quietly here is the app swallowing a drop it took responsibility for - and the drop
+    // that reaches this line is one where `types` said one thing and `getData` gave
+    // nothing. Silence would read as the same bug this whole change fixed.
+    if (!uriList) {
+      toast.current?.('That drag carried no file and no link the pane could read.')
+      return
+    }
 
-    const uris = uriList
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s && (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')))
+    const { paths: dropped, uris } = splitDropUris(uriList)
+    if (dropped.length) {
+      // A path is only true on one machine, same rule as the File branch above. This pane's
+      // agent runs here when the id is a plain one, so the file is already where it can be
+      // opened; a mirrored pane's runs on the other desk and this path means nothing there,
+      // and there is no File object to send its bytes instead - so it is said out loud
+      // rather than typed as a link that reads as a missing file.
+      if (!sessionId.startsWith('@')) typePaths(dropped)
+      else
+        toast.current?.(
+          "That file is on this machine and this pane's agent runs on the other device. " +
+            'Drag it from a window on that desk, or copy the image and paste it here.'
+        )
+      if (!uris.length) return
+    }
 
     if (!uris.length) return
 
@@ -2666,9 +2688,20 @@ export default function TerminalPane({
   return (
     <div
       ref={wrap}
-      className={'xterm-wrap' + (dropping ? ' dropping' : '')}
+      className={'xterm-wrap' + (dropping ? ' dropping' : '') + (ask ? ' asking' : '')}
       onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes('Files')) return
+        // `Files` is one of two shapes a dropped file arrives in, and the other one was
+        // never claimed. A macOS screenshot dragged off its own preview thumbnail, and a
+        // browser image drag, carry `text/uri-list` with no File object at all - so this
+        // returned, nothing called preventDefault, no `drop` event was ever delivered
+        // here, and Chromium's default action typed the URL into xterm's helper textarea.
+        // The agent got `file:///var/folders/…/Screenshot%20….png` as a sentence.
+        //
+        // `text/plain` is deliberately NOT accepted: a dragged word or sentence is
+        // Chromium's own paste into the terminal and is worth keeping. Only a uri-list,
+        // which nothing but a link or a file produces, makes this a drop target.
+        const kinds = e.dataTransfer.types
+        if (!kinds.includes('Files') && !kinds.includes('text/uri-list')) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'copy'
         setDropping(true)
