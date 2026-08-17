@@ -232,7 +232,13 @@ function defaults(): Config {
     // Ask rather than move. See the field's note in shared/types.ts: the machine knows it
     // is full, it does not know that this pane is the one being worked in.
     offloadAsk: true,
-    voice: { enabled: true, model: 'base', language: 'auto', engine: 'auto' },
+    // `small` and `en`, not `base` and `auto`, both measured 2026-08-17 on an 11.9 s clip
+    // through `whisper-ctranslate2` (int8, warm weights): `small` returned the sentence
+    // verbatim with correct punctuation in 5.2 s, `base` dropped a word ("it so
+    // inefficient") and emitted no terminal punctuation at all - which is the stray-`?`
+    // and missing-full-stop complaint. `auto` also spends a language-detection pass on
+    // every clip and can mis-detect on an accent; dictation here is always English.
+    voice: { enabled: true, model: 'small', language: 'en', engine: 'auto' },
     // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
     // nothing and nothing runs until a person clicks - which is what made off-by-default
     // overcautious: the one person who wanted it on had to find a setting to learn the
