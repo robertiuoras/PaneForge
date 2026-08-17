@@ -69,9 +69,10 @@ module.exports={autoUpdater:au,__calls:calls,__au:au}
 writeFileSync(
   join(work, 'https-stub.cjs'),
   `const {EventEmitter}=require('node:events')
-let listStatus=200,listBody='[]',hits=0
+let listStatus=200,listBody='[]',hits=0,hang=false
 module.exports={
   __list:(status,body)=>{listStatus=status;listBody=body},
+  __hang:(on)=>{hang=on},
   __hits:()=>hits,
   __reset:()=>{hits=0},
   get:(url,_options,cb)=>{
@@ -79,6 +80,12 @@ module.exports={
     req.destroy=(e)=>req.emit('error',e)
     const isList=String(url).includes('/releases?')
     if(isList)hits++
+    if(isList&&hang){
+      // What node:https really does on a stalled read: the 'timeout' event, and then
+      // whatever the caller's own destroy() causes. Nothing else is emitted.
+      setTimeout(()=>req.emit('timeout'),5)
+      return req
+    }
     process.nextTick(()=>{
       const res=new EventEmitter()
       res.statusCode=isList?listStatus:200
@@ -137,6 +144,7 @@ const run=async()=>{
   const dev=process.env.CASE_DEV==='1'
   u.setDevChannel(dev)
   https.__list(Number(process.env.CASE_STATUS),process.env.CASE_BODY)
+  https.__hang(process.env.CASE_HANG==='1')
   https.__reset()
   const s=await u.checkForUpdates()
   console.log(JSON.stringify({
@@ -163,16 +171,16 @@ const ok = (name, cond, detail) => {
 }
 
 /** One check, in its own process, with the releases list answering as told. */
-function check({ dev, status, body }) {
+function check({ dev, status, body, hang }) {
   const out = execFileSync(process.execPath, [drive], {
     encoding: 'utf8',
     stdio: 'pipe',
     env: {
       ...process.env,
-      PF_BLIND_CACHE_MS: '0',
       CASE_DEV: dev ? '1' : '0',
       CASE_STATUS: String(status),
-      CASE_BODY: body
+      CASE_BODY: body,
+      CASE_HANG: hang ? '1' : '0'
     }
   })
   return JSON.parse(out.trim().split('\n').pop())
@@ -204,6 +212,27 @@ console.log('\n-- cannot-tell must not change channel --')
 {
   const r = check({ dev: true, status: 200, body: 'not json at all' })
   ok('an unreadable list leaves the dev channel on', r.allowPrerelease === true, JSON.stringify(r))
+}
+{
+  // A rate limit is the one that would hurt most if read as "no releases": it arrives as
+  // a 200-shaped JSON OBJECT rather than an array, and it arrives to everybody at once.
+  const r = check({
+    dev: true,
+    status: 403,
+    body: '{"message":"API rate limit exceeded","documentation_url":"https://docs.github.com/rest"}'
+  })
+  ok('a rate-limit answer leaves the dev channel on', r.allowPrerelease === true, JSON.stringify(r))
+}
+{
+  const r = check({ dev: true, status: 200, body: '{"message":"not an array"}' })
+  ok('a JSON object where an array belongs is not read as empty', r.allowPrerelease === true, JSON.stringify(r))
+}
+{
+  // The timeout path exists in the module and, until this case, nothing ever entered it:
+  // deleting `req.on('timeout', ...)` left the suite green.
+  const r = check({ dev: true, status: 200, body: '[]', hang: true })
+  ok('a list that never answers leaves the dev channel on', r.allowPrerelease === true, JSON.stringify(r))
+  ok('and the check still completes rather than hanging', r.phase !== undefined, JSON.stringify(r))
 }
 
 console.log('\n-- and a stable install never asks at all --')

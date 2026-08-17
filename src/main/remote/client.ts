@@ -41,7 +41,10 @@ const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
  *
  * Overridable only so the dead-link test can run in seconds instead of a minute.
  */
-const PING_MS = Number(process.env.PF_PING_MS) || 15_000
+// Floored: a negative or absurdly small override is truthy, so `||` alone would let
+// PF_PING_MS=-5000 through as a NEGATIVE deadline, which every elapsed time exceeds -
+// the link would be declared dead on its first tick while it was working perfectly.
+const PING_MS = Math.max(50, Number(process.env.PF_PING_MS) || 15_000)
 /**
  * How long the far end may say nothing before the link counts as dead.
  *
@@ -340,7 +343,7 @@ export class RemoteClient extends EventEmitter {
       // and one more ping into it proves nothing. Destroying the socket is what turns a
       // silently frozen mirror back into a visible 'reconnecting', because `gone` fires
       // the same teardown+retry a clean disconnect does.
-      if (Date.now() - this.heard > DEAD_MS) {
+      if (Date.now() - this.heard >= DEAD_MS) {
         this.teardown('error', 'That device stopped answering')
         this.retry()
         return

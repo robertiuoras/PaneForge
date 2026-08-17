@@ -389,7 +389,10 @@ export function setDevChannel(on: boolean): void {
  * check and the install resolves /releases/latest instead - a build behind the dev
  * channel, and eleven ahead of standing still.
  */
-const BLIND_CACHE_MS = Number(process.env.PF_BLIND_CACHE_MS ?? 10 * 60_000)
+// `||`, not `??`, and it matters: `??` only catches an ABSENT variable, so a non-numeric
+// PF_BLIND_CACHE_MS became NaN, every `elapsed < NaN` was false, and the ten-minute cache
+// silently became a request per check. Same shape as the other budgets above.
+const BLIND_CACHE_MS = Math.max(0, Number(process.env.PF_BLIND_CACHE_MS) || 10 * 60_000)
 let listBlindAt = 0
 let listBlind = false
 
@@ -401,7 +404,14 @@ function devListBlind(): Promise<boolean> {
     // Anything but a clean 200 with an empty array is "cannot tell", and cannot-tell must
     // not change channel: a rate limit, a timeout or an unreadable body would otherwise
     // quietly move every dev install to stable on one bad minute.
+    // Once only. `req.destroy()` on timeout can land BOTH a response 'end' and a request
+    // 'error', and the second call would rewrite the cached reading behind a promise that
+    // had already resolved with the first - leaving the module holding one answer and the
+    // caller another, for the whole cache window.
+    let settled = false
     const settle = (blind: boolean): void => {
+      if (settled) return
+      settled = true
       if (blind && !listBlind) log('feed', 'releases list answered 200 with nothing - using stable for this check')
       listBlind = blind
       resolve(blind)
