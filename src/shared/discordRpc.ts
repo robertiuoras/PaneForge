@@ -73,6 +73,52 @@ export interface PresenceCounts {
   appStart: number
 }
 
+/** The one field of a pane the presence reads, so a caller can pass anything shaped like one. */
+export interface PresenceSession {
+  status: string
+  cwd: string
+  runSince?: number
+}
+
+/**
+ * The folder a pane is working in, as a bare name.
+ *
+ * Split on BOTH separators rather than calling `basename`: that is the POSIX one on a
+ * Mac, and a mirrored pane's cwd arrives in the other machine's notation, so
+ * `C:\Users\Gamer\Desktop\Projects\assistant-b` came back whole and would have gone
+ * onto the profile as the full Windows path.
+ */
+export function folderName(cwd: string): string {
+  const parts = String(cwd ?? '').split(/[\\/]+/)
+  for (let i = parts.length - 1; i >= 0; i--) if (parts[i]) return parts[i]
+  return ''
+}
+
+/**
+ * What the profile says about the desk, from the desk.
+ *
+ * Pure and here rather than in the main entry so the suite can pin it: the counting is
+ * the half that was wrong (mirrored panes left out, Windows paths unsplit) and the main
+ * entry is an Electron module no test can load.
+ */
+export function countPresence(sessions: PresenceSession[], appStart: number): PresenceCounts {
+  const live = sessions.filter((s) => s.status !== 'exited')
+  const running = live.filter((s) => s.status === 'working')
+  const names: string[] = []
+  for (const s of running) {
+    const name = folderName(s.cwd)
+    if (name && !names.includes(name)) names.push(name)
+  }
+  const since = running.map((s) => s.runSince).filter((n): n is number => !!n)
+  return {
+    running: running.length,
+    total: live.length,
+    names,
+    oldestRunSince: since.length ? Math.min(...since) : undefined,
+    appStart
+  }
+}
+
 /**
  * What Discord itself last said about the presence - the only honest answer to "is this
  * working", and the reason the settings tab can stop guessing.

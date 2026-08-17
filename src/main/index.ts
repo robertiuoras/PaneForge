@@ -21,7 +21,7 @@ import {
 import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
-import type { PresenceCounts } from '../shared/discordRpc'
+import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
@@ -748,8 +748,15 @@ manager.on('sessions', () => {
 })
 
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
-// turns start and finish. Local panes only - a mirrored pane is counted by the device
-// its agent actually runs on, which is already reading the same frame.
+// turns start and finish.
+//
+// The WHOLE desk, mirrored panes included. This counted local panes only, on the
+// reasoning that a mirrored pane is counted by the device its agent actually runs on -
+// which is never true in practice: a Discord account shows ONE presence, so the other
+// device's PaneForge has nowhere to publish its half, and those panes went uncounted
+// everywhere. Measured 2026-08-17: eight panes on screen with five running turns, and
+// the profile said "4/5 sessions running" - the five being the local half of the desk.
+// The mirrored view is what the user is looking at, so it is what the profile says.
 const appStartedAt = Date.now()
 const presence = new DiscordPresence({
   enabled: getConfig().discordPresence,
@@ -759,21 +766,7 @@ const presence = new DiscordPresence({
   onStatus: (s) => send('discord:status', s)
 })
 function presenceCounts(): PresenceCounts {
-  const live = manager.list().filter((s) => s.status !== 'exited')
-  const running = live.filter((s) => s.status === 'working')
-  const names: string[] = []
-  for (const s of running) {
-    const name = basename(s.cwd)
-    if (name && !names.includes(name)) names.push(name)
-  }
-  const since = running.map((s) => s.runSince).filter((n): n is number => !!n)
-  return {
-    running: running.length,
-    total: live.length,
-    names,
-    oldestRunSince: since.length ? Math.min(...since) : undefined,
-    appStart: appStartedAt
-  }
+  return countPresence(allSessions(), appStartedAt)
 }
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
@@ -958,6 +951,10 @@ remote.on('reset', (id: string) => {
 remote.on('sessions', () => {
   pump.flush()
   send('sessions:changed', allSessions())
+  // The other machine's turns start and end here and nowhere else. Without this the
+  // presence only ever moved when a LOCAL pane changed, so a desk whose running work
+  // was all on the other device sat on whatever frame the local half last produced.
+  presence.update(presenceCounts())
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
 remote.on('changed', (state: RemoteState) => {

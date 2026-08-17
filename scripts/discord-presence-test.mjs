@@ -50,7 +50,9 @@ const {
   DEFAULT_LINK_URL,
   DISCORD_APP_ID,
   OP_HANDSHAKE,
-  OP_FRAME
+  OP_FRAME,
+  countPresence,
+  folderName
 } =
   req(outShared)
 const { DiscordPresence } = req(outMain)
@@ -424,6 +426,41 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('hostile: non-protocol bytes survive without crashing', true)
   p.dispose()
   await new Promise((r) => server.close(r))
+}
+
+// What the profile counts. The desk below is a real one, read off the running app on
+// 2026-08-17: five local panes and three mirrored from the Windows box, five turns
+// running between them. The profile said "4/5 sessions running" - it was counting the
+// local half and calling that the whole desk.
+{
+  const desk = [
+    { status: 'working', cwd: '/Users/robertiuoras/Projects/taskdriver.ai-b', runSince: 3000 },
+    { status: 'idle', cwd: '/Users/robertiuoras/Projects/taskdriver.ai' },
+    { status: 'working', cwd: '/Users/robertiuoras/Projects/taskdriver.ai-a', runSince: 5000 },
+    { status: 'working', cwd: '/Users/robertiuoras/Projects/toolstash' },
+    { status: 'idle', cwd: '/Users/robertiuoras/Projects/assistant' },
+    { status: 'working', cwd: 'C:\\Users\\Gamer\\Desktop\\Projects\\assistant-b', runSince: 1000 },
+    { status: 'idle', cwd: 'C:\\Users\\Gamer\\Desktop\\Projects\\PaneForge' },
+    { status: 'working', cwd: 'C:\\Users\\Gamer\\Desktop\\Projects\\Manic-s-Auction-House-a', runSince: 2000 },
+    { status: 'exited', cwd: '/Users/robertiuoras/Projects/betting' }
+  ]
+  const c = countPresence(desk, 999)
+  check('counts: mirrored panes are on the desk too', c.total === 8, `total ${c.total}`)
+  check('counts: every running turn counts, whichever machine runs it', c.running === 5, `running ${c.running}`)
+  check(
+    'counts: a mirrored pane\'s Windows cwd becomes a folder name, not a path',
+    c.names.includes('assistant-b') && !c.names.some((n) => n.includes('\\')),
+    c.names.join(', ')
+  )
+  check(
+    'counts: the elapsed clock starts at the oldest run on EITHER machine',
+    c.oldestRunSince === 1000,
+    String(c.oldestRunSince)
+  )
+  check('counts: an exited pane is off the desk', !c.names.includes('betting'))
+  check('counts: an empty desk is empty, not one blank name', countPresence([], 1).total === 0)
+  check('folderName: trailing separator does not yield an empty name', folderName('C:\\Projects\\foo\\') === 'foo')
+  check('folderName: a posix path still works', folderName('/a/b/c') === 'c')
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')
