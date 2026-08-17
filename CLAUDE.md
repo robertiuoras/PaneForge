@@ -800,6 +800,35 @@ whichever one has a hook.
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
   letters into a chooser.
 
+## ...and a question with an obvious answer is answered
+
+Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those
+questions are the CLI asking whether it may do the thing it was just told to do, and the
+person presses return. `shared/autoAnswer.ts` presses it instead — off by default
+(Settings → "Answer an agent's question for me when the answer is obvious"), because every
+question it goes through is one a CLI chose to ask and arriving switched on with an update
+would answer a permission prompt on a desk that never asked for that.
+
+- **The refusals are the feature.** Exactly ONE option leading with a yes-shaped word is
+  answered. Two are a choice between them; none is a decision somebody is being asked to
+  make. An option that WIDENS permission (`don't ask again`, the bare word `always`) is
+  never reachable in either mode — it is the one press that cannot be undone by noticing a
+  second later — and neither is one that stops or answers with a question of its own
+  (`No, tell Claude what to do differently` leaves the CLI holding an empty composer, so a
+  pane that was merely waiting is now waiting AND has lost its question).
+- `anyQuestion` is the wider setting and it takes **the CLI's own default**, the row its
+  arrow is already on, rather than inventing a preference. The two refusals above still
+  hold over it.
+- **The timing half is in `sessions.ts` and is a separate promise.** A question is pressed
+  only once it has sat unchanged for `waitMs` (1.2s — the window in which somebody who
+  disagrees can reach the pane), and the signature includes where the arrow is, so moving
+  it at the desk restarts the wait. Once per signature: a press that does not take leaves
+  the same question on screen, and pressing again every second is the app arguing with a
+  widget. `maxRun` ends a pane that asks the same thing for ever; a pane with no question
+  resets it. The keys go through `choose`, which re-checks the question before every one.
+- `npm run test:autoanswer`, whose weight is in the negatives and whose last case asserts
+  the wiring at source level — the decision is worth nothing if the sweep stops calling it.
+
 ## A pane that is still starting says so
 
 Measured on this Mac, 2026-08-15: `sessions:start` returns in **16-40ms**, and the first

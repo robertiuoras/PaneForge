@@ -38,6 +38,7 @@ const TESTS = [
   ['attach', 'attach-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['choices', 'choices-test.mjs'],
+  ['autoanswer', 'auto-answer-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
