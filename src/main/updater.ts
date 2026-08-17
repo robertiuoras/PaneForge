@@ -371,6 +371,76 @@ export function setDevChannel(on: boolean): void {
 }
 
 /**
+ * Whether the releases LIST is answering, which is the only thing the dev channel can
+ * read - and the failure that stranded this desk for 28 hours.
+ *
+ * Measured on the PC 2026-08-17: `GET /repos/robertiuoras/PaneForge/releases` answered
+ * `200` with an EMPTY array while its own `Link` header advertised eight more pages, and
+ * `/releases/latest` answered correctly throughout. electron-updater's dev-channel path
+ * is `candidates.find(prerelease) || candidates[0]` over that array, so it returned
+ * `undefined` and the next line read `.assets` off it: every poll threw
+ * `Cannot read properties of undefined (reading 'assets')`, once a minute, for 28 hours,
+ * on an install sitting eleven versions behind. Nothing reported it, because an app that
+ * cannot see a newer version is indistinguishable from one that is up to date.
+ *
+ * An empty list is NOT the same fact as an unreachable one, and only the empty case is
+ * worth acting on: a network error is a bad minute, while `200` with nothing in it is an
+ * endpoint that is up and lying. In that case the dev channel is stood down for this
+ * check and the install resolves /releases/latest instead - a build behind the dev
+ * channel, and eleven ahead of standing still.
+ */
+const BLIND_CACHE_MS = Number(process.env.PF_BLIND_CACHE_MS ?? 10 * 60_000)
+let listBlindAt = 0
+let listBlind = false
+
+function devListBlind(): Promise<boolean> {
+  if (!devChannel) return Promise.resolve(false)
+  if (Date.now() - listBlindAt < BLIND_CACHE_MS) return Promise.resolve(listBlind)
+  listBlindAt = Date.now()
+  return new Promise<boolean>((resolve) => {
+    // Anything but a clean 200 with an empty array is "cannot tell", and cannot-tell must
+    // not change channel: a rate limit, a timeout or an unreadable body would otherwise
+    // quietly move every dev install to stable on one bad minute.
+    const settle = (blind: boolean): void => {
+      if (blind && !listBlind) log('feed', 'releases list answered 200 with nothing - using stable for this check')
+      listBlind = blind
+      resolve(blind)
+    }
+    const req = get(
+      API_ALL,
+      {
+        headers: {
+          'user-agent': `PaneForge/${app.getVersion()}`,
+          accept: 'application/vnd.github+json'
+        },
+        timeout: 15_000
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume()
+          return settle(false)
+        }
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => {
+          body += c
+        })
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body)
+            settle(Array.isArray(json) && json.length === 0)
+          } catch {
+            settle(false)
+          }
+        })
+      }
+    )
+    req.on('timeout', () => req.destroy(new Error('releases API timed out')))
+    req.on('error', () => settle(false))
+  })
+}
+
+/**
  * A new version, on a Mac. Either this app can swap itself or you get the page.
  *
  * Squirrel.Mac is what cannot install an unsigned build; a folder move can, so
@@ -873,6 +943,9 @@ async function supersede(): Promise<void> {
   probingAt = Date.now()
   try {
     u.autoDownload = false
+    // Same stand-down as the main check: this is the path that logged the crash every
+    // minute for 28 hours, because a ready build keeps it running forever.
+    u.allowPrerelease = devChannel && !(await devListBlind())
     const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
@@ -925,7 +998,7 @@ export async function checkForUpdates(): Promise<UpdateState> {
     // Re-asserted on every check rather than trusted from wiring time: the setting can
     // change while the app runs, and a stale flag here is a stable install silently
     // taking dev builds (or a dev copy silently not).
-    u.allowPrerelease = devChannel
+    u.allowPrerelease = devChannel && !(await devListBlind())
     set({ phase: 'checking', error: undefined })
     await u.checkForUpdates()
   } catch (e) {

@@ -61,6 +61,9 @@ const TESTS = [
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device
   // that freezes instead of reporting itself gone is too costly to catch by hand.
   ['deadlink', 'deadlink-test.mjs'],
+  // Four short child processes, ~3s: the incident it covers left this desk unable to
+  // update for 28 hours while every surface read as healthy.
+  ['blindlist', 'updater-blindlist-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
