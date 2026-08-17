@@ -42,6 +42,19 @@ const HEADINGS = [
 ]
 const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b/i
 
+// `auto-sync` is the mid-feature backup subject - it exists precisely to commit work that
+// is not a change anybody is announcing, and it is not a defect in the wording either, so
+// `unpublished` must not name it. Three of them touch src/ in this repo's history.
+//
+// It is NOT in DROP, deliberately. DROP feeds `subjects()`, which feeds `changeLog`,
+// `bumpFor` and `smallOnly` - and `smallOnly` returns false on an EMPTY subject list, so
+// adding it there flipped a range of nothing but backups from "small, wait for company"
+// to "release now", which is the exact opposite of what an auto-sync commit means.
+// Publishing was never affected (the hyphen means `parse` reads no type either way);
+// the release TIMING was, silently. A rule that only one caller wants belongs to that
+// caller.
+const NOT_A_CHANGE = /^auto-sync\b/i
+
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], {
     encoding: 'utf8',
@@ -97,6 +110,59 @@ export function subjects(repo, range) {
     .split('\n')
     .map((s) => s.trim())
     .filter((s) => s && !DROP.test(s))
+}
+
+/**
+ * The changes this release page will NOT carry although they changed the app.
+ *
+ * `changeLog` publishes `feat:`, `fix:` and `perf:` and drops everything else, which is
+ * right for the audience and silent about its own misses: v0.8.92 carried one commit,
+ * `Fix browser image drags by fetching URIs instead of pasting URL strings`, which is
+ * exactly what a reader deciding whether to update wants - and because the subject had
+ * no conventional prefix the page said "see the commit history" instead. Nothing looked
+ * wrong: the generator behaved as written, the release published, the notes test passed.
+ *
+ * So the miss is reported rather than guessed at. A subject is only worth naming when it
+ * touched `src/` - a commit against a script, a doc or a test is not what the drop rule
+ * is losing - and this NEVER changes what is published: rewriting the subject into a
+ * heading would put a guess on a public page, and the fix is to word the commit as
+ * `fix:` before it ships, which is the one moment `doctor` can still say so.
+ */
+export function unpublished(repo, range) {
+  // %x00 in front of each subject, so the file names that follow a commit are told from
+  // the next commit's subject without a second call per commit.
+  //
+  // `core.quotepath=false` because git's default wraps any path with a non-ASCII or
+  // control character in double quotes - `"src/café.ts"` - and a quoted name does not
+  // start with `src/`, so the commit is silently NOT reported. This report exists
+  // because a silent drop cost a release page; it may not have a silent drop of its own.
+  const out = gitSafe(repo, [
+    '-c',
+    'core.quotepath=false',
+    'log',
+    '--no-merges',
+    '--format=%x00%s',
+    '--name-only',
+    range
+  ])
+  if (!out) return []
+  const missed = []
+  for (const block of out.split('\0')) {
+    const [subject, ...rest] = block.split('\n')
+    const s = (subject ?? '').trim()
+    if (!s || DROP.test(s) || NOT_A_CHANGE.test(s)) continue
+    // A `docs:` or `test:` subject touching src/ is dropped ON PURPOSE and is not a
+    // miss - naming those is how this report becomes noise nobody reads (measured: the
+    // first version of it flagged an ordinary docs commit against this repo's own
+    // history). Only a subject with NO conventional prefix at all is the defect, since
+    // that is the one whose author was describing a change and got no heading for it.
+    if (parse(s).type !== null) continue
+    // Even with quotepath off, git still quotes a path holding a quote, a backslash or a
+    // newline. The opening `"` is all that has to come off for the membership test - the
+    // escapes inside it are somebody else's problem, this only asks WHERE the file is.
+    if (rest.some((f) => f.trim().replace(/^"/, '').startsWith('src/'))) missed.push(s)
+  }
+  return missed
 }
 
 /** `fix(lanes): a dead chat's lane...` -> { type, scope, text } */

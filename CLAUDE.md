@@ -142,6 +142,15 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   conventional prefix, is dropped; a release carrying only those falls back to the
   commit-history link rather than heading an empty section. There is no catch-all
   heading, and adding one back is what made the pages read like a diary.
+  **The drop used to be silent, and that is how a real fix vanished**: v0.8.92 carried
+  `Fix browser image drags by fetching URIs instead of pasting URL strings`, a change to
+  `src/` worded as a sentence, so the page said "see the commit history" and nothing
+  anywhere said otherwise. `unpublished` in that file names a commit that touched `src/`
+  and carries NO conventional prefix, and `doctor` prints it while the subject can still
+  be reworded. It reports and never rewrites - a heading inferred from a sentence is a
+  guess on a public page. A `docs:`/`test:` subject over `src/` is dropped ON PURPOSE and
+  is never named; the first version of the report flagged one and that is the shape that
+  makes a warning unread.
 - Actions and this machine can BOTH publish a release. The duplicate installers are
   harmless; `latest.yml` is not, because the loser's feed names the winner's file.
   `reconcileFeed` on the retry timer compares the feed to the asset it names and puts ours

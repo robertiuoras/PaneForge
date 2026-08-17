@@ -225,7 +225,88 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
   put('fix: one line, but nine hundred of them', 900)
   check('and neither is a fix: that rewrites the file', smallOnly(small) === false)
 
+  // An `auto-sync` batch is mid-feature backup and must keep WAITING, not release on the
+  // ordinary window. `unpublished` wants to ignore those subjects and briefly did it by
+  // adding them to the shared DROP - which empties `subjects()`, and an empty list is
+  // `smallOnly === false`, i.e. "not small, ship it". The rule now lives in `unpublished`
+  // alone; this is the case that goes red if it moves back.
+  sgit('tag', 'v0.1.2')
+  put('auto-sync: mid-feature backup', 5)
+  check('a range of nothing but backups is still small, so it waits', smallOnly(small) === true)
+
   rmSync(small, { recursive: true, force: true })
+}
+
+// What the page will NOT say. `changeLog` publishing only feat/fix/perf is right and is
+// silent about its own misses: v0.8.92 shipped `Fix browser image drags by fetching URIs
+// instead of pasting URL strings`, a real user-visible fix worded as a sentence, and the
+// release page said "see the commit history". The negatives are the load-bearing half -
+// a report that names every doc and test commit is one nobody reads.
+{
+  const { unpublished } = await import('./release-notes.mjs')
+  const miss = mkdtempSync(join(tmpdir(), 'pf-miss-'))
+  const mgit = (...args) =>
+    execFileSync('git', ['-C', miss, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  mgit('init', '-b', 'master')
+  mgit('config', 'user.email', 'test@example.com')
+  mgit('config', 'user.name', 'Test')
+  mgit('config', 'commit.gpgsign', 'false')
+  mkdirSync(join(miss, 'src'))
+  mkdirSync(join(miss, 'scripts'))
+  let k = 0
+  const put = (subject, dir) => {
+    writeFileSync(join(miss, dir, `f${k++}.ts`), subject)
+    mgit('add', '-A')
+    mgit('commit', '-m', subject)
+  }
+
+  put('feat: something published', 'src')
+  mgit('tag', 'v0.1.0')
+
+  put('Fix browser image drags by fetching URIs instead of pasting URL strings', 'src')
+  check(
+    'a sentence-subject change to the app is named',
+    unpublished(miss, 'v0.1.0..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.0..HEAD'))
+  )
+
+  put('fix: this one does reach the page', 'src')
+  put('docs: written for the next session in this repo', 'src')
+  put('test: a red case for the above', 'src')
+  // The mid-feature backup subject, over src/ where it really appears in this repo's
+  // history (three times). It is not a change being announced and not a wording defect.
+  put('auto-sync: mid-feature backup', 'src')
+  put('auto-sync (Mac) 2026-08-14 10:10:15', 'src')
+  put('a sentence, but only about a script', 'scripts')
+  put('release: v0.1.1', 'src')
+  put('merge lane b', 'src')
+  check(
+    'and nothing else is',
+    unpublished(miss, 'v0.1.0..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.0..HEAD'))
+  )
+  // It reports, it never rewrites: the published page is the same either way.
+  check(
+    'the page itself is untouched by any of this',
+    !changeLog(miss, '0.1.1').includes('browser image drags'),
+    changeLog(miss, '0.1.1')
+  )
+  check('a range git cannot read says nothing', unpublished(miss, 'v9.9.9..HEAD').length === 0)
+
+  // git's default core.quotepath wraps a path holding a non-ASCII character in double
+  // quotes, and `"src/café.ts"` does not start with `src/` - so the commit was dropped
+  // by the very report whose job is to catch a silent drop.
+  mgit('tag', 'v0.1.2')
+  writeFileSync(join(miss, 'src', 'café.ts'), 'accented')
+  mgit('add', '-A')
+  mgit('commit', '-m', 'Fix the accented file, worded as a sentence')
+  check(
+    'a path git quotes is still seen as src/',
+    unpublished(miss, 'v0.1.2..HEAD').length === 1,
+    JSON.stringify(unpublished(miss, 'v0.1.2..HEAD'))
+  )
+
+  rmSync(miss, { recursive: true, force: true })
 }
 
 rmSync(root, { recursive: true, force: true })
