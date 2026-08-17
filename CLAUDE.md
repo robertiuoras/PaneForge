@@ -1358,10 +1358,22 @@ now four rungs, each firing only where the one above it did not solve it: trim s
   a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
   question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the
   best moment to move a pane and a live question is the one moment that must not be.
-- Every other refusal is `reclaim.ts`'s, verbatim: pressure is the trigger and never a
-  clock, the focused pane and anything on screen are left alone, a mirror is somebody else's
-  pty, and the window is never emptied. A failed move puts that pane on a `cooldownMinutes`
-  hold - a repo that cannot be pushed will not become pushable in fifteen seconds.
+- Every other refusal is `reclaim.ts`'s, verbatim: pressure is the trigger, the focused pane
+  and anything on screen are left alone, a mirror is somebody else's pty, and the window is
+  never emptied. A failed move puts that pane on a `cooldownMinutes` hold - a repo that
+  cannot be pushed will not become pushable in fifteen seconds.
+- **...and those last two refusals are exactly why it could never fire.** `visible` is a
+  refusal because moving something off somebody's screen while their machine is busy is
+  theft - but with the grid on **every pane is visible**, so on a one-window desk the
+  eligible list is empty at every pressure there is, and pressure itself arrives long after
+  the lag does. So `idleOffloadPlan` is the opt-in clock beside it
+  (`autoHandoff.offloadIdleMinutes`, 0 = off, the switch sets 30), the same shape as
+  `reclaim.idleCloseMinutes` and for the same reason: it drops `visible` and the pressure
+  gate and **nothing else**. Three times what the pressure sweep waits, because being early
+  under pressure costs a reopen and being early here moves work somebody was coming back to.
+  Its own minute timer, since the thing it watches is time passing. The load-bearing test is
+  a PAIR - the pressure sweep still refuses a visible pane, the clock takes it - because
+  either half alone passes while the feature stays dead.
 - **`handingOff` is on the Session, and `reclaim.ts` refuses it.** Without it the closing
   sweep and the moving sweep race over the same pane, and closing wins by being faster: the
   same memory back, the work lost. Every exit from a move clears it, refusals included, or
