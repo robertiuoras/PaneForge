@@ -2946,6 +2946,10 @@ export default function App(): JSX.Element {
   // A pane that was cleared in an empty lane is moved back to the project folder by the
   // main process; that is a thing happening to your window, so it says so.
   useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
+  // A pane that leaves for another device must say so here. Without this the queued
+  // move (the mid-turn case, and every move asked for from the phone) simply closed the
+  // pane, which looks exactly like a session that froze.
+  useEffect(() => api.onHandoffMoved((message) => flash(message)), [flash])
 
   // The "what is this feature" notes, and the × that retires one. Held here rather than
   // passed down because eight dialogs would otherwise each grow a config prop to draw

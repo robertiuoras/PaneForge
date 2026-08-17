@@ -1813,6 +1813,8 @@ export interface Api {
   mergeLane(cwd: string): Promise<LaneMergeResult>
   /** a pane was sent back to its project folder because its lane held nothing */
   onLaneMoved(cb: (id: string, message: string) => void): () => void
+  /** A queued handoff finished, failed, or gave up waiting - said on screen, not only logged. */
+  onHandoffMoved(cb: (message: string) => void): () => void
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.

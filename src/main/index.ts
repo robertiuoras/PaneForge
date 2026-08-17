@@ -2080,7 +2080,11 @@ const handoffQueue = new HandoffQueue({
   mark: (id, on) => manager.setHandingOff(id, on),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
-  log: (line) => console.info(line)
+  log: (line) => console.info(line),
+  // The queue finishes long after the dialog closed, and from the phone there was no
+  // dialog at all - so its outcome goes to the window too, or a pane disappears with
+  // no reason on screen and the desk it left reads as a frozen session.
+  notify: (line) => send('handoff:moved', line)
 })
 
 ipcMain.handle(

@@ -98,6 +98,7 @@ export const SURFACE: Surface = {
   laneWork: ['invoke', 'lanes:work'],
   mergeLane: ['invoke', 'lanes:merge'],
   onLaneMoved: ['on', 'lane:moved'],
+  onHandoffMoved: ['on', 'handoff:moved'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],
   adminEnable: ['invoke', 'admin:enable'],

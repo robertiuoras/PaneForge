@@ -36,6 +36,13 @@ export interface QueueDeps {
   deviceName(device: string): string
   config(): AutoHandoffConfig
   log(line: string): void
+  /**
+   * Say it to the PERSON, not just the log. A queued move finishes minutes after the
+   * button was pressed - the dialog that flashed "it goes as soon as the turn ends" is
+   * long closed, and the phone never had one - so `log()` alone meant a pane vanished
+   * from the desk with no reason on screen. That reads as a frozen session, not a move.
+   */
+  notify?(line: string): void
   now?(): number
 }
 
@@ -116,8 +123,10 @@ export class HandoffQueue {
       }
       if (verdict === 'expired') {
         this.deps.mark(q.id, false)
-        this.deps.log(
-          `handoff: ${q.id} gave up waiting after ${Math.round((now - q.since) / 60000)} min - still working, so it stays here`
+        const mins = Math.round((now - q.since) / 60000)
+        this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - still working, so it stays here`)
+        this.deps.notify?.(
+          `${this.paneName(q.id, panes)} did not move to ${this.deps.deviceName(q.device)} - still working after ${mins} min, so it stays here`
         )
         continue
       }
@@ -126,16 +135,35 @@ export class HandoffQueue {
     if (!this.entries.size) this.stop()
   }
 
+  /** The pane's title if it is still listed, else its id - a message needs a name. */
+  private paneName(id: string, panes?: Map<string, Session>): string {
+    const found = (panes ?? new Map(this.deps.list().map((s) => [s.id, s]))).get(id)
+    return found?.title || id
+  }
+
   private run(q: Queued): void {
     this.running.add(q.id)
+    // Read the title BEFORE the move: a successful handoff kills the pane, so by the
+    // time the promise resolves there is nothing left to name it with.
+    const name = this.paneName(q.id)
+    const where = this.deps.deviceName(q.device)
     void this.deps
       .send(q.id, q.device, q.closeReceiverWhenDone === true)
       .then((items) => {
         const item = items[0]
-        if (item?.ok) this.deps.log(`handoff: ${q.id} moved to ${this.deps.deviceName(q.device)} - its turn had ended`)
-        else this.deps.log(`handoff: ${q.id} could not move - ${item?.error ?? 'refused over there'}`)
+        if (item?.ok) {
+          this.deps.log(`handoff: ${q.id} moved to ${where} - its turn had ended`)
+          this.deps.notify?.(`Moved ${name} to ${where} - its turn had ended`)
+        } else {
+          const why = item?.error ?? 'refused over there'
+          this.deps.log(`handoff: ${q.id} could not move - ${why}`)
+          this.deps.notify?.(`${name} could not move to ${where} - ${why}`)
+        }
       })
-      .catch((err: Error) => this.deps.log(`handoff: ${q.id} could not move - ${err.message}`))
+      .catch((err: Error) => {
+        this.deps.log(`handoff: ${q.id} could not move - ${err.message}`)
+        this.deps.notify?.(`${name} could not move to ${where} - ${err.message}`)
+      })
       .finally(() => {
         this.running.delete(q.id)
         // Whatever happened, the pane is no longer on its way: a failed move must not
