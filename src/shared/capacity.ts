@@ -405,16 +405,24 @@ export function restorePlan(saved: number, m: Machine): RestorePlan {
   const v = assess({ ...m, localPanes: m.localPanes })
   const each = v.nextPaneMb
 
+  // "The rest are in History" is only true when some were held back. Said unconditionally
+  // it is a sentence about panes that do not exist, on the one screen whose whole job is
+  // to say which panes there are - the review of v0.8.93 caught it for two saved panes at
+  // warn, where all of them fit and the note still sent the reader to look for more.
+  const rest = (fits: number): string =>
+    fits < offered ? ' The rest are in History, one click each.' : ''
+
   if (m.pressure === 'critical') {
     return {
       fits: 1,
-      note: `This machine is out of memory right now, and each pane brings back an agent costing ~${each} MB. One is ticked; the rest are in History whenever you want them.`,
+      note: `This machine is out of memory right now, and each pane brings back an agent costing ~${each} MB. One is ticked.${rest(1)}`,
     }
   }
   if (m.pressure === 'warn') {
+    const fits = Math.min(offered, 2)
     return {
-      fits: Math.min(offered, 2),
-      note: `Memory is tight - each pane brings back an agent costing ~${each} MB, and starting ${offered} at once is what makes typing lag. The rest are in History, one click each.`,
+      fits,
+      note: `Memory is tight - each pane brings back an agent costing ~${each} MB, and starting ${offered} at once is what makes typing lag.${rest(fits)}`,
     }
   }
   // Not under pressure: the only limit left is the arithmetic, and on any machine that
@@ -425,7 +433,7 @@ export function restorePlan(saved: number, m: Machine): RestorePlan {
     fits,
     note:
       fits < offered
-        ? `${offered} panes would hold about ${offered * each} MB of this machine's ${Math.round(m.totalMb / 1024)} GB. ${fits} are ticked; the rest are in History.`
+        ? `${offered} panes would hold about ${offered * each} MB of this machine's ${Math.round(m.totalMb / 1024)} GB. ${fits} are ticked.${rest(fits)}`
         : '',
   }
 }

@@ -291,5 +291,34 @@ ok(
     restorePlan(6, { totalMb: 4 * GB, pressure: 'normal', localPanes: 0 }).fits
 )
 
+// A note is only allowed to send somebody to History when something was really held back.
+// Said unconditionally it is a sentence about panes that do not exist.
+ok(
+  'no "the rest are in History" when everything fits',
+  !/History/.test(restorePlan(2, COLD('warn')).note) &&
+    !/History/.test(restorePlan(1, COLD('critical')).note),
+  restorePlan(2, COLD('warn')).note
+)
+ok(
+  'and it IS there when panes were held back',
+  /History/.test(restorePlan(6, COLD('warn')).note) &&
+    /History/.test(restorePlan(6, COLD('critical')).note)
+)
+
+// The half this file cannot reach by importing the module: WHICH pressure reading the
+// offer is built from. `lastPressure` is a module variable the 15s sampler fills in, and
+// on a cold launch it has not necessarily ticked - so reading it would report `normal` on
+// exactly the launch this feature exists for, and every pane would tick again with the
+// test still green. Asserted against the source because the bug is one identifier wide.
+const mainSrc = readFileSync(join(here, '..', 'src', 'main', 'index.ts'), 'utf8')
+// Comments stripped, or the source's own note explaining why `lastPressure` is the WRONG
+// one to read counts as a use of it - a test that fails on the sentence describing the fix.
+const offerBody = mainSrc
+  .slice(mainSrc.indexOf('function offerRestore('), mainSrc.indexOf("ipcMain.handle('restore:pending'"))
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '')
+ok('the restore offer asks the kernel now', /restorePlan\(/.test(offerBody) && /readPressure\(\)/.test(offerBody))
+ok('and never off the sampler variable', !/lastPressure/.test(offerBody))
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

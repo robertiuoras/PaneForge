@@ -292,8 +292,41 @@ const launchRequest = parseOpenArgs(process.argv)
  * it is the one that was missing.
  */
 let quitCause = ''
+let quitLogged = false
+let panesAtQuit = -1
+/**
+ * How many panes were open when leaving started.
+ *
+ * Read at the FIRST sign of a quit, never at the log line: `doInstall` and the admin
+ * relaunch both call `manager.shutdown()` and only then `hardExit()`, so a count taken
+ * where it is printed is always 0 and the number stops meaning anything. Wrapped because
+ * the single-instance loser quits from module scope, above where `manager` is built.
+ */
+function notePanes(): void {
+  if (panesAtQuit >= 0) return
+  try {
+    panesAtQuit = manager.list().length
+  } catch {
+    panesAtQuit = 0
+  }
+}
 function quitting(cause: string): void {
+  notePanes()
   if (!quitCause) quitCause = cause
+}
+/**
+ * The one quit line, wherever leaving started.
+ *
+ * Both handlers used to write one. On macOS Cmd-Q they are not alternatives: `before-quit`
+ * runs, Electron then closes the windows, and `window-all-closed` runs too - so one press
+ * logged twice, and the second line said "the last window was closed", which is the
+ * CONSEQUENCE of the quit being reported as its cause. Found by the review of v0.8.93.
+ */
+function logQuit(): void {
+  if (quitLogged) return
+  quitLogged = true
+  notePanes()
+  updateLog('quit', quitReason(), `${panesAtQuit} pane(s) open`)
 }
 /** The words for the log line, including the case where nothing in the app fired. */
 function quitReason(): string {
@@ -3418,7 +3451,9 @@ app.whenReady().then(() => {
 // Agents are child processes of this app: leaving them running after the window
 // closes would strand invisible `claude` processes holding file locks.
 app.on('window-all-closed', () => {
-  quitting('the last window was closed')
+  // Only when this really IS the cause. On Cmd-Q `before-quit` has already run and
+  // already said what it knew; the windows closing after it is what a quit DOES.
+  if (!quitLogged) quitting('the last window was closed')
   // Before shutdown(), which is what kills the panes this is a record of.
   saveDeskOnExit(manager.snapshot())
   // Guests get their sockets closed rather than left to time out, so the other
@@ -3471,11 +3506,10 @@ function installStagedMacUpdateOnQuit(): void {
 }
 
 function hardExit(): void {
-  updateLog(
-    'exit',
-    installStarted ? 'handing over to the installer' : 'window closed',
-    `- ${quitReason()}`
-  )
+  // The quit line first, for the paths that reach here without `before-quit` ever
+  // running; a no-op when it already did.
+  logQuit()
+  updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
   installStagedMacUpdateOnQuit()
   // The exit that does NOT go through before-quit, so it needs its own line: a driven
   // agent is detached and in its own process group, and nothing below reaches it.
@@ -3494,7 +3528,7 @@ app.on('before-quit', () => {
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported
   // as "it closed by itself".
-  updateLog('quit', quitReason(), `${manager.list().length} pane(s) open`)
+  logQuit()
   // Quitting by any other route than the last window closing - the tray, Cmd-Q, the
   // OS asking everyone to leave before a restart. Same record, same order: the desk
   // is written while the panes are still alive to be read.
