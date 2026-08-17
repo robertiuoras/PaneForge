@@ -71,7 +71,14 @@ import {
   type Verdict
 } from '../../shared/capacity'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
-import { autoHandoffPlan, movable as handoffMovable, DEFAULT_AUTO_HANDOFF } from '../../shared/autoHandoff'
+import {
+  autoHandoffPlan,
+  idleOffloadPlan,
+  movable as handoffMovable,
+  DEFAULT_AUTO_HANDOFF,
+  type AutoHandoff,
+  type AutoPane
+} from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
@@ -1758,23 +1765,102 @@ export default function App(): JSX.Element {
    */
   const handoffBlocked = useRef<Record<string, number>>({})
   const handoffSweeping = useRef(false)
+
+  /**
+   * What every pane looks like to both sweeps. Read fresh through `sessionsRef` rather
+   * than closed over: these run on a timer, and a desk that is full and quiet emits no
+   * session events at all.
+   */
+  const handoffPanes = useCallback(
+    (): AutoPane[] =>
+      sessionsRef.current.map((s) => ({
+        id: s.id,
+        state: fleetState(s),
+        lastKeyboard: s.lastKeyboard,
+        focused: s.id === activeRef.current,
+        visible: visibleIds.has(s.id),
+        remote: !!s.remote,
+        handingOff: !!s.handingOff,
+        // A live question is drawn on a screen and lives in no transcript: resuming over
+        // there comes back with the question gone and nobody asked. Never moved.
+        asking: !!s.ask || !!s.bell,
+        projectName: projectNameOf(s.cwd)
+      })),
+    [visibleIds]
+  )
+
+  /**
+   * Ask the peers, run `make` against them, and carry out whatever it returns.
+   *
+   * The peers are asked only once something is actually eligible - `remoteProjects` is a
+   * round trip per device over the link, and a machine under memory pressure is the last
+   * place to spend one finding out there was nothing to move. Both sweeps share the one
+   * `handoffSweeping` guard, so the pressure sweep and the clock can never both be moving
+   * the same pane.
+   */
+  const runHandoffs = useCallback(
+    (
+      panes: AutoPane[],
+      make: (candidates: OffloadCandidate[], now: number) => AutoHandoff[],
+      why: string,
+      cooldownMinutes: number
+    ) => {
+      if (handoffSweeping.current) return
+      handoffSweeping.current = true
+      void (async () => {
+        try {
+          const state = await api.remoteState()
+          const online = state.peers.filter((p) => p.status === 'online')
+          if (!online.length) return
+          const candidates = await Promise.all(
+            online.map(async (p) => ({
+              device: p.id,
+              deviceName: p.name,
+              online: true,
+              projects: await api
+                .remoteProjects(p.id)
+                .catch(() => [] as { name: string; path: string }[])
+            }))
+          )
+          const plan = make(candidates, Date.now())
+          for (const move of plan) {
+            console.info(
+              `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
+            )
+            const items = await api.handoffToDevice(move.device, [move.id], false, true)
+            const item = items[0]
+            if (item?.ok) {
+              console.info(`handoff: ${move.id} is now running on ${move.deviceName}`)
+            } else {
+              // A repo that cannot be pushed will not become pushable in fifteen seconds,
+              // and retrying it every reading is how an automatic thing becomes noise.
+              handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
+              // ...and drop the ones that have served their time. A cooldown map on a desk
+              // that runs for weeks is a leak nobody would ever see: it is only ever read
+              // through `> now`, so an expired entry changes no decision and simply stays.
+              for (const [id, until] of Object.entries(handoffBlocked.current)) {
+                if (until <= Date.now()) delete handoffBlocked.current[id]
+              }
+              console.info(
+                `handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`
+              )
+            }
+          }
+        } catch {
+          /* a peer that cannot be asked is a peer that cannot be used - the sweeps below still run */
+        } finally {
+          handoffSweeping.current = false
+        }
+      })()
+    },
+    []
+  )
+
   const sweepHandoff = useCallback(() => {
     const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
-    if (!capacity || capacity.level === 'ok' || !cfg.enabled || handoffSweeping.current) return
+    if (!capacity || capacity.level === 'ok' || !cfg.enabled) return
     const now = Date.now()
-    const panes = sessionsRef.current.map((s) => ({
-      id: s.id,
-      state: fleetState(s),
-      lastKeyboard: s.lastKeyboard,
-      focused: s.id === activeRef.current,
-      visible: visibleIds.has(s.id),
-      remote: !!s.remote,
-      handingOff: !!s.handingOff,
-      // A live question is drawn on a screen and lives in no transcript: resuming over
-      // there comes back with the question gone and nobody asked. Never moved.
-      asking: !!s.ask || !!s.bell,
-      projectName: projectNameOf(s.cwd)
-    }))
+    const panes = handoffPanes()
     const worthAsking = panes.some(
       (p) =>
         !p.focused &&
@@ -1786,51 +1872,13 @@ export default function App(): JSX.Element {
         !((handoffBlocked.current[p.id] ?? 0) > now)
     )
     if (!worthAsking) return
-    handoffSweeping.current = true
-    void (async () => {
-      try {
-        const state = await api.remoteState()
-        const online = state.peers.filter((p) => p.status === 'online')
-        if (!online.length) return
-        const candidates = await Promise.all(
-          online.map(async (p) => ({
-            device: p.id,
-            deviceName: p.name,
-            online: true,
-            projects: await api
-              .remoteProjects(p.id)
-              .catch(() => [] as { name: string; path: string }[])
-          }))
-        )
-        const plan = autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, Date.now())
-        for (const move of plan) {
-          console.info(
-            `capacity: ${capacity.level}, moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
-          )
-          const items = await api.handoffToDevice(move.device, [move.id], false, true)
-          const item = items[0]
-          if (item?.ok) {
-            console.info(`handoff: ${move.id} is now running on ${move.deviceName}`)
-          } else {
-            // A repo that cannot be pushed will not become pushable in fifteen seconds, and
-            // retrying it every reading is how an automatic thing becomes noise.
-            handoffBlocked.current[move.id] = Date.now() + Math.max(1, cfg.cooldownMinutes) * 60_000
-            // ...and drop the ones that have served their time. A cooldown map on a desk
-            // that runs for weeks is a leak nobody would ever see: it is only ever read
-            // through `> now`, so an expired entry changes no decision and simply stays.
-            for (const [id, until] of Object.entries(handoffBlocked.current)) {
-              if (until <= Date.now()) delete handoffBlocked.current[id]
-            }
-            console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
-          }
-        }
-      } catch {
-        /* a peer that cannot be asked is a peer that cannot be used - the sweep below still runs */
-      } finally {
-        handoffSweeping.current = false
-      }
-    })()
-  }, [capacity, visibleIds, config?.autoHandoff])
+    runHandoffs(
+      panes,
+      (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
+      `capacity: ${capacity.level}`,
+      cfg.cooldownMinutes
+    )
+  }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])
 
   // Twice: on a reading changing, and on a clock. A desk that is full and quiet emits no
   // session events at all - which is exactly the desk this exists for, and the one a
@@ -1843,6 +1891,42 @@ export default function App(): JSX.Element {
     // interval re-armed on every change is an interval that never fires. The reading
     // (`capacity`) re-arms it, and everything else is read fresh through `sessionsRef`.
   }, [sweepHandoff])
+
+  /**
+   * The same move on a clock, and the only sweep that can fire on a single-window desk.
+   *
+   * The one above refuses anything `visible`, which with the grid on is every pane - so on
+   * the desk that is actually lagging its eligible list is always empty. This is the opt-in
+   * answer to that (`autoHandoff.offloadIdleMinutes`, 0 = off), and it mirrors
+   * `reclaim.idleCloseMinutes` exactly: its own minute timer, because the thing it watches
+   * is time passing and nothing about a quiet pane changes to announce it.
+   */
+  useEffect(() => {
+    const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+    if (!cfg.enabled || !(cfg.offloadIdleMinutes > 0)) return
+    const sweep = (): void => {
+      const now = Date.now()
+      const panes = handoffPanes()
+      const worthAsking = panes.some(
+        (p) =>
+          !p.focused &&
+          !p.remote &&
+          !p.handingOff &&
+          handoffMovable(p) &&
+          now - p.lastKeyboard >= cfg.offloadIdleMinutes * 60_000 &&
+          !((handoffBlocked.current[p.id] ?? 0) > now)
+      )
+      if (!worthAsking) return
+      runHandoffs(
+        panes,
+        (candidates, at) => idleOffloadPlan(panes, candidates, cfg, handoffBlocked.current, at),
+        `idle-offload: quiet ${cfg.offloadIdleMinutes} min`,
+        cfg.cooldownMinutes
+      )
+    }
+    const timer = window.setInterval(sweep, 60_000)
+    return () => window.clearInterval(timer)
+  }, [handoffPanes, runHandoffs, config?.autoHandoff])
 
   useEffect(() => {
     if (!capacity) return

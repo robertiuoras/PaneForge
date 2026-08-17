@@ -154,6 +154,21 @@ if (cmd === 'list') {
   if (!s) fail(1, `no pane named "${ref}"`)
   await send('pty:write', [s.id, `${text}\r`])
   console.log(`typed into ${s.id} (${s.title})`)
+} else if (cmd === 'call') {
+  // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
+  // is already published, so a setting that only has a switch in the dialog can still be
+  // turned on from a script without adding a second door to the app. Arguments are JSON so
+  // an object survives - `pf-ctl call config:set '{"autoHandoff":{...}}'`.
+  const channel = rest.shift()
+  if (!channel) fail(1, 'call needs a channel: pf-ctl call <channel> [json-arg...]')
+  let args
+  try {
+    args = rest.map((a) => JSON.parse(a))
+  } catch (e) {
+    fail(1, `each argument must be JSON - ${e instanceof Error ? e.message : e}`)
+  }
+  const out = await call(channel, args)
+  console.log(out === undefined ? 'ok' : JSON.stringify(out))
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | type`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | type | call`)
 }

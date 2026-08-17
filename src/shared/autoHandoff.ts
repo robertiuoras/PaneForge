@@ -30,9 +30,16 @@
 //     is drawn on a screen, not in the transcript; resuming over there comes back with the
 //     question gone and the agent waiting for something nobody was asked.
 //
-// Everything else is the same shape as `reclaim.ts`: pressure is the trigger, never a
-// clock; the focused pane and anything on screen are left alone; a failure puts that pane
-// on a cooldown so a repo that cannot be pushed is not retried every fifteen seconds.
+// Everything else is the same shape as `reclaim.ts`: pressure is the trigger; the focused
+// pane and anything on screen are left alone; a failure puts that pane on a cooldown so a
+// repo that cannot be pushed is not retried every fifteen seconds.
+//
+// ...and it is the same shape down to the exception. `idleOffloadPlan` is the opt-in clock
+// beside all of that, mirroring `reclaim.idleClosePlan` exactly, because the two refusals
+// above have a cost nobody saw until a desk was actually lagging: with the grid on every
+// pane is `visible`, so the pressure sweep's eligible list is empty on a single-window
+// desk and the feature could never once fire there. The clock drops `visible` and the
+// pressure gate and NOTHING else.
 //
 // Pure. `npm run test:autohandoff`.
 
@@ -54,6 +61,23 @@ export interface AutoHandoffConfig {
    * worth more than a megabyte.
    */
   waitMinutes: number
+  /**
+   * Move a quiet pane to a paired device on a CLOCK, whatever the memory says. Minutes; 0
+   * is off, which is every desk that has not asked.
+   *
+   * The pressure sweep above can never fire on a single-window desk, and that is not a bug
+   * in it - `visible` is a refusal there because moving something off somebody's screen
+   * while their machine is busy is theft. But with the grid on, every pane is "on screen",
+   * so the eligible list is empty on exactly the desk that is lagging. Same shape as
+   * `reclaim.idleCloseMinutes`: a separate, opt-in clock, with `visible` as the ONLY
+   * refusal dropped - because the clock has already established nobody has typed into this
+   * pane for a long time, which is the fact the screen was standing in for.
+   *
+   * Longer than `minIdleMinutes` when it is turned on at all. Under pressure the app is
+   * choosing between moving a pane and the machine falling over; here it is choosing to
+   * move somebody's work while there is room, so the evidence has to be stronger.
+   */
+  offloadIdleMinutes: number
 }
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
@@ -64,8 +88,18 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   minIdleMinutes: 10,
   maxPerSweep: 2,
   cooldownMinutes: 30,
-  waitMinutes: 30
+  waitMinutes: 30,
+  offloadIdleMinutes: 0
 }
+
+/**
+ * What the switch sets `offloadIdleMinutes` to when it is turned on.
+ *
+ * Three times `minIdleMinutes`, on purpose. That one runs while the machine is falling
+ * over, where being a few minutes early costs a reopen; this runs while there is still
+ * room, where being early moves work somebody was about to come back to.
+ */
+export const IDLE_OFFLOAD_MINUTES = 30
 
 export interface AutoPane {
   id: string
@@ -141,11 +175,56 @@ export function autoHandoffPlan(
   // the app deciding where they work.
   if (v.level === 'ok') return []
   if (!(cfg.maxPerSweep > 0)) return []
-  const minIdle = Math.max(0, cfg.minIdleMinutes) * 60_000
+  return pick(panes, peers, cfg, blocked, now, Math.max(0, cfg.minIdleMinutes), true)
+}
+
+/**
+ * The same move on a CLOCK, for the desk the sweep above can never reach.
+ *
+ * Off unless `offloadIdleMinutes` says otherwise, which is the whole reason it is allowed
+ * to exist beside `autoHandoffPlan`: that one is what a machine may do while it is falling
+ * over, and this is what a machine may be TOLD to do while it is merely busy.
+ *
+ * Two gates are dropped and nothing else. Pressure, because the clock is the trigger here -
+ * lag arrives long before the kernel admits to it, and a pane quiet for half an hour costs
+ * its ~190 MB the whole time. And `visible`, for the reason written on `offloadIdleMinutes`
+ * and already settled by `idleClosePlan`: with the grid on, every pane is on screen, so
+ * keeping it means the feature can never fire on the desk it was built for.
+ *
+ * Everything that makes this safe is kept verbatim: never the focused pane, never a mirror,
+ * never one already moving, never one mid-turn or holding a live question, never the last
+ * pane, the failure cooldown, and `maxPerSweep`.
+ */
+export function idleOffloadPlan(
+  panes: AutoPane[],
+  peers: OffloadCandidate[],
+  cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
+  blocked: Record<string, number> = {},
+  now = 0
+): AutoHandoff[] {
+  if (!cfg.enabled) return []
+  const minutes = Math.max(0, cfg.offloadIdleMinutes ?? 0)
+  if (!minutes) return []
+  if (!(cfg.maxPerSweep > 0)) return []
+  return pick(panes, peers, cfg, blocked, now, minutes, false)
+}
+
+/** The body both plans share. `screen` is whether a pane on screen is refused. */
+function pick(
+  panes: AutoPane[],
+  peers: OffloadCandidate[],
+  cfg: AutoHandoffConfig,
+  blocked: Record<string, number>,
+  now: number,
+  minIdleMinutes: number,
+  screen: boolean
+): AutoHandoff[] {
+  const minIdle = minIdleMinutes * 60_000
 
   const out: AutoHandoff[] = []
   const eligible = panes
-    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => !(screen && p.visible))
     .filter((p) => now - p.lastKeyboard >= minIdle)
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .sort((a, b) => a.lastKeyboard - b.lastKeyboard)

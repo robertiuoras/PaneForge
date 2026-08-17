@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
-import { DEFAULT_AUTO_HANDOFF } from '@shared/autoHandoff'
+import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -433,6 +433,22 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   label="Move a finished pane to a paired device when this machine is full"
                   hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. Only once the machine is genuinely out of memory, only a pane nobody is looking at that has been quiet for ten minutes, and only to a device that is online and has the same project. A pane mid-turn is never moved - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
                 />
+                {config.autoHandoff?.enabled !== false && (
+                  <Switch
+                    checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}
+                    onChange={(v) =>
+                      onChange({
+                        autoHandoff: {
+                          ...DEFAULT_AUTO_HANDOFF,
+                          ...config.autoHandoff,
+                          offloadIdleMinutes: v ? IDLE_OFFLOAD_MINUTES : 0
+                        }
+                      })
+                    }
+                    label="...and move a quiet one over there even when there is still room"
+                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
+                  />
+                )}
                 <Switch
                   checked={config.driveUnattended !== false}
                   onChange={(v) => onChange({ driveUnattended: v })}
