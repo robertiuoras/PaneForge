@@ -144,7 +144,7 @@ buildSync({
   outfile: join(out, 'laneWords.mjs')
 })
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { deviceTip, holderName, laneBusy, laneChipLabel, laneLabel, laneProject, laneState, laneTip } = await import(
+const { deviceTip, holderName, laneBusy, laneChipLabel, laneDoing, laneLabel, laneProject, laneState, laneTip } = await import(
   pathToFileURL(join(out, 'laneWords.mjs')).href
 )
 
@@ -357,6 +357,36 @@ ok(
   "and still says where the holder's chat came from, lower down",
   laneTip(fromTaskdriver, 3).includes('Started in') && laneTip(fromTaskdriver, 3).includes('taskdriver')
 )
+
+// ---------------------------------------------------------------------------
+// What a copy of the project is DOING, which is the question two counts never answered.
+//
+// "3 commits not in main · 2 uncommitted files" is how much, and the report was about what:
+// "see other lanes and what they are working on ... a summary each lane what its doing".
+// Both halves of the answer are free and already in the repository - the newest commit's
+// subject, and the names of the files that are open right now. The load-bearing case is the
+// LAST one: a lane with neither says nothing rather than inventing a sentence about work
+// somebody else did.
+const work = (over) => ({ subject: null, at: null, touching: [], dirty: 0, ...over })
+ok(
+  'a lane with uncommitted files says which',
+  laneDoing(work({ touching: ['src/main/index.ts', 'src/renderer/src/App.tsx'], dirty: 2 }), NOW) ===
+    'editing index.ts, App.tsx',
+  laneDoing(work({ touching: ['src/main/index.ts', 'src/renderer/src/App.tsx'], dirty: 2 }), NOW)
+)
+ok(
+  'and counts the ones it did not list',
+  laneDoing(work({ touching: ['a.ts', 'b.ts', 'c.ts', 'd.ts'], dirty: 9 }), NOW).endsWith('+5 more'),
+  laneDoing(work({ touching: ['a.ts', 'b.ts', 'c.ts', 'd.ts'], dirty: 9 }), NOW)
+)
+ok(
+  'a quiet lane is named by its newest commit, with its age',
+  laneDoing(work({ subject: 'fix(lanes): ship lane-peers.mjs', at: NOW - 3 * 3600_000 }), NOW) ===
+    'last commit 3h ago: "fix(lanes): ship lane-peers.mjs"',
+  laneDoing(work({ subject: 'fix(lanes): ship lane-peers.mjs', at: NOW - 3 * 3600_000 }), NOW)
+)
+ok('a lane with nothing in it says nothing', laneDoing(work(), NOW) === '', laneDoing(work(), NOW))
+ok('and so does a lane that was never read', laneDoing(null, NOW) === '')
 
 rmSync(root, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failed` : '\nall passed')

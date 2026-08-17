@@ -168,6 +168,36 @@ export function heldByTip(lane: LaneBoardEntry, pane?: number): string {
   return where || who ? `Held by ${holderName(lane, pane)}${where}${who}` : ''
 }
 
+/**
+ * What is actually being done in a checkout, in one line.
+ *
+ * The lane dialog used to answer "what is in here?" with two counts, which is how much and
+ * not what - and the report was the plain version of that: "see other lanes and what they
+ * are working on, didn't I say before needed like a summary each lane what its doing".
+ *
+ * Everything here is free and already in the repository: the newest commit's subject is
+ * what the lane has finished saying, and the uncommitted filenames are what it has open
+ * right now. Nothing is summarised by a model and nothing is guessed - a lane that has
+ * neither says so, because "no commits of its own yet" is a fact somebody can act on and
+ * an invented sentence about somebody else's work is not.
+ */
+export function laneDoing(
+  work: { subject: string | null; at: number | null; touching: string[]; dirty: number } | null,
+  now = Date.now()
+): string {
+  if (!work) return ''
+  const bits: string[] = []
+  if (work.touching.length) {
+    const shown = work.touching.map((p) => folderName(p))
+    const more = work.dirty - shown.length
+    bits.push(`editing ${shown.join(', ')}${more > 0 ? ` +${more} more` : ''}`)
+  }
+  if (work.subject) {
+    bits.push(`last commit${work.at ? ` ${ago(work.at, now)} ago` : ''}: "${work.subject}"`)
+  }
+  return bits.join(' · ')
+}
+
 export function laneTip(lane: LaneBoardEntry, pane?: number): string {
   const held = heldByTip(lane, pane)
   // A peer row is a claim on the other machine's trunk, and the two lines a normal row
