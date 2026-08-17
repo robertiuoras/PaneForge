@@ -1163,7 +1163,7 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
 
 ## Checks
 
-`npm run typecheck` before committing, and `npm test` — 43 checks in ~50s, everything
+`npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything
 below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
 It is also the gate's third step: `agentGate.ts` looks for a script called exactly
 `test`, and while there wasn't one every lane the app drove reported its suite step as
@@ -1197,6 +1197,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:devicewatch` | noticing that a ten-year cookie has been copied — and, the half that decides whether anybody ever reads a mark, that a phone leaving the house, an iOS version bump, a reloaded tab and a row with no stored user-agent all say NOTHING |
 | `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
+| `npm run test:confirmfit` | that the app's yes/no box can still be answered once a real question is in it — measured on the offload one ("Start this pane on `<device>`?"), whose three faults all came from the dialog SHELL rather than the confirm rules: a `position: sticky` footer pinning to the scrollport's bottom EDGE and so sitting 2px ON the tick box of a dialog that was not scrolling, `.dialog-row .primary { margin-left: auto }` silently beating the confirm's own `flex-end` for a 99px hole between the two answers, and `.ghost`/`.primary` padding making them 34.8px and 38.8px tall. The load-bearing case is the LONG body: making the row static fixes all three and quietly removes the pinning the sticky was added for |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |

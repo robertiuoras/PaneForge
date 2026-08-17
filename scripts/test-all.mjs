@@ -61,6 +61,7 @@ const TESTS = [
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
+  ['confirmfit', 'confirm-fit-test.mjs'],
   ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],
   ['silence', 'silence-test.mjs'],
