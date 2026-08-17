@@ -235,7 +235,15 @@ try {
   }
   chrome.kill()
   await sleep(300)
-  rmSync(profile, { recursive: true, force: true })
+  // A killed Chrome keeps writing its profile for a moment after the signal, so a plain
+  // rmSync throws ENOTEMPTY and fails a run whose every assertion passed - which is a
+  // test that reports a tidy-up race as a broken card. Retry, and never let the cleanup
+  // decide the result: what this test measures is above, in `failures`.
+  try {
+    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  } catch {
+    /* a temp dir the OS will collect; it is not this test's verdict */
+  }
 }
 
 console.log(failures ? `\n${failures} of ${checks} failed` : `\nall ${checks} card-fit checks passed`)
