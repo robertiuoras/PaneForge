@@ -2031,7 +2031,8 @@ export default function App(): JSX.Element {
         panes: sessionsRef.current.map((s) => ({
           state: fleetState(s),
           lastKeyboard: s.lastKeyboard,
-          remote: !!s.remote
+          remote: !!s.remote,
+          asking: !!s.ask
         })),
         minutes,
         focused: document.hasFocus(),

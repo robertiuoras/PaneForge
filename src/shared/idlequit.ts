@@ -32,6 +32,17 @@ export interface IdleQuitPane {
   lastKeyboard: number
   /** Another device's pty, mirrored here. Quitting cuts somebody else's link. */
   remote: boolean
+  /**
+   * The agent is holding a question on screen right now.
+   *
+   * `needsYou` cannot be the test - a FINISHED turn reads as needsYou too, and refusing on
+   * it would mean a desk of completed panes never quits, which is the desk this feature is
+   * for. A live chooser is the narrower fact and the one that cannot be recovered: it is
+   * drawn on a screen and lives in no transcript, so quitting loses the question itself and
+   * the turn goes back to whatever it was before somebody was asked. Same separation
+   * `autoHandoff.ts` makes, and for the same reason.
+   */
+  asking?: boolean
 }
 
 export interface IdleQuitInput {
@@ -73,6 +84,9 @@ export function idleQuitVerdict(input: IdleQuitInput): IdleQuitVerdict {
   if (busy) return { quit: false, reason: `a pane is ${busy.state}`, idleMs: 0 }
   if (input.panes.some((p) => p.remote)) {
     return { quit: false, reason: 'a pane is driven from another device', idleMs: 0 }
+  }
+  if (input.panes.some((p) => p.asking)) {
+    return { quit: false, reason: 'a pane is holding a question', idleMs: 0 }
   }
 
   // The most recent touch anywhere wins: one busy pane keeps the whole app alive, which is
