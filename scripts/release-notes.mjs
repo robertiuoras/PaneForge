@@ -40,7 +40,10 @@ const HEADINGS = [
   ['fix', 'Fixed'],
   ['perf', 'Faster']
 ]
-const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b/i
+// `auto-sync` is the mid-feature backup subject - it exists precisely to commit work that
+// is not a change anybody is announcing, and it is not a defect in the wording either, so
+// `unpublished` must not name it. Three of them touch src/ in this repo's history.
+const DROP = /^(release|chore\(release\)):\s*v?\d|^merge lane\b|^auto-sync\b/i
 
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], {

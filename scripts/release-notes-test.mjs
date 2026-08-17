@@ -264,7 +264,10 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
   put('fix: this one does reach the page', 'src')
   put('docs: written for the next session in this repo', 'src')
   put('test: a red case for the above', 'src')
-  put('auto-sync: mid-feature backup', 'scripts')
+  // The mid-feature backup subject, over src/ where it really appears in this repo's
+  // history (three times). It is not a change being announced and not a wording defect.
+  put('auto-sync: mid-feature backup', 'src')
+  put('auto-sync (Mac) 2026-08-14 10:10:15', 'src')
   put('a sentence, but only about a script', 'scripts')
   put('release: v0.1.1', 'src')
   put('merge lane b', 'src')
