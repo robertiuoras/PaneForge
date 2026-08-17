@@ -1814,7 +1814,32 @@ body.sizing * { user-select: none !important; }
    tick box between two buttons reads as a third button. */
 .confirm-check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .confirm-check input { accent-color: var(--acc); width: 14px; height: 14px; }
-.dialog.confirm .dialog-row { justify-content: flex-end; }
+/* Three things measured wrong on the offload question ("Start this pane on <PC>?"), all
+   of them inherited from the dialog shell rather than written here:
+
+   1. The row is `position: sticky; bottom: 0` so the buttons of a scrolling dialog stay
+      reachable, and the `padding-bottom: 16px; margin-bottom: -16px` beside it was written
+      to cancel the dialog's own padding so nothing moves when there is no scrolling. It
+      does not: sticky pins to the scrollport's bottom EDGE, which is inside that padding,
+      so the row was pulled 16px up whether the dialog scrolled or not - measured on the
+      offload question at scrollHeight 248 === clientHeight 248, with the primary button's
+      top 2px ABOVE the "Remember for N minutes" line instead of 14px below it. `bottom`
+      has to be offset by the same padding, and then the unscrolled case is the natural
+      one and the pinning still works. Kept on `.dialog.confirm` only: the other dialogs
+      pin a row under a list that is always scrolling, where the 16px never showed.
+   2. `.dialog-row .primary { margin-left: auto }` is right for a row whose cancel belongs
+      on the left, and it silently beats the `flex-end` below: measured 88.6px of automatic
+      margin, leaving a 99px hole between "Keep it here" and "Start on DESKTOP-CMSUCM1".
+      The two answers to one question belong beside each other.
+   3. `.ghost` and `.primary` carry different padding (7px vs 9px), so the two buttons were
+      34.8px and 38.8px tall and each stuck 2px out of the other. One height for both. */
+.dialog.confirm .dialog-row {
+  justify-content: flex-end;
+  gap: 8px;
+  bottom: -16px;
+}
+.dialog.confirm .dialog-row .primary { margin-left: 0; }
+.dialog.confirm .dialog-row button { min-height: 36px; padding-top: 8px; padding-bottom: 8px; }
 button.primary.danger {
   background: linear-gradient(180deg, #5c2b34, #45222a);
   border-color: #ff8f8f4d; color: #ffd7d7;
