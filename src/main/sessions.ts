@@ -22,7 +22,7 @@ import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
-import { DEFAULT_AUTO_ANSWER, pickAnswer } from '../shared/autoAnswer'
+import { askKeyOf, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
@@ -228,9 +228,16 @@ interface Live {
    */
   askSince: number
   askSig: string
-  /** Questions answered by `autoAnswer` in a row on this pane, and the last one pressed. */
+  /**
+   * The same question WITHOUT the arrow (`askKeyOf`), which is what "have I already
+   * pressed this one" has to be asked of: the arrow moves as our own keys land, so a
+   * signature carrying it calls the question being answered a new question.
+   */
+  askKey: string
+  /** Questions answered by `autoAnswer` in a row on this pane, the last one, and when. */
   autoRun: number
-  autoSig: string
+  autoKey: string
+  autoAt: number
   /** The frame the pane was looking at when it last said the turn was over. Diagnostics. */
   lastTail: string
   /**
@@ -390,8 +397,10 @@ export class SessionManager extends EventEmitter {
       recoverTries: 0,
       askSince: 0,
       askSig: '',
+      askKey: '',
       autoRun: 0,
-      autoSig: '',
+      autoKey: '',
+      autoAt: 0,
       lastTail: '',
       typed: '',
       slashAt: 0,
@@ -910,9 +919,18 @@ export class SessionManager extends EventEmitter {
       s.askSig = sig
       s.askSince = sig ? now : 0
     }
-    if (!sig) {
+    s.askKey = askKeyOf(ask)
+    // The run counter is given back by the pane going BUSY, and by nothing else.
+    //
+    // "No question on screen" is the wrong signal for it: a chooser mid-repaint reads as
+    // no question for one frame, so resetting there hands the budget back several times
+    // during a single question and `maxRun` stops bounding anything. A busy pane means
+    // the agent took an answer and went back to work, which is the only evidence that
+    // these presses are getting somewhere.
+    if (busy) {
       s.autoRun = 0
-      s.autoSig = ''
+      s.autoKey = ''
+      s.autoAt = 0
     }
     // The arrow moving is a change worth emitting (it is what `chooseOption` counts
     // from) but is NOT a new question, so it must not be treated as one by anything
@@ -1308,15 +1326,13 @@ export class SessionManager extends EventEmitter {
    */
   private sweepAutoAnswer(live: Live): void {
     const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
-    if (!cfg.enabled) return
     const ask = live.meta.ask
-    if (!ask || !live.askSince) return
-    if (Date.now() - live.askSince < cfg.waitMs) return
-    if (live.askSig === live.autoSig) return
-    if (live.autoRun >= cfg.maxRun) return
+    if (!ask) return
+    if (!dueForAuto(live, cfg, Date.now())) return
     const pick = pickAnswer(ask, cfg)
     if (!pick) return
-    live.autoSig = live.askSig
+    live.autoKey = live.askKey
+    live.autoAt = Date.now()
     live.autoRun++
     console.info(
       `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`

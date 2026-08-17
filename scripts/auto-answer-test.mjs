@@ -29,7 +29,7 @@ await build({
   format: 'esm',
   platform: 'neutral'
 })
-const { pickAnswer, DEFAULT_AUTO_ANSWER } = await import(
+const { pickAnswer, dueForAuto, askKeyOf, PRESS_COOLDOWN_MS, DEFAULT_AUTO_ANSWER } = await import(
   pathToFileURL(join(out, 'autoAnswer.mjs')).href
 )
 
@@ -72,6 +72,23 @@ ok('the widening option is never the one picked', () => {
       const pick = pickAnswer({ ...PERMISSION, selected: sel }, cfg)
       assert.notEqual(pick?.n, 2, `mode=${cfg.anyQuestion} sel=${sel}`)
     }
+  }
+})
+
+ok('every wording of "and stop asking me" is refused, not just this desk\'s', () => {
+  // Matching the two strings Claude Code prints today makes the guard a note about one
+  // CLI's release. These are the same sentence and every one of them must be unreachable.
+  for (const label of [
+    "Yes, and don't ask me again",
+    "Yes, and don't ever ask again",
+    'Yes, and never ask again',
+    'Yes, and do not ask me again for this folder',
+    'Yes, and stop asking about this again',
+    'Yes, allow always'
+  ]) {
+    const a = ask(1, label, 'No')
+    assert.equal(pickAnswer(a, ON), null, label)
+    assert.equal(pickAnswer(a, ANY), null, `${label} (anyQuestion)`)
   }
 })
 
@@ -133,18 +150,100 @@ ok('an empty question answers nothing', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The timing. Every case here is a way the app ends up arguing with a widget, and each
+// one is cheap to state and expensive to find in a live pane.
+// ---------------------------------------------------------------------------
+const T = 1_000_000
+const state = (over = {}) => ({
+  askKey: 'k1',
+  askSince: T,
+  autoKey: '',
+  autoAt: 0,
+  autoRun: 0,
+  ...over
+})
+
+ok('a question is answered once it has settled, and not before', () => {
+  assert.equal(dueForAuto(state(), ON, T + ON.waitMs - 1), false)
+  assert.equal(dueForAuto(state(), ON, T + ON.waitMs), true)
+  assert.equal(dueForAuto(state(), DEFAULT_AUTO_ANSWER, T + 60_000), false, 'off is off')
+})
+
+ok('the arrow moving restarts the wait', () => {
+  // The pane restarts askSince on any frame change, arrow included: somebody moving the
+  // selection at the desk must not have the press land from where they moved away.
+  const moved = state({ askSince: T + 900 })
+  assert.equal(dueForAuto(moved, ON, T + 1200), false)
+  assert.equal(dueForAuto(moved, ON, T + 900 + ON.waitMs), true)
+})
+
+ok('the same question is never pressed twice', () => {
+  assert.equal(dueForAuto(state({ autoKey: 'k1', autoAt: T }), ON, T + 600_000), false)
+  // A different question on the same pane is a new question, cooldown permitting.
+  assert.equal(
+    dueForAuto(state({ askKey: 'k2', autoKey: 'k1', autoAt: T }), ON, T + 600_000),
+    true
+  )
+})
+
+ok('a press is not followed by another while its own keys are still landing', () => {
+  // This is the race the arrow-inclusive signature used to open: our own arrows change
+  // the frame, which restarts the settle clock, which lets a second sequence interleave.
+  const mid = state({ askKey: 'k2', askSince: T, autoKey: 'k1', autoAt: T })
+  assert.equal(dueForAuto(mid, ON, T + PRESS_COOLDOWN_MS - 1), false)
+  assert.equal(dueForAuto(mid, ON, T + PRESS_COOLDOWN_MS), true)
+})
+
+ok('a pane may not do this for ever', () => {
+  const spent = state({ autoRun: ON.maxRun })
+  assert.equal(dueForAuto(spent, ON, T + 600_000), false)
+  assert.equal(dueForAuto({ ...spent, autoRun: ON.maxRun - 1 }, ON, T + 600_000), true)
+})
+
+ok('no question, nothing to answer', () => {
+  assert.equal(dueForAuto(state({ askKey: '' }), ON, T + 600_000), false)
+  assert.equal(dueForAuto(state({ askSince: 0 }), ON, T + 600_000), false)
+})
+
+ok('the identity of a question leaves the arrow out', () => {
+  const a = ask(1, 'Yes', 'No')
+  const b = ask(2, 'Yes', 'No')
+  assert.equal(askKeyOf(a), askKeyOf(b), 'the arrow moved; the question did not')
+  assert.notEqual(askKeyOf(a), askKeyOf(ask(1, 'Yes', 'Maybe')))
+  assert.equal(askKeyOf(null), '')
+})
+
+// ---------------------------------------------------------------------------
 // The wiring, at source level: the decision above is worth nothing if nothing calls it,
 // and the two guards that keep it from arguing with a widget live in sessions.ts.
 // ---------------------------------------------------------------------------
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 
-ok('the sweep is wired, waits, and never presses the same question twice', () => {
+ok('the sweep is wired and the decision above is the one it asks', () => {
   assert.match(sessions, /sweepAutoAnswer\(live\)/, 'called from the sweep')
-  assert.match(sessions, /Date\.now\(\) - live\.askSince < cfg\.waitMs/, 'the settle window')
-  assert.match(sessions, /live\.askSig === live\.autoSig/, 'once per question')
-  assert.match(sessions, /live\.autoRun >= cfg\.maxRun/, 'a run has an end')
+  assert.match(sessions, /dueForAuto\(live, cfg, Date\.now\(\)\)/, 'the timing is the tested one')
   // The keys go through `choose`, which re-checks the question before every one of them.
   assert.match(sessions, /this\.choose\(live\.meta\.id, pick\.n\)/)
+})
+
+ok('the state the guards read is actually written', () => {
+  // A guard is half of a rule. Checking only the comparison lets the assignment that
+  // makes it true be deleted, at which point every question is answered over and over
+  // and this file still passes - which is the shape of green that costs the most.
+  assert.match(sessions, /live\.autoKey = live\.askKey/, 'the pressed question is recorded')
+  assert.match(sessions, /live\.autoAt = Date\.now\(\)/, 'and when')
+  assert.match(sessions, /live\.autoRun\+\+/, 'and the run counter moves')
+  assert.match(sessions, /s\.askKey = askKeyOf\(ask\)/, 'the identity is kept per frame')
+  assert.match(sessions, /s\.askSince = sig \? now : 0/, 'and the settle clock')
+})
+
+ok('the run counter is given back by work resuming, not by a repaint', () => {
+  // A chooser mid-repaint reads as no question for a frame, so resetting on "no question"
+  // hands the budget back several times during ONE question and maxRun bounds nothing.
+  const reset = sessions.slice(sessions.indexOf('s.askKey = askKeyOf(ask)'))
+  const busyGate = reset.indexOf('if (busy) {')
+  const counter = reset.indexOf('s.autoRun = 0')
+  assert.ok(busyGate >= 0 && counter > busyGate && counter - busyGate < 800, 'reset sits under `if (busy)`')
 })
 
 rmSync(out, { recursive: true, force: true })

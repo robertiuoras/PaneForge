@@ -819,15 +819,25 @@ would answer a permission prompt on a desk that never asked for that.
 - `anyQuestion` is the wider setting and it takes **the CLI's own default**, the row its
   arrow is already on, rather than inventing a preference. The two refusals above still
   hold over it.
-- **The timing half is in `sessions.ts` and is a separate promise.** A question is pressed
-  only once it has sat unchanged for `waitMs` (1.2s — the window in which somebody who
-  disagrees can reach the pane), and the signature includes where the arrow is, so moving
-  it at the desk restarts the wait. Once per signature: a press that does not take leaves
-  the same question on screen, and pressing again every second is the app arguing with a
-  widget. `maxRun` ends a pane that asks the same thing for ever; a pane with no question
-  resets it. The keys go through `choose`, which re-checks the question before every one.
-- `npm run test:autoanswer`, whose weight is in the negatives and whose last case asserts
-  the wiring at source level — the decision is worth nothing if the sweep stops calling it.
+- **The timing is `dueForAuto`, and it takes TWO signatures of the same question on
+  purpose.** A press waits until the frame has sat unchanged for `waitMs` (1.2s — the
+  window in which somebody who disagrees can reach the pane) and that signature includes
+  where the arrow is, so moving it at the desk restarts the wait. But "have I already
+  pressed this one" may NOT be asked of that signature: our own keys move the arrow, so a
+  press restarts its own settle clock and a second sequence interleaves with the first,
+  arrows landing between each other and the wrong row committed. `askKeyOf` is the
+  question's identity with the arrow left out, one press per identity, plus a
+  `PRESS_COOLDOWN_MS` floor of 4s so nothing can be pressed while its own keys are still
+  landing.
+- **`maxRun` is given back by the pane going BUSY, and by nothing else.** A chooser
+  mid-repaint reads as no question for one frame, so returning the budget on "no question
+  on screen" hands it back several times during a single question and the cap bounds
+  nothing. A busy pane is the only evidence that an answer went in and work resumed.
+- The keys go through `choose`, which re-checks the question before every one of them.
+- `npm run test:autoanswer` — 21 checks, weight in the negatives: every wording of "and
+  stop asking me" (not the two strings this desk has captured), the timing behaviourally
+  over a fake clock, and source assertions on the STATE the guards read, because a test
+  that only matches the comparison lets the assignment making it true be deleted.
 
 ## A pane that is still starting says so
 

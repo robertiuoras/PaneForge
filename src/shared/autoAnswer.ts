@@ -31,9 +31,16 @@ import type { PaneAsk } from './choices'
  * ("Yes, allow always", "Always allow this command", "Yes, and don't ask again") and a
  * phrase list is a guess at the fourth. An ordinary option that happens to say "always"
  * is merely left for a person, which is the direction this is allowed to be wrong in.
+ *
+ * Same reason the "ask again" half is a SHAPE and not the two strings this desk happens
+ * to have captured: "don't ask me again", "never ask again", "don't ever ask again" and
+ * "stop asking about this again" are the same sentence, and matching only the wording
+ * Claude Code uses today makes the guard a note about one CLI's release rather than a
+ * rule. A false match here costs a question left for a person; a miss costs the one
+ * press that cannot be taken back.
  */
 const WIDENS =
-  /don'?t ask again|do not ask again|\balways\b|rest of this session|auto[- ]?accept|yolo|remember this/i
+  /(?:don'?t|do not|never|stop)\s+(?:\w+\s+){0,2}ask(?:ing)?\b(?:\s+\w+){0,3}\s+again|\bask (?:me |us )?again\b|\balways\b|rest of this session|auto[- ]?accept|yolo|remember this/i
 
 /**
  * An option that stops, or that answers with a question of its own.
@@ -92,6 +99,65 @@ export const DEFAULT_AUTO_ANSWER: AutoAnswerConfig = {
   anyQuestion: false,
   waitMs: 1200,
   maxRun: 12
+}
+
+/**
+ * How long after a press this may press again, whatever the frame says.
+ *
+ * The keys are spread over a few hundred milliseconds and the widget redraws after each
+ * one, so the frames arriving during a press are a moving target by construction. Without
+ * a floor here, the arrow moving under our own keystrokes reads as "the question changed",
+ * which restarts the settle clock and lets a second press interleave with the first -
+ * arrows from two sequences landing between each other, and the wrong row committed.
+ */
+export const PRESS_COOLDOWN_MS = 4000
+
+/**
+ * A question's identity: what it asks and what it offers, with the arrow left out.
+ *
+ * `askSignature` in `shared/choices.ts` deliberately INCLUDES the arrow, because a phone
+ * answering from a stale position picks the wrong row. This is the other question - "is
+ * this the same question I already pressed" - and for that the arrow is noise: it moves
+ * every time a key lands, including our own.
+ */
+export function askKeyOf(ask: PaneAsk | null | undefined): string {
+  if (!ask) return ''
+  return `${ask.question}|${ask.options.map((o) => `${o.n}.${o.label}`).join('|')}`
+}
+
+/** What a pane knows about the question on its screen. All times are ms epoch. */
+export interface AutoAnswerState {
+  /**
+   * The question's IDENTITY - its text and its options, and deliberately NOT where the
+   * arrow is. The arrow moves as the keys land, so a signature carrying it says "a
+   * different question" about the question being answered.
+   */
+  askKey: string
+  /** When the frame last changed, arrow included. A person arrowing restarts this. */
+  askSince: number
+  /** The identity last pressed, and when. */
+  autoKey: string
+  autoAt: number
+  /** Presses in a row on this pane. */
+  autoRun: number
+}
+
+/**
+ * May this pane's question be answered right now?
+ *
+ * Every guard here is a way the app could end up arguing with a widget, and each one is
+ * cheap to state and expensive to discover in a pane: the question has to have settled
+ * (`waitMs`, the window in which somebody who disagrees can reach it), it has to be a
+ * question this has not already pressed, the last press has to be far enough behind that
+ * its own keystrokes are not still landing, and a pane may not do this for ever.
+ */
+export function dueForAuto(s: AutoAnswerState, cfg: AutoAnswerConfig, now: number): boolean {
+  if (!cfg.enabled) return false
+  if (!s.askKey || !s.askSince) return false
+  if (now - s.askSince < cfg.waitMs) return false
+  if (s.askKey === s.autoKey) return false
+  if (s.autoAt && now - s.autoAt < PRESS_COOLDOWN_MS) return false
+  return s.autoRun < cfg.maxRun
 }
 
 export interface AutoPick {
