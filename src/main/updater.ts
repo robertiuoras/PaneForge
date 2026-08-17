@@ -396,6 +396,122 @@ const BLIND_CACHE_MS = Math.max(0, Number(process.env.PF_BLIND_CACHE_MS) || 10 *
 let listBlindAt = 0
 let listBlind = false
 
+// --- the Windows dev channel, pinned to a release it can actually install ----
+//
+// Two things go wrong on Windows and both end at the same error card, which is why they
+// are answered together. Measured on this PC 2026-08-18:
+//
+//   1. `GET /repos/robertiuoras/PaneForge/releases` answers `200 []` - anonymously AND
+//      with the gh CLI token - while `gh release list` (GraphQL) lists every release. That
+//      is the endpoint electron-updater's dev channel is built on, so its provider gets
+//      `undefined` and throws `Cannot read properties of undefined (reading 'assets')`.
+//   2. When the list DOES answer, the newest release is often one this platform cannot
+//      install: a build cut from the Mac publishes `latest-mac.yml` and two arm64 archives
+//      and nothing else (v0.8.104 is one). electron-updater then asks for `latest.yml` in
+//      that tag and throws `Cannot find latest.yml in the release ...` on every poll, for
+//      ever, because nothing in its loop ever looks at the release BELOW the newest.
+//
+// `pickRelease` already answers (2) for the Mac. It cannot be reused here because it reads
+// the same broken list. So the dev channel on Windows stops asking GitHub's API to choose
+// at all: the tags come from `gh release list`, each one is asked directly whether it
+// carries a `latest.yml` (one HEAD against the public download URL - no token, no API), and
+// the feed is pinned to the first that does with the GENERIC provider. That provider reads
+// exactly the file we just proved is there, so there is no list to be empty and no
+// prerelease flag to interpret.
+//
+// Every failure falls through to the behaviour this file had before: a resolution that
+// answers nothing leaves the feed alone.
+
+/** How long a resolved tag is reused before the walk runs again. */
+const WIN_PIN_MS = Math.max(0, Number(process.env.PF_WIN_PIN_MS) || 5 * 60_000)
+/** How far down the list a walk may go before giving up. */
+const WIN_PIN_DEPTH = 8
+let winPinAt = 0
+let winPinTag = ''
+/** The tag the feed is currently pointed at, so it is only re-pointed when it moves. */
+let winPinned = ''
+
+function ghTags(): Promise<string[]> {
+  return new Promise((resolve) => {
+    execFile(
+      'gh',
+      ['release', 'list', '--limit', String(WIN_PIN_DEPTH), '--json', 'tagName', '--jq', '.[].tagName'],
+      { cwd: app.getAppPath(), windowsHide: true, timeout: 20_000 },
+      (err, out) => resolve(err ? [] : out.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.startsWith('v')))
+    )
+  })
+}
+
+/** Does this tag carry a Windows feed file? One HEAD, public URL, no credentials. */
+function hasWinFeed(tag: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (ok: boolean): void => {
+      if (!settled) {
+        settled = true
+        resolve(ok)
+      }
+    }
+    const req = get(
+      `${RELEASES_URL}/download/${tag}/latest.yml`,
+      { headers: { 'user-agent': `PaneForge/${app.getVersion()}` }, timeout: 15_000 },
+      (res) => {
+        // The download URL is a redirect to objects.githubusercontent.com; `get` here does
+        // not follow it, and a 302 is already the answer - the asset exists.
+        const code = res.statusCode ?? 0
+        res.resume()
+        done(code === 200 || (code >= 300 && code < 400))
+      }
+    )
+    req.on('timeout', () => req.destroy(new Error('timeout')))
+    req.on('error', () => done(false))
+  })
+}
+
+async function winDevTag(): Promise<string> {
+  if (Date.now() - winPinAt < WIN_PIN_MS) return winPinTag
+  winPinAt = Date.now()
+  const tags = await ghTags()
+  for (const tag of tags) {
+    if (await hasWinFeed(tag)) {
+      if (tag !== winPinTag) log('feed', `dev channel pinned to ${tag} (newest release with a latest.yml)`)
+      winPinTag = tag
+      return tag
+    }
+  }
+  if (tags.length) log('feed', `no release in the last ${tags.length} carries a latest.yml - leaving the feed alone`)
+  winPinTag = ''
+  return ''
+}
+
+/**
+ * Point the feed at a release this install can take, or leave it exactly as it was.
+ *
+ * Returns whether the pin is in force, because when it is, `allowPrerelease` no longer
+ * means anything: the generic provider reads one file and has no list to filter.
+ */
+async function pinWinDevFeed(u: Updater): Promise<boolean> {
+  if (process.platform !== 'win32') return false
+  if (!devChannel) {
+    // Back to the ordinary feed the moment the dev switch goes off, or a stable install
+    // would keep taking the last dev build this pin resolved.
+    if (winPinned) {
+      winPinned = ''
+      winPinAt = 0
+      u.setFeedURL({ provider: 'github', owner: 'robertiuoras', repo: 'PaneForge' })
+      log('feed', 'dev channel off - back to the GitHub feed')
+    }
+    return false
+  }
+  const tag = await winDevTag()
+  if (!tag) return false
+  if (tag !== winPinned) {
+    u.setFeedURL({ provider: 'generic', url: `${RELEASES_URL}/download/${tag}`, channel: 'latest' })
+    winPinned = tag
+  }
+  return true
+}
+
 function devListBlind(): Promise<boolean> {
   if (!devChannel) return Promise.resolve(false)
   if (Date.now() - listBlindAt < BLIND_CACHE_MS) return Promise.resolve(listBlind)
@@ -955,7 +1071,7 @@ async function supersede(): Promise<void> {
     u.autoDownload = false
     // Same stand-down as the main check: this is the path that logged the crash every
     // minute for 28 hours, because a ready build keeps it running forever.
-    u.allowPrerelease = devChannel && !(await devListBlind())
+    u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
     const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
@@ -1007,8 +1123,9 @@ export async function checkForUpdates(): Promise<UpdateState> {
   try {
     // Re-asserted on every check rather than trusted from wiring time: the setting can
     // change while the app runs, and a stale flag here is a stable install silently
-    // taking dev builds (or a dev copy silently not).
-    u.allowPrerelease = devChannel && !(await devListBlind())
+    // taking dev builds (or a dev copy silently not). A pinned Windows dev feed answers
+    // the same question by construction, so the flag is stood down under it.
+    u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
     set({ phase: 'checking', error: undefined })
     await u.checkForUpdates()
   } catch (e) {
