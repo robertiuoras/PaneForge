@@ -2427,27 +2427,90 @@ export default function TerminalPane({
   }, [visible, active, sessionId])
 
   /**
+   * Fetch bytes from a URI (http(s) or data:), then build an AttachIn object.
+   * For http(s) URIs, uses window.fetch. For data: URIs, decodes the base64 directly.
+   * Returns null if fetch fails or URI is invalid.
+   */
+  const fetchURI = async (uri: string): Promise<AttachIn | null> => {
+    try {
+      if (uri.startsWith('data:')) {
+        // data:image/png;base64,iVBORw0KG... or data:image/png;base64,<hex>
+        const match = uri.match(/^data:([^;]+);base64,(.+)$/)
+        if (!match) return null
+        const [, mime, data] = match
+        const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+        const ext = mime.split('/')[1] || 'bin'
+        return { name: `clipboard.${ext}`, data: base64(bytes) }
+      } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
+        const response = await fetch(uri, { mode: 'cors' })
+        if (!response.ok) return null
+        const blob = await response.blob()
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        if (!bytes.length) return null
+        // Extract filename from URL or use a generic name
+        const pathname = new URL(uri).pathname
+        const filename = pathname.split('/').pop() || 'download'
+        return { name: filename, data: base64(bytes) }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Dropping files types their paths at the prompt. Getting a screenshot or a PDF in front
    * of an agent otherwise means finding the folder by hand and typing the path; here it is
    * drag, drop, Enter. Nothing is sent for you - the paths land in the input box so they
    * can be described first.
+   *
+   * Browser drags that only carry text/uri-list (no File objects) are fetched and attached
+   * the same way as real files.
    */
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
     setDropping(false)
     const files = Array.from(e.dataTransfer.files)
-    if (!files.length) return
-    const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
-    // A path is only true on one machine. This pane's is this one when the id is a plain
-    // one, so the file is already where the agent can open it and nothing needs copying.
-    // A MIRRORED pane (`@device/id`) runs its agent elsewhere, and a browser has no path
-    // for a dropped file at all - both send the bytes and are answered with a path that
-    // exists over there.
-    if (paths.length === files.length && !sessionId.startsWith('@')) {
-      typePaths(paths)
+    if (files.length) {
+      const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
+      // A path is only true on one machine. This pane's is this one when the id is a plain
+      // one, so the file is already where the agent can open it and nothing needs copying.
+      // A MIRRORED pane (`@device/id`) runs its agent elsewhere, and a browser has no path
+      // for a dropped file at all - both send the bytes and are answered with a path that
+      // exists over there.
+      if (paths.length === files.length && !sessionId.startsWith('@')) {
+        typePaths(paths)
+        return
+      }
+      void sendFiles(files)
       return
     }
-    void sendFiles(files)
+
+    // No File objects - check for text/uri-list (browser drag of an image/media)
+    const uriList = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
+    if (!uriList) return
+
+    const uris = uriList
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s && (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')))
+
+    if (!uris.length) return
+
+    ;(async () => {
+      const payload: AttachIn[] = []
+      for (const uri of uris) {
+        const item = await fetchURI(uri)
+        if (item) payload.push(item)
+      }
+      if (!payload.length) {
+        toast.current?.('Failed to fetch the dropped URI')
+        return
+      }
+      const res = await api.attachFiles(sessionId, payload)
+      if (res.error) toast.current?.(res.error)
+      typePaths(res.paths)
+    })()
   }
 
   /**
