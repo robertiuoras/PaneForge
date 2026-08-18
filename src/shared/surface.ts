@@ -90,6 +90,7 @@ export const SURFACE: Surface = {
   chooseOption: ['invoke', 'pty:choose'],
   attachFiles: ['invoke', 'pty:attach'],
   attachClipboardImage: ['invoke', 'pty:attachClipboard'],
+  putImageOnClipboard: ['invoke', 'clipboard:writeImage'],
   clipboardFixtureActive: ['invoke', 'clipboard:fixtureActive'],
   gitInfo: ['invoke', 'git:info'],
   diffFiles: ['invoke', 'git:diffFiles'],

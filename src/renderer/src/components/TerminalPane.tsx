@@ -3,7 +3,8 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { splitDropUris, type AttachIn } from '../../../shared/attach'
+import { pastesClipboardImage } from '../../../shared/agents'
+import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
@@ -105,6 +106,14 @@ interface Props {
    * the renderer could only ever disagree with the first.
    */
   ask?: PaneAsk | null
+  /**
+   * Which CLI is running in this pane.
+   *
+   * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
+   * clipboard when it gets a ^V, so it can be handed the picture itself; the other twelve
+   * read a path off the prompt and would see nothing at all from a paste.
+   */
+  agent?: string
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
 }
@@ -426,6 +435,9 @@ function quote(p: string): string {
 /** Ctrl+V as a byte, for the agents that read the OS clipboard themselves. */
 const RAW_PASTE = String.fromCharCode(0x16)
 
+/** Between two pasted images: long enough for the CLI to have read the first one. */
+const PASTE_GAP_MS = 250
+
 /** The one refusal that means "nothing to attach" rather than "something went wrong". */
 const NO_IMAGE = 'No image on the clipboard'
 
@@ -462,6 +474,7 @@ export default function TerminalPane({
   grid = null,
   termTheme,
   ask = null,
+  agent,
   onToast
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
@@ -710,6 +723,49 @@ export default function TerminalPane({
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
     typePaths(res.paths)
+  }
+
+  /** Is a paste the right answer for this drop? The rule itself is in shared/attach.ts. */
+  const pasteImagesInstead = (items: { name: string; type?: string }[]): boolean =>
+    pasteImageDrop({ agent, sessionId, items }, pastesClipboardImage)
+
+  /**
+   * Hand images to the agent through the clipboard, one ^V each.
+   *
+   * A `path` item is a Finder drag or a screenshot dragged off its own preview thumbnail:
+   * there is no File object behind it and the main process reads the file itself. A
+   * `file` item carries its bytes.
+   *
+   * Anything the decoder refuses falls back to the old behaviour rather than being lost -
+   * a silent nothing is the failure mode this whole path exists to remove.
+   */
+  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+    const missed: { file?: File; path?: string }[] = []
+    for (const item of items) {
+      let ok = false
+      if (item.file) {
+        const bytes = new Uint8Array(await item.file.arrayBuffer())
+        if (bytes.length) ok = await api.putImageOnClipboard({ data: base64(bytes) })
+      } else if (item.path) {
+        ok = await api.putImageOnClipboard({ path: item.path })
+      }
+      if (!ok) {
+        missed.push(item)
+        continue
+      }
+      api.write(sessionId, RAW_PASTE)
+      // The CLI reads the clipboard when the ^V lands, so two images pasted in the same
+      // tick would both read whichever one was written last. One at a time, with a gap
+      // wide enough for the read.
+      if (items.length > 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
+    }
+    if (missed.length) {
+      const files = missed.map((m) => m.file).filter((f): f is File => !!f)
+      if (files.length) await sendFiles(files)
+      const paths = missed.map((m) => m.path).filter((p): p is string => !!p)
+      if (paths.length) typePaths(paths)
+    }
+    term.current?.focus()
   }
 
   const syncTotal = (): void => {
@@ -2591,6 +2647,16 @@ export default function TerminalPane({
     setDropping(false)
     const files = Array.from(e.dataTransfer.files)
     if (files.length) {
+      // An image dropped on an agent that reads the clipboard goes in as the PICTURE, not
+      // as a filename it has to go and open. That is the whole point of dropping a
+      // screenshot on Claude Code, and typing `/Users/.../Screenshot 2026-08-18.png` at
+      // the prompt was a path the agent had to be asked to read before it could see
+      // anything. Falls through to the path for every other CLI, which sees nothing at
+      // all from a ^V.
+      if (pasteImagesInstead(files.map((f) => ({ name: f.name, type: f.type })))) {
+        void pasteImages(files.map((file) => ({ file })))
+        return
+      }
       const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
       // A path is only true on one machine. This pane's is this one when the id is a plain
       // one, so the file is already where the agent can open it and nothing needs copying.
@@ -2627,7 +2693,14 @@ export default function TerminalPane({
       // opened; a mirrored pane's runs on the other desk and this path means nothing there,
       // and there is no File object to send its bytes instead - so it is said out loud
       // rather than typed as a link that reads as a missing file.
-      if (!sessionId.startsWith('@')) typePaths(dropped)
+      if (!sessionId.startsWith('@')) {
+        // Same rule as the File branch: an image goes to a clipboard-reading agent as the
+        // image. These paths have no File object behind them, so the bytes are read in the
+        // main process instead of here.
+        if (pasteImagesInstead(dropped.map((p) => ({ name: p }))))
+          void pasteImages(dropped.map((path) => ({ path })))
+        else typePaths(dropped)
+      }
       else
         toast.current?.(
           "That file is on this machine and this pane's agent runs on the other device. " +

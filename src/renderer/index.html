@@ -26,6 +26,15 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="PaneForge" />
     <link rel="apple-touch-icon" href="pf-192.png" />
+    <!-- The tab icon is the BARE mark, not the plated app icon: the plate's rounded
+         corners are transparent, so on Chrome's near-white tab strip they read as a white
+         ring around the icon (Safari's darker strip hid it). Ember on transparency has
+         contrast either way and has no plate to ring.
+         The .ico is not redundant - Chrome asks for /favicon.ico before it has parsed
+         this tag, and phone.ts answers a missing file with index.html, so without one the
+         first thing the browser gets for its icon is HTML. -->
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="favicon.ico" sizes="16x16 32x32 48x48" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://huggingface.co https://*.hf.co https://*.huggingface.co"

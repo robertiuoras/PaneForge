@@ -204,7 +204,12 @@ const GATED_INVOKE = new Set([
   // DESK's clipboard, which is where a password manager's paste lives for thirty seconds: a
   // phone reading it is the feature, a cookie polling it is exfiltration.
   'history:delete',
-  'clipboard:read'
+  'clipboard:read',
+  // The write side of the same clipboard. A phone dropping an image already has a path
+  // that works (`pty:attach` sends the bytes and the desk saves them), so nothing over
+  // the wire needs this - and a cookie that can REPLACE the desk's clipboard can swap a
+  // wallet address under a paste the person at the desk is about to make.
+  'clipboard:writeImage'
 ])
 
 const TYPES: Record<string, string> = {
