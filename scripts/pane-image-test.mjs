@@ -162,6 +162,23 @@ const junk = await evaluate(
 )
 ok('undecodable bytes are refused', junk === false, String(junk))
 
+// --- probe mode: does it decode, without touching the clipboard? ----------------------
+// The pane checks a WHOLE batch this way before it sends one ^V, so a drop that turns out
+// not to be all images cannot leave a half-pasted prompt behind - and cannot replace what
+// was on the clipboard on its way to failing.
+const probeGood = await evaluate(
+  `window.api.putImageOnClipboard({ path: ${JSON.stringify(imagePath)}, probe: true })`
+)
+ok('an image probes true', probeGood === true, String(probeGood))
+const probeBad = await evaluate(
+  `window.api.putImageOnClipboard({ path: ${JSON.stringify(join(repo, 'package.json'))}, probe: true })`
+)
+ok('a text file probes false', probeBad === false, String(probeBad))
+// The clipboard still holds the LAST thing written above, not the probed file: a probe
+// that wrote would be the bug this mode exists to avoid.
+const untouched = await evaluate(`window.api.attachClipboardImage('pane-image-probe')`)
+ok('and a probe leaves the clipboard alone', untouched?.paths?.length === 1, JSON.stringify(untouched))
+
 // --- the tab icon the same page ships -------------------------------------------------
 const icon = await evaluate(`(async () => {
   const link = document.querySelector('link[rel="icon"]')

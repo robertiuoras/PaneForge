@@ -1814,7 +1814,12 @@ export interface Api {
    * path typed at the prompt. Answers false when the bytes are not an image any decoder
    * here can read, which is the caller's cue to fall back to the path.
    */
-  putImageOnClipboard(src: { data?: string; path?: string }): Promise<boolean>
+  putImageOnClipboard(src: {
+    data?: string
+    path?: string
+    /** decode only - answer whether this IS an image, and leave the clipboard alone */
+    probe?: boolean
+  }): Promise<boolean>
   /** True only for the private clipboard fixture used by the disposable Electron probe. */
   clipboardFixtureActive(): Promise<boolean>
   /** branch + dirty count for a folder; null when it is not a repo */

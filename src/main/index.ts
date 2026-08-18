@@ -2248,35 +2248,47 @@ function readClipboardImage(): Electron.NativeImage | null {
   }
 }
 
-ipcMain.handle('clipboard:writeImage', (_e, src: { data?: string; path?: string }): boolean => {
-  // Two shapes because a drop arrives as two shapes: a browser drag and a mirrored pane
-  // carry BYTES, while a Finder drag (and a macOS screenshot dragged off its own preview
-  // thumbnail) carries only a path on this disk, with no File object behind it.
-  let img: Electron.NativeImage
-  if (src.data) img = nativeImage.createFromBuffer(Buffer.from(src.data, 'base64'))
-  else if (src.path) {
+ipcMain.handle(
+  'clipboard:writeImage',
+  (_e, src: { data?: string; path?: string; probe?: boolean }): boolean => {
+    // EVERYTHING in here is inside the try. `createFromBuffer` throws on some corrupt
+    // images rather than answering an empty one, and a throw here crosses the IPC as a
+    // rejected promise in the renderer, where the drop path would swallow it and the drop
+    // would appear to have done nothing. False is the answer that has a fallback behind
+    // it; an exception is the answer that has none.
     try {
-      if (!statSync(src.path).isFile()) return false
-      img = nativeImage.createFromPath(src.path)
-    } catch {
-      return false
-    }
-  } else return false
+      // Two shapes because a drop arrives as two shapes: a browser drag and a mirrored
+      // pane carry BYTES, while a Finder drag (and a macOS screenshot dragged off its own
+      // preview thumbnail) carries only a path on this disk, with no File object behind it.
+      let img: Electron.NativeImage
+      if (src.data) img = nativeImage.createFromBuffer(Buffer.from(src.data, 'base64'))
+      else if (src.path) {
+        if (!statSync(src.path).isFile()) return false
+        img = nativeImage.createFromPath(src.path)
+      } else return false
   // An empty image is a format Chromium's decoder does not read (a PDF, an HEIC on some
   // builds, a .webp on old ones). Saying so is what keeps the pane from sending a ^V that
   // would paste whatever was on the clipboard BEFORE the drop.
-  if (img.isEmpty()) return false
-  // A test launch fails CLOSED, exactly as the text path does: a probe must never reach
-  // the real clipboard, and a half-configured fixture is a bug, not a fallback.
-  if (testClipboardFile || testClipboardDir) {
-    const file = testClipboardImageFile()
-    if (!clipboardFixtureActive() || !file) return false
-    writeFileSync(file, img.toPNG(), { mode: 0o600 })
-    return true
+      if (img.isEmpty()) return false
+      // `probe` asks only whether this decodes. The pane checks a whole batch that way
+      // before it sends any ^V, so a drop that turns out not to be all images leaves the
+      // clipboard exactly as it was.
+      if (src.probe) return true
+      // A test launch fails CLOSED, exactly as the text path does: a probe must never
+      // reach the real clipboard, and a half-configured fixture is a bug, not a fallback.
+      if (testClipboardFile || testClipboardDir) {
+        const file = testClipboardImageFile()
+        if (!clipboardFixtureActive() || !file) return false
+        writeFileSync(file, img.toPNG(), { mode: 0o600 })
+        return true
+      }
+      clipboard.writeImage(img)
+      return true
+    } catch {
+      return false
+    }
   }
-  clipboard.writeImage(img)
-  return true
-})
+)
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {

@@ -736,34 +736,66 @@ export default function TerminalPane({
    * there is no File object behind it and the main process reads the file itself. A
    * `file` item carries its bytes.
    *
-   * Anything the decoder refuses falls back to the old behaviour rather than being lost -
-   * a silent nothing is the failure mode this whole path exists to remove.
+   * ALL OR NOTHING. Every item is decoded first, and one the decoder refuses sends the
+   * WHOLE drop back to typing paths. Pasting the ones that worked and typing paths for
+   * the rest leaves the prompt holding two pastes and a path in an order nobody can
+   * predict - and a name is the least trustworthy thing about a file, so a PDF called
+   * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
+   * names and MIME types, and only a decode knows.
    */
   const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
-    const missed: { file?: File; path?: string }[] = []
+    /** What this drop does when anything at all goes wrong. Never silent, never partial. */
+    const fallBack = async (why?: string): Promise<void> => {
+      if (why) toast.current?.(why)
+      const files = items.map((i) => i.file).filter((f): f is File => !!f)
+      const paths = items.map((i) => i.path).filter((p): p is string => !!p)
+      if (files.length) await sendFiles(files)
+      if (paths.length) typePaths(paths)
+      term.current?.focus()
+    }
+
+    // 1. Read the bytes. A File handle can be revoked between the drop and this line - the
+    //    file was moved, or the browser refuses it - and that rejection would otherwise be
+    //    swallowed whole by the `void` at the call site.
+    const loaded: { data?: string; path?: string }[] = []
     for (const item of items) {
-      let ok = false
       if (item.file) {
-        const bytes = new Uint8Array(await item.file.arrayBuffer())
-        if (bytes.length) ok = await api.putImageOnClipboard({ data: base64(bytes) })
-      } else if (item.path) {
-        ok = await api.putImageOnClipboard({ path: item.path })
+        try {
+          const bytes = new Uint8Array(await item.file.arrayBuffer())
+          if (!bytes.length) return fallBack()
+          loaded.push({ data: base64(bytes) })
+        } catch {
+          return fallBack()
+        }
+      } else if (item.path) loaded.push({ path: item.path })
+    }
+    if (loaded.length !== items.length) return fallBack()
+
+    // 2. Decode every one of them BEFORE a single ^V is sent. `probe` writes nothing, so a
+    //    batch that turns out not to be all images leaves the clipboard as it was.
+    for (const src of loaded) {
+      let readable = false
+      try {
+        readable = await api.putImageOnClipboard({ ...src, probe: true })
+      } catch {
+        readable = false
       }
-      if (!ok) {
-        missed.push(item)
-        continue
+      if (!readable) return fallBack()
+    }
+
+    // 3. Now paste. A failure here has already overwritten the clipboard, so it is said out
+    //    loud rather than left as a drop that appeared to do nothing at all.
+    for (let i = 0; i < loaded.length; i++) {
+      try {
+        if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
+        api.write(sessionId, RAW_PASTE)
+      } catch {
+        return fallBack('That image reached the clipboard but the pane could not paste it.')
       }
-      api.write(sessionId, RAW_PASTE)
       // The CLI reads the clipboard when the ^V lands, so two images pasted in the same
       // tick would both read whichever one was written last. One at a time, with a gap
-      // wide enough for the read.
-      if (items.length > 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
-    }
-    if (missed.length) {
-      const files = missed.map((m) => m.file).filter((f): f is File => !!f)
-      if (files.length) await sendFiles(files)
-      const paths = missed.map((m) => m.path).filter((p): p is string => !!p)
-      if (paths.length) typePaths(paths)
+      // wide enough for the read - and no gap after the last one, which is only a wait.
+      if (i < loaded.length - 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
     }
     term.current?.focus()
   }
@@ -2654,7 +2686,7 @@ export default function TerminalPane({
       // anything. Falls through to the path for every other CLI, which sees nothing at
       // all from a ^V.
       if (pasteImagesInstead(files.map((f) => ({ name: f.name, type: f.type })))) {
-        void pasteImages(files.map((file) => ({ file })))
+        void pasteImages(files.map((file) => ({ file }))).catch(() => void sendFiles(files))
         return
       }
       const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
@@ -2698,7 +2730,7 @@ export default function TerminalPane({
         // image. These paths have no File object behind them, so the bytes are read in the
         // main process instead of here.
         if (pasteImagesInstead(dropped.map((p) => ({ name: p }))))
-          void pasteImages(dropped.map((path) => ({ path })))
+          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typePaths(dropped))
         else typePaths(dropped)
       }
       else
