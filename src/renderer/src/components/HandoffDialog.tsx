@@ -10,8 +10,9 @@
 // somebody's live work to another computer and closes the pane here, so what it does has
 // to be readable BEFORE the press and not discovered afterwards.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RemotePeerState } from '@shared/types'
+import { handoffReport } from '@shared/handoff'
 
 const api = window.api
 
@@ -51,12 +52,21 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
   const offline = peers.filter((p) => p.status !== 'online')
   const [pick, setPick] = useState<string>(online[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
+  // State is not a lock: `busy` is read out of a render's closure, so a double-click (and
+  // the row's own onDoubleClick shortcut) both pass the check before React has re-rendered,
+  // and the panes are handed off twice - two pushes, two receivers, one killed pty.
+  const sending = useRef(false)
 
   // A device that goes offline while this is open must not stay selected: the press would
   // then fail with a sentence about a link rather than simply not being offered.
   useEffect(() => {
-    if (pick && !online.some((p) => p.id === pick)) setPick(online[0]?.id ?? '')
-  }, [online, pick])
+    // Keyed on `peers`, not on `online`, which is a fresh array every render and would
+    // re-run this on each one; and never while a send is in flight, since clearing the
+    // pick mid-call disables the button for a handoff already on its way.
+    if (busy) return
+    const live = peers.filter((p) => p.status === 'online')
+    if (pick && !live.some((p) => p.id === pick)) setPick(live[0]?.id ?? '')
+  }, [peers, pick, busy])
 
   useEffect(() => {
     const key = (e: KeyboardEvent): void => {
@@ -72,26 +82,14 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
   const chosen = online.find((p) => p.id === pick) ?? null
 
   async function go(): Promise<void> {
-    if (!chosen || busy) return
+    if (!chosen || busy || sending.current) return
+    sending.current = true
     setBusy(true)
     try {
       const items = await api.handoffToDevice(chosen.id, target.ids, true)
-      const moved = items.filter((i) => i.ok)
-      // Queued is neither moved nor refused. Saying "moved" about a pane still running
-      // here is the shape of lie this app keeps having to un-tell, so it gets its own
-      // sentence and the dialog still closes - the queue reports again when it lands.
-      const held = items.filter((i) => i.pending)
-      const bad = items.filter((i) => !i.ok && !i.pending)
-      if (items.length === 0) flash('Nothing to hand off - those panes have already closed')
-      else if (bad.length === 0 && held.length)
-        flash(
-          moved.length
-            ? `Moved ${moved.length} to ${chosen.name}. ${held.length} still working - ${held.length === 1 ? 'it goes' : 'they go'} the moment the turn ends.`
-            : `${target.title} is mid-turn - it moves to ${chosen.name} the moment the turn ends. Nothing was interrupted.`
-        )
-      else if (bad.length === 0)
-        flash(`Moved ${target.title} to ${chosen.name}. It is still on screen here, as a mirror.`)
-      else flash(`${bad[0].title}: ${bad[0].error}`)
+      // Every outcome gets a clause - moved, queued, and each failure by name. The words
+      // are `handoffReport` in shared/handoff.ts, where the mixed case can be tested.
+      flash(handoffReport(items, chosen.name, target.ids.length === 1 ? target.title : undefined))
       // Notes are the half that says what did NOT travel (no transcript, no repo, a dev
       // server that could not be named). They are worth one more line, never silence.
       const notes = items.flatMap((i) => i.notes ?? [])
@@ -99,6 +97,7 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
       onClose()
     } catch (err) {
       flash((err as Error).message)
+      sending.current = false
       setBusy(false)
     }
   }

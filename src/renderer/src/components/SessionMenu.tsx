@@ -43,6 +43,18 @@ export default function SessionMenu({ title, x, y, items, onClose }: Props): JSX
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y })
   const [cursor, setCursor] = useState(-1)
   const live = items.filter((i) => !i.disabled)
+  // The keyboard cursor is an INDEX, and the list it indexes is rebuilt whenever the pane
+  // changes state (an exited pane loses Hand off, Restart and the editor). If an item
+  // above the cursor disappears, every item below it shifts up and the same index is now a
+  // different action - so Enter would silently run the row underneath the one being looked
+  // at. The guard `live[cursor]` only proves an item is there, never that it is the one
+  // that was chosen. So the cursor is dropped whenever the list's own shape changes.
+  const shape = live.map((i) => i.key).join('|')
+  const lastShape = useRef(shape)
+  if (lastShape.current !== shape) {
+    lastShape.current = shape
+    if (cursor !== -1) setCursor(-1)
+  }
 
   // Measured after the first paint rather than guessed: the menu's height depends on how
   // many actions this particular pane offers (a mirror has fewer), so a fixed number would

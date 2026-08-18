@@ -51,7 +51,7 @@ function bundle() {
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
       `export { sendHandoff, receiveHandoff } from ${p('src/main/handoff.ts')}`,
-      `export { handoffReceiverCanQuit, mapCwd } from ${p('src/shared/handoff.ts')}`
+      `export { handoffReceiverCanQuit, mapCwd, handoffReport } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -94,7 +94,7 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd, handoffReceiverCanQuit } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd, handoffReceiverCanQuit, handoffReport } = mod
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -244,6 +244,37 @@ const outside = await sendHandoff(
   'pc'
 )
 ok('a folder outside the projects root fails its own pane', outside[0]?.ok === false)
+
+// What the person is TOLD, which until now had no test at all and was a chain of
+// `bad.length === 0` branches - so one refusal silenced both the pane that moved and the
+// pane still waiting for its turn to end.
+console.log('what it says afterwards')
+{
+  const item = (id, state, error) => ({
+    id,
+    title: id,
+    ok: state === 'ok',
+    pending: state === 'queued' || undefined,
+    error,
+    notes: []
+  })
+  const mixed = handoffReport(
+    [item('A', 'ok'), item('B', 'queued'), item('C', 'bad', 'Repo has no origin remote')],
+    'DESKTOP-CMSUCM1'
+  )
+  ok('a mixed handoff names the pane that moved', /Moved 1 pane/.test(mixed), mixed)
+  ok('...and the one still working', /1 still working/.test(mixed), mixed)
+  ok('...and the one that refused, by name and reason', /C: Repo has no origin remote/.test(mixed), mixed)
+
+  const oneQueued = handoffReport([item('A', 'queued')], 'PC', 'PaneForge')
+  ok('one queued pane is never called moved', !/^Moved/.test(oneQueued) && /mid-turn/.test(oneQueued), oneQueued)
+  const oneMoved = handoffReport([item('A', 'ok')], 'PC', 'PaneForge')
+  ok('one moved pane says where it went', /Moved PaneForge to PC/.test(oneMoved), oneMoved)
+  const nothing = handoffReport([], 'PC')
+  ok('nothing to move says so rather than claiming a move', /already closed/.test(nothing), nothing)
+  const failed = handoffReport([item('A', 'bad', 'Push failed')], 'PC', 'PaneForge')
+  ok('a lone failure never claims a move', !/Moved/.test(failed) && /A: Push failed/.test(failed), failed)
+}
 
 client.disconnect()
 host.stop()
