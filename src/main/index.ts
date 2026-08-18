@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -2201,14 +2201,94 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
  * itself.
  */
 ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> => {
-  const img = clipboard.readImage()
-  if (img.isEmpty()) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
+  const img = readClipboardImage()
+  if (!img || img.isEmpty())
+    return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const png = img.toPNG()
   if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
   if (remote.owns(id)) return remote.attachOn(id, files)
   return Promise.resolve(writeAttachments(files))
 })
+
+/**
+ * Image bytes onto this device's clipboard, for the ^V that follows.
+ *
+ * The reverse of `pty:attachClipboard`, and it exists for the same reason that one does:
+ * an agent that reads the clipboard sees a real image, and one that does not sees nothing
+ * at all. So the renderer only calls this for the agents that do, and falls back to typing
+ * a path when it answers false.
+ *
+ * This DOES overwrite what was on the clipboard - there is no way to hand an image to a
+ * CLI through the clipboard without using the clipboard. Dropping a file is a deliberate
+ * act, so the trade is made where the user made it.
+ */
+/**
+ * The probe's private clipboard, for IMAGES.
+ *
+ * The text fixture beside it exists so a disposable dev copy can prove its clipboard path
+ * without replacing the real user's clipboard, and an image write needs the same door for
+ * the same reason - a test that hands a picture to an agent would otherwise throw away
+ * whatever the person at the desk had copied, and land its own test image on their Stash.
+ * A PNG beside the text file: same directory, same permission checks.
+ */
+function testClipboardImageFile(): string | null {
+  return testClipboardFile ? testClipboardFile + '.png' : null
+}
+
+/** Whatever image the clipboard - real or fixture - is holding. Null when there is none. */
+function readClipboardImage(): Electron.NativeImage | null {
+  if (!testClipboardFile && !testClipboardDir) return clipboard.readImage()
+  const file = testClipboardImageFile()
+  if (!clipboardFixtureActive() || !file || !existsSync(file)) return null
+  try {
+    return nativeImage.createFromBuffer(readFileSync(file))
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle(
+  'clipboard:writeImage',
+  (_e, src: { data?: string; path?: string; probe?: boolean }): boolean => {
+    // EVERYTHING in here is inside the try. `createFromBuffer` throws on some corrupt
+    // images rather than answering an empty one, and a throw here crosses the IPC as a
+    // rejected promise in the renderer, where the drop path would swallow it and the drop
+    // would appear to have done nothing. False is the answer that has a fallback behind
+    // it; an exception is the answer that has none.
+    try {
+      // Two shapes because a drop arrives as two shapes: a browser drag and a mirrored
+      // pane carry BYTES, while a Finder drag (and a macOS screenshot dragged off its own
+      // preview thumbnail) carries only a path on this disk, with no File object behind it.
+      let img: Electron.NativeImage
+      if (src.data) img = nativeImage.createFromBuffer(Buffer.from(src.data, 'base64'))
+      else if (src.path) {
+        if (!statSync(src.path).isFile()) return false
+        img = nativeImage.createFromPath(src.path)
+      } else return false
+  // An empty image is a format Chromium's decoder does not read (a PDF, an HEIC on some
+  // builds, a .webp on old ones). Saying so is what keeps the pane from sending a ^V that
+  // would paste whatever was on the clipboard BEFORE the drop.
+      if (img.isEmpty()) return false
+      // `probe` asks only whether this decodes. The pane checks a whole batch that way
+      // before it sends any ^V, so a drop that turns out not to be all images leaves the
+      // clipboard exactly as it was.
+      if (src.probe) return true
+      // A test launch fails CLOSED, exactly as the text path does: a probe must never
+      // reach the real clipboard, and a half-configured fixture is a bug, not a fallback.
+      if (testClipboardFile || testClipboardDir) {
+        const file = testClipboardImageFile()
+        if (!clipboardFixtureActive() || !file) return false
+        writeFileSync(file, img.toPNG(), { mode: 0o600 })
+        return true
+      }
+      clipboard.writeImage(img)
+      return true
+    } catch {
+      return false
+    }
+  }
+)
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {

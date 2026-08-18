@@ -36,6 +36,8 @@ const TESTS = [
   ['cursorclick', 'cursor-click-test.mjs'],
   ['stickyselect', 'sticky-select-test.mjs'],
   ['attach', 'attach-test.mjs'],
+  ['dropimage', 'drop-image-test.mjs'],
+  ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],

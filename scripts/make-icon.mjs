@@ -195,6 +195,126 @@ ${rects}
 `
 }
 
+// --- the bare mark, for a browser tab ------------------------------------------------
+// A favicon has no background of its own. The dark squircle plate that reads as the app
+// icon on a Dock reads as a white ring in Chrome's tab strip: the plate's rounded corners
+// are transparent, the strip behind them is near-white, and at 16px that transparent
+// corner is a visible halo around the icon. Safari's darker strip hid it, which is why it
+// looked right there and wrong in Chrome.
+//
+// So the tab gets the panes ALONE, on transparency, rescaled to fill the box - the same
+// thing the sidebar's AppLogo draws. Ember on transparency has contrast against a white
+// strip and against a dark one, and there is no plate left to ring.
+//
+// PAD is why this is not simply the plate's panes with the plate deleted: filling the box
+// edge to edge, the three panes touch all four sides and read as one orange square at
+// 16px instead of as a split layout. A tab icon is drawn inside a box with nothing else
+// in it, so the margin has to come from the mark.
+const PAD = 0.07
+const BARE = (1 - PAD * 2) / (1 - M.inset * 2)
+
+function barePanes() {
+  return panes().map(([x, y, w, h]) => [
+    (x - M.inset) * BARE + PAD,
+    (y - M.inset) * BARE + PAD,
+    w * BARE,
+    h * BARE
+  ])
+}
+
+function renderBare(size) {
+  const SS = 4
+  const n = size * SS
+  const cells = barePanes().map(([x, y, w, h]) => [x * n, y * n, w * n, h * n])
+  const rPane = M.paneRadius * BARE * n
+  const px = Buffer.alloc(size * size * 4)
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 0
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const fx = x * SS + sx + 0.5
+          const fy = y * SS + sy + 0.5
+          let inside = false
+          for (const [cx, cy, cw, ch] of cells) {
+            if (inRounded(fx, fy, cx, cy, cw, ch, rPane)) {
+              inside = true
+              break
+            }
+          }
+          if (!inside) continue
+          const c = mix(M.emberTop, M.emberBottom, fy / n)
+          r += c[0]
+          g += c[1]
+          b += c[2]
+          a += 255
+        }
+      }
+      const i = (y * size + x) * 4
+      const cov = a / (SS * SS) / 255
+      // Same un-premultiply as the plated icon: fade the COLOUR out at the edge, not
+      // towards black, or the mark carries its own dirty halo at 16px.
+      px[i] = cov > 0 ? Math.round(r / (a / 255)) : 0
+      px[i + 1] = cov > 0 ? Math.round(g / (a / 255)) : 0
+      px[i + 2] = cov > 0 ? Math.round(b / (a / 255)) : 0
+      px[i + 3] = Math.round(cov * 255)
+    }
+  }
+  return px
+}
+
+function bareSvg() {
+  const pct = (v) => +(v * 64).toFixed(2)
+  const hex = (c) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+  const rects = barePanes()
+    .map(
+      ([x, y, w, h]) =>
+        `  <rect x="${pct(x)}" y="${pct(y)}" width="${pct(w)}" height="${pct(h)}" rx="${pct(M.paneRadius * BARE)}" fill="url(#ember)"/>`
+    )
+    .join('\n')
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="ember" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${hex(M.emberTop)}"/>
+      <stop offset="1" stop-color="${hex(M.emberBottom)}"/>
+    </linearGradient>
+  </defs>
+${rects}
+</svg>
+`
+}
+
+/**
+ * A .ico holding PNGs, which every browser since IE11 reads.
+ *
+ * Chrome asks for /favicon.ico before it has parsed a link tag, and this server answers a
+ * missing file with index.html - so an absent .ico is not "no icon", it is HTML served as
+ * image/x-icon, which is the worst of the three outcomes.
+ */
+function ico(sizes) {
+  const pngs = sizes.map((s) => encodePng(renderBare(s), s))
+  const dir = Buffer.alloc(6 + 16 * sizes.length)
+  dir.writeUInt16LE(0, 0)
+  dir.writeUInt16LE(1, 2) // 1 = icon
+  dir.writeUInt16LE(sizes.length, 4)
+  let offset = dir.length
+  sizes.forEach((s, i) => {
+    const e = 6 + i * 16
+    dir[e] = s >= 256 ? 0 : s // 0 means 256 in this field
+    dir[e + 1] = s >= 256 ? 0 : s
+    dir.writeUInt16LE(1, e + 4) // colour planes
+    dir.writeUInt16LE(32, e + 6) // bits per pixel
+    dir.writeUInt32LE(pngs[i].length, e + 8)
+    dir.writeUInt32LE(offset, e + 12)
+    offset += pngs[i].length
+  })
+  return Buffer.concat([dir, ...pngs])
+}
+
 const args = process.argv.slice(2)
 const sizeArg = args.indexOf('--size')
 const outArg = args.indexOf('--out')
@@ -213,5 +333,16 @@ if (outArg !== -1) {
   // is picked up for the Windows .ico and the Mac .icns with no configuration at all.
   mkdirSync(join(root, 'build'), { recursive: true })
   writeFileSync(join(root, 'build', 'icon.png'), png)
-  console.log(`wrote icon.png, icon.svg and build/icon.png (1024x1024, ${png.length} bytes)`)
+  // The browser tab's copy: the bare mark, no plate. `public/` is copied to the renderer
+  // root by vite, and phone.ts serves that folder, so these are what a phone and a desk
+  // browser both fetch.
+  const pub = join(root, 'src', 'renderer', 'public')
+  const favicon = ico([16, 32, 48])
+  writeFileSync(join(pub, 'favicon.svg'), bareSvg())
+  writeFileSync(join(pub, 'favicon.ico'), favicon)
+  writeFileSync(join(pub, 'favicon-32.png'), encodePng(renderBare(32), 32))
+  console.log(
+    `wrote icon.png, icon.svg, build/icon.png (1024x1024, ${png.length} bytes) and ` +
+      `public/favicon.svg + favicon.ico (${favicon.length} bytes) + favicon-32.png`
+  )
 }

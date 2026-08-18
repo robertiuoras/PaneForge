@@ -1806,6 +1806,20 @@ export interface Api {
    * agent and for a mirrored pane.
    */
   attachClipboardImage(sessionId: string): Promise<AttachResult>
+  /**
+   * Put image bytes on the clipboard of the device this window is on, so a raw ^V can
+   * hand them to an agent that reads images off the clipboard itself.
+   *
+   * The one thing that turns a dropped screenshot into an attached IMAGE rather than a
+   * path typed at the prompt. Answers false when the bytes are not an image any decoder
+   * here can read, which is the caller's cue to fall back to the path.
+   */
+  putImageOnClipboard(src: {
+    data?: string
+    path?: string
+    /** decode only - answer whether this IS an image, and leave the clipboard alone */
+    probe?: boolean
+  }): Promise<boolean>
   /** True only for the private clipboard fixture used by the disposable Electron probe. */
   clipboardFixtureActive(): Promise<boolean>
   /** branch + dirty count for a folder; null when it is not a repo */

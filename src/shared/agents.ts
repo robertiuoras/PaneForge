@@ -402,6 +402,23 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
 ]
 
 /** Built-ins first, then the user's own entries; a custom id overrides a built-in. */
+/**
+ * The CLIs that read an image off the OS clipboard when a raw ^V reaches them.
+ *
+ * Claude Code does; the other twelve take a PATH and read the file. It matters for what a
+ * dropped screenshot becomes: for these, the bytes can be put on the clipboard and pasted,
+ * so the agent attaches a real IMAGE ("[Image #1]") and can see it. For the rest, a path
+ * typed at the prompt is the only thing that works at all.
+ *
+ * `openrouter` is Claude Code with a different base URL, so it reads the clipboard too.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set(['claude', 'openrouter', 'claude-code', 'anthropic'])
+
+/** Would a raw ^V put an image in front of this agent, rather than nothing? */
+export function pastesClipboardImage(agent: string | undefined): boolean {
+  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
+}
+
 export function allAgents(custom: AgentSpec[] = []): AgentSpec[] {
   const out = [...BUILTIN_AGENTS]
   for (const c of custom) {

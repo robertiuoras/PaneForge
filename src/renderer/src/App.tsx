@@ -3907,6 +3907,9 @@ export default function App(): JSX.Element {
               // The question this pane is sitting on, read in the main process so the
               // desk, a phone and a bot are all answering the same reading of it.
               ask={s.ask}
+              // Which CLI is in here, so a dropped image can be handed to the ones that
+              // read an image off the clipboard and typed as a path to the ones that do not.
+              agent={s.agent}
               // A copy out of a pane is silent by construction - the clipboard gives no
               // feedback - so the pane says so in the window's own toast rather than
               // growing a second one of its own.
