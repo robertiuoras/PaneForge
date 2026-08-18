@@ -51,10 +51,11 @@
 // something that ships next month) it does to a screen that is already blank, with the
 // conversation one wheel-notch up. It needs to know nothing about any CLI.
 //
-// `ESC[1;1H` at the end, rather than a save/restore: the CLI's redraw is relative to where
-// it left the cursor, so leaving it near the bottom draws the banner near the bottom under
-// forty blank rows. Homing it first is what puts the banner back at the top of a blank
-// screen, which is what a clear has always looked like.
+// `ESC[1;1H` then `ESC[J` at the end, rather than a save/restore: the CLI's redraw is
+// relative to where it left the cursor, so leaving it near the bottom draws the banner
+// near the bottom under forty blank rows. Homing it first is what puts the banner back at
+// the top, and erasing from there down is what makes the screen it is drawn on genuinely
+// blank - see `blank` below for why the scroll alone does not.
 //
 // The `2J`/`3J` rewrite below stays for a CLI that clears without being asked, and is
 // stood down for the moment after an armed scroll: the screen is already blank and
@@ -242,6 +243,21 @@ export function keepScrollback(
     if (!lines) return `\x1b[${height};1H`
     return `\x1b[${height};1H` + '\r\n'.repeat(lines)
   }
+  // Home, then erase everything from there down.
+  //
+  // The scroll above files the HISTORY rows and only those, which is right - but a scroll
+  // of N rows moves the whole screen up by N, so the rows it did not file (the composer,
+  // its hint line, whatever the CLI was drawing under it) are still on screen, now sitting
+  // at the top. The banner is then painted over the first few of them and the rest are
+  // left in place around it: `────|`, `❯ h 10%pass permissions on (shift+tab to cycle)`,
+  // half a rule - a composer cut in half by a banner drawn through it. That is the
+  // "it is still cut off after /clear" report, and it is on the LIVE screen rather than in
+  // the scrollback, which is why the kept turn above it reads fine.
+  //
+  // `ESC[J` (erase from the cursor to the end of the display) touches no scrollback - only
+  // `3J` does - so what has just been filed is safe, and what is wiped is live UI the CLI
+  // redraws on its next keystroke.
+  const blank = '\x1b[1;1H\x1b[J'
   const keeper = (chunk: string): string => {
     const s = carry + chunk
     carry = ''
@@ -269,12 +285,12 @@ export function keepScrollback(
     // Wrapped in save/restore because a real `2J` does NOT move the cursor - it blanks the
     // screen around it. Restoring lands on the same row and column, which is now blank,
     // which is exactly what the sequence promised.
-    return out.split('\x1b[2J').join('\x1b7' + scrollAway() + '\x1b8')
+    return out.split('\x1b[2J').join('\x1b7' + scrollAway() + blank + '\x1b8')
   }
   keeper.arm = (now = clock()): string => {
     if (alternate()) return ''
     armedAt = now
-    return scrollAway() + '\x1b[1;1H'
+    return scrollAway() + blank
   }
   return keeper
 }

@@ -165,7 +165,12 @@ const wipe = (rows) => '\x1b[H\x1b[2K' + '\x1b[1B\x1b[2K'.repeat(rows) + '\x1b[1
   const away = k.arm()
   check('arming hands the pane a scroll to write', away.startsWith('\x1b[10;1H'), JSON.stringify(away))
   eq('one newline per row on screen', (away.match(/\r\n/g) ?? []).length, 10)
-  check('and homes the cursor, so the banner is drawn at the top', away.endsWith('\x1b[1;1H'))
+  check('and homes the cursor, so the banner is drawn at the top', away.endsWith('\x1b[1;1H\x1b[J'))
+  // A scroll of N rows moves the WHOLE screen up by N, so the rows it did not file - the
+  // composer, its hint line - are still on screen, at the top, where the banner is about
+  // to be drawn through them. Erasing from the home position down is what stops that; it
+  // touches no scrollback, so what was just filed is safe.
+  check('and erases what the scroll left on screen', away.includes('\x1b[J'))
 }
 {
   // The alternate screen has no scrollback to keep and clears constantly.
@@ -230,7 +235,7 @@ eq('nor a path', mayClearScreen('/etc/hosts is wrong'), false)
   const away = k.arm()
   eq('one newline per WRITTEN row', (away.match(/\r\n/g) ?? []).length, 6)
   check('still from the bottom row', away.startsWith('\x1b[40;1H'), JSON.stringify(away))
-  check('and still homed afterwards', away.endsWith('\x1b[1;1H'))
+  check('and still homed and cleared afterwards', away.endsWith('\x1b[1;1H\x1b[J'))
 }
 {
   const k = keepScrollback(() => 40, () => false, () => 0, () => 0)
@@ -443,6 +448,17 @@ eq('nor a blank row', ruleRow('   '), false)
     const clears = all.filter((l) => l.trim() === '❯ /clear').length
     eq('the command appears once, not twice', clears, 1)
     check('and the answer is still kept', all.join('\n').includes('the answer worth keeping'), JSON.stringify(all))
+
+    // The rows the scroll did NOT file are the ones that were left drawn on screen, at the
+    // top, for the banner to be painted through: a half-erased composer reading
+    // `────|`, `❯ h 10%pass permissions on …`. Nothing of the old composer may survive the
+    // arm - it is live UI the CLI redraws, not history.
+    const screen = all.slice(term.buffer.active.baseY, term.buffer.active.baseY + rows)
+    check(
+      'and no scrap of the old composer is left on screen',
+      !screen.join('\n').includes('bypass permissions'),
+      JSON.stringify(screen)
+    )
   }
 }
 
