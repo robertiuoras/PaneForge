@@ -269,6 +269,13 @@ const glLive = new Set<string>()
 const GL_BUDGET = 8
 
 /**
+ * How long a restored pane's output must be quiet before it repairs itself. Long enough
+ * that a CLI still printing its resume banner is not poked mid-paint, short enough that
+ * nobody reaches for the Fix button first.
+ */
+const RESTORE_FIX_MS = 1200
+
+/**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
@@ -605,6 +612,40 @@ export default function TerminalPane({
   const flashTimer = useRef<number | undefined>(undefined)
   /** Phone re-wraps this pane has been through. Read by `npm run test:phoneview`. */
   const rewraps = useRef(0)
+
+  /** Self-repairs this pane has been given after a restore. Read by the probe. */
+  const restoreFixes = useRef(0)
+  /**
+   * This pane came back wearing a frame drawn at somebody else's width.
+   *
+   * A restored pane is seeded with the tail of what the OLD pty printed (`restoredTail`
+   * in `main/sessions.ts`), and the CLI hard-wrapped those lines itself at the width it
+   * had then - into a terminal that has not necessarily been fitted yet, since xterm
+   * opens at 80x24 and the fit lands a frame or two later. So the replay regularly
+   * arrives at the wrong width, the resuming agent then draws its own frame over it, and
+   * the pane reads as broken. That is "after the update restart it looks broken, Fix
+   * fixes it": the app restarts itself for every update, so this is the launch most panes
+   * on this desk get. The pane now presses Fix for itself, once.
+   */
+  const needRestoreFix = useRef(false)
+  /**
+   * Give a restored pane that repair, once. Deliberately not a plain timer from the
+   * replay: a hidden pane cannot be measured and its agent has nothing to redraw against,
+   * so it is left FLAGGED and the visibility effect asks again once it has a real grid.
+   */
+  const runRestoreFix = (): void => {
+    if (!needRestoreFix.current) return
+    // `autoFixUi` is "do not poke a CLI on my behalf", and this is a poke. A mirror is the
+    // other machine's pty, and that machine is repairing its own pane.
+    if (!autoFixRef.current || mirrorRef.current) {
+      needRestoreFix.current = false
+      return
+    }
+    if (!host.current?.offsetParent) return
+    needRestoreFix.current = false
+    restoreFixes.current++
+    paneRepair.get(sessionId)?.()
+  }
 
   /**
    * The two copy affordances, and why they are separate.
@@ -1009,7 +1050,11 @@ export default function TerminalPane({
         // "the history survived" from "the path never ran", and the second one is how a
         // regression here would pass unnoticed: the re-wrap only happens when the COLUMNS
         // move, which depends on the desk's window size on the day.
-        rewraps: () => rewraps.current
+        rewraps: () => rewraps.current,
+        // How many times this pane has repaired itself after being restored. A probe that
+        // only reads the buffer cannot tell "the frame came back clean" from "the path
+        // never ran", and the second is how a regression here would pass unnoticed.
+        restoreFixes: () => restoreFixes.current
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
@@ -1879,6 +1924,15 @@ export default function TerminalPane({
     // main-thread cost with a guaranteed answer.
     let sawOutput = false
 
+    // Settle rather than fire: the agent is resuming and painting its own banner over the
+    // replay, and a repair made mid-paint is undone by the next frame.
+    let fixTimer: number | undefined
+    const armRestoreFix = (): void => {
+      if (!needRestoreFix.current) return
+      window.clearTimeout(fixTimer)
+      fixTimer = window.setTimeout(runRestoreFix, RESTORE_FIX_MS)
+    }
+
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
@@ -1886,6 +1940,10 @@ export default function TerminalPane({
       if (b) {
         sawOutput = true
         setBlank(false)
+        // There is history on this pane, so it was drawn somewhere else first. See
+        // `needRestoreFix`.
+        needRestoreFix.current = true
+        armRestoreFix()
         t.write(keep(b), () => {
           t.scrollToBottom()
           // The replay IS the conversation this pane is being reopened into, so its
@@ -2013,6 +2071,8 @@ export default function TerminalPane({
       if (id !== sessionId) return
       if (!sawOutput) setBlank(false)
       sawOutput = true
+      // The resume prints for a second or two after the replay. Repair once it stops.
+      armRestoreFix()
       // Once per burst while output is flowing, and once more after it stops: the frame
       // that decides "finished or still working" is the last one drawn.
       if (Date.now() - lastBusyCheck > 600) checkBusy()
@@ -2279,6 +2339,7 @@ export default function TerminalPane({
       ro.disconnect()
       window.clearTimeout(settle)
       window.clearTimeout(settle2)
+      window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneFeed.delete(sessionId)
@@ -2443,6 +2504,9 @@ export default function TerminalPane({
               reshape(t, f)
               // The buffer kept growing while this pane was hidden, so the rail is stale.
               syncTotal()
+              // A restored pane that was hidden until now could not be measured, so its
+              // repair was left pending rather than spent on a 0x0 host.
+              runRestoreFix()
             }
           }
         } catch {
