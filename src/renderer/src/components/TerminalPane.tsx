@@ -1942,6 +1942,8 @@ export default function TerminalPane({
         setBlank(false)
         // There is history on this pane, so it was drawn somewhere else first. See
         // `needRestoreFix`.
+        needRestoreFix.current = true
+        armRestoreFix()
         t.write(keep(b), () => {
           t.scrollToBottom()
           // The replay IS the conversation this pane is being reopened into, so its

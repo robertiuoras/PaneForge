@@ -969,6 +969,21 @@ the conversation and not one line of the screen.
   cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
   after it. `npm run test:scrollback`.
 
+**And it presses Fix for itself.** The tail was hard-wrapped by the CLI at the width the
+old pty had, and it is replayed into a terminal xterm opens at 80x24 and fits a frame or
+two later - so the frame that lands is regularly drawn at the wrong width, the resuming
+agent paints its own over it, and the pane reads as broken. That is "after the update
+restart it looks broken, luckily Fix fixes it", and the app restarts itself for every
+update, so it is the launch most panes on a desk get. A pane that came back with history
+on it now runs `repair()` once - the same refit, agent redraw and repaint the Fix button
+does - `RESTORE_FIX_MS` (1.2s) after its output stops, so a CLI still printing its resume
+banner is not poked mid-paint. It is `autoFixUi`'s, since it is a poke; a mirror is
+refused, because that machine is repairing its own pane; and a pane still hidden is left
+FLAGGED rather than repaired against a 0x0 host, with the visibility effect asking again
+once it has a real grid. `npm run test:restorefix`, whose control half is a brand new pane
+recording ZERO repairs - without it "it repaired itself" cannot be told from "it repairs
+everything".
+
 **And the prompt tags come back with it.** The rail is built from KEYSTROKES on their way
 to the pty, which is what makes it work for every agent - and it is why a reopened pane had
 none: a restore replays bytes, nobody typed anything, `feedDraft` never fires. The app
@@ -1276,8 +1291,9 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized), and
-`test:phoneview` (a real headless Chrome at
+`test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized),
+`test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
+back), and `test:phoneview` (a real headless Chrome at
 414x896 against that copy — it skips out loud with no Chrome and no server).
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,
