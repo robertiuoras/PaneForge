@@ -73,6 +73,7 @@ const TESTS = [
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
   ['handofffit', 'handoff-fit-test.mjs'],
+  ['versions', 'version-sync-test.mjs'],
   ['confirmfit', 'confirm-fit-test.mjs'],
   ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],

@@ -2414,6 +2414,24 @@ function ship(kind, session) {
     pkg.version = next
     writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
     git(MAIN, 'add', 'package.json')
+    // The lockfile carries the version TWICE and neither copy was ever bumped, so it had
+    // drifted nine releases behind the tag (0.8.105 against 0.8.114) - a stale answer to
+    // "what version is this" for every tool that reads the lockfile rather than the
+    // manifest, and the shape of drift nothing ever complains about out loud. Rewritten
+    // here rather than by running `npm install`, which would also churn the dependency
+    // tree in a commit whose only job is a number. Silent when there is no lockfile.
+    try {
+      const lockPath = join(MAIN, 'package-lock.json')
+      if (existsSync(lockPath)) {
+        const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+        if (lock.version !== undefined) lock.version = next
+        if (lock.packages?.['']?.version !== undefined) lock.packages[''].version = next
+        writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n', 'utf8')
+        git(MAIN, 'add', 'package-lock.json')
+      }
+    } catch {
+      /* a lockfile we cannot parse is not a reason to hold a release */
+    }
     git(MAIN, 'commit', '-m', `release: v${next}`)
     git(MAIN, 'tag', `v${next}`)
     git(MAIN, 'push')
