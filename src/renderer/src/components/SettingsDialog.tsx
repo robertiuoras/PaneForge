@@ -7,6 +7,7 @@ import type { AgentInfo, AgentSpec } from '@shared/agents'
 import {
   KEY_PROVIDERS,
   installCommand,
+  keyProviderFor,
   modelHint,
   modelLabel,
   modelValue,
@@ -108,6 +109,19 @@ function matches(query: string): typeof TABS {
  * a full editor would be more UI than the feature is worth. The stored shape is the
  * same AgentSpec the built-ins use, so a custom entry is a first-class agent.
  */
+/**
+ * The sentence to print instead of the path when this agent authenticates with a key
+ * Settings does not hold, or '' when it is fine. Only the agents whose AUTH is the key:
+ * one that merely passes a key along runs on its own login without it and is not blocked.
+ */
+function missingKeyFor(spec: AgentSpec, config: Config): string {
+  const id = keyProviderFor(spec)
+  if (!id || config.providerKeys?.[id]?.trim()) return ''
+  const label = KEY_PROVIDERS.find((p) => p.id === id)?.label ?? id
+  // No article in front of the name: "a OpenRouter key" is what writing one produces.
+  return `No ${label} key yet - paste one below, or this pane's first turn comes back 401`
+}
+
 function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): void {
   const label = window.prompt('Name (shown in the picker)')?.trim()
   if (!label) return
@@ -744,7 +758,18 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                         {a.free && <span className="tag free">free</span>}
                         {a.custom && <span className="tag">custom</span>}
                       </span>
-                      <span className="hint">{a.available ? a.path : a.note || `${a.bin} not on PATH`}</span>
+                      {/*
+                        An agent whose AUTH is a key nobody has pasted starts perfectly:
+                        the binary is there, the base URL is set, and the first turn comes
+                        back 401 with the pane looking healthy. The key is dropped rather
+                        than sent (resolveEnv), but the base URL cannot be - dropping that
+                        too would run plain Claude Code inside a pane whose card says GLM,
+                        which is worse than an error. So the card says it here instead.
+                      */}
+                      <span className="hint">
+                        {missingKeyFor(a, config) ||
+                          (a.available ? a.path : a.note || `${a.bin} not on PATH`)}
+                      </span>
                       <div className="agent-actions">
                         {!a.available && installCommand(a) && (
                           <button

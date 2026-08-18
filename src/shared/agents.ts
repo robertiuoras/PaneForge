@@ -222,10 +222,14 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     //
     // The base URL carries the `/anthropic` suffix and NO `/v1` - the CLI appends
     // `/v1/messages` itself, so the request lands on
-    // `https://api.deepseek.com/anthropic/v1/messages`. Bare `api.deepseek.com` is the
-    // OpenAI-compatible endpoint and answering a Messages request there is a 404 that
-    // reads like a broken install. Verified against DeepSeek's own Claude Code page,
-    // which is also where `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) comes from.
+    // `https://api.deepseek.com/anthropic/v1/messages`. Probed 2026-08-18 with a junk
+    // key: it answers 401 `authentication_error` in Anthropic's own error shape, which
+    // is how a real implementation of that API is told from a rewrite of the
+    // chat-completions one. Bare `api.deepseek.com` is the OpenAI-compatible endpoint
+    // and is NOT a documented Messages host - it also answered 401 to that probe, so
+    // the suffix is taken from DeepSeek's own Claude Code page rather than from a
+    // failure that would announce itself. That page is also where `ANTHROPIC_AUTH_TOKEN`
+    // (not `ANTHROPIC_API_KEY`) comes from.
     id: 'deepseek',
     label: 'Claude Code on DeepSeek',
     bin: 'claude',
