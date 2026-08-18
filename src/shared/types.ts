@@ -1214,11 +1214,18 @@ export interface Config {
   /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
   customAgents: AgentSpec[]
   /**
-   * OpenRouter key, handed to every agent whose `env` asks for it. '' = none, and an
-   * agent that authenticates with it is then started with the variable absent rather
-   * than empty - see `resolveEnv`.
+   * @deprecated The OpenRouter slot of `providerKeys`, mirrored here by `setConfig` so
+   * a build rolled back to before that record existed still finds the key. Read
+   * `providerKeys.openrouter`; never write this.
    */
   openrouterKey: string
+  /**
+   * One key per provider, by the id in `KEY_PROVIDERS`, handed to every agent whose
+   * `env` asks for it. A missing or blank one means the agent is started with the
+   * variable ABSENT rather than empty - see `resolveEnv`, and the 401-inside-a-healthy
+   * -pane failure that shape exists to stop.
+   */
+  providerKeys: Record<string, string>
   /** terminal font size, shared by every pane */
   fontSize: number
   /** a mouse selection in a pane goes straight to the clipboard */

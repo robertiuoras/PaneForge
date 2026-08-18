@@ -1563,8 +1563,8 @@ function isTyping(data: string): boolean {
 }
 
 /** The provider keys Settings holds, read fresh so pasting one reaches the next pane. */
-function agentKeys(): { openrouter: string } {
-  return { openrouter: getConfig().openrouterKey ?? '' }
+function agentKeys(): Record<string, string> {
+  return { ...(getConfig().providerKeys ?? {}) }
 }
 
 function agentEnv(): Record<string, string> {

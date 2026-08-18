@@ -513,10 +513,52 @@ export function agentModelLabel(agent: Pick<AgentSpec, 'models'> | undefined, va
   return choice ? modelLabel(choice) : value
 }
 
-/** The keys Settings holds, by the placeholder they answer. */
-export interface AgentKeys {
-  openrouter?: string
+/**
+ * The keys Settings holds, by provider id. `Record`, not a field per provider: the
+ * providers are a list here, so a new one is an entry in `KEY_PROVIDERS` and nothing
+ * else - a typed field would need a matching edit in the config, the settings dialog
+ * and the session spawn, which is three places for one fact.
+ */
+export type AgentKeys = Record<string, string | undefined>
+
+/** Where one provider's key comes from, and what it is called on the way in. */
+export interface KeyProvider {
+  /** stable id, and the key under which the pasted string is stored in config */
+  id: string
+  label: string
+  /** the literal an agent's `env` uses to ask for it, e.g. `${OPENROUTER_KEY}` */
+  placeholder: string
+  /** shown in the empty input, so a pasted key can be eyeballed as the right shape */
+  hint: string
+  /** where to go and make one */
+  url: string
+  /** one line under the field: what having this key buys */
+  note: string
 }
+
+/** The literal an `env` value uses to ask Settings for a provider's key. */
+export function keyVar(id: string): string {
+  return '${' + id.toUpperCase() + '_KEY}'
+}
+
+/**
+ * Every provider PaneForge can hold a key for.
+ *
+ * Adding a provider is an entry here plus an agent whose `env` names `keyVar(id)`.
+ * Settings draws its field off this list, so there is no per-provider UI to forget.
+ */
+export const KEY_PROVIDERS: KeyProvider[] = [
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    placeholder: OPENROUTER_KEY_VAR,
+    hint: 'sk-or-...',
+    url: 'https://openrouter.ai/keys',
+    note: 'One key, hundreds of models - GLM, DeepSeek, Qwen, Kimi, Grok.'
+  }
+]
+
+const KEY_BY_PLACEHOLDER = new Map(KEY_PROVIDERS.map((p) => [p.placeholder, p.id]))
 
 /**
  * The extra environment one agent's pty gets, with the key placeholders filled in.
@@ -526,12 +568,17 @@ export interface AgentKeys {
  * with that literal string and fails as a 401 several seconds into a pane that looks
  * perfectly healthy; dropped, it falls back to whatever login the machine already has
  * and says so in its own words on the first line.
+ *
+ * An UNKNOWN placeholder is dropped too. It can only mean a custom agent asking for a
+ * provider this build has never heard of, and handing a CLI the literal `${FOO_KEY}`
+ * is the exact failure above with nobody to blame it on.
  */
 export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(spec.env ?? {})) {
-    if (v === OPENROUTER_KEY_VAR) {
-      const key = keys.openrouter?.trim()
+    if (/^\$\{[A-Z0-9_]+\}$/.test(v)) {
+      const provider = KEY_BY_PLACEHOLDER.get(v)
+      const key = provider ? keys[provider]?.trim() : ''
       if (key) out[k] = key
       continue
     }
@@ -540,11 +587,20 @@ export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string
   return out
 }
 
+/**
+ * The provider whose key this agent AUTHENTICATES with, or '' when it has a login of
+ * its own. Only the entries whose auth token is the placeholder, never the ones that
+ * merely pass a key along: opencode and aider run on their own logins and take
+ * OpenRouter as one option among several.
+ */
+export function keyProviderFor(spec: AgentSpec): string {
+  const token = spec.env?.ANTHROPIC_AUTH_TOKEN ?? spec.env?.ANTHROPIC_API_KEY ?? ''
+  return KEY_BY_PLACEHOLDER.get(token) ?? ''
+}
+
 /** Whether this agent cannot run at all until a key is pasted into Settings. */
 export function needsOpenRouterKey(spec: AgentSpec): boolean {
-  // Only the entries whose AUTH is the key, not the ones that merely pass it along:
-  // opencode and aider work on their own logins and take OpenRouter as one option.
-  return spec.env?.ANTHROPIC_AUTH_TOKEN === OPENROUTER_KEY_VAR
+  return keyProviderFor(spec) === 'openrouter'
 }
 
 /** Full argv for one launch: resume form or fresh form, plus the model. */

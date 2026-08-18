@@ -5,6 +5,7 @@ import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import {
+  KEY_PROVIDERS,
   installCommand,
   modelHint,
   modelLabel,
@@ -802,28 +803,37 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </div>
                   ))}
                 </div>
-                <div className="setting">
-                  <label>OpenRouter key</label>
-                  {/*
-                    A password field because this is read over somebody's shoulder in a
-                    room, not because it is secret from the machine - it is in config.json
-                    beside the pairing code, same as every other credential here.
-                  */}
-                  <input
-                    type="password"
-                    className="search"
-                    placeholder="sk-or-..."
-                    value={config.openrouterKey}
-                    onChange={(e) => onChange({ openrouterKey: e.target.value })}
-                  />
-                  <span className="hint">
-                    Runs Claude Code, opencode, Crush and Aider on GLM, DeepSeek, Qwen or Kimi. Left
-                    blank, those agents start on whatever login this machine already has.{' '}
-                    <button className="ghost small" onClick={() => api.openExternal('https://openrouter.ai/keys')}>
-                      Get a key
-                    </button>
-                  </span>
-                </div>
+                {/*
+                  One field per provider, drawn off KEY_PROVIDERS rather than written out
+                  here: a provider added to the catalogue has to reach this screen by
+                  itself, or an agent ships with nowhere to authenticate from and fails as
+                  a 401 inside a pane that looks healthy.
+
+                  Password fields because these are read over somebody's shoulder in a
+                  room, not because they are secret from the machine - they are in
+                  config.json beside the pairing code, same as every other credential here.
+                */}
+                {KEY_PROVIDERS.map((p) => (
+                  <div className="setting" key={p.id}>
+                    <label>{p.label} key</label>
+                    <input
+                      type="password"
+                      className="search"
+                      placeholder={p.hint}
+                      value={config.providerKeys?.[p.id] ?? ''}
+                      onChange={(e) =>
+                        onChange({ providerKeys: { ...(config.providerKeys ?? {}), [p.id]: e.target.value } })
+                      }
+                    />
+                    <span className="hint">
+                      {p.note} Left blank, the agents that ask for it start on whatever login this
+                      machine already has.{' '}
+                      <button className="ghost small" onClick={() => api.openExternal(p.url)}>
+                        Get a key
+                      </button>
+                    </span>
+                  </div>
+                ))}
                 <div className="setting-row">
                   <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>

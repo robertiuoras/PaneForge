@@ -169,6 +169,7 @@ function defaults(): Config {
     defaultModels: {},
     customAgents: [],
     openrouterKey: '',
+    providerKeys: {},
     fontSize: 13,
     copyOnSelect: true,
     clickMovesCursor: true,
@@ -366,12 +367,28 @@ export function getConfig(): Config {
       // missing `accent` reaches `paletteFor` as `undefined.trim()`. Merged, not replaced,
       // so a theme saved before a knob was added still gains that knob's default.
       theme: { ...base.theme!, ...(raw.theme ?? {}) },
-      defaultModels: migrateModels(raw.defaultModels)
+      defaultModels: migrateModels(raw.defaultModels),
+      providerKeys: migrateKeys(raw)
     }
   } catch {
     cache = base
   }
   return cache
+}
+
+/**
+ * The provider keys, with the one that used to have a field of its own folded in.
+ *
+ * `openrouterKey` was a top-level string before there was more than one provider to
+ * hold a key for. It is still written by every config on disk, and by an older build
+ * anybody rolls back to, so it is read here rather than deleted - and `setConfig`
+ * writes it back, which is what keeps a downgrade from losing the key silently. The
+ * record wins when both carry something: it is the one the UI edits.
+ */
+function migrateKeys(raw: Partial<Config>): Record<string, string> {
+  const out: Record<string, string> = { ...(raw.providerKeys ?? {}) }
+  if (!out.openrouter?.trim() && raw.openrouterKey?.trim()) out.openrouter = raw.openrouterKey.trim()
+  return out
 }
 
 /**
@@ -408,6 +425,10 @@ function dropSavedDiscordId(raw: Record<string, unknown>): void {
 
 export function setConfig(patch: Partial<Config>): Config {
   const next = { ...getConfig(), ...patch }
+  // The deprecated single field is kept in step with the record it became, so a build
+  // rolled back to before `providerKeys` existed still finds the OpenRouter key where
+  // it looks for it. One line, in the one place a key can change.
+  next.openrouterKey = next.providerKeys?.openrouter ?? ''
   cache = next
   try {
     mkdirSync(dirname(file()), { recursive: true })
