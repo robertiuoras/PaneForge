@@ -118,6 +118,8 @@ export interface ScreenReader {
   buffer: {
     active: {
       baseY: number
+      /** Where the caret is on the screen. The composer is drawn around it. */
+      cursorY?: number
       getLine(y: number): { translateToString(trim?: boolean): string } | undefined
     }
   }
@@ -137,6 +139,68 @@ export function writtenRows(t: ScreenReader): number {
     if (b.getLine(b.baseY + y)?.translateToString(true).trim()) return y + 1
   }
   return 0
+}
+
+/**
+ * The glyphs a CLI rules its composer off with. Claude Code 2.1.234 draws a horizontal
+ * rule above and below the input; Codex and Gemini draw a full box, whose corners and
+ * sides are in the same block.
+ */
+const FRAME = /^[\s\u2500-\u257f]+$/
+/** How short a run of them is still a markdown separator rather than a composer edge. */
+const FRAME_MIN = 8
+
+/** This row is nothing but frame: a composer edge, not something somebody wrote. */
+export function ruleRow(text: string): boolean {
+  const t = text.trim()
+  return t.length >= FRAME_MIN && FRAME.test(t)
+}
+
+/** How far above the caret a composer's top edge may be before this stops believing it. */
+const COMPOSER_MAX = 20
+
+/**
+ * The screen row the composer starts on, or null when this pane draws none.
+ *
+ * The caret has to be INSIDE the pair of rules for them to count, which is what keeps a
+ * markdown separator in an answer from being read as an input box and swallowing the rows
+ * under it.
+ */
+export function composerTop(t: ScreenReader, written: number): number | null {
+  const b = t.buffer.active
+  const cur = b.cursorY
+  if (cur === undefined || cur < 1) return null
+  const line = (y: number): string => b.getLine(b.baseY + y)?.translateToString(true) ?? ''
+  let bottom = -1
+  for (let y = Math.min(t.rows - 1, written); y > cur; y--) {
+    if (ruleRow(line(y))) {
+      bottom = y
+      break
+    }
+  }
+  if (bottom < 0) return null
+  for (let y = cur - 1; y >= Math.max(0, bottom - COMPOSER_MAX); y--) {
+    if (ruleRow(line(y))) return y
+  }
+  return null
+}
+
+/**
+ * How much of the screen is HISTORY - everything above the composer the CLI is drawing.
+ *
+ * `writtenRows` on its own files the composer too, and at the moment a clear is submitted
+ * the composer is still showing the very line that was submitted. So `/clear` was kept
+ * TWICE: once as the box that still held it, and once as the CLI's own echo of it on the
+ * fresh screen. Measured in a live pane before this - six `❯ /clear` rows in the
+ * scrollback for three clears, which is "it shows duplicated /clear message".
+ *
+ * The composer is live UI redrawn on every keystroke and is never a record of anything, so
+ * it and the hint lines under it are left where they are rather than filed.
+ */
+export function keptRows(t: ScreenReader): number {
+  const written = writtenRows(t)
+  const top = composerTop(t, written)
+  return top === null ? written : Math.min(written, top)
 }
 
 export interface ScrollKeeper {

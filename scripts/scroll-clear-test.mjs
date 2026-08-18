@@ -34,7 +34,7 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { keepScrollback, clearsScreen, mayClearScreen, writtenRows } = require_(outfile)
+const { keepScrollback, clearsScreen, mayClearScreen, writtenRows, keptRows, ruleRow, composerTop } = require_(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -372,6 +372,77 @@ eq('nor a path', mayClearScreen('/etc/hosts is wrong'), false)
       JSON.stringify(left.slice(0, 6))
     )
     check('and nothing of it reached the scrollback', bare.buffer.active.baseY === 0)
+  }
+}
+
+
+// --- the composer is UI, not history --------------------------------------------------
+// At the moment a clear is submitted the composer is still drawing the line that was
+// submitted, so filing the whole written screen kept `/clear` TWICE: once as the box that
+// held it, and once as the CLI's own echo of it on the fresh screen. Measured in a live
+// pane before this - six `❯ /clear` rows in the scrollback for three clears, which is
+// "it shows duplicated /clear message".
+eq('a rule row is frame and nothing else', ruleRow('─────────────'), true)
+eq('a boxed rule counts too', ruleRow('╭──────────────╮'), true)
+eq('a short separator does not', ruleRow('───'), false)
+eq('nor a row with words on it', ruleRow('── the answer ──'), false)
+eq('nor a blank row', ruleRow('   '), false)
+{
+  // A markdown separator in an ANSWER, with the caret nowhere near it: the pair of rules
+  // this looks for must have the caret BETWEEN them, or a `---` in an answer would swallow
+  // every row under it.
+  const rows = ['turn 1', '────────────────', 'still the answer', '']
+  const fake = {
+    rows: 4,
+    buffer: { active: { baseY: 0, cursorY: 3, getLine: (y) => ({ translateToString: () => rows[y] ?? '' }) } }
+  }
+  eq('a separator alone is not a composer', composerTop(fake, 3), null)
+  eq('so the whole written screen is filed', keptRows(fake), 3)
+}
+{
+  let Terminal
+  try {
+    ;({ Terminal } = require_('@xterm/headless'))
+  } catch {
+    /* already reported above */
+  }
+  if (Terminal) {
+    const rows = 10
+    const write = (t, s) => new Promise((r) => t.write(s, r))
+    const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    const k = keepScrollback(
+      () => term.rows,
+      () => term.buffer.active.type === 'alternate',
+      Date.now,
+      () => keptRows(term)
+    )
+    // A screen the shape Claude Code 2.1.234 really draws: the turn, then a composer ruled
+    // top and bottom with the submitted line still in it, then its hint line.
+    await write(term, k('turn 1\r\n'))
+    await write(term, k('the answer worth keeping\r\n'))
+    await write(term, k('────────────────────────\r\n'))
+    await write(term, k('❯ /clear\r\n'))
+    await write(term, k('────────────────────────\r\n'))
+    await write(term, k('⏵⏵ bypass permissions on'))
+    // The caret sits in the composer at submit time, which is what makes those two rules a
+    // box rather than two separators.
+    await write(term, k('\x1b[4;10H'))
+    eq('six rows are written', writtenRows(term), 6)
+    eq('but only the two above the composer are history', keptRows(term), 2)
+
+    const away = k.arm()
+    eq('so two rows are filed, not six', (away.match(/\r\n/g) ?? []).length, 2)
+    await write(term, away)
+    // The CLI then echoes the command itself on the fresh screen, as it always does.
+    await write(term, k('❯ /clear\r\n'))
+
+    const all = []
+    for (let y = 0; y < term.buffer.active.length; y++) {
+      all.push(term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+    }
+    const clears = all.filter((l) => l.trim() === '❯ /clear').length
+    eq('the command appears once, not twice', clears, 1)
+    check('and the answer is still kept', all.join('\n').includes('the answer worth keeping'), JSON.stringify(all))
   }
 }
 

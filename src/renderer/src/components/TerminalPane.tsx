@@ -17,7 +17,7 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
-import { keepScrollback, mayClearScreen, writtenRows } from '../../../shared/keepScrollback'
+import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
@@ -861,7 +861,7 @@ export default function TerminalPane({
       // blank, and scrolling those rows only puts a screenful of nothing into the
       // scrollback in front of the turn being kept. The walk itself is in the shared file
       // so the test can drive the shipped one against a real xterm rather than a copy.
-      () => writtenRows(t)
+      () => keptRows(t)
     )
     const f = new FitAddon()
     t.loadAddon(f)
