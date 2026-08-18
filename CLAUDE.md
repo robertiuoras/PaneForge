@@ -969,6 +969,18 @@ the conversation and not one line of the screen.
   cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
   after it. `npm run test:scrollback`.
 
+**And which restarts ask is one rule with one switch.** An update restart hands the desk
+straight back and every other restart asks, which is deterministic and still reads as
+random from the outside: the app updates itself several times a day, so the branch you get
+depends on something you were never told about. `askAfterUpdate` (Settings -> Updates,
+under "Reopen my panes after an update restart") makes the update restart obey the same
+offer as a quit or a crash. **Off by default and deliberately so** - asking several times a
+day costs more than the inconsistency it removes - and it does nothing while
+`restoreAfterUpdate` is off, since there is then nothing to offer. Verified in a real
+window against a desk written with `reason: 'update'`: on, the panes are OFFERED and none
+opens until the question is answered; off, one pane comes back with no question, which is
+exactly the behaviour every desk has today.
+
 **And it presses Fix for itself.** The tail was hard-wrapped by the CLI at the width the
 old pty had, and it is replayed into a terminal xterm opens at 80x24 and fits a frame or
 two later - so the frame that lands is regularly drawn at the wrong width, the resuming
