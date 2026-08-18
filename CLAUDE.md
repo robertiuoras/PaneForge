@@ -1027,6 +1027,15 @@ terminal loses the lines.
   (`/doctor`) and one carrying an argument (`/model opus`) are read literally and do not.
   What makes a false arm cheap is that only the rows holding something are filed: the pane
   passes `used()` and the scroll is that many newlines, not a screenful.
+- **What is filed is the history, and the composer is not history.** At the moment a clear
+  is submitted the CLI's composer is still drawing the line that was submitted, so filing
+  the whole written screen kept `❯ /clear` twice - once as the box that held it, and once
+  as the CLI's own echo of it on the fresh screen. Measured in a live pane: six `❯ /clear`
+  rows in the scrollback for three clears, which is "it shows duplicated /clear message".
+  `keptRows` stops at the composer's top edge, and the composer is only believed when the
+  CARET is between its two rules - without that a markdown separator in an answer reads as
+  an input box and swallows every row under it. Pinned by `test:scrollclear`, whose live
+  shape is the one Claude Code 2.1.234 really draws (a rule, the line, a rule, the hints).
 - The `2J`/`3J` rewrite stays for
   a CLI that clears unasked, and stands down for 10s after an armed scroll so a `2J` that
   follows one cannot file a screenful of blanks in front of the turn being kept.
