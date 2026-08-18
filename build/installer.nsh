@@ -32,10 +32,18 @@
   ; version's uninstaller during an ordinary update. A shortcut that vanishes after an
   ; update reads as "the app uninstalled itself". Both are inside the block now, and the app
   ; puts a missing shortcut back on launch anyway (src/main/winShortcut.ts).
-  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableGone_${__LINE__}
+  ; The label is a PLAIN NAME, and the `${__LINE__}` it used to carry is why every Windows
+  ; build since v0.8.105 failed: that token expands to the CURRENT source line, so the jump
+  ; on one line and the label three lines below it generated two different names -
+  ; `could not resolve label "portableGone_239.1.11" in uninstall section`, makensis exit 1,
+  ; no installer and no latest.yml published for four releases while the mac leg looked fine.
+  ; A fixed name is safe because NSIS labels are scoped to the function they are in, and the
+  ; two insertions below land in different ones (`customInit` -> .onInit, `customUnInstall`
+  ; -> the uninstaller). Never insert this macro twice into the SAME function.
+  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableGone
     RMDir /r "$LOCALAPPDATA\Programs\PaneForge"
     Delete "$DESKTOP\PaneForge.lnk"
-  portableGone_${__LINE__}:
+  portableGone:
 !macroend
 
 !macro customInit
