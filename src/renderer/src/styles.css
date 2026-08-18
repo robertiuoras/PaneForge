@@ -3095,3 +3095,97 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   .voice-ring { transition: none; }
   .voice-dots i { animation: none; opacity: 0.7; }
 }
+
+/* ---------------------------------------------------------------- right-click a card
+   The desktop twin of `.pane-menu` (the phone's bottom sheet, in the handheld block
+   above). Rows are 30px rather than 52 because this is a pointer surface; the shape,
+   the wording and the destructive-last order are the same, so the two read as one
+   control seen by two hands. */
+.ctx-back { position: fixed; inset: 0; z-index: 95; }
+.ctx-menu {
+  position: fixed;
+  min-width: 216px; max-width: 320px;
+  padding: 5px;
+  border: 1px solid var(--line-strong); border-radius: var(--r);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  animation: pop 120ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.ctx-head {
+  padding: 5px 8px 6px;
+  color: var(--muted);
+  font: 600 11px/1.2 inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ctx-row {
+  display: flex; align-items: baseline; gap: 8px;
+  width: 100%; padding: 6px 8px;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text);
+  font: 500 12.5px/1.3 inherit; text-align: left;
+}
+.ctx-row:hover:not(:disabled), .ctx-row.on { background: var(--surface-3); }
+.ctx-row:disabled { opacity: 0.45; }
+.ctx-row.danger { color: var(--danger); }
+.ctx-label { flex: none; }
+.ctx-hint {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--muted); font-size: 11px; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------------ hand off
+   One question - which machine - so the box holds a picker and nothing else. */
+.dialog.handoff-dialog { width: 480px; }
+.ho-lead { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ho-lead code { font-size: 11px; }
+.ho-note {
+  margin: 0; padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3); color: var(--text);
+  font-size: 12px; line-height: 1.45;
+}
+.ho-note.warn { color: var(--warn); }
+.ho-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+.ho-dev {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--text);
+  text-align: left;
+}
+.ho-dev.picked { border-color: var(--accent); background: var(--accent-soft); }
+.ho-dev:hover:not(.off) { border-color: var(--line-strong); }
+.ho-dev.off { opacity: 0.6; }
+.ho-dev-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.ho-dev-name {
+  font-weight: 600; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ho-dev-sub {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ho-tick { flex: none; width: 14px; color: var(--accent); font-size: 13px; }
+/* A row, against `.dialog > .dialog-foot`'s column. `.ho-spacer` does the separating
+   rather than `margin-left: auto` on the primary: a margin there silently beats a
+   parent's justification and is what left a 99px hole between two answers once. */
+.dialog > .ho-foot, .dialog > .si-foot {
+  flex-direction: row; align-items: center; gap: 8px;
+}
+.ho-spacer, .si-spacer { flex: 1 1 auto; }
+
+/* --------------------------------------------------------------------- session info */
+.dialog.session-info { width: 470px; }
+.si-body { display: flex; flex-direction: column; gap: 7px; min-height: 0; overflow-y: auto; }
+.si-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.si-key { flex: none; width: 106px; color: var(--muted); font-size: 11.5px; }
+.si-val { flex: 1 1 auto; min-width: 0; }
+.si-dim { color: var(--muted); font-size: 11.5px; }
+.si-inline { font-size: 11.5px; }
+.si-path {
+  color: var(--muted); font-size: 11px; font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.si-id { color: var(--muted); font-size: 11px; }

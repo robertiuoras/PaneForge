@@ -25,6 +25,9 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import SessionMenu from './components/SessionMenu'
+import SessionInfo from './components/SessionInfo'
+import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
@@ -267,7 +270,11 @@ export default function App(): JSX.Element {
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
-  const [handoff, setHandoff] = useState<{ ids: string[]; title: string } | null>(null)
+  const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
+  /** The card a right-click landed on, and where the pointer was when it did. */
+  const [cardMenu, setCardMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  /** The pane whose details are open - "how long has this been sitting here" and the rest. */
+  const [info, setInfo] = useState<string | null>(null)
   /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
   /** the pane whose output is being read as text (and therefore selected with a finger) */
@@ -3219,6 +3226,14 @@ export default function App(): JSX.Element {
                 handheld.showPane()
               }}
               onDoubleClick={() => setRenaming(s.id)}
+              // A list row's actions belong on its right-click, which is where every
+              // desktop hand looks for them first. The pane is made active on the way in,
+              // so the menu is never acting on a card other than the one being pointed at.
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
+              }}
             >
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
@@ -3801,8 +3816,12 @@ export default function App(): JSX.Element {
                       const ids = s.lane
                         ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
                         : [s.id]
-                      setHandoff({ ids, title: s.lane ? `lane ${s.lane}` : s.title })
-                      setDevices(true)
+                      setHandoff({
+                        ids,
+                        title: s.lane ? `lane ${s.lane}` : s.title,
+                        busy: s.status === 'working' || s.status === 'starting',
+                        asking: Boolean(s.ask)
+                      })
                     }}
                   >
                     Hand off
@@ -4155,11 +4174,7 @@ export default function App(): JSX.Element {
           state={remote}
           onState={setRemote}
           flash={flash}
-          handoff={handoff}
-          onClose={() => {
-            setDevices(false)
-            setHandoff(null)
-          }}
+          onClose={() => setDevices(false)}
         />
       )}
       {history && (
@@ -4305,6 +4320,88 @@ export default function App(): JSX.Element {
                 run: () => close(s.id)
               }
             ]}
+          />
+        )
+      })()}
+      {/* Hand off asks one question - which machine - so it gets one box rather than the
+          whole Devices screen with a banner over it. */}
+      {handoff && (
+        <HandoffDialog
+          target={handoff}
+          peers={remote?.peers ?? []}
+          flash={flash}
+          onPair={() => {
+            setHandoff(null)
+            setDevices(true)
+          }}
+          onClose={() => setHandoff(null)}
+        />
+      )}
+      {/* Right-click on a session card. Same actions as the pane header and the phone's
+          sheet, at the place a desktop hand looks for them. */}
+      {(() => {
+        const s = cardMenu ? sessions.find((x) => x.id === cardMenu.id) : null
+        if (!s || !cardMenu) return null
+        const paneNumber = sessions.indexOf(s) + 1
+        const shut = (): void => setCardMenu(null)
+        const local = !s.remote
+        return (
+          <SessionMenu
+            title={s.title}
+            x={cardMenu.x}
+            y={cardMenu.y}
+            onClose={shut}
+            items={[
+              { key: 'open', label: 'Open this pane', run: () => { setActiveId(s.id); handheld.showPane() } },
+              { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
+              { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
+              ...(local && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'handoff',
+                      label: 'Hand off…',
+                      hint: 'move it to another machine',
+                      run: () =>
+                        setHandoff({
+                          ids: s.lane
+                            ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
+                            : [s.id],
+                          title: s.lane ? `lane ${s.lane}` : s.title,
+                          busy: s.status === 'working' || s.status === 'starting',
+                          asking: Boolean(s.ask)
+                        })
+                    }
+                  ]
+                : []),
+              { key: 'copy', label: 'Copy output', hint: 'the whole terminal', run: () => copyPaneOutput(s) },
+              { key: 'text', label: 'Select text', run: () => setTextPane(s.id) },
+              { key: 'fix', label: 'Fix the display', hint: 'refit and repaint, keeping the run', run: () => fixUi(s.id) },
+              ...(local
+                ? [
+                    { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },
+                    { key: 'restart', label: 'Restart agent', run: () => void api.restartSession(s.id) }
+                  ]
+                : []),
+              { key: 'clear', label: 'Clear', hint: 'runs /clear; the run keeps going, its memory does not', danger: true, run: () => clearPane(s) },
+              { key: 'close', label: 'Close pane', hint: 'the transcript stays in history', danger: true, run: () => close(s.id) }
+            ]}
+          />
+        )
+      })()}
+      {(() => {
+        const s = info ? sessions.find((x) => x.id === info) : null
+        if (!s) return null
+        return (
+          <SessionInfo
+            session={s}
+            paneNumber={sessions.indexOf(s) + 1}
+            agents={agents}
+            usage={usage?.panes[s.id]}
+            onRename={() => {
+              setInfo(null)
+              setRenaming(s.id)
+            }}
+            onClose={() => setInfo(null)}
           />
         )
       })()}

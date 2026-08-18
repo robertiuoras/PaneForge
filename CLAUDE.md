@@ -303,8 +303,17 @@ older build does not recognise `askpair` and refuses, which is correct — it ha
 show. `npm run test:pairask`, whose load-bearing case is a real relay proving the two
 numbers differ.
 
-**A handoff moves the WORK, still never the pty.** `Hand off` on a paired device's card
-(two presses — the first arms it) pushes each pane's repo as an `auto-sync:` commit,
+**A handoff moves the WORK, still never the pty.** `Hand off` on a pane's own card asks
+one question — which machine — in a box of its own (`HandoffDialog.tsx`), because the
+answer used to be a ghost button on the third row of a card inside Devices, a screen
+carrying pairing codes, a QR, a tunnel switch and a per-pane mirror list. It lists the
+paired machines, says in words what travels (the repo as an `auto-sync:` commit, the
+conversation, the screen, the dev servers) and what a mid-turn pane does — **queued, never
+killed**, so pressing it during a turn is the ordinary case rather than a refusal. The
+bulk path is unchanged and still lives in Devices as `Hand off all`. `npm run
+test:handofffit` measures the box in a real Chrome over the shipped stylesheet: the
+answers stay reachable and a machine's NAME is never the string that gets cut. `Hand off`
+on a paired device's card in Devices (two presses — the first arms it) pushes each pane's repo as an `auto-sync:` commit,
 streams its transcript and screen tail over the link, and the far end pulls the branch,
 writes the transcript where its own CLI looks, and starts a fresh pane with `--resume` —
 through the same lane split a local launch gets. The sender's pane closes only on the far
@@ -690,6 +699,23 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
 - The sidebar has no `git status` of its own on purpose, so it may not assert "not a git
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
+
+## A card answers a right-click, and can say what it is
+
+Everything you might do to a pane lived somewhere that was not the card: rename behind a
+double-click nobody discovers, hand off / clear / close inside the pane's own header, and
+"what IS this, how long has it been open" nowhere at all. `SessionMenu.tsx` is the desktop
+context menu on the card - opened at the pointer, clamped on screen after it is measured
+(the height depends on which actions that pane offers, so a fixed number is wrong for half
+of them), arrow keys and Escape. It is deliberately NOT `PaneMenu.tsx`: that is the phone's
+bottom sheet with 52px rows, same actions, other hand.
+
+`SessionInfo.tsx` is the "see info" the card has no room for. **Its clocks are live** -
+`Open for` counts from `createdAt` through `useNow` (the app's one shared second timer), so
+"can I close this" gets a ticking answer rather than a frozen one. The header's clock is the
+TURN and stays that way; the two numbers are different questions. Everything else on it is a
+reading the app already holds - last spoke, last typed into, the place, and the pane's real
+cost out of `main/usage.ts` - so opening it polls nothing.
 
 ## Copying a prompt, or the answer it got
 
@@ -1276,6 +1302,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:agentenv` | the environment a pane's agent is started with — a provider is a catalogue entry with two variables set, not a branch in the spawn path, and a key placeholder with no key behind it is DROPPED rather than passed through: a CLI handed the literal `${OPENROUTER_KEY}` fails as a 401 several seconds into a pane that looks perfectly healthy. Also that every placeholder a built-in asks for is one Settings can actually fill, that one provider's key cannot fill another's variable, and that a placeholder nobody answers is dropped rather than handed over as a credential |
 | `npm run test:devicewatch` | noticing that a ten-year cookie has been copied — and, the half that decides whether anybody ever reads a mark, that a phone leaving the house, an iOS version bump, a reloaded tab and a row with no stored user-agent all say NOTHING |
 | `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
+| `npm run test:handofffit` | that the hand-off box can still be ANSWERED once real machine names are in it: the shipped stylesheet in a real headless Chrome at three window sizes, asserting the box fits, both answers are hittable and sit together (the 99px hole `test:confirmfit` caught once), and every device name is whole — measured with a Range over the text, because these spans stretch to the row and `scrollWidth` answers about the box |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
 | `npm run test:confirmfit` | that the app's yes/no box can still be answered once a real question is in it — measured on the offload one ("Start this pane on `<device>`?"), whose three faults all came from the dialog SHELL rather than the confirm rules: a `position: sticky` footer pinning to the scrollport's bottom EDGE and so sitting 2px ON the tick box of a dialog that was not scrolling, `.dialog-row .primary { margin-left: auto }` silently beating the confirm's own `flex-end` for a 99px hole between the two answers, and `.ghost`/`.primary` padding making them 34.8px and 38.8px tall. The load-bearing case is the LONG body: making the row static fixes all three and quietly removes the pinning the sticky was added for |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
