@@ -118,7 +118,12 @@ export const HEADLESS: Record<string, HeadlessMode> = {
     parse: 'codex'
   },
   gemini: { args: ['-p', '--yolo'], modelFlag: '--model', parse: 'plain' },
-  qwen: { args: ['-p', '--yolo'], modelFlag: '--model', parse: 'plain' }
+  qwen: { args: ['-p', '--yolo'], modelFlag: '--model', parse: 'plain' },
+  grok: {
+    args: ['-p', '--output-format', 'streaming-json', '--permission-mode', 'bypassPermissions'],
+    modelFlag: '--model',
+    parse: 'plain'
+  },
 }
 
 /** Can this agent be driven at all? A `shell` pane has nothing to drive. */
