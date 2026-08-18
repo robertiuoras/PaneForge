@@ -89,20 +89,29 @@ export interface HeadlessMode {
   parse: 'claude' | 'codex' | 'plain'
 }
 
+const CLAUDE_HEADLESS: HeadlessMode = {
+  args: [
+    '-p',
+    '--output-format',
+    'stream-json',
+    // stream-json is refused without it: the flag is what turns the per-message lines on.
+    '--verbose',
+    '--permission-mode',
+    'bypassPermissions'
+  ],
+  modelFlag: '--model',
+  parse: 'claude'
+}
+
 export const HEADLESS: Record<string, HeadlessMode> = {
-  claude: {
-    args: [
-      '-p',
-      '--output-format',
-      'stream-json',
-      // stream-json is refused without it: the flag is what turns the per-message lines on.
-      '--verbose',
-      '--permission-mode',
-      'bypassPermissions'
-    ],
-    modelFlag: '--model',
-    parse: 'claude'
-  },
+  claude: CLAUDE_HEADLESS,
+  // The same binary with a different base URL, so it drives a lane exactly the same
+  // way. Keyed by agent id, these were silently NOT drivable - `drivable()` reads this
+  // table, so a lane on GLM or DeepSeek was refused for a reason that had nothing to do
+  // with the CLI it would have run.
+  openrouter: CLAUDE_HEADLESS,
+  deepseek: CLAUDE_HEADLESS,
+  glm: CLAUDE_HEADLESS,
   codex: {
     args: ['exec', '--json', '--skip-git-repo-check', '--full-auto', '-'],
     modelFlag: '--model',

@@ -216,6 +216,102 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     docs: 'https://openrouter.ai/docs/community/claude-code'
   },
   {
+    // Same shape as the OpenRouter entry and for the same reason, but pointed at
+    // DeepSeek's own Anthropic-protocol endpoint rather than at a broker: one hop
+    // fewer, and the price is DeepSeek's rather than DeepSeek's plus a margin.
+    //
+    // The base URL carries the `/anthropic` suffix and NO `/v1` - the CLI appends
+    // `/v1/messages` itself, so the request lands on
+    // `https://api.deepseek.com/anthropic/v1/messages`. Bare `api.deepseek.com` is the
+    // OpenAI-compatible endpoint and answering a Messages request there is a 404 that
+    // reads like a broken install. Verified against DeepSeek's own Claude Code page,
+    // which is also where `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) comes from.
+    id: 'deepseek',
+    label: 'Claude Code on DeepSeek',
+    bin: 'claude',
+    alwaysArgs: BYPASS_ARGS,
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
+    modelFlag: '--model',
+    // `[1m]` is not a decoration: it is the model id DeepSeek's own config example
+    // uses to ask for the 1M-context variant, and it is passed through verbatim.
+    models: [
+      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', hint: 'strongest' },
+      { value: 'deepseek-v4-pro[1m]', label: 'DeepSeek V4 Pro 1M', hint: '1M context' },
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', hint: 'fast, cheapest' }
+    ],
+    env: {
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      ANTHROPIC_AUTH_TOKEN: keyVar('deepseek'),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    },
+    color: '#4d6bfe',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
+    free: true,
+    note: 'DeepSeek key in Settings - no subscription, pay per token',
+    docs: 'https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/'
+  },
+  {
+    // Z.ai publishes no coding CLI of its own - ZCode is a desktop app and
+    // `@z_ai/coding-helper` is a wizard that writes these two variables into somebody
+    // else's tool. So this entry IS that wizard's output, without the wizard.
+    //
+    // `/api/anthropic`, no `/v1`, same rule as DeepSeek above. The OpenAI-compatible
+    // `/api/paas/v4` and the Coding-Plan `/api/coding/paas/v4` are different endpoints
+    // and neither speaks the Messages API.
+    id: 'glm',
+    label: 'Claude Code on GLM',
+    bin: 'claude',
+    alwaysArgs: BYPASS_ARGS,
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
+    modelFlag: '--model',
+    models: [
+      { value: 'glm-5.2', label: 'GLM 5.2', hint: 'flagship' },
+      { value: 'glm-5.2[1m]', label: 'GLM 5.2 1M', hint: '1M context' },
+      { value: 'glm-5.1', label: 'GLM 5.1' },
+      { value: 'glm-5', label: 'GLM 5' },
+      { value: 'glm-4.7', label: 'GLM 4.7' },
+      { value: 'glm-4.7-flashx', label: 'GLM 4.7 FlashX', hint: 'fastest' }
+    ],
+    env: {
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+      ANTHROPIC_AUTH_TOKEN: keyVar('zai'),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    },
+    color: '#14b8a6',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
+    free: true,
+    note: 'Z.ai key in Settings - pay per token, or a GLM Coding Plan',
+    docs: 'https://docs.z.ai/devpack/tool/claude'
+  },
+  {
+    // xAI's own CLI, NOT Claude Code with a base URL: x.ai documents an
+    // OpenAI-compatible endpoint and nothing else, and the "Grok speaks the Anthropic
+    // Messages API" claims in circulation trace to no xAI-owned page. Shipping that as
+    // a spec would be a pane that 404s several seconds into its first turn, which is
+    // the one failure this catalogue is written to avoid.
+    id: 'grok',
+    label: 'Grok Build',
+    bin: 'grok',
+    modelFlag: '--model',
+    models: [{ value: 'grok-4.6', label: 'Grok 4.6', hint: 'coding and agentic work' }],
+    // Offered rather than required: the CLI signs in on its own as well, so a blank
+    // key box leaves it on whatever login this machine already has.
+    env: { XAI_API_KEY: keyVar('xai') },
+    color: '#cbd5e1',
+    // The curl script is the install x.ai documents. On Windows there is no shell to
+    // pipe it into, so that platform gets the npm package instead.
+    installMac: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    installWin: 'npm i -g @xai-official/grok',
+    uninstallWin: 'npm rm -g @xai-official/grok',
+    note: 'xAI account, or an xAI key in Settings',
+    docs: 'https://docs.x.ai/build/overview'
+  },
+  {
     id: 'codex',
     label: 'Codex',
     bin: 'codex',
@@ -267,7 +363,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     install: 'npm i -g @qwen-code/qwen-code',
     uninstall: 'npm rm -g @qwen-code/qwen-code',
     free: true,
-    note: 'Free daily quota with a Qwen account',
+    // Node 22 is its `engines` floor, not a suggestion: npm installs it anyway on
+    // Node 20 with a warning nobody reads in an install log, and the CLI then fails
+    // at its first launch inside a pane that looks like a bad install.
+    note: 'Free daily quota with a Qwen account - needs Node 22+',
     docs: 'https://github.com/QwenLM/qwen-code'
   },
   {
@@ -410,9 +509,17 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
  * so the agent attaches a real IMAGE ("[Image #1]") and can see it. For the rest, a path
  * typed at the prompt is the only thing that works at all.
  *
- * `openrouter` is Claude Code with a different base URL, so it reads the clipboard too.
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
  */
-const CLIPBOARD_IMAGE_AGENTS = new Set(['claude', 'openrouter', 'claude-code', 'anthropic'])
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic'
+])
 
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
@@ -555,6 +662,30 @@ export const KEY_PROVIDERS: KeyProvider[] = [
     hint: 'sk-or-...',
     url: 'https://openrouter.ai/keys',
     note: 'One key, hundreds of models - GLM, DeepSeek, Qwen, Kimi, Grok.'
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    placeholder: keyVar('deepseek'),
+    hint: 'sk-...',
+    url: 'https://platform.deepseek.com/api_keys',
+    note: 'Runs Claude Code straight on DeepSeek V4, at DeepSeek prices.'
+  },
+  {
+    id: 'zai',
+    label: 'Z.ai (GLM)',
+    placeholder: keyVar('zai'),
+    hint: 'your Z.ai API key',
+    url: 'https://z.ai/manage-apikey/apikey-list',
+    note: 'Runs Claude Code on GLM 5.2, including a GLM Coding Plan subscription.'
+  },
+  {
+    id: 'xai',
+    label: 'xAI (Grok)',
+    placeholder: keyVar('xai'),
+    hint: 'xai-...',
+    url: 'https://console.x.ai',
+    note: 'The key Grok Build reads. It can also sign in on its own.'
   }
 ]
 
