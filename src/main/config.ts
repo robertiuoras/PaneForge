@@ -225,6 +225,7 @@ function defaults(): Config {
     // makes THIS install the dev copy that takes every build the moment it is cut.
     devUpdates: false,
     restoreAfterUpdate: true,
+    askAfterUpdate: false,
     restoreAfterRestart: 'ask',
     saveHistory: true,
     historyDays: 30,

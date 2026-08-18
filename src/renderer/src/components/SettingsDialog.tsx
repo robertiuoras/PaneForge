@@ -1410,6 +1410,13 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     label="Reopen my panes after an update restart"
                     hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
                   />
+                  <Switch
+                    checked={!!config.askAfterUpdate}
+                    onChange={(v) => onChange({ askAfterUpdate: v })}
+                    disabled={!config.restoreAfterUpdate}
+                    label="…and ask first, like every other restart"
+                    hint="Off, an update restart is the one restart that never asks - it was the app's own idea, so it hands the desk straight back. On, it offers the panes exactly as a quit or a crash does."
+                  />
                 </div>
               </div>
 

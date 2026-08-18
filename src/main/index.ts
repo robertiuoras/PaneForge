@@ -3351,9 +3351,18 @@ function offerRestore(): void {
     return
   }
   if (desk.reason === 'update') {
-    if (cfg.restoreAfterUpdate) restorePanes(desk.specs)
-    else clearDesk()
-    return
+    if (!cfg.restoreAfterUpdate) {
+      clearDesk()
+      return
+    }
+    // `askAfterUpdate` is the one rule for every restart, for a desk that would rather be
+    // asked than handed its panes back. Off by default: the app updates itself several
+    // times a day, so asking every time costs more than the inconsistency it removes.
+    // On, this falls through to the same offer a quit or a crash gets.
+    if (!cfg.askAfterUpdate) {
+      restorePanes(desk.specs)
+      return
+    }
   }
   // Nobody is sitting in front of a test copy. An agent runs `npm run try` to measure
   // something and gets "restore your last session?" across the window instead - every

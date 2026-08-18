@@ -1393,6 +1393,13 @@ export interface Config {
    */
   restoreAfterUpdate: boolean
   /**
+   * Ask before reopening them, so an update restart obeys the same rule as every other
+   * restart. Off by default and deliberately so: the app updates itself several times a
+   * day, and a dialog that often is worse than the inconsistency it removes. On, the
+   * update restart stops being the one restart that never asks.
+   */
+  askAfterUpdate: boolean
+  /**
    * What a cold launch does with the panes the last run left behind (a normal quit,
    * a PC restart, a crash). `ask` offers them, `always` reopens them silently,
    * `never` starts clean. An update restart is not this setting - see
