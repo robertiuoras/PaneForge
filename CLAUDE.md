@@ -624,6 +624,35 @@ channel of its own.
   `window.__pf[id].term.buffer`, never in the DOM - xterm draws to a canvas.
 - Not built: headless host (B1 - the app must be running), phone-first diff (H2).
 
+## A pane can run on somebody else's model
+
+Most of `shared/agents.ts` is one binary pointed somewhere else: Claude Code reads
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` and nothing else, so "Claude Code on
+GLM" is a catalogue entry with two variables set, and every feature in this app that
+reads a Claude pane keeps working. Separate ids rather than a switch on `claude`,
+because the two have different histories, costs and failure modes and a pane must say
+which it is on its card.
+
+- **A provider is an entry in `KEY_PROVIDERS` plus an agent whose `env` names
+  `keyVar(id)`.** Settings draws its key field off that list, so a provider added to
+  the catalogue reaches the screen by itself; it used to be one hardcoded OpenRouter
+  field, which meant a new entry shipped with nowhere to authenticate from.
+- **"Anthropic-compatible" is probed, never read.** DeepSeek (`https://api.deepseek.com/
+  anthropic`) and Z.ai (`https://api.z.ai/api/anthropic`) both answer a junk-key POST
+  with a 401 in Anthropic's own error shape, which is how a real implementation is told
+  from a rewrite of chat-completions. **xAI does not have one** — every claim that it
+  does traces to a non-xAI page — so Grok is its own CLI entry (`grok`, installed by
+  x.ai's script into `~/.grok/bin`, which `which.ts` now hydrates because the script only
+  *tries* to symlink onto PATH). Neither base URL carries `/v1`: the CLI appends it.
+- **A blank key drops the token and KEEPS the base URL.** Dropping both would run plain
+  Claude Code inside a pane whose card says GLM — worse than an error, because nothing
+  says so. The Settings card names the missing key instead (`missingKeyFor`), which is
+  the first use `keyProviderFor` has ever had.
+- **`HEADLESS` is keyed by agent id**, so these were silently undrivable while running the
+  identical binary. They share `claude`'s entry now. Grok is deliberately absent: its
+  headless flags are unverified, and `drivable()` refusing is better than a guess.
+- `npm run test:agentenv`.
+
 ## Every colour is derived, and every pane says which project it is in
 
 **There is no palette.** `src/shared/theme.ts` computes one from a single accent;
@@ -1244,7 +1273,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
-| `npm run test:agentenv` | the environment a pane's agent is started with — a provider is a catalogue entry with two variables set, not a branch in the spawn path, and a key placeholder with no key behind it is DROPPED rather than passed through: a CLI handed the literal `${OPENROUTER_KEY}` fails as a 401 several seconds into a pane that looks perfectly healthy |
+| `npm run test:agentenv` | the environment a pane's agent is started with — a provider is a catalogue entry with two variables set, not a branch in the spawn path, and a key placeholder with no key behind it is DROPPED rather than passed through: a CLI handed the literal `${OPENROUTER_KEY}` fails as a 401 several seconds into a pane that looks perfectly healthy. Also that every placeholder a built-in asks for is one Settings can actually fill, that one provider's key cannot fill another's variable, and that a placeholder nobody answers is dropped rather than handed over as a credential |
 | `npm run test:devicewatch` | noticing that a ten-year cookie has been copied — and, the half that decides whether anybody ever reads a mark, that a phone leaving the house, an iOS version bump, a reloaded tab and a row with no stored user-agent all say NOTHING |
 | `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
 | `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
