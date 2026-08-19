@@ -4574,13 +4574,19 @@ export default function App(): JSX.Element {
           // It never picks WHICH machine - that is the one question the hand-off box
           // exists to ask, and a mascot guessing it would move a pane to a desk nobody
           // is at. It opens the box with the panes already chosen.
-          const first = sessions.find((x) => x.id === ids[0])
+          const going = sessions.filter((x) => ids.includes(x.id))
+          const first = going[0]
           if (!first) return
+          // Every pane going, not just the first: the box's own words change on `busy` and
+          // `asking`, and reading them off ids[0] alone promised "Hand off" over a set
+          // whose second pane was mid-turn or holding a question. It is the answer that
+          // would be wrong, not the move - `sendHandoff` still checks each pane - which is
+          // the shape of wrong that is only found afterwards.
           setHandoff({
             ids,
             title: first.lane ? `lane ${first.lane}` : first.title,
-            busy: first.status === 'working' || first.status === 'starting',
-            asking: Boolean(first.ask)
+            busy: going.some((x) => x.status === 'working' || x.status === 'starting'),
+            asking: going.some((x) => Boolean(x.ask))
           })
         }}
         onConfig={(patch: Partial<MascotConfig>) =>

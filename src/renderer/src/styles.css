@@ -3226,8 +3226,13 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   color: var(--accent-text); line-height: 0; filter: none;
   animation: mascot-bob 4.2s ease-in-out infinite;
 }
-.mascot-body:hover { transform: scale(1.06); }
-.mascot-body { transition: transform 160ms ease; }
+/* `scale`, not `transform: scale()`. The bob is a transform animation, and a hover rule
+   setting `transform` REPLACES it outright rather than composing - the mascot stopped
+   bobbing while the pointer was on it and jumped back to whatever frame the animation had
+   reached on the way out. The standalone `scale` property is its own thing and multiplies
+   with the animated transform. */
+.mascot-body:hover { scale: 1.06; }
+.mascot-body { transition: scale 160ms ease; }
 @keyframes mascot-bob {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-3px); }
