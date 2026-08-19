@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
+import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -464,6 +465,21 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
                   />
                 )}
+                <Switch
+                  checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleCloseMinutes: v ? IDLE_CLOSE_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Close a pane nobody has touched for a while"
+                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                />
                 <Switch
                   checked={config.driveUnattended !== false}
                   onChange={(v) => onChange({ driveUnattended: v })}

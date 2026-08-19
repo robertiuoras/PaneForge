@@ -74,6 +74,16 @@ export interface ReclaimConfig {
   idleCloseMinutes: number
 }
 
+/**
+ * What the Settings switch sets `idleCloseMinutes` to when it is turned on.
+ *
+ * Two hours, which is eight times what the pressure sweep waits, for the reason the
+ * field's own comment gives: being early under pressure costs a reopen from History, and
+ * being early on a clock closes a pane somebody was coming back to. It is the number
+ * already running on this desk's PC.
+ */
+export const IDLE_CLOSE_MINUTES = 120
+
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
