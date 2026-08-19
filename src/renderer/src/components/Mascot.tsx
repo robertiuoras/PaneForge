@@ -27,6 +27,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
+import { BLINK, BODY, DUST, GRID, LEGS, runsOf, TAILS, type Rect } from '@shared/foxSprite'
 import {
   actedWords,
   clampSpot,
@@ -86,6 +87,28 @@ const DASH_MS = 5200
 const DASH_EVERY_MS = 150_000
 /** The lane it runs in, as a fraction of the window height - under every card, over nothing. */
 const DASH_Y = 0.955
+
+/**
+ * One layer of the sprite, as horizontal runs rather than as cells: the whole fox is ~90
+ * rects instead of 576, and a run of one colour is what a pixel row actually is. The art
+ * is module-level constants, so the walk over it is cached by identity and every
+ * re-render after the first reuses the rects.
+ */
+const LAYERS = new Map<string[], Rect[]>()
+function Layer({ art, cls }: { art: string[]; cls: string }): JSX.Element {
+  let rects = LAYERS.get(art)
+  if (!rects) {
+    rects = runsOf(art)
+    LAYERS.set(art, rects)
+  }
+  return (
+    <g className={cls}>
+      {rects.map((r, i) => (
+        <rect key={i} className={r.cls} x={r.x} y={r.y} width={r.w} height={1} />
+      ))}
+    </g>
+  )
+}
 
 export default function Mascot(props: MascotProps): JSX.Element | null {
   const cfg = { ...DEFAULT_MASCOT, ...props.config }
@@ -434,60 +457,37 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             say({ say: 'Ask me - "what is pane 3", "close the idle ones".', key: 'greet' })
           }}
         >
-          <svg viewBox="0 0 64 64" width="46" height="46" aria-hidden="true">
-            {/* A fox, in four shades all mixed from `currentColor` (the accent) rather than
-                from a surface variable: the sprite has to keep its own light-to-dark reading
-                on a light theme (Paper) as well as on a dark one, and a surface-derived fill
-                inverts between the two.
-
-                The ground shadow sits OUTSIDE the bobbing group so it squashes against a
+          <svg
+            className="fox"
+            viewBox={`0 0 ${GRID} ${GRID}`}
+            width="48"
+            height="48"
+            shapeRendering="crispEdges"
+            aria-hidden="true"
+          >
+            {/* The ground shadow sits OUTSIDE the bobbing group so it squashes against a
                 ground that does not move - a shadow that rises with the body reads as a
-                sticker rather than a lift. The tail sways and the legs only move while it is
-                running, and both are transforms, which is the one thing an infinite loop here
-                is allowed to touch. */}
-            <ellipse className="m-shadow" cx="32" cy="60" rx="15" ry="2.4" />
+                sticker rather than a lift. It is the one thing here not on the pixel
+                grid: a 1px-tall ellipse would be a rectangle. */}
+            <ellipse className="m-shadow" cx="11" cy="22.4" rx="7" ry="1" />
             <g className="m-bob">
-              {/* Tail first, so the body overlaps its root. Its own group so the sway
-                  pivots at the hip rather than at the tip. */}
-              <g className="m-tail">
-                <path
-                  className="m-fur"
-                  d="M23 47 C12 48 4 41 6 31 C7 25 12 21 15 21 C13 27 13 33 17 37 C19 40 21 42 25 43 Z"
-                />
-                <path className="m-fur-l" d="M15 21 C13 27 13 33 17 37 C13 34 10 27 12 22 Z" />
-              </g>
-              {/* Legs. Static and tucked under the body while it stands; the run is a
-                  rotate on each of these, out of phase. */}
-              <g className="m-legs">
-                <rect className="m-leg m-fur-d" x="24" y="48" width="5.4" height="10" rx="2.6" />
-                <rect className="m-leg m-fur-d" x="35" y="48" width="5.4" height="10" rx="2.6" />
-              </g>
-              <path
-                className="m-fur"
-                d="M32 24 C41 24 46 34 46 44 C46 52 40 56 32 56 C24 56 18 52 18 44 C18 34 23 24 32 24 Z"
-              />
-              {/* Chest ruff: the one big light shape, and what keeps the silhouette
-                  readable at 46px on a dark theme. */}
-              <path className="m-fur-l" d="M32 33 C37 33 40 41 40 47 C40 53 36 55 32 55 C28 55 24 53 24 47 C24 41 27 33 32 33 Z" />
-              {/* Ears, behind the head so the head's curve cuts their base. */}
-              <path className="m-fur" d="M20.5 15 L17.5 4 L28.5 10.5 Z" />
-              <path className="m-fur-d" d="M21.5 14 L20 7.5 L26 11.5 Z" />
-              <path className="m-fur" d="M43.5 15 L46.5 4 L35.5 10.5 Z" />
-              <path className="m-fur-d" d="M42.5 14 L44 7.5 L38 11.5 Z" />
-              <path
-                className="m-fur"
-                d="M32 8 C42 8 47.5 15 47.5 23 C47.5 31.5 40.5 37.5 32 37.5 C23.5 37.5 16.5 31.5 16.5 23 C16.5 15 22 8 32 8 Z"
-              />
-              {/* Muzzle and cheeks - one shape, so there is no seam to misalign. */}
-              <path
-                className="m-fur-l"
-                d="M32 22 C37.5 22 41 26 41 30.5 C41 35 37 37.5 32 37.5 C27 37.5 23 35 23 30.5 C23 26 26.5 22 32 22 Z"
-              />
-              <g className="m-eyes">
-                <ellipse cx="26" cy="23" rx="2" ry="2.6" />
-                <ellipse cx="38" cy="23" rx="2" ry="2.6" />
-              </g>
-              <ellipse className="m-nose" cx="32" cy="30" rx="2.4" ry="1.9" />
+              {/* Tail first, so the body overlaps its root. The two standing tails ARE
+                  the idle animation and the four leg sets are the gallop - a pixel sprite
+                  cannot be rotated without resampling the grid, so every pose is its own
+                  drawing and the motion is WHICH drawing is showing. */}
+              <Layer art={TAILS.idleA} cls="m-tail-a" />
+              <Layer art={TAILS.idleB} cls="m-tail-b" />
+              <Layer art={TAILS.run} cls="m-tail-run" />
+              <Layer art={LEGS.stand} cls="m-legs-stand" />
+              <Layer art={LEGS.run1} cls="m-legs-run m-legs-run1" />
+              <Layer art={LEGS.run2} cls="m-legs-run m-legs-run2" />
+              <Layer art={LEGS.run3} cls="m-legs-run m-legs-run3" />
+              <Layer art={LEGS.run4} cls="m-legs-run m-legs-run4" />
+              <Layer art={BODY} cls="m-body" />
+              {/* The closed eye is drawn OVER the open one rather than replacing the
+                  head: there is then no second head to keep in step with this one. */}
+              <Layer art={BLINK} cls="m-lid" />
+              <Layer art={DUST} cls="m-dust" />
             </g>
           </svg>
         </button>

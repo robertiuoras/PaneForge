@@ -11,7 +11,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -33,6 +33,19 @@ buildSync({
 })
 const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot, DEFAULT_MASCOT } =
   createRequire(import.meta.url)(outfile)
+
+// The sprite itself. It is data rather than drawing code, which is the only reason it can
+// be checked at all without a window.
+const spriteFile = join(work, 'sprite.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/foxSprite.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: spriteFile
+})
+const sprite = createRequire(import.meta.url)(spriteFile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -239,6 +252,55 @@ const desk = [
   eq('off the right edge comes back', clampSpot(1.4, 0.5).x, 0.98)
   eq('off the top comes back', clampSpot(0.5, -3).y, 0.02)
   eq('and a reading that is not a number is centred', clampSpot(NaN, 0.5).x, 0.5)
+}
+
+{
+  // The sprite is a grid, and a row one cell short does not draw a wonky fox - it shifts
+  // every colour after it left on that row, which reads as corruption rather than as a
+  // typo. Nothing in the drawing code can notice; this is where it is caught.
+  const { ALL_LAYERS, GRID, CLASS_OF, LEGS, TAILS, BODY, runsOf } = sprite
+  let square = true
+  let known = true
+  for (const layer of ALL_LAYERS) {
+    if (layer.length !== GRID) square = false
+    for (const row of layer) {
+      if (row.length !== GRID) square = false
+      for (const c of row) if (c !== '.' && !(c in CLASS_OF)) known = false
+    }
+  }
+  eq('every layer is a square grid', square, true)
+  eq('and uses no colour the stylesheet has never heard of', known, true)
+
+  // The gallop is four beats. Three reads as a limp and five as a stumble, and either way
+  // the CSS that cycles them is written for exactly four.
+  eq('the run is four frames', Object.keys(LEGS).filter((k) => k.startsWith('run')).length, 4)
+  eq('and there is one standing pose', typeof LEGS.stand, 'object')
+  eq('the idle animation is two tails', TAILS.idleA !== TAILS.idleB, true)
+
+  // Runs, not cells: the whole point of the walk is that a row of eight identical cells is
+  // one rect. A per-cell version passes every other check here and quadruples the DOM.
+  const rects = runsOf(BODY)
+  eq('the body is drawn as runs', rects.length < 90, true)
+  eq('and every run has width', rects.every((r) => r.w >= 1), true)
+  const widest = Math.max(...rects.map((r) => r.w))
+  eq('with at least one long one', widest >= 6, true)
+  eq('and none off the grid', rects.every((r) => r.x + r.w <= GRID && r.y < GRID), true)
+
+  // A pose defined and never drawn is dead art nobody will notice for a year. Every one of
+  // them has to appear in the component that draws the sprite.
+  const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
+  const missing = [
+    ...Object.keys(LEGS).map((k) => `LEGS.${k}`),
+    ...Object.keys(TAILS).map((k) => `TAILS.${k}`)
+  ].filter((ref) => !drawn.includes(ref))
+  eq('every pose is drawn', missing.join(',') || 'none', 'none')
+
+  // ...and the stylesheet has to carry a rule for each of the classes the drawing hangs the
+  // animation on, or a pose is on screen for ever or never.
+  const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
+  const classless = ['m-tail-a', 'm-tail-b', 'm-tail-run', 'm-legs-stand', 'm-legs-run', 'm-lid', 'm-dust']
+    .filter((c) => !css.includes(`.${c}`))
+  eq('and every layer has a rule', classless.join(',') || 'none', 'none')
 }
 
 console.log(`mascot: ${checks} checks passed`)

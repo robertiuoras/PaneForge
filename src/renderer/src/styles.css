@@ -3264,7 +3264,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   50% { transform: translateY(-2.6px); }
 }
 .m-shadow {
-  fill: currentColor; transform-origin: 32px 60px;
+  fill: currentColor; transform-origin: 11px 22.4px;
   animation: mascot-shadow 4.2s ease-in-out infinite;
 }
 @keyframes mascot-shadow {
@@ -3276,41 +3276,58 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    surface variable: the fox has to keep its own light-to-dark reading on a light theme
    (Paper) as well as a dark one, and a surface-derived fill inverts between the two. */
 .m-fur { fill: color-mix(in oklab, currentColor 88%, #000); }
-.m-fur-d { fill: color-mix(in oklab, currentColor 48%, #000); }
-.m-fur-l { fill: color-mix(in oklab, currentColor 62%, #fff); }
-.m-nose { fill: color-mix(in oklab, currentColor 26%, #000); }
-.m-eyes ellipse { fill: color-mix(in oklab, currentColor 22%, #000); transition: opacity 90ms linear; }
-.mascot-body.blink .m-eyes ellipse { opacity: 0.06; }
+.m-fur-d { fill: color-mix(in oklab, currentColor 44%, #000); }
+.m-fur-l { fill: color-mix(in oklab, currentColor 66%, #fff); }
+.m-eye { fill: color-mix(in oklab, currentColor 16%, #000); }
 
-/* The tail is the only thing that says it is awake rather than a decal. Rotate about the
-   hip, so the plume swings and its root stays attached to the body. */
-.m-tail { transform-origin: 25px 45px; animation: mascot-tail 3.6s ease-in-out infinite; }
-@keyframes mascot-tail {
-  0%, 100% { transform: rotate(-3deg); }
-  50% { transform: rotate(5deg); }
+/* The sprite is a 24x24 PIXEL GRID (src/shared/foxSprite.ts) drawn as one rect per
+   horizontal run. `crispEdges` on the svg is what makes it pixel art rather than a small
+   blurry drawing: at 48 CSS pixels a cell is exactly 2 device pixels and nothing is
+   resampled. It is also why nothing here rotates - a rotated pixel grid stops being one -
+   so every pose is its own drawing and the motion is WHICH drawing is showing, which is
+   an opacity step and therefore free (`npm run test:anim`). */
+.m-lid, .m-tail-run, .m-legs-run, .m-dust { opacity: 0; }
+.mascot-body.blink .m-lid { opacity: 1; }
+
+/* Standing: the two tail positions swap, and that is the whole idle animation. */
+.m-tail-a { animation: m-frame2 3.2s steps(1, end) infinite; }
+.m-tail-b { animation: m-frame2 3.2s steps(1, end) infinite -1.6s; }
+@keyframes m-frame2 {
+  0% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Running: the tail streams out behind, the four-beat gallop cycles at ~8 frames a
+   second, and dust kicks up off the back paws. */
+.mascot-body.running .m-tail-a,
+.mascot-body.running .m-tail-b,
+.mascot-body.running .m-legs-stand { animation: none; opacity: 0; }
+.mascot-body.running .m-tail-run { opacity: 1; }
+.mascot-body.running .m-legs-run { animation: m-frame4 480ms steps(1, end) infinite; }
+.mascot-body.running .m-legs-run2 { animation-delay: -120ms; }
+.mascot-body.running .m-legs-run3 { animation-delay: -240ms; }
+.mascot-body.running .m-legs-run4 { animation-delay: -360ms; }
+@keyframes m-frame4 {
+  0% { opacity: 1; }
+  25%, 100% { opacity: 0; }
+}
+.mascot-body.running .m-dust { animation: m-dust 480ms linear infinite; }
+@keyframes m-dust {
+  0% { opacity: 0.55; transform: translate(0, 0); }
+  100% { opacity: 0; transform: translate(-3px, -1.6px); }
 }
 
 /* The run along the bottom of the window (`DASH_MS` in Mascot.tsx - change both).
-   `dash-port` is the one frame in which the sprite is placed at the starting edge with the
-   transition off: without it the browser coalesces the two writes and it slides to the
-   start line instead of appearing there. */
+   `dash-port` is the one frame in which the sprite is placed at the starting edge with
+   the transition off: without it the browser coalesces the two writes and it slides to
+   the start line instead of appearing there. */
 .mascot.dash-port { transition: none; }
 .mascot.dashing { transition: left 5200ms linear, top 500ms ease-out; }
 /* Running the other way, so it is never moon-walking. `transform` on the svg is free -
    the bob lives on a group inside it, so the two do not overwrite each other. */
-.mascot-body.face-left svg { transform: scaleX(-1); transform-origin: 32px 32px; }
-.mascot-body.running .m-tail { animation-duration: 420ms; }
-.mascot-body.running .m-bob { animation-duration: 620ms; }
-.mascot-body.running .m-leg:nth-child(1) {
-  transform-origin: 26.7px 49px; animation: mascot-stride 320ms linear infinite;
-}
-.mascot-body.running .m-leg:nth-child(2) {
-  transform-origin: 37.7px 49px; animation: mascot-stride 320ms linear infinite reverse;
-}
-@keyframes mascot-stride {
-  0%, 100% { transform: rotate(-22deg); }
-  50% { transform: rotate(22deg); }
-}
+.mascot-body.face-left svg { transform: scaleX(-1); transform-origin: 12px 12px; }
+.mascot-body.running .m-bob { animation-duration: 520ms; }
+.mascot-body.running .m-shadow { animation-duration: 520ms; }
 .mascot-bubble {
   pointer-events: auto; max-width: 300px; background: var(--surface-2);
   border: 1px solid var(--line-strong); border-radius: var(--r);

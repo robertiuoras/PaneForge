@@ -37,30 +37,28 @@ const pad = (rows: string[]): string[] => {
 
 /** Head, ears, chest and belly. Never moves, so it is drawn once under every pose. */
 export const BODY = pad([
-  '........................',
-  '........................',
   '...............d..d.....',
-  '..............dfd.dfd...',
-  '..............dfd.dfd...',
+  '..............dld.dld...',
+  '..............dld.dld...',
   '.............dfffffffd..',
   '............dfffffffffd.',
   '............dffffkffffd.',
   '............dfffffffffd.',
   '...........dffffffffflld',
   '...........dffffffffllkd',
-  '....dffffffffffffffffd..',
-  '...dfffffffffffffffffd..',
-  '...dfffffffffffffffffd..',
-  '...dffffflllllllllfd....',
-  '....dffffllllllllld.....',
-  '....dfffffffffffffd.....'
+  '...........dffffffffld..',
+  '............dfffffffd...',
+  '.....dffffffffffffffd...',
+  '...dfffffffffffffffd....',
+  '...dfffffffffffffffd....',
+  '...dfffffllllllllld.....',
+  '....dfffflllllllld......',
+  '....ddddddddddddd.......'
 ])
 
 /** The closed eye. Drawn over the body, so the open one underneath is covered rather than
  *  deleted - there is no second head to keep in step. */
 export const BLINK = pad([
-  '........................',
-  '........................',
   '........................',
   '........................',
   '........................',
@@ -79,6 +77,7 @@ export const TAILS = {
     '........................',
     '........................',
     '........................',
+    '........................',
     '..dll...................',
     '.dllld..................',
     '.dlllfd.................',
@@ -90,6 +89,7 @@ export const TAILS = {
     '...dff..................'
   ]),
   idleB: pad([
+    '........................',
     '........................',
     '........................',
     '........................',
@@ -115,6 +115,7 @@ export const TAILS = {
     '........................',
     '........................',
     '........................',
+    '........................',
     '...dll..................',
     '.dllllfd................',
     'dllllffff...............',
@@ -122,52 +123,51 @@ export const TAILS = {
   ])
 } satisfies Record<string, string[]>
 
-const legs = (r17: string, r18: string, r19: string, r20: string): string[] =>
-  pad([
-    ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-    r17,
-    r18,
-    r19,
-    r20
-  ])
+const legs = (...rows: string[]): string[] =>
+  pad([...Array.from({ length: 17 }, () => '.'.repeat(GRID)), ...rows])
 
-/** Legs. One standing pair, and a four-beat gallop: reach, gather, push, float. */
+/** Legs. One standing pair, and a four-beat gallop: reach, contact, push, gather. */
 export const LEGS = {
   stand: legs(
-    '......ff.....ff.........',
-    '......ff.....ff.........',
-    '......dd.....dd.........',
-    '......dd.....dd.........'
+    '......ff......ff........',
+    '......ff......ff........',
+    '......ff......ff........',
+    '......dd......dd........',
+    '......dd......dd........'
   ),
   run1: legs(
-    '.....ff......ff.........',
-    '....ff........ff........',
-    '...dd..........dd.......',
-    '...dd..........dd.......'
+    '.....ff.......ff........',
+    '....ff.........ff.......',
+    '...ff...........ff......',
+    '...dd...........dd......',
+    '........................'
   ),
   run2: legs(
-    '......ff.....ff.........',
-    '.......ff.....ff........',
-    '.......dd.....dd........',
-    '........dd....dd........'
+    '......ff......ff........',
+    '......ff.......ff.......',
+    '.......ff......ff.......',
+    '.......dd......dd.......',
+    '.......dd......dd.......'
   ),
   run3: legs(
     '.......ff....ff.........',
     '........ff..ff..........',
     '.........dd.dd..........',
-    '.........dd.dd..........'
+    '.........dd.dd..........',
+    '........................'
   ),
   run4: legs(
-    '......ff.....ff.........',
-    '......ff.....ff.........',
-    '.....dd.......dd........',
+    '......ff......ff........',
+    '.....ff........ff.......',
+    '.....dd........dd.......',
+    '........................',
     '........................'
   )
 } satisfies Record<string, string[]>
 
 /** Kicked up behind a running fox. Two puffs, faded by CSS. */
 export const DUST = pad([
-  ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+  ...Array.from({ length: 20 }, () => '.'.repeat(GRID)),
   '..l.....................',
   '.l.l....................'
 ])

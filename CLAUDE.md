@@ -1418,10 +1418,27 @@ draws it. `npm run test:mascot`.
   on: nothing the app decided by itself may make a noise into somebody's room.
 - **It never picks which machine.** `hand off pane 2` opens the hand-off box with the panes
   already chosen; choosing the device is the one question that box exists to ask.
-- **The sprite is a fox**, drawn in `currentColor` shades over `var(--accent-text)` so it
-  re-tints with the theme like everything else. No asset, no sprite sheet - four fills mixed
-  in oklab from the one accent, because a surface-derived fill inverts between a dark theme
-  and Paper. The tail sway is the only thing that says it is awake, and it is a rotate.
+- **The sprite is PIXEL ART, and that is a correctness decision rather than a style one.**
+  It was eight bezier paths, and at the 46px it is actually drawn at, a curve is resolved
+  by the rasteriser rather than by us: the ears rounded off, the muzzle and the head merged,
+  and what was left read as a blob with two triangles on it - "it doesn't even look like
+  what you showed me". `src/shared/foxSprite.ts` is a 24x24 grid of characters, one per
+  colour, drawn as one `<rect>` per horizontal RUN (169 rects for the whole fox, against 576
+  cells) under `shape-rendering: crispEdges` at 48 CSS pixels, so a cell is exactly two
+  device pixels and nothing is ever resampled. Four fills, still mixed in oklab from the one
+  accent, because a surface-derived fill inverts between a dark theme and Paper.
+- **It is LAYERS, not frames, and the motion is which drawing is showing.** A running fox
+  differs from a standing one in its legs and its tail and in nothing else, so the body is
+  drawn once and only the moving parts have variants - which is what makes seven poses a
+  page of art rather than seven. Nothing rotates: a rotated pixel grid resamples and stops
+  being pixels, which is exactly the blur this replaced. So a pose swap is an OPACITY step
+  (`steps(1, end)` keyframes, two frames for the standing tail, four for the gallop at ~8
+  frames a second), and opacity is the one thing besides a transform that `npm run test:anim`
+  lets loop. Dust off the back paws is a transform and an opacity too.
+- **A pose defined and never drawn is dead art nobody notices for a year**, so
+  `npm run test:mascot` reads `Mascot.tsx` for every entry in `LEGS` and `TAILS` and the
+  stylesheet for every layer class, and checks the grid is square - a row one cell short
+  does not draw a wonky fox, it shifts every colour after it on that row.
 - **It runs along the bottom of the window every so often** (`DASH_MS` / `DASH_EVERY_MS`,
   2.5 minutes), and that run is the one thing here that is not a reading - so it stands down
   the moment it would be in the way: a bubble up, the ask box open, a spot somebody dragged
