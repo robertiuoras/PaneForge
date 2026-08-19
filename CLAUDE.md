@@ -874,8 +874,11 @@ whichever one has a hook.
   by being handed to a loopback endpoint; `--poll` is opt-in and only correct for a token
   nothing else reads.
 - **A question is also RED, and it also leaves the machine.** Every idle reading in the app
-  says yes about a pane that is only quiet because it is owed an answer, so the card and the
-  pane itself glow red while `Session.ask` is set (`.row.asking` / `.xterm-wrap.asking`) and
+  says yes about a pane that is only quiet because it is owed an answer, so the card
+  glows red down its left edge while `Session.ask` is set (`.row.asking`; there is no ring
+  on the pane itself any more - drawing the same fact a second time over the agent's live
+  output read as something the agent had printed, and the sidebar is where a person looks
+  to find WHICH pane is owed an answer) and
   the card's title line carries the word `asks you` with the question on its hover - the blue
   lane glow that was removed from that card was removed for being a colour with nothing to
   read, not for being a colour. The same moment posts the question to Telegram
@@ -910,7 +913,18 @@ whichever one has a hook.
   turn and a stopped one are the two most different outcomes there are and one chime for
   both is why a question sits for an hour. The glow was there before this and was 7% over
   a dark card, which is a tint you find once you know it exists; it is 15% with a 3px
-  pulsing bar now, and the pane's ring is 2.5px.
+  pulsing bar down the card's left edge now.
+- **A RULE in the list is not prose, and reading it as prose made every question
+  invisible.** Claude Code 2.1.235 draws a full-width rule between the answers it was given
+  and the two it always appends (`Type something.`, `Chat about this`), wrapped onto a
+  second row in a wide pane. The walk up from the footer treated it as prose, stopped one
+  option in, and the 1..N check failed - so on 2026-08-19 a live 159-column taskdriver.ai
+  pane with a question plainly on screen read as NO question: no buttons, no red card, no
+  Telegram message and nothing for `autoAnswer` to press. A rule is read exactly like a
+  blank line now. It cannot admit a false question, because the FOOTER is still the
+  load-bearing signal and only a chooser widget draws one. The box gutter a CLI leaves down
+  the left of its question is stripped as well - it was reaching the buttons and the
+  Telegram message as a literal bar.
 - `npm run test:choices`. The load-bearing assertion is on the BYTE
   (`charCodeAt(0) === 27`): the first version of that test lost its escape in the same
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
@@ -1320,6 +1334,45 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
   `npm run test:goals` does the same for the queue: a goal read back after a simulated
   kill, and a second goal that starts because the first one ended.
 
+## The resource ladder has a face
+
+`capacity.ts`, `autoHandoff.ts` and `reclaim.ts` trim, move and close panes on their own,
+and until now the entire output of all three was a `console.info` in a devtools window
+nobody has open - so the app's only automatic answer to a full machine was invisible, and
+"where is the thing that manages resources" had no answer because there is no agent, only
+three timers with no mouth. `shared/mascot.ts` is the mouth and `components/Mascot.tsx`
+draws it. `npm run test:mascot`.
+
+- **It is not a model.** Every sentence is arithmetic over readings the app already holds
+  (`usage.ts` memory, `fleet.ts` state, `place.ts` words, the sidebar's own numbering), and
+  every typed command is a small parser over that same list. No request leaves the machine,
+  so it costs nothing to leave on - and a mascot that needed a token to say "pane 4 has
+  been quiet two hours" would be switched off inside a day.
+- **A guess is never an action.** "close pane 9" with five panes open closes nothing and
+  says how many there are; a name is matched longest-first with a contained name dropped,
+  so `close service-a` cannot also take `service`; and every destructive intent is OFFERED
+  as a press, never run. `closeable()` is `reclaim.ts`'s own refusal set, so it can never
+  suggest something the sweep itself would refuse - never a working pane, never one holding
+  a question, never another machine's pty.
+- **It speaks unasked exactly once per situation**, and only where the app is otherwise
+  silent: two or more finished panes, quiet over an hour, holding more than 1.2 GB, with
+  the idle-close clock OFF. With that clock on it says nothing, because the app is already
+  handling it. The one thing it always says is what the ladder DID - a sweep that closed a
+  pane now gets a sentence instead of a console line.
+- **The walk is how it says WHICH pane** - it moves to the card (`[data-id]`, always on
+  screen, unlike a pane in a grid) rather than printing an id. One composited `transform`
+  transition; the blink is `opacity`. `npm run test:anim` refuses anything else.
+- **The layer never takes a click.** `.mascot-layer` covers the window at `z-index: 40` -
+  over the panes, UNDER every dialog - and is `pointer-events: none` everywhere except the
+  sprite and its bubble. It never focuses, never raises a window and never opens a dialog.
+- **Mute by default**, and the speaker on the bubble is the only thing that turns a voice
+  on: nothing the app decided by itself may make a noise into somebody's room.
+- **It never picks which machine.** `hand off pane 2` opens the hand-off box with the panes
+  already chosen; choosing the device is the one question that box exists to ask.
+- The sprite is the app's own icon geometry - three panes, the middle one wearing the face
+  - drawn in `currentColor` over `var(--accent-text)`, so it re-tints with the theme like
+  everything else. No asset, no sprite sheet.
+
 ## Checks
 
 `npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything
@@ -1404,6 +1457,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
+| `npm run test:mascot` | what the mascot may do to somebody's panes: a number naming no pane closes nothing, a name contained in a longer one is dropped (`service` inside `service-a`), a count is not a pane number, and every suggestion is drawn from `reclaim.ts`'s own refusal set. The weight is in the four silences - it says nothing when the app's own clock is on, when one pane is stale, when the panes are cheap, or when they are minutes rather than hours old |
 | `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
 | `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
