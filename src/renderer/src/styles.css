@@ -3244,26 +3244,58 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .mascot-body {
   pointer-events: auto; background: none; border: 0; padding: 0; cursor: pointer;
   color: var(--accent-text); line-height: 0; filter: none;
-  animation: mascot-bob 4.2s ease-in-out infinite;
 }
-/* `scale`, not `transform: scale()`. The bob is a transform animation, and a hover rule
-   setting `transform` REPLACES it outright rather than composing - the mascot stopped
-   bobbing while the pointer was on it and jumped back to whatever frame the animation had
-   reached on the way out. The standalone `scale` property is its own thing and multiplies
-   with the animated transform. */
+/* `scale`, not `transform: scale()`. The bob is a transform animation on the group
+   INSIDE the svg, and a hover rule setting `transform` on an animated element replaces it
+   outright rather than composing - the mascot stopped bobbing while the pointer was on it
+   and jumped back to whatever frame the animation had reached on the way out. The
+   standalone `scale` property is its own thing and multiplies with the animated
+   transform. */
 .mascot-body:hover { scale: 1.06; }
 .mascot-body { cursor: grab; }
 .mascot-body.dragging { cursor: grabbing; scale: 1.06; }
 .mascot-body { transition: scale 160ms ease; }
+
+/* The bob is on the GROUP, not on the button, so the ground shadow can stay put and
+   squash against it - a shadow that rises with the body reads as a sticker, not a lift. */
+.m-bob { animation: mascot-bob 4.2s ease-in-out infinite; }
 @keyframes mascot-bob {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
+  50% { transform: translateY(-2.6px); }
 }
-.m-pane { fill: currentColor; opacity: 0.38; }
-.m-face { fill: var(--surface-3); stroke: currentColor; stroke-width: 1.6; }
-.m-eyes circle { fill: currentColor; transition: opacity 90ms linear; }
-.mascot-body.blink .m-eyes circle { opacity: 0.06; }
-.m-mouth { stroke: currentColor; }
+.m-shadow {
+  fill: currentColor; transform-origin: 32px 59.5px;
+  animation: mascot-shadow 4.2s ease-in-out infinite;
+}
+@keyframes mascot-shadow {
+  0%, 100% { transform: scaleX(1); opacity: 0.13; }
+  50% { transform: scaleX(0.88); opacity: 0.085; }
+}
+
+/* Five shades, all derived from the one accent `currentColor` carries, never from a
+   surface variable: the sprite has to keep its own light-to-dark reading on a light theme
+   (Paper) as well as a dark one, and a surface-derived visor inverts between the two. */
+.m-deep { fill: color-mix(in oklab, currentColor 42%, #000); }
+.m-mid { fill: color-mix(in oklab, currentColor 76%, #000); }
+.m-shell { fill: color-mix(in oklab, currentColor 30%, #000); }
+.m-void { fill: color-mix(in oklab, currentColor 15%, #000); }
+.m-ln { fill: currentColor; opacity: 0.42; }
+.m-vent { fill: color-mix(in oklab, currentColor 42%, #000); }
+.m-grille rect { fill: currentColor; opacity: 0.5; }
+.m-ant { stroke: color-mix(in oklab, currentColor 76%, #000); stroke-width: 1.6; stroke-linecap: round; }
+/* The one thing that says it is thinking rather than asleep. Opacity only. */
+.m-bead { fill: color-mix(in oklab, currentColor 88%, #fff); animation: mascot-bead 2.6s ease-in-out infinite; }
+@keyframes mascot-bead { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.m-scan {
+  fill: color-mix(in oklab, currentColor 55%, #fff); opacity: 0.16;
+  animation: mascot-scan 3.4s linear infinite;
+}
+@keyframes mascot-scan {
+  0% { transform: translateY(0); }
+  70%, 100% { transform: translateY(17px); }
+}
+.m-eyes rect { fill: color-mix(in oklab, currentColor 62%, #fff); transition: opacity 90ms linear; }
+.mascot-body.blink .m-eyes rect { opacity: 0.06; }
 .mascot-bubble {
   pointer-events: auto; max-width: 300px; background: var(--surface-2);
   border: 1px solid var(--line-strong); border-radius: var(--r);

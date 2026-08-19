@@ -356,17 +356,56 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             if (!bubble) say({ say: 'Ask me - "what is pane 3", "close the idle ones".', key: 'greet' })
           }}
         >
-          <svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true">
-            {/* The app's own three-pane geometry: the outer two are the project, the
-                middle one is the face. Same 0.043 gap the icon uses. */}
-            <rect className="m-pane" x="2" y="10" width="10" height="28" rx="3" />
-            <rect className="m-pane" x="36" y="10" width="10" height="28" rx="3" />
-            <rect className="m-face" x="14" y="6" width="20" height="34" rx="5" />
-            <g className="m-eyes">
-              <circle cx="20" cy="19" r="2.1" />
-              <circle cx="28" cy="19" r="2.1" />
+          <svg viewBox="0 0 64 64" width="46" height="46" aria-hidden="true">
+            {/* Still the app's own three-pane geometry - the outer two are the project,
+                the middle one is the chassis wearing the face - but grown into a machine:
+                a visor instead of eyes on a rectangle, vent slats, feet, and an ember on
+                the antenna. Every fill is derived from `currentColor` (the accent) so it
+                re-tints with the theme, and the shadow sits OUTSIDE the bobbing group so
+                it squashes against a ground that does not move. */}
+            <ellipse className="m-shadow" cx="32" cy="59.5" rx="14" ry="2.4" />
+            <g className="m-bob">
+              <g className="m-side">
+                <rect className="m-deep" x="3" y="19" width="12.5" height="33" rx="3.6" />
+                <rect className="m-void" x="5" y="21" width="8.5" height="29" rx="2.4" />
+                <rect className="m-ln" x="6.4" y="24.5" width="5.6" height="1.4" rx="0.7" />
+                <rect className="m-ln" x="6.4" y="28.5" width="4.2" height="1.4" rx="0.7" />
+                <rect className="m-ln" x="6.4" y="32.5" width="5" height="1.4" rx="0.7" />
+              </g>
+              {/* Mirrored rather than drawn twice: x maps to 64 - x. */}
+              <g className="m-side" transform="translate(64,0) scale(-1,1)">
+                <rect className="m-deep" x="3" y="19" width="12.5" height="33" rx="3.6" />
+                <rect className="m-void" x="5" y="21" width="8.5" height="29" rx="2.4" />
+                <rect className="m-ln" x="6.4" y="24.5" width="5.6" height="1.4" rx="0.7" />
+                <rect className="m-ln" x="6.4" y="28.5" width="4.2" height="1.4" rx="0.7" />
+                <rect className="m-ln" x="6.4" y="32.5" width="5" height="1.4" rx="0.7" />
+              </g>
+              <path className="m-ant" d="M32 9 V4.6" />
+              <circle className="m-bead" cx="32" cy="3" r="2.1" />
+              <rect className="m-mid" x="18.5" y="9" width="27" height="45" rx="7.5" />
+              <rect className="m-shell" x="20.4" y="11" width="23.2" height="41" rx="6" />
+              <rect className="m-void" x="22" y="15.5" width="20" height="14" rx="5.5" />
+              {/* The scanline is clipped to the visor, so the loop is one translate. */}
+              <clipPath id="pf-mascot-visor">
+                <rect x="22" y="15.5" width="20" height="14" rx="5.5" />
+              </clipPath>
+              <g clipPath="url(#pf-mascot-visor)">
+                <rect className="m-scan" x="22" y="13" width="20" height="3.4" />
+              </g>
+              <g className="m-eyes">
+                <rect x="26" y="19.8" width="3.6" height="5.4" rx="1.8" />
+                <rect x="34.4" y="19.8" width="3.6" height="5.4" rx="1.8" />
+              </g>
+              <rect className="m-void" x="26.5" y="33" width="11" height="5.6" rx="2.2" />
+              <g className="m-grille">
+                <rect x="28.2" y="34.5" width="7.6" height="1" rx="0.5" />
+                <rect x="28.2" y="36.4" width="7.6" height="1" rx="0.5" />
+              </g>
+              <rect className="m-vent" x="24" y="43.4" width="16" height="1.5" rx="0.75" />
+              <rect className="m-vent" x="24" y="46.6" width="16" height="1.5" rx="0.75" />
+              <rect className="m-deep" x="22.5" y="53" width="7" height="3.4" rx="1.7" />
+              <rect className="m-deep" x="34.5" y="53" width="7" height="3.4" rx="1.7" />
             </g>
-            <path className="m-mouth" d="M20 27 q4 3.5 8 0" fill="none" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
         </button>
       </div>
