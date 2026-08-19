@@ -1250,15 +1250,11 @@ body.sizing * { user-select: none !important; }
   border: 1.5px dashed color-mix(in srgb, var(--agent) 70%, transparent);
   border-radius: var(--r); background: color-mix(in srgb, var(--agent) 8%, transparent);
 }
-/* ...and the same fact on the pane itself, for a grid where the card is off to the side.
-   A static ring, because this one is drawn over an agent's output all the while the
-   question is up and a breathing border over live text is the thing anim-cost-test.mjs
-   exists to refuse. The buttons themselves (shared/choices.ts) are the action; this is
-   only what makes the pane findable from across the room. */
-.xterm-wrap.asking::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: var(--r);
-  box-shadow: inset 0 0 0 2.5px #ff8f8fb3, inset 0 0 34px #ff8f8f38;
-}
+/* There WAS a red ring around the pane itself here, for the same question the card's
+   left bar already marks. It is gone on purpose: the sidebar is where a person looks to
+   find WHICH pane is owed an answer, and inset 34px of red over an agent's live output
+   reads as part of what the agent printed rather than as the app saying something. The
+   buttons (shared/choices.ts) are the action; the card is the flag. */
 .drop-hint {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);

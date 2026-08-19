@@ -3071,7 +3071,12 @@ export default function TerminalPane({
   return (
     <div
       ref={wrap}
-      className={'xterm-wrap' + (dropping ? ' dropping' : '') + (ask ? ' asking' : '')}
+      // No ring for a live question. The card in the sidebar carries the red bar down its
+      // left edge and the "asks you" chip, which is where a person looks to see WHICH pane
+      // is owed an answer; drawing it a second time as a border over the agent's own output
+      // was the same fact twice, over live text, in the one place it could be mistaken for
+      // part of what the agent printed.
+      className={'xterm-wrap' + (dropping ? ' dropping' : '')}
       onDragOver={(e) => {
         // `Files` is one of two shapes a dropped file arrives in, and the other one was
         // never claimed. A macOS screenshot dragged off its own preview thumbnail, and a

@@ -80,6 +80,52 @@ ok('a description paragraph never becomes an option', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Real frame 3: the SAME widget as frame 1, drawn by Claude Code 2.1.235 on
+// 2026-08-19 - which now puts a full-width rule between the real answers and the
+// two it always appends, and wraps that rule onto a second row in a wide pane.
+// Read off a live taskdriver.ai pane at 159 columns, where every AskUserQuestion
+// on this desk was reading as NO question at all: no buttons, no red card, no
+// Telegram message, and nothing for autoAnswer to press. A rule was prose to the
+// walk, so it stopped one option in and the 1..N check failed.
+// ---------------------------------------------------------------------------
+const ASK_RULED = [
+  ' \u2610 Threads setup ',
+  '',
+  '\u2502 Threads needs the "Access the Threads API" use case added to Meta app 1492418122726503 - that mints the app id',
+  '\u2502 and secret. Your Facebook App Review submission is in flight. Add it now?',
+  '',
+  '\u276f 1. Add it now (Recommended)',
+  '     Threads is a separate use case with its own review track - it does not add permissions to the request.',
+  '  2. Wait for the review verdict',
+  '     Leave the Meta app untouched until the current App Review comes back (~14 days).',
+  '  3. Type something.',
+  '\u2500'.repeat(157),
+  '\u2500\u2500',
+  '  4. Chat about this',
+  '',
+  'Enter to select \u00b7 \u2191/\u2193 to navigate \u00b7 Esc to cancel'
+].join('\n')
+
+ok('a rule between the options does not hide the question', () => {
+  const ask = readAsk(ASK_RULED)
+  assert.ok(ask, 'the whole question was invisible - this is the live bug')
+  assert.equal(ask.options.length, 4)
+  assert.equal(ask.selected, 1)
+  assert.equal(ask.options[3].label, 'Chat about this')
+})
+
+ok('and the box gutter is not part of the question', () => {
+  const q = readAsk(ASK_RULED).question
+  assert.ok(!/[\u2502|]/.test(q), `gutter reached the buttons: ${q}`)
+  assert.ok(/^Threads needs/.test(q), q)
+})
+
+ok('a rule still cannot conjure a question with no footer', () => {
+  const noFooter = ASK_RULED.split('\n').slice(0, -2).join('\n')
+  assert.equal(readAsk(noFooter), null)
+})
+
+// ---------------------------------------------------------------------------
 // Real frame 2: Claude Code's own resume prompt, from history/s1-ms1mghme.log.
 // No descriptions, options indented, and the SHORTER footer - a parser written
 // against frame 1 alone refuses this one.
