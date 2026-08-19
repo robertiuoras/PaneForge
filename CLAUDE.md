@@ -958,10 +958,25 @@ whichever one has a hook.
 
 Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those
 questions are the CLI asking whether it may do the thing it was just told to do, and the
-person presses return. `shared/autoAnswer.ts` presses it instead — off by default
-(Settings → "Answer an agent's question for me when the answer is obvious"), because every
-question it goes through is one a CLI chose to ask and arriving switched on with an update
-would answer a permission prompt on a desk that never asked for that.
+person presses return. `shared/autoAnswer.ts` presses it instead — **on by default**
+(Settings → "Answer an agent's question for me when the answer is obvious"), with the wait
+adjustable beside it and a **five second** default rather than 1.2s.
+
+It was off for exactly one reason — "arriving switched on with an update would answer a
+permission prompt on a desk that never asked for that" — and the answer to that is the
+countdown, not silence: the pane names the option about to be pressed and counts the
+seconds down, and a press or an arrow at the desk cancels it. 1.2s was long enough while
+whoever got it had gone looking for the setting; on by default the wait has to be long
+enough to READ, which is why the number is now a control. Every refusal is unchanged.
+
+**A changed default cannot reach an existing desk on its own**, and this is the trap:
+`defaults()` is WRITTEN to config.json at first launch, so every install carries
+`enabled: false` explicitly and a flip in `DEFAULT_AUTO_ANSWER` reads as somebody's own
+choice. `defaultsV2` is the marker that separates the two and `migrateAutoAnswer` in
+`main/config.ts` applies the new defaults once — after which off stays off through every
+later update. The marker is read off the **saved** config and never off the merge: the
+default carries it, so asking the merged object answers yes for every config in existence,
+which is how the first version of this ran on nothing and left this desk exactly as it was.
 
 - **The refusals are the feature.** Exactly ONE option leading with a yes-shaped word is
   answered. Two are a choice between them; none is a decision somebody is being asked to
@@ -1403,9 +1418,20 @@ draws it. `npm run test:mascot`.
   on: nothing the app decided by itself may make a noise into somebody's room.
 - **It never picks which machine.** `hand off pane 2` opens the hand-off box with the panes
   already chosen; choosing the device is the one question that box exists to ask.
-- The sprite is the app's own icon geometry - three panes, the middle one wearing the face
-  - drawn in `currentColor` over `var(--accent-text)`, so it re-tints with the theme like
-  everything else. No asset, no sprite sheet.
+- **The sprite is a fox**, drawn in `currentColor` shades over `var(--accent-text)` so it
+  re-tints with the theme like everything else. No asset, no sprite sheet - four fills mixed
+  in oklab from the one accent, because a surface-derived fill inverts between a dark theme
+  and Paper. The tail sway is the only thing that says it is awake, and it is a rotate.
+- **It runs along the bottom of the window every so often** (`DASH_MS` / `DASH_EVERY_MS`,
+  2.5 minutes), and that run is the one thing here that is not a reading - so it stands down
+  the moment it would be in the way: a bubble up, the ask box open, a spot somebody dragged
+  it to, or `roam` off. It is placed at the starting edge with the transition OFF for one
+  frame (`dash-port`) and then given a single `left` transition across the window; without
+  that frame the browser coalesces both writes and it slides to the start line instead. The
+  legs only move while it is running and the sprite flips rather than moon-walking.
+- **A press closes whatever is up**, whichever half of it is up. Toggling `open` alone left
+  a notice bubble on screen with no way to dismiss it from the sprite, which reads as the
+  press not working.
 
 ## Checks
 
