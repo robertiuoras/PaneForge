@@ -105,7 +105,17 @@ async function pages() {
 
 let live = null
 try {
-  live = (await pages()).find((t) => t.type === 'page' && !(t.url ?? '').includes('shelf'))
+  // A page on that port is not the same fact as OUR page on that port: an automation
+  // Chrome left behind by another checkout answers /json/list with a `data:` tab, which
+  // sailed through this filter and then failed in probe.mjs with "port 9333 belongs to
+  // another checkout" - a red test about somebody else's stray browser. The window this
+  // test needs is one of ours, so the url has to look like the renderer we built.
+  live = (await pages()).find(
+    (t) =>
+      t.type === 'page' &&
+      !(t.url ?? '').includes('shelf') &&
+      /index\.html/.test(t.url ?? '')
+  )
 } catch {
   live = null
 }
