@@ -568,6 +568,20 @@ export default function TerminalPane({
    */
   const askRef = useRef<PaneAsk | null>(null)
   askRef.current = ask ?? null
+  /**
+   * Every keystroke this pane's MOUSE handlers have sent, for a probe to read.
+   *
+   * `window.api` is frozen by the context bridge, so a test cannot wrap `write` to watch
+   * what a click did - it assigns, the assignment is dropped in silence, and the test then
+   * reports an empty list for every click it makes, including the ones that typed. That is
+   * how the first version of `test:askclick` passed without ever reaching the handler. The
+   * only honest reading is one the pane keeps itself.
+   */
+  const clickKeys = useRef<string[]>([])
+  const sendKeys = (keys: string): void => {
+    clickKeys.current.push(keys)
+    void api.write(sessionId, keys)
+  }
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
   // link provider is attached once per session, so it reads the folder through a ref.
   const cwdRef = useRef(cwd)
@@ -1269,7 +1283,9 @@ export default function TerminalPane({
         // How many times this pane has repaired itself after being restored. A probe that
         // only reads the buffer cannot tell "the frame came back clean" from "the path
         // never ran", and the second is how a regression here would pass unnoticed.
-        restoreFixes: () => restoreFixes.current
+        restoreFixes: () => restoreFixes.current,
+        // What the mouse handlers have typed into the pty, newest last. See `clickKeys`.
+        clickKeys: () => [...clickKeys.current]
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
@@ -1779,7 +1795,7 @@ export default function TerminalPane({
       e.stopPropagation()
       // preventDefault on mousedown costs the focus the click would have given it.
       t.focus()
-      if (keys) api.write(sessionId, keys)
+      if (keys) sendKeys(keys)
     }
 
     /**
@@ -1940,7 +1956,7 @@ export default function TerminalPane({
         wrapped: true
       })
       if (!keys) return 'refused'
-      api.write(sessionId, keys)
+      sendKeys(keys)
       t.clearSelection()
       lastSelection.current = ''
       return 'done'
@@ -1984,7 +2000,7 @@ export default function TerminalPane({
         if (!boxKeys) return
         e.preventDefault()
         stopForAgent(e)
-        api.write(sessionId, boxKeys)
+        sendKeys(boxKeys)
         return
       }
       // Past the end of what is written is the end of what is written. Without this, a
@@ -2000,7 +2016,7 @@ export default function TerminalPane({
       if (!keys) return
       e.preventDefault()
       stopForAgent(e)
-      api.write(sessionId, keys)
+      sendKeys(keys)
     }
 
     const forceSelectable = (e: MouseEvent): void => {

@@ -80,6 +80,7 @@
     "test:attach": "node scripts/attach-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:autoanswer": "node scripts/auto-answer-test.mjs",
+    "test:askclick": "node scripts/ask-click-test.mjs",
     "test:choices": "node scripts/choices-test.mjs",
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
