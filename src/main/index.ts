@@ -816,6 +816,10 @@ function raiseStalled(s: Session): void {
  * two messages for one question is how a notification stops being read.
  */
 function raiseAsk(s: Session): void {
+  // The renderer first and unconditionally: it owns the sound, and a question is the one
+  // alert that must not be gated on the notification settings below - a run that has
+  // stopped dead is not a notification preference.
+  send('sessions:ask', s)
   if (!s.remote && getConfig().telegramAsk) {
     void postAsk(askMessage(s.title, s.ask!, undefined)).then((sent) => {
       if (!sent && telegramCreds())

@@ -199,6 +199,7 @@ export const SURFACE: Surface = {
   onAttention: ['on', 'sessions:attention'],
   onStalled: ['on', 'sessions:stalled'],
   onBell: ['on', 'sessions:bell'],
+  onAsk: ['on', 'sessions:ask'],
   paneBell: ['send', 'sessions:bell'],
   onRemote: ['on', 'remote:changed'],
   onCapacity: ['on', 'capacity:changed'],

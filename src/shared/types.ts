@@ -101,6 +101,16 @@ export interface Session {
    * a phone draws the same buttons, and a bot over the phone server can answer one.
    */
   ask?: PaneAsk
+  /**
+   * When `autoAnswer` will press that question, epoch ms, and which option it will press.
+   *
+   * Absent whenever nothing is going to happen - the setting is off, the question has no
+   * obviously-good answer, or the pane has used up its run of automatic presses. The pane
+   * counts down against it (`shared/autoAnswer.ts`, `autoAnswerAt`), so a press is never
+   * the first anybody hears of it.
+   */
+  autoAnswerAt?: number
+  autoAnswerN?: number
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -2196,6 +2206,8 @@ export interface Api {
   onStalled(cb: (s: Session) => void): () => void
   /** a pane's terminal rang its bell - a CLI asking for a human directly */
   onBell(cb: (s: Session) => void): () => void
+  /** A pane has just put a NEW question on screen (the arrow moving is not one). */
+  onAsk(cb: (s: Session) => void): () => void
   /** the pane's terminal rang its bell; reported from the renderer, which parses it */
   paneBell(id: string): void
   /** hosting, pairing or discovery changed */

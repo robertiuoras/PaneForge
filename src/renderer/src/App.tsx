@@ -561,6 +561,11 @@ export default function App(): JSX.Element {
         // window in the background there is no such pane, so the selected one is as
         // worth announcing as any other.
         const watching = s.id === activeIdRef.current && !document.hidden && document.hasFocus()
+        // A pane holding a question reaches this the same way a finished pane does - every
+        // idle reading in the app says yes about it - and it has its own alert with its own
+        // sound and its own red card. Chiming "finished" over it is the wrong word for a
+        // run that has stopped and will not move again until it is answered.
+        if (s.ask) return
         if (soundOn.current && !watching) playEvent('done', soundSet.current)
         if (watching) return
         setJustDone((cur) => (cur.includes(s.id) ? cur : [...cur, s.id]))
@@ -604,6 +609,12 @@ export default function App(): JSX.Element {
       if (soundOn.current && !watching(s)) playEvent('stall', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
+    // A question is its own alert, and the loudest thing the app can say: the run is not
+    // finished, it is stopped, and only a person restarts it.
+    const offAsk = api.onAsk((s) => {
+      if (soundOn.current && !watching(s)) playEvent('ask', soundSet.current)
+      if (!watching(s)) glow(s.id)
+    })
     const offBell = api.onBell((s) => {
       if (!bellOn.current) return
       if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
@@ -611,6 +622,7 @@ export default function App(): JSX.Element {
     })
     return () => {
       offStalled()
+      offAsk()
       offBell()
     }
   }, [])
@@ -3932,6 +3944,8 @@ export default function App(): JSX.Element {
               // The question this pane is sitting on, read in the main process so the
               // desk, a phone and a bot are all answering the same reading of it.
               ask={s.ask}
+              autoAnswerAt={s.autoAnswerAt}
+              autoAnswerN={s.autoAnswerN}
               // Which CLI is in here, so a dropped image can be handed to the ones that
               // read an image off the clipboard and typed as a path to the ones that do not.
               agent={s.agent}

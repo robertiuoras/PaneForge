@@ -30,6 +30,7 @@ import type { RevealTarget } from '../../../shared/pathToken'
 import { placeTurnCopies } from '../../../shared/turnCopy'
 import { HANDHELD_MAX } from '../handheld'
 import { CopyIcon, CopyReplyIcon } from './Icons'
+import { useNow } from './Elapsed'
 import './TerminalPane.css'
 
 const api = window.api
@@ -108,6 +109,15 @@ interface Props {
    */
   ask?: PaneAsk | null
   /**
+   * When that question will be answered for you, epoch ms, and which option.
+   *
+   * Decided in the main process (`shared/autoAnswer.ts`), never here: the press and the
+   * countdown have to come from one clock, or the pane promises seconds the presser does
+   * not keep. Absent means nothing is going to happen and no clock is drawn.
+   */
+  autoAnswerAt?: number
+  autoAnswerN?: number
+  /**
    * Which CLI is running in this pane.
    *
    * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
@@ -117,6 +127,29 @@ interface Props {
   agent?: string
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
+}
+
+/**
+ * "This will be answered for you in N seconds."
+ *
+ * Its own component so the second timer only runs while a countdown is on screen: `useNow`
+ * is one shared tick for the whole app, and subscribing the pane itself would re-render
+ * every pane once a second for a clock almost none of them are showing.
+ *
+ * It names the OPTION as well as the time. A countdown alone says something is about to
+ * happen; the point of showing it at all is that somebody who disagrees can reach the pane
+ * first, and they cannot disagree with a number.
+ */
+function AskCountdown({ at, n, ask }: { at: number; n?: number; ask: PaneAsk }): React.JSX.Element {
+  const now = useNow()
+  const left = Math.max(0, Math.ceil((at - now) / 1000))
+  const label = ask.options.find((o) => o.n === n)?.label
+  return (
+    <div className="pane-ask-auto" title="Settings -> Answer an agent's question for me">
+      {left > 0 ? `Answering in ${left}s` : 'Answering now'}
+      {label ? <span className="pane-ask-auto-pick">{label}</span> : null}
+    </div>
+  )
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
@@ -490,6 +523,8 @@ export default function TerminalPane({
   grid = null,
   termTheme,
   ask = null,
+  autoAnswerAt,
+  autoAnswerN,
   agent,
   onToast
 }: Props): JSX.Element {
@@ -515,6 +550,24 @@ export default function TerminalPane({
   const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  /**
+   * The question this pane is sitting on, where the mouse handlers can see it.
+   *
+   * They are attached once per session and they TYPE INTO THE PTY - a bare click becomes
+   * left and right arrows, an Alt-click becomes up and down, a selection delete becomes a
+   * run of backspaces - and a live chooser is the one moment on a pane when every one of
+   * those is an action rather than a movement. Measured against a real `claude` in a pty
+   * on 2026-08-19: 15 right arrows sent while its `/model` chooser was up moved it from
+   * Medium to `max effort`, and 2 down arrows moved the selection and left a torn partial
+   * repaint behind. Claude Code does NOT turn mouse reporting on (no `?1000h` anywhere in
+   * its boot), so `mouseGrabbed()` is false, nothing is swallowed, and a click that merely
+   * tried to place the cursor was silently answering somebody else's question.
+   *
+   * So: while a question is up, a click does nothing to the pty at all. The answer is the
+   * buttons under the pane, which say what they will do before they do it.
+   */
+  const askRef = useRef<PaneAsk | null>(null)
+  askRef.current = ask ?? null
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
   // link provider is attached once per session, so it reads the folder through a ref.
   const cwdRef = useRef(cwd)
@@ -1704,6 +1757,8 @@ export default function TerminalPane({
      */
     const placeCursor = (e: MouseEvent): void => {
       if (!clickCursorRef.current) return
+      // An arrow is a menu step while a chooser is up - see `askRef`.
+      if (askRef.current) return
       if (e.button !== 0 || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
       // The alternate screen is vim, less, a menu - things where an arrow is navigation
       // and there is no line being edited to move along.
@@ -1867,6 +1922,9 @@ export default function TerminalPane({
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
       if (!pos || t.buffer.active.type === 'alternate') return 'no'
+      // A run of backspaces into a chooser is the same mistake as a run of arrows, and
+      // there is no line being edited to delete from anyway - see `askRef`.
+      if (askRef.current) return 'no'
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
       if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return 'no'
@@ -1894,6 +1952,8 @@ export default function TerminalPane({
       const from = downAt
       downAt = null
       if (!clickCursorRef.current || !from) return
+      // An arrow is a menu step while a chooser is up - see `askRef`.
+      if (askRef.current) return
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
       if (t.getSelection()) return
       if (t.buffer.active.type === 'alternate') return
@@ -3231,6 +3291,7 @@ export default function TerminalPane({
       {ask && (
         <div className="pane-ask">
           {ask.question && <div className="pane-ask-q">{ask.question}</div>}
+          {autoAnswerAt ? <AskCountdown at={autoAnswerAt} n={autoAnswerN} ask={ask} /> : null}
           <div className="pane-ask-row">
             {ask.options.map((o) => (
               <button

@@ -87,7 +87,7 @@ export interface CustomSound {
 }
 
 /** Which alert is being played. Each one picks its own sound. */
-export type SoundEvent = 'done' | 'stall' | 'bell'
+export type SoundEvent = 'done' | 'stall' | 'bell' | 'ask'
 
 export interface SoundConfig {
   /** a session finished its turn or asked you something */
@@ -96,6 +96,16 @@ export interface SoundConfig {
   stall: string
   /** the terminal rang its bell */
   bell: string
+  /**
+   * the agent put a question on screen.
+   *
+   * Its own event and not `done` on purpose: a question and a finished turn are the same
+   * thing to every idle reading in the app, and they are the two most different outcomes
+   * there are - one is work you can go and read, the other is a run that has STOPPED and
+   * will not move again until somebody answers. Hearing them as one sound is why a
+   * question can sit for an hour.
+   */
+  ask: string
   /** 0..1, applied on top of every sound's own level */
   volume: number
   custom: CustomSound[]
@@ -567,6 +577,7 @@ export const DEFAULT_SOUNDS: SoundConfig = {
   done: 'chime',
   stall: 'fall',
   bell: 'ping',
+  ask: 'knock',
   volume: 1,
   custom: []
 }
@@ -696,6 +707,7 @@ export function pruneSounds(sounds: SoundConfig, exists: (file: string) => boole
     done: keep(sounds.done, DEFAULT_SOUNDS.done),
     stall: keep(sounds.stall, DEFAULT_SOUNDS.stall),
     bell: keep(sounds.bell, DEFAULT_SOUNDS.bell),
+    ask: keep(sounds.ask, DEFAULT_SOUNDS.ask),
     volume: clampVolume(sounds.volume)
   }
 }

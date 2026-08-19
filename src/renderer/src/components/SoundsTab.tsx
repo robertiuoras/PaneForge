@@ -36,6 +36,11 @@ const EVENTS: { key: SoundEvent; label: string; hint: string }[] = [
     hint: 'The turn clock is still going and the pane has printed nothing for the number of minutes set under General. Worth making audibly different from the one above - it is the only check on the app claiming an agent is working.'
   },
   {
+    key: 'ask',
+    label: 'An agent asked you a question',
+    hint: 'The run has stopped and will not move again until somebody answers. Make this one unmistakable - it is the alert whose cost is the rest of the run.'
+  },
+  {
     key: 'bell',
     label: 'A pane rang the terminal bell',
     hint: 'A CLI asking for a person directly: a prompt it needs answered, a build that failed. Short is better here, since a chatty CLI can ring several times a minute.'

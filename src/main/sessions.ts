@@ -22,7 +22,7 @@ import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
-import { askKeyOf, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
@@ -940,6 +940,7 @@ export class SessionManager extends EventEmitter {
       s.askSince = sig ? now : 0
     }
     s.askKey = askKeyOf(ask)
+    this.refreshAutoPlan(s)
     // The run counter is given back by the pane going BUSY, and by nothing else.
     //
     // "No question on screen" is the wrong signal for it: a chooser mid-repaint reads as
@@ -1367,15 +1368,45 @@ export class SessionManager extends EventEmitter {
    * only once per signature: a press that does not take leaves the same question on screen,
    * and pressing again every second is the app arguing with a widget.
    */
+  /**
+   * What autoAnswer is going to do about this pane's question, and when.
+   *
+   * Written onto the session so the pane can say so BEFORE it happens, and carrying the
+   * same guards `sweepAutoAnswer` presses under - a question this will never answer shows
+   * no clock at all.
+   *
+   * Called from BOTH the frame path and the timer, which is not belt and braces: a frame
+   * only arrives when the screen changes, so computing it there alone meant turning the
+   * setting on while a question was already up produced no countdown at all and then a
+   * press out of nowhere. Measured that way on 2026-08-19 against a live trust prompt -
+   * the answer went in, the clock never appeared. Returns whether anything moved, so the
+   * timer can emit only when it did.
+   */
+  private refreshAutoPlan(live: Live): boolean {
+    const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
+    const ask = live.meta.ask
+    const at = ask ? autoAnswerAt(live, cfg, ask) : 0
+    const n = at && ask ? pickAnswer(ask, cfg)?.n : undefined
+    if (live.meta.autoAnswerAt === (at || undefined) && live.meta.autoAnswerN === n) return false
+    live.meta.autoAnswerAt = at || undefined
+    live.meta.autoAnswerN = n
+    return true
+  }
+
   private sweepAutoAnswer(live: Live): void {
     const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
     const ask = live.meta.ask
     if (!ask) return
+    if (this.refreshAutoPlan(live)) this.emitSessions()
     if (!dueForAuto(live, cfg, Date.now())) return
     const pick = pickAnswer(ask, cfg)
     if (!pick) return
     live.autoKey = live.askKey
     live.autoAt = Date.now()
+    // The clock has run out; nothing is pending any more. The next frame recomputes it,
+    // but a countdown left sitting at 0 while the keys land reads as a stuck timer.
+    live.meta.autoAnswerAt = undefined
+    live.meta.autoAnswerN = undefined
     live.autoRun++
     console.info(
       `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`

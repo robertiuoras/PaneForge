@@ -160,6 +160,34 @@ export function dueForAuto(s: AutoAnswerState, cfg: AutoAnswerConfig, now: numbe
   return s.autoRun < cfg.maxRun
 }
 
+/**
+ * WHEN this pane's question will be answered, epoch ms, or 0 for "it will not be".
+ *
+ * `dueForAuto` answers "may I press now" and is what really presses. This is the same
+ * question asked ahead of time, because a press that arrives with no warning is
+ * indistinguishable from the pane answering itself: the countdown on the pane
+ * (`AskCountdown` in `TerminalPane.tsx`) is the whole reason this exists, and the
+ * seconds it shows have to be the seconds the press actually waits.
+ *
+ * So every guard here is `dueForAuto`'s, plus the one it cannot make on its own - that
+ * there IS an option this would pick. A question with no obvious answer is left for a
+ * person, and promising a countdown for it would be a clock that never fires.
+ */
+export function autoAnswerAt(
+  s: AutoAnswerState,
+  cfg: AutoAnswerConfig,
+  ask: PaneAsk | null | undefined
+): number {
+  if (!cfg.enabled || !ask) return 0
+  if (!s.askKey || !s.askSince) return 0
+  if (s.askKey === s.autoKey) return 0
+  if (s.autoRun >= cfg.maxRun) return 0
+  if (!pickAnswer(ask, cfg)) return 0
+  const settled = s.askSince + cfg.waitMs
+  const cooled = s.autoAt ? s.autoAt + PRESS_COOLDOWN_MS : 0
+  return Math.max(settled, cooled)
+}
+
 export interface AutoPick {
   /** The option number to press. */
   n: number
