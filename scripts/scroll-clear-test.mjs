@@ -46,7 +46,7 @@ buildSync({
   platform: 'node',
   outfile: lossFile
 })
-const { screenLost, fileRows } = require_(lossFile)
+const { screenLost, lostRows, fileRows } = require_(lossFile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -214,8 +214,8 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
       await seed(term, k)
       await write(term, k(clear))
       await write(term, k(draw))
-      const filed = snap && screenLost(snap, screenOf(term))
-      if (filed) await write(term, fileRows(snap, term.rows))
+      const filed = Boolean(snap) && screenLost(snap, screenOf(term))
+      if (filed) await write(term, fileRows(lostRows(snap, screenOf(term)), term.rows))
       return { term, snap, filed }
     }
 
@@ -308,6 +308,17 @@ const wipes = (rows, chunks) => {
   )
   eq('a banner on a blank screen lost the screen', screenLost(before, ['   Claude Code v2.1.235', '', '❯ ']), true)
   eq('a screen with nothing on it cannot lose anything', screenLost(['', '  ', ''], ['   Claude Code v2.1.235']), false)
+  // The case between the two, measured off a real pane log: the CLI re-rendering a
+  // scrolling diff loses 13-17 rows of ~39 - a third to a half - because it drew the same
+  // view a few lines further on. Those rows really are gone, and filing them is still
+  // refused: what is on screen mid-render is a torn frame, and a scrollback full of those
+  // is the reported bug from the other side.
+  {
+    const rows = Array.from({ length: 39 }, (_, i) => `line ${i + 1} of the diff being drawn`)
+    const scrolled = rows.slice(15).concat(Array.from({ length: 15 }, (_, i) => `line ${i + 40} of the diff being drawn`))
+    eq('a re-render that scrolled the view files nothing', screenLost(rows, scrolled), false)
+    check('though it can say which rows went', lostRows(rows, scrolled).length === 15)
+  }
   const bytes = fileRows(['first row of the answer', 'second row', '', ''], 10)
   // Two rows printed (one newline between them) and then one scroll each to file them.
   eq('trailing blank rows are not filed', (bytes.match(/\r\n/g) ?? []).length, 3)

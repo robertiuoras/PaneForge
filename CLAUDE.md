@@ -1118,6 +1118,28 @@ terminal loses the lines.
   CARET is between its two rules - without that a markdown separator in an answer reads as
   an input box and swallows every row under it. Pinned by `test:scrollclear`, whose live
   shape is the one Claude Code 2.1.234 really draws (a rule, the line, a rule, the hints).
+- **Then 2.1.235 wiped a third way, and the answer stopped being a list of shapes.**
+  Measured 2026-08-19 off a live `claude` in a real pty: a submitted `/clear` sends `ESC[H`,
+  then `ESC[2K ESC[1B` **29 times**, then `ESC[H` and the banner - an erase-per-row wipe
+  with no `2J`, no `3J` and no `ESC[J` anywhere. Three releases, three byte patterns. What
+  they share is a SHAPE: the cursor sent to the top of the screen with an **erase** as the
+  first thing that happens there. `keepScrollback` reads that shape and REPORTS it; it does
+  not act on it, because the same shape is also an ordinary repaint - one 8.4 MB pane log
+  holds **152** of them. The pane snapshots the screen on the report, and `shared/screenLoss.ts`
+  decides once the redraw has settled: `lostRows` is what the redraw did not put back, and
+  a screen is filed only when **80%+ of it is gone**. Measured on that log, a CLI
+  re-rendering a scrolling diff loses **13, 17 and 15 rows of 39, 39 and 36** (35-44%) and
+  is left alone; a clear loses all of it. Filing the middle case is refused on purpose -
+  mid-render frames are torn, and a scrollback full of those is this bug from the other side.
+- **`arm()` is fed by keystrokes, and a keystroke is one of several ways a clear arrives.**
+  The app's own **Clear** button writes `/clear` straight at the pty, and so does the
+  session menu, a phone typing into a desk pane, and every path in main that types for you -
+  none of which the pane's own `onData` ever sees. Measured in the running app 2026-08-19: a
+  pane cleared by typing kept its screen, the same pane cleared through `api.write` lost it.
+  `paneArmClear` (TerminalPane) is that seam and `clearPane` calls it before a byte goes
+  out. An armed clear files the screen whole, colours and all; an unarmed one is still
+  caught by the wipe check, one step later and in plain text.
+
 - The `2J`/`3J` rewrite stays for
   a CLI that clears unasked, and stands down for 10s after an armed scroll so a `2J` that
   follows one cannot file a screenful of blanks in front of the turn being kept.
