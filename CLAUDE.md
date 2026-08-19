@@ -700,6 +700,30 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
 
+## Finding a setting
+
+The search box above the rail used to filter the RAIL, so it could only ever say which
+PAGE a thing was on - and "close a pane" then meant reading a page of thirty switches. It
+now finds the SETTING: the matching rows are tinted on the right, the best one is scrolled
+to and edged in the accent, and the rail follows it to that tab. Nothing is hidden, which
+is the original rule and still right - a switch read out of the group that explains it is a
+switch nobody can judge.
+
+- **The index is GENERATED from the dialog's own source** (`scripts/settings-index.mjs` ->
+  `src/shared/settingsIndex.ts`, `npm run gen:settings`). A hand-written one is the obvious
+  answer and the wrong one: a setting added later is simply missing from search, silently,
+  and the way anybody finds out is by searching for it and being told nothing matches.
+  `npm run test:settingsearch` regenerates it in memory and fails on any disagreement.
+- **A setting is found by its hint as well as its name.** "Close a pane nobody has touched
+  for a while" is not a phrase anybody types; "idle" and "memory" are, and both are in the
+  sentence under it. A hit on the LABEL still outranks a hint-only one.
+- **The marking is done to the DOM**, not by threading a `highlight` prop through nine tab
+  bodies: the thing being marked is a row that already draws its own name, and that name is
+  what the index took out of this same file. A live reading in brackets is why the match is
+  a prefix test rather than equality.
+- `scrollIntoView` is `nearest`, never `center` - a match already on screen must not scroll
+  the page out from under somebody reading it. No animation: `test:anim`'s rule.
+
 ## A card answers a right-click, and can say what it is
 
 Everything you might do to a pane lived somewhere that was not the card: rename behind a
@@ -1427,6 +1451,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
 | `npm run test:asknotify` | a pane's question on its way to a phone: the message names the pane and keeps the CLI's own numbering, a machine with no bot credentials sends nothing and says so rather than throwing inside a pty read, and the post never asks for updates - which would steal `pf-telegram.mjs`'s poller |
 | `npm run test:askclick` | that a click on a pane holding a live question types nothing into the pty - real mouse input through CDP against a real CLI chooser, with the control that decides whether the test means anything (the same click with no question must still send its arrows) and a red case that types six right arrows without the guard. Needs a window |
+| `npm run test:settingsearch` | that a setting can be FOUND by typing what it does: the index is generated from the dialog's own source, so a setting added without regenerating turns this red rather than being quietly unfindable, and every entry is findable by its own name. The negatives are the rest - a nonsense query marks nothing, a second word narrows, and a reading in brackets ("Terminal font size (13px)") is not part of the name |
 | `npm run test:choices` | reading a live question off a pane's frame and the keys that answer it: two real captured chooser shapes, and the negatives that decide whether it is safe to draw buttons at all - a numbered list in an answer, one somebody quoted back at the agent, a gap in the numbering, and no selection arrow. Plus the byte-level check that the arrows really are escape sequences, because the first version of this file lost its escape in the same edit the source did and passed |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |

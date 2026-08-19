@@ -82,6 +82,8 @@
     "test:autoanswer": "node scripts/auto-answer-test.mjs",
     "test:askclick": "node scripts/ask-click-test.mjs",
     "test:choices": "node scripts/choices-test.mjs",
+    "gen:settings": "node scripts/gen-settings-index.mjs",
+    "test:settingsearch": "node scripts/settings-search-test.mjs",
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",

@@ -40,6 +40,7 @@ const TESTS = [
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['choices', 'choices-test.mjs'],
+  ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],

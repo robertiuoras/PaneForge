@@ -1883,6 +1883,19 @@ button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
 .setting-row .search { flex: 1; }
 .switches { display: flex; flex-direction: column; gap: 2px; }
 
+/* Settings search marks the rows it found rather than hiding the rest: a switch read out
+   of the group that explains it is a switch nobody can judge. The tint is the accent at a
+   low alpha so it reads on both a light and a dark palette; `found-top` is the one the
+   panel scrolled to, and is the only one that gets an edge. No animation - this is drawn
+   while somebody is reading, and `test:anim` refuses a loop that costs a GPU core. */
+.tab-body .found {
+  background: var(--accent-dim);
+  border-radius: 7px;
+  box-shadow: 0 0 0 6px var(--accent-dim);
+}
+.tab-body .found-top { box-shadow: 0 0 0 6px var(--accent-dim), 0 0 0 7px var(--accent); }
+
+
 input[type='range'] {
   -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px;
   background: var(--surface-3); outline: none;

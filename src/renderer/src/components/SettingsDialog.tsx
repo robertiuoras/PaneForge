@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { findSettings } from '@shared/settingsIndex'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
 import { DEFAULT_MASCOT } from '@shared/mascot'
@@ -156,6 +157,7 @@ function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): 
 export default function SettingsDialog({ config, agents, initial, onChange, onClose }: Props): JSX.Element {
   const [tab, setTab] = useState<Tab>(initial ?? 'general')
   const [find, setFind] = useState('')
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
   const [voiceStatus, setVoice] = useState<VoiceStatus | null>(null)
@@ -224,12 +226,61 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
   const setDiscord = (patch: Partial<DiscordStyle>): void =>
     onChange({ discordStyle: { ...config.discordStyle, ...patch } })
 
+  // The settings themselves that the query hits, best first, and the tabs they are on.
+  // The rail alone could only ever say WHICH PAGE a thing is on, so finding a switch still
+  // meant reading a page of switches; these are what get highlighted on the right.
+  const settingHits = findSettings(find)
+  const settingTabs = new Set(settingHits.map((s) => s.tab))
+
   // The current tab is never filtered away, however badly it matches: a rail that removes
   // the entry you are reading leaves a panel on screen with nothing selected beside it.
-  const hits = matches(find)
+  const keyword = matches(find)
+  const hits = find.trim()
+    ? TABS.filter((t) => keyword.includes(t) || settingTabs.has(t.id))
+    : TABS
   const shown = hits.length && !hits.some((t) => t.id === tab)
     ? TABS.filter((t) => t.id === tab || hits.includes(t))
     : hits
+
+  /**
+   * Put the accent on every setting the query hit, and bring the best one into view.
+   *
+   * It is done to the DOM rather than by passing a `highlight` prop down through nine
+   * tab bodies and two child components: the thing being marked is a row somebody is
+   * looking at, and every one of them already draws its own name. Matching is by that
+   * name - a label the index took verbatim out of this same file - and a reading in
+   * brackets ("Terminal font size (14px)") is why it is a prefix test and not equality.
+   *
+   * Nothing is HIDDEN. Filtering the settings would strip controls out of the groups that
+   * explain them, which is how a search turns a settings page into orphaned switches.
+   */
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    for (const el of body.querySelectorAll('.found')) el.classList.remove('found', 'found-top')
+    if (!settingHits.length) return
+
+    const wanted = settingHits.filter((s) => s.tab === tab)
+    if (!wanted.length) return
+    const rows = [...body.querySelectorAll<HTMLElement>('.sw-label, .setting > label')]
+    let top: HTMLElement | null = null
+    for (const hit of wanted) {
+      const row = rows.find((r) => {
+        const text = (r.textContent ?? '').replace(/\s+/g, ' ').trim()
+        return text === hit.label || text.startsWith(hit.label)
+      })
+      if (!row) continue
+      const mark = row.closest<HTMLElement>('.sw-row, .setting') ?? row
+      mark.classList.add('found')
+      if (!top) top = mark
+    }
+    // `nearest` rather than `center`: a match already on screen must not scroll the page
+    // out from under somebody who is reading it.
+    if (top) {
+      top.classList.add('found-top')
+      top.scrollIntoView({ block: 'nearest' })
+    }
+  }, [tab, find, config])
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -250,9 +301,14 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                 const q = e.target.value
                 setFind(q)
                 // Jump as you type: with the rail filtered to one entry, having to then
-                // click it is a second action for a decision already made.
+                // click it is a second action for a decision already made. A hit on a
+                // SETTING wins over one on a tab's keyword list - the query named a
+                // control, so the page holding that control is the one to open.
+                if (!q.trim()) return
+                const best = findSettings(q)[0]
                 const hit = matches(q)
-                if (q.trim() && hit.length && !hit.some((t) => t.id === tab)) setTab(hit[0].id)
+                const page = best ? (best.tab as Tab) : hit.length ? hit[0].id : null
+                if (page && page !== tab) setTab(page)
               }}
             />
             {shown.map((t) => (
@@ -266,9 +322,15 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
               </button>
             ))}
             {!shown.length && <div className="hint nav-empty">Nothing matches "{find}".</div>}
+            {!!settingHits.length && (
+              <div className="hint nav-count">
+                {settingHits.length === 1 ? '1 setting' : `${settingHits.length} settings`} match
+                {settingHits.length === 1 ? 'es' : ''}, marked on the right.
+              </div>
+            )}
           </div>
 
-        <div className="tab-body">
+        <div className="tab-body" ref={bodyRef}>
           {tab === 'appearance' && (
             <AppearanceTab
               theme={config.theme ?? DEFAULT_THEME}
