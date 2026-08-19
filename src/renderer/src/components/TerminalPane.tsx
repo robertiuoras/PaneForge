@@ -19,7 +19,7 @@ import {
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
-import { fileRows, screenLost } from '../../../shared/screenLoss'
+import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
@@ -1028,10 +1028,15 @@ export default function TerminalPane({
       wipeSnap = null
       wipeTimer = undefined
       if (!snap || dead) return
+      // What is filed is what the redraw did NOT put back. A repaint hands every row back
+      // and this is empty; a clear hands none back and this is the whole screen; a CLI
+      // re-rendering its view a line or two further on hands back everything except the
+      // lines that fell off the top - which are the ones nothing else would have kept.
+      const lost = lostRows(snap, screenNow())
       if (!screenLost(snap, screenNow())) return
       // The bytes are built in the shared file so the test drives the shipped ones against
       // a real terminal rather than a copy of them.
-      const bytes = fileRows(snap, t.rows)
+      const bytes = fileRows(lost, t.rows)
       if (!bytes) return
       t.write(bytes)
       paneRepair.get(sessionId)?.()

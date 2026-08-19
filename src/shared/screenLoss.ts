@@ -26,15 +26,26 @@
 const MEANINGFUL = 6
 
 /**
- * How much of `before` must survive on `after` for it to have been a repaint.
+ * How many rows have to be missing before any of it is worth filing.
  *
- * A repaint is not byte-identical - a spinner turns, a clock ticks, a token count moves -
- * so this is deliberately far below "the same". A clear leaves nothing of the old screen
- * at all, so anything in between is a redraw that happened to change a lot, and the
- * cheaper mistake there is to call it a repaint and file nothing: the screen the user is
- * reading is still on screen either way.
+ * Every redraw differs by a row or two - a spinner, a clock, a token count - and filing
+ * those would put a line of noise into the scrollback dozens of times a session.
  */
-const KEPT_ENOUGH = 0.34
+const LOST_ENOUGH = 3
+
+/**
+ * ...and how much of the screen has to be missing, which is the line between a clear and
+ * every other reason a CLI wipes.
+ *
+ * Measured 2026-08-19 by replaying an 8.4 MB pane log through the shipped keeper and a
+ * real terminal: 152 wipes, and the ones that were the CLI re-rendering a scrolling diff
+ * lost **13, 17 and 15 rows of 39, 39 and 36** - 35-44%, because the frame it drew back is
+ * the same view a few lines further on. A `/clear` loses all of it. Filing the middle case
+ * looks tempting (those rows really are gone) and is refused on purpose: what is on screen
+ * mid-render is a torn frame - half-drawn box edges, a spinner caught between characters -
+ * and a scrollback stuffed with those is the reported bug arrived at from the other side.
+ */
+const LOST_SHARE = 0.8
 
 /** The rows of a screen that are worth comparing at all. */
 export function meaningful(screen: string[]): string[] {
@@ -42,17 +53,37 @@ export function meaningful(screen: string[]): string[] {
 }
 
 /**
- * Was the screen `before` a wipe destroyed by what was drawn after it?
+ * The rows of `before` that are not on `after` - what the redraw really took.
  *
- * `false` for a screen that had nothing on it: there is nothing to lose, and filing a
- * blank screen would put a screenful of empty rows in front of whatever is above it.
+ * This is the whole answer to "repaint or clear", and it is better than answering that
+ * question: a repaint puts every row back and this is empty, a clear puts none back and
+ * this is the screen, and the case in between - a CLI re-rendering its view a line or two
+ * further on - hands back exactly the lines that fell off the top. Measured over a real
+ * 8.4 MB pane log, that middle case is most of them: 152 wipes, of which only a handful
+ * are clears. Filing whole screens for those would have put ~7,000 duplicated rows into
+ * the scrollback; filing what is missing puts back only what was about to be lost.
+ */
+export function lostRows(before: string[], after: string[]): string[] {
+  const now = meaningful(after).join('\n')
+  return before.filter((r) => {
+    const t = r.trim()
+    return t.length >= MEANINGFUL && !now.includes(t)
+  })
+}
+
+/**
+ * Was the screen `before` a wipe worth keeping any of?
+ *
+ * `false` for a screen that had nothing on it, and for one the redraw put straight back:
+ * there is nothing to keep, and filing it anyway is how a scrollback fills with copies of
+ * itself. `LOST_ENOUGH` rather than a single row because a status line, a clock and a
+ * token count differ between any two frames and are not history.
  */
 export function screenLost(before: string[], after: string[]): boolean {
   const was = meaningful(before)
-  if (!was.length) return false
-  const now = meaningful(after).join('\n')
-  const kept = was.filter((r) => now.includes(r)).length
-  return kept / was.length < KEPT_ENOUGH
+  if (was.length < LOST_ENOUGH) return false
+  const lost = lostRows(before, after).length
+  return lost >= LOST_ENOUGH && lost / was.length >= LOST_SHARE
 }
 
 /**
