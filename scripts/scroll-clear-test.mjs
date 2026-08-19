@@ -155,10 +155,50 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
 //
 // So `arm()` does the keeping itself, off the submitted line, before the CLI says a word.
 const wipe = (rows) => '\x1b[H\x1b[2K' + '\x1b[1B\x1b[2K'.repeat(rows) + '\x1b[1B\x1b[H'
+// ...and then v2.1.235 sent a third shape, measured 2026-08-19 off a live `claude` in a
+// real pty: `ESC[H` and then every row on the screen erased in place walking down. Three
+// releases, three byte patterns. What they share is a SHAPE - the cursor sent to the top
+// of the screen with an ERASE as the first thing that happens there - and that is what the
+// keeper reads now, so a clear nobody armed (the app's own Clear button, a phone typing
+// into a desk pane, a CLI compacting itself) is kept as well.
 {
   const k = keeper(10)
-  eq('an unarmed repaint is passed through untouched', k(wipe(10)), wipe(10))
-  eq('and so is a cursor-up overdraw, which is all v2.1.233 sends', k('\x1b[6Ax'), '\x1b[6Ax')
+  const out = k(wipe(10))
+  check('a wipe that starts at the top of the screen is filed', out.includes('\x1b[10;1H'), JSON.stringify(out))
+  eq('one newline per row on screen', (out.match(/\r\n/g) ?? []).length, 10)
+  check(
+    'and the wipe itself still runs, on the blank screen it leaves',
+    out.endsWith(wipe(10).slice(wipe(10).indexOf('\x1b[2K'))),
+    JSON.stringify(out)
+  )
+}
+{
+  // The negatives are the whole reason this is keyed on home-then-erase rather than on an
+  // erase: measured over one session log, 58 of 60 erase-per-row repaints were ordinary
+  // redraws of a composer that is standing where it is - no home in front of them.
+  const k = keeper(10)
+  const repaint = '\x1b[2K\x1b[1B\x1b[2K\x1b[1B\x1b[2K'
+  eq('an erase-per-row repaint with no home files nothing', k(repaint), repaint)
+  const drawn = '\x1b[Hhello\x1b[2K'
+  eq('nor does a home that WRITES before it erases', k(drawn), drawn)
+  const moved = '\x1b[H\x1b[4B\x1b[2K'
+  eq('nor a home that has moved off the top row again', k(moved), moved)
+  eq('and a cursor-up overdraw still says nothing, which is all v2.1.233 sends', k('\x1b[6Ax'), '\x1b[6Ax')
+}
+{
+  // Torn where it matters: the home in one chunk and the erase in the next. A wipe read a
+  // byte at a time must still be one wipe.
+  const k = keeper(10)
+  eq('a home on its own emits nothing extra', k('\x1b[H'), '\x1b[H')
+  const out = k('\x1b[2K')
+  check('and the erase that follows it in the next chunk files the screen', out.includes('\x1b[10;1H'), JSON.stringify(out))
+}
+{
+  // One clear, one filing: the 29 row-erases a wipe is made of are not 29 screens.
+  const k = keeper(10)
+  const out = k(wipe(10))
+  eq('a wipe files the screen once', (out.match(/\x1b\[10;1H/g) ?? []).length, 1)
+  eq('and a second wipe inside the stand-down files nothing', k(wipe(10)), wipe(10))
 }
 {
   const k = keeper(10)
