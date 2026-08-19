@@ -12,7 +12,7 @@ import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_RECLAIM } from '../shared/reclaim'
-import { DEFAULT_AUTO_ANSWER } from '../shared/autoAnswer'
+import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
@@ -273,9 +273,9 @@ function defaults(): Config {
     // pane that is idle with an unfinished answer on it, and it stops after three in a row.
     // Off by default would ship a feature whose entire value is that nobody has to notice.
     recover: DEFAULT_RECOVER,
-    // Off. Every question it would press through is one a CLI chose to ask - most often
-    // "may I edit this file" - so shipping it on would answer a permission prompt on a
-    // desk whose owner never asked for that. Settings turns it on in one line.
+    // On, with a five-second countdown on the pane naming the option it is about to press.
+    // The refusals are what make that safe: one plainly-yes option and nothing else, never
+    // one that widens permission, never one that stops. Settings turns it off in one line.
     autoAnswer: DEFAULT_AUTO_ANSWER,
     // On, but it only ever acts on a machine the kernel says is out of memory, and never on
     // a pane that is working or waiting for a person. Closing keeps the History row, the
@@ -338,11 +338,7 @@ export function getConfig(): Config {
       promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
       recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
-      autoAnswer: {
-        ...DEFAULT_AUTO_ANSWER,
-        ...(base.autoAnswer ?? {}),
-        ...(raw.autoAnswer ?? {})
-      },
+      autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
       mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
       reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
       autoHandoff: {
@@ -388,6 +384,33 @@ export function getConfig(): Config {
  * writes it back, which is what keeps a downgrade from losing the key silently. The
  * record wins when both carry something: it is the one the UI edits.
  */
+/**
+ * The one-time move onto autoAnswer's new defaults.
+ *
+ * A changed default cannot reach an existing desk on its own: `defaults()` is WRITTEN to
+ * config.json at first launch, so every install carries `enabled: false` explicitly and a
+ * flip in `DEFAULT_AUTO_ANSWER` would be read as somebody's own choice. `defaultsV2` is the
+ * marker that separates the two, and it is applied once - after this, off stays off.
+ */
+function migrateAutoAnswer(
+  base: AutoAnswerConfig | undefined,
+  raw: AutoAnswerConfig | undefined
+): AutoAnswerConfig {
+  const merged: AutoAnswerConfig = { ...DEFAULT_AUTO_ANSWER, ...(base ?? {}), ...(raw ?? {}) }
+  // The marker is read off the SAVED config, never off the merged one: `DEFAULT_AUTO_ANSWER`
+  // carries it (so a config written from here already has it), and asking the merge whether
+  // it is set therefore answers yes for every config in existence - which is how the first
+  // version of this ran the migration on nothing at all and left this desk exactly as it was.
+  if (raw?.defaultsV2) return merged
+  merged.enabled = DEFAULT_AUTO_ANSWER.enabled
+  // Only the wait nobody could have chosen: there was no control for it before this, so
+  // the old default is a value written by the app and is safe to move. Anything else is a
+  // number somebody typed.
+  if (merged.waitMs === 1200) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+  merged.defaultsV2 = true
+  return merged
+}
+
 function migrateKeys(raw: Partial<Config>): Record<string, string> {
   const out: Record<string, string> = { ...(raw.providerKeys ?? {}) }
   if (!out.openrouter?.trim() && raw.openrouterKey?.trim()) out.openrouter = raw.openrouterKey.trim()

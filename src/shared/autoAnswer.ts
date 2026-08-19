@@ -89,16 +89,34 @@ export interface AutoAnswerConfig {
    * the app talking to itself, which is exactly the shape `recover` guards against too.
    */
   maxRun: number
+  /**
+   * Marker for the one-time default flip, written by `main/config.ts` and read nowhere else.
+   *
+   * This shipped OFF and now ships ON, and a default alone cannot change an existing desk:
+   * every install has `enabled: false` WRITTEN into its config.json, because the defaults are
+   * persisted at first launch. So a config with no marker is one written before the flip and
+   * is moved to the new default once; after that the switch in Settings is the only thing
+   * that decides, and turning it off stays off through every later update.
+   */
+  defaultsV2?: boolean
 }
 
 export const DEFAULT_AUTO_ANSWER: AutoAnswerConfig = {
-  // Off, and it ships off. Every question this presses through is one a CLI decided to
-  // ask - most often "may I edit this file" - so arriving switched on with an update
-  // would answer a permission prompt on a desk whose owner never asked for it.
-  enabled: false,
+  // On. It was off for exactly one reason - "arriving switched on with an update would
+  // answer a permission prompt on a desk whose owner never asked for it" - and the answer
+  // to that is the countdown, not silence: the pane now says WHICH option is about to be
+  // pressed and how many seconds are left, and pressing any other button, or arrowing at
+  // the desk, cancels it. Every refusal below is unchanged, and they are the feature: one
+  // plainly-yes option and nothing else, never an option that widens permission, never one
+  // that stops. A question with no obvious answer still waits for a person for ever.
+  enabled: true,
   anyQuestion: false,
-  waitMs: 1200,
-  maxRun: 12
+  // Five seconds rather than 1.2: the wait is the window in which somebody who disagrees
+  // reaches the pane, and while this was off by default that window only had to satisfy
+  // whoever went looking for the setting. On by default it has to be long enough to READ.
+  waitMs: 5000,
+  maxRun: 12,
+  defaultsV2: true
 }
 
 /**

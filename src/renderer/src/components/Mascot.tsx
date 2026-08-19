@@ -14,9 +14,10 @@
 //   - It is drawn in `currentColor` and the theme's own variables, never a literal, so it
 //     re-tints with the accent like every other colour in this window (`shared/theme.ts`).
 //
-// The sprite is the app's own icon geometry: three panes, the middle one wearing the
-// face. It is a character made of the thing it looks after rather than a mascot bought
-// in from somewhere, which is also why it needs no asset - it is ~40 lines of SVG.
+// The sprite is a fox, drawn in `currentColor` shades so it re-tints with the accent like
+// everything else in this window. It needs no asset - it is ~40 lines of SVG - and every
+// moving part of it is a transform or an opacity, which is what `npm run test:anim`
+// refuses to let anybody undo.
 
 import {
   useCallback,
@@ -73,6 +74,18 @@ const HOME: Spot = { x: 0.06, y: 0.86 }
 const WANDER_MS = 24_000
 /** Below this the gesture was a press, not a drag. A finger is never still. */
 const DRAG_SLOP = 4
+/**
+ * The run along the bottom of the window: how long it takes, and how rarely it happens.
+ *
+ * It is scenery and nothing else - it says nothing, points at nothing and is the one thing
+ * here that is not a reading - so it is deliberately rare and it stands down the moment it
+ * would be in the way: something to say, the bubble open, a spot somebody dragged it to, or
+ * `roam` off. Same law as the walk: one composited `left` transition, no repaint per frame.
+ */
+const DASH_MS = 5200
+const DASH_EVERY_MS = 150_000
+/** The lane it runs in, as a fraction of the window height - under every card, over nothing. */
+const DASH_Y = 0.955
 
 export default function Mascot(props: MascotProps): JSX.Element | null {
   const cfg = { ...DEFAULT_MASCOT, ...props.config }
@@ -83,6 +96,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [blink, setBlink] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // The run: 'port' is the frame in which it is placed at the starting edge with no
+  // transition at all (a 5s crawl to the start line is not a run), 'go' is the run itself.
+  const [dash, setDash] = useState<{ dir: 'right' | 'left'; phase: 'port' | 'go' } | null>(null)
+  const dashDir = useRef<'right' | 'left'>('right')
+  const dashTimers = useRef<number[]>([])
   const said = useRef(new Set<string>())
   const input = useRef<HTMLInputElement | null>(null)
   // A drag ends in a `click` on the same element, so the press that opens the bubble has
@@ -180,11 +198,53 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     return () => window.clearInterval(t)
   }, [cfg.enabled])
 
+  /** Stop a run where it is: a drag, something to say, or the component going away. */
+  const endDash = useCallback(() => {
+    for (const t of dashTimers.current) window.clearTimeout(t)
+    dashTimers.current = []
+    setDash(null)
+  }, [])
+
+  // The run along the bottom. Every refusal below is the walk's, plus one of its own: it
+  // never runs while there is a bubble up, because the sprite is then the thing being read.
+  useEffect(() => {
+    if (!cfg.enabled || !cfg.roam || pinned) return
+    const t = window.setInterval(() => {
+      if (bubble || open || dragging || dash) return
+      const dir = dashDir.current
+      dashDir.current = dir === 'right' ? 'left' : 'right'
+      setDash({ dir, phase: 'port' })
+      setSpot({ x: dir === 'right' ? 0.04 : 0.96, y: DASH_Y })
+      // Two frames, not one: the port has to be PAINTED with the transition off, or the
+      // browser coalesces both writes and the sprite slides to the start line instead.
+      dashTimers.current.push(
+        window.setTimeout(() => {
+          setDash({ dir, phase: 'go' })
+          setSpot({ x: dir === 'right' ? 0.96 : 0.04, y: DASH_Y })
+        }, 60),
+        window.setTimeout(() => {
+          setDash(null)
+          setSpot(HOME)
+        }, DASH_MS + 120)
+      )
+    }, DASH_EVERY_MS)
+    return () => {
+      window.clearInterval(t)
+      endDash()
+    }
+  }, [cfg.enabled, cfg.roam, pinned, bubble, open, dragging, dash, endDash])
+
+  // Anything with words in it beats the scenery - a sprite mid-run cannot be read.
+  useEffect(() => {
+    if (bubble || open) endDash()
+  }, [bubble, open, endDash])
+
   // The drag itself. Pointer events, so a mouse, a pen and a touch are one path, and the
   // pointer is CAPTURED - without it a fast drag leaves the sprite behind the moment the
   // cursor is over a terminal, and the pane gets the rest of the gesture.
   const onDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return
+    endDash()
     // The GRAB offset, not the pointer. `left/top` place the sprite's centre, so writing
     // the raw pointer there teleports it under the cursor on the first millimetre of the
     // gesture and drops it half a sprite away from where it was let go.
@@ -205,7 +265,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     } catch {
       // no capture, still draggable while the pointer is over the sprite
     }
-  }, [])
+  }, [endDash])
 
   const onMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
     const d = drag.current
@@ -272,7 +332,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   return (
     <div className="mascot-layer" aria-hidden={false}>
       <div
-        className={'mascot' + (dragging ? ' dragging' : '')}
+        className={
+          'mascot' +
+          (dragging ? ' dragging' : '') +
+          (dash ? (dash.phase === 'port' ? ' dash-port' : ' dashing') : '')
+        }
         style={{ left: `${spot.x * 100}%`, top: `${spot.y * 100}%` }}
         data-open={open ? '1' : '0'}
       >
@@ -336,7 +400,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           </div>
         )}
         <button
-          className={'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '')}
+          className={
+            'mascot-body' +
+            (blink ? ' blink' : '') +
+            (dragging ? ' dragging' : '') +
+            (dash ? ' running' : '') +
+            (dash?.dir === 'left' ? ' face-left' : '')
+          }
           title="Ask about this machine - drag to move it"
           onPointerDown={onDown}
           onPointerMove={onMove}
@@ -352,59 +422,72 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               e.preventDefault()
               return
             }
-            setOpen((v) => !v)
-            if (!bubble) say({ say: 'Ask me - "what is pane 3", "close the idle ones".', key: 'greet' })
+            // A press closes whatever is up, whichever half of it is up. Toggling `open`
+            // alone left a notice bubble on screen with no way to dismiss it from the
+            // sprite, which reads as the press not working.
+            if (open || bubble) {
+              setOpen(false)
+              setBubble(null)
+              return
+            }
+            setOpen(true)
+            say({ say: 'Ask me - "what is pane 3", "close the idle ones".', key: 'greet' })
           }}
         >
           <svg viewBox="0 0 64 64" width="46" height="46" aria-hidden="true">
-            {/* Still the app's own three-pane geometry - the outer two are the project,
-                the middle one is the chassis wearing the face - but grown into a machine:
-                a visor instead of eyes on a rectangle, vent slats, feet, and an ember on
-                the antenna. Every fill is derived from `currentColor` (the accent) so it
-                re-tints with the theme, and the shadow sits OUTSIDE the bobbing group so
-                it squashes against a ground that does not move. */}
-            <ellipse className="m-shadow" cx="32" cy="59.5" rx="14" ry="2.4" />
+            {/* A fox, in four shades all mixed from `currentColor` (the accent) rather than
+                from a surface variable: the sprite has to keep its own light-to-dark reading
+                on a light theme (Paper) as well as on a dark one, and a surface-derived fill
+                inverts between the two.
+
+                The ground shadow sits OUTSIDE the bobbing group so it squashes against a
+                ground that does not move - a shadow that rises with the body reads as a
+                sticker rather than a lift. The tail sways and the legs only move while it is
+                running, and both are transforms, which is the one thing an infinite loop here
+                is allowed to touch. */}
+            <ellipse className="m-shadow" cx="32" cy="60" rx="15" ry="2.4" />
             <g className="m-bob">
-              <g className="m-side">
-                <rect className="m-deep" x="3" y="19" width="12.5" height="33" rx="3.6" />
-                <rect className="m-void" x="5" y="21" width="8.5" height="29" rx="2.4" />
-                <rect className="m-ln" x="6.4" y="24.5" width="5.6" height="1.4" rx="0.7" />
-                <rect className="m-ln" x="6.4" y="28.5" width="4.2" height="1.4" rx="0.7" />
-                <rect className="m-ln" x="6.4" y="32.5" width="5" height="1.4" rx="0.7" />
+              {/* Tail first, so the body overlaps its root. Its own group so the sway
+                  pivots at the hip rather than at the tip. */}
+              <g className="m-tail">
+                <path
+                  className="m-fur"
+                  d="M23 47 C12 48 4 41 6 31 C7 25 12 21 15 21 C13 27 13 33 17 37 C19 40 21 42 25 43 Z"
+                />
+                <path className="m-fur-l" d="M15 21 C13 27 13 33 17 37 C13 34 10 27 12 22 Z" />
               </g>
-              {/* Mirrored rather than drawn twice: x maps to 64 - x. */}
-              <g className="m-side" transform="translate(64,0) scale(-1,1)">
-                <rect className="m-deep" x="3" y="19" width="12.5" height="33" rx="3.6" />
-                <rect className="m-void" x="5" y="21" width="8.5" height="29" rx="2.4" />
-                <rect className="m-ln" x="6.4" y="24.5" width="5.6" height="1.4" rx="0.7" />
-                <rect className="m-ln" x="6.4" y="28.5" width="4.2" height="1.4" rx="0.7" />
-                <rect className="m-ln" x="6.4" y="32.5" width="5" height="1.4" rx="0.7" />
+              {/* Legs. Static and tucked under the body while it stands; the run is a
+                  rotate on each of these, out of phase. */}
+              <g className="m-legs">
+                <rect className="m-leg m-fur-d" x="24" y="48" width="5.4" height="10" rx="2.6" />
+                <rect className="m-leg m-fur-d" x="35" y="48" width="5.4" height="10" rx="2.6" />
               </g>
-              <path className="m-ant" d="M32 9 V4.6" />
-              <circle className="m-bead" cx="32" cy="3" r="2.1" />
-              <rect className="m-mid" x="18.5" y="9" width="27" height="45" rx="7.5" />
-              <rect className="m-shell" x="20.4" y="11" width="23.2" height="41" rx="6" />
-              <rect className="m-void" x="22" y="15.5" width="20" height="14" rx="5.5" />
-              {/* The scanline is clipped to the visor, so the loop is one translate. */}
-              <clipPath id="pf-mascot-visor">
-                <rect x="22" y="15.5" width="20" height="14" rx="5.5" />
-              </clipPath>
-              <g clipPath="url(#pf-mascot-visor)">
-                <rect className="m-scan" x="22" y="13" width="20" height="3.4" />
-              </g>
+              <path
+                className="m-fur"
+                d="M32 24 C41 24 46 34 46 44 C46 52 40 56 32 56 C24 56 18 52 18 44 C18 34 23 24 32 24 Z"
+              />
+              {/* Chest ruff: the one big light shape, and what keeps the silhouette
+                  readable at 46px on a dark theme. */}
+              <path className="m-fur-l" d="M32 33 C37 33 40 41 40 47 C40 53 36 55 32 55 C28 55 24 53 24 47 C24 41 27 33 32 33 Z" />
+              {/* Ears, behind the head so the head's curve cuts their base. */}
+              <path className="m-fur" d="M20.5 15 L17.5 4 L28.5 10.5 Z" />
+              <path className="m-fur-d" d="M21.5 14 L20 7.5 L26 11.5 Z" />
+              <path className="m-fur" d="M43.5 15 L46.5 4 L35.5 10.5 Z" />
+              <path className="m-fur-d" d="M42.5 14 L44 7.5 L38 11.5 Z" />
+              <path
+                className="m-fur"
+                d="M32 8 C42 8 47.5 15 47.5 23 C47.5 31.5 40.5 37.5 32 37.5 C23.5 37.5 16.5 31.5 16.5 23 C16.5 15 22 8 32 8 Z"
+              />
+              {/* Muzzle and cheeks - one shape, so there is no seam to misalign. */}
+              <path
+                className="m-fur-l"
+                d="M32 22 C37.5 22 41 26 41 30.5 C41 35 37 37.5 32 37.5 C27 37.5 23 35 23 30.5 C23 26 26.5 22 32 22 Z"
+              />
               <g className="m-eyes">
-                <rect x="26" y="19.8" width="3.6" height="5.4" rx="1.8" />
-                <rect x="34.4" y="19.8" width="3.6" height="5.4" rx="1.8" />
+                <ellipse cx="26" cy="23" rx="2" ry="2.6" />
+                <ellipse cx="38" cy="23" rx="2" ry="2.6" />
               </g>
-              <rect className="m-void" x="26.5" y="33" width="11" height="5.6" rx="2.2" />
-              <g className="m-grille">
-                <rect x="28.2" y="34.5" width="7.6" height="1" rx="0.5" />
-                <rect x="28.2" y="36.4" width="7.6" height="1" rx="0.5" />
-              </g>
-              <rect className="m-vent" x="24" y="43.4" width="16" height="1.5" rx="0.75" />
-              <rect className="m-vent" x="24" y="46.6" width="16" height="1.5" rx="0.75" />
-              <rect className="m-deep" x="22.5" y="53" width="7" height="3.4" rx="1.7" />
-              <rect className="m-deep" x="34.5" y="53" width="7" height="3.4" rx="1.7" />
+              <ellipse className="m-nose" cx="32" cy="30" rx="2.4" ry="1.9" />
             </g>
           </svg>
         </button>

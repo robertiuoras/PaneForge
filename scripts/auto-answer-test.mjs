@@ -46,6 +46,8 @@ const ask = (selected, ...labels) => ({
   options: labels.map((label, i) => ({ n: i + 1, label }))
 })
 const ON = { ...DEFAULT_AUTO_ANSWER, enabled: true }
+// It ships ON now, so "off" is a config somebody switched off rather than the default.
+const OFF = { ...DEFAULT_AUTO_ANSWER, enabled: false }
 const ANY = { ...ON, anyQuestion: true }
 
 // ---------------------------------------------------------------------------
@@ -108,9 +110,17 @@ ok('the resume prompt continues', () => {
 // The refusals.
 // ---------------------------------------------------------------------------
 ok('off answers nothing', () => {
-  assert.equal(pickAnswer(PERMISSION, DEFAULT_AUTO_ANSWER), null)
-  assert.equal(DEFAULT_AUTO_ANSWER.enabled, false, 'it ships off')
-  assert.equal(DEFAULT_AUTO_ANSWER.anyQuestion, false)
+  assert.equal(pickAnswer(PERMISSION, OFF), null)
+})
+
+ok('what it ships as', () => {
+  // On, with a wait long enough to READ the countdown - that pane-side clock is the whole
+  // reason this may be on by default. `anyQuestion` stays off: that one answers questions
+  // somebody is being asked to DECIDE.
+  assert.equal(DEFAULT_AUTO_ANSWER.enabled, true, 'it ships on')
+  assert.equal(DEFAULT_AUTO_ANSWER.anyQuestion, false, 'the wider one stays off')
+  assert.ok(DEFAULT_AUTO_ANSWER.waitMs >= 3000, 'the wait is readable, not a formality')
+  assert.equal(DEFAULT_AUTO_ANSWER.defaultsV2, true, 'the migration marker is set')
 })
 
 ok('a design question waits for a person', () => {
@@ -166,7 +176,7 @@ const state = (over = {}) => ({
 ok('a question is answered once it has settled, and not before', () => {
   assert.equal(dueForAuto(state(), ON, T + ON.waitMs - 1), false)
   assert.equal(dueForAuto(state(), ON, T + ON.waitMs), true)
-  assert.equal(dueForAuto(state(), DEFAULT_AUTO_ANSWER, T + 60_000), false, 'off is off')
+  assert.equal(dueForAuto(state(), OFF, T + 60_000), false, 'off is off')
 })
 
 ok('the arrow moving restarts the wait', () => {
@@ -189,7 +199,10 @@ ok('the same question is never pressed twice', () => {
 ok('a press is not followed by another while its own keys are still landing', () => {
   // This is the race the arrow-inclusive signature used to open: our own arrows change
   // the frame, which restarts the settle clock, which lets a second sequence interleave.
-  const mid = state({ askKey: 'k2', askSince: T, autoKey: 'k1', autoAt: T })
+  // The question is already settled by T, so the cooldown is the ONLY thing left holding
+  // the press - which is what this case is about. Written with `askSince: T` it silently
+  // measured the settle instead the moment the shipped wait grew past the cooldown.
+  const mid = state({ askKey: 'k2', askSince: T - ON.waitMs, autoKey: 'k1', autoAt: T })
   assert.equal(dueForAuto(mid, ON, T + PRESS_COOLDOWN_MS - 1), false)
   assert.equal(dueForAuto(mid, ON, T + PRESS_COOLDOWN_MS), true)
 })
@@ -260,7 +273,10 @@ ok('the countdown is the settle window, and it agrees with the presser', () => {
 })
 
 ok('a cooldown still running pushes the clock out, not just the press', () => {
-  const s = state({ askKey: askKeyOf(PERMISSION), askSince: T, autoAt: T + 500 })
+  // Settled before T, so the cooldown is the later of the two and is what the clock has to
+  // show. With `askSince: T` this case measured the settle instead the moment the shipped
+  // wait grew past the cooldown - a green test about the wrong number.
+  const s = state({ askKey: askKeyOf(PERMISSION), askSince: T - ON.waitMs, autoAt: T + 500 })
   const at = autoAnswerAt(s, ON, PERMISSION)
   assert.equal(at, T + 500 + PRESS_COOLDOWN_MS)
   assert.equal(dueForAuto(s, ON, at), true)
@@ -268,7 +284,7 @@ ok('a cooldown still running pushes the clock out, not just the press', () => {
 
 ok('no clock is drawn for anything that will not be pressed', () => {
   const s = () => state({ askKey: askKeyOf(PERMISSION), askSince: T })
-  assert.equal(autoAnswerAt(s(), DEFAULT_AUTO_ANSWER, PERMISSION), 0, 'the setting is off')
+  assert.equal(autoAnswerAt(s(), OFF, PERMISSION), 0, 'the setting is off')
   assert.equal(autoAnswerAt(s(), ON, null), 0, 'there is no question')
   // The one this exists for: a question with no obvious answer is LEFT for a person, and
   // a countdown over it would be a clock that never fires - which reads as the app having

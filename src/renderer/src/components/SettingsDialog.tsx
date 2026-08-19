@@ -602,6 +602,36 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     hint="A question with several real answers ('which of these three shapes?') is a decision you are being asked to make, so by default it waits for you. On, the app takes the row the CLI's own arrow is already on - its preference, not one invented here - and keeps the run moving. The two refusals above still hold."
                   />
                 )}
+                {config.autoAnswer?.enabled === true && (
+                  <div className="setting">
+                    <label>Wait before answering</label>
+                    <Select
+                      value={String(config.autoAnswer?.waitMs ?? DEFAULT_AUTO_ANSWER.waitMs)}
+                      onChange={(v) =>
+                        onChange({
+                          autoAnswer: {
+                            ...DEFAULT_AUTO_ANSWER,
+                            ...config.autoAnswer,
+                            waitMs: Number(v)
+                          }
+                        })
+                      }
+                      menuWidth={260}
+                      options={[
+                        { value: '1200', label: '1.2 seconds', hint: 'barely a pause' },
+                        { value: '3000', label: '3 seconds' },
+                        { value: '5000', label: '5 seconds' },
+                        { value: '10000', label: '10 seconds' },
+                        { value: '30000', label: '30 seconds', hint: 'plenty of time to disagree' }
+                      ]}
+                    />
+                    <span className="hint">
+                      The pane counts this down on the question itself and names the option it is
+                      about to press, so an answer never arrives out of nowhere. Pressing any
+                      button, or arrowing at the desk, cancels it.
+                    </span>
+                  </div>
+                )}
                 <Switch
                   checked={config.confirmClose}
                   onChange={(v) => onChange({ confirmClose: v })}
