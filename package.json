@@ -85,6 +85,7 @@
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
+    "test:mascot": "node scripts/mascot-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",
     "test:autohandoff": "node scripts/autohandoff-test.mjs",
     "test:idlequit": "node scripts/idlequit-test.mjs",

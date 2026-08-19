@@ -90,12 +90,24 @@ function paneNumbers(text: string): number[] {
   return out
 }
 
-/** Panes whose name the sentence names. Longest name first, so a substring cannot win. */
+/**
+ * Panes whose name the sentence names.
+ *
+ * Longest first, and a name CONTAINED in one already matched is dropped: "close service-a"
+ * names `service` too, and answering it with both panes is either a refusal or - worse -
+ * a close of somebody else's project for the price of a hyphen. `place.ts` has the same
+ * hazard and resolves it the same way.
+ */
 function byName(text: string, panes: MascotPane[]): MascotPane[] {
   const low = text.toLowerCase()
-  return [...panes]
-    .sort((a, b) => b.name.length - a.name.length)
-    .filter((p) => p.name.length >= 3 && low.includes(p.name.toLowerCase()))
+  const hit: MascotPane[] = []
+  for (const p of [...panes].sort((a, b) => b.name.length - a.name.length)) {
+    const n = p.name.toLowerCase()
+    if (p.name.length < 3 || !low.includes(n)) continue
+    if (hit.some((h) => h.name.toLowerCase().includes(n))) continue
+    hit.push(p)
+  }
+  return hit
 }
 
 /** How the mascot refers to a pane in a sentence: the number is the keystroke that reaches it. */
@@ -194,6 +206,15 @@ export function parse(text: string, panes: MascotPane[]): Intent {
   }
 
   if (hit.length) return { kind: 'report', ids: hit.map((p) => p.id), say: hit.map(paneLine).join('\n') }
+
+  // A description that matched nothing is answered as itself. Falling through to the
+  // catch-all made "what are the two biggest" on a desk with no panes read as "I did not
+  // understand", which is the wrong half of the answer: it understood perfectly.
+  if (wantsBig || wantsIdle)
+    return {
+      kind: 'say',
+      say: panes.length ? 'Nothing on this desk fits that.' : 'No panes open here.'
+    }
 
   if (/\b(memory|ram|total|how much|usage|resources)\b/.test(low)) {
     const known = panes.filter((p) => p.memMb !== null)

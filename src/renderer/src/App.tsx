@@ -28,6 +28,7 @@ import { PaneMenu } from './components/PaneMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
+import Mascot from './components/Mascot'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
@@ -74,6 +75,7 @@ import {
   type OffloadStick,
   type Verdict
 } from '../../shared/capacity'
+import { DEFAULT_MASCOT, type MascotConfig, type MascotPane } from '../../shared/mascot'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
 import {
   autoHandoffPlan,
@@ -334,6 +336,15 @@ export default function App(): JSX.Element {
   // Read from inside listeners that outlive a render - the draft watcher below fires on
   // every keystroke and must not re-subscribe each time the session list changes.
   const sessionsRef = useRef<Session[]>([])
+  /**
+   * "pane 3" for a session id, numbered off the same list the sidebar numbers and
+   * Ctrl+3 reaches. A ref because the sweeps that use it run from timers holding no
+   * render's closure, and a stale name here would point at the wrong card.
+   */
+  const paneWordRef = useRef((id: string) => {
+    const i = sessionsRef.current.findIndex((x) => x.id === id)
+    return i < 0 ? 'a pane' : `pane ${i + 1}`
+  })
   sessionsRef.current = sessions
   /**
    * Last input anywhere in the app that did NOT go into a pane's pty - a click, a drag,
@@ -1730,6 +1741,14 @@ export default function App(): JSX.Element {
    * is running" rather than "not measured yet".
    */
   const [usage, setUsage] = useState<UsageReport | null>(null)
+  /**
+   * What the ladder did on its own, for the mascot to say. It is a fact with a timestamp
+   * rather than a message queue: the mascot keys off `at`, so the same sweep is announced
+   * once however often this component re-renders.
+   */
+  const [acted, setActed] = useState<
+    { what: 'closed' | 'moved' | 'trimmed'; panes: string[]; mb?: number; at: number } | undefined
+  >(undefined)
   useEffect(() => {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
@@ -1998,6 +2017,13 @@ export default function App(): JSX.Element {
       void api.killSession(p.id)
     }
     console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
+    if (plan.length)
+      setActed({
+        what: 'closed',
+        panes: plan.map((p) => paneWordRef.current(p.id)),
+        mb: reclaimedMb(plan),
+        at: Date.now()
+      })
   }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
 
   /**
@@ -2033,6 +2059,15 @@ export default function App(): JSX.Element {
         )
         void api.killSession(p.id)
       }
+      // ...and out loud. This sweep has closed panes into a console nobody has open
+      // since it shipped; the mascot is the only thing that ever says it happened.
+      if (plan.length)
+        setActed({
+          what: 'closed',
+          panes: plan.map((p) => paneWordRef.current(p.id)),
+          mb: reclaimedMb(plan),
+          at: Date.now()
+        })
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -2989,6 +3024,26 @@ export default function App(): JSX.Element {
         })
     }),
     [config?.hiddenBlurbs, patchConfig]
+  )
+
+  /**
+   * What the mascot is allowed to know: the sidebar's own numbering, the words `place.ts`
+   * already worked out, the state `fleet.ts` already decided, and the memory the sampler
+   * already read. Nothing here is computed for it, which is why it costs no request and
+   * cannot disagree with the rest of the window.
+   */
+  const mascotPanes: MascotPane[] = useMemo(
+    () =>
+      sessions.map((s, i) => ({
+        id: s.id,
+        pane: i + 1,
+        name: projectNameOf(s.cwd) || s.title,
+        state: fleetState(s),
+        memMb: usage?.panes[s.id]?.rssMb ?? null,
+        idleMs: Math.max(0, Date.now() - (s.lastKeyboard || s.createdAt || Date.now())),
+        remote: !!s.remote
+      })),
+    [sessions, usage]
   )
 
   return (
@@ -4504,6 +4559,34 @@ export default function App(): JSX.Element {
           and offered Approve to the one screen that cannot check the digits against the
           desk. The desk decides. */}
       {phone?.ask && !isPhoneClient() && <PhoneAsk ask={phone.ask} />}
+      {/* The face on the resource ladder. Everything it may do is in shared/mascot.ts;
+          this passes it the readings and the two actions, and nothing else. */}
+      <Mascot
+        panes={mascotPanes}
+        config={config?.mascot ?? DEFAULT_MASCOT}
+        idleCloseOn={(config?.reclaim?.idleCloseMinutes ?? 0) > 0}
+        acted={acted}
+        onReveal={(id) => setActiveId(id)}
+        onClose={(ids) => {
+          for (const id of ids) void api.killSession(id)
+        }}
+        onHandoff={(ids) => {
+          // It never picks WHICH machine - that is the one question the hand-off box
+          // exists to ask, and a mascot guessing it would move a pane to a desk nobody
+          // is at. It opens the box with the panes already chosen.
+          const first = sessions.find((x) => x.id === ids[0])
+          if (!first) return
+          setHandoff({
+            ids,
+            title: first.lane ? `lane ${first.lane}` : first.title,
+            busy: first.status === 'working' || first.status === 'starting',
+            asking: Boolean(first.ask)
+          })
+        }}
+        onConfig={(patch: Partial<MascotConfig>) =>
+          void api.setConfig({ mascot: { ...DEFAULT_MASCOT, ...config?.mascot, ...patch } })
+        }
+      />
       <UpdateToast />
     </div>
     </BlurbContext.Provider>

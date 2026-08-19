@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
+import { DEFAULT_MASCOT } from '@shared/mascot'
 import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
@@ -463,6 +464,24 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     }
                     label="...and move a quiet one over there even when there is still room"
                     hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
+                  />
+                )}
+                <Switch
+                  checked={config.mascot?.enabled !== false}
+                  onChange={(v) =>
+                    onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, enabled: v } })
+                  }
+                  label="Let the little one keep an eye on this machine"
+                  hint="Everything above happens silently - panes are trimmed, moved and closed by three timers whose only output is a line in a console nobody has open. This is the face on them: it walks to the pane it is talking about, says what was done in a bubble, and offers a press before anything is closed. It answers typed questions about this window too - 'what are the two biggest', 'close the idle ones', 'what is pane 3' - out of readings the app already holds, with no model and no request to anywhere. It never takes focus, never opens a dialog, and it is silent until you press the speaker on its bubble."
+                />
+                {config.mascot?.enabled !== false && (
+                  <Switch
+                    checked={config.mascot?.roam !== false}
+                    onChange={(v) =>
+                      onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, roam: v } })
+                    }
+                    label="...and let it wander over to the pane it means"
+                    hint="Walking to the card is how it says WHICH pane without you reading an id. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
                   />
                 )}
                 <Switch

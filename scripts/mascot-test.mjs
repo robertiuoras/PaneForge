@@ -148,6 +148,17 @@ const desk = [
 }
 
 {
+  // A description it understood but that matched nothing is not the same as a sentence it
+  // could not read, and answering both with "I did not understand" throws away the half
+  // that was right - measured in a real window, on a desk with no panes open.
+  const none = parse('what are the two biggest', [])
+  eq('a description on an empty desk says so', none.kind, 'say')
+  check('and does not claim to be confused', /No panes open/.test(none.say), none.say)
+  const cold = parse('close the idle ones', [pane({ state: 'working', idleMs: 0 })])
+  check('nothing quiet enough is its own answer', /Nothing quiet enough/.test(cold.say), cold.say)
+}
+
+{
   eq('an empty line asks rather than acts', parse('   ', desk).kind, 'say')
   eq('and so does something it cannot read', parse('write me a poem', desk).kind, 'say')
   check('help lists what it knows', /close the idle ones/.test(parse('help', desk).say))

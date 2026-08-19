@@ -48,6 +48,7 @@ const TESTS = [
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
+  ['mascot', 'mascot-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],

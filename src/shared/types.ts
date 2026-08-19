@@ -4,6 +4,7 @@
 import type { AttachIn, AttachResult } from './attach'
 import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
+import type { MascotConfig } from './mascot'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
 import type { ReclaimConfig } from './reclaim'
@@ -1489,6 +1490,11 @@ export interface Config {
    * Close idle panes when this machine runs out of memory - see shared/reclaim.ts.
    * Optional so a config written by an older build still loads.
    */
+  /**
+   * The face on the resource ladder - src/shared/mascot.ts. Optional so a config written
+   * by an older build still loads.
+   */
+  mascot?: MascotConfig
   reclaim?: ReclaimConfig
   /**
    * Move finished panes to a paired device when this machine runs out of memory, rather
