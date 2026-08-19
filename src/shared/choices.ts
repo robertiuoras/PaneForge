@@ -50,6 +50,27 @@ const FOOTER = /^\s*(?:.*·\s*)?Enter to (?:select|confirm|choose)\b/im
 /** `❯ 1. Label`, `  2. Label`. The arrow is optional; exactly one line carries it. */
 const OPTION = /^(\s*)(❯\s*|>\s*)?(\d{1,2})\.\s*(\S.*)$/
 
+/**
+ * A side-by-side PREVIEW column, cut off the end of a row.
+ *
+ * Claude Code's AskUserQuestion draws previews (an ASCII mockup, a code snippet) in a
+ * panel to the RIGHT of the option list, so one terminal row carries the option AND a
+ * slice of somebody else's box: `1. Pane sprite (Recommended)    | ## |`. That slice is
+ * not part of the label - it reached the buttons and the Telegram message as a row of
+ * box characters that means nothing without the other rows around it.
+ *
+ * Cut at the first run of blanks followed by a box or block character: a real label is
+ * one phrase and never contains those, and the gutter between the two columns is always
+ * at least two spaces wide.
+ */
+const PREVIEW = /\s{2,}[│|┌┐└┘├┤┬┴┼─━═╭╮╰╯█▀▄▌▐░▒▓▏▕].*$/
+
+/** A row with its preview column removed, or the row unchanged when the cut empties it. */
+function stripPreview(line: string): string {
+  const cut = line.replace(PREVIEW, '').trim()
+  return cut || line.trim()
+}
+
 /** Box drawing, rules and the like: never a question, whatever else is on the line. */
 const RULE = /^[\s─━═\-_·|┌┐└┘├┤┬┴┼]*$/
 
@@ -104,7 +125,8 @@ export function readAsk(text: string): PaneAsk | null {
       const n = Number(m[3])
       // First sighting wins going up, so a row repainted higher in the frame cannot
       // replace the one nearest the footer.
-      if (!found.has(n)) found.set(n, { label: m[4].trim(), arrow: Boolean(m[2]), line: i })
+      if (!found.has(n))
+        found.set(n, { label: stripPreview(m[4]), arrow: Boolean(m[2]), line: i })
       top = i
       continue
     }
@@ -162,7 +184,7 @@ export function readAsk(text: string): PaneAsk | null {
     // A CLI that draws its question inside a box leaves the frame's own gutter on every
     // row, and that gutter is not the question: it reached the buttons, the card's hover
     // and the Telegram message as a literal `|` at the start of each line.
-    q.unshift(line.trim().replace(/^[│|]\s?/, ''))
+    q.unshift(stripPreview(line.replace(/^\s*[│|]\s?/, '')))
   }
 
   return { question: q.join(' ').trim(), options, selected: arrows[0] }

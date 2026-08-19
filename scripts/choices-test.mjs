@@ -305,5 +305,43 @@ ok('a question that was replaced mid-answer stops the rest of the keys', () => {
   assert.ok(!sameAsk(first, null), 'and a question that went away must not either')
 })
 
+// ---------------------------------------------------------------------------
+// Real frame: AskUserQuestion with PREVIEWS. The widget switches to a two-column
+// layout - options on the left, the focused option's ASCII preview in a panel on
+// the right - so every option row also carries a slice of that panel. Captured
+// off the mascot question on 2026-08-19, whose Telegram message read
+// `1. Pane sprite (Recommended)    +------------------+`.
+// ---------------------------------------------------------------------------
+const ASK_PREVIEW = [
+  'Which 2D look for the mascot?                \u2502                                      \u2502',
+  '',
+  '\u276f 1. Pane sprite (Recommended)    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510',
+  '     A little pane that blinks.      \u2502 \u2588\u2588  \u2588\u2588                    \u2502',
+  '  2. Terminal ghost               \u2502  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588                   \u2502',
+  '  3. Pixel-art critter            \u2502   \u2588\u2588\u2588\u2588                       \u2502',
+  '',
+  'Enter to select \u00b7 \u2191/\u2193 to navigate \u00b7 Esc to cancel'
+].join('\n')
+
+ok('a preview column never reaches the label', () => {
+  const ask = readAsk(ASK_PREVIEW)
+  assert.ok(ask, 'no ask read')
+  assert.equal(ask.options.length, 3)
+  assert.equal(ask.selected, 1)
+  assert.equal(ask.options[0].label, 'Pane sprite (Recommended)')
+  assert.equal(ask.options[1].label, 'Terminal ghost')
+  assert.equal(ask.options[2].label, 'Pixel-art critter')
+})
+
+ok('a preview column never reaches the question', () => {
+  assert.equal(readAsk(ASK_PREVIEW).question, 'Which 2D look for the mascot?')
+})
+
+ok('a label that is only box characters is kept rather than emptied', () => {
+  const odd = ASK_PREVIEW.replace('Pane sprite (Recommended)    \u250c', '\u2500\u2500\u2500  \u250c')
+  const ask = readAsk(odd)
+  assert.ok(ask.options[0].label.length, 'an empty label is worse than a noisy one')
+})
+
 rmSync(out, { recursive: true, force: true })
 console.log(`\nchoices: ${n} checks passed`)
