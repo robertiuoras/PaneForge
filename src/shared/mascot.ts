@@ -38,9 +38,26 @@ export interface MascotConfig {
    * the corner of their eye expensive; the bubble and the commands are unchanged.
    */
   roam: boolean
+  /**
+   * Where somebody PUT it, as a fraction of the window.
+   *
+   * Absent means the app places it: bottom-left, and walking to whichever pane it is
+   * talking about. Present means a person dragged it there, and that beats every
+   * automatic move - the walk would otherwise take the sprite straight back off the
+   * corner it was just moved out of, which reads as the drag not having worked. A
+   * fraction rather than pixels so a resize never strands it off screen, and the walk
+   * to a pane is still allowed to point (`roam` decides that) once it is unpinned.
+   */
+  spot?: { x: number; y: number } | null
 }
 
-export const DEFAULT_MASCOT: MascotConfig = { enabled: true, voice: false, roam: true }
+export const DEFAULT_MASCOT: MascotConfig = { enabled: true, voice: false, roam: true, spot: null }
+
+/** Keep a dropped sprite inside the window, whatever the pointer did on the way out. */
+export function clampSpot(x: number, y: number): { x: number; y: number } {
+  const c = (v: number): number => Math.min(0.98, Math.max(0.02, Number.isFinite(v) ? v : 0.5))
+  return { x: c(x), y: c(y) }
+}
 
 /** One pane, reduced to what the mascot is allowed to reason about. */
 export interface MascotPane {

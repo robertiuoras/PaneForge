@@ -1383,6 +1383,16 @@ draws it. `npm run test:mascot`.
   the idle-close clock OFF. With that clock on it says nothing, because the app is already
   handling it. The one thing it always says is what the ladder DID - a sweep that closed a
   pane now gets a sentence instead of a console line.
+- **It can be picked up and put somewhere.** The sprite is dragged with pointer events (one
+  path for a mouse, a pen and a finger), captured so a fast drag over a terminal does not
+  leave it behind, and what is stored is the GRAB offset rather than the pointer - writing
+  the raw pointer into `left/top` teleports it under the cursor on the first millimetre.
+  A drop writes `mascot.spot` as a fraction of the window, which **beats every automatic
+  move**: the walk and the wander both stand down while it is pinned, since a walk that
+  takes it straight back off the corner it was moved out of reads as the drag not having
+  worked at all. `📍` on the bubble gives it back to the walk. Under `DRAG_SLOP` the
+  gesture is still the press that opens the bubble, and the click that follows a real drag
+  is refused from a REF - `dragging` state is already cleared by the time it arrives.
 - **The walk is how it says WHICH pane** - it moves to the card (`[data-id]`, always on
   screen, unlike a pane in a grid) rather than printing an id. One composited `transform`
   transition; the blink is `opacity`. `npm run test:anim` refuses anything else.

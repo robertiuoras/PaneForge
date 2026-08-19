@@ -3238,6 +3238,9 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
   display: flex; align-items: flex-end; gap: 8px;
 }
+/* A drag has to land under the pointer, not walk there 900ms later - the walk's easing
+   is what made a dragged sprite feel stuck to the corner it started in. */
+.mascot.dragging { transition: none; }
 .mascot-body {
   pointer-events: auto; background: none; border: 0; padding: 0; cursor: pointer;
   color: var(--accent-text); line-height: 0; filter: none;
@@ -3249,6 +3252,8 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    reached on the way out. The standalone `scale` property is its own thing and multiplies
    with the animated transform. */
 .mascot-body:hover { scale: 1.06; }
+.mascot-body { cursor: grab; }
+.mascot-body.dragging { cursor: grabbing; scale: 1.06; }
 .mascot-body { transition: scale 160ms ease; }
 @keyframes mascot-bob {
   0%, 100% { transform: translateY(0); }

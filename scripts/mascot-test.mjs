@@ -31,7 +31,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { parse, notice, closeable, isDestructive, paneLine, humanMins, DEFAULT_MASCOT } =
+const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot, DEFAULT_MASCOT } =
   createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -225,6 +225,20 @@ const desk = [
   // the screen, and a voice is that intrusion through the other sense.
   eq('the mascot is on', DEFAULT_MASCOT.enabled, true)
   eq('and mute', DEFAULT_MASCOT.voice, false)
+  // ...and where the APP put it, not where a person did. A spot is only ever written by a
+  // drag, so an unpinned mascot is what every desk that has not moved it still gets.
+  eq('and unpinned', DEFAULT_MASCOT.spot ?? null, null)
+}
+
+{
+  // A dropped sprite stays in the window. The pointer can leave it (a capture keeps the
+  // events coming from off-screen), and a fraction outside 0..1 is a mascot nobody can
+  // reach again - there is no way back to something drawn past the edge.
+  eq('a drop inside is kept', clampSpot(0.4, 0.6).x, 0.4)
+  eq('and its other half', clampSpot(0.4, 0.6).y, 0.6)
+  eq('off the right edge comes back', clampSpot(1.4, 0.5).x, 0.98)
+  eq('off the top comes back', clampSpot(0.5, -3).y, 0.02)
+  eq('and a reading that is not a number is centred', clampSpot(NaN, 0.5).x, 0.5)
 }
 
 console.log(`mascot: ${checks} checks passed`)

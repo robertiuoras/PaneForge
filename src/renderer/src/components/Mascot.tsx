@@ -18,9 +18,17 @@
 // face. It is a character made of the thing it looks after rather than a mascot bought
 // in from somewhere, which is also why it needs no asset - it is ~40 lines of SVG.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import {
   actedWords,
+  clampSpot,
   closeable,
   DEFAULT_MASCOT,
   isDestructive,
@@ -63,16 +71,28 @@ interface Spot {
 const HOME: Spot = { x: 0.06, y: 0.86 }
 /** How often it may wander when it has nothing to say. Slow: this is scenery, not a signal. */
 const WANDER_MS = 24_000
+/** Below this the gesture was a press, not a drag. A finger is never still. */
+const DRAG_SLOP = 4
 
 export default function Mascot(props: MascotProps): JSX.Element | null {
   const cfg = { ...DEFAULT_MASCOT, ...props.config }
-  const [spot, setSpot] = useState<Spot>(HOME)
+  const pinned = cfg.spot ?? null
+  const [spot, setSpot] = useState<Spot>(pinned ?? HOME)
   const [bubble, setBubble] = useState<Bubble | null>(null)
   const [typing, setTyping] = useState('')
   const [open, setOpen] = useState(false)
   const [blink, setBlink] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const said = useRef(new Set<string>())
   const input = useRef<HTMLInputElement | null>(null)
+  // A drag ends in a `click` on the same element, so the press that opens the bubble has
+  // to be told which gesture it was - otherwise every move also opens or closes it.
+  const drag = useRef<{ moved: boolean; id: number; x: number; y: number; dx: number; dy: number } | null>(
+    null
+  )
+  // `dragging` is state (it draws), but the click arrives after it has been cleared, so
+  // the suppression is a ref - reading the state there re-opens the bubble on every drop.
+  const justDragged = useRef(false)
 
   const panes = props.panes
 
@@ -93,10 +113,18 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     [cfg.voice]
   )
 
+  // A spot somebody put it in outlives a reload, and beats anything automatic below.
+  useEffect(() => {
+    if (pinned) setSpot(pinned)
+  }, [pinned?.x, pinned?.y])
+
   // Walk to a pane's card. The card is the only anchor that is always on screen - a pane
   // in a grid may be hidden, and pointing at nothing is worse than standing still.
   const walkTo = useCallback(
     (id?: string) => {
+      // Dragged there by a person: the walk would take it straight back, which reads as
+      // the drag not having worked at all.
+      if (pinned) return
       if (!cfg.roam) return setSpot(HOME)
       const el = id ? document.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`) : null
       if (!el) return
@@ -106,7 +134,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         y: Math.min(0.9, (r.top + r.height / 2) / window.innerHeight)
       })
     },
-    [cfg.roam]
+    [cfg.roam, pinned]
   )
 
   // The unasked notice. One at a time, said once, and only ever an OFFER.
@@ -133,7 +161,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   // Wander, and blink. Both are decoration and both are transform/opacity only.
   useEffect(() => {
-    if (!cfg.enabled || !cfg.roam) return
+    if (!cfg.enabled || !cfg.roam || pinned) return
     const t = window.setInterval(() => {
       if (bubble || open) return
       const pick = closeable(panes)[0] ?? panes[0]
@@ -141,7 +169,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
       else setSpot(HOME)
     }, WANDER_MS)
     return () => window.clearInterval(t)
-  }, [cfg.enabled, cfg.roam, panes, bubble, open, walkTo])
+  }, [cfg.enabled, cfg.roam, pinned, panes, bubble, open, walkTo])
 
   useEffect(() => {
     if (!cfg.enabled) return
@@ -151,6 +179,62 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     }, 5200)
     return () => window.clearInterval(t)
   }, [cfg.enabled])
+
+  // The drag itself. Pointer events, so a mouse, a pen and a touch are one path, and the
+  // pointer is CAPTURED - without it a fast drag leaves the sprite behind the moment the
+  // cursor is over a terminal, and the pane gets the rest of the gesture.
+  const onDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return
+    // The GRAB offset, not the pointer. `left/top` place the sprite's centre, so writing
+    // the raw pointer there teleports it under the cursor on the first millimetre of the
+    // gesture and drops it half a sprite away from where it was let go.
+    const box = e.currentTarget.closest('.mascot')?.getBoundingClientRect()
+    drag.current = {
+      moved: false,
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      dx: box ? box.left + box.width / 2 - e.clientX : 0,
+      dy: box ? box.top + box.height / 2 - e.clientY : 0
+    }
+    // Capture keeps the move and up events coming once the pointer is over a terminal.
+    // A synthetic pointer id has none to capture, which is a throw and not a reason to
+    // drop the drag.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // no capture, still draggable while the pointer is over the sprite
+    }
+  }, [])
+
+  const onMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    if (!d.moved) {
+      // A press is never perfectly still, with a mouse or with a finger. Under the slop
+      // this is still a click and the sprite must not twitch.
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < DRAG_SLOP) return
+      d.moved = true
+      setDragging(true)
+    }
+    setSpot(clampSpot((e.clientX + d.dx) / window.innerWidth, (e.clientY + d.dy) / window.innerHeight))
+  }, [])
+
+  const onUp = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      const d = drag.current
+      if (!d || d.id !== e.pointerId) return
+      drag.current = null
+      setDragging(false)
+      if (!d.moved) return
+      justDragged.current = true
+      // Where it was dropped is where it stays - across a reload, and against the walk.
+      props.onConfig({
+        spot: clampSpot((e.clientX + d.dx) / window.innerWidth, (e.clientY + d.dy) / window.innerHeight)
+      })
+    },
+    [props]
+  )
 
   const run = useCallback(
     (i: Intent) => {
@@ -188,7 +272,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   return (
     <div className="mascot-layer" aria-hidden={false}>
       <div
-        className="mascot"
+        className={'mascot' + (dragging ? ' dragging' : '')}
         style={{ left: `${spot.x * 100}%`, top: `${spot.y * 100}%` }}
         data-open={open ? '1' : '0'}
       >
@@ -232,6 +316,15 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               >
                 {cfg.voice ? '🔊' : '🔇'}
               </button>
+              {pinned && (
+                <button
+                  className="mascot-icon"
+                  title="Let it walk to the pane it is talking about again"
+                  onClick={() => props.onConfig({ spot: null })}
+                >
+                  📍
+                </button>
+              )}
               <button
                 className="mascot-icon"
                 title="Hide the mascot (Settings brings it back)"
@@ -243,9 +336,22 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           </div>
         )}
         <button
-          className={'mascot-body' + (blink ? ' blink' : '')}
-          title="Ask about this machine"
-          onClick={() => {
+          className={'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '')}
+          title="Ask about this machine - drag to move it"
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={() => {
+            drag.current = null
+            setDragging(false)
+          }}
+          onClick={(e) => {
+            // The gesture that just ended was a move, not a press.
+            if (dragging || justDragged.current) {
+              justDragged.current = false
+              e.preventDefault()
+              return
+            }
             setOpen((v) => !v)
             if (!bubble) say({ say: 'Ask me - "what is pane 3", "close the idle ones".', key: 'greet' })
           }}
