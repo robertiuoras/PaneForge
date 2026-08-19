@@ -231,6 +231,8 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
   // meant reading a page of switches; these are what get highlighted on the right.
   const settingHits = findSettings(find)
   const settingTabs = new Set(settingHits.map((s) => s.tab))
+  const here = settingHits.filter((s) => s.tab === tab).length
+  const elsewhere = settingHits.length - here
 
   // The current tab is never filtered away, however badly it matches: a rail that removes
   // the entry you are reading leaves a panel on screen with nothing selected beside it.
@@ -323,9 +325,16 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
             ))}
             {!shown.length && <div className="hint nav-empty">Nothing matches "{find}".</div>}
             {!!settingHits.length && (
+              // Only the settings on THIS page are marked, so only those may be counted as
+              // marked: saying "5 marked on the right" over two visible rings reads as
+              // three results having gone missing. The rest are named as being elsewhere,
+              // and the rail beside this line is where they are.
               <div className="hint nav-count">
-                {settingHits.length === 1 ? '1 setting' : `${settingHits.length} settings`} match
-                {settingHits.length === 1 ? 'es' : ''}, marked on the right.
+                {here === 0
+                  ? `${elsewhere} on the other pages.`
+                  : `${here === 1 ? '1 setting' : `${here} settings`} marked on the right${
+                      elsewhere ? `, ${elsewhere} more on the other pages` : ''
+                    }.`}
               </div>
             )}
           </div>

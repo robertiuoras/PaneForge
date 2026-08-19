@@ -35,6 +35,13 @@ ok(
 
 ok('there are settings at all', settings.length > 50, `${settings.length} found`)
 
+// A NUL byte makes a source file binary: git prints "Binary files ... differ" instead of a
+// diff and grep skips it, so the next session cannot review or search the generator at all.
+for (const f of ['settings-index.mjs', 'gen-settings-index.mjs', 'settings-search-test.mjs']) {
+  const raw = readFileSync(resolve(root, 'scripts', f))
+  ok(`scripts/${f} is text, not binary`, !raw.includes(0))
+}
+
 // Every tab the rail draws has at least one setting on it, or the search can send
 // somebody to a page with nothing marked on it.
 const TABS = ['general', 'appearance', 'sounds', 'agents', 'stash', 'voice', 'prompts', 'discord', 'system']
@@ -67,7 +74,25 @@ ok(
 )
 ok('...on the tab it is really drawn on', closeHit[0]?.tab === 'general', closeHit[0]?.tab)
 
-ok('a word only in the hint still finds the setting', labels('telegram').length > 0)
+// A hint is as often an expression as a literal, and reading only the literals dropped
+// nine of them - so this asks for words that exist ONLY inside a template string or a
+// keyLabel() call. 'telegram' would have passed against a broken parser: it is in a label.
+ok('a word only in a literal hint finds the setting', labels('bot token').length > 0)
+ok(
+  'a word only in a TEMPLATE hint finds the setting',
+  labels('190 mb').length > 0,
+  'the ~190 MB an idle agent costs is only in hints built from a template'
+)
+ok(
+  'a word only in a keyLabel() hint finds the setting',
+  findSettings('shift+l').length > 0,
+  'hint={keyLabel("... Ctrl+Shift+L ...")}'
+)
+ok(
+  'most settings carry more than their own name',
+  settings.filter((s) => s.find !== s.label).length > 30,
+  `${settings.filter((s) => s.find !== s.label).length} have a hint`
+)
 ok('a nonsense query finds nothing', findSettings('zzzq nothing here').length === 0)
 
 const wide = findSettings('pane')
