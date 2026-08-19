@@ -56,6 +56,7 @@ import TerminalPane, {
   paneFind,
   paneFocus,
   paneTerms,
+  paneArmClear,
   paneInsert,
   paneRepair,
   syncedPanes
@@ -1581,6 +1582,11 @@ export default function App(): JSX.Element {
       const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
       const rounds = Math.min(24, Math.max(4, lines + 2))
       const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
+      // The pane keeps its screen off the keystrokes it relays, and these are not
+      // keystrokes - so it is told directly, before a byte goes out. Without this the
+      // button cleared the pane and took the conversation off the screen with it, which is
+      // the half of the /clear report that survived every fix to the byte stream.
+      paneArmClear.get(s.id)?.()
       api.write(s.id, wipe)
       void typeAndSubmit(s, cmd, flash)
     },

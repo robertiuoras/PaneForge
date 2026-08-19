@@ -19,6 +19,7 @@ import {
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
+import { fileRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
@@ -128,6 +129,21 @@ import { isPhoneClient } from '../client'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/**
+ * Tell a pane that a clear is about to be sent to it, from something other than its own
+ * keyboard.
+ *
+ * `arm()` is fed by keystrokes, and a keystroke is only one of the ways a `/clear` reaches
+ * a pty here: the Clear button on a card writes it straight at the pty, and so does the
+ * session menu and every path in main that types for you. Measured in the running app on
+ * 2026-08-19, a pane cleared by typing kept its screen and the same pane cleared through
+ * `api.write` lost it - the keeper never heard about the second one. This is that seam,
+ * and it is the cheap half of the answer: an armed clear files the screen whole, colours
+ * and all, before the CLI has emitted a byte. A clear that arrives with nothing armed is
+ * still caught, one step later and in plain text, by the wipe check in the pane.
+ */
+export const paneArmClear = new Map<string, () => void>()
 
 /**
  * What each pane's user has typed but not sent, reconstructed from the keystrokes this
@@ -982,6 +998,51 @@ export default function TerminalPane({
      * chunks from the pty), so there is exactly one of it per pane and every write site
      * uses it, and `arm()` below is what tells it a wipe is a clear, not a repaint.
      */
+    /** The screen as it stands, one string per row. */
+    const screenNow = (): string[] => {
+      const b = t.buffer.active
+      const out: string[] = []
+      for (let y = b.baseY; y < b.baseY + t.rows; y++) {
+        out.push(b.getLine(y)?.translateToString(true) ?? '')
+      }
+      return out
+    }
+    // The screen as it was when a wipe started, held until the redraw that follows has
+    // settled and can be compared with it. See `wipeSettled`.
+    let wipeSnap: string[] | null = null
+    let wipeTimer: number | undefined
+    /**
+     * The redraw after a wipe has gone quiet: decide whether it was a repaint or a clear.
+     *
+     * A repaint puts the same rows back and there is nothing to keep. A clear does not, and
+     * the rows it took are still in `wipeSnap` - so they are printed onto a blank screen
+     * and scrolled off it, which is the only way to put anything into a terminal's
+     * scrollback, and the agent is then asked to redraw the frame that was wiped out from
+     * under it. What is kept is the TEXT of those rows: the colours are gone, which is the
+     * price of finding out after the fact rather than being told in advance. A clear the
+     * pane armed itself never gets here - `arm()` files the screen whole, colours and all,
+     * before the CLI has said a word.
+     */
+    const wipeSettled = (): void => {
+      const snap = wipeSnap
+      wipeSnap = null
+      wipeTimer = undefined
+      if (!snap || dead) return
+      if (!screenLost(snap, screenNow())) return
+      // The bytes are built in the shared file so the test drives the shipped ones against
+      // a real terminal rather than a copy of them.
+      const bytes = fileRows(snap, t.rows)
+      if (!bytes) return
+      t.write(bytes)
+      paneRepair.get(sessionId)?.()
+    }
+    /** How long the redraw after a wipe is given to stop before it is judged. */
+    const WIPE_SETTLE_MS = 400
+    const armWipeCheck = (): void => {
+      if (!wipeSnap) return
+      window.clearTimeout(wipeTimer)
+      wipeTimer = window.setTimeout(wipeSettled, WIPE_SETTLE_MS)
+    }
     const keep = keepScrollback(
       () => t.rows,
       () => t.buffer.active.type === 'alternate',
@@ -990,7 +1051,15 @@ export default function TerminalPane({
       // blank, and scrolling those rows only puts a screenful of nothing into the
       // scrollback in front of the turn being kept. The walk itself is in the shared file
       // so the test can drive the shipped one against a real xterm rather than a copy.
-      () => keptRows(t)
+      () => keptRows(t),
+      // A wipe has started, and nothing in the bytes says whether it is a clear or one of
+      // the full repaints this CLI does dozens of times a session. Remember the screen and
+      // find out - see `wipeSettled`.
+      () => {
+        if (wipeSnap) return
+        wipeSnap = screenNow()
+        armWipeCheck()
+      }
     )
     const f = new FitAddon()
     t.loadAddon(f)
@@ -2173,6 +2242,9 @@ export default function TerminalPane({
       // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
       // write should have). Intent cannot drift, so this recovers by itself.
       t.write(keep(data), () => {
+        // A wipe is judged once its redraw stops, not on a fixed delay: a banner drawn in
+        // three bursts must not be compared with the screen half way through it.
+        armWipeCheck()
         if (pinned.current) t.scrollToBottom()
         // Same callback so the rail is measured against a buffer that has already grown,
         // rather than one write behind it.
@@ -2200,6 +2272,10 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneArmClear.set(sessionId, () => {
+      const away = keep.arm()
+      if (away) t.write(away)
+    })
     paneFeed.set(sessionId, feedInput)
     paneTerms.set(sessionId, t)
     paneFocus.set(sessionId, () => {
@@ -2430,6 +2506,7 @@ export default function TerminalPane({
       window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)
       paneCopyMode.delete(sessionId)

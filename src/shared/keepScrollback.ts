@@ -255,10 +255,13 @@ export function keepScrollback(
   rows: () => number,
   alternate: () => boolean,
   clock: () => number = Date.now,
-  used: () => number = rows
+  used: () => number = rows,
+  onWipe: () => void = () => {}
 ): ScrollKeeper {
   let carry = ''
-  let armedAt = 0
+  // Negative infinity rather than 0: a clock that starts at 0 is a real clock (a test's,
+  // a monotonic one), and `armedAt > 0` quietly turned the standdown off for it.
+  let armedAt = Number.NEGATIVE_INFINITY
   // The cursor has been sent to the top of the screen and nothing has been written there
   // since. An erase arriving in that state is a wipe rather than a repaint - see the note
   // at the top of the file for the measurement that says so.
@@ -297,9 +300,22 @@ export function keepScrollback(
    * The same window covers the 29 row-erases the wipe itself is made of.
    */
   const fileScreen = (): string => {
-    if (armedAt > 0 && clock() - armedAt < ARM_MS) return ''
+    if (clock() - armedAt < ARM_MS) return ''
     armedAt = clock()
     return scrollAway() + blank
+  }
+
+  /**
+   * Say that a wipe has started - once per wipe, and never for one the pane armed itself.
+   *
+   * A wipe is thirty-odd row erases and the pane needs to hear about the first only. The
+   * standdown does both jobs: it collapses the run, and it stays quiet for a clear that
+   * was armed off the keystrokes, whose screen is already in the scrollback.
+   */
+  const wiped = (): void => {
+    if (clock() - armedAt < ARM_MS) return
+    armedAt = clock()
+    onWipe()
   }
 
   /** A whole CSI sequence starting at `i`, or null when the chunk ends inside one. */
@@ -396,15 +412,17 @@ export function keepScrollback(
           const away = fileScreen()
           out += away ? '\x1b7' + away + '\x1b8' : seq
         } else {
-          // Erase from the cursor down. Only a wipe does that from the top of the screen.
-          out += (homed ? fileScreen() : '') + seq
+          // Erase from the cursor down, from the top of the screen: a wipe. Reported to
+          // the pane rather than rewritten - see `wiped`.
+          if (homed) wiped()
+          out += seq
         }
         homed = false
       } else if (final === 'K') {
         // Erase in line. One of these at the top of an untouched screen is the first row
         // of an erase-per-row wipe - which is how Claude Code 2.1.235 clears.
-        out += (homed ? fileScreen() : '') + seq
-        homed = false
+        if (homed) wiped()
+        out += seq
       } else if ('ABCDEFGIdSTLM@P'.includes(final)) {
         // Every other cursor move, scroll or insert: the top of the screen is no longer
         // where the next byte lands.

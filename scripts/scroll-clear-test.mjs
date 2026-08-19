@@ -36,6 +36,18 @@ buildSync({
 const require_ = createRequire(import.meta.url)
 const { keepScrollback, clearsScreen, mayClearScreen, writtenRows, keptRows, ruleRow, composerTop } = require_(outfile)
 
+// The other half of the answer: what the pane does once a wipe has been reported.
+const lossFile = outfile.replace(/keep\.bundle\.cjs$/, 'loss.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/screenLoss.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: lossFile
+})
+const { screenLost, fileRows } = require_(lossFile)
+
 let checks = 0
 const check = (what, ok, detail) => {
   checks++
@@ -145,6 +157,93 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
   }
 }
 
+// The whole answer in a real terminal, with NOTHING armed - the shape a Clear button, a
+// phone, or a CLI compacting itself produces. The clear is byte for byte what Claude Code
+// v2.1.235 sends, captured 2026-08-19 from a live `claude` in a real pty: a home, every
+// row erased walking down, a home, the banner. What runs here is what the pane runs: the
+// keeper reports, `screenLost` judges the settled screen, `fileRows` writes it back.
+{
+  let Terminal
+  try {
+    ;({ Terminal } = require_('@xterm/headless'))
+  } catch {
+    console.log('scroll clear: SKIPPED the unarmed-wipe half - @xterm/headless is not installed')
+  }
+  if (Terminal) {
+    const write = (t, d) => new Promise((r) => t.write(d, r))
+    const rows = 12
+    const real = '\x1b[H' + '\x1b[2K\x1b[1B'.repeat(rows) + '\x1b[H'
+    const banner = '   Claude Code v2.1.235'
+    // One short of a screenful and no trailing newline: nothing has scrolled by itself, so
+    // every one of these rows is on the live screen and reaches the scrollback only if the
+    // pane puts it there. A seed that scrolls makes the control below pass for free.
+    const seed = async (t, k) => {
+      for (let i = 1; i < rows; i++) {
+        const line = `turn ${i}` + (i === rows - 1 ? '' : '\r\n')
+        await write(t, k ? k(line) : line)
+      }
+    }
+    const screenOf = (t) => {
+      const out = []
+      for (let y = t.buffer.active.baseY; y < t.buffer.active.baseY + t.rows; y++) {
+        out.push(t.buffer.active.getLine(y)?.translateToString(true) ?? '')
+      }
+      return out
+    }
+    const readAll = (t) => {
+      const all = []
+      for (let y = 0; y < t.buffer.active.length; y++) {
+        all.push(t.buffer.active.getLine(y)?.translateToString(true) ?? '')
+      }
+      return all.join('\n')
+    }
+
+    // What the pane does, in the order it does it.
+    const run = async (clear, draw) => {
+      const term = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+      let snap = null
+      const k = keepScrollback(
+        () => term.rows,
+        () => term.buffer.active.type === 'alternate',
+        Date.now,
+        () => keptRows(term),
+        () => {
+          if (!snap) snap = screenOf(term)
+        }
+      )
+      await seed(term, k)
+      await write(term, k(clear))
+      await write(term, k(draw))
+      const filed = snap && screenLost(snap, screenOf(term))
+      if (filed) await write(term, fileRows(snap, term.rows))
+      return { term, snap, filed }
+    }
+
+    const cleared = await run(real, banner)
+    check('a clear is judged a loss and filed', cleared.filed === true)
+    const text = readAll(cleared.term)
+    check('an unarmed v2.1.235 clear keeps the screen it wiped', text.includes('turn 1'), text.slice(0, 200))
+    check('all of it', text.includes('turn 10') && text.includes('turn 11'))
+    const screen = screenOf(cleared.term)
+    check('with nothing of the old screen left on it', !screen.join('\n').includes('turn '), JSON.stringify(screen))
+
+    // The control: this is the bug, and without it the case above can pass by accident.
+    const bare = new Terminal({ rows, cols: 40, scrollback: 1000, allowProposedApi: true })
+    await seed(bare, null)
+    await write(bare, real)
+    await write(bare, banner)
+    check('a plain terminal loses it, which is the report', !readAll(bare).includes('turn 1'))
+
+    // And the case that decides whether any of this is worth having: the same bytes when
+    // the CLI is only redrawing the frame it already had. Nothing may be filed, or the
+    // scrollback fills with copies of the screen.
+    const repainted = await run(real, ['turn 1', 'turn 2', 'turn 3', 'turn 4'].join('\r\n'))
+    check('a full repaint of the same frame files nothing', repainted.filed === false)
+    const again = readAll(repainted.term)
+    eq('and leaves one copy of the screen, not two', (again.match(/turn 1\b/g) ?? []).length, 1)
+  }
+}
+
 // --- what a clear really looks like now ------------------------------------------------
 // Two shapes measured off this machine's pane logs, neither of which can be caught by
 // looking at the bytes:
@@ -157,49 +256,65 @@ const keeper = (rows = 24, alt = false) => keepScrollback(() => rows, () => alt)
 const wipe = (rows) => '\x1b[H\x1b[2K' + '\x1b[1B\x1b[2K'.repeat(rows) + '\x1b[1B\x1b[H'
 // ...and then v2.1.235 sent a third shape, measured 2026-08-19 off a live `claude` in a
 // real pty: `ESC[H` and then every row on the screen erased in place walking down. Three
-// releases, three byte patterns. What they share is a SHAPE - the cursor sent to the top
-// of the screen with an ERASE as the first thing that happens there - and that is what the
-// keeper reads now, so a clear nobody armed (the app's own Clear button, a phone typing
-// into a desk pane, a CLI compacting itself) is kept as well.
+// releases, three byte patterns.
+//
+// What they share is a SHAPE - the cursor sent to the top of the screen with an ERASE as
+// the first thing that happens there - and the keeper reads that. It does NOT act on it:
+// measured over this machine's pane logs, one Claude Code pane sent that exact shape 152
+// times in 8.4 MB and most were ordinary mid-turn repaints, which lose nothing because the
+// same frame is drawn straight back. Filing those would stuff the scrollback with
+// duplicate frames, which is the reported bug arrived at from the other side. So a wipe is
+// REPORTED, the pane remembers the screen, and `screenLost` decides once the redraw has
+// settled - see `src/shared/screenLoss.ts`.
+const wipes = (rows, chunks) => {
+  let n = 0
+  const k = keepScrollback(() => rows, () => false, () => 0, () => rows, () => n++)
+  for (const c of chunks) k(c)
+  return n
+}
 {
-  const k = keeper(10)
-  const out = k(wipe(10))
-  check('a wipe that starts at the top of the screen is filed', out.includes('\x1b[10;1H'), JSON.stringify(out))
-  eq('one newline per row on screen', (out.match(/\r\n/g) ?? []).length, 10)
-  check(
-    'and the wipe itself still runs, on the blank screen it leaves',
-    out.endsWith(wipe(10).slice(wipe(10).indexOf('\x1b[2K'))),
-    JSON.stringify(out)
-  )
+  eq('a wipe that starts at the top of the screen is reported', wipes(10, [wipe(10)]), 1)
+  eq('once, however many rows it erases', wipes(10, [wipe(40)]), 1)
+  eq('and torn across chunks it is still one wipe', wipes(10, ['\x1b[H', '\x1b[2K\x1b[1B\x1b[2K']), 1)
+  const k = keepScrollback(() => 10, () => false, () => 0, () => 10, () => {})
+  eq('the bytes themselves are passed through untouched', k(wipe(10)), wipe(10))
 }
 {
   // The negatives are the whole reason this is keyed on home-then-erase rather than on an
-  // erase: measured over one session log, 58 of 60 erase-per-row repaints were ordinary
-  // redraws of a composer that is standing where it is - no home in front of them.
-  const k = keeper(10)
-  const repaint = '\x1b[2K\x1b[1B\x1b[2K\x1b[1B\x1b[2K'
-  eq('an erase-per-row repaint with no home files nothing', k(repaint), repaint)
-  const drawn = '\x1b[Hhello\x1b[2K'
-  eq('nor does a home that WRITES before it erases', k(drawn), drawn)
-  const moved = '\x1b[H\x1b[4B\x1b[2K'
-  eq('nor a home that has moved off the top row again', k(moved), moved)
-  eq('and a cursor-up overdraw still says nothing, which is all v2.1.233 sends', k('\x1b[6Ax'), '\x1b[6Ax')
+  // erase: 58 of 60 erase-per-row repaints in one session log were redraws of a composer
+  // standing where it is, with no home in front of them.
+  eq('an erase-per-row repaint with no home says nothing', wipes(10, ['\x1b[2K\x1b[1B\x1b[2K']), 0)
+  eq('nor does a home that WRITES before it erases', wipes(10, ['\x1b[Hhello\x1b[2K']), 0)
+  eq('nor a home that has moved off the top row again', wipes(10, ['\x1b[H\x1b[4B\x1b[2K']), 0)
+  eq('nor a cursor-up overdraw, which is all v2.1.233 sends', wipes(10, ['\x1b[6Ax']), 0)
+  eq('nor colour and cursor traffic on its own', wipes(10, ['\x1b[0m\x1b[?25l\x1b[38;5;174mx']), 0)
 }
 {
-  // Torn where it matters: the home in one chunk and the erase in the next. A wipe read a
-  // byte at a time must still be one wipe.
-  const k = keeper(10)
-  eq('a home on its own emits nothing extra', k('\x1b[H'), '\x1b[H')
-  const out = k('\x1b[2K')
-  check('and the erase that follows it in the next chunk files the screen', out.includes('\x1b[10;1H'), JSON.stringify(out))
+  // A clear the pane armed off the keystrokes has already filed the screen, colours and
+  // all. Hearing about the CLI's own wipe a beat later would file it twice.
+  let n = 0
+  const k = keepScrollback(() => 10, () => false, () => 0, () => 10, () => n++)
+  k.arm()
+  k(wipe(10))
+  eq('an armed clear does not report the wipe that follows it', n, 0)
 }
 {
-  // One clear, one filing: the 29 row-erases a wipe is made of are not 29 screens.
-  const k = keeper(10)
-  const out = k(wipe(10))
-  eq('a wipe files the screen once', (out.match(/\x1b\[10;1H/g) ?? []).length, 1)
-  eq('and a second wipe inside the stand-down files nothing', k(wipe(10)), wipe(10))
+  // What the pane does with the report, in the shared function it really calls.
+  const before = ['❯ how do I log an error?', 'You can use the logger in', 'src/log.ts, like this:', '']
+  eq(
+    'a redraw that puts the same rows back lost nothing',
+    screenLost(before, ['❯ how do I log an error?', 'You can use the logger in', 'src/log.ts, like this:', 'thinking… 4s']),
+    false
+  )
+  eq('a banner on a blank screen lost the screen', screenLost(before, ['   Claude Code v2.1.235', '', '❯ ']), true)
+  eq('a screen with nothing on it cannot lose anything', screenLost(['', '  ', ''], ['   Claude Code v2.1.235']), false)
+  const bytes = fileRows(['first row of the answer', 'second row', '', ''], 10)
+  // Two rows printed (one newline between them) and then one scroll each to file them.
+  eq('trailing blank rows are not filed', (bytes.match(/\r\n/g) ?? []).length, 3)
+  check('and what is filed is what was on the screen', bytes.includes('first row of the answer'))
+  eq('and a blank screen files nothing at all', fileRows(['', ' '], 10), '')
 }
+
 {
   const k = keeper(10)
   const away = k.arm()
