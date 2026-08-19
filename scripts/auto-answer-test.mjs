@@ -29,7 +29,7 @@ await build({
   format: 'esm',
   platform: 'neutral'
 })
-const { pickAnswer, dueForAuto, askKeyOf, PRESS_COOLDOWN_MS, DEFAULT_AUTO_ANSWER } = await import(
+const { pickAnswer, dueForAuto, autoAnswerAt, askKeyOf, PRESS_COOLDOWN_MS, DEFAULT_AUTO_ANSWER } = await import(
   pathToFileURL(join(out, 'autoAnswer.mjs')).href
 )
 
@@ -244,6 +244,50 @@ ok('the run counter is given back by work resuming, not by a repaint', () => {
   const busyGate = reset.indexOf('if (busy) {')
   const counter = reset.indexOf('s.autoRun = 0')
   assert.ok(busyGate >= 0 && counter > busyGate && counter - busyGate < 800, 'reset sits under `if (busy)`')
+})
+
+// ---------------------------------------------------------------------------
+// The countdown. A press that arrives with no warning is indistinguishable from the pane
+// answering itself, so the pane says when and what - and the only way that stays true is
+// if the clock it draws is the clock the presser keeps.
+
+ok('the countdown is the settle window, and it agrees with the presser', () => {
+  const s = state({ askKey: askKeyOf(PERMISSION), askSince: T })
+  const at = autoAnswerAt(s, ON, PERMISSION)
+  assert.equal(at, T + ON.waitMs, 'the clock is askSince + waitMs')
+  assert.equal(dueForAuto(s, ON, at - 1), false, 'a second early, the presser refuses')
+  assert.equal(dueForAuto(s, ON, at), true, 'and on the tick it presses')
+})
+
+ok('a cooldown still running pushes the clock out, not just the press', () => {
+  const s = state({ askKey: askKeyOf(PERMISSION), askSince: T, autoAt: T + 500 })
+  const at = autoAnswerAt(s, ON, PERMISSION)
+  assert.equal(at, T + 500 + PRESS_COOLDOWN_MS)
+  assert.equal(dueForAuto(s, ON, at), true)
+})
+
+ok('no clock is drawn for anything that will not be pressed', () => {
+  const s = () => state({ askKey: askKeyOf(PERMISSION), askSince: T })
+  assert.equal(autoAnswerAt(s(), DEFAULT_AUTO_ANSWER, PERMISSION), 0, 'the setting is off')
+  assert.equal(autoAnswerAt(s(), ON, null), 0, 'there is no question')
+  // The one this exists for: a question with no obvious answer is LEFT for a person, and
+  // a countdown over it would be a clock that never fires - which reads as the app having
+  // given up rather than as it deliberately not deciding.
+  const design = ask(1, 'Use a modal', 'Use a drawer', 'Use a new page')
+  assert.equal(autoAnswerAt(state({ askKey: askKeyOf(design), askSince: T }), ON, design), 0)
+  const pressed = state({ askKey: askKeyOf(PERMISSION), askSince: T, autoKey: askKeyOf(PERMISSION) })
+  assert.equal(autoAnswerAt(pressed, ON, PERMISSION), 0, 'already answered')
+  const spent = state({ askKey: askKeyOf(PERMISSION), askSince: T, autoRun: ON.maxRun })
+  assert.equal(autoAnswerAt(spent, ON, PERMISSION), 0, 'out of automatic presses')
+})
+
+ok('the plan is refreshed from the TIMER as well as from a frame', () => {
+  // A frame only arrives when the screen changes, so computing it there alone means
+  // turning the setting on over a question already on screen shows no countdown at all
+  // and then presses out of nowhere. Measured that way against a live trust prompt.
+  assert.match(sessions, /private refreshAutoPlan\(live: Live\)/)
+  assert.match(sessions, /if \(this\.refreshAutoPlan\(live\)\) this\.emitSessions\(\)/, 'from the sweep')
+  assert.match(sessions, /this\.refreshAutoPlan\(s\)/, 'and from the frame path')
 })
 
 rmSync(out, { recursive: true, force: true })

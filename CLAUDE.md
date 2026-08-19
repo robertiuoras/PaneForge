@@ -887,6 +887,30 @@ whichever one has a hook.
   `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (environment or `~/.claude/usage-notify.env`), one
   message per question (`sameAsk`, so arrowing through the options sends nothing), and never
   for a mirror - that pane's own machine is raising it too. `npm run test:asknotify`.
+- **A click on a pane holding a question types NOTHING into it.** Clicking a pane is not
+  passive here - a bare click becomes left and right arrows, an Alt-click up and down, a
+  selection delete a run of backspaces - and a chooser is the one moment when every one of
+  those is an ACTION. Measured against a real `claude` in a pty on 2026-08-19: 15 right
+  arrows sent at its `/model` chooser moved it from Medium to `max effort` (the widget
+  says the arrows adjust it, and means it), and 2 down arrows moved the selection and left
+  a torn partial repaint - which is "I click on the question and it disappears and breaks
+  my whole terminal". The same run showed Claude Code turns mouse reporting OFF (no
+  `?1000h` in its whole boot), so `mouseGrabbed()` is false, nothing is swallowed, and the
+  pane's own handlers were the only thing typing. `askRef` in `TerminalPane.tsx` refuses
+  all three while `Session.ask` is set; the answer is the buttons, which say what they do.
+  `npm run test:askclick` is a real mouse through CDP with the control that decides
+  whether it means anything - the same click with no question up must still send the
+  arrows. Its red case (guard removed) types six right arrows into a live question.
+  **`window.api` is frozen by the context bridge**, so a test cannot wrap `write` to see
+  what a click did: the assignment is dropped in silence and every click then reports
+  "typed nothing". The pane keeps its own list (`window.__pf[id].clickKeys()`).
+- **A question is RED and it makes a NOISE of its own.** The card and the pane glow
+  (`.row.asking` / `.xterm-wrap.asking`) and `sounds.ask` (default `knock`) plays on the
+  new `sessions:ask` event - `done` is deliberately NOT played over it, because a finished
+  turn and a stopped one are the two most different outcomes there are and one chime for
+  both is why a question sits for an hour. The glow was there before this and was 7% over
+  a dark card, which is a tint you find once you know it exists; it is 15% with a 3px
+  pulsing bar now, and the pane's ring is 2.5px.
 - `npm run test:choices`. The load-bearing assertion is on the BYTE
   (`charCodeAt(0) === 27`): the first version of that test lost its escape in the same
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
@@ -926,7 +950,14 @@ would answer a permission prompt on a desk that never asked for that.
   on screen" hands it back several times during a single question and the cap bounds
   nothing. A busy pane is the only evidence that an answer went in and work resumed.
 - The keys go through `choose`, which re-checks the question before every one of them.
-- `npm run test:autoanswer` — 21 checks, weight in the negatives: every wording of "and
+- **It says when, and what, before it does it.** `autoAnswerAt` puts the press's own clock
+  on the session (`Session.autoAnswerAt` / `autoAnswerN`) and the pane counts down against
+  it (`AskCountdown`). Same guards the presser runs under, so a question this will never
+  answer shows no clock at all rather than one that never fires. Refreshed from the TIMER
+  as well as from a frame: a frame only arrives when the screen changes, so computing it
+  only there meant switching the setting on over a question already up showed nothing and
+  then pressed out of nowhere.
+- `npm run test:autoanswer` — 25 checks, weight in the negatives: every wording of "and
   stop asking me" (not the two strings this desk has captured), the timing behaviourally
   over a fake clock, and source assertions on the STATE the guards read, because a test
   that only matches the comparison lets the assignment making it true be deleted.
@@ -1342,6 +1373,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
 | `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
 | `npm run test:asknotify` | a pane's question on its way to a phone: the message names the pane and keeps the CLI's own numbering, a machine with no bot credentials sends nothing and says so rather than throwing inside a pty read, and the post never asks for updates - which would steal `pf-telegram.mjs`'s poller |
+| `npm run test:askclick` | that a click on a pane holding a live question types nothing into the pty - real mouse input through CDP against a real CLI chooser, with the control that decides whether the test means anything (the same click with no question must still send its arrows) and a red case that types six right arrows without the guard. Needs a window |
 | `npm run test:choices` | reading a live question off a pane's frame and the keys that answer it: two real captured chooser shapes, and the negatives that decide whether it is safe to draw buttons at all - a numbered list in an answer, one somebody quoted back at the agent, a gap in the numbering, and no selection arrow. Plus the byte-level check that the arrows really are escape sequences, because the first version of this file lost its escape in the same edit the source did and passed |
 | `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
@@ -1383,7 +1415,7 @@ Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
 `test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized),
 `test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
-back), and `test:phoneview` (a real headless Chrome at
+back), `test:askclick`, and `test:phoneview` (a real headless Chrome at
 414x896 against that copy — it skips out loud with no Chrome and no server).
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,

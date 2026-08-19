@@ -1968,7 +1968,8 @@ export default function TerminalPane({
       const from = downAt
       downAt = null
       if (!clickCursorRef.current || !from) return
-      // An arrow is a menu step while a chooser is up - see `askRef`.
+      // An arrow is a menu step while a chooser is up - see `askRef`. Proven by
+      // `test:askclick`, whose red case types six right arrows into a live question.
       if (askRef.current) return
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
       if (t.getSelection()) return
