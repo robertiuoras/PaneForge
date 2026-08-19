@@ -108,9 +108,22 @@ export function readAsk(text: string): PaneAsk | null {
       top = i
       continue
     }
-    if (!line.trim()) {
+    if (!line.trim() || RULE.test(line)) {
       // A blank line above the list ends it; a blank line INSIDE it (between an option
       // and its description) is only allowed while more options are still to come.
+      //
+      // A RULE is read exactly the same way, and that is not cosmetic: Claude Code 2.1.235
+      // draws a full-width `-` between the real answers and the trailing ones it always
+      // offers ("Type something.", "Chat about this"), wrapped over two rows in a wide
+      // pane. Reading that as prose ended the walk one option in, so `found` held only
+      // {4}, the 1..N check failed, and EVERY AskUserQuestion on this desk read as no
+      // question at all - no buttons, no red card, no Telegram message and nothing for
+      // `autoAnswer` to press. Measured off a real 157-column pane frame on 2026-08-19
+      // and kept as a fixture in `npm run test:choices`.
+      //
+      // It cannot open the door to a false question: a numbered list in an ANSWER is
+      // refused by the footer, which is the load-bearing signal and is drawn by the
+      // chooser widget alone.
       if (found.has(1)) break
       continue
     }
@@ -146,7 +159,10 @@ export function readAsk(text: string): PaneAsk | null {
       continue
     }
     if (RULE.test(line)) break
-    q.unshift(line.trim())
+    // A CLI that draws its question inside a box leaves the frame's own gutter on every
+    // row, and that gutter is not the question: it reached the buttons, the card's hover
+    // and the Telegram message as a literal `|` at the start of each line.
+    q.unshift(line.trim().replace(/^[│|]\s?/, ''))
   }
 
   return { question: q.join(' ').trim(), options, selected: arrows[0] }

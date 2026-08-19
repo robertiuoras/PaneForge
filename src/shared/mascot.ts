@@ -1,0 +1,268 @@
+// The face on the resource ladder.
+//
+// `capacity.ts`, `autoHandoff.ts` and `reclaim.ts` have watched this machine's memory and
+// closed, trimmed and moved panes for weeks, and the entire output of all three is a
+// `console.info` in a devtools window nobody has open. So the app's only automatic answer
+// to a full machine was invisible, and the question it produced was "where IS the thing
+// that manages resources" - the honest answer being that there is no agent, there are
+// three timers with no mouth.
+//
+// This is the mouth. It is deliberately NOT a model: every sentence here is arithmetic
+// over readings the app already holds (`usage.ts` per-pane memory, `fleet.ts` state,
+// `place.ts` words), and every command is a small parser over that same list. A mascot
+// that needed a token to say "pane 4 has been quiet two hours" would be off within a day,
+// and one that guessed which pane you meant would close the wrong one.
+//
+// Pure: no DOM, no Electron. `npm run test:mascot`.
+
+import type { FleetState } from './fleet'
+import { formatMb } from './usage'
+
+/** Turned on by default: silent, and it is the only thing that ever says the ladder acted. */
+export interface MascotConfig {
+  enabled: boolean
+  /**
+   * Say it out loud as well as drawing it.
+   *
+   * Off, and it stays off unless somebody presses the speaker on the bubble. The app's
+   * standing law is that nothing it decides by itself may take the screen; a voice is the
+   * same intrusion through the other sense, and it also carries into a room with other
+   * people in it. The bubble is readable and ignorable, which is the right default.
+   */
+  voice: boolean
+  /**
+   * Wander between panes, rather than sitting in one corner.
+   *
+   * The walk is what makes it point AT the pane it is talking about, which is the whole
+   * reason it beats a toast. Off parks it bottom-left for somebody who finds movement in
+   * the corner of their eye expensive; the bubble and the commands are unchanged.
+   */
+  roam: boolean
+}
+
+export const DEFAULT_MASCOT: MascotConfig = { enabled: true, voice: false, roam: true }
+
+/** One pane, reduced to what the mascot is allowed to reason about. */
+export interface MascotPane {
+  id: string
+  /** 1-based position in the sidebar - the number a person says out loud, and the Ctrl key. */
+  pane: number
+  /** The pane's own name, or the project it is in. What `place.ts` already worked out. */
+  name: string
+  state: FleetState
+  /** This pane's whole process tree, MB. null when the sampler has not read it yet. */
+  memMb: number | null
+  /** How long since anybody typed into it, ms. */
+  idleMs: number
+  /** Another device's pty. Closing it here frees nothing here. */
+  remote: boolean
+}
+
+export type Intent =
+  /** Close these panes. Destructive, so it is always confirmed before it runs. */
+  | { kind: 'close'; ids: string[]; say: string }
+  /** Move these panes to a paired device. Also confirmed. */
+  | { kind: 'handoff'; ids: string[]; say: string }
+  /** Show these panes' readings. Nothing happens to them. */
+  | { kind: 'report'; ids: string[]; say: string }
+  /** It understood the shape and found nothing, or did not understand at all. */
+  | { kind: 'say'; say: string }
+
+/** An intent that changes something, and therefore may not run on a guess. */
+export function isDestructive(i: Intent): boolean {
+  return i.kind === 'close' || i.kind === 'handoff'
+}
+
+const MIN = 60_000
+
+/** "pane 4", "session 4", "#4", "4" - the number a person actually says. */
+function paneNumbers(text: string): number[] {
+  const out: number[] = []
+  const re = /(?:pane|session|tab|window)\s*#?\s*(\d{1,2})|#(\d{1,2})/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) out.push(Number(m[1] ?? m[2]))
+  // A bare number is only a pane when the sentence is otherwise about closing one:
+  // "close 4" is a pane, "close the 2 idle ones" is a count and must not be.
+  if (!out.length) {
+    const bare = /^\s*(?:close|kill|end|stop|move|hand\s*off|show|what(?:'s| is)?)\s+(\d{1,2})\s*$/i.exec(text)
+    if (bare) out.push(Number(bare[1]))
+  }
+  return out
+}
+
+/** Panes whose name the sentence names. Longest name first, so a substring cannot win. */
+function byName(text: string, panes: MascotPane[]): MascotPane[] {
+  const low = text.toLowerCase()
+  return [...panes]
+    .sort((a, b) => b.name.length - a.name.length)
+    .filter((p) => p.name.length >= 3 && low.includes(p.name.toLowerCase()))
+}
+
+/** How the mascot refers to a pane in a sentence: the number is the keystroke that reaches it. */
+export function paneWord(p: MascotPane): string {
+  return `pane ${p.pane} (${p.name})`
+}
+
+export function paneLine(p: MascotPane): string {
+  const mem = p.memMb === null ? 'not measured yet' : formatMb(p.memMb)
+  const idle = p.idleMs >= MIN ? `, quiet ${humanMins(p.idleMs)}` : ''
+  return `${paneWord(p)} - ${p.state}, ${mem}${idle}`
+}
+
+export function humanMins(ms: number): string {
+  const m = Math.round(ms / MIN)
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  return r ? `${h}h ${r}m` : `${h}h`
+}
+
+/**
+ * Panes it is willing to close on its own suggestion.
+ *
+ * The same refusals `reclaim.ts` runs under, because a mascot that offers to close a pane
+ * the sweep would refuse is offering to do something the app considers theft: never one
+ * that is working, starting or waiting for a person, and never another device's pty.
+ */
+export function closeable(panes: MascotPane[]): MascotPane[] {
+  return panes.filter((p) => !p.remote && (p.state === 'ready' || p.state === 'exited'))
+}
+
+/**
+ * What a typed line means.
+ *
+ * Everything is resolved against the pane list that is on screen right now, and a command
+ * that resolves to NOTHING says so rather than picking a nearest match - "close pane 9"
+ * with eight panes open is a typo, and the cost of guessing is somebody's session.
+ */
+export function parse(text: string, panes: MascotPane[]): Intent {
+  const t = text.trim()
+  if (!t) return { kind: 'say', say: 'Ask me something - "what is pane 3", "close the idle ones".' }
+  const low = t.toLowerCase()
+
+  const wantsClose = /\b(close|kill|end|quit|stop|shut)\b/.test(low)
+  const wantsMove = /\b(hand\s*off|move|send|offload|push)\b/.test(low)
+  const wantsBig = /\b(big|biggest|heavy|heaviest|largest|most memory|hog|eating|using most)\b/.test(low)
+  const wantsIdle = /\b(idle|quiet|unused|finished|done|old|stale)\b/.test(low)
+
+  // A set the sentence describes rather than names: "the idle ones", "the big ones".
+  const described = (): MascotPane[] => {
+    if (wantsIdle) return closeable(panes).filter((p) => p.idleMs >= 10 * MIN)
+    if (wantsBig) {
+      const known = panes.filter((p) => p.memMb !== null)
+      const n = /\b(two|2)\b/.test(low) ? 2 : /\b(three|3)\b/.test(low) ? 3 : 1
+      return [...known].sort((a, b) => (b.memMb as number) - (a.memMb as number)).slice(0, n)
+    }
+    return []
+  }
+
+  const nums = paneNumbers(t)
+  const named = byName(t, panes)
+  let hit: MascotPane[] = []
+  if (nums.length) hit = panes.filter((p) => nums.includes(p.pane))
+  else if (named.length) hit = named
+  else hit = described()
+
+  if (wantsClose) {
+    if (!hit.length)
+      return {
+        kind: 'say',
+        say: nums.length
+          ? `No pane ${nums.join(' or ')} open - there ${panes.length === 1 ? 'is 1 pane' : `are ${panes.length} panes`}.`
+          : 'Nothing quiet enough to close. Try "close pane 3".'
+      }
+    const refused = hit.filter((p) => p.remote)
+    const ok = hit.filter((p) => !p.remote)
+    if (!ok.length)
+      return { kind: 'say', say: `${refused.map(paneWord).join(' and ')} lives on another machine - close it over there.` }
+    return {
+      kind: 'close',
+      ids: ok.map((p) => p.id),
+      say: `Close ${ok.map(paneWord).join(' and ')}? It keeps its conversation and its screen - History reopens both.`
+    }
+  }
+
+  if (wantsMove) {
+    if (!hit.length) return { kind: 'say', say: 'Which one? "hand off pane 2".' }
+    const ok = hit.filter((p) => !p.remote)
+    if (!ok.length) return { kind: 'say', say: 'That one is already on the other machine.' }
+    return {
+      kind: 'handoff',
+      ids: ok.map((p) => p.id),
+      say: `Move ${ok.map(paneWord).join(' and ')} to the paired device? Its branch, conversation and screen go with it.`
+    }
+  }
+
+  if (hit.length) return { kind: 'report', ids: hit.map((p) => p.id), say: hit.map(paneLine).join('\n') }
+
+  if (/\b(memory|ram|total|how much|usage|resources)\b/.test(low)) {
+    const known = panes.filter((p) => p.memMb !== null)
+    const total = known.reduce((n, p) => n + (p.memMb as number), 0)
+    const top = [...known].sort((a, b) => (b.memMb as number) - (a.memMb as number)).slice(0, 3)
+    return {
+      kind: 'report',
+      ids: top.map((p) => p.id),
+      say: `${panes.length} panes, about ${formatMb(total)} between them.\n${top.map(paneLine).join('\n')}`
+    }
+  }
+
+  if (/\b(help|what can you|commands?)\b/.test(low))
+    return {
+      kind: 'say',
+      say: 'Try: "what is pane 3", "what are the two biggest", "close the idle ones", "hand off pane 2", "memory".'
+    }
+
+  return { kind: 'say', say: `I only know this window - panes, memory and closing them. "help" lists it.` }
+}
+
+/** What the mascot volunteers, unasked, or nothing. */
+export interface Notice {
+  /** Stable across re-readings of the same situation, so it is said once. */
+  key: string
+  say: string
+  /** The pane it is about, so it can walk over and point at it. */
+  about?: string
+  /** Offered as a button on the bubble. Never run without the press. */
+  action?: Intent
+}
+
+/**
+ * The one thing it says on its own.
+ *
+ * Deliberately a single notice at a time and deliberately rare: a mascot that pipes up
+ * about every reading is a mascot that gets switched off, and the readings underneath it
+ * change every four seconds. It speaks when idle panes are holding real memory and the
+ * app is not already going to do something about it - which is the exact situation the
+ * ladder is silent in on a desk with room to spare.
+ */
+export function notice(
+  panes: MascotPane[],
+  opts: { idleCloseOn: boolean; idleMinutes?: number; minMb?: number }
+): Notice | null {
+  const mins = opts.idleMinutes ?? 60
+  const minMb = opts.minMb ?? 1200
+  if (opts.idleCloseOn) return null // the clock is on; it will handle these itself
+  const stale = closeable(panes).filter((p) => p.idleMs >= mins * MIN && p.memMb !== null)
+  if (stale.length < 2) return null
+  const total = stale.reduce((n, p) => n + (p.memMb as number), 0)
+  if (total < minMb) return null
+  const ids = stale.map((p) => p.id)
+  return {
+    key: `stale:${ids.join(',')}`,
+    about: ids[0],
+    say: `${stale.length} panes have been quiet over ${humanMins(mins * MIN)} and are holding ${formatMb(total)}. Close them?`,
+    action: {
+      kind: 'close',
+      ids,
+      say: `Close ${stale.map(paneWord).join(', ')}?`
+    }
+  }
+}
+
+/** What it says after the ladder acted by itself, so an invisible action stops being invisible. */
+export function actedWords(what: 'closed' | 'moved' | 'trimmed', panes: string[], mb?: number): string {
+  const who = panes.length === 1 ? panes[0] : `${panes.length} panes`
+  if (what === 'trimmed') return `Trimmed ${who} back${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
+  if (what === 'moved') return `Moved ${who} to the paired device - this machine was out of memory.`
+  return `Closed ${who}${mb ? `, about ${formatMb(mb)} back` : ''} - reopen from History, nothing is lost.`
+}
