@@ -1057,7 +1057,15 @@ function TerminalPane({
    */
   const sayCopied = (text: string, what = 'Selection'): void => {
     const body = text.trim()
-    if (!body) return
+    // Nothing readable in it - a drag that caught only spaces, or a blank row. It still
+    // reached the clipboard (these callers write before they announce), and saying
+    // nothing here is the exact silence this whole change exists to remove: the press
+    // worked, nothing happened on screen, and there is no way to tell that from a copy
+    // that failed. Same sentence `putOnClipboard` uses, so the two paths agree.
+    if (!body) {
+      say('Nothing to copy there')
+      return
+    }
     const lines = body.split('\n').length
     say(`${what} copied - ${lines} line${lines === 1 ? '' : 's'}`)
   }
@@ -3446,9 +3454,12 @@ function sameGrid(a?: { cols: number; rows: number } | null, b?: { cols: number;
  *
  * Every prop is compared, and the three that are objects are compared by VALUE, because
  * main sends new ones each time and by reference this comparator would always say "no".
- * A prop added to `Props` without a line here is a pane that stops updating for it, which
- * is why this lists them out rather than looping over keys: the missing line is then a
- * type error rather than a silent staleness.
+ * A prop added to `Props` without a line here is a pane that STOPS UPDATING for it, and
+ * nothing catches that: TypeScript has no exhaustiveness check over an object's keys, so
+ * the missing comparison compiles, the comparator answers "same", and the pane quietly
+ * never re-renders for that prop. It is listed out rather than looped over so the omission
+ * is at least visible when reading the function - it is not a compile error. Add the line
+ * in the same edit as the prop.
  */
 function samePaneProps(a: Props, b: Props): boolean {
   return (
