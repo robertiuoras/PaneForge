@@ -1454,6 +1454,42 @@ CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
   `npm run test:goals` does the same for the queue: a goal read back after a simulated
   kill, and a second goal that starts because the first one ended.
 
+## ...and it knows what is serving, and can stop one
+
+"What dev servers are running" had no answer anywhere in this app, and the app already had
+most of it: `devServers.ts` reads the process table for a handoff, but its answer is a
+package.json SCRIPT - deliberately, because that is what the OTHER machine needs. A person
+asking has the two things that throws away in their head: the PORT they cannot reach and
+the pane it came out of. `shared/devList.ts` is that answer, `npm run test:devlist`.
+
+- **One server, not one process.** Measured here 2026-08-21: `npm run dev -p 3100` and the
+  `node .../next dev -p 3100` it spawned are both real, both recognised and are the SAME
+  server - so a bare list said two, and "close the second one" would have killed a child of
+  the first. A candidate whose ancestor chain reaches another candidate is folded into that
+  ancestor (the thing a person typed, and the one whose kill takes the tree), and what the
+  child knew - the port, the path - is folded upward, since npm's own title carries neither.
+- **A number is not a port because it is a number.** `--max-old-space-size=4096` is full of
+  them and a wrong port is worse than none: it is the one thing somebody acts on. Only
+  `-p`/`--port`/`--port=`/`PORT=` count.
+- **Attribution is two-legged**, same as the handoff path and for the same measured reason:
+  the server on this desk had been reparented onto pid 1 with its npm parent gone, so a
+  tree walk from the pane finds nothing. Tree first, then a path test against the pane's
+  folder. **A server no pane claims is still listed** - the question is what is running on
+  this machine, not what PaneForge owns, and an unclaimed one is the likeliest to be lost.
+- **An ambiguous stop prints the list and asks.** "close the dev" with three running names
+  none of them, so it picks NONE. Named by port, by pid, by pane, by project, by tool, by
+  "the first one", or by "both". A generic label (`dev`, `start`, `serve`) never matches on
+  its own - that word is in the question as often as the answer, so matching it made "close
+  the dev in pane 2" name every `dev` on the machine.
+- **The pid is re-validated in main before anything is signalled.** It came off a list a
+  person then read and confirmed, and a pid is reused: one whose command line is no longer a
+  dev server is refused out loud. SIGTERM, then SIGKILL for anything still up - a server
+  killed outright leaves its port held, which is the failure somebody reboots over.
+- The renderer supplies only the ORDER and the words (which pane is 3, what that project is
+  called); every fact - the folder, the pty pid - is read in main off the pane's own record,
+  so a caller cannot point this at a folder it does not own. Read on demand when the ask box
+  opens, never on a timer: it is a whole `ps -Ao command=`.
+
 ## The resource ladder has a face
 
 `capacity.ts`, `autoHandoff.ts` and `reclaim.ts` trim, move and close panes on their own,
@@ -1666,6 +1702,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
 | `npm run test:mascot` | what the mascot may do to somebody's panes: a number naming no pane closes nothing, a name contained in a longer one is dropped (`service` inside `service-a`), a count is not a pane number, and every suggestion is drawn from `reclaim.ts`'s own refusal set. The weight is in the four silences - it says nothing when the app's own clock is on, when one pane is stale, when the panes are cheap, or when they are minutes rather than hours old |
 | `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
+| `npm run test:devlist` | what is serving right now, and which one a sentence names: a server and the child it spawned counted as ONE, a heap-size flag that is not a port, and the refusal that carries the feature - "close the dev" with three running picks none and prints the list |
 | `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 | `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back — and the three refusals, of which the load-bearing one is a `npm run try` copy out of `dist\win-unpacked`: a Desktop shortcut pointing at a folder the next build deletes looks fine until it is pressed |
