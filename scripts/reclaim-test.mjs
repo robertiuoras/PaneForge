@@ -83,11 +83,25 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 {
-  // Never somebody's business. `needsYou` is the load-bearing one - it is quiet BECAUSE it
-  // is waiting for a person, so every "is it idle" test in the app says yes about it.
-  for (const state of ['needsYou', 'working', 'starting', 'stalled']) {
+  // Never somebody's business. A live QUESTION is the load-bearing one - the pane is quiet
+  // BECAUSE it is waiting for a person, so every "is it idle" test in the app says yes
+  // about it.
+  for (const state of ['working', 'starting', 'stalled']) {
     const panes = [pane({ id: 'x', state }), pane({ id: 'keep' })]
     eq(`never closes a pane that is ${state}`, ids(reclaimPlan(panes, over, DEFAULT_RECLAIM, NOW)), 'keep')
+  }
+  {
+    const asked = [pane({ id: 'x', state: 'needsYou', asking: true }), pane({ id: 'keep' })]
+    eq('never closes a pane holding a live question', ids(reclaimPlan(asked, over, DEFAULT_RECLAIM, NOW)), 'keep')
+  }
+  {
+    // ...and the other half of `needsYou`, which is the only pane anybody ever wants
+    // closed. The state is one word for two facts - an agent that ASKED something, and an
+    // agent that FINISHED and is sitting at its composer - and refusing the state to
+    // protect the first refused the second too. Measured on this desk 2026-08-20: every
+    // pane on it was `needsYou`, so this sweep had never closed anything in its life.
+    const done = [pane({ id: 'x', state: 'needsYou', asking: false }), pane({ id: 'keep' }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('a FINISHED turn is closeable', ids(reclaimPlan(done, over, DEFAULT_RECLAIM, NOW)).includes('x'), ids(reclaimPlan(done, over, DEFAULT_RECLAIM, NOW)))
   }
 }
 
@@ -149,13 +163,24 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // the one it cannot keep: on a desk nobody is sitting at, every pane in the grid is "on
   // screen", and keeping it would mean the feature can never fire on the machine it was
   // built for.
-  for (const state of ['needsYou', 'working', 'starting', 'stalled']) {
+  for (const state of ['working', 'starting', 'stalled']) {
     const p = [pane({ id: 'x', state, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'keep', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
     check(
       `the clock never closes a pane that is ${state}`,
       !idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'),
       ids(idleClosePlan(p, CLOCKED, NOW))
     )
+  }
+  {
+    const p = [pane({ id: 'x', state: 'needsYou', asking: true, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'keep', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('the clock never closes a pane holding a live question', !idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'), ids(idleClosePlan(p, CLOCKED, NOW)))
+  }
+  {
+    // The pair that decides whether the clock can ever fire at all: with `needsYou`
+    // refused outright it could only reach a CLI nobody had typed into, which on a real
+    // desk is no pane at all.
+    const p = [pane({ id: 'x', state: 'needsYou', asking: false, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('but a finished turn is exactly what it is for', idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'), ids(idleClosePlan(p, CLOCKED, NOW)))
   }
   const guarded = [
     pane({ id: 'focused', focused: true, lastKeyboard: NOW - 9 * HOUR }),

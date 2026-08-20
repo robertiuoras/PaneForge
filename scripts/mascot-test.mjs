@@ -31,7 +31,20 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot, bubbleSpot, DEFAULT_MASCOT } =
+const {
+  parse,
+  notice,
+  closeable,
+  isDestructive,
+  paneLine,
+  humanMins,
+  clampSpot,
+  bubbleSpot,
+  countdownWords,
+  CLOSE_COUNTDOWN_MS,
+  KEEP_MINUTES,
+  DEFAULT_MASCOT
+} =
   createRequire(import.meta.url)(outfile)
 
 // The sprite itself. It is data rather than drawing code, which is the only reason it can
@@ -39,7 +52,7 @@ const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot,
 const spriteFile = join(work, 'sprite.bundle.cjs')
 buildSync({
   absWorkingDir: root,
-  entryPoints: ['src/shared/foxSprite.ts'],
+  entryPoints: ['src/shared/botSprite.ts'],
   bundle: true,
   format: 'cjs',
   platform: 'node',
@@ -63,17 +76,26 @@ const pane = (o) => ({
   memMb: 200,
   idleMs: 0,
   remote: false,
+  asking: false,
   ...o
 })
 
 // A desk that looks like this one: something working, something finished, something the
-// agent asked a question in, and a mirror of the other machine.
+// agent asked a question in, a mirror of the other machine - and, the case this whole
+// module got wrong for weeks, a pane whose agent FINISHED a turn.
+//
+// `fleetState` calls that last one `needsYou`, the same word it uses for the pane holding
+// a live question, so a rule written against the state refused both. On a real desk nearly
+// every pane is that pane, which is why "close the idle ones" answered "nothing quiet
+// enough to close" while eleven finished agents sat there holding 190 MB each. `asking` is
+// the fact that actually separates them, and it comes from the pane's own question.
 const desk = [
   pane({ id: 'a', pane: 1, name: 'PaneForge', state: 'working', memMb: 240, idleMs: 0 }),
   pane({ id: 'b', pane: 2, name: 'taskdriver', state: 'ready', memMb: 2100, idleMs: 3 * 60 * MIN }),
   pane({ id: 'c', pane: 3, name: 'assistant', state: 'ready', memMb: 1900, idleMs: 2 * 60 * MIN }),
-  pane({ id: 'd', pane: 4, name: 'secondtonone', state: 'needsYou', memMb: 300, idleMs: 90 * MIN }),
-  pane({ id: 'e', pane: 5, name: 'crypto', state: 'ready', memMb: 180, idleMs: 5 * MIN, remote: true })
+  pane({ id: 'd', pane: 4, name: 'secondtonone', state: 'needsYou', asking: true, memMb: 300, idleMs: 90 * MIN }),
+  pane({ id: 'e', pane: 5, name: 'crypto', state: 'ready', memMb: 180, idleMs: 5 * MIN, remote: true }),
+  pane({ id: 'f', pane: 6, name: 'inbox-ops', state: 'needsYou', memMb: 900, idleMs: 4 * 60 * MIN })
 ]
 
 {
@@ -99,7 +121,7 @@ const desk = [
   // nearest one - that is somebody's session for the price of a slipped finger.
   const i = parse('close pane 9', desk)
   eq('a pane that is not open closes nothing', i.kind, 'say')
-  check('and says how many there are', /5 panes/.test(i.say), i.say)
+  check('and says how many there are', /6 panes/.test(i.say), i.say)
 }
 
 {
@@ -115,7 +137,9 @@ const desk = [
   // refusals reclaim.ts uses: the working pane and the one holding a question stay.
   const i = parse('close the idle ones', desk)
   eq('idle ones is a close', i.kind, 'close')
-  eq('and it is exactly the finished, local, quiet ones', i.ids.sort().join(','), 'b,c')
+  eq('and it is exactly the finished, local, quiet ones', i.ids.sort().join(','), 'b,c,f')
+  check('a finished turn is one of them', i.ids.includes('f'), i.ids)
+  check('and the pane holding a question is not', !i.ids.includes('d'), i.ids)
 }
 
 {
@@ -150,13 +174,13 @@ const desk = [
 {
   // A count is not a pane number. "close the 2 idle ones" must not become "close pane 2".
   const i = parse('close the 2 idle ones', desk)
-  eq('a count is read as a count', i.ids.sort().join(','), 'b,c')
+  eq('a count is read as a count', i.ids.sort().join(','), 'b,c,f')
 }
 
 {
   const i = parse('memory', desk)
   eq('memory is a report', i.kind, 'report')
-  check('it totals the desk', /5 panes/.test(i.say), i.say)
+  check('it totals the desk', /6 panes/.test(i.say), i.say)
   check('and names the top few', i.ids.length <= 3 && i.ids[0] === 'b', i.ids)
 }
 
@@ -180,7 +204,11 @@ const desk = [
 {
   // closeable is the same set reclaim.ts would take, and it is what every suggestion is
   // built from - so the mascot can never OFFER something the sweep itself would refuse.
-  eq('closeable skips working, needsYou and mirrors', closeable(desk).map((p) => p.id).sort().join(','), 'b,c')
+  eq(
+    'closeable skips working, mirrors and a live question - and KEEPS a finished turn',
+    closeable(desk).map((p) => p.id).sort().join(','),
+    'b,c,f'
+  )
 }
 
 {
@@ -188,19 +216,23 @@ const desk = [
   const n = notice(desk, { idleCloseOn: false })
   check('it speaks when idle panes hold real memory', !!n, n)
   eq('and offers the close as a press, never a fait accompli', n.action.kind, 'close')
-  eq('over exactly the stale ones', n.action.ids.sort().join(','), 'b,c')
+  eq('over exactly the stale ones', n.action.ids.sort().join(','), 'b,c,f')
   check('the key is stable so it is said once', n.key === notice(desk, { idleCloseOn: false }).key)
   check('it walks to the pane it is about', desk.some((p) => p.id === n.about))
 }
 
 {
-  // The four ways it must stay quiet. Each one alone is what turns a mascot into noise.
+  // The three ways it must stay quiet. Each one alone is what turns a mascot into noise.
   eq('silent when the app already has a clock for this', notice(desk, { idleCloseOn: true }), null)
-  eq(
-    'silent for one pane - not worth a sentence',
-    notice([desk[0], desk[1]], { idleCloseOn: false }),
-    null
-  )
+  // ...and the way it must NOT. Two stale panes was the old floor, and it was set while
+  // `closeable` could not see a finished pane at all - so between the two rules this had
+  // never once fired on a real desk. One finished agent is 190 MB whether it has company
+  // or not, and a mascot that will not mention that is a mascot with nothing to say.
+  {
+    const one = notice([desk[0], desk[1]], { idleCloseOn: false })
+    check('one stale pane is still worth a sentence', !!one && one.action.ids.join(',') === 'b', one)
+    check('and it names that pane rather than counting', /pane 2/.test(one.say), one.say)
+  }
   eq(
     'silent when the panes are cheap',
     notice(
@@ -258,7 +290,7 @@ const desk = [
   // The sprite is a grid, and a row one cell short does not draw a wonky fox - it shifts
   // every colour after it left on that row, which reads as corruption rather than as a
   // typo. Nothing in the drawing code can notice; this is where it is caught.
-  const { ALL_LAYERS, GRID, CLASS_OF, LEGS, TAILS, BODY, runsOf } = sprite
+  const { ALL_LAYERS, GRID, CLASS_OF, ARMS, TREADS, ANTENNA, BEACON, EYES, BODY, runsOf } = sprite
   let square = true
   let known = true
   for (const layer of ALL_LAYERS) {
@@ -271,23 +303,20 @@ const desk = [
   eq('every layer is a square grid', square, true)
   eq('and uses no colour the stylesheet has never heard of', known, true)
 
-  // The gallop is four beats. Three reads as a limp and five as a stumble, and either way
-  // the CSS that cycles them is written for exactly four.
-  eq('the run is four frames', Object.keys(LEGS).filter((k) => k.startsWith('run')).length, 4)
-  eq('and there is one standing pose', typeof LEGS.stand, 'object')
-  // Standing is not one frame: three tail heights, two leg poses, two ear poses and two
-  // eye positions. A pose that is identical to another is dead art that reads as a still.
-  const { EARS, EYES } = sprite
+  // Standing still is not one frame: three arm heights, two tread poses, two antenna
+  // poses, two beacon states and two visor positions, each on its own clock. A pose
+  // identical to another is dead art that reads as a still picture.
   const distinct = (o) => new Set(Object.values(o).map((a) => a.join('|'))).size
-  eq('the idle sway is three tails', distinct(TAILS) >= 4, true)
-  eq('and there are two standing poses', LEGS.stand.join() !== LEGS.standB.join(), true)
-  eq('the ears have three poses', distinct(EARS), 3)
-  eq('and the eye two', distinct(EYES), 2)
+  eq('the arms settle over three drawings', distinct(ARMS), 3)
+  eq('the treads tick between two', distinct(TREADS), 2)
+  eq('the antenna has two poses', distinct(ANTENNA), 2)
+  eq('the beacon two', distinct(BEACON), 2)
+  eq('and the visor two', distinct(EYES), 2)
 
   // Runs, not cells: the whole point of the walk is that a row of eight identical cells is
   // one rect. A per-cell version passes every other check here and quadruples the DOM.
   const rects = runsOf(BODY)
-  eq('the body is drawn as runs', rects.length < 90, true)
+  eq('the chassis is drawn as runs', rects.length < 90, true)
   eq('and every run has width', rects.every((r) => r.w >= 1), true)
   const widest = Math.max(...rects.map((r) => r.w))
   eq('with at least one long one', widest >= 6, true)
@@ -297,9 +326,10 @@ const desk = [
   // them has to appear in the component that draws the sprite.
   const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
   const missing = [
-    ...Object.keys(LEGS).map((k) => `LEGS.${k}`),
-    ...Object.keys(TAILS).map((k) => `TAILS.${k}`),
-    ...Object.keys(EARS).map((k) => `EARS.${k}`),
+    ...Object.keys(ARMS).map((k) => `ARMS.${k}`),
+    ...Object.keys(TREADS).map((k) => `TREADS.${k}`),
+    ...Object.keys(ANTENNA).map((k) => `ANTENNA.${k}`),
+    ...Object.keys(BEACON).map((k) => `BEACON.${k}`),
     ...Object.keys(EYES).map((k) => `EYES.${k}`)
   ].filter((ref) => !drawn.includes(ref))
   eq('every pose is drawn', missing.join(',') || 'none', 'none')
@@ -308,13 +338,22 @@ const desk = [
   // animation on, or a pose is on screen for ever or never.
   const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   const classless = [
-    'm-tail-a', 'm-tail-b', 'm-tail-c', 'm-tail-run',
-    'm-legs-stand', 'm-legs-stand-a', 'm-legs-stand-b', 'm-legs-run',
-    'm-ear-perk', 'm-ear-flick', 'm-ear-back', 'm-eye-ahead', 'm-eye-look',
-    'm-lid', 'm-dust'
-  ]
-    .filter((c) => !css.includes(`.${c}`))
+    'm-arm-a', 'm-arm-b', 'm-arm-c',
+    'm-treads-a', 'm-treads-b',
+    'm-antenna', 'm-antenna-tilt', 'm-beacon-on',
+    'm-eye-ahead', 'm-eye-look', 'm-lid',
+    'm-shell', 'm-shell-d', 'm-shell-l', 'm-visor'
+  ].filter((c) => !css.includes(`.${c}`))
   eq('and every layer has a rule', classless.join(',') || 'none', 'none')
+
+  // IT DOES NOT FLOAT. The old sprite bobbed on a 4.2s `translateY` loop and that is the
+  // first thing anybody said about it, so a vertical loop coming back is a regression and
+  // not a taste change. The sprite still MOVES - it walks to the card of the pane it is
+  // talking about - but that is a `left`/`top` transition on the layer, not a loop on the
+  // drawing, and it is a sentence rather than scenery.
+  const spriteCss = css.slice(css.indexOf('---- the mascot'))
+  check('the sprite has no vertical loop left in it', !/translateY/.test(spriteCss), 'translateY')
+  check('and no bob keyframes', !/mascot-bob/.test(css), 'mascot-bob')
 }
 
 {
@@ -352,6 +391,27 @@ const desk = [
   const narrow = bubbleSpot({ cx: 100, cy: 300, sprite: 48, width: 0, height: 80, vw: 220, vh: 700 })
   check('a narrow window caps the width', narrow.max <= 200, narrow.max)
   check('and still starts on screen', narrow.left >= 0, narrow.left)
+}
+
+{
+  // The countdown. It is the answer to "the app closed a pane and the only record was a
+  // console line nobody has open": the sentence names the pane, says how long is left, and
+  // says what closing costs - which here is nothing, because History reopens the
+  // conversation AND the screen.
+  const w = countdownWords(['pane 2 (taskdriver)'], 7400, 'idle')
+  check('it counts in whole seconds', /in 8s/.test(w), w)
+  check('and names the pane', /pane 2 \(taskdriver\)/.test(w), w)
+  check('and says nothing is lost', /History/.test(w), w)
+  const many = countdownWords(['pane 2 (a)', 'pane 3 (b)'], 1200, 'pressure')
+  check('several panes are counted and named', /2 panes/.test(many) && /pane 3 \(b\)/.test(many), many)
+  check('and the reason is the one that triggered it', /out of memory/.test(many), many)
+  eq('a deadline already passed reads as zero', /in 0s/.test(countdownWords(['x'], -50, 'idle')), true)
+
+  // Both numbers are the feature. A count too short to read is a close with a flicker in
+  // front of it, and a "keep it open" that expires in a minute is the same question again
+  // sixty seconds later, for ever - which is what gets a feature switched off.
+  check('the count is long enough to read and reach', CLOSE_COUNTDOWN_MS >= 10_000, CLOSE_COUNTDOWN_MS)
+  check('and keeping a pane holds for an hour', KEEP_MINUTES >= 30, KEEP_MINUTES)
 }
 
 console.log(`mascot: ${checks} checks passed`)
