@@ -3236,7 +3236,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   /* The walk. One property, composited, and slow enough to read as a walk rather
      than a jump - it is how the mascot says WHICH pane without printing an id. */
   transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
-  display: flex; align-items: flex-end; gap: 8px;
+  line-height: 0;
 }
 /* A drag has to land under the pointer, not walk there 900ms later - the walk's easing
    is what made a dragged sprite feel stuck to the corner it started in. */
@@ -3286,23 +3286,63 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    resampled. It is also why nothing here rotates - a rotated pixel grid stops being one -
    so every pose is its own drawing and the motion is WHICH drawing is showing, which is
    an opacity step and therefore free (`npm run test:anim`). */
-.m-lid, .m-tail-run, .m-legs-run, .m-dust { opacity: 0; }
+.m-lid, .m-tail-run, .m-legs-run, .m-dust,
+.m-tail-b, .m-tail-c, .m-legs-stand-b, .m-ear-flick, .m-ear-back, .m-eye-look { opacity: 0; }
 .mascot-body.blink .m-lid { opacity: 1; }
 
-/* Standing: the two tail positions swap, and that is the whole idle animation. */
-.m-tail-a { animation: m-frame2 3.2s steps(1, end) infinite; }
-.m-tail-b { animation: m-frame2 3.2s steps(1, end) infinite -1.6s; }
-@keyframes m-frame2 {
-  0% { opacity: 1; }
-  50%, 100% { opacity: 0; }
+/* Standing is NOT one frame. Four things move on four different clocks - the tail sways
+   over three drawings, the weight shifts between two leg poses, an ear flicks, the eye
+   darts - and the periods are deliberately coprime-ish (4.8s / 7s / 9s / 6.5s) so they
+   never line up into a loop anybody can count. Every one of them is an opacity step, which
+   is what `npm run test:anim` allows and what makes the whole idle fox cost nothing. */
+.m-tail-a { animation: m-tail-a 4.8s steps(1, end) infinite; }
+.m-tail-b { animation: m-tail-b 4.8s steps(1, end) infinite; }
+.m-tail-c { animation: m-tail-c 4.8s steps(1, end) infinite; }
+@keyframes m-tail-a { 0% { opacity: 1; } 25%, 100% { opacity: 0; } }
+@keyframes m-tail-b {
+  0% { opacity: 0; } 25% { opacity: 1; } 50% { opacity: 0; }
+  75% { opacity: 1; } 100% { opacity: 0; }
 }
+@keyframes m-tail-c { 0% { opacity: 0; } 50% { opacity: 1; } 75%, 100% { opacity: 0; } }
+
+.m-legs-stand-a { animation: m-stand-a 7s steps(1, end) infinite; }
+.m-legs-stand-b { animation: m-stand-b 7s steps(1, end) infinite; }
+@keyframes m-stand-a { 0% { opacity: 1; } 55%, 100% { opacity: 0; } }
+@keyframes m-stand-b { 0% { opacity: 0; } 55% { opacity: 1; } 100% { opacity: 0; } }
+
+/* The flick is a BEAT, not a state: 6% of nine seconds. A pose held half the time reads as
+   a fox with a broken ear rather than as one listening to something. */
+.m-ear-perk { animation: m-ear-perk 9s steps(1, end) infinite; }
+.m-ear-flick { animation: m-ear-flick 9s steps(1, end) infinite; }
+@keyframes m-ear-perk { 0% { opacity: 1; } 88% { opacity: 0; } 94%, 100% { opacity: 1; } }
+@keyframes m-ear-flick { 0% { opacity: 0; } 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
+
+.m-eye-ahead { animation: m-eye-ahead 6.5s steps(1, end) infinite; }
+.m-eye-look { animation: m-eye-look 6.5s steps(1, end) infinite; }
+@keyframes m-eye-ahead { 0% { opacity: 1; } 72% { opacity: 0; } 84%, 100% { opacity: 1; } }
+@keyframes m-eye-look { 0% { opacity: 0; } 72% { opacity: 1; } 84%, 100% { opacity: 0; } }
+
+/* Noticed: a pointer on the sprite speeds the sway and holds the ears up. It is the one
+   piece of feedback that says the fox is a control and not a picture. */
+.mascot-body:hover .m-tail-a,
+.mascot-body:hover .m-tail-b,
+.mascot-body:hover .m-tail-c { animation-duration: 2.2s; }
+.mascot-body:hover .m-ear-flick { opacity: 0; animation: none; }
+.mascot-body:hover .m-ear-perk { opacity: 1; animation: none; }
 
 /* Running: the tail streams out behind, the four-beat gallop cycles at ~8 frames a
    second, and dust kicks up off the back paws. */
 .mascot-body.running .m-tail-a,
 .mascot-body.running .m-tail-b,
+.mascot-body.running .m-tail-c,
+.mascot-body.running .m-ear-perk,
+.mascot-body.running .m-ear-flick,
+.mascot-body.running .m-eye-look,
 .mascot-body.running .m-legs-stand { animation: none; opacity: 0; }
 .mascot-body.running .m-tail-run { opacity: 1; }
+/* Ears back is the cheapest way to make a gallop read as effort rather than as legs. */
+.mascot-body.running .m-ear-back { opacity: 1; }
+.mascot-body.running .m-eye-ahead { animation: none; opacity: 1; }
 .mascot-body.running .m-legs-run { animation: m-frame4 480ms steps(1, end) infinite; }
 .mascot-body.running .m-legs-run2 { animation-delay: -120ms; }
 .mascot-body.running .m-legs-run3 { animation-delay: -240ms; }
@@ -3328,13 +3368,22 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .mascot-body.face-left svg { transform: scaleX(-1); transform-origin: 12px 12px; }
 .mascot-body.running .m-bob { animation-duration: 520ms; }
 .mascot-body.running .m-shadow { animation-duration: 520ms; }
+/* The bubble is placed in the LAYER, in pixels, by `bubbleSpot` in shared/mascot.ts - it
+   is NOT a child of the sprite. As a child it widened the sprite's own box, which is
+   centred on the spot, so saying anything shoved the fox sideways by half a bubble and
+   hung the rest of it off the left edge of the window. `min-width: 0` and the max-width
+   the placer computes keep it inside a narrow window as well as a wide one. */
 .mascot-bubble {
-  pointer-events: auto; max-width: 300px; background: var(--surface-2);
+  position: absolute; pointer-events: auto; min-width: 0;
+  background: var(--surface-2);
   border: 1px solid var(--line-strong); border-radius: var(--r);
   padding: 9px 10px; box-shadow: var(--shadow); font-size: 12px;
   display: flex; flex-direction: column; gap: 8px;
-  order: -1; margin-bottom: 10px;
+  transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
 }
+/* A dragged sprite lands under the pointer; a bubble walking after it for 900ms
+   reads as the drag not having worked. */
+.mascot-bubble.dragging { transition: none; }
 .mascot-say { white-space: pre-wrap; color: var(--text); line-height: 1.45; }
 .mascot-acts { display: flex; gap: 6px; }
 .mascot-ask { display: flex; gap: 6px; }

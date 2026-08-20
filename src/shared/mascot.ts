@@ -59,6 +59,66 @@ export function clampSpot(x: number, y: number): { x: number; y: number } {
   return { x: c(x), y: c(y) }
 }
 
+/**
+ * Where the bubble goes, given where the sprite is standing.
+ *
+ * It used to go nowhere at all: the bubble was a flex CHILD of the sprite's own box, and
+ * that box is centred on the spot - so a bubble appearing widened the box by ~310px, moved
+ * the fox ~155px sideways to keep the new box centred, and put the left half of the bubble
+ * off the window whenever the fox was near the left edge, which is where it stands by
+ * default. That is "the chatbox is bugged, it is off screen, and now the fox is too".
+ *
+ * So the bubble is not attached to the sprite at all any more - it is placed in the layer
+ * in pixels, clamped into the window on both axes, and the sprite never moves because
+ * something was said. Above the fox when there is room, below it when there is not, and
+ * always fully on screen: a message that cannot be read is the same as no message, and a
+ * button that cannot be reached is worse.
+ */
+export interface BubbleBox {
+  left: number
+  top: number
+  /** What it was placed as. */
+  width: number
+  /** The widest it may be drawn - the window's own limit, not the message's. */
+  max: number
+  /** Which side of the sprite it ended up on. The tail of the bubble points the other way. */
+  above: boolean
+}
+
+/** The most it may be, and the least gap it keeps from the window edge and the sprite. */
+export const BUBBLE_MAX = 300
+const BUBBLE_PAD = 10
+const BUBBLE_GAP = 8
+
+export function bubbleSpot(o: {
+  /** The sprite's centre, in window pixels. */
+  cx: number
+  cy: number
+  /** The sprite's drawn size - the bubble clears it rather than overlapping the fox. */
+  sprite: number
+  /** The bubble's own measured size. 0 before the first paint, which is still placeable. */
+  width: number
+  height: number
+  vw: number
+  vh: number
+}): BubbleBox {
+  // Unmeasured (the first paint) is treated as full width: centring a box whose size is
+  // not known yet on its own guess is what puts it off the edge for one frame.
+  const max = Math.max(80, Math.min(BUBBLE_MAX, o.vw - BUBBLE_PAD * 2))
+  const width = o.width > 0 ? Math.min(o.width, max) : max
+  const left = Math.max(BUBBLE_PAD, Math.min(o.cx - width / 2, o.vw - BUBBLE_PAD - width))
+  const half = o.sprite / 2 + BUBBLE_GAP
+  // Above unless there is no room for it, and above ANYWAY when there is no room either
+  // way - a bubble clamped against the top edge is readable, one clamped over the sprite
+  // it is pointing out of is not.
+  const roomAbove = o.cy - half - o.height >= BUBBLE_PAD
+  const roomBelow = o.cy + half + o.height <= o.vh - BUBBLE_PAD
+  const above = roomAbove || !roomBelow
+  const raw = above ? o.cy - half - o.height : o.cy + half
+  const top = Math.max(BUBBLE_PAD, Math.min(raw, Math.max(BUBBLE_PAD, o.vh - BUBBLE_PAD - o.height)))
+  return { left, top, width, max, above }
+}
+
 /** One pane, reduced to what the mascot is allowed to reason about. */
 export interface MascotPane {
   id: string

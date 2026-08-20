@@ -1418,6 +1418,17 @@ draws it. `npm run test:mascot`.
   on: nothing the app decided by itself may make a noise into somebody's room.
 - **It never picks which machine.** `hand off pane 2` opens the hand-off box with the panes
   already chosen; choosing the device is the one question that box exists to ask.
+- **The bubble is placed in the LAYER, not beside the sprite.** It used to be a flex child
+  of the fox's own box, and that box is centred on the spot - so saying anything widened it
+  by ~310px, shoved the fox ~155px sideways to keep the new box centred, and hung the left
+  half of the words off the window at the fox's own default corner (`x = 0.06`). That is
+  "the chatbox is bugged, it is off screen, and now the fox is". `bubbleSpot`
+  (`shared/mascot.ts`) puts it in pixels instead: clamped inside the window on both axes,
+  above the fox when there is room and below when there is not, and above ANYWAY when there
+  is room for neither - a bubble clamped to the top edge is readable, one clamped over the
+  sprite is not. Unmeasured (the first paint) counts as full width, because centring a box
+  whose size is not known yet on its own guess is what puts it off the edge for one frame.
+  Pinned by `npm run test:mascot` with no window, and measured in a real one.
 - **The sprite is PIXEL ART, and that is a correctness decision rather than a style one.**
   It was eight bezier paths, and at the 46px it is actually drawn at, a curve is resolved
   by the rasteriser rather than by us: the ears rounded off, the muzzle and the head merged,
@@ -1427,6 +1438,16 @@ draws it. `npm run test:mascot`.
   cells) under `shape-rendering: crispEdges` at 48 CSS pixels, so a cell is exactly two
   device pixels and nothing is ever resampled. Four fills, still mixed in oklab from the one
   accent, because a surface-derived fill inverts between a dark theme and Paper.
+- **Standing still is not ONE frame.** A fox drawn once and bobbed is a sticker with a
+  wobble, which is why the first pixel version still read as flat. Four things move on four
+  different clocks, and the periods are deliberately not multiples of each other (tail
+  4.8s, weight 7s, ear 9s, eye 6.5s) so they never line up into a loop anybody can count:
+  the tail sways over THREE heights of one drawing, the weight shifts between two standing
+  leg poses, an ear flicks for 6% of its cycle - a beat, never a state, since a pose held
+  half the time reads as a broken ear - and the eye darts forward and back. A pointer on
+  the sprite speeds the sway and holds the ears up, which is the one thing that says the
+  fox is a control rather than a picture. Ears go BACK while it runs; that is what makes a
+  gallop read as effort rather than as legs.
 - **It is LAYERS, not frames, and the motion is which drawing is showing.** A running fox
   differs from a standing one in its legs and its tail and in nothing else, so the body is
   drawn once and only the moving parts have variants - which is what makes seven poses a

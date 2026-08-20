@@ -22,14 +22,16 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
-import { BLINK, BODY, DUST, GRID, LEGS, runsOf, TAILS, type Rect } from '@shared/foxSprite'
+import { BLINK, BODY, DUST, EARS, EYES, GRID, LEGS, runsOf, TAILS, type Rect } from '@shared/foxSprite'
 import {
   actedWords,
+  bubbleSpot,
   clampSpot,
   closeable,
   DEFAULT_MASCOT,
@@ -71,6 +73,8 @@ interface Spot {
 }
 
 const HOME: Spot = { x: 0.06, y: 0.86 }
+/** How big the fox is drawn, in CSS pixels. The bubble clears it rather than covering it. */
+const SPRITE = 48
 /** How often it may wander when it has nothing to say. Slow: this is scenery, not a signal. */
 const WANDER_MS = 24_000
 /** Below this the gesture was a press, not a drag. A finger is never still. */
@@ -134,6 +138,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // `dragging` is state (it draws), but the click arrives after it has been cleared, so
   // the suppression is a ref - reading the state there re-opens the bubble on every drop.
   const justDragged = useRef(false)
+  // The bubble is placed in the LAYER in pixels rather than beside the sprite, so both of
+  // those readings are needed here: the window it has to stay inside, and its own size.
+  const [vp, setVp] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
+  const bubbleEl = useRef<HTMLDivElement | null>(null)
+  const [bubbleSize, setBubbleSize] = useState({ w: 0, h: 0 })
 
   const panes = props.panes
 
@@ -319,6 +328,22 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     [props]
   )
 
+  useEffect(() => {
+    const on = (): void => setVp({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
+
+  // Measured every paint, deliberately: the bubble's height is what decides whether it goes
+  // above or below, and it changes with the message, the buttons and the ask box. React
+  // bails out of a set with the same value, so this cannot loop.
+  useLayoutEffect(() => {
+    const el = bubbleEl.current
+    const w = el ? el.offsetWidth : 0
+    const h = el ? el.offsetHeight : 0
+    setBubbleSize((b) => (b.w === w && b.h === h ? b : { w, h }))
+  })
+
   const run = useCallback(
     (i: Intent) => {
       if (i.kind === 'close') props.onClose(i.ids)
@@ -352,8 +377,87 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   if (!cfg.enabled) return null
 
+  const box = bubbleSpot({
+    cx: spot.x * vp.w,
+    cy: spot.y * vp.h,
+    sprite: SPRITE,
+    width: bubbleSize.w,
+    height: bubbleSize.h,
+    vw: vp.w,
+    vh: vp.h
+  })
+
   return (
     <div className="mascot-layer" aria-hidden={false}>
+      {/* The bubble is a SIBLING of the sprite, not a child of it. As a child it widened
+          the sprite's own box - which is centred on the spot - so saying anything shoved
+          the fox ~155px sideways and hung the left half of the bubble off the window. It
+          is placed in pixels and clamped instead (`bubbleSpot`), so the fox never moves
+          because something was said and the words are always on screen. */}
+      {(bubble || open) && (
+        <div
+          ref={bubbleEl}
+          className={'mascot-bubble' + (box.above ? '' : ' below') + (dragging ? ' dragging' : '')}
+          role="status"
+          style={{ left: box.left, top: box.top, maxWidth: box.max }}
+        >
+          {bubble && <div className="mascot-say">{bubble.say}</div>}
+          {bubble?.action && (
+            <div className="mascot-acts">
+              <button className="primary small" onClick={() => run(bubble.action as Intent)}>
+                {bubble.action.kind === 'close' ? 'Close' : 'Move it'}
+              </button>
+              <button className="ghost small" onClick={() => setBubble(null)}>
+                Leave it
+              </button>
+            </div>
+          )}
+          {open && (
+            <div className="mascot-ask">
+              <input
+                ref={input}
+                value={typing}
+                placeholder={`${panes.length} panes, ${Math.round(total)} MB - ask me`}
+                onChange={(e) => setTyping(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submit()
+                  if (e.key === 'Escape') setOpen(false)
+                }}
+              />
+              <button className="ghost small" onClick={submit}>
+                Ask
+              </button>
+            </div>
+          )}
+          <div className="mascot-tools">
+            {/* The speaker is the only way a voice is ever turned on: nothing this app
+                decided by itself may make a noise into somebody's room. */}
+            <button
+              className="mascot-icon"
+              title={cfg.voice ? 'Stop talking out loud' : 'Say it out loud'}
+              onClick={() => props.onConfig({ voice: !cfg.voice })}
+            >
+              {cfg.voice ? '🔊' : '🔇'}
+            </button>
+            {pinned && (
+              <button
+                className="mascot-icon"
+                title="Let it walk to the pane it is talking about again"
+                onClick={() => props.onConfig({ spot: null })}
+              >
+                📍
+              </button>
+            )}
+            <button
+              className="mascot-icon"
+              title="Hide the mascot (Settings brings it back)"
+              onClick={() => props.onConfig({ enabled: false })}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       <div
         className={
           'mascot' +
@@ -363,65 +467,6 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         style={{ left: `${spot.x * 100}%`, top: `${spot.y * 100}%` }}
         data-open={open ? '1' : '0'}
       >
-        {(bubble || open) && (
-          <div className="mascot-bubble" role="status">
-            {bubble && <div className="mascot-say">{bubble.say}</div>}
-            {bubble?.action && (
-              <div className="mascot-acts">
-                <button className="primary small" onClick={() => run(bubble.action as Intent)}>
-                  {bubble.action.kind === 'close' ? 'Close' : 'Move it'}
-                </button>
-                <button className="ghost small" onClick={() => setBubble(null)}>
-                  Leave it
-                </button>
-              </div>
-            )}
-            {open && (
-              <div className="mascot-ask">
-                <input
-                  ref={input}
-                  value={typing}
-                  placeholder={`${panes.length} panes, ${Math.round(total)} MB - ask me`}
-                  onChange={(e) => setTyping(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') submit()
-                    if (e.key === 'Escape') setOpen(false)
-                  }}
-                />
-                <button className="ghost small" onClick={submit}>
-                  Ask
-                </button>
-              </div>
-            )}
-            <div className="mascot-tools">
-              {/* The speaker is the only way a voice is ever turned on: nothing this app
-                  decided by itself may make a noise into somebody's room. */}
-              <button
-                className="mascot-icon"
-                title={cfg.voice ? 'Stop talking out loud' : 'Say it out loud'}
-                onClick={() => props.onConfig({ voice: !cfg.voice })}
-              >
-                {cfg.voice ? '🔊' : '🔇'}
-              </button>
-              {pinned && (
-                <button
-                  className="mascot-icon"
-                  title="Let it walk to the pane it is talking about again"
-                  onClick={() => props.onConfig({ spot: null })}
-                >
-                  📍
-                </button>
-              )}
-              <button
-                className="mascot-icon"
-                title="Hide the mascot (Settings brings it back)"
-                onClick={() => props.onConfig({ enabled: false })}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
         <button
           className={
             'mascot-body' +
@@ -471,21 +516,31 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
                 grid: a 1px-tall ellipse would be a rectangle. */}
             <ellipse className="m-shadow" cx="11" cy="22.4" rx="7" ry="1" />
             <g className="m-bob">
-              {/* Tail first, so the body overlaps its root. The two standing tails ARE
-                  the idle animation and the four leg sets are the gallop - a pixel sprite
-                  cannot be rotated without resampling the grid, so every pose is its own
-                  drawing and the motion is WHICH drawing is showing. */}
+              {/* Tail first, so the body overlaps its root. Every pose is its own drawing
+                  and the motion is WHICH drawing is showing - a pixel grid cannot be
+                  rotated without resampling, so an opacity step is the only free move. The
+                  standing fox is not one frame: the tail sways over three, the weight
+                  shifts between two leg poses, an ear flicks and the eye darts, each on its
+                  own clock so they never line up into a loop anybody can count. */}
               <Layer art={TAILS.idleA} cls="m-tail-a" />
               <Layer art={TAILS.idleB} cls="m-tail-b" />
+              <Layer art={TAILS.idleC} cls="m-tail-c" />
               <Layer art={TAILS.run} cls="m-tail-run" />
-              <Layer art={LEGS.stand} cls="m-legs-stand" />
+              <Layer art={LEGS.stand} cls="m-legs-stand m-legs-stand-a" />
+              <Layer art={LEGS.standB} cls="m-legs-stand m-legs-stand-b" />
               <Layer art={LEGS.run1} cls="m-legs-run m-legs-run1" />
               <Layer art={LEGS.run2} cls="m-legs-run m-legs-run2" />
               <Layer art={LEGS.run3} cls="m-legs-run m-legs-run3" />
               <Layer art={LEGS.run4} cls="m-legs-run m-legs-run4" />
               <Layer art={BODY} cls="m-body" />
-              {/* The closed eye is drawn OVER the open one rather than replacing the
-                  head: there is then no second head to keep in step with this one. */}
+              {/* Ears and eye are drawn OVER the head rather than inside it: a part that
+                  moves cannot live in the drawing that does not, or there is a second head
+                  to keep in step with this one. */}
+              <Layer art={EARS.perk} cls="m-ear-perk" />
+              <Layer art={EARS.flick} cls="m-ear-flick" />
+              <Layer art={EARS.back} cls="m-ear-back" />
+              <Layer art={EYES.ahead} cls="m-eye-ahead" />
+              <Layer art={EYES.look} cls="m-eye-look" />
               <Layer art={BLINK} cls="m-lid" />
               <Layer art={DUST} cls="m-dust" />
             </g>

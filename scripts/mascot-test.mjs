@@ -31,7 +31,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot, DEFAULT_MASCOT } =
+const { parse, notice, closeable, isDestructive, paneLine, humanMins, clampSpot, bubbleSpot, DEFAULT_MASCOT } =
   createRequire(import.meta.url)(outfile)
 
 // The sprite itself. It is data rather than drawing code, which is the only reason it can
@@ -275,7 +275,14 @@ const desk = [
   // the CSS that cycles them is written for exactly four.
   eq('the run is four frames', Object.keys(LEGS).filter((k) => k.startsWith('run')).length, 4)
   eq('and there is one standing pose', typeof LEGS.stand, 'object')
-  eq('the idle animation is two tails', TAILS.idleA !== TAILS.idleB, true)
+  // Standing is not one frame: three tail heights, two leg poses, two ear poses and two
+  // eye positions. A pose that is identical to another is dead art that reads as a still.
+  const { EARS, EYES } = sprite
+  const distinct = (o) => new Set(Object.values(o).map((a) => a.join('|'))).size
+  eq('the idle sway is three tails', distinct(TAILS) >= 4, true)
+  eq('and there are two standing poses', LEGS.stand.join() !== LEGS.standB.join(), true)
+  eq('the ears have three poses', distinct(EARS), 3)
+  eq('and the eye two', distinct(EYES), 2)
 
   // Runs, not cells: the whole point of the walk is that a row of eight identical cells is
   // one rect. A per-cell version passes every other check here and quadruples the DOM.
@@ -291,16 +298,60 @@ const desk = [
   const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
   const missing = [
     ...Object.keys(LEGS).map((k) => `LEGS.${k}`),
-    ...Object.keys(TAILS).map((k) => `TAILS.${k}`)
+    ...Object.keys(TAILS).map((k) => `TAILS.${k}`),
+    ...Object.keys(EARS).map((k) => `EARS.${k}`),
+    ...Object.keys(EYES).map((k) => `EYES.${k}`)
   ].filter((ref) => !drawn.includes(ref))
   eq('every pose is drawn', missing.join(',') || 'none', 'none')
 
   // ...and the stylesheet has to carry a rule for each of the classes the drawing hangs the
   // animation on, or a pose is on screen for ever or never.
   const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
-  const classless = ['m-tail-a', 'm-tail-b', 'm-tail-run', 'm-legs-stand', 'm-legs-run', 'm-lid', 'm-dust']
+  const classless = [
+    'm-tail-a', 'm-tail-b', 'm-tail-c', 'm-tail-run',
+    'm-legs-stand', 'm-legs-stand-a', 'm-legs-stand-b', 'm-legs-run',
+    'm-ear-perk', 'm-ear-flick', 'm-ear-back', 'm-eye-ahead', 'm-eye-look',
+    'm-lid', 'm-dust'
+  ]
     .filter((c) => !css.includes(`.${c}`))
   eq('and every layer has a rule', classless.join(',') || 'none', 'none')
+}
+
+{
+  // Where the bubble goes. This is the whole of the "the chatbox is off screen, and so is
+  // the fox" bug: it used to be a flex CHILD of the sprite's box, which is centred on the
+  // spot, so saying anything widened that box by a bubble and moved the fox half a bubble
+  // sideways - and at the fox's own default corner (x = 0.06) the left half of the words
+  // was simply outside the window. The placer is in shared/ so it can be checked with no
+  // window at all, and every case below is one a real desk produces.
+  const vw = 1400
+  const vh = 900
+  const at = (fx, fy, w = 300, h = 90) =>
+    bubbleSpot({ cx: fx * vw, cy: fy * vh, sprite: 48, width: w, height: h, vw, vh })
+
+  const home = at(0.06, 0.86)
+  check('a bubble at the fox home corner starts on screen', home.left >= 0, home.left)
+  check('and ends on screen', home.left + home.width <= vw, home.left + home.width)
+  check('and is above the fox there', home.above, home)
+
+  const right = at(0.97, 0.5)
+  check('one at the right edge is pulled back in', right.left + right.width <= vw, right)
+
+  // The one it cannot get right by clamping alone: a fox near the TOP has no room above,
+  // so the bubble has to change sides rather than sit on the sprite.
+  const top = at(0.5, 0.02)
+  check('a fox at the top gets its bubble below it', !top.above, top)
+  check('and never above the window', top.top >= 0, top.top)
+
+  // A tall bubble in a short window fits nowhere - it must still be readable from the top
+  // rather than clamped over the fox.
+  const tall = bubbleSpot({ cx: 700, cy: 300, sprite: 48, width: 300, height: 700, vw, vh: 400 })
+  check('a bubble taller than the window starts on screen', tall.top >= 0, tall.top)
+
+  // A narrow window: the max is the WINDOW's, never the message's.
+  const narrow = bubbleSpot({ cx: 100, cy: 300, sprite: 48, width: 0, height: 80, vw: 220, vh: 700 })
+  check('a narrow window caps the width', narrow.max <= 200, narrow.max)
+  check('and still starts on screen', narrow.left >= 0, narrow.left)
 }
 
 console.log(`mascot: ${checks} checks passed`)
