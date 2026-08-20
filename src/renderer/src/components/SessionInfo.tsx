@@ -87,10 +87,10 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
           <Row label="Open for">
             <Elapsed
               className="elapsed"
-              since={s.createdAt}
+              since={s.openedAt ?? s.createdAt}
               title="Since this pane was opened"
             />
-            <span className="si-dim"> · opened {new Date(s.createdAt).toLocaleString()}</span>
+            <span className="si-dim"> · opened {new Date(s.openedAt ?? s.createdAt).toLocaleString()}</span>
           </Row>
           <Row label="State">
             {state}

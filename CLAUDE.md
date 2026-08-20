@@ -1163,6 +1163,32 @@ the conversation and not one line of the screen.
   cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
   after it. `npm run test:scrollback`.
 
+**And it comes back with its own clock, and finishes the turn it was cut off in.**
+`snapshot()` wrote the pane's folder, agent and transcript ids and nothing the PERSON
+knows about the pane, so a restored pane inherited none of it. Measured 2026-08-21, right
+after the app installed an update and reopened nine panes: every restored row read
+`engaged: false`, `runSince: null`, `lastRunMs: undefined`, which the sidebar draws as **no
+clock at all** (the row renders `runSince`, then `lastRunMs`, then nothing) and the grey
+`.dot.idle.ready` "ready - type to start" instead of the green `.dot.idle` "waiting for
+you". Both are false about a live conversation. `shared/restoreTurn.ts` is the decision.
+
+- The display clock is `openedAt`, a field of its own, and deliberately **not** `createdAt`.
+  Three timers read `createdAt` as the age of THIS PROCESS - the `starting`->`idle` flip,
+  the attention rule and the stall rule - so back-dating it would report a pane that is
+  genuinely still booting as idle. Only the display reads `openedAt`.
+- **A pane the restart caught mid-turn is continued.** `--resume` brings the conversation
+  back and not the answer that was being written, so the CLI returns to an empty composer -
+  idle, green, and indistinguishable from a pane that finished. `wasWorking` is read off
+  `runSince`, the turn clock, which is set exactly while an agent is producing an answer.
+  Same machinery and the SAME SWITCH as a turn the transport cut in half: with "finish a
+  turn that was cut off" off, the app types nothing here either. It goes through
+  `queuePrompt`, so a CLI still replaying its transcript is never typed over, and the flag
+  is cleared afterwards so a manual restart hours later does not continue a dead turn.
+- The refusals are the feature: a pane that was not mid-turn is left alone (typing at it
+  starts a turn nobody asked for), and a pane launched WITH a prompt is left alone (two
+  things queued into one composer is one of them landing inside the other).
+- `npm run test:restoreturn`.
+
 **And which restarts ask is one rule with one switch.** An update restart hands the desk
 straight back and every other restart asks, which is deterministic and still reads as
 random from the outside: the app updates itself several times a day, so the branch you get
@@ -1634,6 +1660,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
 | `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — all three shapes it has had (`CSI 2 J`, the erase-per-row, and the bare `ESC[6A` overdraw v2.1.233 sends, which erases nothing at all), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm with a control per shape proving a plain terminal loses it |
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
+| `npm run test:restoreturn` | what a reopened pane inherits, and the turn a restart cut in half: the clock and the engaged flag that a restored row draws as a number and a green dot, plus the refusals around continuing - a pane that was not mid-turn, a pane launched with its own prompt, and the switch being off. The source assertions are half of it, because a green pure test over a function nothing calls is exactly the false confidence this repo keeps hitting |
+| `npm run test:quitwords` | telling a Cmd-Q from something that asked from outside, when nothing in the app asked. The load-bearing case is the false positive: a blur a beat before the quit still reads as the keyboard |
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
 | `npm run test:mascot` | what the mascot may do to somebody's panes: a number naming no pane closes nothing, a name contained in a longer one is dropped (`service` inside `service-a`), a count is not a pane number, and every suggestion is drawn from `reclaim.ts`'s own refusal set. The weight is in the four silences - it says nothing when the app's own clock is on, when one pane is stale, when the panes are cheap, or when they are minutes rather than hours old |
@@ -1865,6 +1893,19 @@ writes that name to `updater.log` with the pane count. A quit that leaves it emp
 answer that was missing: Chromium turns a SIGTERM into exactly this shape of graceful
 shutdown, so "nothing in the app asked" and "the window was closed" are different facts
 and the log now separates them.
+
+**That sentence named three possibilities and separated none of them**, which is what made
+2026-08-21's close unanswerable: nine panes gone, `quit nothing in the app asked ... 9
+pane(s) open`, and no way to tell a Cmd-Q from a `pkill` from a logout. A signal still
+cannot be caught - Chromium takes SIGTERM below the JS layer and `process.on('SIGTERM')`
+never runs, measured - but the three are told apart by **where the screen was**: a Cmd-Q or
+an app-menu Quit can only be typed at a frontmost window, while `pkill`, `osascript ...
+quit`, a launchd job and a logout all arrive while somebody is looking at something else.
+`shared/quitWords.ts` turns the last focus into that sentence. It is evidence and never a
+verdict - the useful half is the negative, "this did NOT come from this keyboard", and it
+names no culprit. `FROM_KEYBOARD_MS` is a generous 4s because Cmd-Q blurs the window a beat
+before `before-quit` runs and calling a real Cmd-Q an outside kill would send the next
+person hunting a script that does not exist. `npm run test:quitwords`.
 
 ## Gotchas that look like mistakes
 

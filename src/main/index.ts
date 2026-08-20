@@ -22,6 +22,7 @@ import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
+import { quitWhere } from '../shared/quitWords'
 import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
@@ -299,6 +300,21 @@ const launchRequest = parseOpenArgs(process.argv)
 let quitCause = ''
 let quitLogged = false
 let panesAtQuit = -1
+/*
+ * ...and when the app itself did not ask, WHICH of the three it was.
+ *
+ * 2026-08-21 the sentence below was read for real - nine panes closed with no cause - and
+ * it named three possibilities and separated none of them, so the answer was still a
+ * guess. A signal cannot be caught (Chromium takes SIGTERM below the JS layer; measured,
+ * see `quitReason`), but the three are trivially told apart by WHERE THE SCREEN WAS. A
+ * Cmd-Q or an app-menu Quit can only be typed at a frontmost window; a `pkill`, an
+ * `osascript ... quit`, a launchd job or a logout all arrive while somebody is looking at
+ * something else. So the last time a window of ours had focus is recorded, and the quit
+ * line carries it. It is evidence, not a verdict - it says "not from this keyboard",
+ * which is exactly the half that was missing.
+ */
+let lastFocusAt = 0
+let focused = false
 /**
  * How many panes were open when leaving started.
  *
@@ -340,7 +356,9 @@ function quitReason(): string {
   // runs - measured by SIGTERMing a test copy, which wrote this exact line with the
   // handler installed. `pkill`, a launchd job and Cmd-Q are one case from in here, and
   // saying so is better than a sentence that only names the fingers.
-  return quitCause || 'nothing in the app asked - Cmd-Q, the app menu, or a signal from the OS'
+  if (quitCause) return quitCause
+  // Where the screen was, so the three are no longer one case. Words: shared/quitWords.ts.
+  return `nothing in the app asked - ${quitWhere(focused, lastFocusAt, Date.now())}`
 }
 
 if (!app.requestSingleInstanceLock(launchRequest)) {
@@ -3767,6 +3785,14 @@ function hardExit(): void {
   process.exit(0)
 }
 
+app.on('browser-window-focus', () => {
+  focused = true
+  lastFocusAt = Date.now()
+})
+app.on('browser-window-blur', () => {
+  focused = false
+  lastFocusAt = Date.now()
+})
 app.on('before-quit', () => {
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported

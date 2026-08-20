@@ -33,6 +33,8 @@
     "test:lanelag": "node scripts/lane-lag-test.mjs",
     "test:lanes:memory": "node scripts/lane-memory-test.mjs",
     "test:gate": "node scripts/release-gate-test.mjs",
+    "test:restoreturn": "node scripts/restore-turn-test.mjs",
+    "test:quitwords": "node scripts/quit-words-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
     "test:promote": "node scripts/promote-test.mjs",
     "test:dropimage": "node scripts/drop-image-test.mjs",

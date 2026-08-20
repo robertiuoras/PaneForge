@@ -17,6 +17,14 @@ import { memoryPrelude } from './board'
 import { endAll, recordData, recordEnd, recordStart, tail } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
+import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
+
+/**
+ * Extra patience for the "continue" a restore sends. `queuePrompt` waits for an idle
+ * composer either way; this only widens its deadline, because a CLI replaying a long
+ * transcript can be quiet-then-busy several times before it really settles.
+ */
+const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
 import { killPaneStrays, trackStrays } from './strays'
 import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
@@ -343,7 +351,17 @@ export class SessionManager extends EventEmitter {
         scrollbackId: s.meta.id,
         // The port the pane's dev server was told to use, kept across the restart
         // so a server started before an update comes back on the same one.
-        laneEnv: s.req.laneEnv
+        laneEnv: s.req.laneEnv,
+        // ...and what the PERSON knows about this pane, which a new session cannot work
+        // out for itself: how long it has been open, its last turn's length, whether it
+        // has been asked anything, and whether it was mid-turn when we went down. Without
+        // these a restored row draws no clock and a grey dot. See shared/restoreTurn.ts.
+        openedAt: s.meta.openedAt ?? s.meta.createdAt,
+        lastRunMs: s.meta.lastRunMs,
+        engaged: s.meta.engaged,
+        // `runSince` is the turn clock: it is set exactly while the agent is producing an
+        // answer, so it is the one honest reading of "mid-turn" at the moment we die.
+        wasWorking: Boolean(s.meta.runSince)
       }))
   }
 
@@ -358,6 +376,7 @@ export class SessionManager extends EventEmitter {
     // already be sitting on the trust prompt by the time anything here could help.
     if (agent === 'claude') ensureTrusted(req.cwd)
     const id = `s${++this.seq}-${Date.now().toString(36)}`
+    const clock = restoredClock(req, Date.now())
 
     const meta: Session = {
       id,
@@ -369,9 +388,14 @@ export class SessionManager extends EventEmitter {
       lastOutput: Date.now(),
       lastKeyboard: Date.now(),
       createdAt: Date.now(),
+      // The display clock, and deliberately NOT createdAt - see shared/restoreTurn.ts.
+      openedAt: clock.openedAt,
+      // Its last finished turn, so a reopened row still has a number rather than a blank.
+      lastRunMs: clock.lastRunMs,
       // A launch with a prompt is engaged from the start; a bare CLI is not doing
-      // anything for you yet, so its first quiet moment is not "finished".
-      engaged: Boolean(req.prompt),
+      // anything for you yet, so its first quiet moment is not "finished". A RESTORED
+      // pane inherits it: the conversation is live even though nobody has typed since.
+      engaged: clock.engaged,
       role: req.role,
       lane: req.lane,
       laneNote: req.laneNote,
@@ -419,6 +443,19 @@ export class SessionManager extends EventEmitter {
     // newer one to belong to.
     noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
     this.queuePrompt(id, req.prompt, req.promptDelay)
+    // The pane was mid-turn when the app went down. `--resume` brings the conversation
+    // back and not the answer that was being written, so the CLI comes back at an empty
+    // composer - idle, green, and indistinguishable from a pane that finished. Same
+    // machinery and same switch as a turn the transport cut in half: `queuePrompt` waits
+    // for an idle composer and confirms the return took, so a CLI still replaying its
+    // transcript is never typed over. Cleared from `req` so a later manual restart of
+    // this pane does not continue a turn that ended hours ago.
+    if (continueAfterRestore(req, (getConfig().recover ?? DEFAULT_RECOVER).enabled)) {
+      const text = (getConfig().recover ?? DEFAULT_RECOVER).text || DEFAULT_RECOVER.text
+      console.info(`restore: ${id} was mid-turn when the app went down - continuing it`)
+      this.queuePrompt(id, text, RESTORE_CONTINUE_MS)
+    }
+    req.wasWorking = false
 
     this.emitSessions()
     return meta

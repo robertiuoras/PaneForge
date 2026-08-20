@@ -84,6 +84,13 @@ export interface Session {
   /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
   lastKeyboard: number
   createdAt: number
+  /**
+   * When this PANE first appeared on the desk, across every restart since - which is not
+   * `createdAt`, the age of this process. Three timers read `createdAt` as process age
+   * (the starting->idle flip, the attention rule, the stall rule), so the display clock
+   * gets a field of its own rather than back-dating theirs.
+   */
+  openedAt?: number
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */
   attention?: boolean
@@ -222,6 +229,17 @@ export interface StartSessionRequest {
    * fight the original folder's for a port. Set by the main process only.
    */
   laneEnv?: Record<string, string>
+  /**
+   * What the pane the desk is replacing knew about itself: when it first opened, how long
+   * its last turn took, whether it had been asked anything, and whether it was mid-turn.
+   * A restored pane is a NEW session, so without these it comes back with no clock and a
+   * grey "ready - type to start" dot on a live conversation. See `shared/restoreTurn.ts`.
+   * Only the desk sets them.
+   */
+  openedAt?: number
+  lastRunMs?: number
+  engaged?: boolean
+  wasWorking?: boolean
 }
 
 /** One saved project inside a workspace. */

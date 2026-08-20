@@ -48,6 +48,8 @@ const TESTS = [
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
+  ['restoreturn', 'restore-turn-test.mjs'],
+  ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
