@@ -133,6 +133,17 @@ export interface MascotPane {
   idleMs: number
   /** Another device's pty. Closing it here frees nothing here. */
   remote: boolean
+  /**
+   * The agent has a LIVE question on screen, right now.
+   *
+   * `fleetState` cannot answer this: it calls both a finished turn and an unanswered
+   * question `needsYou`, which is the same word for the best moment to close a pane and
+   * the one moment that must not be. Reading the state alone is why "close the idle ones"
+   * answered "nothing quiet enough to close" on a desk full of finished panes - every one
+   * of them had said something and was therefore `needsYou`. This is the real refusal, and
+   * it is the pane's own `ask`, not a guess off its state.
+   */
+  asking: boolean
 }
 
 export type Intent =
@@ -209,21 +220,22 @@ export function humanMins(ms: number): string {
 /**
  * Panes it is willing to close on its own suggestion.
  *
- * The same refusals `reclaim.ts` runs under, because a mascot that offers to close a pane
- * the sweep would refuse is offering to do something the app considers theft: never one
- * that is working, starting or waiting for a person, and never another device's pty.
+ * The same refusals `reclaim.ts` runs under: never one that is working or starting, never
+ * one holding a live question, and never another device's pty.
+ *
+ * A FINISHED TURN is closeable, and getting that wrong made the whole feature look blind.
+ * `fleetState` says `needsYou` both for a pane whose agent asked something and for a pane
+ * whose agent finished and is sitting at its composer - so a rule written as "ready or
+ * exited" refused every pane anybody would ever want closed, and the mascot answered
+ * "nothing quiet enough to close" on a desk of eleven finished ones. The question is not
+ * what the state is called; it is whether somebody is owed an answer (`asking`).
  */
 export function closeable(panes: MascotPane[]): MascotPane[] {
-  return panes.filter((p) => !p.remote && (p.state === 'ready' || p.state === 'exited'))
+  return panes.filter(
+    (p) => !p.remote && !p.asking && (p.state === 'ready' || p.state === 'exited' || p.state === 'needsYou')
+  )
 }
 
-/**
- * What a typed line means.
- *
- * Everything is resolved against the pane list that is on screen right now, and a command
- * that resolves to NOTHING says so rather than picking a nearest match - "close pane 9"
- * with eight panes open is a typo, and the cost of guessing is somebody's session.
- */
 export function parse(text: string, panes: MascotPane[]): Intent {
   const t = text.trim()
   if (!t) return { kind: 'say', say: 'Ask me something - "what is pane 3", "close the idle ones".' }
@@ -337,18 +349,25 @@ export function notice(
   panes: MascotPane[],
   opts: { idleCloseOn: boolean; idleMinutes?: number; minMb?: number }
 ): Notice | null {
-  const mins = opts.idleMinutes ?? 60
-  const minMb = opts.minMb ?? 1200
+  const mins = opts.idleMinutes ?? 45
+  const minMb = opts.minMb ?? 400
   if (opts.idleCloseOn) return null // the clock is on; it will handle these itself
   const stale = closeable(panes).filter((p) => p.idleMs >= mins * MIN && p.memMb !== null)
-  if (stale.length < 2) return null
+  // One is enough. Two was the old floor and it was set while `closeable` could not see a
+  // finished pane at all, so between the two rules the notice had never once fired on this
+  // desk: an agent sitting finished for an hour costs its ~190 MB whether it has company
+  // or not, and the whole point of the sprite is that the ladder stops being invisible.
+  if (stale.length < 1) return null
   const total = stale.reduce((n, p) => n + (p.memMb as number), 0)
   if (total < minMb) return null
   const ids = stale.map((p) => p.id)
   return {
     key: `stale:${ids.join(',')}`,
     about: ids[0],
-    say: `${stale.length} panes have been quiet over ${humanMins(mins * MIN)} and are holding ${formatMb(total)}. Close them?`,
+    say:
+      stale.length === 1
+        ? `${paneWord(stale[0])} finished ${humanMins(stale[0].idleMs)} ago and is holding ${formatMb(total)}. Close it?`
+        : `${stale.length} panes have been quiet over ${humanMins(mins * MIN)} and are holding ${formatMb(total)}. Close them?`,
     action: {
       kind: 'close',
       ids,
@@ -363,4 +382,37 @@ export function actedWords(what: 'closed' | 'moved' | 'trimmed', panes: string[]
   if (what === 'trimmed') return `Trimmed ${who} back${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
   if (what === 'moved') return `Moved ${who} to the paired device - this machine was out of memory.`
   return `Closed ${who}${mb ? `, about ${formatMb(mb)} back` : ''} - reopen from History, nothing is lost.`
+}
+
+
+/**
+ * How long a pane gets between the app deciding to close it and it closing.
+ *
+ * The sweeps used to close on the spot and write a line to a devtools console nobody has
+ * open, so the only evidence a pane had been closed was the pane not being there. A count
+ * is the smallest thing that turns that into a decision somebody is part of: it names the
+ * pane, it says when, and it can be stopped by one press. Fifteen seconds is long enough
+ * to read a sentence and reach a button and short enough that a machine that is genuinely
+ * out of memory is not waiting on a person who left.
+ */
+export const CLOSE_COUNTDOWN_MS = 15_000
+
+/**
+ * How long a pane is left alone after somebody says "keep it open".
+ *
+ * The sweeps run every minute, so without this the answer to "keep it" is the same
+ * question sixty seconds later, for ever - which is the exact behaviour that gets a
+ * feature switched off. An hour, and the clock starts again from there.
+ */
+export const KEEP_MINUTES = 60
+
+/** The countdown, in words. `names` are already `paneWord` strings. */
+export function countdownWords(names: string[], msLeft: number, why: 'idle' | 'pressure'): string {
+  const secs = Math.max(0, Math.ceil(msLeft / 1000))
+  const who = names.length === 1 ? names[0] : `${names.length} panes (${names.join(', ')})`
+  const reason =
+    why === 'pressure'
+      ? 'this machine is out of memory'
+      : 'nobody has typed there in a while'
+  return `Closing ${who} in ${secs}s - ${reason}. Nothing is lost: History reopens the conversation and the screen.`
 }

@@ -28,7 +28,7 @@ import { PaneMenu } from './components/PaneMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
-import Mascot from './components/Mascot'
+import Mascot, { type CloseSoon } from './components/Mascot'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb } from './components/Elapsed'
@@ -75,8 +75,14 @@ import {
   type OffloadStick,
   type Verdict
 } from '../../shared/capacity'
-import { DEFAULT_MASCOT, type MascotConfig, type MascotPane } from '../../shared/mascot'
-import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import {
+  CLOSE_COUNTDOWN_MS,
+  DEFAULT_MASCOT,
+  KEEP_MINUTES,
+  type MascotConfig,
+  type MascotPane
+} from '../../shared/mascot'
+import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb, type Reclaim } from '../../shared/reclaim'
 import {
   autoHandoffPlan,
   idleOffloadPlan,
@@ -1749,6 +1755,19 @@ export default function App(): JSX.Element {
   const [acted, setActed] = useState<
     { what: 'closed' | 'moved' | 'trimmed'; panes: string[]; mb?: number; at: number } | undefined
   >(undefined)
+  /**
+   * How a sweep asks for panes to be closed.
+   *
+   * It is a ref rather than a callback because the machinery behind it (the countdown, the
+   * "keep it open" holds, the mascot's own switch) is declared further down beside the rest
+   * of the mascot's props, and a sweep is an effect whose dependency list is evaluated at
+   * render. Through a ref there is no ordering to get wrong and no dependency to forget.
+   *
+   * Neither sweep kills a pane itself any more. They used to, into a `console.info` in a
+   * devtools window nobody has open, which is why "I have never seen an idle pane close"
+   * was true even on a desk where the clock was doing its job.
+   */
+  const armCloseRef = useRef<(plan: Reclaim[], why: 'idle' | 'pressure', log: string) => void>(() => {})
   useEffect(() => {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
@@ -2000,6 +2019,10 @@ export default function App(): JSX.Element {
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
+        // The real refusal, and not the pane's STATE: `fleetState` says `needsYou` for a
+        // finished turn and for a live question alike, so reading it alone refused every
+        // finished pane and this sweep had never closed anything on this desk.
+        asking: !!s.ask,
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff
@@ -2009,21 +2032,7 @@ export default function App(): JSX.Element {
       Date.now()
     )
     if (!plan.length) return
-    for (const p of plan) {
-      console.info(
-        `capacity: ${capacity.level}, closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
-          `${p.hadAgent ? '' : ' (already exited)'}`
-      )
-      void api.killSession(p.id)
-    }
-    console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
-    if (plan.length)
-      setActed({
-        what: 'closed',
-        panes: plan.map((p) => paneWordRef.current(p.id)),
-        mb: reclaimedMb(plan),
-        at: Date.now()
-      })
+    armCloseRef.current(plan, 'pressure', `capacity: ${capacity.level}`)
   }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
 
   /**
@@ -2047,27 +2056,16 @@ export default function App(): JSX.Element {
           focused: s.id === activeRef.current,
           visible: false,
           remote: !!s.remote,
+          asking: !!s.ask,
           handingOff: !!s.handingOff
         })),
         cfg,
         Date.now()
       )
-      for (const p of plan) {
-        console.info(
-          `idle-close: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
-            `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
-        )
-        void api.killSession(p.id)
-      }
-      // ...and out loud. This sweep has closed panes into a console nobody has open
-      // since it shipped; the mascot is the only thing that ever says it happened.
-      if (plan.length)
-        setActed({
-          what: 'closed',
-          panes: plan.map((p) => paneWordRef.current(p.id)),
-          mb: reclaimedMb(plan),
-          at: Date.now()
-        })
+      // ...and out loud, and not yet. This sweep has closed panes into a console nobody
+      // has open since it shipped; now it counts down on the mascot first, and a press
+      // stops it.
+      if (plan.length) armCloseRef.current(plan, 'idle', 'idle-close')
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -3032,6 +3030,74 @@ export default function App(): JSX.Element {
    * already read. Nothing here is computed for it, which is why it costs no request and
    * cannot disagree with the rest of the window.
    */
+  /**
+   * The countdown between the ladder deciding and the pane closing.
+   *
+   * Everything below this app's memory line - trim, move, close - used to happen and then
+   * be reported, at best. A count is the smallest thing that turns a report into a
+   * decision somebody is part of: the mascot names the pane, says when, and takes one
+   * press either way. It is not a confirmation dialog, because a dialog would take the
+   * screen and this app never does that on its own initiative; it is a sentence with a
+   * clock in it, and doing nothing still closes the pane.
+   */
+  const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
+  const closeSoonRef = useRef<CloseSoon | undefined>(undefined)
+  closeSoonRef.current = closeSoon
+  /** What the pending close is expected to give back, for the sentence afterwards. */
+  const pendingMb = useRef(0)
+  /**
+   * Panes somebody said "keep it open" about, and until when.
+   *
+   * Without this, "keep it" is the same question sixty seconds later for ever, because the
+   * sweeps run on a minute timer and nothing about the pane has changed. That is the exact
+   * shape that gets a feature switched off.
+   */
+  const keptUntil = useRef<Record<string, number>>({})
+  const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
+  mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
+
+  const doClose = useCallback((ids: string[], mb: number) => {
+    for (const id of ids) void api.killSession(id)
+    setCloseSoon(undefined)
+    setActed({ what: 'closed', panes: ids.map((id) => paneWordRef.current(id)), mb, at: Date.now() })
+  }, [])
+
+  armCloseRef.current = (plan, why, log) => {
+    const now = Date.now()
+    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
+    if (!keep.length) return
+    // One countdown at a time. Two would be two bubbles for one bubble's worth of space,
+    // and the second would silently replace the first mid-count.
+    if (closeSoonRef.current) return
+    const mb = reclaimedMb(keep)
+    for (const p of keep)
+      console.info(
+        `${log}: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+          `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
+      )
+    const ids = keep.map((p) => p.id)
+    pendingMb.current = mb
+    // With the mascot hidden there is nowhere to draw a count and nowhere to press, so the
+    // old behaviour is the only honest one: do it, and say so in the log.
+    if (!mascotOnRef.current) return doClose(ids, mb)
+    setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline: now + CLOSE_COUNTDOWN_MS, why })
+  }
+
+  useEffect(() => {
+    if (!closeSoon) return
+    const t = window.setTimeout(
+      () => doClose(closeSoon.ids, pendingMb.current),
+      Math.max(0, closeSoon.deadline - Date.now())
+    )
+    return () => window.clearTimeout(t)
+  }, [closeSoon, doClose])
+
+  const keepOpen = useCallback((ids: string[]) => {
+    const until = Date.now() + KEEP_MINUTES * 60_000
+    for (const id of ids) keptUntil.current[id] = until
+    setCloseSoon(undefined)
+  }, [])
+
   const mascotPanes: MascotPane[] = useMemo(
     () =>
       sessions.map((s, i) => ({
@@ -3041,7 +3107,8 @@ export default function App(): JSX.Element {
         state: fleetState(s),
         memMb: usage?.panes[s.id]?.rssMb ?? null,
         idleMs: Math.max(0, Date.now() - (s.lastKeyboard || s.createdAt || Date.now())),
-        remote: !!s.remote
+        remote: !!s.remote,
+        asking: !!s.ask
       })),
     [sessions, usage]
   )
@@ -4566,6 +4633,9 @@ export default function App(): JSX.Element {
         config={config?.mascot ?? DEFAULT_MASCOT}
         idleCloseOn={(config?.reclaim?.idleCloseMinutes ?? 0) > 0}
         acted={acted}
+        closeSoon={closeSoon}
+        onKeep={keepOpen}
+        onCloseNow={(ids) => doClose(ids, pendingMb.current)}
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
           for (const id of ids) void api.killSession(id)

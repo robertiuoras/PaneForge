@@ -38,8 +38,19 @@
 import { SESSION_MB, type Verdict } from './capacity'
 import type { FleetState } from './fleet'
 
-/** States that may be closed to reclaim memory. Everything else is somebody's business. */
-const CLOSEABLE: ReadonlySet<FleetState> = new Set<FleetState>(['ready', 'exited'])
+/**
+ * States that may be closed to reclaim memory. Everything else is somebody's business.
+ *
+ * `needsYou` is in the list and `asking` is what keeps it honest. That state is two facts
+ * wearing one name - an agent that ASKED something, and an agent that FINISHED and is
+ * sitting at its composer - and refusing the whole state to protect the first refused the
+ * second as well. A finished pane is the only pane anybody ever wants closed, so with
+ * `ready | exited` this sweep could only ever reach a CLI nobody had typed into at all:
+ * measured on this desk 2026-08-20, every pane on it was `needsYou` and the sweep had
+ * therefore never closed anything in its life. The refusal that was actually meant is the
+ * one below, and it reads the pane's own live question rather than the word for its state.
+ */
+const CLOSEABLE: ReadonlySet<FleetState> = new Set<FleetState>(['ready', 'exited', 'needsYou'])
 
 export interface ReclaimConfig {
   /** Close idle panes when this machine runs out of memory. */
@@ -103,6 +114,14 @@ export interface ReclaimPane {
   /** Another device's pty, mirrored here. Closing it frees no agent on this machine. */
   remote: boolean
   /**
+   * The agent has a question on screen that nobody has answered.
+   *
+   * This is the one that would feel like theft, and it is the reason `needsYou` alone is
+   * not a refusal: the pane is quiet BECAUSE it is owed an answer, and every idle reading
+   * in the app says yes about it. It comes from the pane's own `ask`, never from its state.
+   */
+  asking?: boolean
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -141,7 +160,7 @@ export function reclaimPlan(
   const minIdle = Math.max(0, cfg.minIdleMinutes) * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
+    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && CLOSEABLE.has(p.state))
     .filter((p) => now - p.lastKeyboard >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
     // morning is the safer one to close than the one that finished a minute ago.
@@ -185,7 +204,7 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && CLOSEABLE.has(p.state))
     .filter((p) => now - p.lastKeyboard >= minIdle)
     .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
 

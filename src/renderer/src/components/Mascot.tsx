@@ -1,8 +1,8 @@
 // The face on the resource ladder - see `src/shared/mascot.ts` for why it exists at all.
 //
 // Everything with a judgement in it is in that module, which has no DOM in it and is
-// pinned by `npm run test:mascot`. What is here is the drawing, the walk and the two
-// presses, and the three rules it is drawn under are the app's own:
+// pinned by `npm run test:mascot`. What is here is the drawing, the walk, the countdown
+// and the two presses, and the three rules it is drawn under are the app's own:
 //
 //   - It may never take the screen. It never focuses, never raises a window, never opens
 //     a dialog, and its overlay is `pointer-events: none` everywhere except the sprite
@@ -10,14 +10,16 @@
 //     one place this app cannot afford one.
 //   - A looping animation may move `transform` and `opacity` and nothing else
 //     (`scripts/anim-cost-test.mjs`, which measured a `box-shadow` loop at 136% of a GPU
-//     core on idle panes). The walk is a transform transition; the blink is opacity.
+//     core on idle panes). Every loop on the sprite is an opacity step.
 //   - It is drawn in `currentColor` and the theme's own variables, never a literal, so it
 //     re-tints with the accent like every other colour in this window (`shared/theme.ts`).
 //
-// The sprite is a fox, drawn in `currentColor` shades so it re-tints with the accent like
-// everything else in this window. It needs no asset - it is ~40 lines of SVG - and every
-// moving part of it is a transform or an opacity, which is what `npm run test:anim`
-// refuses to let anybody undo.
+// Two things it deliberately no longer does. It does not BOB - the old fox floated on a
+// 4.2s vertical loop and that is the first thing anybody said about it - and it does not
+// wander or run along the bottom of the window for something to do. Movement here is a
+// sentence: it walks to the card of the pane it is talking about, and otherwise it stands
+// still. What replaced the scenery is the countdown, which is the thing it was always
+// supposed to be for.
 
 import {
   useCallback,
@@ -28,12 +30,12 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
-import { BLINK, BODY, DUST, EARS, EYES, GRID, LEGS, runsOf, TAILS, type Rect } from '@shared/foxSprite'
+import { ANTENNA, ARMS, BEACON, BLINK, BODY, EYES, GRID, runsOf, TREADS, type Rect } from '@shared/botSprite'
 import {
   actedWords,
   bubbleSpot,
   clampSpot,
-  closeable,
+  countdownWords,
   DEFAULT_MASCOT,
   isDestructive,
   notice,
@@ -42,6 +44,15 @@ import {
   type MascotConfig,
   type MascotPane
 } from '@shared/mascot'
+
+/** A close the app has decided on and has not done yet. The person gets the seconds. */
+export interface CloseSoon {
+  ids: string[]
+  /** `paneWord` strings, so the sentence names panes the way the rest of the app does. */
+  names: string[]
+  deadline: number
+  why: 'idle' | 'pressure'
+}
 
 export interface MascotProps {
   panes: MascotPane[]
@@ -56,6 +67,12 @@ export interface MascotProps {
   idleCloseOn: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
   acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: string[]; mb?: number; at: number }
+  /** A close that is about to happen, counted down out loud. */
+  closeSoon?: CloseSoon
+  /** Stop that close and leave those panes alone for a while. */
+  onKeep: (ids: string[]) => void
+  /** Do it now rather than waiting out the count. */
+  onCloseNow: (ids: string[]) => void
 }
 
 interface Bubble {
@@ -73,29 +90,15 @@ interface Spot {
 }
 
 const HOME: Spot = { x: 0.06, y: 0.86 }
-/** How big the fox is drawn, in CSS pixels. The bubble clears it rather than covering it. */
+/** How big it is drawn, in CSS pixels. The bubble clears it rather than covering it. */
 const SPRITE = 48
-/** How often it may wander when it has nothing to say. Slow: this is scenery, not a signal. */
-const WANDER_MS = 24_000
 /** Below this the gesture was a press, not a drag. A finger is never still. */
 const DRAG_SLOP = 4
-/**
- * The run along the bottom of the window: how long it takes, and how rarely it happens.
- *
- * It is scenery and nothing else - it says nothing, points at nothing and is the one thing
- * here that is not a reading - so it is deliberately rare and it stands down the moment it
- * would be in the way: something to say, the bubble open, a spot somebody dragged it to, or
- * `roam` off. Same law as the walk: one composited `left` transition, no repaint per frame.
- */
-const DASH_MS = 5200
-const DASH_EVERY_MS = 150_000
-/** The lane it runs in, as a fraction of the window height - under every card, over nothing. */
-const DASH_Y = 0.955
 
 /**
- * One layer of the sprite, as horizontal runs rather than as cells: the whole fox is ~90
- * rects instead of 576, and a run of one colour is what a pixel row actually is. The art
- * is module-level constants, so the walk over it is cached by identity and every
+ * One layer of the sprite, as horizontal runs rather than as cells: the whole robot is
+ * ~90 rects instead of 576, and a run of one colour is what a pixel row actually is. The
+ * art is module-level constants, so the walk over it is cached by identity and every
  * re-render after the first reuses the rects.
  */
 const LAYERS = new Map<string[], Rect[]>()
@@ -123,11 +126,10 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [blink, setBlink] = useState(false)
   const [dragging, setDragging] = useState(false)
-  // The run: 'port' is the frame in which it is placed at the starting edge with no
-  // transition at all (a 5s crawl to the start line is not a run), 'go' is the run itself.
-  const [dash, setDash] = useState<{ dir: 'right' | 'left'; phase: 'port' | 'go' } | null>(null)
-  const dashDir = useRef<'right' | 'left'>('right')
-  const dashTimers = useRef<number[]>([])
+  // Re-read once a second while a close is counting down, and never otherwise: the number
+  // on screen is the only thing that changes, and a timer running when nothing is pending
+  // is a re-render of the whole layer for no reading at all.
+  const [tick, setTick] = useState(0)
   const said = useRef(new Set<string>())
   const input = useRef<HTMLInputElement | null>(null)
   // A drag ends in a `click` on the same element, so the press that opens the bubble has
@@ -145,6 +147,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const [bubbleSize, setBubbleSize] = useState({ w: 0, h: 0 })
 
   const panes = props.panes
+  const soon = props.closeSoon
 
   /** Say it, and - only if the speaker has been pressed - say it out loud. */
   const say = useCallback(
@@ -187,15 +190,26 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     [cfg.roam, pinned]
   )
 
-  // The unasked notice. One at a time, said once, and only ever an OFFER.
+  // The countdown owns the sprite while it is running: it walks to the first pane it is
+  // about, and it re-reads once a second so the number on the bubble is a real clock and
+  // not a sentence written once.
   useEffect(() => {
-    if (!cfg.enabled || bubble || open) return
+    if (!soon) return
+    walkTo(soon.ids[0])
+    const t = window.setInterval(() => setTick((n) => n + 1), 500)
+    return () => window.clearInterval(t)
+  }, [soon?.deadline, soon?.ids.join(','), walkTo])
+
+  // The unasked notice. One at a time, said once, and only ever an OFFER. Silent while a
+  // countdown is up - that IS the app talking about idle panes already.
+  useEffect(() => {
+    if (!cfg.enabled || bubble || open || soon) return
     const n = notice(panes, { idleCloseOn: props.idleCloseOn })
     if (!n || said.current.has(n.key)) return
     said.current.add(n.key)
     walkTo(n.about)
     say({ say: n.say, action: n.action, key: n.key })
-  }, [panes, cfg.enabled, props.idleCloseOn, bubble, open, say, walkTo])
+  }, [panes, cfg.enabled, props.idleCloseOn, bubble, open, soon, say, walkTo])
 
   // ...and the one report that is not a suggestion: the ladder acted, so it says what it
   // did. This is the whole reason the mascot is worth having - those three sweeps have
@@ -209,18 +223,6 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     say({ say: actedWords(a.what, a.panes, a.mb), key })
   }, [props.acted, cfg.enabled, say])
 
-  // Wander, and blink. Both are decoration and both are transform/opacity only.
-  useEffect(() => {
-    if (!cfg.enabled || !cfg.roam || pinned) return
-    const t = window.setInterval(() => {
-      if (bubble || open) return
-      const pick = closeable(panes)[0] ?? panes[0]
-      if (pick) walkTo(pick.id)
-      else setSpot(HOME)
-    }, WANDER_MS)
-    return () => window.clearInterval(t)
-  }, [cfg.enabled, cfg.roam, pinned, panes, bubble, open, walkTo])
-
   useEffect(() => {
     if (!cfg.enabled) return
     const t = window.setInterval(() => {
@@ -230,53 +232,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     return () => window.clearInterval(t)
   }, [cfg.enabled])
 
-  /** Stop a run where it is: a drag, something to say, or the component going away. */
-  const endDash = useCallback(() => {
-    for (const t of dashTimers.current) window.clearTimeout(t)
-    dashTimers.current = []
-    setDash(null)
-  }, [])
-
-  // The run along the bottom. Every refusal below is the walk's, plus one of its own: it
-  // never runs while there is a bubble up, because the sprite is then the thing being read.
-  useEffect(() => {
-    if (!cfg.enabled || !cfg.roam || pinned) return
-    const t = window.setInterval(() => {
-      if (bubble || open || dragging || dash) return
-      const dir = dashDir.current
-      dashDir.current = dir === 'right' ? 'left' : 'right'
-      setDash({ dir, phase: 'port' })
-      setSpot({ x: dir === 'right' ? 0.04 : 0.96, y: DASH_Y })
-      // Two frames, not one: the port has to be PAINTED with the transition off, or the
-      // browser coalesces both writes and the sprite slides to the start line instead.
-      dashTimers.current.push(
-        window.setTimeout(() => {
-          setDash({ dir, phase: 'go' })
-          setSpot({ x: dir === 'right' ? 0.96 : 0.04, y: DASH_Y })
-        }, 60),
-        window.setTimeout(() => {
-          setDash(null)
-          setSpot(HOME)
-        }, DASH_MS + 120)
-      )
-    }, DASH_EVERY_MS)
-    return () => {
-      window.clearInterval(t)
-      endDash()
-    }
-  }, [cfg.enabled, cfg.roam, pinned, bubble, open, dragging, dash, endDash])
-
-  // Anything with words in it beats the scenery - a sprite mid-run cannot be read.
-  useEffect(() => {
-    if (bubble || open) endDash()
-  }, [bubble, open, endDash])
-
   // The drag itself. Pointer events, so a mouse, a pen and a touch are one path, and the
   // pointer is CAPTURED - without it a fast drag leaves the sprite behind the moment the
   // cursor is over a terminal, and the pane gets the rest of the gesture.
   const onDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return
-    endDash()
     // The GRAB offset, not the pointer. `left/top` place the sprite's centre, so writing
     // the raw pointer there teleports it under the cursor on the first millimetre of the
     // gesture and drops it half a sprite away from where it was let go.
@@ -297,7 +257,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     } catch {
       // no capture, still draggable while the pointer is over the sprite
     }
-  }, [endDash])
+  }, [])
 
   const onMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
     const d = drag.current
@@ -370,12 +330,17 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     if (open) input.current?.focus()
   }, [open])
 
-  const total = useMemo(
-    () => panes.reduce((n, p) => n + (p.memMb ?? 0), 0),
-    [panes]
-  )
+  const total = useMemo(() => panes.reduce((n, p) => n + (p.memMb ?? 0), 0), [panes])
 
   if (!cfg.enabled) return null
+
+  // Read fresh on every render, and re-rendered once a second by the countdown's own
+  // interval. `tick` is the dependency that makes that true.
+  void tick
+  const left = soon ? soon.deadline - Date.now() : 0
+  const counting = !!soon && left > -1000
+  const secs = Math.max(0, Math.ceil(left / 1000))
+  const showBubble = counting || !!bubble || open
 
   const box = bubbleSpot({
     cx: spot.x * vp.w,
@@ -391,18 +356,39 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     <div className="mascot-layer" aria-hidden={false}>
       {/* The bubble is a SIBLING of the sprite, not a child of it. As a child it widened
           the sprite's own box - which is centred on the spot - so saying anything shoved
-          the fox ~155px sideways and hung the left half of the bubble off the window. It
-          is placed in pixels and clamped instead (`bubbleSpot`), so the fox never moves
-          because something was said and the words are always on screen. */}
-      {(bubble || open) && (
+          the sprite ~155px sideways and hung the left half of the bubble off the window.
+          It is placed in pixels and clamped instead (`bubbleSpot`), so the sprite never
+          moves because something was said and the words are always on screen. */}
+      {showBubble && (
         <div
           ref={bubbleEl}
-          className={'mascot-bubble' + (box.above ? '' : ' below') + (dragging ? ' dragging' : '')}
+          className={
+            'mascot-bubble' +
+            (box.above ? '' : ' below') +
+            (dragging ? ' dragging' : '') +
+            (counting ? ' counting' : '')
+          }
           role="status"
           style={{ left: box.left, top: box.top, maxWidth: box.max }}
         >
-          {bubble && <div className="mascot-say">{bubble.say}</div>}
-          {bubble?.action && (
+          {counting && soon && (
+            <>
+              <div className="mascot-count">
+                <span className="mascot-secs">{secs}</span>
+                <span className="mascot-count-say">{countdownWords(soon.names, left, soon.why)}</span>
+              </div>
+              <div className="mascot-acts">
+                <button className="primary small" onClick={() => props.onKeep(soon.ids)}>
+                  Keep {soon.ids.length > 1 ? 'them' : 'it'} open
+                </button>
+                <button className="ghost small" onClick={() => props.onCloseNow(soon.ids)}>
+                  Close now
+                </button>
+              </div>
+            </>
+          )}
+          {!counting && bubble && <div className="mascot-say">{bubble.say}</div>}
+          {!counting && bubble?.action && (
             <div className="mascot-acts">
               <button className="primary small" onClick={() => run(bubble.action as Intent)}>
                 {bubble.action.kind === 'close' ? 'Close' : 'Move it'}
@@ -459,21 +445,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         </div>
       )}
       <div
-        className={
-          'mascot' +
-          (dragging ? ' dragging' : '') +
-          (dash ? (dash.phase === 'port' ? ' dash-port' : ' dashing') : '')
-        }
+        className={'mascot' + (dragging ? ' dragging' : '')}
         style={{ left: `${spot.x * 100}%`, top: `${spot.y * 100}%` }}
         data-open={open ? '1' : '0'}
       >
         <button
           className={
-            'mascot-body' +
-            (blink ? ' blink' : '') +
-            (dragging ? ' dragging' : '') +
-            (dash ? ' running' : '') +
-            (dash?.dir === 'left' ? ' face-left' : '')
+            'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '') + (counting ? ' alert' : '')
           }
           title="Ask about this machine - drag to move it"
           onPointerDown={onDown}
@@ -492,7 +470,9 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             }
             // A press closes whatever is up, whichever half of it is up. Toggling `open`
             // alone left a notice bubble on screen with no way to dismiss it from the
-            // sprite, which reads as the press not working.
+            // sprite, which reads as the press not working. A countdown is NOT dismissed
+            // by it - that bubble has two named answers and neither of them is a stray
+            // click on the sprite.
             if (open || bubble) {
               setOpen(false)
               setBubble(null)
@@ -503,46 +483,41 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           }}
         >
           <svg
-            className="fox"
+            className="bot"
             viewBox={`0 0 ${GRID} ${GRID}`}
             width="48"
             height="48"
             shapeRendering="crispEdges"
             aria-hidden="true"
           >
-            {/* The ground shadow sits OUTSIDE the bobbing group so it squashes against a
-                ground that does not move - a shadow that rises with the body reads as a
-                sticker rather than a lift. It is the one thing here not on the pixel
-                grid: a 1px-tall ellipse would be a rectangle. */}
-            <ellipse className="m-shadow" cx="11" cy="22.4" rx="7" ry="1" />
-            <g className="m-bob">
-              {/* Tail first, so the body overlaps its root. Every pose is its own drawing
-                  and the motion is WHICH drawing is showing - a pixel grid cannot be
-                  rotated without resampling, so an opacity step is the only free move. The
-                  standing fox is not one frame: the tail sways over three, the weight
-                  shifts between two leg poses, an ear flicks and the eye darts, each on its
-                  own clock so they never line up into a loop anybody can count. */}
-              <Layer art={TAILS.idleA} cls="m-tail-a" />
-              <Layer art={TAILS.idleB} cls="m-tail-b" />
-              <Layer art={TAILS.idleC} cls="m-tail-c" />
-              <Layer art={TAILS.run} cls="m-tail-run" />
-              <Layer art={LEGS.stand} cls="m-legs-stand m-legs-stand-a" />
-              <Layer art={LEGS.standB} cls="m-legs-stand m-legs-stand-b" />
-              <Layer art={LEGS.run1} cls="m-legs-run m-legs-run1" />
-              <Layer art={LEGS.run2} cls="m-legs-run m-legs-run2" />
-              <Layer art={LEGS.run3} cls="m-legs-run m-legs-run3" />
-              <Layer art={LEGS.run4} cls="m-legs-run m-legs-run4" />
+            {/* The ground shadow. It is the one thing here not on the pixel grid: a 1px-tall
+                ellipse would be a rectangle. Nothing above it translates vertically, so the
+                shadow is still - the old sprite bobbed, and a floating mascot is what this
+                drawing replaced. */}
+            <ellipse className="m-shadow" cx="11" cy="22.6" rx="8" ry="1" />
+            <g className="m-rig">
+              {/* Arms and treads first, so the chassis overlaps their roots. Every pose is
+                  its own drawing and the motion is WHICH drawing is showing - a pixel grid
+                  cannot be rotated without resampling, so an opacity step is the only free
+                  move. Standing still is four clocks that never line up: the arms settle
+                  over three drawings, the treads tick between two, the visor scans and the
+                  beacon pulses. */}
+              <Layer art={ARMS.idleA} cls="m-arm-a" />
+              <Layer art={ARMS.idleB} cls="m-arm-b" />
+              <Layer art={ARMS.idleC} cls="m-arm-c" />
+              <Layer art={TREADS.stand} cls="m-treads m-treads-a" />
+              <Layer art={TREADS.standB} cls="m-treads m-treads-b" />
               <Layer art={BODY} cls="m-body" />
-              {/* Ears and eye are drawn OVER the head rather than inside it: a part that
-                  moves cannot live in the drawing that does not, or there is a second head
-                  to keep in step with this one. */}
-              <Layer art={EARS.perk} cls="m-ear-perk" />
-              <Layer art={EARS.flick} cls="m-ear-flick" />
-              <Layer art={EARS.back} cls="m-ear-back" />
+              {/* Antenna, beacon and pupil are drawn OVER the chassis rather than inside
+                  it: a part that moves cannot live in the drawing that does not, or there
+                  is a second chassis to keep in step with this one. */}
+              <Layer art={ANTENNA.mast} cls="m-antenna" />
+              <Layer art={ANTENNA.tilt} cls="m-antenna-tilt" />
+              <Layer art={BEACON.off} cls="m-beacon-off" />
+              <Layer art={BEACON.on} cls="m-beacon-on" />
               <Layer art={EYES.ahead} cls="m-eye-ahead" />
               <Layer art={EYES.look} cls="m-eye-look" />
               <Layer art={BLINK} cls="m-lid" />
-              <Layer art={DUST} cls="m-dust" />
             </g>
           </svg>
         </button>
