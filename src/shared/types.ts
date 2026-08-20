@@ -631,6 +631,18 @@ export interface HistoryEntry {
   gist?: string
   /** how many asks were submitted in it; 40 and 1 are different sessions to return to */
   asks?: number
+  /**
+   * The folder this session ran in is not there any more.
+   *
+   * Computed on every read rather than stored, because it is a fact about the disk and not
+   * about the session. It exists because "Open again" on such a row did NOTHING visible:
+   * main's start loop catches a missing folder per request so one bad entry cannot abort a
+   * whole workspace launch, and the row is then simply not started. On this desk most of
+   * History is temp folders from tests and swept lane worktrees, so that is the common
+   * case rather than the rare one - and a button that reads as working and is not is worse
+   * than a row that says why.
+   */
+  gone?: boolean
 }
 
 export interface HistoryHit {

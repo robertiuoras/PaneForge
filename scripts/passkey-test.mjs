@@ -633,7 +633,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'remote:state', 'remote:rename', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
     'remote:watch', 'remote:projects', 'remote:agents', 'remote:handoffPending',
     'prompt:prior', 'improve:status',
-    'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get'
+    'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get',
+    // A read of the process table, filtered to dev servers. `devs:stop` is the other half
+    // and is GATED - it kills a process on this desk.
+    'devs:list'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
   ok(

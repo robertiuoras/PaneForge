@@ -141,6 +141,10 @@ const GATED_INVOKE = new Set([
   // stolen cookie flip the setting Robert reads on screen to decide whether he is elevated.
   'admin:enable',
   'admin:disable',
+  // Stopping a dev server is killing a process on this desk - the same class as
+  // `sessions:kill`, and worse in one way: what it kills is not on screen anywhere, so a
+  // stolen cookie taking down whatever this machine is serving leaves nothing to notice.
+  'devs:stop',
 
   // --- runs a process on this desk ------------------------------------------------------
   // Each of these ends in something spawned here: a supervisor driving panes, an agent CLI

@@ -159,6 +159,9 @@ export function list(): HistoryEntry[] {
           const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
           const log = logFile(e.id)
           e.bytes = existsSync(log) ? statSync(log).size : 0
+          // Not stored - a folder can come back, and a stale `gone` in a metadata file
+          // would outlive the truth. One stat per row, next to the one already being made.
+          e.gone = !e.cwd || !existsSync(e.cwd)
           return e
         } catch {
           return null

@@ -124,8 +124,20 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                   </div>
                 )}
                 <div className="hist-actions">
-                  <button className="ghost small" onClick={() => onResume(e)}>
-                    Open again
+                  {/* A folder that is not there any more cannot be reopened, and pressing
+                      the button did nothing at all: main catches a missing folder per
+                      request so one bad row cannot abort a workspace launch, and the row
+                      was then silently not started. Most of this list is temp folders from
+                      tests and swept lane worktrees, so say it on the row instead. The
+                      transcript is still readable and Delete still works - the session's
+                      output is the reason to keep the row. */}
+                  <button
+                    className="ghost small"
+                    disabled={e.gone}
+                    title={e.gone ? `${e.cwd} is not on this machine any more` : undefined}
+                    onClick={() => !e.gone && onResume(e)}
+                  >
+                    {e.gone ? 'Folder is gone' : 'Open again'}
                   </button>
                   <button
                     className="ghost small"

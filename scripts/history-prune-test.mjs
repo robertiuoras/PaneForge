@@ -93,6 +93,31 @@ for (let i = 0; i < 7; i++) make(`k${i}`, i + 1, 100)
 h.prune(0)
 ok(!ids().includes('ancient'), 'and the size cap still applies with it set', ids().join())
 
+// --- a row whose folder is gone says so ---------------------------------------------
+// "Open again" on such a row did nothing at all: main's start loop catches a missing
+// folder per request, so the row was silently not started. Most of this list on a real
+// desk is temp folders from tests and swept lane worktrees, so this is the COMMON case.
+// Computed on every read, never stored - a folder can come back.
+rmSync(dir, { recursive: true, force: true })
+mkdirSync(dir, { recursive: true })
+const here = join(work, 'a-real-folder')
+mkdirSync(here, { recursive: true })
+writeFileSync(
+  join(dir, 'live.json'),
+  JSON.stringify({ id: 'live', startedAt: Date.now(), title: 'live', cwd: here })
+)
+writeFileSync(
+  join(dir, 'dead.json'),
+  JSON.stringify({ id: 'dead', startedAt: Date.now() - 1000, title: 'dead', cwd: join(work, 'deleted-lane') })
+)
+const rows = h.list()
+const row = (id) => rows.find((r) => r.id === id)
+ok(row('live') && row('live').gone === false, 'a folder that is still there is openable', JSON.stringify(row('live')))
+ok(row('dead') && row('dead').gone === true, 'a folder that has been deleted is marked gone', JSON.stringify(row('dead')))
+// The transcript is still the reason to keep the row, so nothing is hidden or pruned for
+// being unopenable - only the button changes.
+ok(rows.length === 2, 'and the row itself is kept - its output is still readable', rows.length)
+
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall passed')
 process.exit(fail.length ? 1 : 0)

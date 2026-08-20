@@ -1164,7 +1164,20 @@ export default function App(): JSX.Element {
       }
       const started = await api.startSessions(reqs)
       if (started.length) setActiveId(started[started.length - 1].id)
-      if (started.length < reqs.length) flash('Some folders could not be opened.')
+      if (started.length < reqs.length) {
+        // Name it. "Some folders could not be opened" was true and unusable: the one thing
+        // somebody needs is WHICH, and on this desk the answer is nearly always a folder
+        // that has been deleted since - a temp folder from a test, or a swept lane.
+        // Counted, not matched: a launch that lands in a lane comes back with a DIFFERENT
+        // cwd (the worktree), so pairing requests to results by folder would report a pane
+        // that opened perfectly as a failure. With one request there is nothing to pair.
+        const missed = reqs.length - started.length
+        flash(
+          reqs.length === 1
+            ? `Could not open ${reqs[0].cwd} - it may not be on this machine any more.`
+            : `${missed} of ${reqs.length} folders could not be opened.`
+        )
+      }
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
       const noted = started.filter((s) => s.laneNote)
