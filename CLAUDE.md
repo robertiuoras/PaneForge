@@ -1448,6 +1448,30 @@ draws it. `npm run test:mascot`.
   as a press, never run. `closeable()` is `reclaim.ts`'s own refusal set, so it can never
   suggest something the sweep itself would refuse - never a working pane, never one holding
   a question, never another machine's pty.
+- **A finished turn is the pane this whole ladder exists for, and for weeks nothing could
+  see one.** `fleetState` says `needsYou` both for an agent holding a live question and for
+  an agent that finished and is sitting at its composer, so `closeable()` and `reclaim.ts`'s
+  `CLOSEABLE` - both written as `ready | exited` - refused every pane anybody would ever
+  want closed. On this desk that is every pane: "close the idle ones" answered *nothing
+  quiet enough to close* with eleven finished agents on screen, and the idle-close clock had
+  never closed anything in its life. The refusal that was meant is the pane's own live
+  question (`asking`, off `Session.ask`), never the word for its state.
+- **Nothing decides and then reports any more: it counts down first.** Both sweeps hand
+  their plan to `armCloseRef` instead of calling `killSession`, and the mascot draws
+  `CLOSE_COUNTDOWN_MS` (15s) of seconds with the pane named, `Keep it open` and `Close now`
+  beside it. Doing nothing still closes the pane - it is a sentence with a clock in it, not
+  a dialog, because nothing this app decides by itself may take the screen. `Keep it open`
+  holds those panes for `KEEP_MINUTES` (60), since the sweeps run every minute and without
+  that "keep it" is the same question a minute later for ever. With the mascot hidden there
+  is nowhere to draw a count, so the old behaviour stands and it closes on the spot.
+- **The sprite is a ROBOT and it does not float.** The fox bobbed on a 4.2s `translateY`
+  loop, wandered between panes on a timer and ran along the bottom of the window every 2.5
+  minutes, and all three were scenery. They are gone: movement is now a sentence (it walks
+  to the card of the pane it is talking about) and the drawing holds still while a beacon
+  pulses, a visor scans, the treads tick and the arms settle - four opacity clocks on
+  periods that never line up. `src/shared/botSprite.ts`; `test:mascot` fails on a
+  `translateY` anywhere in the sprite's stylesheet, because a float coming back is a
+  regression rather than a taste change.
 - **It speaks unasked exactly once per situation**, and only where the app is otherwise
   silent: two or more finished panes, quiet over an hour, holding more than 1.2 GB, with
   the idle-close clock OFF. With that clock on it says nothing, because the app is already
