@@ -530,6 +530,14 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   border-radius: 3px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
 }
 .chip.asks { color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c; flex: none; margin-left: auto; }
+/* How long is left before that question is answered for you. Beside the chip above and in
+   the same red, because it is the same fact one step further on - and tabular so a card
+   does not jog sideways as 10 becomes 9. It is the sidebar half of `AskCountdown`: the
+   pane draws the full sentence, and the pane is regularly not what is on screen. */
+.chip.asks-in {
+  color: var(--surface-1); background: var(--danger); border-color: var(--danger);
+  flex: none; font-variant-numeric: tabular-nums; font-weight: 600;
+}
 /* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
    beside it rather than pushing it off the end. */
 .row-title .chip.asks + .elapsed, .row-title .chip.asks + .chip.dead { margin-left: 6px; }

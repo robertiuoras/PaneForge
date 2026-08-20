@@ -281,6 +281,27 @@ export function playEvent(event: SoundEvent, sounds: Partial<SoundConfig> | unde
 }
 
 /**
+ * One second of an auto-answer countdown.
+ *
+ * Deliberately NOT throttled and deliberately not `playEvent`: the 900ms guard exists so
+ * two alerts landing together do not stack, and a metronome is exactly the case it would
+ * suppress at one a second - and worse, a tick that touched `lastPlayed` would swallow the
+ * finished-turn chime that follows the answer. It is quieter than an alert for the same
+ * reason: this is a clock, not an interruption.
+ */
+export function playTick(sounds: Partial<SoundConfig> | undefined): void {
+  // A probe cannot hear a sound, and the countdown's whole promise is that it is audible
+  // once a second. This is the only thing a test can read back, the same way `__pfRenders`
+  // is what makes "which panes re-rendered" answerable at all.
+  const w = window as unknown as { __pfTicks?: number }
+  w.__pfTicks = (w.__pfTicks ?? 0) + 1
+  const volume = clampVolume(sounds?.volume ?? 1)
+  if (!volume) return
+  const fallback = soundFor(undefined, 'tick')
+  playResolved(sounds?.tick ?? '', sounds, volume, fallback.kind === 'builtin' ? fallback.def : null)
+}
+
+/**
  * The Settings preview button.
  *
  * Deliberately not throttled: clicking down a list of twenty-four sounds is exactly the

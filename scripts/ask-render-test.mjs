@@ -92,7 +92,14 @@ await wait(2500)
 
 await evalIn(`(async () => {
   const c = await window.api.getConfig()
-  await window.api.setConfig({ ...c, autoAnswer: { ...(c.autoAnswer || {}), enabled: true, waitMs: 20000, anyQuestion: false, maxRun: 5 } })
+  await window.api.setConfig({
+    ...c,
+    // The tick is a sound about a pane, so it is under the same switch as the rest of them
+    // and a dev profile with alerts off would report a working countdown as silent.
+    soundOnIdle: true,
+    sounds: { ...(c.sounds || {}), volume: Math.max(0.2, (c.sounds || {}).volume ?? 1) },
+    autoAnswer: { ...(c.autoAnswer || {}), enabled: true, waitMs: 20000, anyQuestion: false, maxRun: 5 }
+  })
 })()`)
 
 // A chooser the real reader accepts: the CLI's own footer, numbered options, one arrow.
@@ -137,6 +144,27 @@ check(/\d+s/.test(drawn.text ?? ''), 'it counts in seconds', drawn.text ?? 'noth
 check((drawn.text ?? '').includes('Yes, run it'), 'it names the option it will press')
 const marked = drawn.btns.filter((b) => b.auto)
 check(marked.length === 1 && marked[0].text.includes('Yes, run it'), 'that option is the marked one on the row', JSON.stringify(marked))
+
+// The sidebar half. The pane's countdown is drawn inside a pane that is very often not
+// the one on screen, which is exactly the report this answers ("I cannot even see the
+// timer counting down"), so the card carries the seconds too.
+const card = await evalIn(`(() => {
+  const row = document.querySelector('.row[data-id=' + JSON.stringify(${JSON.stringify(ids[0])}) + ']')
+  const chip = row && row.querySelector('.chip.asks-in')
+  const r = chip && chip.getBoundingClientRect()
+  return { text: chip ? chip.textContent : null, w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0 }
+})()`)
+check(card.w > 8 && card.h >= 10, "the card says how long is left", `${card.text} ${card.w}x${card.h}`)
+check(/^\d+s$|^now$/.test(card.text ?? ''), 'and says it in seconds', card.text ?? 'nothing drawn')
+
+// ...and it is also audible, which is the half no screen is needed for. `playTick` counts
+// itself on the window because a probe cannot hear anything; three seconds of a live
+// countdown must produce two or three ticks, never one per frame of the chooser.
+const ticks = () => evalIn('window.__pfTicks || 0')
+const t0 = await ticks()
+await wait(3200)
+const t1 = await ticks()
+check(t1 - t0 >= 2 && t1 - t0 <= 4, 'it ticks once a second while the countdown runs', `${t1 - t0} ticks in 3.2s`)
 
 // Now the cost. Five arrow moves, counted per pane.
 const renders = () => evalIn(`(() => Object.fromEntries([...(window.__pfRenders || new Map())]))()`)

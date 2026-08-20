@@ -31,7 +31,7 @@ import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
-import Elapsed, { formatElapsed, kb } from './components/Elapsed'
+import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import FleetDialog from './components/FleetDialog'
@@ -121,7 +121,7 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
 import VersionBadge from './components/VersionBadge'
-import { playEvent } from './useChime'
+import { playEvent, playTick } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
 import { useHandheld } from './handheld'
@@ -143,6 +143,35 @@ import {
   usable,
   type LayoutKind
 } from './gridLayout'
+
+/**
+ * "3s" on the card of a pane whose question is about to be answered for you.
+ *
+ * The countdown itself is drawn in the PANE (`AskCountdown` in TerminalPane.tsx), which is
+ * the right place for it and is very often not the place being looked at: with the grid
+ * off, or the window on another desktop, the one pane holding a question is the one pane
+ * not on screen. The sidebar is where somebody looks to find WHICH pane is owed an answer,
+ * so the seconds belong here too - beside the "asks you" chip the same glow already earned.
+ *
+ * Its own component so the second timer runs only while a countdown is live: `useNow` is
+ * one shared tick, and subscribing the list itself would re-render every card once a
+ * second for a clock almost no desk is showing.
+ */
+function AskClock({ at }: { at: number }): React.JSX.Element | null {
+  const now = useNow()
+  const left = Math.ceil((at - now) / 1000)
+  // Nothing is drawn once the clock has run out: the keys are landing, and a chip stuck at
+  // 0s reads as a timer that jammed.
+  if (left < 0) return null
+  return (
+    <span
+      className="chip asks-in"
+      title="This question is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent's question for me."
+    >
+      {left > 0 ? `${left}s` : 'now'}
+    </span>
+  )
+}
 
 const api = window.api
 
@@ -560,6 +589,43 @@ export default function App(): JSX.Element {
   // resubscribing to every session event.
   const soundSet = useRef<Config['sounds'] | undefined>(undefined)
   soundSet.current = config?.sounds
+  // ...and the countdown is also a SOUND.
+  //
+  // A question answered for you is the one thing this app does on its own that somebody
+  // may want to stop, and the window in which they can is the countdown - which is drawn
+  // inside a pane. A pane that is not on screen (the grid off, another desktop, the window
+  // minimised) had no way of saying so at all, which is why "I cannot even see the timer
+  // counting down" is a real report about a feature that works. One tick a second says it
+  // without needing a screen.
+  //
+  // The SOONEST countdown on the desk, not one per pane: two panes counting down together
+  // would beat against each other twice a second, which reads as a fault rather than as a
+  // clock.
+  const soonestAuto = sessions.reduce(
+    (min, s) => (s.autoAnswerAt && (!min || s.autoAnswerAt < min) ? s.autoAnswerAt : min),
+    0
+  )
+  const tickNow = useNow()
+  // The second last ticked FOR THIS countdown. Keyed by the deadline as well as by the
+  // number, so a new question that happens to start at the same reading is still heard.
+  const lastTick = useRef('')
+  useEffect(() => {
+    if (!soonestAuto) {
+      lastTick.current = ''
+      return
+    }
+    const left = Math.ceil((soonestAuto - Date.now()) / 1000)
+    // Nothing before the last minute: a wait somebody lengthened to five minutes in
+    // Settings is a clock, not an alarm, and ticking through all of it is a metronome.
+    if (left <= 0 || left > 60) return
+    const key = `${soonestAuto}:${left}`
+    if (lastTick.current === key) return
+    lastTick.current = key
+    // Same switch as every other sound the app makes about a pane. The volume slider, and
+    // a picker pointed at a file of your own, are honoured by `playTick` itself.
+    if (soundOn.current) playTick(soundSet.current)
+  }, [soonestAuto, tickNow])
+
   // The pane already on screen is acknowledged the moment it raises its hand
   // (the effect above clears it), so chiming for it is noise about something you
   // are already watching.
@@ -3507,6 +3573,10 @@ export default function App(): JSX.Element {
                         asks you
                       </span>
                     )}
+                    {/* ...and, when it is about to be answered for you, how long is left.
+                        Beside the word rather than instead of it: "asks you" is what the
+                        pane needs, and the seconds are what is about to happen to it. */}
+                    {s.ask && s.autoAnswerAt ? <AskClock at={s.autoAnswerAt} /> : null}
                     {/* A pane on its way out says so, and says it here for the same reason
                         the chip above is here: the sub-line has no room and this is
                         transient - it takes the clock's place for the few seconds a move

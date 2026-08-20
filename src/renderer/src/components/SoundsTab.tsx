@@ -41,6 +41,11 @@ const EVENTS: { key: SoundEvent; label: string; hint: string }[] = [
     hint: 'The run has stopped and will not move again until somebody answers. Make this one unmistakable - it is the alert whose cost is the rest of the run.'
   },
   {
+    key: 'tick',
+    label: 'A question is about to be answered for you',
+    hint: 'One tick a second while the countdown runs, so a question being answered in a pane you are not looking at is still something you can hear in time to disagree with it. Quieter than the alerts above by design - it is a clock, not an interruption.'
+  },
+  {
     key: 'bell',
     label: 'A pane rang the terminal bell',
     hint: 'A CLI asking for a person directly: a prompt it needs answered, a build that failed. Short is better here, since a chatty CLI can ring several times a minute.'
@@ -101,7 +106,7 @@ export default function SoundsTab({ config, onChange }: Props): JSX.Element {
           onMouseUp={() => previewSound(sounds.done, sounds)}
         />
         <div className="hint">
-          Applies to all three below. At 0% the alerts still mark the pane and flash the
+          Applies to every sound below. At 0% the alerts still mark the pane and flash the
           taskbar - they just do it silently.
         </div>
       </div>
