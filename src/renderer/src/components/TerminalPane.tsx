@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -146,8 +146,20 @@ function AskCountdown({ at, n, ask }: { at: number; n?: number; ask: PaneAsk }):
   const label = ask.options.find((o) => o.n === n)?.label
   return (
     <div className="pane-ask-auto" title="Settings -> Answer an agent's question for me">
-      {left > 0 ? `Answering in ${left}s` : 'Answering now'}
-      {label ? <span className="pane-ask-auto-pick">{label}</span> : null}
+      {/* The seconds are their own element and are the biggest thing on the row: this is
+          the one part somebody has to read at a glance from across the desk, and the
+          11px line it used to be was a sentence nobody reported ever seeing. */}
+      <span className="pane-ask-auto-left">{left > 0 ? `${left}s` : 'now'}</span>
+      <span className="pane-ask-auto-word">
+        {/* The seconds are in the pill to the left, so the words say WHAT rather than
+            when: "Answering for you in Yes, run it" is what reading the two halves as one
+            sentence produced, and it parses as nonsense. */}
+        Answering for you with
+        {/* The option is named, not only numbered: a countdown alone says something is
+            about to happen, and the point of showing it is that somebody who disagrees
+            can reach the pane - which they cannot do against a number. */}
+        {label ? <b className="pane-ask-auto-pick"> {label}</b> : null}
+      </span>
     </div>
   )
 }
@@ -162,6 +174,10 @@ import { isPhoneClient } from '../client'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/** Per-pane render counter, exposed on the window for probes. See the component body. */
+export const renderCount = new Map<string, number>()
+;(window as unknown as { __pfRenders?: Map<string, number> }).__pfRenders = renderCount
 
 /**
  * Tell a pane that a clear is about to be sent to it, from something other than its own
@@ -509,7 +525,7 @@ function base64(bytes: Uint8Array): string {
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
-export default function TerminalPane({
+function TerminalPane({
   sessionId,
   cwd,
   visible,
@@ -528,6 +544,14 @@ export default function TerminalPane({
   agent,
   onToast
 }: Props): JSX.Element {
+  // How many times each pane has rendered, where a probe can read it.
+  //
+  // A pane's render is not cheap - it re-measures the turn-copy pairs and the rail against
+  // the live xterm buffer - and the sessions list arrives from main as a fresh array on
+  // every change, so before `memo` below EVERY pane re-rendered whenever ANY pane's
+  // question moved by one arrow. This counter is what makes that statement a measurement
+  // rather than a theory, and it is what `scripts/ask-render-test.mjs` reads.
+  renderCount.set(sessionId, (renderCount.get(sessionId) ?? 0) + 1)
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
@@ -1019,6 +1043,21 @@ export default function TerminalPane({
     api.copyText(body)
     // The count is the receipt: "Copied" alone cannot tell a whole reply from one blank
     // line, and a copy that quietly took the wrong range is the failure worth catching.
+    const lines = body.split('\n').length
+    say(`${what} copied - ${lines} line${lines === 1 ? '' : 's'}`)
+  }
+
+  /**
+   * The receipt for a copy that has already happened.
+   *
+   * Same words as `putOnClipboard`, without the write: the keyboard and right-click paths
+   * hand the text to the clipboard themselves (they have their own "did anything get
+   * copied" rules and their own highlight handling), and all they were missing was the
+   * sentence saying it worked.
+   */
+  const sayCopied = (text: string, what = 'Selection'): void => {
+    const body = text.trim()
+    if (!body) return
     const lines = body.split('\n').length
     say(`${what} copied - ${lines} line${lines === 1 ? '' : 's'}`)
   }
@@ -1609,12 +1648,24 @@ export default function TerminalPane({
     // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
     const copied = { current: '' }
 
-    const copySelection = (keepHighlight = false): boolean => {
+    /**
+     * Copy what is highlighted, and SAY SO.
+     *
+     * The clipboard gives no feedback of its own, so a copy that went nowhere and a copy
+     * that worked look identical - which is "I press copy and nothing tells me it copied".
+     * Every copy a PERSON asked for therefore reports in the window's toast, with the line
+     * count as the receipt (the same rule `putOnClipboard` already followed for the turn
+     * icons and the selection chip). `announce` is false for exactly one caller: copy on
+     * select, which nobody pressed - toasting on every drag of the mouse is noise, and the
+     * highlight is its own feedback there.
+     */
+    const copySelection = (keepHighlight = false, announce = true): boolean => {
       // A visible highlight always wins: Ctrl+C copies it and drops it, so the very next
       // Ctrl+C is an interrupt again. One extra keypress, never a lost prompt.
       const live = t.getSelection()
       if (live) {
         api.copyText(live)
+        if (announce) sayCopied(live)
         if (!keepHighlight) t.clearSelection()
         lastSelection.current = ''
         copied.current = live
@@ -1623,6 +1674,7 @@ export default function TerminalPane({
       const sel = lastSelection.current
       if (!sel || sel === copied.current) return false
       api.copyText(sel)
+      if (announce) sayCopied(sel)
       copied.current = sel
       lastSelection.current = ''
       return true
@@ -2092,8 +2144,9 @@ export default function TerminalPane({
       const sel = t.getSelection()
       if (sel.trim().length < 2) return
       // Keep the highlight: it is the only feedback that the copy happened, and a
-      // following Ctrl+C should still copy rather than interrupt.
-      copySelection(true)
+      // following Ctrl+C should still copy rather than interrupt. Silent on purpose -
+      // nobody pressed anything, so a toast per mouse drag would be noise.
+      copySelection(true, false)
     }
     // Right-click: copy when something is selected, paste when nothing is.
     const onContextMenu = (e: MouseEvent): void => {
@@ -2101,8 +2154,9 @@ export default function TerminalPane({
       const sel = t.getSelection()
       if (sel) {
         api.copyText(sel)
-        const lines = sel.split('n').length
-        say(`Selection copied - ${lines} line${lines === 1 ? '' : 's'}`)
+        // `sel.split('n')` here counted the letter n, so a one-line copy of a word
+        // containing an n reported several lines. One counter, one place.
+        sayCopied(sel)
         return
       }
       if (!copySelection()) pasteClipboard()
@@ -2456,7 +2510,10 @@ export default function TerminalPane({
       copy.current = state
       if (action === 'yank') {
         const text = t.getSelection()
-        if (text) api.copyText(text)
+        if (text) {
+          api.copyText(text)
+          sayCopied(text)
+        }
         leaveCopy()
         return true
       }
@@ -3318,8 +3375,22 @@ export default function TerminalPane({
             {ask.options.map((o) => (
               <button
                 key={o.n}
-                className={'pane-ask-btn' + (o.n === ask.selected ? ' on' : '')}
-                title={`${o.n}. ${o.label}`}
+                // Three states, not two: where the CLI's own arrow is (`on`), and which
+                // one this app is about to press for you (`auto`). They are usually the
+                // same row and are not always - the pick is `pickAnswer`'s, which reads
+                // the labels rather than the arrow - so a countdown that named an option
+                // the eye could not then find on the row was the half of the promise that
+                // was missing.
+                className={
+                  'pane-ask-btn' +
+                  (o.n === ask.selected ? ' on' : '') +
+                  (autoAnswerAt && o.n === autoAnswerN ? ' auto' : '')
+                }
+                title={
+                  autoAnswerAt && o.n === autoAnswerN
+                    ? `${o.n}. ${o.label} - this is the one that will be pressed for you`
+                    : `${o.n}. ${o.label}`
+                }
                 onClick={() => {
                   void api.chooseOption(sessionId, o.n).then((ok) => {
                     // A refusal is the pane having moved on - answered at the desk while
@@ -3339,3 +3410,74 @@ export default function TerminalPane({
     </div>
   )
 }
+
+/**
+ * Is this the same question, drawn the same way?
+ *
+ * `ask` arrives from the main process inside a fresh sessions array on every change, so
+ * its identity is never stable and comparing it by reference would defeat the memo below
+ * outright. What matters to the pane is what it DRAWS: the question, which row the CLI's
+ * arrow is on, and the options themselves.
+ */
+function sameAsk(a?: PaneAsk | null, b?: PaneAsk | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.question !== b.question || a.selected !== b.selected) return false
+  if (a.options.length !== b.options.length) return false
+  return a.options.every((o, i) => o.n === b.options[i].n && o.label === b.options[i].label)
+}
+
+function sameGrid(a?: { cols: number; rows: number } | null, b?: { cols: number; rows: number } | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.cols === b.cols && a.rows === b.rows
+}
+
+/**
+ * Whether this pane can skip a render.
+ *
+ * The sessions list is one array for the whole desk, rebuilt in main whenever ANYTHING
+ * about ANY pane changes - and a question being arrowed through rebuilds it on every
+ * frame. Without this, a pane's render is work every other pane pays for: measured on
+ * 2026-08-20 against a real chooser in a dev copy, five arrow moves cost **34 renders of
+ * every pane on the desk**, four of which had no question on them at all. A render is not
+ * free either - it re-measures the turn-copy pairs and the prompt rail against the live
+ * xterm buffer - which is what made arrowing through an agent's answers feel heavy.
+ *
+ * Every prop is compared, and the three that are objects are compared by VALUE, because
+ * main sends new ones each time and by reference this comparator would always say "no".
+ * A prop added to `Props` without a line here is a pane that stops updating for it, which
+ * is why this lists them out rather than looping over keys: the missing line is then a
+ * type error rather than a silent staleness.
+ */
+function samePaneProps(a: Props, b: Props): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.cwd === b.cwd &&
+    a.visible === b.visible &&
+    a.active === b.active &&
+    a.fontSize === b.fontSize &&
+    a.copyOnSelect === b.copyOnSelect &&
+    a.mouseSelect === b.mouseSelect &&
+    a.clickMovesCursor === b.clickMovesCursor &&
+    a.autoFixUi === b.autoFixUi &&
+    a.agent === b.agent &&
+    a.onToast === b.onToast &&
+    a.autoAnswerAt === b.autoAnswerAt &&
+    a.autoAnswerN === b.autoAnswerN &&
+    sameAsk(a.ask, b.ask) &&
+    sameGrid(a.mirror, b.mirror) &&
+    sameGrid(a.grid, b.grid) &&
+    sameTheme(a.termTheme, b.termTheme)
+  )
+}
+
+/** The xterm palette, by value: it is derived in App and is a new object every render. */
+function sameTheme(a: Props['termTheme'], b: Props['termTheme']): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const ka = Object.keys(a) as (keyof NonNullable<Props['termTheme']>)[]
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k])
+}
+
+export default memo(TerminalPane, samePaneProps)

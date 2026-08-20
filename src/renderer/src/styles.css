@@ -3208,10 +3208,35 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    about to happen without a press, so it may not be read as another option. */
 .pane-ask-auto {
   display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-  font-size: 11px; color: var(--danger);
+  font-size: 12px; color: var(--danger);
+  /* Its own banded row rather than a line of small text: at 11px on a dark card, under a
+     question and above a row of buttons, it was reported as not being on screen at all. */
+  padding: 4px 8px; border-radius: 8px;
+  border: 1px solid var(--danger); background: var(--surface-1);
 }
-.pane-ask-auto-pick {
-  color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* The seconds. Tabular so the row does not jog sideways as 10 becomes 9, and wide enough
+   for two digits plus the word "now", so nothing reflows on the last tick either. */
+.pane-ask-auto-left {
+  flex: none; min-width: 34px; text-align: center;
+  padding: 2px 6px; border-radius: 6px;
+  background: var(--danger); color: var(--surface-1);
+  font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pane-ask-auto-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-ask-auto-pick { color: var(--text); font-weight: 600; }
+/* The option about to be pressed for you. Dashed rather than solid so it cannot be
+   confused with `.on` - where the CLI's own arrow is - which is a different fact and is
+   often a different row. The word is drawn by CSS because the button already has a
+   number and a label in it, and a third element per option is a wrapped row on a phone. */
+.pane-ask-btn.auto {
+  border-color: var(--danger); border-style: dashed;
+}
+.pane-ask-btn.auto::after {
+  content: 'auto';
+  margin-left: 2px; padding: 0 5px; border-radius: 999px;
+  background: var(--danger); color: var(--surface-1);
+  font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
 }
 
 

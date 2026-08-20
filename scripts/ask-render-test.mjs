@@ -1,0 +1,156 @@
+// A pane's question, drawn and paid for.
+//
+// Two promises this cannot check without a real window, and both were broken before it
+// existed:
+//
+//  1. Arrowing through an agent's answers may not cost the whole desk a render. The
+//     sessions list is one array for every pane, rebuilt in main on every frame of a
+//     question, so before `memo` in TerminalPane.tsx five arrow moves cost **34 renders
+//     of every pane on the desk** - four of which had no question on them at all. A
+//     render re-measures the turn-copy pairs and the prompt rail against the live xterm
+//     buffer, which is why that was felt as lag rather than seen as a number.
+//     The load-bearing assertion is the BYSTANDER's count, not the question pane's: a
+//     memo that skipped the pane holding the question would pass a "renders went down"
+//     check and break the feature outright.
+//
+//  2. The countdown says what is about to happen, in time to disagree with it. It has to
+//     be on screen with a real size, and it has to NAME the option - and that option has
+//     to be findable on the row of buttons, which is the `.auto` mark.
+//
+// Needs a window:
+//   npm run build && npm run try -- --keep --remote-debugging-port=9334
+//   PF_PORT=9334 node scripts/ask-render-test.mjs
+// It skips out loud when there is none, the same as the other window tests.
+
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+
+const PORT = process.env.PF_PORT || '9333'
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+let page
+for (let i = 0; i < 20; i++) {
+  const list = await fetch(`http://127.0.0.1:${PORT}/json/list`)
+    .then((r) => r.json())
+    .catch(() => [])
+  page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf'))
+  if (page) break
+  await new Promise((r) => setTimeout(r, 500))
+}
+if (!page) {
+  console.log(`SKIP: no debuggable window on port ${PORT}.`)
+  console.log('  npm run build && npm run try -- --keep --remote-debugging-port=9334')
+  console.log('  PF_PORT=9334 node scripts/ask-render-test.mjs')
+  process.exit(0)
+}
+
+const ws = new WebSocket(page.webSocketDebuggerUrl)
+await new Promise((r) => ws.addEventListener('open', r, { once: true }))
+const pending = new Map()
+let seq = 0
+ws.addEventListener('message', (e) => {
+  const m = JSON.parse(e.data)
+  const p = pending.get(m.id)
+  if (!p) return
+  pending.delete(m.id)
+  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
+})
+const send = (method, params) =>
+  new Promise((res, rej) => {
+    const id = ++seq
+    pending.set(id, { res, rej })
+    ws.send(JSON.stringify({ id, method, params }))
+  })
+const evalIn = async (expression) => {
+  const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails))
+  return r.result.value
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+let bad = 0
+const check = (ok, what, detail = '') => {
+  console.log(`${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ' - ' + detail : ''}`)
+  if (!ok) bad++
+}
+
+// A clean desk first: this is the DEV copy's own profile, and a pane left over from an
+// earlier run holds a question of its own - whose card is then the first `.pane-ask` in
+// the document, in a pane that is not on screen. Measuring that one reported the
+// countdown as 0x0 while the real one was drawn perfectly.
+// Two shell panes. The second one is the point: it has no question and must not render.
+const ids = await evalIn(`(async () => {
+  for (const s of await window.api.listSessions()) await window.api.killSession(s.id)
+  const out = []
+  for (const n of [1, 2]) {
+    const s = await window.api.startSession({ cwd: ${JSON.stringify(ROOT)}, agent: 'shell', name: 'askrender-' + n })
+    out.push(typeof s === 'string' ? s : s.id)
+  }
+  return out
+})()`)
+await wait(2500)
+
+await evalIn(`(async () => {
+  const c = await window.api.getConfig()
+  await window.api.setConfig({ ...c, autoAnswer: { ...(c.autoAnswer || {}), enabled: true, waitMs: 20000, anyQuestion: false, maxRun: 5 } })
+})()`)
+
+// A chooser the real reader accepts: the CLI's own footer, numbered options, one arrow.
+// One option leads with a yes-shaped word, so autoAnswer has something to pick and the
+// countdown has something to name.
+const frameFor = (sel) =>
+  [
+    'Do you want to proceed?',
+    `${sel === 1 ? '❯' : ' '} 1. Yes, run it`,
+    `${sel === 2 ? '❯' : ' '} 2. No, stop and tell me`,
+    'Enter to select · ↑/↓ to navigate · Esc to cancel'
+  ].join('\n')
+
+const feed = async (sel) => {
+  const b64 = Buffer.from(frameFor(sel) + '\n', 'utf8').toString('base64')
+  await evalIn(`window.api.write(${JSON.stringify(ids[0])}, ${JSON.stringify(`clear; echo ${b64} | base64 -d\r`)})`)
+}
+
+await feed(1)
+await wait(3000)
+
+const ask = await evalIn(`(async () => {
+  const l = await window.api.listSessions()
+  const s = l.find((x) => x.id === ${JSON.stringify(ids[0])})
+  return s && s.ask ? { selected: s.ask.selected, n: s.ask.options.length } : null
+})()`)
+check(Boolean(ask) && ask.n === 2, 'the frame reads as a live question', JSON.stringify(ask))
+
+// Scoped to THIS pane's own subtree: see the note above about a stale pane's card.
+const drawn = await evalIn(`(() => {
+  const pane = window.__pf[${JSON.stringify(ids[0])}].host.parentElement
+  const auto = pane.querySelector('.pane-ask-auto')
+  const r = auto && auto.getBoundingClientRect()
+  const btns = [...pane.querySelectorAll('.pane-ask-btn')].map((b) => ({
+    text: b.textContent,
+    auto: b.classList.contains('auto')
+  }))
+  return { text: auto ? auto.textContent : null, w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0, btns }
+})()`)
+check(drawn.w > 100 && drawn.h >= 20, 'the countdown is on screen with a real size', `${drawn.w}x${drawn.h}`)
+check(/\d+s/.test(drawn.text ?? ''), 'it counts in seconds', drawn.text ?? 'nothing drawn')
+check((drawn.text ?? '').includes('Yes, run it'), 'it names the option it will press')
+const marked = drawn.btns.filter((b) => b.auto)
+check(marked.length === 1 && marked[0].text.includes('Yes, run it'), 'that option is the marked one on the row', JSON.stringify(marked))
+
+// Now the cost. Five arrow moves, counted per pane.
+const renders = () => evalIn(`(() => Object.fromEntries([...(window.__pfRenders || new Map())]))()`)
+const before = await renders()
+for (const sel of [2, 1, 2, 1, 2]) {
+  await feed(sel)
+  await wait(1500)
+}
+const after = await renders()
+const cost = (id) => (after[id] ?? 0) - (before[id] ?? 0)
+check(cost(ids[1]) === 0, 'a pane with no question renders NOT AT ALL while another is arrowed', `${cost(ids[1])} renders`)
+check(cost(ids[0]) > 0 && cost(ids[0]) <= 15, 'the pane holding the question still redraws', `${cost(ids[0])} renders`)
+
+await evalIn(`(async () => { for (const id of ${JSON.stringify(ids)}) await window.api.killSession(id) })()`)
+ws.close()
+console.log(bad ? `\n${bad} failed` : '\nall good')
+process.exit(bad ? 1 : 0)

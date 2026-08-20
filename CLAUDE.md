@@ -775,6 +775,14 @@ followed it. They are drawn for every VISIBLE turn, never for the hovered one.
 - The reply is the rows after the prompt up to the row before the next one. Off by one in
   either direction and the paste is perfect and wrong.
 
+**Every copy a person asked for says so.** The clipboard gives no feedback, so a copy that
+went nowhere and one that worked look identical - "I press copy and nothing tells me it
+copied". Ctrl/Cmd+C, the right-click copy, copy mode's `y` and the selection chip all report
+in the window's toast with the line count as the receipt (`sayCopied`, one counter in one
+place - the right-click path had `sel.split('n')`, counting the letter n). Copy ON SELECT is
+the one silent path and deliberately so: nobody pressed anything, and the highlight is its
+own feedback.
+
 ## A click puts the cursor where you clicked
 
 A CLI's prompt is drawn text and a pty takes keystrokes, so a click cannot place a caret —
@@ -954,6 +962,25 @@ whichever one has a hook.
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
   letters into a chooser.
 
+## Arrowing through a question may not cost the whole desk
+
+The sessions list is ONE array for every pane, rebuilt in main whenever anything about any
+pane changes - and a question being arrowed through rebuilds it on every frame. A pane's
+render is not cheap either: it re-measures the turn-copy pairs and the prompt rail against
+the live xterm buffer. Measured on 2026-08-20 against a real chooser in a dev copy, five
+arrow moves cost **34 renders of EVERY pane on the desk**, four of which had no question on
+them at all - which is what "the overlay is laggy when I switch my answers" was.
+`TerminalPane` is `memo`'d with `samePaneProps`, which compares `ask`, `termTheme`,
+`mirror` and `grid` BY VALUE because main sends a fresh object for each of them every time.
+After: 5 renders on the pane holding the question and **0** on every other pane.
+
+- **The load-bearing assertion is the bystander's count**, not the question pane's: a memo
+  that also skipped the pane holding the question would pass a "renders went down" check
+  and break the feature outright. `npm run test:askrender` checks both, and
+  `window.__pfRenders` is the per-pane counter it reads.
+- A prop added to `Props` without a line in `samePaneProps` is a pane that stops updating
+  for it, which is why that function lists them out instead of looping over keys.
+
 ## ...and a question with an obvious answer is answered
 
 Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those
@@ -968,6 +995,14 @@ countdown, not silence: the pane names the option about to be pressed and counts
 seconds down, and a press or an arrow at the desk cancels it. 1.2s was long enough while
 whoever got it had gone looking for the setting; on by default the wait has to be long
 enough to READ, which is why the number is now a control. Every refusal is unchanged.
+
+**The countdown is a banded row, and the option it will press is marked on the row.** It
+was an 11px line of text under the question and was reported as not being on screen at all;
+it is now a pill with the seconds in it (tabular, so the row does not jog as 10 becomes 9)
+beside `Answering for you with <option>`, and that option's button carries `.auto` - dashed
+rather than solid, because `.on` is a different fact (where the CLI's own arrow is) and the
+two are often different rows. `npm run test:askrender` measures the row's real size in a
+live window, because "it renders" and "it is on screen" are not the same claim.
 
 **A changed default cannot reach an existing desk on its own**, and this is the trap:
 `defaults()` is WRITTEN to config.json at first launch, so every install carries
@@ -1568,7 +1603,8 @@ Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
 `test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized),
 `test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
-back), `test:askclick`, and `test:phoneview` (a real headless Chrome at
+back), `test:askclick`, `test:askrender` (the countdown on a real question, and what
+arrowing through it costs every OTHER pane), and `test:phoneview` (a real headless Chrome at
 414x896 against that copy — it skips out loud with no Chrome and no server).
 
 Out of the default suite on purpose because they need the network: `test:discordbrand`,
