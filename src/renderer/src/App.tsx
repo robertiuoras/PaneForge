@@ -82,6 +82,7 @@ import {
   type MascotConfig,
   type MascotPane
 } from '../../shared/mascot'
+import type { RunningDev } from '../../shared/devList'
 import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb, type Reclaim } from '../../shared/reclaim'
 import {
   autoHandoffPlan,
@@ -3098,6 +3099,12 @@ export default function App(): JSX.Element {
     setCloseSoon(undefined)
   }, [])
 
+  // What is serving on this machine, for the mascot's "what dev servers are running" and
+  // for stopping one by name. Held rather than polled: the reading costs a whole process
+  // table with full command lines, so it is refreshed when the ask box opens and after
+  // anything is stopped, and never on a timer.
+  const [devs, setDevs] = useState<RunningDev[]>([])
+
   const mascotPanes: MascotPane[] = useMemo(
     () =>
       sessions.map((s, i) => ({
@@ -3112,6 +3119,13 @@ export default function App(): JSX.Element {
       })),
     [sessions, usage]
   )
+
+  const refreshDevs = useCallback(() => {
+    void api
+      .listDevServers(mascotPanes.map((p) => ({ id: p.id, pane: p.pane, name: p.name })))
+      .then((list) => setDevs(list ?? []))
+      .catch(() => setDevs([]))
+  }, [mascotPanes])
 
   return (
     <BlurbContext.Provider value={blurbs}>
@@ -4634,6 +4648,14 @@ export default function App(): JSX.Element {
         idleCloseOn={(config?.reclaim?.idleCloseMinutes ?? 0) > 0}
         acted={acted}
         closeSoon={closeSoon}
+        devs={devs}
+        onRefreshDevs={refreshDevs}
+        onStopDev={(pids) => {
+          // Stopped one at a time and re-read afterwards, because the answer that matters
+          // is what is running NOW - a stop that silently failed (a pid already gone, a
+          // pid that is no longer a dev server) must not leave a list saying otherwise.
+          void Promise.all(pids.map((pid) => api.stopDevServer(pid))).then(() => refreshDevs())
+        }}
         onKeep={keepOpen}
         onCloseNow={(ids) => doClose(ids, pendingMb.current)}
         onReveal={(id) => setActiveId(id)}

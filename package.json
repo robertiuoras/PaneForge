@@ -91,6 +91,7 @@
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",
+    "test:devlist": "node scripts/devlist-test.mjs",
     "test:autohandoff": "node scripts/autohandoff-test.mjs",
     "test:idlequit": "node scripts/idlequit-test.mjs",
     "test:promptecho": "node scripts/promptecho-test.mjs",

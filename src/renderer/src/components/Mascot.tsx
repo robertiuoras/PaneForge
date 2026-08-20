@@ -44,6 +44,7 @@ import {
   type MascotConfig,
   type MascotPane
 } from '@shared/mascot'
+import type { RunningDev } from '@shared/devList'
 
 /** A close the app has decided on and has not done yet. The person gets the seconds. */
 export interface CloseSoon {
@@ -61,6 +62,17 @@ export interface MascotProps {
   onReveal: (id: string) => void
   onClose: (ids: string[]) => void
   onHandoff: (ids: string[]) => void
+  /**
+   * The dev servers running right now.
+   *
+   * Asked for rather than polled: reading them is a full `ps -Ao command=` of the whole
+   * machine, which is a keystroke's worth of work and not a timer's.
+   */
+  devs?: RunningDev[]
+  /** Read them again - called when the ask box opens and before a question is answered. */
+  onRefreshDevs?: () => void
+  /** Stop these, by pid. A dev server is routinely not a descendant of any pane. */
+  onStopDev?: (pids: number[]) => void
   /** Turned off from the bubble's own menu, so it can always be dismissed where it is. */
   onConfig: (patch: Partial<MascotConfig>) => void
   /** Whether the app's own idle-close clock is running - it stays quiet if so. */
@@ -308,6 +320,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     (i: Intent) => {
       if (i.kind === 'close') props.onClose(i.ids)
       else if (i.kind === 'handoff') props.onHandoff(i.ids)
+      else if (i.kind === 'stopDev') props.onStopDev?.(i.pids)
       setBubble(null)
     },
     [props]
@@ -317,8 +330,8 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     const text = typing.trim()
     if (!text) return
     setTyping('')
-    const i = parse(text, panes)
-    if (i.kind !== 'say' && i.ids.length) {
+    const i = parse(text, panes, props.devs ?? [])
+    if ('ids' in i && i.ids.length) {
       walkTo(i.ids[0])
       props.onReveal(i.ids[0])
     }
@@ -327,8 +340,12 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   }, [typing, panes, walkTo, props, say])
 
   useEffect(() => {
-    if (open) input.current?.focus()
-  }, [open])
+    if (!open) return
+    input.current?.focus()
+    // Read the machine's dev servers once, here, so an answer is about what is running now
+    // rather than about what was running when the window opened.
+    props.onRefreshDevs?.()
+  }, [open, props])
 
   const total = useMemo(() => panes.reduce((n, p) => n + (p.memMb ?? 0), 0), [panes])
 
@@ -391,7 +408,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           {!counting && bubble?.action && (
             <div className="mascot-acts">
               <button className="primary small" onClick={() => run(bubble.action as Intent)}>
-                {bubble.action.kind === 'close' ? 'Close' : 'Move it'}
+                {bubble.action.kind === 'close'
+                  ? 'Close'
+                  : bubble.action.kind === 'stopDev'
+                    ? 'Stop it'
+                    : 'Move it'}
               </button>
               <button className="ghost small" onClick={() => setBubble(null)}>
                 Leave it

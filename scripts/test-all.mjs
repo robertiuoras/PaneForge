@@ -53,6 +53,7 @@ const TESTS = [
   ['reclaim', 'reclaim-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
+  ['devlist', 'devlist-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],

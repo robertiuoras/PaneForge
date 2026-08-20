@@ -16,6 +16,7 @@
 // Pure: no DOM, no Electron. `npm run test:mascot`.
 
 import type { FleetState } from './fleet'
+import { devReport, mentionsDev, pickDevs, type RunningDev } from './devList'
 import { formatMb } from './usage'
 
 /** Turned on by default: silent, and it is the only thing that ever says the ladder acted. */
@@ -153,12 +154,20 @@ export type Intent =
   | { kind: 'handoff'; ids: string[]; say: string }
   /** Show these panes' readings. Nothing happens to them. */
   | { kind: 'report'; ids: string[]; say: string }
+  /**
+   * Stop these dev servers. Destructive, and confirmed like every other one.
+   *
+   * By pid rather than by pane, because a dev server is routinely not a descendant of the
+   * pane that started it - the one measured on this desk had been reparented onto pid 1 -
+   * so "the pane's server" is not a thing that can be killed by closing the pane.
+   */
+  | { kind: 'stopDev'; pids: number[]; say: string }
   /** It understood the shape and found nothing, or did not understand at all. */
   | { kind: 'say'; say: string }
 
 /** An intent that changes something, and therefore may not run on a guess. */
 export function isDestructive(i: Intent): boolean {
-  return i.kind === 'close' || i.kind === 'handoff'
+  return i.kind === 'close' || i.kind === 'handoff' || i.kind === 'stopDev'
 }
 
 const MIN = 60_000
@@ -236,9 +245,14 @@ export function closeable(panes: MascotPane[]): MascotPane[] {
   )
 }
 
-export function parse(text: string, panes: MascotPane[]): Intent {
+/** How a dev server is named back to somebody who is about to stop it. */
+function devLineShort(d: RunningDev): string {
+  return `${d.label}${d.port ? ` on ${d.port}` : ''} (${d.where})`
+}
+
+export function parse(text: string, panes: MascotPane[], devs: RunningDev[] = []): Intent {
   const t = text.trim()
-  if (!t) return { kind: 'say', say: 'Ask me something - "what is pane 3", "close the idle ones".' }
+  if (!t) return { kind: 'say', say: 'Ask me something - "what is pane 3", "what dev servers are running".' }
   const low = t.toLowerCase()
 
   const wantsClose = /\b(close|kill|end|quit|stop|shut)\b/.test(low)
@@ -263,6 +277,27 @@ export function parse(text: string, panes: MascotPane[]): Intent {
   if (nums.length) hit = panes.filter((p) => nums.includes(p.pane))
   else if (named.length) hit = named
   else hit = described()
+
+  // Dev servers come first, because "close the dev" is a close with no pane in it and
+  // would otherwise fall through to "nothing quiet enough to close" - an answer about
+  // panes to a question about servers.
+  if (mentionsDev(t) && !/\bpane\b/.test(low.replace(/\bpane\s*#?\s*\d/g, ''))) {
+    const named = pickDevs(t, devs)
+    if (wantsClose) {
+      if (!devs.length) return { kind: 'say', say: 'No dev server running that I can see.' }
+      if (!named.length)
+        return {
+          kind: 'say',
+          say: `Which one?\n${devReport(devs)}\nSay "close the first one", its port, or "close both".`
+        }
+      return {
+        kind: 'stopDev',
+        pids: named.map((d) => d.pid),
+        say: `Stop ${named.length === 1 ? devLineShort(named[0]) : `${named.length} dev servers (${named.map(devLineShort).join(', ')})`}? Whatever it was serving goes down until it is started again.`
+      }
+    }
+    return { kind: 'say', say: devReport(devs) }
+  }
 
   if (wantsClose) {
     if (!hit.length)
@@ -319,10 +354,13 @@ export function parse(text: string, panes: MascotPane[]): Intent {
   if (/\b(help|what can you|commands?)\b/.test(low))
     return {
       kind: 'say',
-      say: 'Try: "what is pane 3", "what are the two biggest", "close the idle ones", "hand off pane 2", "memory".'
+      say: 'Try: "what is pane 3", "what are the two biggest", "close the idle ones", "hand off pane 2", "what dev servers are running", "close both dev servers", "memory".'
     }
 
-  return { kind: 'say', say: `I only know this window - panes, memory and closing them. "help" lists it.` }
+  return {
+    kind: 'say',
+    say: `I only know this machine - panes, memory, dev servers and closing them. "help" lists it.`
+  }
 }
 
 /** What the mascot volunteers, unasked, or nothing. */

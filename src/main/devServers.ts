@@ -17,7 +17,8 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { devPlan, inRepo, managerFor, type DevServer } from '../shared/devServers'
+import { devPlan, devSignalOf, inRepo, managerFor, type DevServer } from '../shared/devServers'
+import { runningDevs, type DevPane, type RunningDev } from '../shared/devList'
 
 const WIN = process.platform === 'win32'
 
@@ -154,4 +155,69 @@ export function localDevCommand(dir: string, script: string): string | null {
   const scripts = packageScripts(dir)
   if (typeof scripts[script] !== 'string') return null
   return `${managerFor(lockfiles(dir))} run ${script}`
+}
+
+
+/**
+ * Every dev server running on this machine, attributed to the panes that own them.
+ *
+ * The handoff path above asks a different question and gets a package.json script back;
+ * this one is what the mascot answers "what dev servers are running" with, so it is pids
+ * and ports - the two things somebody asking already has in their head and cannot get at.
+ *
+ * One process table read per call, on demand: this is a keystroke's worth of work, not a
+ * timer, and `ps -Ao command=` is far too expensive to hold open (which is exactly why
+ * `strays.ts` asks only for `comm=`).
+ */
+export async function listRunningDevs(panes: DevPane[]): Promise<RunningDev[]> {
+  const procs = await table()
+  if (!procs.length) return []
+  return runningDevs(procs, panes)
+}
+
+/**
+ * Stop one dev server, and the tree under it.
+ *
+ * Re-validated against the LIVE table before anything is signalled: the pid came out of a
+ * list a person then read, typed at and confirmed, and a pid is reused. Killing whatever
+ * now holds that number because it held a `vite` a minute ago is the one way this feature
+ * could destroy something nobody named, so a pid whose command line is no longer a dev
+ * server is refused and said out loud.
+ *
+ * SIGTERM, then SIGKILL for anything still alive - a dev server given no chance to close
+ * its own sockets leaves the port occupied, which is the failure somebody restarts the
+ * machine over.
+ */
+export async function stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }> {
+  if (!Number.isInteger(pid) || pid <= 1) return { ok: false, why: 'not a process I can stop' }
+  const procs = await table()
+  const me = procs.find((p) => p.pid === pid)
+  if (!me) return { ok: false, why: 'already gone' }
+  if (!devSignalOf(me.cmd)) return { ok: false, why: 'that pid is not a dev server any more' }
+
+  if (WIN) {
+    await new Promise<void>((resolve) => {
+      execFile('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, timeout: 10_000 }, () =>
+        resolve()
+      )
+    })
+    return { ok: true }
+  }
+
+  const kids = descendants(procs, pid).map((p) => p.pid)
+  const all = [...kids, pid]
+  const signal = (sig: NodeJS.Signals): void => {
+    for (const target of all) {
+      try {
+        process.kill(target, sig)
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  signal('SIGTERM')
+  await new Promise((r) => setTimeout(r, 2500))
+  const after = await table()
+  if (after.some((p) => p.pid === pid)) signal('SIGKILL')
+  return { ok: true }
 }

@@ -125,7 +125,7 @@ import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from '
 import { receiveHandoff, sendHandoff } from './handoff'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
-import { devServersOf, localDevCommand } from './devServers'
+import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
   clearDesk,
@@ -1038,6 +1038,33 @@ const stopUsage = trackUsage(
 // A window opened after the last sample (a reload, a quiet restart) would otherwise draw
 // no figures until the next tick.
 ipcMain.handle('usage:get', () => lastUsage)
+
+// The dev servers running on this machine, for the mascot's "what dev servers are
+// running". The renderer supplies only the ORDER and the words - which pane is number 3,
+// and what that project is called - because that is the sidebar's own arithmetic and main
+// has never had it. Every FACT is read here: the folder off the pane's own record and the
+// pty's pid off the manager, so a caller cannot point this at a folder it does not own.
+ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
+  const roots = manager.roots()
+  const live = manager.list()
+  const asked = Array.isArray(panes) ? panes : []
+  const known = asked
+    .map((p) => {
+      const s = live.find((x) => x.id === p.id)
+      if (!s) return null
+      return {
+        id: s.id,
+        pane: Number(p.pane) || 0,
+        name: String(p.name || s.title || ''),
+        cwd: s.cwd,
+        pid: roots.find((r) => r.id === s.id)?.pid ?? 0
+      }
+    })
+    .filter(Boolean) as Array<{ id: string; pane: number; name: string; cwd: string; pid: number }>
+  return listRunningDevs(known)
+})
+
+ipcMain.handle('devs:stop', (_e, pid: number) => stopDevServer(Number(pid)))
 
 let lastPressure: Pressure = 'normal'
 // Only fires on a CHANGE of level, so this is a handful of messages in a session rather

@@ -205,6 +205,8 @@ export const SURFACE: Surface = {
   onCapacity: ['on', 'capacity:changed'],
   onUsage: ['on', 'usage:changed'],
   usage: ['invoke', 'usage:get'],
+  listDevServers: ['invoke', 'devs:list'],
+  stopDevServer: ['invoke', 'devs:stop'],
   onPaneReset: ['on', 'pane:reset'],
   onVoiceHotkey: ['on', 'voice:hotkey'],
   onRecents: ['on', 'recents:changed'],

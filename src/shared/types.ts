@@ -9,6 +9,7 @@ import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
+import type { RunningDev } from './devList'
 
 import type { DriveRun } from './agentic'
 // Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
@@ -2245,6 +2246,17 @@ export interface Api {
   onUsage(cb: (r: UsageReport) => void): () => void
   /** The last reading, for a window that opened between samples. Null before the first. */
   usage(): Promise<UsageReport | null>
+  /**
+   * The dev servers running on this machine right now, attributed to panes.
+   *
+   * The caller passes the sidebar's own ordering and words - which pane is number 3 and
+   * what that project is called - and nothing else: the folder and the pty pid are read
+   * in main off the pane's own record, so this cannot be pointed at a folder the caller
+   * does not own. One process-table read per call, on demand.
+   */
+  listDevServers(panes: Array<{ id: string; pane: number; name: string }>): Promise<RunningDev[]>
+  /** Stop one of them, and the tree under it. Re-validated in main - a pid is reused. */
+  stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }>
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending
