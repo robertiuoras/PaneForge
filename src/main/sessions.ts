@@ -14,7 +14,7 @@ import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { endAll, recordData, recordEnd, recordStart, tail } from './history'
+import { endAll, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -828,6 +828,9 @@ export class SessionManager extends EventEmitter {
     }
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
+    // History replays this pane's raw bytes at whatever width they were written for, so
+    // the last one wins. In memory only - a dragged window resizes many times a second.
+    noteCols(id, s.cols)
     if (borrowed) {
       s.borrowed = true
     } else {

@@ -1344,6 +1344,30 @@ followed.
   best-effort one from the prompt archive (same project, inside its own window) and
   otherwise **no line at all**: a confident wrong sentence about which session to bring
   back is worse than none.
+- **A session is several jobs, and `/clear` is where one ends.** The first ask describes a
+  session that asked one thing, and is the first sentence of a long document for every
+  session actually worth finding again: the context is thrown away at a clear and what
+  follows is a new subject in the same window. So the ask that opens each CHAPTER is kept -
+  the first one, and the first one after each clear (`noteAskInto` in `shared/gist.ts`,
+  which reads a clear exactly as `keepScrollback` does, menu completions and all). The row
+  shows three and counts the rest; the hover and the opened session print them numbered.
+  A clear is a boundary and never a chapter heading, every other slash command (`/model`,
+  `/doctor`) heads nothing, and `asks` counts only the ones that were WORK - a count made
+  mostly of slash commands says the opposite of what it looks like. Twelve chapters are
+  kept and anything past that is counted rather than dropped in silence.
+- **What was asked survives a restart.** `recordStart` runs again on the same id when a
+  pane comes back, and it used to write a fresh record - so the one kind of session most
+  worth finding, a long one the app restarted itself for an update, went back to a folder
+  name and a clock.
+- **The transcript is RENDERED, not stripped.** A pane's log is a stream of REPAINTS, so
+  `stripAnsi` puts every frame of an agent's thinking line on its own line: measured on a
+  seeded 4 KB log, the old view was **205 lines of which 200 said `Thinking…`**, against
+  **3 lines and none** through a terminal. The bytes go through an off-screen xterm and its
+  buffer is what is shown - `renderer/src/termRender.ts`, ONE copy, shared with the phone's
+  `TextSheet`, because two surfaces disagreeing about what a session said is the drift
+  nobody notices. It is replayed at the width it was WRITTEN at (`cols` on the entry, kept
+  in memory per resize and written when the session ends); stripping stays as the fallback,
+  since a transcript that will not render is still worth reading.
 - It is written outside the prompt-recall gate — that switch is about "you have asked this
   before", and turning it off is not a reason for History to go back to a folder and a
   clock. `npm run test:gist`.

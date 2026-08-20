@@ -629,7 +629,28 @@ export interface HistoryEntry {
    * it is keystrokes the app already relays, never a summary anything had to be paid for.
    */
   gist?: string
-  /** how many asks were submitted in it; 40 and 1 are different sessions to return to */
+  /**
+   * The ask that opened each chapter of the session, oldest first.
+   *
+   * `gist` answers "what was this" for a session that asked one thing, and is wrong for
+   * every session worth coming back to: a long one is several jobs in a row, and `/clear`
+   * is where one ends and the next begins. See `shared/gist.ts` - still keystrokes the app
+   * already relays, never a summary anything was paid for.
+   */
+  chapters?: string[]
+  /** chapters past the cap: the count is kept when the text is not */
+  dropped?: number
+  /** internal: a clear happened, so the next real ask opens a chapter */
+  fresh?: boolean
+  /**
+   * The pty's width while this session ran.
+   *
+   * The transcript is raw terminal bytes hard-wrapped by the CLI at that width, so
+   * replaying it at any other one re-flows box drawing into soup. Best effort: the last
+   * width the pane was resized to.
+   */
+  cols?: number
+  /** asks that were work (never a slash command); 40 and 1 are different sessions */
   asks?: number
   /**
    * The folder this session ran in is not there any more.

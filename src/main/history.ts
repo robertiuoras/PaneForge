@@ -22,7 +22,7 @@ import { app } from 'electron'
 // time, and two copies of "what counts as an escape sequence" drift in exactly the way
 // nobody notices - a transcript and its tee disagreeing about the same run.
 import { stripAnsi as strip } from '../shared/ansi'
-import { gistOf } from '../shared/gist'
+import { gistOf, noteAskInto } from '../shared/gist'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
 import { firstAskIn } from './promptArchive'
 
@@ -34,6 +34,8 @@ const FLUSH_MS = 1500
 let enabled = true
 const pending = new Map<string, string>()
 const sizes = new Map<string, number>()
+/** Last known pty width per live session; written into the metadata when it ends. */
+const widths = new Map<string, number>()
 let flushTimer: NodeJS.Timeout | null = null
 
 function dir(): string {
@@ -50,17 +52,33 @@ export function setHistoryEnabled(on: boolean): void {
   if (!on) pending.clear()
 }
 
-/** Called when a session starts (or restarts) so the metadata matches the pane. */
+/**
+ * Called when a session starts (or restarts) so the metadata matches the pane.
+ *
+ * What was ASKED is carried over on a restart. The pane keeps its id, its transcript file
+ * and its conversation, so throwing its chapters away here would leave the one kind of
+ * session most worth finding again - a long one the app restarted itself for an update -
+ * as a folder name and a clock.
+ */
 export function recordStart(s: Session): void {
   if (!enabled) return
   try {
+    let asked: Partial<HistoryEntry> = {}
+    try {
+      const was = JSON.parse(readFileSync(metaFile(s.id), 'utf8')) as HistoryEntry
+      asked = { gist: was.gist, chapters: was.chapters, dropped: was.dropped, asks: was.asks, fresh: was.fresh }
+    } catch {
+      /* first launch of this pane */
+    }
     const entry: HistoryEntry = {
+      ...asked,
       id: s.id,
       title: s.title,
       cwd: s.cwd,
       agent: s.agent,
       model: s.model,
       startedAt: s.createdAt,
+      cols: s.cols,
       bytes: 0
     }
     writeFileSync(metaFile(s.id), JSON.stringify(entry), 'utf8')
@@ -70,11 +88,13 @@ export function recordStart(s: Session): void {
 }
 
 /**
- * A prompt was submitted in this pane. The first one becomes the row's line in History.
+ * A prompt was submitted in this pane. It becomes the row's line, or part of it.
  *
- * The FIRST rather than the latest on purpose: the opening ask is what a session was
- * about, and the twentieth is a follow-up inside it ("now do the same for the other file")
- * which reads as nothing at all once the session is closed and the context is gone.
+ * The first ask is what the session was about, and the twentieth is usually a follow-up
+ * inside it ("now the other file") which reads as nothing once the context is gone - so
+ * the row is NOT the latest ask. But a session that cleared four times is four subjects in
+ * one window, and only the first of them was ever shown. `noteAskInto` in `shared/gist.ts`
+ * is that decision: the opening ask, plus the first ask after each clear.
  *
  * Written straight through rather than buffered like the transcript is: this is one small
  * JSON file per submitted prompt, it only ever grows a counter after the first one, and a
@@ -82,16 +102,25 @@ export function recordStart(s: Session): void {
  */
 export function noteAsk(id: string, prompt: string): void {
   if (!enabled) return
-  const line = gistOf(prompt)
-  if (!line) return
+  if (!gistOf(prompt)) return
   try {
     const entry = JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry
-    entry.asks = (entry.asks ?? 0) + 1
-    if (!entry.gist) entry.gist = line
-    writeFileSync(metaFile(id), JSON.stringify(entry), 'utf8')
+    writeFileSync(metaFile(id), JSON.stringify({ ...entry, ...noteAskInto(entry, prompt) }), 'utf8')
   } catch {
     /* no metadata yet, or an unwritable profile: a note is a nicety, never fatal */
   }
+}
+
+/**
+ * The pane's current width, for replaying its transcript at the width it was written for.
+ *
+ * Held in memory and written when the session ends, never per resize: a window being
+ * dragged fires this many times a second and this is a JSON file on disk. `recordStart`
+ * writes the launch width, so a session killed without an end still has a usable one.
+ */
+export function noteCols(id: string, cols: number): void {
+  if (!enabled || !(cols > 0)) return
+  widths.set(id, cols)
 }
 
 export function recordData(id: string, chunk: string): void {
@@ -127,11 +156,13 @@ function writeEnd(id: string): void {
     const entry = JSON.parse(raw) as HistoryEntry
     entry.endedAt = Date.now()
     entry.bytes = sizes.get(id) ?? entry.bytes
+    entry.cols = widths.get(id) ?? entry.cols
     writeFileSync(metaFile(id), JSON.stringify(entry), 'utf8')
   } catch {
     /* no metadata (history was off when it started) */
   }
   sizes.delete(id)
+  widths.delete(id)
 }
 
 export function flush(): void {
