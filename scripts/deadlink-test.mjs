@@ -225,8 +225,19 @@ async function main() {
 
   // A deadline that fires too eagerly is its own bug: one slow moment on a busy machine
   // must not tear down a working link, so nothing may be declared dead before DEAD_MS.
+  //
+  // Measured against a few milliseconds of slack, not against the number exactly: the
+  // link's own clock starts at the last frame it SAW, and `cut` is read a moment later in
+  // this script, so the two disagree by however long that took. Observed on this Mac at
+  // 437ms and 447ms against a 450ms deadline in two runs out of six - a failure that says
+  // nothing about the behaviour being checked and everything about which line ran first.
+  // The bug this exists to catch is a deadline firing at a FRACTION of its interval.
+  const SLACK_MS = 30
   const took = Date.now() - cut
-  ok(`the call took ${took}ms, no sooner than the ${DEAD_MS}ms deadline`, took >= DEAD_MS)
+  ok(
+    `the call took ${took}ms, no sooner than the ${DEAD_MS}ms deadline`,
+    took >= DEAD_MS - SLACK_MS
+  )
 
   console.log('\n-- a link that is merely quiet is left alone --')
   link.stop()
