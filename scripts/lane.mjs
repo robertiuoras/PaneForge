@@ -403,7 +403,17 @@ const LOCK_MS = 20 * 60 * 1000
 // with the next release, which every later `ready` and every SessionEnd triggers - so
 // it ships the next time anyone finishes anything here, and `npm run ship` still
 // releases immediately when something must go out now.
-const COOLDOWN_MS = 30 * 60 * 1000
+//
+// Two hours, not the half hour it was until 2026-08-20. Measured that day: 130 releases
+// in the 14 days since v0.8.0 - 9 to 13 a day, peak 18, at 3.8 commits each. "A release
+// costs nothing to ignore" is true of the update PROMPT and false of everything else: on
+// the dev channel each one is a build to install, a restart to take it, and a version
+// number that has to be read to know what is in it. Half an hour is shorter than one
+// build-and-verify cycle, so it batched almost nothing - a release carried whatever one
+// chat had just finished, which is the same thing as no batching at all. Two hours is
+// still same-day for every fix and roughly quarters the number of builds anybody has to
+// take. Nothing waits longer to be SAFE; it waits longer for company.
+const COOLDOWN_MS = 2 * 60 * 60 * 1000
 // And a longer window when everything waiting is SMALL - only fix/docs/chore subjects and
 // under 150 changed lines between them (`smallOnly` in release-notes.mjs, which explains
 // why it is both halves). A version is a claim that something changed, and a release whose
@@ -1988,6 +1998,94 @@ function typecheckFailure() {
   return `${MB} does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
 }
 
+// A suite that has not finished in this long is not going to.
+const SUITE_TIMEOUT_MS = 20 * 60 * 1000
+
+/**
+ * Empty when the release branch's own test suite passes, a sentence when it does not.
+ *
+ * The typecheck above was the ONLY thing between a commit and a tag, and a typecheck
+ * proves the types agree - never that the app works. That is how 130 dev builds went out
+ * in 14 days carrying bugs the checked-in suite already knew about, and the cost lands
+ * entirely on whoever runs the dev channel: the app updates itself, restarts, and is
+ * still wrong. `npm test` is 81 checks in ~145s and needs no window, no network and no
+ * agent CLI - which is exactly why it is the right gate and why it was worth having
+ * before this was written. Nobody is watching an automatic release; it checks itself.
+ *
+ * **Cached on the COMMIT**, in the ledger every worktree shares, because the app's retry
+ * timer asks this every minute. Without the cache a red branch burns the whole suite once
+ * a minute for as long as it stays red, and a green one re-proves itself for every
+ * attempt that then loses on some other check. A new commit is the only thing that
+ * invalidates it, which is the only thing that should: the suite is a fact about a tree.
+ *
+ * A suite that could not START is reported as this checkout's tooling, never as a failing
+ * test - same distinction `typecheckFailure` draws, and for the same reason: the sentence
+ * decides where the next person looks. That case is deliberately NOT cached; a missing
+ * node_modules is fixed outside this file and the next attempt should find out.
+ *
+ * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
+ * hands now, and it is typed by a person who is watching.
+ */
+function suiteFailure(state) {
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  // A repo with no suite is not held to one. Nor is npm's own "no test specified" stub,
+  // which exits 1 by design and would block every release in a repo that never had tests.
+  const script = pkg.scripts?.test
+  if (!script || /no test specified/i.test(script)) return null
+
+  const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
+  const commit = head.ok ? head.out : null
+  if (commit && state.suite?.commit === commit) return state.suite.ok ? null : state.suite.reason
+
+  if (dependenciesMissing(pkg)) {
+    const failed = installDeps()
+    if (failed) return failed
+  }
+  // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
+  const r = spawnSync('npm test --silent', {
+    cwd: MAIN,
+    encoding: 'utf8',
+    timeout: SUITE_TIMEOUT_MS,
+    shell: true
+  })
+  if (r.status === 0) {
+    if (commit) {
+      state.suite = { commit, ok: true, at: now() }
+      write(state)
+    }
+    return null
+  }
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (cannotRun(all)) {
+    return (
+      `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
+      `That is this checkout's tooling, not the code.`
+    )
+  }
+  // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
+  // rest is noise. A suite with some other shape falls back to its first real line.
+  const failed = all
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
+    .slice(0, 4)
+    .join('; ')
+  const reason =
+    r.signal || (r.status == null && !all.trim())
+      ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
+      : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
+  if (commit) {
+    state.suite = { commit, ok: false, at: now(), reason }
+    write(state)
+  }
+  return reason
+}
+
 /**
  * The release nobody has to ask for. Called at the end of `ready` and of `release`, so
  * the version goes out the moment the last chat with unfinished work finishes it - and
@@ -2033,6 +2131,10 @@ function autoship(kind = 'auto', session = 'auto') {
   // installer - and the next chat inherits both.
   const broken = typecheckFailure()
   if (broken) return { shipped: false, reason: broken }
+  // ...and then whether it WORKS, which the typecheck never answered. Second because it
+  // is ten times the cost and a tree that does not compile cannot pass it anyway.
+  const red = suiteFailure(state)
+  if (red) return { shipped: false, reason: red }
   try {
     return ship(kind, session)
   } catch (e) {

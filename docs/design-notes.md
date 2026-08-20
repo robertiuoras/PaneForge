@@ -175,13 +175,65 @@ since the last tag, so a feature list from further back needs putting on by hand
 (`gh release edit`), AFTER the workflow's `notes` job has run, since that job rewrites the
 body from its own range.
 
-Automatic releases batch: one every thirty minutes at most (`COOLDOWN_MS` in
+Automatic releases batch: one every **two hours** at most (`COOLDOWN_MS` in
 `scripts/lane.mjs`). Inside that window `ready` says so and leaves the work on master,
 where the next `ready` or session end takes it out. Do not "fix" that by running
 `npm run ship` - a version per finished chunk is what produced fifteen releases in one
-day. It used to cost two hours of batching because each release interrupted with a prompt;
-updates now install on exit, so releases are cheap to ignore and the wait is short. Reach
-for `ship` only when a specific build has to be in Robert's hands now, and say why.
+day. Reach for `ship` only when a specific build has to be in Robert's hands now, and say
+why.
+
+It was two hours originally, dropped to thirty minutes on the argument that a release
+interrupted with a prompt and updates now install on exit, so one is cheap to ignore.
+Measured 2026-08-20, that argument was half true and the half it missed is the one that
+costs: **130 releases in the 14 days after v0.8.0 - 9 to 13 a day, peak 18, at 3.8 commits
+each.** The prompt is gone, but a dev build is still a download, a restart to take it, and
+a version number somebody has to read to know what is in it. Half an hour is shorter than
+one build-and-verify cycle, so the window batched almost nothing: a release carried
+whatever one chat had just finished, which is what no batching looks like. Two hours is
+still same-day for every fix and roughly quarters the number of builds anybody installs.
+
+The version NUMBER is a separate question and the answer is to leave it alone. "0.8.130"
+reads like churn, and the demotion rule above (below 1.0, a `feat:` is a patch) is what
+concentrates every release into the patch. Restoring `feat:` to a minor does not fix it -
+it moves the same count onto the minor, since at this cadence most releases carry a
+feature - and a 0.x shipping ten times a day genuinely has had 130 builds. Chrome is on
+its 140th major for the same reason. Cut the rate, not the number.
+
+### An automatic release runs the suite (2026-08-20)
+
+Until this, `typecheckFailure` was the ONLY thing between a commit and a tag - and a
+typecheck proves the types agree, never that the app works. All 130 of those dev builds
+went out on that gate, several carrying bugs `npm test` already knew about, and the cost
+lands entirely on whoever is running the dev channel: the app updates itself, restarts,
+and is still wrong. That is Robert's complaint verbatim - "it keeps making versions which
+are broken and not properly tested ... have to restart PaneForge a lot of times even if
+it's dev and still have bugs."
+
+`suiteFailure` in `scripts/lane.mjs` is the second gate, after the typecheck because it is
+ten times the cost and a tree that does not compile cannot pass it anyway. `npm test` is
+81 checks in ~145s and needs no window, no network and no agent CLI, which is exactly why
+it is the right thing to hold a release to - it was already the gate the app applies to a
+lane it drove itself (`src/main/agentGate.ts`), and the release path simply never used it.
+
+Three decisions inside it:
+
+- **Cached on the commit**, in the ledger every worktree shares. The app's retry timer
+  calls `autoship` once a minute; uncached, a red master burns the whole suite every
+  minute for as long as it stays red, and a green one re-proves itself for every attempt
+  that then loses on some other check. A new commit is the only thing that invalidates the
+  answer, which is the only thing that should - the suite is a fact about a tree.
+- **A suite that could not START is not a suite that failed.** It reports as this
+  checkout's tooling and is deliberately not cached: a missing `node_modules` is fixed
+  outside this file and the next attempt should find out. Same distinction
+  `typecheckFailure` draws, for the same reason - the sentence decides where the next
+  person looks.
+- **`npm run ship` still skips it**, along with the typecheck. It exists for a build that
+  has to be in somebody's hands now and it is typed by a person who is watching.
+
+`npm run test:gate` covers it against a real repo whose suite really runs: a red suite
+stops the release and the failing check is quoted, a second attempt refuses without
+re-running it, and a new commit re-runs and releases. The cache half is the one worth
+having a test for - it is invisible when it works and expensive when it does not.
 
 A lane is only ready while it still looks the way it did when it said so: edit or commit
 again and the mark is dropped and the release waits for you, by name. Nothing to do about

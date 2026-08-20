@@ -165,6 +165,71 @@ ok(
 )
 rmSync(join(repo, 'still-typing.js'))
 
+// ------------------------------------------------------------------ the suite gate
+//
+// Until 2026-08-20 a typecheck was the only thing between a commit and a tag, and a
+// typecheck says the types agree - never that the app works. 130 dev builds went out in
+// the 14 days after v0.8.0 on that gate alone, and a broken one costs whoever runs the
+// dev channel a download, a restart and a still-broken app. So an automatic release now
+// runs the repo's own `npm test` as well.
+//
+// Two things are worth a test rather than a comment: that a red suite really does stop
+// the release (a gate that reports and ships is not a gate), and that the answer is
+// CACHED on the commit - the app's retry timer asks once a minute, so an uncached suite
+// would burn its whole runtime every minute for as long as master stayed red.
+
+const runs = join(root, 'suite-runs')
+const exitFile = join(root, 'suite-exit')
+writeFileSync(runs, '')
+writeFileSync(exitFile, '1')
+writeFileSync(
+  join(repo, 'scripts', 'fake-test.mjs'),
+  `import { appendFileSync, readFileSync } from 'node:fs'\n` +
+    `appendFileSync(${JSON.stringify(runs)}, 'x')\n` +
+    `if (readFileSync(${JSON.stringify(exitFile)}, 'utf8').trim() !== '0') {\n` +
+    `  console.log('FAIL  the one that broke')\n` +
+    `  process.exit(1)\n` +
+    `}\n` +
+    `console.log('ok    everything')\n`
+)
+// The counter and the exit code live OUTSIDE the checkout on purpose: a file the suite
+// writes inside it would make master dirty, and a dirty master holds the release for a
+// reason that has nothing to do with what is being tested here.
+writeFileSync(
+  join(repo, 'package.json'),
+  JSON.stringify({ name: 'demo', version: '0.0.1', scripts: { test: 'node scripts/fake-test.mjs' } }, null, 2) + '\n'
+)
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'a suite that fails')
+// Nothing may be waiting on a chat, and the cooldown must be spent, or the refusal we
+// read back could be either of those instead.
+lane('ready', '--session', 'sess-work')
+lane('ready', '--session', 'sess-main')
+patchState((s) => {
+  s.lastShip = { version: '0.0.1', at: Date.now() - 24 * 60 * 60 * 1000, lanes: [] }
+})
+const redOut = lane('autoship')
+ok('a failing suite stops the release', /fails its own test suite/.test(redOut), redOut)
+ok('and it quotes the check that failed', /the one that broke/.test(redOut), redOut)
+ok('the suite really ran', readFileSync(runs, 'utf8').length === 1, `ran ${readFileSync(runs, 'utf8').length} times`)
+
+const redAgain = lane('autoship')
+ok('it still refuses on the next attempt', /fails its own test suite/.test(redAgain), redAgain)
+ok(
+  'but does not run the suite again for the same commit',
+  readFileSync(runs, 'utf8').length === 1,
+  `ran ${readFileSync(runs, 'utf8').length} times`
+)
+
+// A new commit is the only thing that may invalidate that answer - the suite is a fact
+// about a tree, and this is the tree changing.
+writeFileSync(exitFile, '0')
+git(repo, 'commit', '-qm', 'fix the suite', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const greenOut = lane('autoship')
+ok('a new commit re-runs it', readFileSync(runs, 'utf8').length === 2, `ran ${readFileSync(runs, 'utf8').length} times`)
+ok('and a passing suite no longer holds the release', !/test suite/.test(greenOut), greenOut)
+
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')
 

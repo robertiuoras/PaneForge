@@ -141,13 +141,33 @@ than shipping again. Edit or commit after marking and the mark is dropped, by na
   batch of work landed" and started meaning "a session happened" (v0.4.62 → v0.8.0 in one
   day over six releases carrying seven commits). At 1.0 the ordinary semver reading comes
   back on its own. A bump named on the command line is always obeyed as given.
-- Releases batch: one per 30 minutes (`COOLDOWN_MS`). Inside that window the work sits on
-  master for the next `ready`. Do not "fix" that with `npm run ship`.
+- Releases batch: one per **2 hours** (`COOLDOWN_MS`). Inside that window the work sits on
+  master for the next `ready`. Do not "fix" that with `npm run ship`. It was half an hour
+  until 2026-08-20, which batched nothing: 130 releases in the 14 days after v0.8.0, 9-13
+  a day at 3.8 commits each, because half an hour is shorter than one build-and-verify
+  cycle. "A release costs nothing to ignore" is true of the update PROMPT and of nothing
+  else — on the dev channel each one is a build to install and a restart to take it. And
+  the number is not the problem it looks like: 130 patches on a 0.x shipping ten times a
+  day is honest, so the fix is the rate, never a renumbering.
 - `npm version`, `git tag vX` and pushing a version tag by hand are **blocked**.
-  `npm run ship` exists for a build Robert needs in his hands now — say why.
-- Two things stop a release, both reported by name: master not typechecking, and a lane
-  conflicting with master. A conflicting lane is left out; the rest still goes out.
-  `rerere` is on, and the retry timer re-tries recorded conflicts every minute.
+  `npm run ship` exists for a build Robert needs in his hands now — say why. It is also
+  the one path that skips the two checks below, deliberately: a person is watching it.
+- **Three things stop an automatic release, all reported by name**: master not
+  typechecking, master failing **its own `npm test`**, and a lane conflicting with master.
+  A conflicting lane is left out; the rest still goes out. `rerere` is on, and the retry
+  timer re-tries recorded conflicts every minute.
+  - The suite gate is `suiteFailure` in `scripts/lane.mjs`, and it exists because a
+    typecheck proves the types agree and never that the app works. Every one of those 130
+    dev builds went out on a typecheck alone, and a broken one costs whoever runs the dev
+    channel a download, a restart, and an app that is still wrong.
+  - **The answer is cached on the COMMIT**, in the shared ledger. The app's retry timer
+    asks once a minute: uncached, a red master burns the whole suite every minute for as
+    long as it stays red. A new commit is the only thing that invalidates it, because the
+    suite is a fact about a tree.
+  - A suite that could not START is named as this checkout's tooling, never as a failing
+    test, and is deliberately not cached — same distinction `typecheckFailure` draws, and
+    the sentence is what decides where the next person looks.
+  - `npm run test:gate` covers the release gate, red suite and cache included.
 - Release notes come from Conventional Commit subjects between version tags
   (`scripts/release-notes.mjs`, template `.github/release-notes.md`). `npm run test:notes`.
   **Only `feat:`, `fix:` and `perf:` reach the page** — the release body is public and is
@@ -1528,6 +1548,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:laneforeign` | a folder at a lane's path that is a checkout of a DIFFERENT repository: it is named and refused rather than adopted, and its commits are left alone. The load-bearing half is the control that the clone really does pass the old `--is-inside-work-tree` test, without which the case is never reproduced |
 | `npm run test:lanepeers` | the arithmetic of a claim on the other desk: what a ref name may carry, and the negatives that decide whether the check is worth having — a desk never blocks itself, a claim nobody refreshed stops counting, and a letter lane is never anybody else's business |
 | `npm run test:lanedevice` | the same thing with the plumbing attached: a real bare repo, two real clones, one told it is another machine. The second desk is sent to a letter rather than onto the shared branch, the trunk comes back the instant a chat ends, and the release lock is refused at the SERVER — with the two mechanisms that looked right and were not (the shared branch tip, and `--force-with-lease`) kept as controls |
+| `npm run test:gate` | what stops an automatic release: a chat that said "done" and kept typing, and a red `npm test` — including the half that is invisible when it works, that a refusal is CACHED on the commit rather than re-running the whole suite every minute the retry timer asks |
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:pickrelease` | which release an install may take: the newest one carrying an asset THIS platform can install, so a win-only release is skipped rather than 404'd at for ever |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
