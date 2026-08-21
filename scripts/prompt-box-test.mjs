@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, promptTop } = createRequire(import.meta.url)(outfile)
+const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, leadingBlanks, promptTop } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -192,6 +192,20 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
     [RULE, '\u276f typed', '\u2500'.repeat(40)], 1)
   no('nothing below at all - the composer has no bottom', [RULE, '\u276f typed'], 1)
   no('a shell, which draws no composer at all', [BASH, 'total 24', 'drwxr-xr-x 4 robert'], 1)
+
+  // THE character that broke this, kept as its own case: Claude Code draws its marker
+  // followed by U+00A0, not by a space. It is drawn identically, it prints identically in
+  // any log, and testing for `' '` alone made `inputStart` answer 0 on the prompt row -
+  // which highlighted the CLI's own marker on a select-all and made the composer
+  // unfindable, so every multi-row delete was refused. Rows copied off a live pane.
+  const NB = '\u00a0'
+  const real = [RULE, '\u276f' + NB + 'alpha bravo charlie', '  yankee zulu one two', RULE]
+  const readReal = (r) => real[r] ?? ''
+  eq('the marker is followed by a non-breaking space, and still starts the text at 2', inputStart(real[1]), 2)
+  eq('a composer drawn that way is found', composerAt(readReal, 2)?.top, 1)
+  eq('and it ends above its closing rule', composerAt(readReal, 2)?.bottom, 2)
+  eq('the indent of a continuation row is measured the same way', leadingBlanks(real[2]), 2)
+  eq('a non-breaking space at the end of a row is trailing blank too', inputEnd('typed' + NB + NB), 5)
 
   // A framed CLI still answers through `sameBox`, unchanged.
   const boxed = ['\u256d' + '\u2500'.repeat(20) + '\u256e', '\u2502 > first line       \u2502', '\u2502   second line      \u2502', '\u2570' + '\u2500'.repeat(20) + '\u256f']

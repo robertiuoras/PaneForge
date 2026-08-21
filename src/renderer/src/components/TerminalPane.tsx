@@ -23,7 +23,7 @@ import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepSc
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { composerAt, frameAt, inputEnd, inputStart, promptTop } from '../../../shared/promptBox'
+import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
 import { placeRail } from '../../../shared/rail'
@@ -1974,9 +1974,7 @@ function TerminalPane({
      */
     const contentStart = (text: string, first: boolean): number => {
       if (first || frameAt(text) >= 0) return inputStart(text)
-      let i = 0
-      while (i < text.length && text[i] === ' ') i++
-      return i
+      return leadingBlanks(text)
     }
 
     /**
