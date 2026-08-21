@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { boxedRow, frameAt, sameBox, inputStart, inputEnd, promptTop } = createRequire(import.meta.url)(outfile)
+const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, promptTop } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -152,6 +152,52 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
   // The bound the caller passes is the last prompt's line: a tag can never be anchored
   // above the prompt that was sent before it.
   eq('the walk is bounded by the caller', promptTop(claude, 0), 0)
+}
+
+// --- the composer a CLI draws with no frame at all --------------------------------
+//
+// Every row here is off a live Claude Code 2.1.x pane at 157 columns (the same capture
+// the numbers in `InputRow` came from). It draws a rule, `❯ what you typed` with each
+// further row indented two spaces, then another rule - no vertical rules anywhere, and
+// xterm calls neither row wrapped. So both tests the pane had said "these rows are
+// unrelated", and a selection across them deleted one character.
+{
+  const RULE = '\u2500'.repeat(157)
+  const rows = [
+    'somewhere in the transcript',
+    '',
+    RULE,
+    '\u276f alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike',
+    '  november oscar papa quebec romeo sierra tango uniform victor whiskey xray',
+    RULE,
+    '  [CAVEMAN] \u25c6 Opus 5 | probe-repo'
+  ]
+  const read = (r) => rows[r] ?? ''
+  const found = composerAt(read, 4)
+  check('the frameless composer is found from its last row', !!found)
+  eq('and it starts on the row carrying the marker', found?.top, 3)
+  eq('and ends on the row above the closing rule', found?.bottom, 4)
+  eq('and its width is the rule it is drawn between', found?.width, 157)
+  eq('the same answer from the first row of it', composerAt(read, 3)?.bottom, 4)
+
+  // The refusals, which are the half worth pinning: this decides whether a burst of
+  // backspaces is sent, so anything it claims wrongly is somebody's typing destroyed.
+  const no = (what, list, at) => check(what, composerAt((r) => list[r] ?? '', at) === null)
+  no('a paragraph between two rules is not a composer - it carries no prompt marker',
+    [RULE, 'a sentence of an answer, sitting between two rules', RULE], 1)
+  no('a closing corner above means the box belongs to something else',
+    ['\u2570' + '\u2500'.repeat(20) + '\u256f', '\u276f typed', RULE], 1)
+  no('two blank rows are the gap below the transcript', ['', '', '\u276f typed', RULE], 2)
+  no('a rule of another width below closes something else',
+    [RULE, '\u276f typed', '\u2500'.repeat(40)], 1)
+  no('nothing below at all - the composer has no bottom', [RULE, '\u276f typed'], 1)
+  no('a shell, which draws no composer at all', [BASH, 'total 24', 'drwxr-xr-x 4 robert'], 1)
+
+  // A framed CLI still answers through `sameBox`, unchanged.
+  const boxed = ['\u256d' + '\u2500'.repeat(20) + '\u256e', '\u2502 > first line       \u2502', '\u2502   second line      \u2502', '\u2570' + '\u2500'.repeat(20) + '\u256f']
+  const box = composerAt((r) => boxed[r] ?? '', 2)
+  eq('a framed composer starts at its first framed row', box?.top, 1)
+  eq('and ends at its last', box?.bottom, 2)
 }
 
 console.log(`prompt box: ${checks} checks passed`)

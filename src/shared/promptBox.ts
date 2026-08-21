@@ -160,3 +160,97 @@ export function inputEnd(text: string): number {
   const frame = frameAt(text)
   return frame < 0 ? end : Math.max(end, frame + 1)
 }
+
+/**
+ * The rows of the CLI's own composer, when the cursor is inside one.
+ *
+ * `sameBox` answers this for a CLI that frames its input with vertical rules, and for
+ * three releases that was every CLI here. Claude Code 2.1.x draws no frame at all: a
+ * horizontal rule, then `❯ what you typed` with each further row indented two spaces,
+ * then another rule. Measured live at 157 columns, a 244-character prompt drew across two
+ * rows and NEITHER carried a frame and NEITHER said `isWrapped` - so "are these one input"
+ * was answered no by both tests the pane had, and a selection across them deleted a single
+ * character. That is the whole of "it doesn't delete all the highlighted text".
+ *
+ * The walk is bounded on both sides and refuses rather than guesses: a top rule above, a
+ * rule of the SAME width below, a prompt marker on the first row, and the cursor between
+ * them. A pane scrolling ordinary output has no such sandwich, and a shell draws neither
+ * rule - so nothing here can fire in one.
+ */
+export interface Composer {
+  /** first row of what was typed, counted the way the caller counts rows */
+  top: number
+  /** last row of it */
+  bottom: number
+  /** how wide the composer is drawn, so a row that FILLS it can be told from one that does not */
+  width: number
+}
+
+export function composerAt(
+  read: (row: number) => string,
+  cursorRow: number,
+  opts: { maxUp?: number; maxDown?: number } = {}
+): Composer | null {
+  const here = read(cursorRow)
+  // A framed box says what it is on every row of itself - that is `sameBox`, unchanged.
+  if (frameAt(here) >= 0) {
+    let top = cursorRow
+    while (top > 0 && sameBox(read(top - 1), here)) top--
+    let bottom = cursorRow
+    while (sameBox(read(bottom + 1), here)) bottom++
+    return { top, bottom, width: trimmed(here).length }
+  }
+  const maxUp = opts.maxUp ?? 12
+  const maxDown = opts.maxDown ?? 8
+  let top = -1
+  let width = 0
+  let blanks = 0
+  for (let up = 1; up <= maxUp; up++) {
+    const r = cursorRow - up
+    if (r < 0) return null
+    const s = trimmed(read(r)).trim()
+    if (!s) {
+      // Two blank rows are the gap between the transcript and the composer, so anything
+      // above them belongs to something else - the same stop `promptTop` walks under.
+      if (++blanks >= 2) return null
+      continue
+    }
+    blanks = 0
+    if (BOTTOM_RULE.test(s)) return null
+    if (frameAt(read(r)) >= 0) return null
+    if (isRule(s)) {
+      top = r + 1
+      width = s.length
+      break
+    }
+  }
+  if (top < 0 || top > cursorRow) return null
+  // The first row of a composer carries the CLI's own prompt marker. Requiring it is what
+  // keeps a paragraph sandwiched between two rules in an ANSWER from reading as one.
+  if (inputStart(read(top)) === 0) return null
+  let bottom = -1
+  for (let down = cursorRow + 1; down <= cursorRow + maxDown; down++) {
+    const s = trimmed(read(down)).trim()
+    if (!s) return null
+    if (isRule(s)) {
+      // A closing rule of another width closes something else.
+      if (s.length !== width) return null
+      bottom = down - 1
+      break
+    }
+  }
+  if (bottom < cursorRow) return null
+  return { top, bottom, width }
+}
+
+/** Trailing blanks off, which is how every row here is compared. */
+function trimmed(text: string): string {
+  let end = text.length
+  while (end > 0 && text[end - 1] === ' ') end--
+  return text.slice(0, end)
+}
+
+/** A drawn rule, long enough that a line of prose cannot be mistaken for one. */
+function isRule(s: string): boolean {
+  return s.length >= 8 && TOP_RULE.test(s)
+}

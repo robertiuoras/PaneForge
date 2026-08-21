@@ -48,7 +48,7 @@ const DEFAULT_KEY_LIMIT = 400
  * spurious one does is delete a character the CLI can put back.
  *
  * Sharing the arrow limit is what made "highlight it and press delete" leave text behind.
- * `keysForDelete` returned `''` for any selection over 400 characters, the pane read that
+ * The delete path returned `''` for any selection over 400 characters, the pane read that
  * as "not eligible" and handed the key to the pty, and the pty did what a bare Backspace
  * always does: removed ONE character and left the highlight sitting there. A Mod+A over a
  * paragraph-length prompt is past 400 immediately, so the whole-input case - the one the
@@ -116,57 +116,6 @@ export function keysAlongLine(c: {
 export const BACKSPACE = '\x7f'
 
 /**
- * The keys that delete a highlighted piece of what you have typed.
- *
- * A terminal cannot hand a selection to the far end any more than it can hand it a caret,
- * so a selection you can see and cannot delete is the ordinary state of every terminal -
- * "can't select all and then delete" was the report. The move is the same one a click
- * makes: walk the cursor to the END of the selection with arrows, then send one backspace
- * per selected character. What comes back is the CLI's own editing, so it undoes, it
- * re-wraps, and nothing here has to know what it is editing.
- *
- * `wrapped` is what makes a multi-row selection legal. Rows a long input WRAPPED onto are
- * one line to the far end, `cols` characters each, so the arithmetic crosses them. Rows of
- * a drawn input box are separate lines holding a newline and a frame of unknown width, and
- * that count cannot be derived from the screen - so a selection across those is refused
- * rather than guessed at, and a guess here is a burst of backspaces eating the line above.
- */
-export function keysForDelete(c: {
-  cursorRow: number
-  cursorCol: number
-  /** the selection, in absolute buffer rows, end exclusive */
-  startRow: number
-  startCol: number
-  endRow: number
-  endCol: number
-  cols: number
-  /** the selected rows are one wrapped line, not separate lines of a box */
-  wrapped: boolean
-  keyLimit?: number
-}): string {
-  const keyLimit = c.keyLimit ?? DEFAULT_DELETE_LIMIT
-  const rows = c.endRow - c.startRow
-  if (rows < 0) return ''
-  if (rows > 0 && !c.wrapped) return ''
-  if (!(c.cols > 0)) return ''
-  const length = rows * c.cols + (c.endCol - c.startCol)
-  if (length <= 0 || length > keyLimit) return ''
-  // The cursor has to reach the far end of the selection first, and it may only do that
-  // along the line it is already on - the same restriction a bare click lives under.
-  const toEnd = c.endRow - c.cursorRow
-  if (toEnd !== 0 && !c.wrapped) return ''
-  const move = keysAlongLine({
-    cursorCol: c.cursorCol,
-    clickCol: c.endCol,
-    rows: toEnd,
-    cols: c.cols,
-    keyLimit
-  })
-  if (Math.abs(toEnd) * c.cols + Math.abs(c.endCol - c.cursorCol) > keyLimit) return ''
-  return move + BACKSPACE.repeat(length)
-}
-
-/**
  * Which cell a pointer is over, given the pixel box the terminal's rows and columns are
  * drawn in. Kept here beside the arithmetic it feeds so both are testable without a
  * window; the caller supplies the rectangle it measured.
@@ -185,4 +134,89 @@ export function cellAt(
     col: clamp(Math.floor((x - box.left) / cw), cols - 1),
     row: clamp(Math.floor((y - box.top) / ch), rows - 1)
   }
+}
+
+/**
+ * One row of what is being typed, in screen columns: where the text starts on that row,
+ * where it ends, and whether it FILLS the composer.
+ *
+ * `full` is the only part that is not a reading, and it decides one character. Measured
+ * against a live Claude Code composer at 157 columns:
+ *
+ *   - a row broken at a space holds 151 characters of a 244-character prompt and the next
+ *     holds 91: 242 on screen, 244 in the CLI. The wrap ATE the space, so crossing that
+ *     boundary is one character nothing draws. A hard newline costs the same one - `aaaa`,
+ *     esc-enter, `bbbb` is emptied by exactly 8 backspaces, not 9.
+ *   - 300 unbroken `x` characters draw 153 then 147 and are emptied by exactly 300: a word
+ *     too long for the line is SPLIT, and nothing was eaten.
+ *
+ * So a row that stops short of the width was broken at a separator worth one character, and
+ * a row drawn out to the width was split and is worth none.
+ */
+export interface InputRow {
+  /** first column of what was typed on this row */
+  start: number
+  /** column just past the last character typed on it */
+  end: number
+  /** the row is drawn out to the composer's full width, so the break below it ate nothing */
+  full: boolean
+}
+
+/** How many characters into the input a screen position is, or -1 when it is not in it. */
+export function offsetIn(rows: InputRow[], index: number, col: number): number {
+  if (!rows.length || index < 0 || index >= rows.length) return -1
+  let off = 0
+  for (let i = 0; i < index; i++) off += rows[i].end - rows[i].start + (rows[i].full ? 0 : 1)
+  const r = rows[index]
+  return off + Math.min(Math.max(col, r.start), r.end) - r.start
+}
+
+/**
+ * The arrows that walk the far end's cursor from one place in the input to another.
+ *
+ * Left and right only, whatever rows are crossed - which is what makes this safe in a
+ * composer the CLI is drawing itself: the text is one string over there, so a left arrow at
+ * the start of a row steps back onto the end of the one above it. An up arrow would be the
+ * CLI's own history, and this never sends one.
+ */
+export function keysToPoint(
+  rows: InputRow[],
+  from: { row: number; col: number },
+  to: { row: number; col: number },
+  keyLimit = DEFAULT_KEY_LIMIT
+): string {
+  const a = offsetIn(rows, from.row, from.col)
+  const b = offsetIn(rows, to.row, to.col)
+  if (a < 0 || b < 0) return ''
+  const d = b - a
+  if (!d) return ''
+  if (Math.abs(d) > keyLimit) return ''
+  return (d > 0 ? ARROW.right : ARROW.left).repeat(Math.abs(d))
+}
+
+/**
+ * `keysForDelete`, for an input the CLI draws over several rows of its own.
+ *
+ * Same move as the wrapped case - walk to the end of the selection, then one backspace per
+ * character - counted over `rows` rather than over a rectangle of `cols`, because a
+ * composer's rows are indented, are of different lengths, and are not xterm wraps.
+ * Everything about the count is in `offsetIn`; the refusals are here.
+ */
+export function keysForRows(a: {
+  rows: InputRow[]
+  /** all three are ROW INDICES into `rows`, not buffer rows */
+  cursor: { row: number; col: number }
+  start: { row: number; col: number }
+  end: { row: number; col: number }
+  keyLimit?: number
+}): string {
+  const keyLimit = a.keyLimit ?? DEFAULT_DELETE_LIMIT
+  const s = offsetIn(a.rows, a.start.row, a.start.col)
+  const e = offsetIn(a.rows, a.end.row, a.end.col)
+  const c = offsetIn(a.rows, a.cursor.row, a.cursor.col)
+  if (s < 0 || e < 0 || c < 0) return ''
+  const length = e - s
+  if (length <= 0 || length > keyLimit) return ''
+  if (Math.abs(e - c) > keyLimit) return ''
+  return keysToPoint(a.rows, a.cursor, a.end, keyLimit) + BACKSPACE.repeat(length)
 }

@@ -17,12 +17,13 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
-import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
+import type { InputRow } from '../../../shared/cursorMove'
+import { cellAt, keysAlongLine, keysForClick, keysForRows, keysToPoint } from '../../../shared/cursorMove'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
+import { composerAt, frameAt, inputEnd, inputStart, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
 import { placeRail } from '../../../shared/rail'
@@ -592,6 +593,11 @@ function TerminalPane({
    */
   const askRef = useRef<PaneAsk | null>(null)
   askRef.current = ask ?? null
+  // The paste path lives inside a long-lived effect, so the prop itself would be the
+  // one this pane mounted with - and a pane switched to another CLI would keep pasting
+  // the way the old one wanted.
+  const agentRef = useRef(agent)
+  agentRef.current = agent
   /**
    * Every keystroke this pane's MOUSE handlers have sent, for a probe to read.
    *
@@ -1694,11 +1700,17 @@ function TerminalPane({
           t.paste(text)
           return
         }
-        // No text usually means an image. It is saved as a file on the machine that owns
-        // this pty and the PATH is what gets typed, because forwarding a raw ^V only
-        // works for an agent that reads the OS clipboard itself - Claude Code does, Codex
-        // and the other eleven do not - and only when the agent is on the same machine as
-        // the clipboard, which a mirrored pane's agent is not.
+        // No text usually means an image, and an agent that reads the clipboard itself
+        // should be handed the PICTURE - the same thing a drop gives it, which is what
+        // makes Cmd+V and a drag land identically. Typing the path of a file it then has
+        // to be asked to open is the answer for every OTHER CLI, which sees nothing at all
+        // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
+        // and not this one.
+        if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
+          api.write(sessionId, RAW_PASTE)
+          return
+        }
+        // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
           if (res.paths.length) {
             typePaths(res.paths)
@@ -1930,18 +1942,78 @@ function TerminalPane({
      * plus every row the same input wrapped onto, from past the prompt marker to the last
      * character written.
      */
-    const inputSpan = (): { row: number; col: number; end: number; length: number } | null => {
-      if (t.buffer.active.type === 'alternate') return null
+    /**
+     * Where a row's own text begins.
+     *
+     * `inputStart` hunts for a prompt marker, which is right on the row a CLI drew its
+     * prompt on and wrong on every row after it: ordinary prose holds `$ ` and `# ` and
+     * `> ` all the time, and moving the start forward there selects fewer characters than
+     * were highlighted. Under-selecting is the failure that leaves text behind, which is
+     * the bug this is all for. A framed row keeps the hunt - the frame bounds it.
+     */
+    const contentStart = (text: string, first: boolean): number => {
+      if (first || frameAt(text) >= 0) return inputStart(text)
+      let i = 0
+      while (i < text.length && text[i] === ' ') i++
+      return i
+    }
+
+    /**
+     * What is being typed, row by row: the composer the CLI draws when there is one, and
+     * otherwise the cursor's row plus whatever xterm wrapped it onto.
+     *
+     * Both are the same shape to everything downstream - a list of screen spans plus
+     * whether each one fills its width - so one piece of arithmetic (`offsetIn`) answers
+     * for a shell, for a framed box, and for Claude Code's frameless composer alike.
+     */
+    const inputRows = (): { top: number; rows: InputRow[] } | null => {
       const b = t.buffer.active
+      if (b.type === 'alternate') return null
       const cursorRow = b.baseY + b.cursorY
+      const comp = composerAt(rowText, cursorRow)
+      if (comp) {
+        const rows: InputRow[] = []
+        for (let r = comp.top; r <= comp.bottom; r++) {
+          const text = rowText(r)
+          const start = contentStart(text, r === comp.top)
+          const end = Math.max(start, inputEnd(text))
+          // Within a column of the far edge counts as FULL, deliberately: a boundary
+          // counted as a separator that was not one deletes a character nobody
+          // highlighted, and one counted the other way only leaves a character behind.
+          rows.push({ start, end, full: end >= comp.width - start - 1 })
+        }
+        return { top: comp.top, rows }
+      }
       let top = cursorRow
       while (top > 0 && b.getLine(top)?.isWrapped) top--
       let bottom = cursorRow
       while (b.getLine(bottom + 1)?.isWrapped) bottom++
-      const col = inputStart(rowText(top))
-      const end = inputEnd(rowText(bottom))
-      const length = (bottom - top) * t.cols + (end - col)
-      return length > 0 ? { row: top, col, end, length } : null
+      const rows: InputRow[] = []
+      for (let r = top; r <= bottom; r++) {
+        const text = rowText(r)
+        // An xterm wrap is a row that ran out of columns, so it holds no character of its
+        // own and every row of one is full by definition.
+        rows.push({
+          start: r === top ? inputStart(text) : 0,
+          end: r === bottom ? inputEnd(text) : t.cols,
+          full: true
+        })
+      }
+      return { top, rows }
+    }
+
+    /** The last row of what `inputRows` returned, in absolute buffer rows. */
+    const spanBottom = (span: { top: number; rows: InputRow[] }): number =>
+      span.top + span.rows.length - 1
+
+    const inputSpan = (): { row: number; col: number; end: number; length: number } | null => {
+      const span = inputRows()
+      if (!span) return null
+      const first = span.rows[0]
+      const last = span.rows[span.rows.length - 1]
+      // Cells, not characters: `t.select` counts across the screen by columns.
+      const length = (spanBottom(span) - span.top) * t.cols + (last.end - first.start)
+      return length > 0 ? { row: span.top, col: first.start, end: last.end, length } : null
     }
 
     /**
@@ -1960,40 +2032,22 @@ function TerminalPane({
     }
 
     /**
-     * The delete path's version of `clampCol`.
-     *
-     * Same job - never past what is written, never into the box's own frame - minus the
-     * prompt-marker half on any row that is a CONTINUATION of a wrapped input. `inputStart`
-     * hunts for the first marker character followed by a space and moves the start past it,
-     * which is right on the row a shell drew its prompt on and wrong on every row after it:
-     * ordinary wrapped prose contains `> ` and `- ` and `$ ` all the time, and moving the
-     * start forward there deletes fewer characters than were highlighted. Under-selecting is
-     * the one failure mode that leaves text behind, which is the bug being fixed.
-     */
-    const clampDeleteCol = (row: number, col: number): number => {
-      const text = rowText(row)
-      const end = Math.min(col, inputEnd(text))
-      // A row that says it is wrapped is a continuation, so nothing precedes the input on it.
-      const continuation = t.buffer.active.getLine(row)?.isWrapped === true
-      return continuation ? Math.max(end, 0) : Math.max(end, inputStart(text))
-    }
-
-    /**
      * Delete the highlighted text by walking to it and backspacing over it.
      *
      * A selection lives in this window and the far end has never heard of it, which is why
      * no terminal lets you delete one. The arithmetic and every refusal are in
-     * `cursorMove.ts`; this half is only about which selections are eligible - all of it on
-     * the line the far end is still editing, which is the cursor's own row and whatever
-     * that input wrapped onto.
+     * `cursorMove.ts`; this half is only about which selections are eligible - all of it
+     * inside the one input the far end is editing, which `inputRows` names.
      *
      * Three answers, not two, and the third is the whole point. `no` means the selection is
      * somewhere this cannot act on - scrollback, an alternate screen, another line - and the
-     * key must go to the pty untouched. `refused` means the selection IS on the line being
+     * key must go to the pty untouched. `refused` means the selection IS in the input being
      * edited and the keys still could not be built; there the key must be SWALLOWED, because
      * handing a bare Backspace to the pty in that state removes exactly one character out of
      * a highlighted block and leaves the highlight up. That is what "it doesn't delete fully"
-     * was: a refusal reported as ineligibility.
+     * was: a refusal reported as ineligibility - and, for two releases, a whole CLI whose
+     * composer rows are neither framed nor wrapped, so every multi-row selection took that
+     * path.
      */
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
@@ -2003,17 +2057,16 @@ function TerminalPane({
       if (askRef.current) return 'no'
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
-      if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return 'no'
-      const keys = keysForDelete({
-        cursorRow,
-        cursorCol: b.cursorX,
-        startRow: pos.start.y,
-        startCol: clampDeleteCol(pos.start.y, pos.start.x),
-        endRow: pos.end.y,
-        endCol: clampDeleteCol(pos.end.y, pos.end.x),
-        cols: t.cols,
-        // Every row here is part of one wrapped input - `sameLine` walked the chain.
-        wrapped: true
+      const span = inputRows()
+      if (!span) return 'no'
+      const bottom = spanBottom(span)
+      const inside = (r: number): boolean => r >= span.top && r <= bottom
+      if (!inside(cursorRow) || !inside(pos.start.y) || !inside(pos.end.y)) return 'no'
+      const keys = keysForRows({
+        rows: span.rows,
+        cursor: { row: cursorRow - span.top, col: b.cursorX },
+        start: { row: pos.start.y - span.top, col: pos.start.x },
+        end: { row: pos.end.y - span.top, col: pos.end.x }
       })
       if (!keys) return 'refused'
       sendKeys(keys)
@@ -2042,28 +2095,30 @@ function TerminalPane({
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
       const clickRow = b.viewportY + at.row
-      if (!sameLine(cursorRow, clickRow)) {
-        // A second LINE of a draft is a hard newline, not a wrap, so the chain above says
-        // the two rows are unrelated and a click on it used to do nothing at all - which is
-        // "the cursor can't select exactly where I want, it's very limited". Inside a drawn
-        // input box it is safe to send the vertical arrows a bare click may otherwise never
-        // send: the box is a text field the CLI is handling itself, so an up-arrow there is
-        // a movement and not the previous command. A plain shell draws no box, so this
-        // cannot fire in one - see shared/promptBox.ts.
-        if (!sameBox(rowText(cursorRow), rowText(clickRow))) return
-        const boxKeys = keysForClick({
-          cursorRow,
-          cursorCol: b.cursorX,
-          clickRow,
-          clickCol: clampCol(clickRow, at.col),
-          rowLimit: 8
-        })
-        if (!boxKeys) return
-        e.preventDefault()
-        stopForAgent(e)
-        sendKeys(boxKeys)
-        return
+      // A composer the CLI draws itself is ONE text field spread over several rows, and the
+      // two numbers that matter are offsets into that field: where the far end's cursor is
+      // in it, and where the click landed. That covers a framed box and Claude Code's
+      // frameless one alike, and it replaces the vertical arrows the box branch used to
+      // send - a second line of a draft is a hard newline, worth exactly one left arrow,
+      // which is safer than an up arrow the CLI may read as its own history.
+      const span = inputRows()
+      if (span) {
+        const bottom = spanBottom(span)
+        const held = (r: number): boolean => r >= span.top && r <= bottom
+        if (held(cursorRow) && held(clickRow)) {
+          const keys = keysToPoint(
+            span.rows,
+            { row: cursorRow - span.top, col: b.cursorX },
+            { row: clickRow - span.top, col: at.col }
+          )
+          if (!keys) return
+          e.preventDefault()
+          stopForAgent(e)
+          sendKeys(keys)
+          return
+        }
       }
+      if (!sameLine(cursorRow, clickRow)) return
       // Past the end of what is written is the end of what is written. Without this, a
       // click in the empty half of the row sends a burst of rights that the editor eats one
       // by one for nothing - and on a CLI that reads an arrow as a menu step, does worse.
