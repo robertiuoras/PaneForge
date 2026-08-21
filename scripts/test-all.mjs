@@ -12,9 +12,9 @@
 // somebody looking at a pane. Measured on this Mac, the lot runs in ~35s.
 //
 // What stays out, and where to run it instead:
-//   test:strays (~25s of real orphan processes), test:lanes, test:agentic, test:goals,
+//   test:strays (~25s of real orphan processes), test:lanes,
 //   test:remote, test:updater   - slow, or they spawn real processes and repositories
-//   test:view, test:stashdrag, test:activate, test:improveview  - need a real window
+//   test:view, test:stashdrag, test:activate                   - need a real window
 //   test:discordbrand, mac-update-test --live                   - need the network
 //
 //   node scripts/test-all.mjs             every test below
@@ -81,7 +81,6 @@ const TESTS = [
   ['handofffit', 'handoff-fit-test.mjs'],
   ['versions', 'version-sync-test.mjs'],
   ['confirmfit', 'confirm-fit-test.mjs'],
-  ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],
   ['silence', 'silence-test.mjs'],
   ['blurbs', 'blurb-test.mjs'],
@@ -89,10 +88,7 @@ const TESTS = [
   ['voice', 'voice-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
-  ['unattended', 'unattended-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
-  ['dispatch', 'dispatch-test.mjs'],
-  ['dispatchpane', 'dispatch-pane-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
   // Cheap, and the pair covers the two halves that fail differently: the arithmetic of a
@@ -109,8 +105,6 @@ const TESTS = [
   ['recall', 'prompt-recall-test.mjs'],
   ['draft', 'prompt-draft-test.mjs'],
   ['redact', 'prompt-redact-test.mjs'],
-  ['insert', 'prompt-insert-test.mjs'],
-  ['improve', 'prompt-improve-test.mjs'],
   ['pump', 'pump-test.mjs'],
   ['pipe', 'pipe-test.mjs'],
   ['diff', 'diff-test.mjs'],

@@ -12,23 +12,17 @@ import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
 import type { RunningDev } from './devList'
 
-import type { DriveRun } from './agentic'
-// Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
-// `Goal` from there, which is a cycle at the type level only and no import at runtime.
-import type { Goal } from './goals'
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
 // Same type-level-only cycle as goals: handoff.ts imports Session from here.
 import type { HandoffItem } from './handoff'
 import type { DeviceMark } from './deviceWatch'
-import type { Improvement } from './promptSchema'
-import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
 import type { RouteMatch, RouteResult } from './projectRoute'
 import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 
-export type { CustomSound, DiscordStyle, DriveRun, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
+export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -571,45 +565,6 @@ export interface SwarmRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Split
-//
-// The other shape: not several roles sharing one checkout, but one task cut into
-// workstreams that each get their OWN worktree lane. See main/split.ts for why the
-// file ownership below is the load-bearing part rather than a hint.
-
-/** One workstream of a split: what to build, and the files it alone may write. */
-export interface SplitLane {
-  name: string
-  brief: string
-  /** repo-relative paths or directories. Never overlapping another lane's. */
-  owns: string[]
-  /** unticked lanes are left out of the launch and their files stay unclaimed */
-  enabled?: boolean
-}
-
-export interface SplitPlan {
-  lanes: SplitLane[]
-  /** what every lane must implement identically - written into all of their briefs */
-  contracts: string
-  /** set when there is no usable split; `lanes` is empty and this says why */
-  refused?: string
-}
-
-export interface SplitRequest {
-  cwd: string
-  mission: string
-  plan: SplitPlan
-  agent?: Agent
-  model?: string
-}
-
-/** The same plan, driven by the app. See `docs/agentic.md` and `main/supervisor.ts`. */
-export interface DriveRequest extends SplitRequest {
-  /** Skip the reviewer agent. The diff and command steps of the gate still run. */
-  skipReview?: boolean
-}
-
-// ---------------------------------------------------------------------------
 // History
 
 /** A finished or running session's transcript on disk. */
@@ -771,119 +726,6 @@ export interface PriorPrompt {
    * is here rather than added later so those rows survive a merge unchanged.
    */
   outcome: string | null
-}
-
-export interface PromptImproveConfig {
-  mode: 'off' | 'suggest' | 'auto'
-  /** Which CLI runs the improver. '' = the same agent as the pane. */
-  engine: string
-  /** Model for the improver; '' = that CLI's default. A cheap tier is the right choice. */
-  model: string
-  /** How readily it may ask. `minimal` allows one question, `balanced` allows three. */
-  clarify: 'minimal' | 'balanced'
-  /** What the budget is spent on. `tokens` drops retrieved knowledge first. */
-  optimise: 'quality' | 'balanced' | 'tokens'
-  /** Consult the capability catalogue at all. */
-  capabilities: boolean
-  /** ms of quiet before the pane's footer offers the chip. Generation never starts here. */
-  idleMs: number
-  /** Obsidian vault root. '' disables the Markdown knowledge provider. */
-  vaultPath: string
-  /** Absolute path to `vaultindex.py`. '' disables the indexed knowledge provider. */
-  indexScript: string
-  /** Write improvement events to prompt-audit.log. Hashes and counts only. */
-  telemetry: boolean
-  /** Also keep the text of improved prompts, so a golden case can be contributed. */
-  telemetryText: boolean
-}
-
-export type ImproveOutcomeKind = 'accepted' | 'rejected' | 'cancelled' | 'failed'
-
-/** What Settings and the sheet need to know without running anything. */
-export interface ImproveStatus {
-  /** A CLI that can run the improver was found on PATH. */
-  available: boolean
-  /** Which one would be used for a pane with no agent of its own. */
-  engine: string
-  /** Command that installs one, for the one-click button - the Voice tab's shape. */
-  install: string
-  /** Knowledge sources that answered when asked. Empty is a normal state. */
-  providers: string[]
-  /** A vault path that exists on this machine, offered as a starting point. */
-  vaultCandidate: string
-}
-
-export interface ImproveOptions {
-  /**
-   * Include `draft`/`inbox` knowledge, labelled unverified everywhere it appears.
-   *
-   * The same escape hatch `vaultindex.py --include-untrusted` has. Not reachable from the
-   * UI: it exists for the tests and the demonstration, where the bundled fixture
-   * catalogue is the only knowledge there is and all of it is honestly `draft`.
-   */
-  includeUntrusted?: boolean
-  /**
-   * Capability ids the user removed from a previous answer.
-   *
-   * Removal is a re-run rather than a redraw: the improved prompt was written with that
-   * capability in it, so hiding the chip would leave the text still recommending it.
-   */
-  exclude?: string[]
-  /**
-   * A note on the rewrite, typed after reading one: "shorter", "keep the file names",
-   * "ask me about the auth part".
-   *
-   * A re-run rather than an edit of the text in the box, so what comes back is a whole
-   * suggestion written to that instruction - and the word diff against the original still
-   * means what it says.
-   */
-  tweak?: string
-}
-
-/** One retrieved reference as the sheet shows it. */
-export interface ImproveSource {
-  id: string
-  title: string
-  provider: string
-  source: string
-  trusted: boolean
-  /** The derived lifecycle word: discovered, evaluated, tested, verified, recommended... */
-  stage: string
-  /** Past its review window. Usable, but it has to say so. */
-  stale: boolean
-  /** Can the user remove this one and re-run? Only catalogue entries. */
-  removable: boolean
-}
-
-/** One improvement, as it crosses the bridge. The original is always carried back. */
-export interface ImproveResult {
-  ok: boolean
-  error?: string
-  original: string
-  improvement?: Improvement
-  /** Where the brief's references came from, shown separately from the prompt. */
-  sources: ImproveSource[]
-  /** "held back: 1 secret, 2 code blocks", or empty. */
-  held: string
-  metrics: ImproveMetrics
-}
-
-/** What one on-demand research pass returns to the sheet. */
-export interface ResearchReport {
-  ok: boolean
-  /** completed | no-finding | skipped | deferred | failed | needs-human */
-  outcome: string
-  /** One line, safe to show. */
-  detail: string
-  /** New, and untested. Never presented as a recommendation. */
-  kept: Array<{ id: string; name: string; category: string; description: string; stage: string; source: string }>
-  /** Dropped, with the reason - so a run that kept nothing is not a run that found nothing. */
-  rejected: Array<{ id: string; why: string }>
-  /** What it says it opened, shown so the user can judge the sources themselves. */
-  sources: Array<{ url: string; sourceClass: string; opened: boolean; checkedAt: string }>
-  /** Already known. The number that proves research was avoided. */
-  duplicates: number
-  ms: number
 }
 
 export interface VoiceStatus {
@@ -1482,8 +1324,6 @@ export interface Config {
   /** delete stored transcripts older than this; 0 keeps everything */
   historyDays: number
   voice: VoiceConfig
-  /** improve a draft prompt before it is sent - see PromptImproveConfig. Off by default. */
-  promptImprove: PromptImproveConfig
   /** say so when a draft repeats an ask already made - see PromptRecallConfig. On. */
   promptRecall: PromptRecallConfig
   /** stay out of the way while a game is running - see GameModeConfig */
@@ -1512,21 +1352,6 @@ export interface Config {
   offloadAsk: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
-  /**
-   * May the app drive a lane with an agent whose only headless posture is "no prompts"?
-   *
-   * On, because that is every agent the app can drive (see `HEADLESS` in shared/agentic.ts)
-   * and the blast radius is one unmerged branch in a worktree the app made. Off refuses to
-   * start a drive or queue a goal at all, and says which flag it refused - K4.
-   */
-  driveUnattended: boolean
-  /**
-   * D3 of `docs/agentic-dispatch.md`: where a finished dispatched goal reports to.
-   * Empty `reportUrl` turns the POST off entirely; `reportKey` rides as `x-dispatch-key`
-   * when the endpoint demands one. The desk never holds the Discord token - the endpoint
-   * does the posting and the 24h delete.
-   */
-  dispatch: { reportUrl: string; reportKey: string }
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
   /**
@@ -1974,42 +1799,6 @@ export interface Api {
 
   startSwarm(req: SwarmRequest): Promise<Session[]>
 
-  /** Ask the local coding CLI how this task divides. Never throws - see `refused`. */
-  planSplit(req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan>
-  /** One pane per lane, each moved into its own git worktree before it starts. */
-  startSplit(req: SplitRequest): Promise<Session[]>
-
-  /**
-   * The same plan, driven by the app instead of by a person: no panes, one headless
-   * agent per lane, each verified before it is called finished. Never merges - see
-   * `docs/agentic.md`. Returns as soon as the run exists, not when it finishes.
-   */
-  startDrive(req: DriveRequest): Promise<DriveRun>
-  /** Stop one run now, mid-command if need be. */
-  stopDrive(id: string): Promise<boolean>
-  /** Stop every live run. The one switch. */
-  stopAllDrives(): Promise<number>
-  listDrives(): Promise<DriveRun[]>
-  /** Forget the finished ones. Memory only. */
-  clearDrives(): Promise<number>
-
-  /**
-   * The queue a driven plan goes into rather than starting on the spot (I4).
-   *
-   * The difference from `startDrive` is everything that happens when nobody is watching:
-   * a goal is on disk, so it survives a restart; a second one waits rather than fighting
-   * the first for worktrees; and when it ends it says what it turned into. Prefer this to
-   * `startDrive` for anything a person is not about to sit and watch.
-   */
-  addGoal(req: DriveRequest): Promise<Goal>
-  listGoals(): Promise<Goal[]>
-  /** Stop it, whether it is running or still in the line. */
-  cancelGoal(id: string): Promise<boolean>
-  /** Put a finished, cancelled or interrupted goal back in the line, keeping its attempts. */
-  retryGoal(id: string): Promise<boolean>
-  /** Drop one finished goal from the file. */
-  removeGoal(id: string): Promise<boolean>
-  clearGoals(): Promise<number>
 
   listHistory(): Promise<HistoryEntry[]>
   searchHistory(query: string): Promise<HistoryHit[]>
@@ -2200,43 +1989,10 @@ export interface Api {
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
 
-  /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
   /** Record that a draft was actually sent. Fire-and-forget. */
   promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
-  improveStatus(): Promise<ImproveStatus>
-  /**
-   * Improve a draft. Never submits anything and never writes to the pane: the result is
-   * shown first and only `applyImproved` touches the terminal.
-   */
-  improvePrompt(id: string, draft: string, options?: ImproveOptions): Promise<ImproveResult>
-  /** One second pass, with the answers to the questions the first pass asked. Never a third. */
-  answerImprove(
-    id: string,
-    draft: string,
-    answers: Array<{ question: string; answer: string }>,
-    options?: ImproveOptions
-  ): Promise<ImproveResult>
-  /** Abort whatever is in flight for this pane. Silent, and safe to call when nothing is. */
-  cancelImprove(id: string): void
-  /**
-   * Research this request: one bounded pass over public sources, on demand.
-   *
-   * Never automatic. It installs nothing, it does not rewrite the draft, and what it finds
-   * comes back labelled Discovered - the prompt is only rebuilt afterwards, by asking for
-   * an improvement again.
-   */
-  researchRequest(id: string, draft: string): Promise<ResearchReport>
-  /** Stop a research pass. Does not touch an improvement running for the same pane. */
-  cancelResearch(id: string): void
-  /**
-   * Accept: empty the prompt box and paste the improved text into it. There is no `\r` in
-   * what this writes and no option that adds one - the user presses Enter.
-   */
-  applyImproved(id: string, text: string): Promise<{ ok: boolean; error?: string }>
-  /** What happened to a suggestion, for the development metrics. Off unless telemetry is on. */
-  recordImprove(outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number): void
 
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
@@ -2245,9 +2001,6 @@ export interface Api {
 
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
-  /** A driven run moved: a lane changed state, or its progress line changed. */
-  onDrive(cb: (run: DriveRun) => void): () => void
-  onGoals(cb: (goals: Goal[]) => void): () => void
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void

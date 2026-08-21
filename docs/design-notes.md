@@ -1095,105 +1095,6 @@ by the OS voice pushed through the shipped worker (2.6s of audio, ~1.8s to trans
 with `tiny`), plus the overlay measured at 390x844 and asserted absent at 1400x900.
 It skips out loud without a window or without macOS `say`.
 
-## The app can run a lane itself, and refuses to call it done unheard
-
-Shipped 2026-08-07 as phases I1, I2 and I3 of `docs/agentic.md`. That file is still the
-reasoning and the survey; this section is what landed and what it cost to get right.
-
-**The control channel is headless, not the pty.** `claude -p --output-format stream-json
---verbose` prints one JSON object per line carrying turn boundaries, tool calls, token
-counts and an explicit end. `readsBusy()` infers one of those from terminal glyphs and has
-to be re-taught every time a CLI redraws its footer. Panes keep the pty - that is the
-product - and `shared/agentic.ts` parses the stream for anything the app drives itself.
-An agent whose structured flag we do not know still runs, as `plain`: text, no tool count,
-no token count. A worse answer, not a missing feature.
-
-**Three things a driven turn must survive, and all three are spawned for real in
-`npm run test:agentic`** - 66 assertions, ~4s, six real child processes and seven real git
-repositories, no CLI installed and none startable (the `bin`/`argsPrefix` seam runs a stub
-under `node`):
-
-- **A turn that never ends.** The budget timer is armed BEFORE the first await, not in a
-  `finally`, for the same reason `POLL_WATCHDOG_MS` is: a recovery that lives inside the
-  thing that can hang is not a recovery. The stub ignores `SIGTERM`, so only the tree kill
-  ends it, and the test asserts it died on time rather than eventually.
-- **A turn that ends having done nothing.** The dangerous outcome is not a crash - a crash
-  is loud - it is twenty minutes of tokens producing a comment. So the gate's FIRST step is
-  the diffstat, and `noOp` calls two lines or fewer nothing. A CLI that exits 0 having
-  printed nothing is `silent`, not `done`.
-- **A new file that was never `git add`ed.** `git diff` cannot see one, so a lane whose
-  whole deliverable is one new file would report itself as having changed nothing - and
-  that is the signal everything above trusts. `diffSince` runs `git add -A --intent-to-add`
-  first: the paths without their content, into the lane's own index.
-
-**The gate's order is the design.** diffstat → typecheck → the repo's own suite → a
-reviewer agent over the patch. Cheapest first, and the reviewer last because a diff that
-does not compile has nothing worth an opinion about. Two things it will not do: a missing
-step is reported as *skipped*, never as passed ("the suite passed" and "there is no suite"
-are different sentences), and `parseVerdict` fails closed - a reviewer that timed out,
-crashed or answered prose has NOT passed the lane. Defaulting that the other way is the
-one change that would make the whole gate decorative.
-
-**The reviewer runs in an empty directory.** It is started with the same
-`bypassPermissions` posture as the lane it is judging, so inside the lane it could edit the
-branch to agree with itself. Its whole input is the patch already in its prompt.
-
-**The retry prompt is a local, not the lane's `note`.** `note` is the line the board shows
-and every tool call overwrites it; parking the retry brief there means the second attempt
-is started with whatever the first one was doing when it stopped - which fails again,
-identically, and looks like the agent being stubborn. The test proves the second attempt is
-a different attempt: the stub only fixes its file when it can see the failure text.
-
-Two retries then stop (`MAX_ATTEMPTS` 3). An agent that has failed one gate three times is
-not one retry away from passing it. Lanes run three at a time - a Max plan has no
-concurrency cap, it has a five-hour token window, and 3-5 sustained agents is what that
-window carries - staggered 900ms apart because N `git worktree add` on one repository is a
-fight over one index lock.
-
-**What a driven lane leaves running is our problem too.** A driven agent is spawned
-detached, in its own process group - which is what makes the tree kill work and what makes
-it survive us. It is not a pty, so `strays.ts` has never heard of it and the quit-time
-`taskkill` walk does not name it. Without `stopAllDrives()` on the way out, quitting the
-app leaves an agent editing a worktree with nothing left that can stop it. It is called
-from `before-quit` and again from `hardExit`, because the second path does not go through
-the first.
-
-**A goal outlives the window (I4).** Everything up to I3 lived in a Map: the ask, the plan,
-which lanes passed, which branch was sitting there reviewed and unmerged. That is fine for a
-loop somebody is watching and useless for one that is meant to run while nobody is. So Drive
-it queues a goal instead of starting a run - `goals.json` under userData, written to a temp
-file and renamed, because the read happens once at startup and a half-written file at that
-moment is the whole queue gone.
-
-Four things it took to be honest rather than merely persistent:
-
-- **One goal at a time.** Not a token decision - `MAX_PARALLEL` already caps the lanes
-  inside a run at three, and a second goal starting beside it quietly makes that six against
-  one five-hour window and one worktree pool. I5 is what turns the constant into a reading
-  of the real budget.
-- **A goal the process died holding is `interrupted`.** A fourth outcome, deliberately: its
-  agents are gone, but the branch is not, and it holds whatever had been written when they
-  were killed. `done` would put unread work under a heading that says ready to review;
-  automatically re-queueing it would start a second agent in a worktree nobody has looked
-  at, which is the one thing lanes exist to prevent. Retry is a press.
-- **`recordOutcome` stamps, it never creates.** The prompt archive is fed from the bytes on
-  their way to a pty; an ask it has never seen is a miss, not a new row. Inventing one would
-  mean a mission typed into a dialog quietly became something the recall chip warns about
-  later.
-- **The debounce may not eat a state change.** Lane notes move on every tool call, so the
-  file is written on a 500ms timer - but every transition calls `flushGoals()` first, and
-  the recovery pass writes back immediately rather than returning a corrected list nobody
-  persisted.
-
-Found by building the test rather than by reading the code: a lane that throws - a malformed
-plan was enough - escaped `driveLane` through `Promise.all` into the `void drive(...)` in
-`startDrive`, as an unhandled rejection. The whole run died, the other lanes stopped
-mid-work, and the board went on showing them as `working` for ever because nothing was left
-to move them. `driveLane` is wrapped now and the lane fails alone.
-
-Not built: the budget scheduler, hotspot locks and unattended mode (I5-I7). And by decision,
-never: this merges nothing. `lane.mjs ready` stays a person's word.
-
 ## Checks
 
 `npm run typecheck` before committing, and `npm test`.
@@ -1214,9 +1115,9 @@ resolved to against the real repo, not that the reporting is correct.
 Which tests belong in it is a cost question, not a taste one. A driven lane waits on this
 before a reviewer ever sees the diff, so the entry price is that a test catches its
 regression by ARITHMETIC rather than by somebody looking at a pane. The slow ones
-(`test:strays` spawns real orphans, `test:lanes`, `test:agentic`, `test:goals`,
+(`test:strays` spawns real orphans, `test:lanes`,
 `test:remote`), the ones that need a real window (`test:view`, `test:stashdrag`,
-`test:activate`, `test:improveview`) and the ones that need the network
+`test:activate`) and the ones that need the network
 (`test:discordbrand`, `mac-update-test --live`) stay out, and the header of
 `test-all.mjs` names each with where to run it instead. A failure prints that test's
 whole output rather than a summary, because the reader is as often the agent being told
@@ -1397,94 +1298,6 @@ the screen it owns (so a search that "found nothing" was a test writing into a p
 then zoomed), and a window that is not being drawn can find every match and count none -
 which is why the bar says "found" rather than "no matches" when the search landed but
 nothing was counted, and why the test wants `--show`.
-
-`npm run test:improve` is the prompt-improvement feature, model-free: the one draft
-reconstruction (`shared/draft.ts`, which replaced the three copies that used to disagree),
-the envelope that holds secrets and long code back and restores them byte-exact, the
-sanitiser, and the whole retrieval and budget pipeline against real fixture vaults on
-disk. Its cheap, load-bearing half is `prompt-insert-test.mjs`: the improved text is not
-displayed, it is TYPED into an agent with real tools in a real repo, so every assertion
-there is about the exact byte stream reaching `write()` - no `\r` ever, no leading `/`
-`!` or `#`, no escape that could close the bracketed paste early and hand the rest to the
-terminal as keys.
-
-`npm run test:improveview` is the half only a real window can answer, and it needs one up
-(`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`). The draft
-is reconstructed from keystrokes, so it is driven by real keystrokes through xterm's own
-input path and read back out of `window.__pf.draft(id)`. Two things it pinned that cost an
-hour each: a pane keeps reading `status: 'working'` for ~3.5 s after the last keystroke,
-because the shell echoing its own prompt line is output like any other - so a single idle
-timer always fired while the pane was still busy and the chip could never appear at all;
-and `Session.engaged` is not "busy" but "something has been asked of this session", which
-typing is, and it never goes back down, so guarding on it suppressed the chip forever.
-Accept is proved by the terminal, not by a spy on the bridge - `applyImproved` writes from
-the main process on purpose, so the byte stream is built in one place - and "did not
-submit" is the improved text sitting on the prompt row with the cursor never having moved
-down to a fresh one.
-
-Its last assertion is the one every other assertion here assumed and none of them made:
-that a suggestion actually comes back. The sheet tests deliberately do not say which phase
-they land in, calling that a race, so nothing noticed that `DEADLINE_MS` was 20 s while the
-work takes 22.5 s bare and 32.6 s from inside the app - every click was killed by its own
-deadline and reported as "produced no answer", which reads as a broken feature rather than
-as a wrong number. It prints the milliseconds, so a CLI that gets slower shows up as a
-rising figure instead. The companion rule is that only a CHANGED draft cancels a run in
-flight: a keystroke used to, and over half a minute a person moves the cursor or clicks
-back into the pane, which silently threw the answer away and put the offer chip back.
-
-`npm run test:research` is the Phase 2 gate, model-free and network-free: what a research
-run is allowed to believe, and what it must refuse. Three cases are the reason it exists. A
-lead is not evidence - a finding cited only to a Reddit thread or a showcase page is
-rejected outright rather than stored at low confidence. A source that was never opened is
-not a source, because a search snippet reads exactly like a citation once it is in a JSON
-field. And hostile text is REJECTED, never sanitised: repairing it would mean deciding
-which half of a poisoned note was the honest half. It also pins the derived lifecycle -
-`Discovered → Evaluated → Tested → Verified → Recommended` is computed by `stage()` from the
-stored vault status plus the evidence on the record, so nothing reaches Tested without a
-sandbox run and nothing reaches Recommended without something having shipped. There is no
-field anyone can set.
-
-The pipeline that fills the catalogue is documented in `RESEARCH-POLICY.md`, and the one
-thing worth knowing before touching it is that `scripts/capability-ingest.mjs` is the ONLY
-door in. The scheduled agent lives in taskdriver and is Python; the gate is TypeScript; an
-agent that validated its own findings would be a second implementation of the
-untrusted-content boundary, and the drift would only ever be visible as something hostile
-getting stored. `capability-sandbox.mjs` is the only thing allowed to install, only with an
-explicit `--install`, into a throwaway directory with no credentials in its environment and
-`--ignore-scripts` - and it never RUNS what it installed, because the build links modules
-rather than executing them.
-
-`npm run test:split` is the other way several agents take one job, and the difference
-from a swarm is the whole point. A swarm is several roles in ONE checkout, kept apart by
-their briefs - right when they interleave, wrong for four independent features, because
-"do not edit files another role owns" is a sentence in a prompt and a sentence does not
-survive an agent that needs one import from over there. A split cuts the task into
-workstreams and sends each through the same `laneFor` the session list uses, so each one
-is in its own worktree: they cannot write the same file because they are not looking at
-the same file.
-
-The model proposes and `src/main/split.ts` decides. The load-bearing check is that no
-two lanes claim the same path - a plan that overlaps is REFUSED, never repaired, because
-repairing it means guessing which lane the file belonged to and the cost of guessing is
-paid later, in a merge, by someone who was not there. Containment counts (`src/main` and
-`src/main/split.ts` are the same claim), case counts (these file systems are
-case-insensitive), and `.` is the whole repository rather than a path that collides with
-nothing.
-
-Two of its rules were written by running the real CLI rather than by reading the code,
-and neither is visible without doing that. Claimed paths keep their capitals: they are
-compared lowercased but STORED as given, because the string ends up in the brief the
-agent is started with and `src/renderer/src/components/settingsdialog.tsx` is a file
-that does not exist on a Mac. And the brief cap is 2400, not 1200, because a real
-three-lane plan came back with ~1300-character briefs and the first cap truncated every
-one of them mid-sentence.
-
-`SPLIT_DEADLINE_MS` is 240 s and the number was measured, for the same reason the
-improver's was: a real plan for this repository takes **61.5 s** from a bare `claude -p`
-and 35 s from inside the app, and the first version shipped with improvement's 90 s,
-where every click died on its own deadline and reported "produced no answer" - which
-reads as a broken feature rather than as a wrong constant. The dialog counts the seconds
-out loud so a slow plan looks slow rather than stuck.
 
 `npm run test:pipe` is the live tee of a pane's output, and the half of it worth pinning
 is not the file being written - it is the chunk boundary. The pty hands over whatever
@@ -2063,12 +1876,6 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
-| `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
-| `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
-| `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
-| `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
-| `npm run test:dispatch` | the router that picks the agent, the model and the budget for an ask — and the four cases where the CHEAP tier must not be chosen: a repo that cannot check itself, an ask naming no file, repo-wide words, and a retry of something that already failed |
-| `npm run test:dispatchpane` | a dispatched run as a real pane, against a fake driver and real git: closes itself on success, STAYS on failure, a person's keystroke drops it ungated, an exited pty is a failure not a wait — and the report that leaves carries the gate's per-step verdicts, skipped included |
 | `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
@@ -2094,7 +1901,6 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:copymode` | keyboard copy mode arithmetic |
 | `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
 | `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
-| `npm run test:improve` | prompt improvement, model-free (incl. the exact typed byte stream) |
 | `npm run test:voice` | dictation: which transcriber, and a spoken clip through it |
 | `npm run test:recall` | "you have asked this before" — and PARITY with the canonical fingerprint |
 | `npm run test:rename` | the folder rename, on a throwaway repo |
@@ -2120,7 +1926,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized),
+`test:activate`, `test:turncopyview` (which is happy minimized),
 `test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
 back), `test:askclick`, `test:askrender` (the countdown on a real question, and what
 arrowing through it costs every OTHER pane), and `test:phoneview` (a real headless Chrome at
@@ -2132,10 +1938,8 @@ the art asset `PRESENCE_IMAGE` names — it passes now, and the two halves fail 
 because a correct name with no asset is a card with no logo on it; and
 `node scripts/mac-update-test.mjs --live <version>` (~120 MB).
 
-The research pipeline's gate is `npm run test:research`, and
-`scripts/capability-ingest.mjs` is the ONLY door into the catalogue — see
-`RESEARCH-POLICY.md`. That pipeline researches *techniques*; the other agent-runners are
-watched separately by `npm run competitors` (`npm run test:competitors`), which diffs the
+The other agent-runners are
+watched by `npm run competitors` (`npm run test:competitors`), which diffs the
 repos in `competitors.json` against the checked-in `docs/competitors.state.json` and prints
 only what moved. It is deliberately quiet: sub-5% star drift says nothing, and a changed
 README is the one line that means go re-read a feature list into `TODO.md`.

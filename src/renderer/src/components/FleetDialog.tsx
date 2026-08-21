@@ -1,11 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { DiffScope, DriveRun, GitInfo, Session } from '@shared/types'
+import type { DiffScope, GitInfo, Session } from '@shared/types'
 import type { AgentInfo } from '@shared/agents'
 import { describePlace } from '@shared/place'
-import { driveLine, runDone, unattended, unattendedLine } from '@shared/agentic'
-import type { Goal } from '@shared/goals'
-import { planLine } from '@shared/dispatch'
-import { goalLine, queuePosition } from '@shared/goals'
 import { density, fleetRow, fleetSections, gitLine, previewFrom } from '@shared/fleet'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -63,30 +59,6 @@ export default function FleetDialog({
   const [hi, setHi] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Lanes the app is driving itself. They have no pane, so nothing above this line can
-  // see them - and this is the screen whose whole question is "what is happening and
-  // who needs me", which a run nobody is watching is the sharpest case of.
-  const [drives, setDrives] = useState<DriveRun[]>([])
-  useEffect(() => {
-    void api.listDrives().then(setDrives)
-    return api.onDrive((run) =>
-      setDrives((all) => {
-        const i = all.findIndex((r) => r.id === run.id)
-        return i === -1 ? [...all, run] : all.map((r) => (r.id === run.id ? run : r))
-      })
-    )
-  }, [])
-
-  // The queue behind the runs (I4). A goal that is RUNNING is already on this screen as
-  // its drive, in full, so only the ones with nothing live to show appear here: the ones
-  // waiting their turn, and the ones that ended - including the ones that were still
-  // going when the app was last closed, which is the state nothing could report before.
-  const [goals, setGoals] = useState<Goal[]>([])
-  useEffect(() => {
-    void api.listGoals().then(setGoals)
-    return api.onGoals(setGoals)
-  }, [])
-  const waiting = goals.filter((g) => g.state !== 'running')
 
   const sections = useMemo(() => fleetSections(sessions), [sessions])
   const rows = useMemo(() => sections.flatMap((g) => g.sessions), [sections])
@@ -281,138 +253,14 @@ export default function FleetDialog({
               })}
             </Fragment>
           ))}
-          {rows.length === 0 && drives.length === 0 && waiting.length === 0 && (
+          {rows.length === 0 && (
             <div className="empty">No panes open.</div>
           )}
 
-          {waiting.length > 0 && (
-            <div className="fleet-drive">
-              <div className="fleet-drive-head">
-                <strong>Queue</strong>
-                <span className="muted">
-                  {waiting.length} goal{waiting.length === 1 ? '' : 's'} · one runs at a time
-                </span>
-              </div>
-              {waiting.map((g) => (
-                <div key={g.id} className={`fleet-row is-drive goal-${g.state}`} title={g.cwd}>
-                  <span className="fleet-dot m-still" aria-hidden="true" />
-                  <span className="fleet-num" />
-                  <span className="fleet-who">
-                    <span className="fleet-title">{g.mission.slice(0, 80)}</span>
-                    <span className="fleet-place">{goalLine(g, queuePosition(goals, g.id))}</span>
-                    {g.dispatch && <span className="fleet-place">{planLine(g.dispatch)}</span>}
-                  </span>
-                  <span className="fleet-state">
-                    {g.state === 'queued' ? (
-                      <button
-                        className="ghost small"
-                        title="Take this out of the line. Nothing has started, so nothing is lost."
-                        onClick={() => void api.cancelGoal(g.id)}
-                      >
-                        Cancel
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          className="ghost small"
-                          title="Put it back in the line, keeping every attempt so far. New worktrees - the old branches stay where they are."
-                          onClick={() => void api.retryGoal(g.id)}
-                        >
-                          Retry
-                        </button>
-                        <button
-                          className="ghost small"
-                          title="Forget this goal. The branches it produced are untouched."
-                          onClick={() => void api.removeGoal(g.id)}
-                        >
-                          Forget
-                        </button>
-                      </>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
 
-          {drives.map((run) => (
-            <div key={run.id} className="fleet-drive">
-              <div className="fleet-drive-head">
-                <strong>{run.mission.slice(0, 90)}</strong>
-                {/* K4. This run's agents were started with their permission prompt off,
-                    which is the one thing about a driven lane a person cannot see by
-                    looking at it. Derived from the arguments the run actually carries. */}
-                {unattended(run.agent) && (
-                  <span className="perm-chip" title={unattendedLine(run.agent)}>
-                    unattended
-                  </span>
-                )}
-                <span className="muted">
-                  {run.lanes.length} lane{run.lanes.length === 1 ? '' : 's'}
-                  {run.tokens.output ? ` · ${Math.round(run.tokens.output / 1000)}k out` : ''}
-                  {run.costUsd ? ` · $${run.costUsd.toFixed(2)}` : ''}
-                </span>
-                {!runDone(run) && (
-                  <button
-                    className="ghost small"
-                    title="Stop this run now, mid-command if need be"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void api.stopDrive(run.id)
-                    }}
-                  >
-                    Stop
-                  </button>
-                )}
-              </div>
-              {run.lanes.map((lane) => (
-                <div
-                  key={lane.name}
-                  className={`fleet-row is-drive drive-${lane.state}`}
-                  title={lane.cwd || 'no worktree yet'}
-                  onClick={() => {
-                    // A driven lane has no pane to focus, so the useful click is its
-                    // diff - which is the whole deliverable, and the only thing a
-                    // person is meant to do with it.
-                    // No lane LABEL is passed: `branch` is `lane-a`, and the diff header
-                    // wants the `a` the sidebar shows. Naming it wrongly is worse than
-                    // not naming it - the folder is already in the title.
-                    if (lane.cwd) onDiff(lane.cwd, undefined, 0, 'all')
-                  }}
-                >
-                  <span className="fleet-dot m-still" aria-hidden="true" />
-                  <span className="fleet-num" />
-                  <span className="fleet-who">
-                    <span className="fleet-title">{lane.name}</span>
-                    <span className="fleet-place">{driveLine(lane)}</span>
-                  </span>
-                  <span className="fleet-state">
-                    <span className="fleet-label">{lane.state}</span>
-                    {lane.startedAt !== undefined && lane.endedAt === undefined && (
-                      <Elapsed since={lane.startedAt} className="fleet-clock" title={lane.state} />
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ))}
         </div>
         <div className="dialog-foot">
           <span className="muted">↑↓ to move, Enter to open that pane, Esc to close.</span>
-          {/* A driven run has no pane to close, so without this the board keeps every
-              finished run until the app restarts. Only the finished ones go: a live run
-              cannot be dismissed, it can only be stopped. */}
-          {drives.some(runDone) && (
-            <button
-              className="ghost small"
-              onClick={() => {
-                void api.clearDrives()
-                setDrives((all) => all.filter((r) => !runDone(r)))
-              }}
-            >
-              Clear finished
-            </button>
-          )}
           <button className="primary" onClick={onClose}>
             Close
           </button>

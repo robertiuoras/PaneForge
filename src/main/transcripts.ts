@@ -129,7 +129,7 @@ function transcripts(dir: string): { file: string; at: number }[] {
  *
  * Headless runs (`claude -p ...`) file their transcript in the same per-cwd folder as
  * the real session, and they finish AFTER it: the /clear handoff writer, and the
- * dispatcher's agentic runs, which are given the repo as their cwd because they have
+ * app-driven runs, which are given the repo as their cwd because they have
  * to edit it. So the newest transcript in a folder is quite often a robot's, and it is
  * newest at exactly the moment a pane re-picks - which is what /clear makes it do.
  * Claiming one put the pane's resume id on a machine conversation: reopening the desk

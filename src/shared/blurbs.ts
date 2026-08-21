@@ -59,11 +59,6 @@ export const BLURBS: Blurb[] = [
     text: 'Open one or more panes, each an agent running in a project folder. Tick several projects to start them all in one go, and each pane keeps its own terminal, history and folder.'
   },
   {
-    id: 'improve',
-    title: 'Improve',
-    text: 'A pass over the prompt before it is sent: it clarifies what you asked, adds the context the agent would otherwise ask for, and shows you the rewrite so you can edit it or send the original.'
-  },
-  {
     id: 'stash',
     title: 'Stash',
     text: 'Everything you copy, kept in a list you can float over any window. Click an entry to put it back on the clipboard, pin the ones you keep needing, and drag files or images straight out of it.'

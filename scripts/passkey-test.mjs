@@ -603,12 +603,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gated.has('pty:choose'), 'answering a question is still behind the passkey')
 
   // The three classes the gate now recognises, spelled out so a reader can check them:
-  //  - runs a process here (drive:start, improve:run, agents:install, shell:editor, ...)
+  //  - runs a process here (agents:install, shell:editor, sessions:start, ...)
   //  - changes who may reach here (config:set, the phone:* switches, every remote:* pairing)
   //  - is irreversible or reads what was never on the phone's screen (history:delete,
   //    clipboard:read - the DESK's clipboard, where a password manager's paste lives)
-  ok(gated.has('drive:start') && gated.has('goal:add'), 'the autonomous drivers are gated')
-  ok(gated.has('improve:run') && gated.has('research:run'), 'the agent-CLI runs are gated')
   ok(gated.has('agents:install') && gated.has('update:install'), 'installers are gated')
   ok(gated.has('config:set'), 'the config that decides what start runs is gated')
   ok(gated.has('phone:tunnel') && gated.has('remote:pair'), 'the ways in are gated')

@@ -247,25 +247,6 @@ function defaults(): Config {
     // and missing-full-stop complaint. `auto` also spends a language-detection pass on
     // every clip and can mis-detect on an accent; dictation here is always English.
     voice: { enabled: true, model: 'small', language: 'en', engine: 'auto' },
-    // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
-    // nothing and nothing runs until a person clicks - which is what made off-by-default
-    // overcautious: the one person who wanted it on had to find a setting to learn the
-    // feature existed. Every other default still chosen so the first use changes as
-    // little as possible: the pane's own agent, one question at most, balanced budget,
-    // no telemetry, and no knowledge source until the user points at one.
-    promptImprove: {
-      mode: 'suggest',
-      engine: '',
-      model: '',
-      clarify: 'minimal',
-      optimise: 'balanced',
-      capabilities: true,
-      idleMs: 1200,
-      vaultPath: '',
-      indexScript: '',
-      telemetry: false,
-      telemetryText: false
-    },
     // On, unlike promptImprove: this one spends nothing and starts nothing. No archive is
     // configured by default - the app's own history is what it runs on, and a second one is
     // only worth naming if the person already has prompts written down somewhere else.
@@ -292,13 +273,6 @@ function defaults(): Config {
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
     swarmRoles: DEFAULT_ROLES,
-    // On: every agent the app can drive only runs headlessly with its prompt off, so off
-    // by default would ship the feature dead. What K4 adds is that it is now sayable.
-    driveUnattended: true,
-    // The report is on by default because it costs nothing when the ask never came from
-    // a channel - TaskDriver stores the row and posts nowhere. The key is empty until
-    // the endpoint starts demanding one.
-    dispatch: { reportUrl: 'https://app.taskdriver.ai/api/dispatch/report', reportKey: '' },
     remote: defaultRemote(),
     // Off, and it stays off until Settings says otherwise: serving the UI over HTTP hands
     // a browser a pane, and a pane runs commands on this machine.
@@ -334,10 +308,6 @@ export function getConfig(): Config {
       ...raw,
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
-      // Merged rather than replaced: a config written before this feature existed has the
-      // key missing entirely, and an upgrade must land on `mode: 'off'` rather than on
-      // `undefined`, which every read below would then have to guard.
-      promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
       recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
       autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
@@ -349,7 +319,6 @@ export function getConfig(): Config {
         ...(base.autoHandoff ?? {}),
         ...(raw.autoHandoff ?? {})
       },
-      dispatch: { ...base.dispatch, ...(raw.dispatch ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },

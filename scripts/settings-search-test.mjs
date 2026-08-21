@@ -44,7 +44,7 @@ for (const f of ['settings-index.mjs', 'gen-settings-index.mjs', 'settings-searc
 
 // Every tab the rail draws has at least one setting on it, or the search can send
 // somebody to a page with nothing marked on it.
-const TABS = ['general', 'appearance', 'sounds', 'agents', 'stash', 'voice', 'prompts', 'discord', 'system']
+const TABS = ['general', 'appearance', 'sounds', 'agents', 'stash', 'voice', 'discord', 'system']
 for (const tab of TABS) {
   ok(`tab ${tab} has settings indexed`, settings.some((s) => s.tab === tab))
 }

@@ -24,7 +24,6 @@ import type {
   AdminStatus,
   Config,
   DiscordStyle,
-  ImproveStatus,
   RestoreMode,
   UpdateState,
   VoiceStatus,
@@ -66,7 +65,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
+type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'stash' | 'voice' | 'discord' | 'system'
 
 /**
  * The rail down the left of the dialog.
@@ -88,7 +87,6 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex gemini copilot cursor install uninstall model custom cli path' },
   { id: 'stash', label: 'Stash', note: 'Clipboard history', find: 'clipboard copy paste history overlay pin float peek images files' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
-  { id: 'prompts', label: 'Prompts', note: 'Improving what you type', find: 'improve prompt rewrite clarify optimise vault knowledge capability telemetry engine' },
   { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },
   { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
 ]
@@ -174,7 +172,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
     touch: matchMedia('(pointer: coarse)').matches,
     prefer: config?.voice.engine ?? 'auto'
   })
-  const [improve, setImprove] = useState<ImproveStatus | null>(null)
   // Which agent the console below is for, and whether it is being put on or taken off.
   const [installing, setInstalling] = useState('')
   const [mode, setMode] = useState<'install' | 'uninstall'>('install')
@@ -192,7 +189,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
     api.adminStatus().then(setAdmin)
     api.updateState().then(setUpdate)
     api.voiceStatus().then(setVoice)
-    api.improveStatus().then(setImprove)
     return api.onUpdate(setUpdate)
   }, [rescan])
 
@@ -594,12 +590,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   }
                   label="Close a pane nobody has touched for a while"
                   hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
-                />
-                <Switch
-                  checked={config.driveUnattended !== false}
-                  onChange={(v) => onChange({ driveUnattended: v })}
-                  label="Let a driven lane run unattended"
-                  hint="Drive starts a coding CLI with its permission prompt turned off - Claude with --permission-mode bypassPermissions, Codex with --full-auto, Gemini and Qwen with --yolo - because an agent that stops to ask nobody is an agent that hangs until its budget kills it. What it may touch is a worktree the app made, on a branch nothing merges by itself. Off refuses to start or queue a driven run at all, and says which flag it refused; panes you launch yourself are unaffected and still ask."
                 />
                 <Switch
                   checked={config.autoAnswer?.enabled === true}
@@ -1188,174 +1178,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
             </>
           )}
 
-          {tab === 'prompts' && (
-            <>
-              <div className="setting">
-                <label>Prompt improvement</label>
-                <span className="hint">
-                  Before a prompt is sent, PaneForge can rewrite it into a shorter, more specific
-                  brief - carrying this project's own context, asking at most one question, and
-                  naming only what materially helps. It never sends anything: you read the
-                  suggestion, edit it if you like, and press Enter yourself.
-                </span>
-                <Select
-                  value={config.promptImprove.mode === 'off' ? 'off' : 'suggest'}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        mode: v as 'off' | 'suggest'
-                      }
-                    })
-                  }
-                  menuWidth={340}
-                  options={[
-                    { value: 'off', label: 'Off', hint: 'nothing runs, nothing is spent' },
-                    {
-                      value: 'suggest',
-                      label: 'Suggest',
-                      hint: 'offer a chip when a draft goes quiet'
-                    }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <div className="setting-row">
-                  <span className="hint">
-                    {improve?.available
-                      ? `The improver runs through ${improve.engine}, headlessly, in an empty folder with no access to this repo. It counts against that CLI's plan.`
-                      : 'No agent CLI on PATH to run the improver. Install one from the Agents tab.'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="setting">
-                <label>Questions</label>
-                <span className="hint">
-                  Only ever for what you alone know - your audience, the feeling you want, a
-                  business requirement, an irreversible choice. Never which library to use.
-                </span>
-                <Select
-                  value={config.promptImprove.clarify}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        clarify: v as 'minimal' | 'balanced'
-                      }
-                    })
-                  }
-                  menuWidth={300}
-                  options={[
-                    { value: 'minimal', label: 'Minimal', hint: 'at most one, and only if it matters' },
-                    { value: 'balanced', label: 'Balanced', hint: 'up to three' }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <label>Spend</label>
-                <Select
-                  value={config.promptImprove.optimise}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        optimise: v as 'quality' | 'balanced' | 'tokens'
-                      }
-                    })
-                  }
-                  menuWidth={340}
-                  options={[
-                    { value: 'quality', label: 'Quality', hint: 'more context and references' },
-                    { value: 'balanced', label: 'Balanced', hint: '~2500 tokens in, 700 out' },
-                    { value: 'tokens', label: 'Fewest tokens', hint: 'drops references first' }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <label>Knowledge</label>
-                <span className="hint">
-                  Where researched capability knowledge is read from. Both are optional and both
-                  are read-only. Only notes a human marked reviewed or verified are ever offered
-                  as something to use; drafts, archives and restricted notes never leave the
-                  vault. {improve?.providers.length
-                    ? `Active: ${improve.providers.join(', ')}.`
-                    : 'None configured - improvements still work, with no references.'}
-                </span>
-              </div>
-
-              <div className="setting">
-                <label>Obsidian vault folder</label>
-                <input
-                  className="text"
-                  spellCheck={false}
-                  placeholder={improve?.vaultCandidate || 'leave empty to use no vault'}
-                  value={config.promptImprove.vaultPath}
-                  onChange={(e) =>
-                    onChange({
-                      promptImprove: { ...config.promptImprove, vaultPath: e.target.value }
-                    })
-                  }
-                />
-                {improve?.vaultCandidate && !config.promptImprove.vaultPath && (
-                  <button
-                    className="ghost"
-                    onClick={() =>
-                      onChange({
-                        promptImprove: {
-                          ...config.promptImprove,
-                          vaultPath: improve.vaultCandidate
-                        }
-                      })
-                    }
-                  >
-                    Use {improve.vaultCandidate}
-                  </button>
-                )}
-              </div>
-
-              <div className="setting">
-                <label>vaultindex.py (optional, preferred)</label>
-                <span className="hint">
-                  If you have the vault-index CLI, point at its `vaultindex.py` and it is used
-                  instead of reading the folder directly - it enforces the sensitivity rules when
-                  the index is built rather than when a query runs, which is the stronger
-                  guarantee.
-                </span>
-                <input
-                  className="text"
-                  spellCheck={false}
-                  placeholder="…/vault-index/vaultindex.py"
-                  value={config.promptImprove.indexScript}
-                  onChange={(e) =>
-                    onChange({
-                      promptImprove: { ...config.promptImprove, indexScript: e.target.value }
-                    })
-                  }
-                />
-              </div>
-
-              <div className="switches">
-                <Switch
-                  checked={config.promptImprove.capabilities}
-                  onChange={(v) =>
-                    onChange({ promptImprove: { ...config.promptImprove, capabilities: v } })
-                  }
-                  label="Consult the capability catalogue (libraries, patterns and their trade-offs)"
-                />
-                <Switch
-                  checked={config.promptImprove.telemetry}
-                  onChange={(v) =>
-                    onChange({ promptImprove: { ...config.promptImprove, telemetry: v } })
-                  }
-                  label="Record what improvements cost and whether they were accepted (counts and hashes, never the text)"
-                />
-              </div>
-            </>
-          )}
 
           {tab === 'discord' && (
             <>

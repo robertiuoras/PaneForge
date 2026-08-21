@@ -1011,62 +1011,6 @@ download, and the only one that sends audio off the device).
   hearing shows it by not moving. It also appears while the model downloads.
 - `npm run test:voice`.
 
-## The app can run a lane itself
-
-`docs/agentic.md` is the plan; I1–I4 of it are built. A lane the app drives is a **headless
-CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
-`readsBusy()`. Panes stay ptys. It produces a branch and a diff and **merges nothing** —
-`lane.mjs ready` is still a person's word.
-
-- **A run that changed nothing is a failure**, not a pass. The gate's first step is the
-  diffstat and `noOp` calls two lines or fewer nothing. Same rule for a CLI that exits 0
-  having printed nothing: that is `silent`, not `done`.
-- **`diffSince` runs `git add -A --intent-to-add` first.** Without it `git diff` cannot see
-  a file the agent created and never added, and a lane whose deliverable is one new file
-  reports itself as idle.
-- **The gate is diffstat → typecheck → suite → reviewer**, cheapest first. A missing step
-  says *skipped*; it never reads as a pass. `parseVerdict` fails closed — a reviewer that
-  crashed or answered prose has not passed the lane.
-- **The reviewer runs in an empty directory**, not the lane: it is started with the same
-  permissions as the agent it judges and would otherwise be able to edit the branch to
-  agree with itself.
-- **The retry prompt is a local, never the lane's `note`** — `note` is the board's line and
-  every tool call overwrites it.
-- The budget timer is armed before the first await, not in a `finally`. Two retries then
-  stop. Three lanes at a time, 900ms apart.
-- **The app says what a driven lane may do, and the words are derived from the arguments
-  it passes.** Every entry in `HEADLESS` starts its CLI with the permission prompt off, and
-  that is deliberate — an agent that stops to ask is one that hangs until its budget kills
-  it. `unattended()` finds the flag in the args we really send, so the chip on the board,
-  the line above Drive and the refusal all name the same string the process carries; make a
-  posture stricter and every one of them falls silent rather than claiming otherwise.
-  `driveUnattended` in config may refuse the whole thing, by name, at both doors
-  (`drive:start` and `goal:add`). `npm run test:unattended`.
-- **Quitting kills the driven agents** (`stopAllDrives`, on `before-quit` AND `hardExit`).
-  They are detached, in their own process group, and are not ptys — `strays.ts` has never
-  heard of them, so without that line the app leaves an agent editing a worktree with
-  nothing left to stop it.
-- **A goal outlives the window** (I4, `main/goals.ts` + `shared/goals.ts`). Drive it queues
-  one rather than starting it on the spot: it is in `goals.json` under userData, written
-  through a temp file and a rename, and **one runs at a time** — a second press lines up
-  behind the first instead of handing two runs the same worktree pool.
-  - **A goal caught running by a restart is `interrupted`, never `done` and never re-run
-    by itself.** Its agents died with the process, so the branch holds whatever had been
-    written by then; calling that a pass puts unread work on a board saying "ready to
-    review", and re-queueing it starts a second agent over a worktree nobody has looked at.
-    Retry is a press.
-  - **The queue is what finally fills `promptArchive`'s `outcome`.** `recordOutcome` stamps
-    the row an ask already has — `<repo> <branch@sha> verified, N files` — and never
-    creates one, because that archive is fed from bytes on their way to a pty and a mission
-    typed into a dialog is not one of those.
-  - One lane throwing may not take the run with it: `driveLane` is wrapped, and before that
-    a malformed plan reached `void drive(...)` as an unhandled rejection that killed every
-    other lane and left them reading `working` for ever.
-- `npm run test:agentic` spawns real stubs into real repositories, including one that hangs
-  and must be killed and one that fails its own gate and then fixes it. No CLI needed.
-  `npm run test:goals` does the same for the queue: a goal read back after a simulated
-  kill, and a second goal that starts because the first one ended.
-
 ## ...and it knows what is serving, and can stop one
 
 "What dev servers are running" had no answer anywhere in this app, and the app already had
@@ -1233,12 +1177,6 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
-| `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
-| `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
-| `npm run test:goals` | the queue that outlives the window |
-| `npm run test:unattended` | that the words for what a driven lane may do are DERIVED from the arguments it carries |
-| `npm run test:dispatch` | the router picking agent, model and budget - and the four cases where the cheap tier must not be chosen |
-| `npm run test:dispatchpane` | a dispatched run as a real pane: closes on success, STAYS on failure, a keystroke drops it ungated, an exited pty is a failure not a wait |
 | `npm run test:turncopy` | where a turn's two copy icons go, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
 | `npm run test:cursorclick` | the keys a click sends, the clicks refused, and that a BARE click emits no vertical arrow at any input |
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go, with the capture-phase `stopPropagation` kept as the control |
@@ -1265,7 +1203,6 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:copymode` | keyboard copy mode arithmetic |
 | `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
 | `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
-| `npm run test:improve` | prompt improvement, model-free |
 | `npm run test:voice` | dictation: which transcriber, and a spoken clip through it |
 | `npm run test:recall` | "you have asked this before", and PARITY with the canonical fingerprint |
 | `npm run test:rename` | the folder rename, on a throwaway repo |
@@ -1288,16 +1225,14 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 
 Needing a real window (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view`, `test:stashdrag`, `test:activate`,
-`test:improveview`, `test:turncopyview` (happy minimized), `test:restorefix` (two launches),
+`test:turncopyview` (happy minimized), `test:restorefix` (two launches),
 `test:askclick`, `test:askrender`, `test:phoneview`.
 
 Out of the default suite because they need the network: `test:discordbrand` (asks Discord
 what `DISCORD_APP_ID` is called AND whether `PRESENCE_IMAGE`'s asset still exists - the two
 halves fail separately), and `node scripts/mac-update-test.mjs --live <version>` (~120 MB).
 
-The research pipeline's gate is `npm run test:research`, and `scripts/capability-ingest.mjs`
-is the ONLY door into the catalogue - see `RESEARCH-POLICY.md`. Other agent-runners are
-watched by `npm run competitors` (`npm run test:competitors`), which prints only what moved.
+Other agent-runners are watched by `npm run competitors` (`npm run test:competitors`), which prints only what moved.
 
 ## A turn the transport cut in half finishes itself
 

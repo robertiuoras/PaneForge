@@ -28,7 +28,6 @@ import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
-import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
 import { askMessage, postAsk, telegramCreds } from './askNotify'
@@ -51,45 +50,7 @@ import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
 import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
-import { cancelImprove, improve, resolveEngine, runCli } from './improve'
-import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
-import { cancelResearch, research } from './researchRun'
-import type { ClaimLane, PaneDriver } from './supervisor'
-import {
-  clearFinishedDrives,
-  driveCwds,
-  listDrives,
-  notePaneInput,
-  onDriveChange,
-  startDrive,
-  stopAllDrives,
-  stopDrive
-} from './supervisor'
-import {
-  addGoal,
-  cancelGoal,
-  clearFinishedGoals,
-  configureGoals,
-  listGoals,
-  noteDriveChange,
-  onGoalReport,
-  onGoalsChange,
-  priorDispatch,
-  removeGoal,
-  retryGoal
-} from './goals'
-import { route } from '../shared/dispatch'
-import { buildAsk } from './dispatchAsk'
-import { buildReport, postReport } from './dispatchReport'
-import { currentBranch } from './agentRun'
-import type { Goal } from '../shared/goals'
-import type { DriveRequest, DriveRun } from '../shared/types'
-import { buildContextPack } from './contextPack'
-import { stage } from '../shared/capability'
-import { firstExistingVault, loadCapabilities } from './knowledge'
 import { priorPrompt, recordPrompt } from './promptArchive'
-import { recordImprovement } from './promptAudit'
-import { insertSequence } from '../shared/promptSchema'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
   cancelDeferred,
@@ -216,20 +177,13 @@ import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   GameModeStatus,
-  ImproveOptions,
-  ImproveOutcomeKind,
-  ImproveResult,
-  ImproveStatus,
   InstallOutcome,
   PipeInfo,
   RemoteState,
-  ResearchReport,
   RestoreAnswer,
   RestoreOffer,
   RestorePane,
   Session,
-  SplitPlan,
-  SplitRequest,
   StartSessionRequest,
   StashConfig,
   SwarmRequest,
@@ -238,7 +192,6 @@ import type {
   UpdateState
 } from '../shared/types'
 import type { AgentSpec } from '../shared/agents'
-import type { ImproveMetrics } from '../shared/promptBudget'
 
 // Before a single handler registers: the phone client calls the same ipcMain bodies the
 // window does, and the tap can only record registrations it was in place for.
@@ -1241,10 +1194,6 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 )
 ipcMain.on('pty:write', (_e, id: string, data: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
-  // A person typing into a dispatched pane takes it over: the run is dropped, never
-  // fought over. Only this channel carries a person's bytes - the dispatcher's own
-  // prompt and retry brief go through `manager.write` directly.
-  notePaneInput(id)
   watchForClear(id, data)
   manager.write(id, data)
 })
@@ -1372,217 +1321,6 @@ ipcMain.on(
 )
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
-
-// --- split one task across lanes -------------------------------------------
-//
-// A swarm shares a checkout because its roles interleave. A split does the opposite:
-// every workstream is moved into its own git worktree, through the same `laneFor` the
-// session list uses, so two agents cannot reach the same file rather than being asked
-// not to. main/split.ts explains why that is the difference worth having.
-ipcMain.handle(
-  'sessions:planSplit',
-  async (_e, req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan> => {
-    const nothing = (refused: string): SplitPlan => ({ lanes: [], contracts: '', refused })
-    if (!req.mission.trim()) return nothing('Describe the task first.')
-
-    const cfg = getConfig().promptImprove
-    const specs = listAgents(false).map((a) => a as AgentSpec)
-    const engine = resolveEngine(cfg.engine, req.agent ?? '', specs, cfg.model)
-    if (!engine) return nothing('No coding CLI on PATH to plan the split with.')
-
-    // The top level of the repository, so the plan claims paths that exist. Only the
-    // top level: a full tree is most of a context window and the planner is choosing
-    // owners, not writing the code.
-    let tree: string[] = []
-    try {
-      tree = readdirSync(req.cwd, { withFileTypes: true })
-        .filter((d) => !d.name.startsWith('.') && d.name !== 'node_modules')
-        .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
-    } catch {
-      /* a folder we cannot list still gets a plan, just a blinder one */
-    }
-
-    const out = await runCli(engine, splitPayload(req.mission, tree), {
-      key: `split:${req.cwd}`,
-      // Its own deadline, not improvement's: a plan is a much longer answer than a
-      // rewritten prompt, and 90s was measured to be under what it costs. See
-      // SPLIT_DEADLINE_MS for the number that was measured.
-      deadlineMs: SPLIT_DEADLINE_MS
-    })
-    return out ? parsePlan(out) : nothing('The planner produced no answer.')
-  }
-)
-
-ipcMain.handle('sessions:split', async (_e, req: SplitRequest): Promise<Session[]> => {
-  const lanes = req.plan.lanes.filter((l) => l.enabled !== false)
-  if (!lanes.length) return []
-  const plan: SplitPlan = { ...req.plan, lanes }
-  const out: Session[] = []
-  // Same claim list as a workspace launch: the session list has not caught up mid-loop,
-  // so without this every lane would be handed the same free worktree.
-  const claimed: string[] = []
-  for (const [i, lane] of lanes.entries()) {
-    try {
-      const started = await laneFor(
-        {
-          cwd: req.cwd,
-          title: lane.name,
-          role: lane.name,
-          agent: req.agent as StartSessionRequest['agent'],
-          model: req.model,
-          prompt: laneBrief(plan, i, req.mission),
-          // Staggered like a swarm, and for a second reason here: each launch may have
-          // to create a worktree, and N `git worktree add` on one repository at once
-          // is a fight over one index lock.
-          promptDelay: i * 900
-        },
-        claimed
-      )
-      claimed.push(started.cwd)
-      out.push(manager.start(started))
-    } catch {
-      // One lane that could not be made must not cost the others their launch.
-    }
-  }
-  return out
-})
-
-// --- the app drives the plan itself ----------------------------------------
-//
-// Split spawns panes and never looks again. This runs the same plan with no panes: one
-// headless agent per lane, verified before it is called finished, and never merged.
-// `docs/agentic.md` is the reasoning; `main/supervisor.ts` is the loop.
-//
-// The claim is passed IN rather than imported by the supervisor, because the list of
-// worktrees already in use is the session list, which lives here. A driven lane is taken
-// out of the same pool a pane would have used - two agents cannot both hold `-a`,
-// whether or not either of them has a window.
-// Built per run rather than once, so two drives in two repositories cannot end up
-// claiming out of each other's pool - the repo is captured, never a module-level latch.
-const claimForDrive =
-  (repo: string): ClaimLane =>
-  async (_name, taken) => {
-    const busy = [
-      ...manager
-        .list()
-        .filter((s) => s.status !== 'exited')
-        .map((s) => s.cwd),
-      // Lanes other DRIVEN runs are holding. They have no pane, so the list above cannot
-      // see them - see driveCwds().
-      ...driveCwds(),
-      ...taken
-    ]
-    const lane = await resolveLane(repo, busy)
-    // `resolveLane` hands back the folder it was given when the pool is full. A driven
-    // lane sharing the main checkout with whoever is sitting in it is the one thing
-    // lanes exist to prevent, so that is a refusal, not a fallback.
-    return lane.cwd === repo ? null : { cwd: lane.cwd, branch: lane.branch ?? '' }
-  }
-
-// One listener, and it feeds two readers: the board, which wants every change, and the
-// goal queue, which only cares that a run it started has ended. The supervisor takes a
-// single listener on purpose, so the fan-out is here rather than a second registration.
-onDriveChange((run) => {
-  send('drive:changed', run)
-  noteDriveChange(run)
-})
-
-// D2: how a dispatched run gets its pane. The same `laneFor` a person's launch goes
-// through, so the worktree comes out of the same pool, and `manager.start` types the
-// prompt through the same queue a Split launch uses. `alive` answers from the session
-// list rather than an exit event, because the watcher polls anyway - a session that is
-// gone entirely counts as exited, which it is.
-const dispatchPanes: PaneDriver = {
-  open: async (req) => {
-    const started = await laneFor(
-      {
-        cwd: req.cwd,
-        title: req.title,
-        role: 'dispatched',
-        agent: req.agent as StartSessionRequest['agent'],
-        model: req.model,
-        prompt: req.prompt
-      },
-      driveCwds()
-    )
-    const s = manager.start(started)
-    return { id: s.id, cwd: started.cwd, branch: await currentBranch(started.cwd) }
-  },
-  // The supervisor's retry brief goes into a pane that is already running, unattended, so
-  // it needs the same submit discipline as a launch prompt: `write(text + '\r')` leaves the
-  // brief in the composer with nobody to press Enter (measured 2026-08-11 for launch
-  // prompts, found again in the lane hand-over on 2026-08-17).
-  type: (id, text) => manager.sendPrompt(id, text),
-  close: (id) => manager.kill(id),
-  alive: (id) => {
-    const s = manager.list().find((x) => x.id === id)
-    return Boolean(s && s.status !== 'exited')
-  }
-}
-
-// Both doors into a driven run ask the same question first (K4). A refusal throws, so the
-// renderer's invoke rejects with the sentence naming the flag - a button that silently
-// does nothing is the failure mode this is meant to avoid, not a second one to add.
-function refuseUnattended(agent: string): void {
-  const why = driveRefusal(agent, getConfig().driveUnattended !== false)
-  if (why) throw new Error(why)
-}
-
-ipcMain.handle('drive:start', (_e, req: DriveRequest): DriveRun => {
-  refuseUnattended(req.agent ?? 'claude')
-  return startDrive(
-    {
-      cwd: req.cwd,
-      mission: req.mission,
-      plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
-      agent: req.agent ?? 'claude',
-      model: req.model,
-      skipReview: req.skipReview
-    },
-    claimForDrive(req.cwd)
-  )
-})
-ipcMain.handle('drive:stop', (_e, id: string) => stopDrive(id))
-ipcMain.handle('drive:stopAll', () => stopAllDrives())
-ipcMain.handle('drive:list', () => listDrives())
-ipcMain.handle('drive:clear', () => clearFinishedDrives())
-
-// --- the goal queue (I4) ----------------------------------------------------------------
-// A goal outlives this window: it is on disk, it starts by itself when the one in front of
-// it finishes, and it says what it turned into. `configureGoals` also does the startup
-// recovery - anything left `running` by a kill becomes `interrupted` - so it runs at wiring
-// time and not on the first press.
-onGoalsChange((list) => send('goals:changed', list))
-configureGoals(claimForDrive, { paneDriver: dispatchPanes })
-// D3: a finished dispatched goal reports back where the ask came from. TaskDriver owns
-// the Discord token and the channel row; this desk only ever POSTs.
-onGoalReport((g) => {
-  const d = getConfig().dispatch
-  const body = buildReport(g)
-  if (body && d.reportUrl) postReport(d.reportUrl, body, d.reportKey)
-})
-
-ipcMain.handle('goal:add', (_e, req: DriveRequest): Goal => {
-  // D5.2: the router prices the ask - tier, model, budget, gate - and the board shows
-  // its reasoning. The dialog's own picks still win where they were made deliberately.
-  const plan = route(buildAsk(req.cwd, req.mission, priorDispatch(req.mission)))
-  const agent = req.agent ?? plan.agent
-  refuseUnattended(agent)
-  return addGoal({
-    cwd: req.cwd,
-    mission: req.mission,
-    plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
-    agent,
-    model: req.model || (agent === plan.agent ? plan.model : ''),
-    skipReview: req.skipReview ?? !plan.gate.includes('review'),
-    dispatch: plan
-  })
-})
-ipcMain.handle('goal:list', () => listGoals())
-ipcMain.handle('goal:cancel', (_e, id: string) => cancelGoal(id))
-ipcMain.handle('goal:retry', (_e, id: string) => retryGoal(id))
-ipcMain.handle('goal:remove', (_e, id: string) => removeGoal(id))
-ipcMain.handle('goal:clear', () => clearFinishedGoals())
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
@@ -3037,108 +2775,6 @@ ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
 ipcMain.handle('history:delete', (_e, id: string) => history.remove(id))
 
-// --- prompt improvement ----------------------------------------------------
-//
-// A mirrored pane improves ON THE HOST and never on the mirror - the same rule the busy
-// footer follows. The mirror has neither the repository nor the project's memory, so an
-// improvement computed here would be a brief about a folder this machine does not have.
-// Rather than route the request over the link (stage 2 work), it is declined by name.
-
-ipcMain.handle('improve:status', (): ImproveStatus => {
-  const cfg = getConfig().promptImprove
-  const specs = listAgents(false).map((a) => a as AgentSpec)
-  const engine = resolveEngine(cfg.engine, '', specs, cfg.model)
-  const providers: string[] = []
-  if (cfg.indexScript) providers.push('vault-index')
-  if (cfg.vaultPath) providers.push('markdown')
-  if (cfg.capabilities) providers.push('catalogue')
-  return {
-    available: Boolean(engine),
-    engine: engine?.id ?? '',
-    install: 'npm i -g @anthropic-ai/claude-code',
-    providers,
-    vaultCandidate: firstExistingVault()
-  }
-})
-
-async function runImprove(
-  id: string,
-  draft: string,
-  answers: Array<{ question: string; answer: string }> | undefined,
-  options: ImproveOptions | undefined
-): Promise<ImproveResult> {
-  const decline = (error: string): ImproveResult => ({
-    ok: false,
-    error,
-    original: draft,
-    sources: [],
-    held: '',
-    metrics: {
-      originalTokens: 0,
-      improvedTokens: 0,
-      contextTokens: 0,
-      knowledgeTokens: 0,
-      knowledgeNotes: 0,
-      ms: 0,
-      questions: 0,
-      taskType: 'other',
-      engine: '',
-      outcome: 'failed',
-      secretsHeld: 0
-    }
-  })
-
-  const cfg = getConfig().promptImprove
-  if (cfg.mode === 'off') return decline('prompt improvement is off')
-  if (remote.owns(id)) return decline('that pane runs on another device - improve it there')
-
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return decline('no such pane')
-
-  const outcome = await improve({
-    sessionId: id,
-    cwd: session.cwd,
-    agent: session.agent,
-    draft,
-    git: await gitInfo(session.cwd).catch(() => null),
-    config: cfg,
-    specs: listAgents(false).map((a) => a as AgentSpec),
-    answers,
-    includeUntrusted: options?.includeUntrusted,
-    exclude: options?.exclude,
-    tweak: options?.tweak
-  })
-
-  // The derived stage, for catalogue entries only. A vault note has a status but no
-  // lifecycle - it was never a candidate that could be sandboxed - so it reports its
-  // status and is not offered a Remove control it has nothing to re-run without.
-  const byId = new Map(loadCapabilities().map((c) => [c.id, c]))
-
-  return {
-    ok: outcome.ok,
-    error: outcome.error,
-    original: outcome.original,
-    improvement: outcome.improvement,
-    // Provenance crosses the bridge as ids and titles, never as the note bodies: the
-    // sheet cites, it does not re-display somebody's vault.
-    sources: outcome.sources.map((n) => {
-      const cap = byId.get(n.id)
-      return {
-        id: n.id,
-        title: n.title,
-        provider: n.provider,
-        source: n.source,
-        trusted: n.trusted,
-        stage: cap ? stage(cap) : n.status,
-        stale: n.stale,
-        removable: Boolean(cap)
-      }
-    }),
-    held: outcome.held,
-    metrics: outcome.metrics
-  }
-}
-
 /**
  * "Has this been asked before?" — see main/promptArchive.ts.
  *
@@ -3184,97 +2820,6 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   }
 })
 
-ipcMain.handle('improve:run', (_e, id: string, draft: string, options?: ImproveOptions) =>
-  runImprove(id, draft, undefined, options)
-)
-ipcMain.handle(
-  'improve:answer',
-  (
-    _e,
-    id: string,
-    draft: string,
-    answers: Array<{ question: string; answer: string }>,
-    options?: ImproveOptions
-  ) => runImprove(id, draft, answers, options)
-)
-ipcMain.on('improve:cancel', (_e, id: string) => cancelImprove(id))
-
-// --- research this request -------------------------------------------------
-//
-// Never automatic, and never on a mirrored pane for the same reason improvement is not:
-// the research is about the project in front of the person, and this device does not have
-// that folder.
-ipcMain.handle('research:run', async (_e, id: string, draft: string): Promise<ResearchReport> => {
-  const nothing = (detail: string): ResearchReport => ({
-    ok: false,
-    outcome: 'failed',
-    detail,
-    kept: [],
-    rejected: [],
-    sources: [],
-    duplicates: 0,
-    ms: 0
-  })
-
-  const cfg = getConfig().promptImprove
-  if (cfg.mode === 'off') return nothing('prompt improvement is off')
-  if (remote.owns(id)) return nothing('that pane runs on another device - research it there')
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return nothing('no such pane')
-
-  const engine = resolveEngine(
-    cfg.engine,
-    session.agent,
-    listAgents(false).map((a) => a as AgentSpec),
-    cfg.model
-  )
-  if (!engine) return nothing('no CLI on PATH that could run the research')
-
-  const git = await gitInfo(session.cwd).catch(() => null)
-  // The stack, so a finding that cannot work here is never fetched. Only the framework
-  // ids leave this machine - not the context pack, not a path, not a dependency list.
-  const context = buildContextPack(session.cwd, git, 200)
-  return research({
-    sessionId: id,
-    // A sentence about the task, capped - never the draft verbatim, which is the thing
-    // that may hold a secret and which the envelope exists to keep out of a request.
-    task: draft.replace(/\s+/g, ' ').trim().slice(0, 300),
-    stack: context.stack,
-    engine
-  })
-})
-ipcMain.on('research:cancel', (_e, id: string) => cancelResearch(id))
-
-ipcMain.handle('improve:apply', async (_e, id: string, text: string) => {
-  if (remote.owns(id)) return { ok: false, error: 'that pane runs on another device' }
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return { ok: false, error: 'no such pane' }
-
-  const { wipe, payload, error } = insertSequence(text, session.agent)
-  if (!payload) return { ok: false, error: error ?? 'nothing safe to insert' }
-
-  // The same measured shape `clearPane()` uses: empty the box, wait for the CLI to settle,
-  // then paste. 320ms is the measured settle - at 40ms the key arrived before the TUI had
-  // redrawn. Bracketed paste so newlines land in the box instead of submitting it.
-  manager.write(id, wipe)
-  await new Promise((r) => setTimeout(r, 320))
-  manager.write(id, payload)
-  return { ok: true }
-})
-
-ipcMain.on(
-  'improve:record',
-  (_e, outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number) => {
-    const cfg = getConfig().promptImprove
-    // Hashes and counts. The text is only kept when the user has ticked for it, and even
-    // then a draft that still looks like it carries a credential is refused.
-    recordImprovement({ ...metrics, outcome }, '', '', {
-      enabled: cfg.telemetry,
-      keepText: false,
-      editedChars
-    })
-  }
-)
 
 // --- voice -----------------------------------------------------------------
 
@@ -3799,9 +3344,6 @@ function hardExit(): void {
   logQuit()
   updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
   installStagedMacUpdateOnQuit()
-  // The exit that does NOT go through before-quit, so it needs its own line: a driven
-  // agent is detached and in its own process group, and nothing below reaches it.
-  stopAllDrives()
   // The one thing shutdown() cannot reach: the ConPTY console hosts are OUR children,
   // not the agents', so no taskkill of an agent tree names them. This runs after we are
   // gone and only touches consoles whose parent is gone with us. See consoles.ts.
@@ -3842,11 +3384,6 @@ app.on('before-quit', () => {
   manager.shutdown()
   stopInstalls()
   // A driven lane's agent is a detached process in its own group - nothing joins it to
-  // this one once we are gone, and `strays.ts` has never heard of it because it is not a
-  // pty. Leaving one behind means an agent editing a worktree with nobody watching it and
-  // no way left to stop it. `stopAllDrives` kills the tree, and it is cheap when there is
-  // nothing to kill.
-  stopAllDrives()
   installStagedMacUpdateOnQuit()
 })
 app.on('will-quit', () => {
