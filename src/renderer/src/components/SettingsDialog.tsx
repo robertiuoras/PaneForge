@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { findSettings } from '@shared/settingsIndex'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
-import { DEFAULT_MASCOT } from '@shared/mascot'
+import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
 import { DEFAULT_TIPS } from '@shared/tips'
 import PetPicker from './PetPicker'
 import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
@@ -567,6 +567,37 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                       movement is which layer is showing rather than anything being redrawn.
                       Only the one you pick is ever on screen, and all of it stops while the
                       window is minimised.
+                    </p>
+                  </div>
+                )}
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+                  <div className="setting">
+                    <label>Take what it says away after</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={5}
+                      value={config.mascot?.hideSeconds ?? HIDE_SECONDS}
+                      onChange={(e) =>
+                        onChange({
+                          mascot: {
+                            ...DEFAULT_MASCOT,
+                            ...config.mascot,
+                            hideSeconds: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                    <p className="hint">
+                      Seconds. Everything it says is a reading - which pane closed, what it
+                      was working on, how long ago - and a reading left on screen stops being
+                      one: it becomes a box over the corner of the window saying something
+                      that was true a while ago. The clock restarts while you are typing at
+                      it, and a countdown before a pane is closed is never taken away early,
+                      because the press that stops the close is on it. 0 leaves everything up
+                      until you press it away.
                     </p>
                   </div>
                 )}

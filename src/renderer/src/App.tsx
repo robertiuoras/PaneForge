@@ -79,6 +79,8 @@ import {
   CLOSE_COUNTDOWN_MS,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
+  paneWord,
+  type ActedPane,
   type MascotConfig,
   type MascotPane
 } from '../../shared/mascot'
@@ -393,8 +395,25 @@ export default function App(): JSX.Element {
    */
   const paneWordRef = useRef((id: string) => {
     const i = sessionsRef.current.findIndex((x) => x.id === id)
-    return i < 0 ? 'a pane' : `pane ${i + 1}`
+    if (i < 0) return 'a pane'
+    const s = sessionsRef.current[i]
+    // The project as well as the number: "closed pane 3" names a keystroke, and the thing
+    // somebody wants back is a conversation. Same words the mascot uses everywhere else.
+    return paneWord({ name: projectNameOf(s.cwd) || s.title, pane: i + 1 } as MascotPane)
   })
+  /**
+   * ...and the same pane with what it was in the middle of.
+   *
+   * `Session.gist` is History's own line, pushed onto the live session so a sentence about
+   * a pane can be written while the pane still exists. Absent is said as nothing: a
+   * confident wrong subject on a pane that has just been closed is worse than none.
+   */
+  const paneActedRef = useRef(
+    (id: string): ActedPane => ({
+      word: paneWordRef.current(id),
+      doing: sessionsRef.current.find((x) => x.id === id)?.gist
+    })
+  )
   sessionsRef.current = sessions
   /**
    * Last input anywhere in the app that did NOT go into a pane's pty - a click, a drag,
@@ -1666,7 +1685,7 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    { what: 'closed' | 'moved' | 'trimmed'; panes: string[]; mb?: number; at: number } | undefined
+    { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number } | undefined
   >(undefined)
   /**
    * How a sweep asks for panes to be closed.
@@ -3006,7 +3025,7 @@ export default function App(): JSX.Element {
         mb = Math.round((mb * live.length) / ids.length)
       }
       for (const id of live) void api.killSession(id)
-      setActed({ what: 'closed', panes: live.map((id) => paneWordRef.current(id)), mb, at: Date.now() })
+      setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
     [stillCloseable]
   )
@@ -3078,7 +3097,10 @@ export default function App(): JSX.Element {
         memMb: usage?.panes[s.id]?.rssMb ?? null,
         idleMs: Math.max(0, Date.now() - (Math.max(s.lastKeyboard, s.lastOutput ?? 0) || s.createdAt || Date.now())),
         remote: !!s.remote,
-        asking: !!s.ask
+        asking: !!s.ask,
+        // What this pane was asked to do, so every sentence about it can say which
+        // conversation it is rather than only which key reaches it.
+        doing: s.gist
       })),
     [sessions, usage]
   )
