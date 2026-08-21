@@ -15,6 +15,24 @@
  * is the blur the pixel grid replaced. Detail here comes from LAYERS and shades, not from
  * more cells.
  *
+ * **An eye is not a lit rectangle.** The first ten pets drew every eye as two or three
+ * cells of the accent colour, which is a lamp rather than a face: at 48px a flat block
+ * has no direction, no roundness and nothing to blink, so nine of the ten read as a
+ * coloured blob with two dots and the report was the plain version of that - "our pets
+ * look terrible". An eye that reads is three colours in one shape: a light ring (`l`) so
+ * the eye has a white to sit in, a near-black pupil (`k`) so it has somewhere to point,
+ * and one cell of the ring left showing at the top as the glint. `EYE`, `EYE_S` and
+ * `EYE_B` below are that shape at three sizes, stamped in one place by `both()` so the
+ * pair can never drift a cell apart. The `look` frame moves the PUPIL inside the ring
+ * rather than moving the whole eye sideways, which is the difference between a glance and
+ * the whole face sliding.
+ *
+ * The same rule made the rest of the features: an ear is an outline with a warm inner
+ * (`d` around `a`), a muzzle is a light patch with a dark nose in it, a chest is a lighter
+ * shade of the body rather than a different colour. Three shades of one hue plus the
+ * accent is the whole palette - there is no fifth colour to reach for, and that is what
+ * keeps ten pets looking like one family.
+ *
  * The slots are named for what the robot does with them, and every pet is free to mean
  * something else by the same slot - the stylesheet only knows the clock:
  *
@@ -28,7 +46,7 @@
  * A pet may leave any of them out and simply be stiller. What it may NOT do is move
  * vertically on a loop: the first mascot bobbed and floating is the one thing everybody
  * complained about. `npm run test:anim` refuses anything but transform and opacity, and
- * `npm run test:pets` refuses a wonky grid, an unknown colour and a pose nothing draws.
+ * `npm run test:mascot` refuses a wonky grid, an unknown colour and a pose nothing draws.
  */
 
 /** One cell of art. `.` is transparent; three shell shades, the dark glass, the accent. */
@@ -56,11 +74,52 @@ export const art = (rows: string[]): string[] => {
   return out.slice(0, GRID)
 }
 
+/** An empty grid, for a layer built by stamping rather than by typing rows. */
+const blank = (): string[] => art([])
+
+/**
+ * A block of cells written into a copy of `rows` at (x, y); `.` inside the block leaves
+ * whatever was underneath.
+ *
+ * Counting dots is how an eye ends up one cell from its twin, and a pair of eyes half a
+ * pixel apart is exactly the wrongness nobody can name when they say a face looks off. A
+ * stamped block cannot drift: the same four rows go down at two x positions.
+ */
+export const stamp = (rows: string[], x: number, y: number, block: string[]): string[] => {
+  const out = art(rows).map((r) => [...r])
+  block.forEach((line, dy) => {
+    const ry = y + dy
+    if (ry < 0 || ry >= GRID) return
+    ;[...line].forEach((c, dx) => {
+      const rx = x + dx
+      if (c === '.' || rx < 0 || rx >= GRID) return
+      out[ry][rx] = c
+    })
+  })
+  return out.map((r) => r.join(''))
+}
+
+/** The same block at two columns: a pair of eyes, a pair of ears, two paws. */
+const both = (block: string[], x1: number, x2: number, y: number): string[] =>
+  stamp(stamp(blank(), x1, y, block), x2, y, block)
+
+/** A lid: a solid block of one colour, the size of the eye it has to cover. */
+const lid = (w: number, h: number, c: Cell): string[] => Array.from({ length: h }, () => String(c).repeat(w))
+
+// The eyes themselves. A ring, a pupil, and the top of the ring left showing as a glint -
+// the only three things that make a pixel eye read as an eye rather than as a lamp.
+const EYE = ['.ll.', 'lkkl', 'lkkl', '.ll.']
+const EYE_LOOK = ['.ll.', 'llkk', 'llkk', '.ll.']
+const EYE_S = ['ll.', 'lkk', '.kk']
+const EYE_S_LOOK = ['.ll', 'kkl', 'kk.']
+const EYE_B = ['.aaaa.', 'alllla', 'alkkla', 'alkkla', 'alllla', '.aaaa.']
+const EYE_B_LOOK = ['.aaaa.', 'alllla', 'allkka', 'allkka', 'alllla', '.aaaa.']
+
 /** The same drawing, moved down the grid. A settle is one part drawn at three heights. */
 export const shift = (rows: string[], dy: number): string[] => {
   if (dy === 0) return art(rows)
-  const blank = '.'.repeat(GRID)
-  const moved = dy > 0 ? [...Array.from({ length: dy }, () => blank), ...rows] : rows.slice(-dy)
+  const blankRow = '.'.repeat(GRID)
+  const moved = dy > 0 ? [...Array.from({ length: dy }, () => blankRow), ...rows] : rows.slice(-dy)
   return art(moved)
 }
 
@@ -98,68 +157,67 @@ const SHADOW = { cx: 11.5, cy: 22.6, rx: 8, ry: 1 }
 
 /* ---------------------------------------------------------------- 1. the robot ---- */
 
-const BOT_BODY = art([
-  '',
-  '',
-  '',
-  '',
-  '',
-  '.....dddddddddddd.......',
-  '.....dffffffffffd.......',
-  '.....dkkkkkkkkkkd.......',
-  '.....dkkkkkkkkkkd.......',
-  '.....dffffffffffd.......',
-  '.....dddddddddddd.......',
-  '.........dffffd.........',
-  '....dddddddddddddd......',
-  '....dffffffffffffd......',
-  '....dffllllllllffd......',
-  '....dffllllllllffd......',
-  '....dffffffffffffd......',
-  '....dffffffffffffd......',
-  '....dddddddddddddd......'
-])
-
-const BOT_ARM = art([
-  '', '', '', '', '', '', '', '', '', '', '', '', '',
-  '..dd..............dd....',
-  '..df..............fd....',
-  '..df..............fd....',
-  '..dd..............dd....'
-])
-
 const bot: Pet = {
   id: 'bot',
   name: 'Bit',
-  note: 'The robot. Beacon, scanning visor, treads.',
+  note: 'The robot. Lit eyes behind glass, a chest lamp, treads.',
   art: {
-    body: BOT_BODY,
-    blink: art(['', '', '', '', '', '', '', '......dddddddddd........', '......dddddddddd........']),
+    body: art([
+      '',
+      '',
+      '......dddddddddddd',
+      '......dffffffffffd',
+      '......dfkkkkkkkkfd',
+      '......dfkkkkkkkkfd',
+      '......dfkkkkkkkkfd',
+      '......dfkkkkkkkkfd',
+      '......dffffffffffd',
+      '......dddddddddddd',
+      '.........dd..dd',
+      '....dddddddddddddddd',
+      '....dffffffffffffffd',
+      '....dffddddddddddffd',
+      '....dffdlllllllldffd',
+      '....dffdlllllllldffd',
+      '....dffddddddddddffd',
+      '....dffffffffffffffd',
+      '....dddddddddddddddd'
+    ]),
+    // The glass, not the shell: a robot shuts its eyes by going dark behind the visor.
+    blink: both(lid(3, 3, 'k'), 8, 14, 5),
     eyes: {
-      ahead: art(['', '', '', '', '', '', '', '.......llll.............', '.......llll.............']),
-      look: art(['', '', '', '', '', '', '', '...........llll.........', '...........llll.........'])
+      ahead: both(['la.', 'aa.', 'aa.'], 8, 14, 5),
+      look: both(['.la', '.aa', '.aa'], 8, 14, 5)
     },
     beacon: {
-      on: art(['', '..........aaaa..........']),
-      off: art(['', '..........dddd..........'])
+      on: stamp(blank(), 10, 14, ['aa', 'aa']),
+      off: stamp(blank(), 10, 14, ['ll', 'll'])
     },
     antenna: {
-      mast: art(['', '', '...........dd...........', '...........dd...........', '...........dd...........']),
-      tilt: art(['', '', '.............dd.........', '............dd..........', '...........dd...........'])
+      mast: art(['..........dd', '..........dd', '..........dd']),
+      tilt: art(['............dd', '...........dd', '..........dd'])
     },
-    arms: settle(BOT_ARM),
+    arms: settle(
+      art([
+        '', '', '', '', '', '', '', '', '', '', '', '',
+        '..dd..................dd',
+        '..df..................fd',
+        '..df..................fd',
+        '..dd..................dd'
+      ])
+    ),
     treads: {
       a: art([
         ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
-        '...dddddddddddddddd.....',
-        '...dlldlldlldlldlld.....',
-        '...dddddddddddddddd.....'
+        '...dddddddddddddddd',
+        '...dlldlldlldlldlld',
+        '...dddddddddddddddd'
       ]),
       b: art([
         ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
-        '...dddddddddddddddd.....',
-        '...lldlldlldlldlldl.....',
-        '...dddddddddddddddd.....'
+        '...dddddddddddddddd',
+        '...lldlldlldlldlldl',
+        '...dddddddddddddddd'
       ])
     },
     shadow: SHADOW
@@ -174,60 +232,62 @@ const fox: Pet = {
   note: 'A fox with a lit collar. Tail sway, ear flick.',
   art: {
     body: art([
-      '', '', '',
-      '.....dd..........dd.....',
-      '.....dfd........dfd.....',
-      '....dffd........dffd....',
-      '....dddddddddddddddd....',
-      '....dffffffffffffffd....',
-      '....dffffffffffffffd....',
-      '....dffffffffffffffd....',
-      '....dffllllllllllffd....',
-      '....dffllllllllllffd....',
-      '....dffffllllllffffd....',
-      '....dddddddddddddddd....',
-      '.....aaaaaaaaaaaaaa.....',
-      '.....dffffffffffd.......',
-      '.....dffffffffffd.......',
-      '.....dffllllllffd.......',
-      '.....dffllllllffd.......',
-      '.....dffffffffffd.......'
+      '',
+      '',
+      '.....d............d',
+      '....dad..........dad',
+      '....daad........daad',
+      '....dddddddddddddddd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dfffllllllllfffd',
+      '....dffflllkklllfffd',
+      '....dfffllllllllfffd',
+      '.....dddddddddddddd',
+      '.....aaaaaaaaaaaaaa',
+      '.....dffffffffffffd',
+      '.....dfffllllllfffd',
+      '.....dfffllllllfffd',
+      '.....dfffllllllfffd',
+      '.....dffffffffffffd',
+      '.....dddddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '', '', '.......fff....fff.......']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '', '', '.......aaa....aaa.......']),
-      look: art(['', '', '', '', '', '', '', '', '', '........aaa....aaa......'])
-    },
+    blink: both(lid(4, 4, 'f'), 6, 14, 7),
+    eyes: { ahead: both(EYE, 6, 14, 7), look: both(EYE_LOOK, 6, 14, 7) },
     beacon: {
-      on: art([...Array.from({ length: 15 }, () => '.'.repeat(GRID)), '..........ll............']),
-      off: art([...Array.from({ length: 15 }, () => '.'.repeat(GRID)), '..........dd............'])
+      on: stamp(blank(), 10, 15, ['ll']),
+      off: stamp(blank(), 10, 15, ['dd'])
     },
     antenna: {
-      mast: art(['', '', '', '.....dd..........dd.....']),
-      tilt: art(['', '', '', '.....dd.........dd......'])
+      mast: art(['', '', '.....d............d', '....dad..........dad']),
+      tilt: art(['', '', '....d..............d', '...dad............dad'])
     },
+    // The tail, drawn behind the body - arms are mounted before it, so the hip covers
+    // the root and only the sweep shows.
     arms: settle(
       art([
-        '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '................ddd.....',
-        '...............dfffd....',
-        '...............dfllfd...',
-        '...............dfffd....',
-        '................ddd.....'
+        '', '', '', '', '', '', '', '', '', '', '', '', '',
+        '..................ddd',
+        '.................dfffd',
+        '................dfllfd',
+        '................dfllfd',
+        '.................dfffd',
+        '..................ddd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 20 }, () => '.'.repeat(GRID)),
-        '.....dddd....dddd.......',
-        '.....dlld....dlld.......',
-        '.....dddd....dddd.......'
+        ...Array.from({ length: 21 }, () => '.'.repeat(GRID)),
+        '......dddd....dddd',
+        '......dlld....dlld'
       ]),
       b: art([
-        ...Array.from({ length: 20 }, () => '.'.repeat(GRID)),
-        '.....dddd....dddd.......',
-        '.....dldd....ddld.......',
-        '.....dddd....dddd.......'
+        ...Array.from({ length: 21 }, () => '.'.repeat(GRID)),
+        '.....dddd......dddd',
+        '.....dlld......dlld'
       ])
     },
     shadow: SHADOW
@@ -242,58 +302,58 @@ const cat: Pet = {
   note: 'A sitting cat. Tail sway, whisker twitch.',
   art: {
     body: art([
-      '', '', '',
-      '.....dd..........dd.....',
-      '.....dfd........dfd.....',
-      '.....dffdddddddddffd....',
-      '.....dffffffffffffffd...',
-      '.....dffffffffffffffd...',
-      '.....dffffffffffffffd...',
-      '.....dfflllllllllfffd...',
-      '.....dfflllllllllfffd...',
-      '.....dddddddddddddddd...',
-      '......dffffffffffffd....',
-      '......dffffffffffffd....',
-      '......dfflllllllfffd....',
-      '......dfflllllllfffd....',
-      '......dffffffffffffd....',
-      '......dffffffffffffd....'
+      '',
+      '',
+      '......d..........d',
+      '.....dad........dad',
+      '.....daad......daad',
+      '.....dddddddddddddd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffllllllllffd',
+      '.....dfflllkklllffd',
+      '.....dffllllllllffd',
+      '......dddddddddddd',
+      '......dffffffffffd',
+      '......dfffllllfffd',
+      '......dfffllllfffd',
+      '......dfffllllfffd',
+      '......dffffffffffd',
+      '......dddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '', '.......fff.....fff......']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '', '.......aaa.....aaa......']),
-      look: art(['', '', '', '', '', '', '', '', '........aaa.....aaa.....'])
-    },
+    blink: both(lid(4, 4, 'f'), 7, 13, 6),
+    eyes: { ahead: both(EYE, 7, 13, 6), look: both(EYE_LOOK, 7, 13, 6) },
     beacon: {
-      on: art([...Array.from({ length: 12 }, () => '.'.repeat(GRID)), '...........ll...........']),
-      off: art([...Array.from({ length: 12 }, () => '.'.repeat(GRID)), '...........dd...........'])
+      on: stamp(blank(), 11, 11, ['ll']),
+      off: stamp(blank(), 11, 11, ['kk'])
     },
+    // Whiskers: three cells each side, flicked up a row.
     antenna: {
-      mast: art(['', '', '', '', '', '', '', '', '', '', '...ddd.........ddd......']),
-      tilt: art(['', '', '', '', '', '', '', '', '', '', '..ddd...........ddd.....'])
+      mast: art(['', '', '', '', '', '', '', '', '', '', '..ddd..........ddd']),
+      tilt: art(['', '', '', '', '', '', '', '', '', '..ddd..........ddd'])
     },
     arms: settle(
       art([
         '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '..................dd....',
-        '.................dfd....',
-        '.................dfd....',
-        '.................dfd....',
-        '..................dd....'
+        '.................ddd',
+        '................dfffd',
+        '................dffld',
+        '.................dffd',
+        '..................dd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '......dddddddddddd......',
-        '......dllddffddlld......',
-        '......dddddddddddd......'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '.....dddd......dddd',
+        '.....dlld......dlld'
       ]),
       b: art([
-        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '......dddddddddddd......',
-        '......dlddffffddld......',
-        '......dddddddddddd......'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '......dddd....dddd',
+        '......dlld....dlld'
       ])
     },
     shadow: SHADOW
@@ -305,55 +365,56 @@ const cat: Pet = {
 const dog: Pet = {
   id: 'dog',
   name: 'Rook',
-  note: 'A shiba with floppy ears. Tail wag, nose blink.',
+  note: 'A shiba with floppy ears. Tail wag, a wet nose.',
   art: {
     body: art([
-      '', '', '', '',
-      '.....dddddddddddddd.....',
-      '....dffffffffffffffd....',
-      '...ddffffffffffffffdd...',
-      '...dfdffffffffffffdfd...',
-      '...dfdfflllllllfffdfd...',
-      '...dfdfflllllllfffdfd...',
-      '...dfdddddddddddddfd....',
-      '...dfd.dffffffffd.dfd...',
-      '....dd.dfflllllfd..dd...',
-      '.......dddddddddd.......',
-      '......dffffffffffd......',
-      '......dfflllllllfd......',
-      '......dfflllllllfd......',
-      '......dffffffffffd......'
+      '',
+      '',
+      '',
+      '.....dddddddddddddd',
+      '...dddffffffffffffddd',
+      '...dfdffffffffffffdfd',
+      '...dfdffffffffffffdfd',
+      '...dfdffffffffffffdfd',
+      '...dfdffffffffffffdfd',
+      '...dfddffffffffffddfd',
+      '....ddfffllllllfffdd',
+      '.....dfflllkkllfffd',
+      '.....dffllllllllffd',
+      '......dddddddddddd',
+      '......dffffffffffd',
+      '......dfffllllfffd',
+      '......dfffllllfffd',
+      '......dffffffffffd',
+      '......dddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '', '.......fff...fff........']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '', '.......aaa...aaa........']),
-      look: art(['', '', '', '', '', '', '', '', '........aaa...aaa.......'])
-    },
+    blink: both(lid(4, 4, 'f'), 7, 13, 5),
+    eyes: { ahead: both(EYE, 7, 13, 5), look: both(EYE_LOOK, 7, 13, 5) },
+    // The nose, which is the one thing on a dog that is worth a pulse.
     beacon: {
-      on: art([...Array.from({ length: 12 }, () => '.'.repeat(GRID)), '..........llll..........']),
-      off: art([...Array.from({ length: 12 }, () => '.'.repeat(GRID)), '..........dddd..........'])
+      on: stamp(blank(), 11, 11, ['aa']),
+      off: stamp(blank(), 11, 11, ['kk'])
     },
     arms: settle(
       art([
         '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '.................ddd....',
-        '................dfffd...',
-        '................dfffd...',
-        '.................ddd....'
+        '.................ddd',
+        '................dfffd',
+        '................dfllfd',
+        '.................dffd',
+        '..................dd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '......dddddddddddd......',
-        '......dllddddddlld......',
-        '......dddddddddddd......'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '.....dddd......dddd',
+        '.....dlld......dlld'
       ]),
       b: art([
-        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '......dddddddddddd......',
-        '......dlddddddddld......',
-        '......dddddddddddd......'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '......dddd....dddd',
+        '......dlld....dlld'
       ])
     },
     shadow: SHADOW
@@ -365,54 +426,60 @@ const dog: Pet = {
 const owl: Pet = {
   id: 'owl',
   name: 'Hoot',
-  note: 'An owl. Big eyes, slow wings, a rare crest flick.',
+  note: 'An owl. Big ringed eyes, slow wings, a crest flick.',
   art: {
     body: art([
-      '', '', '',
-      '.....dd..........dd.....',
-      '....dffd........dffd....',
-      '....dffddddddddddffd....',
-      '....dffffffffffffffd....',
-      '....dfkkkkffffkkkkfd....',
-      '....dfkkkkffffkkkkfd....',
-      '....dfkkkkffffkkkkfd....',
-      '....dffffflllfffffd.....',
-      '.....dffffflfffffd......',
-      '.....dfflllllllffd......',
-      '.....dfflllllllffd......',
-      '.....dffllllllfffd......',
-      '.....dffffffffffd.......',
-      '......dddddddddd........'
+      '',
+      '',
+      '.....d............d',
+      '....dfd..........dfd',
+      '....dffddddddddddffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffllllllllffd',
+      '.....dffllllllllffd',
+      '.....dffllllllllffd',
+      '.....dfffllllllfffd',
+      '......dffffffffffd',
+      '.......dddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '....dffffffffffffffd....', '....dffffffffffffffd....']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '.....aaa......aaa.......', '.....aaa......aaa.......']),
-      look: art(['', '', '', '', '', '', '', '......aaa......aaa......', '......aaa......aaa......'])
+    blink: both(lid(6, 6, 'f'), 5, 13, 5),
+    eyes: { ahead: both(EYE_B, 5, 13, 5), look: both(EYE_B_LOOK, 5, 13, 5) },
+    // The beak, between the two eye rings.
+    beacon: {
+      on: stamp(blank(), 11, 10, ['aa', 'aa', '.a']),
+      off: stamp(blank(), 11, 10, ['dd', 'dd', '.d'])
     },
     antenna: {
-      mast: art(['', '', '', '.....dd..........dd.....']),
-      tilt: art(['', '', '', '....dd............dd....'])
+      mast: art(['', '', '.....d............d', '....dfd..........dfd']),
+      tilt: art(['', '', '....d..............d', '...dfd............dfd'])
     },
     arms: settle(
       art([
         '', '', '', '', '', '', '', '', '', '', '',
-        '...dd................dd.',
-        '...dfd..............dfd.',
-        '...dfd..............dfd.',
-        '...dfd..............dfd.',
-        '....dd................dd'
+        '...dd................dd',
+        '..dffd..............dffd',
+        '..dffd..............dffd',
+        '..dffd..............dffd',
+        '...dd................dd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '.......ddd..ddd.........',
-        '.......dld..dld.........'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '.......ddd..ddd',
+        '.......dad..dad'
       ]),
       b: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '.......ddd..ddd.........',
-        '.......dld..ddl.........'
+        ...Array.from({ length: 19 }, () => '.'.repeat(GRID)),
+        '......ddd....ddd',
+        '......dad....dad'
       ])
     },
     shadow: SHADOW
@@ -424,49 +491,53 @@ const owl: Pet = {
 const crab: Pet = {
   id: 'crab',
   name: 'Nip',
-  note: 'A crab. Clacking claws, stalk eyes, a scuttle.',
+  note: 'A crab. Clacking claws, eyes on stalks, a scuttle.',
   art: {
     body: art([
-      '', '', '', '', '', '',
-      '.........dd....dd.......',
-      '.........dd....dd.......',
-      '......dddddddddddddd....',
-      '.....dffffffffffffffd...',
-      '....dfflllllllllllffd...',
-      '....dffllllllllllllfd...',
-      '....dffffffffffffffdd...',
-      '....dddddddddddddddd....',
-      '.....dffffffffffffd.....',
-      '......dddddddddddd......'
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '.........dd....dd',
+      '.........dd....dd',
+      '.........dd....dd',
+      '.....dddddddddddddd',
+      '....dffffffffffffffd',
+      '...dffllllllllllllffd',
+      '...dfflllllllllllllfd',
+      '...dffllllllllllllffd',
+      '...dffffffffffffffffd',
+      '....dddddddddddddddd',
+      '.....dffffffffffffd',
+      '......dddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '.........dd....dd.......']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '.........aa....aa.......']),
-      look: art(['', '', '', '', '', '..........aa....aa......'])
-    },
+    blink: both(lid(3, 3, 'f'), 8, 14, 4),
+    eyes: { ahead: both(EYE_S, 8, 14, 4), look: both(EYE_S_LOOK, 8, 14, 4) },
     beacon: {
-      on: art([...Array.from({ length: 10 }, () => '.'.repeat(GRID)), '..........llll..........']),
-      off: art([...Array.from({ length: 10 }, () => '.'.repeat(GRID)), '..........ffff..........'])
+      on: stamp(blank(), 10, 12, ['aaaa']),
+      off: stamp(blank(), 10, 12, ['llll'])
     },
     arms: settle(
       art([
-        '', '', '', '', '', '', '', '',
-        '..ddd...............ddd.',
-        '.dfffd.............dfffd',
-        '.dffdd.............ddffd',
-        '..ddd...............ddd.'
+        '', '', '', '', '', '', '', '', '',
+        '..ddd................ddd',
+        '.dfffd..............dfffd',
+        '.dfld..................dfd',
+        '..ddd................ddd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '...dd..dd....dd..dd.....',
-        '...dd..dd....dd..dd.....'
+        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
+        '...dd..dd....dd..dd',
+        '...dd..dd....dd..dd'
       ]),
       b: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '..dd....dd..dd....dd....',
-        '..dd....dd..dd....dd....'
+        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
+        '..dd....dd..dd....dd',
+        '..dd....dd..dd....dd'
       ])
     },
     shadow: SHADOW
@@ -481,46 +552,49 @@ const slime: Pet = {
   note: 'A slime. Drips, a wobbling hem, a bright core.',
   art: {
     body: art([
-      '', '', '', '', '',
-      '..........dddd..........',
-      '........ddffffdd........',
-      '.......dffffffffd.......',
-      '......dffffffffffd......',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '....dffffffffffffffd....',
-      '....dffffffffffffffd....',
-      '....dfflllllllllllfd....',
-      '....dfflllllllllllfd....',
-      '....dffffffffffffffd....',
-      '.....dddddddddddddd.....'
+      '',
+      '',
+      '',
+      '..........dddd',
+      '........ddffffdd',
+      '.......dffffffffd',
+      '......dffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dffffffffffffffd',
+      '....dfflllllllllfffd',
+      '....dfflllllllllfffd',
+      '....dffffffffffffffd',
+      '.....dddddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '', '', '.......ffff...ffff......']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '', '', '.......aaaa...aaaa......']),
-      look: art(['', '', '', '', '', '', '', '', '', '........aaaa...aaaa.....'])
-    },
+    blink: both(lid(4, 4, 'f'), 6, 14, 8),
+    eyes: { ahead: both(EYE, 6, 14, 8), look: both(EYE_LOOK, 6, 14, 8) },
+    // The core, seen through the body.
     beacon: {
-      on: art([...Array.from({ length: 6 }, () => '.'.repeat(GRID)), '..........aa............']),
-      off: art([...Array.from({ length: 6 }, () => '.'.repeat(GRID)), '..........ff............'])
+      on: stamp(blank(), 10, 12, ['aaaa', 'aaaa']),
+      off: stamp(blank(), 10, 12, ['llll', 'llll'])
     },
     arms: settle(
       art([
         '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '...dd..............dd...',
-        '...df..............fd...'
+        '...dd..............dd',
+        '...dl..............ld'
       ])
     ),
     treads: {
       a: art([
         ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '.....dffdffdffdffdffd...',
-        '......dd.dd.dd.dd.dd....'
+        '.....dffdffdffdffdffd',
+        '......dd.dd.dd.dd.dd'
       ]),
       b: art([
         ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
-        '.....ffdffdffdffdffdf...',
-        '.....dd.dd.dd.dd.dd.....'
+        '.....ffdffdffdffdffdf',
+        '.....dd.dd.dd.dd.dd'
       ])
     },
     shadow: SHADOW
@@ -535,53 +609,55 @@ const dino: Pet = {
   note: 'A small raptor. Tail counterweight, a jaw twitch.',
   art: {
     body: art([
-      '', '', '',
-      '............dddddddd....',
-      '...........dffffffffd...',
-      '...........dfflllllfd...',
-      '...........dffffffffd...',
-      '...........ddddddddd....',
-      '.........dddddd.........',
-      '........dffffffd........',
-      '.......dffffffffd.......',
-      '.......dfflllllfd.......',
-      '.......dfflllllfd.......',
-      '.......dffffffffd.......',
-      '.......dffffffffd.......',
-      '........dddddddd........'
+      '',
+      '',
+      '',
+      '...........dddddddd',
+      '..........dffffffffd',
+      '..........dffffffffd',
+      '..........dffffffffd',
+      '..........dffffffffdd',
+      '..........dfflllllladd',
+      '..........ddddddddddd',
+      '........dddddd',
+      '.......dffffffd',
+      '......dffffffffd',
+      '......dfflllllfd',
+      '......dfflllllfd',
+      '......dffllllllfd',
+      '......dffffffffffd',
+      '.......ddddddddddd'
     ]),
-    blink: art(['', '', '', '', '', '...........ffff.........']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '...........aa...........']),
-      look: art(['', '', '', '', '', '............aa..........'])
-    },
+    blink: stamp(blank(), 12, 4, lid(3, 3, 'f')),
+    eyes: { ahead: stamp(blank(), 12, 4, EYE_S), look: stamp(blank(), 12, 4, EYE_S_LOOK) },
     beacon: {
-      on: art([...Array.from({ length: 5 }, () => '.'.repeat(GRID)), '..................ll....']),
-      off: art([...Array.from({ length: 5 }, () => '.'.repeat(GRID)), '..................ff....'])
+      on: stamp(blank(), 6, 12, ['a']),
+      off: stamp(blank(), 6, 12, ['f'])
     },
+    // The crest along the back of the skull.
     antenna: {
-      mast: art(['', '', '', '', '', '', '', '...........ddddddddd....']),
-      tilt: art(['', '', '', '', '', '', '', '...........dddddddd.....'])
+      mast: art(['', '', '..........dddddddd', '..........aaaaaaaa']),
+      tilt: art(['', '', '...........dddddddd', '...........aaaaaaaa'])
     },
     arms: settle(
       art([
-        '', '', '', '', '', '', '', '', '',
-        '...ddd..................',
-        '..dfffd.................',
-        '..dfffdd................',
-        '...dddd.................'
+        '', '', '', '', '', '', '', '', '', '',
+        '...ddd',
+        '..dfffd',
+        '..dfffdd',
+        '...dddd'
       ])
     ),
     treads: {
       a: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '.......dddd..dddd.......',
-        '.......dlld..dlld.......'
+        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
+        '......dddd..dddd',
+        '......dlld..dlld'
       ]),
       b: art([
-        ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '......dddd....dddd......',
-        '......dlld....dlld......'
+        ...Array.from({ length: 18 }, () => '.'.repeat(GRID)),
+        '.....dddd....dddd',
+        '.....dlld....dlld'
       ])
     },
     shadow: SHADOW
@@ -593,49 +669,56 @@ const dino: Pet = {
 const drone: Pet = {
   id: 'drone',
   name: 'Kite',
-  note: 'A quadcopter. Rotor blur, a strobe, a low shadow.',
+  note: 'A quadcopter. Rotor blur, one lens, a low shadow.',
   art: {
     body: art([
-      '', '', '', '', '', '',
-      '...dd..............dd...',
-      '...dd..............dd...',
-      '....ddd..........ddd....',
-      '......dddd....dddd......',
-      '.........dddddd.........',
-      '........dffffffd........',
-      '.......dffffffffd.......',
-      '.......dfkkkkkkfd.......',
-      '.......dfkkkkkkfd.......',
-      '.......dffffffffd.......',
-      '........dddddddd........',
-      '.........d....d.........'
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '...dd..............dd',
+      '...dd..............dd',
+      '....ddd..........ddd',
+      '......dddd....dddd',
+      '.........dddddd',
+      '.......dddddddddd',
+      '......dffffffffffd',
+      '......dffffffffffd',
+      '......dffffffffffd',
+      '......dffffffffffd',
+      '......dffffffffffd',
+      '.......dddddddddd',
+      '........d....d'
     ]),
-    blink: art(['', '', '', '', '', '', '', '', '', '', '', '', '', '.......dffffffd.........']),
+    // The lens shuts by going dark, the way the robot's visor does.
+    blink: stamp(blank(), 9, 12, lid(6, 5, 'k')),
     eyes: {
-      ahead: art(['', '', '', '', '', '', '', '', '', '', '', '', '', '........aaa.............']),
-      look: art(['', '', '', '', '', '', '', '', '', '', '', '', '', '............aaa.........'])
+      ahead: stamp(blank(), 9, 12, ['.aaaa.', 'akkkka', 'aklkka', 'akkkka', '.aaaa.']),
+      look: stamp(blank(), 9, 12, ['.aaaa.', 'akkkka', 'akklka', 'akkkka', '.aaaa.'])
     },
     beacon: {
-      on: art([...Array.from({ length: 18 }, () => '.'.repeat(GRID)), '.........a....a.........']),
-      off: art([...Array.from({ length: 18 }, () => '.'.repeat(GRID)), '.........d....d.........'])
+      on: both(['a'], 8, 14, 18),
+      off: both(['d'], 8, 14, 18)
     },
     arms: settle(
       art([
-        '', '', '', '', '',
-        '..dddd............dddd..',
-        '...dd..............dd...'
+        '', '', '', '',
+        '..dddd............dddd',
+        '...dd..............dd'
       ])
     ),
     treads: {
       a: art([
         '', '', '', '', '',
-        '.dddddd..........dddddd.',
-        '..dddd............dddd..'
+        '.dddddd..........dddddd',
+        '..dddd............dddd'
       ]),
       b: art([
         '', '', '', '', '',
-        '..dddd............dddd..',
-        '.dddddd..........dddddd.'
+        '..dddd............dddd',
+        '.dddddd..........dddddd'
       ])
     },
     shadow: { cx: 11.5, cy: 22.8, rx: 6, ry: 0.9, opacity: 0.08 }
@@ -650,46 +733,47 @@ const ghost: Pet = {
   note: 'A wisp. A drifting hem and a very slow blink.',
   art: {
     body: art([
-      '', '', '',
-      '.........dddddd.........',
-      '.......ddffffffdd.......',
-      '......dffffffffffd......',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....',
-      '.....dffffffffffffd.....'
+      '',
+      '',
+      '',
+      '.........dddddd',
+      '.......ddffffffdd',
+      '......dffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd',
+      '.....dffffffffffffd'
     ]),
-    blink: art(['', '', '', '', '', '', '', '.......ffff...ffff......', '.......ffff...ffff......']),
-    eyes: {
-      ahead: art(['', '', '', '', '', '', '', '.......kkkk...kkkk......', '.......kkkk...kkkk......']),
-      look: art(['', '', '', '', '', '', '', '........kkkk...kkkk.....', '........kkkk...kkkk.....'])
-    },
+    blink: both(lid(4, 4, 'f'), 6, 14, 7),
+    eyes: { ahead: both(EYE, 6, 14, 7), look: both(EYE_LOOK, 6, 14, 7) },
+    // The mouth, an o that fades in and out.
     beacon: {
-      on: art([...Array.from({ length: 11 }, () => '.'.repeat(GRID)), '.........aaaaaa.........']),
-      off: art([...Array.from({ length: 11 }, () => '.'.repeat(GRID)), '.........ffffff.........'])
+      on: stamp(blank(), 10, 13, ['.kk.', 'kkkk', '.kk.']),
+      off: stamp(blank(), 10, 13, ['....', '.ff.', '....'])
     },
     arms: settle(
       art([
         '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '....dd............dd....'
+        '....dd............dd'
       ])
     ),
     treads: {
       a: art([
         ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '.....dffdffddffdffdd....',
-        '......dd.dd..dd.dd......'
+        '.....dffdffddffdffdd',
+        '......dd.dd..dd.dd'
       ]),
       b: art([
         ...Array.from({ length: 17 }, () => '.'.repeat(GRID)),
-        '.....ddffddffddffddf....',
-        '.....dd..dd..dd..dd.....'
+        '.....ddffddffddffddf',
+        '.....dd..dd..dd..dd'
       ])
     },
     shadow: { cx: 11.5, cy: 22.6, rx: 6, ry: 0.9, opacity: 0.07 }
