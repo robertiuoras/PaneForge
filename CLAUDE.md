@@ -553,6 +553,21 @@ modifier and why this one did too.
   (104, row 10) → (10, row 9) across a wrap in a 157-column pane, exact both times.
 - **On mouseup, and only when the pointer did not travel.** Swallowing the mousedown would
   take drag-selection with it, and copy-on-select is the more important of the two.
+- **The composer a CLI draws is ONE text field, and it is found by its rules, not by its
+  frame.** Claude Code 2.1.x draws no frame at all - a rule, `❯ text` with each further row
+  indented two spaces, another rule - so `isWrapped` said the rows were unrelated, `sameBox`
+  found no box, and every selection spanning two rows deleted a single character: "it
+  doesn't delete all the highlighted text". `composerAt` (`shared/promptBox.ts`) walks to
+  the rule above and to a rule of the SAME width below and requires a prompt marker on the
+  first row; `inputRows` in the pane turns that into spans, and `offsetIn`/`keysForRows`
+  (`shared/cursorMove.ts`) count over them. **Crossing a row boundary costs exactly one
+  character** - the space the wrapper ate, or a hard newline - and **nothing** when the row
+  is drawn out to the full width, because only a word too long for the line is split.
+  Measured live at 157 columns: a 244-character prompt draws 242 and is emptied by 244; 300
+  unbroken `x` are emptied by 300. A row within a column of the width counts as full on
+  purpose - over-counting deletes a character nobody highlighted, under-counting only leaves
+  one behind. **The marker is followed by U+00A0, not a space**, which is what made every one
+  of these refuse in silence while every test passed: `BLANKS` in `promptBox.ts`.
 - **A drawn input box is the one place a bare click may go up and down.** Every agent CLI
   draws a multi-line box, and a second line of a draft is a hard newline rather than a
   wrap - so the `isWrapped` chain called the rows unrelated and a click on line two did
@@ -770,6 +785,12 @@ at the prompt. The bytes are therefore written as a real file **on the machine t
 the pty**, and the path of that file is what is typed (`shared/attach.ts` for the naming,
 `main/attach.ts` for the disk, `pty:attach` / `pty:attachClipboard`).
 
+- **A paste is the one place the ^V is right.** Cmd+V used to write the bytes to disk and
+  type the path even for Claude Code, so pasting a screenshot and dropping one gave two
+  different things - the drop gave the picture, the paste gave a filename the agent had to
+  be asked to open. A clipboard image now goes to an agent that reads the clipboard itself
+  as a plain ^V (`[Image #1]`, verified live); every other CLI and every MIRRORED pane still
+  gets the file and the path, for the reasons below.
 - **Forwarding a raw ^V was the old answer and it only ever worked twice over.** It needs
   an agent that reads the OS clipboard itself - Claude Code does, Codex and the other
   eleven do not - AND it needs that agent to be on the same machine as the clipboard. A
