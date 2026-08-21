@@ -33,6 +33,8 @@ import {
 import { GRID, petFor, runsOf, type Rect } from '@shared/pets'
 import {
   actedWords,
+  agoWords,
+  hideAfterMs,
   DASH_MS,
   dueDash,
   bubbleSpot,
@@ -42,6 +44,7 @@ import {
   isDestructive,
   notice,
   parse,
+  type ActedPane,
   type Intent,
   type MascotConfig,
   type MascotPane
@@ -81,7 +84,7 @@ export interface MascotProps {
   /** Whether the app's own idle-close clock is running - it stays quiet if so. */
   idleCloseOn: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: string[]; mb?: number; at: number }
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
   /** A close that is about to happen, counted down out loud. */
   closeSoon?: CloseSoon
   /** Stop that close and leave those panes alone for a while. */
@@ -96,6 +99,14 @@ interface Bubble {
   action?: Intent
   /** Dismissed once said, so the same notice is not repeated. */
   key: string
+  /**
+   * The report of something the ladder did, kept as its parts rather than as a sentence.
+   *
+   * "Closed pane 3 just now" is a READING, and it goes stale while it is on screen - so
+   * the words are built at render time against the clock rather than once, when it was
+   * said. Everything else the pet says is fixed the moment it is said.
+   */
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
 }
 
 /** Where it stands, as a fraction of the window, so a resize never strands it. */
@@ -258,8 +269,38 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     const key = `acted:${a.at}`
     if (said.current.has(key)) return
     said.current.add(key)
-    say({ say: actedWords(a.what, a.panes, a.mb), key })
+    say({ say: actedWords(a.what, a.panes, a.mb, Date.now() - a.at), acted: a, key })
   }, [props.acted, cfg.enabled, say])
+
+  // A report of something that HAPPENED carries how long ago, and that number is only true
+  // for a few seconds. Five seconds rather than one: `agoWords` rounds to five below a
+  // minute, so a faster tick re-renders the layer for a string that has not changed.
+  useEffect(() => {
+    if (!bubble?.acted) return
+    const t = window.setInterval(() => setTick((n) => n + 1), 5000)
+    return () => window.clearInterval(t)
+  }, [bubble?.key, bubble?.acted])
+
+  /**
+   * ...and then it takes itself away.
+   *
+   * Everything the pet says is a reading, and a reading left on screen stops being one: it
+   * is a box over the corner of the window saying something that was true a while ago. The
+   * timer restarts on every keystroke in the ask box (`typing` is a dependency), so it can
+   * never close over somebody mid-sentence, and a COUNTDOWN is exempt - that bubble has a
+   * deadline of its own and two named answers, and taking it away would take the press
+   * that stops the close with it.
+   */
+  useEffect(() => {
+    const ms = hideAfterMs(cfg)
+    if (!ms || soon) return
+    if (!bubble && !open) return
+    const t = window.setTimeout(() => {
+      setBubble(null)
+      setOpen(false)
+    }, ms)
+    return () => window.clearTimeout(t)
+  }, [bubble?.key, open, typing, cfg.hideSeconds, soon])
 
   useEffect(() => {
     if (!cfg.enabled) return
@@ -489,7 +530,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               </div>
             </>
           )}
-          {!counting && bubble && <div className="mascot-say">{bubble.say}</div>}
+          {!counting && bubble && (
+            <div className="mascot-say">
+              {bubble.acted
+                ? actedWords(bubble.acted.what, bubble.acted.panes, bubble.acted.mb, Date.now() - bubble.acted.at)
+                : bubble.say}
+            </div>
+          )}
           {!counting && bubble?.action && (
             <div className="mascot-acts">
               <button className="primary small" onClick={() => run(bubble.action as Intent)}>

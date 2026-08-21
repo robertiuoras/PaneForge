@@ -14,7 +14,7 @@ import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { endAll, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -438,6 +438,10 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)
+    // A reopened pane keeps its id, so History already knows what it was asked to do -
+    // and a restored row that cannot say which conversation it is is the whole reason
+    // this reading is on the session at all.
+    meta.gist = gistFor(id)
     // Started ON a conversation (a reopened desk) rather than into a fresh one: say so,
     // or the pane spends its life holding a file older than itself and looking for a
     // newer one to belong to.
@@ -634,6 +638,22 @@ export class SessionManager extends EventEmitter {
     for (let i = 0; i < after.length; i++) if (before[i] !== after[i]) same = false
     if (same) return
     this.sessions = next
+    this.emitSessions()
+  }
+
+  /**
+   * A prompt was submitted in this pane, and History worked out what it says about it.
+   *
+   * Pushed rather than pulled: everything that talks about a live pane (the mascot's
+   * sentence about a close, the countdown before one) is holding a session and has no
+   * way to reach a file on disk in the moment that matters.
+   */
+  noteGist(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    const line = gistFor(id)
+    if (!line || s.meta.gist === line) return
+    s.meta.gist = line
     this.emitSessions()
   }
 

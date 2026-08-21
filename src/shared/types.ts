@@ -125,6 +125,18 @@ export interface Session {
   runSince?: number
   /** How long the last finished turn took (ms), shown frozen once it ends. */
   lastRunMs?: number
+  /**
+   * What this pane was asked to do, in one line - the same reading History puts under a
+   * closed session (`shared/gist.ts`), for the surfaces that talk about a LIVE pane.
+   *
+   * On the session rather than fetched when wanted because the thing that needs it is a
+   * sentence about a pane that is being closed: by the time anything could read it off
+   * disk, the pane it is about is gone. Free by construction - it is keystrokes the app
+   * already relays on their way to the pty, never a summary anything was paid for - and
+   * absent for a pane nobody has typed a real ask into yet, which is said as nothing
+   * rather than as a guess.
+   */
+  gist?: string
   /** worktree lane suffix ("w2") when this session runs in an auto-created lane */
   lane?: string
   /**

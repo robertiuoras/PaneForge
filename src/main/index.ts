@@ -2824,6 +2824,9 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   if (meta.id) {
     try {
       history.noteAsk(meta.id, draft)
+      // ...and onto the live session, so the app can say WHICH conversation a pane is in
+      // while the pane still exists. See Session.gist.
+      manager.noteGist(meta.id)
     } catch {
       /* a note is a nicety, never the reason a pane stops working */
     }

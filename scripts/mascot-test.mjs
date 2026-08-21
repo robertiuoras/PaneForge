@@ -37,6 +37,12 @@ const {
   closeable,
   isDestructive,
   paneLine,
+  paneWord,
+  paneDoing,
+  actedWords,
+  agoWords,
+  hideAfterMs,
+  HIDE_SECONDS,
   humanMins,
   clampSpot,
   bubbleSpot,
@@ -442,6 +448,85 @@ const desk = [
   // sixty seconds later, for ever - which is what gets a feature switched off.
   check('the count is long enough to read and reach', CLOSE_COUNTDOWN_MS >= 10_000, CLOSE_COUNTDOWN_MS)
   check('and keeping a pane holds for an hour', KEEP_MINUTES >= 30, KEEP_MINUTES)
+}
+
+{
+  // Which pane, and what it was in the middle of. "Closed a pane, about 190 MB back" is
+  // the sentence this replaces: it names neither the conversation that went nor when, and
+  // both are the only things somebody wants when a pane they were using is not there.
+  const p = pane({ pane: 1, name: 'taskdriver', doing: 'fix the login redirect' })
+  eq('the project comes before the number', paneWord(p), 'taskdriver pane 1')
+  check('and the subject rides with it', /was working on "fix the login redirect"/.test(paneDoing(p)), paneDoing(p))
+  // Never invented. A pane nobody has typed a real ask into is named and nothing more.
+  eq('a pane with no recorded ask says nothing about one', paneDoing(pane({ pane: 4, name: 'vrb' })), 'vrb pane 4')
+
+  const one = actedWords('closed', [{ word: paneWord(p), doing: p.doing }], 190, 3 * MIN)
+  check('a close names the pane', /taskdriver pane 1/.test(one), one)
+  check('...says what it was working on', /login redirect/.test(one), one)
+  check('...says how long ago', /3 min ago/.test(one), one)
+  check('...and still says what it gave back', /190 MB/.test(one), one)
+  check('and that nothing is lost', /History/.test(one), one)
+
+  // Several go on their own lines: the whole point is WHICH conversations went, and four
+  // of them comma-joined into one sentence is a paragraph nobody reads in a corner bubble.
+  const many = actedWords(
+    'closed',
+    [
+      { word: 'taskdriver pane 1', doing: 'fix the login redirect' },
+      { word: 'PaneForge pane 4', doing: 'the mascot bubble' }
+    ],
+    380,
+    45_000
+  )
+  check('several panes are counted', /2 panes/.test(many), many)
+  check('...listed one per line', many.split('\n').length === 3, many)
+  check('...and named', /PaneForge pane 4/.test(many) && /taskdriver pane 1/.test(many), many)
+
+  // A subject long enough to be a paragraph is cut rather than allowed to fill the window.
+  const long = actedWords('closed', [{ word: 'x pane 1', doing: 'a'.repeat(400) }], 10, 0)
+  check('a very long ask is cut', long.length < 260, long.length)
+}
+
+{
+  // How long ago, said the way somebody says it. Below a minute it rounds to five seconds:
+  // a number changing every second in the corner of an eye is motion, not information.
+  eq('a moment ago reads as just now', agoWords(4000), 'just now')
+  eq('half a minute is seconds', agoWords(31_000), '30s ago')
+  eq('a few minutes is minutes', agoWords(3 * MIN), '3 min ago')
+  check('hours are hours', /h/.test(agoWords(150 * MIN)), agoWords(150 * MIN))
+  eq('and a negative clock never prints one', agoWords(-5000), 'just now')
+}
+
+{
+  // The bubble takes itself away. A config written before this existed never chose, so it
+  // gets the default rather than 0 - an absent field reading as "never hide" would leave
+  // every existing desk exactly as it was and the setting would look like it did nothing.
+  eq('an old config gets the default', hideAfterMs({}), HIDE_SECONDS * 1000)
+  eq('a minute is a minute', hideAfterMs({ hideSeconds: 60 }), 60_000)
+  eq('zero means until it is pressed away', hideAfterMs({ hideSeconds: 0 }), 0)
+  eq('a silly small number is held to the floor', hideAfterMs({ hideSeconds: 1 }), 5000)
+  eq('and a silly large one to the ceiling', hideAfterMs({ hideSeconds: 99_999 }), 3_600_000)
+  eq('junk reads as the default', hideAfterMs({ hideSeconds: Number.NaN }), HIDE_SECONDS * 1000)
+
+  // The load-bearing half: a hide that also took the COUNTDOWN away would pass every check
+  // above and would remove the one press that stops a pane being closed. It is a source
+  // assertion because the exemption is a guard in an effect, not arithmetic.
+  const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
+  check(
+    'the hide timer stands down for a countdown',
+    /const ms = hideAfterMs\(cfg\)\n\s*if \(!ms \|\| soon\) return/.test(drawn),
+    'the hide effect must return early while `soon` is set'
+  )
+  check(
+    'and it restarts while somebody is typing at it',
+    /\}, \[bubble\?\.key, open, typing, cfg\.hideSeconds, soon\]\)/.test(drawn),
+    'typing must be a dependency of the hide timer'
+  )
+  check(
+    'the acted sentence is rebuilt as it is drawn, not stored',
+    /actedWords\(bubble\.acted\.what/.test(drawn),
+    'the bubble must re-render its "ago" rather than keeping the string it was said with'
+  )
 }
 
 console.log(`mascot: ${checks} checks passed`)

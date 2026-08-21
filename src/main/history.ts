@@ -71,6 +71,7 @@ export function recordStart(s: Session): void {
     try {
       const was = JSON.parse(readFileSync(metaFile(s.id), 'utf8')) as HistoryEntry
       asked = { gist: was.gist, chapters: was.chapters, dropped: was.dropped, asks: was.asks, fresh: was.fresh }
+      remember(s.id, was)
     } catch {
       /* first launch of this pane */
     }
@@ -109,10 +110,35 @@ export function noteAsk(id: string, prompt: string): void {
   if (!gistOf(prompt)) return
   try {
     const entry = JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry
-    writeFileSync(metaFile(id), JSON.stringify({ ...entry, ...noteAskInto(entry, prompt) }), 'utf8')
+    const next = { ...entry, ...noteAskInto(entry, prompt) }
+    writeFileSync(metaFile(id), JSON.stringify(next), 'utf8')
+    remember(id, next)
   } catch {
     /* no metadata yet, or an unwritable profile: a note is a nicety, never fatal */
   }
+}
+
+/**
+ * The same line, held in memory for the panes that are still open.
+ *
+ * `list()` reads every metadata file on disk, which is the right answer for History and
+ * the wrong one for a sentence about a pane that is being closed right now - by the time
+ * a disk read came back the pane it names is gone. This is one string per live pane,
+ * written on the two paths that already write the file.
+ */
+const lines = new Map<string, string>()
+
+function remember(id: string, e: HistoryEntry): void {
+  // The CURRENT chapter, not the opening one: `/clear` is where one job ends and the next
+  // begins, so on a session that has cleared four times the first ask is a subject nobody
+  // in that window is working on any more.
+  const line = e.chapters?.length ? e.chapters[e.chapters.length - 1] : e.gist
+  if (line) lines.set(id, line)
+}
+
+/** What this pane was asked to do, or undefined - never a guess. */
+export function gistFor(id: string): string | undefined {
+  return lines.get(id)
 }
 
 /**
@@ -324,6 +350,7 @@ export function tail(id: string, bytes: number): string {
 }
 
 export function remove(id: string): void {
+  lines.delete(id)
   for (const f of [logFile(id), metaFile(id)]) {
     try {
       rmSync(f, { force: true })

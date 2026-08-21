@@ -58,14 +58,46 @@ export interface MascotConfig {
    * to a pane is still allowed to point (`roam` decides that) once it is unpinned.
    */
   spot?: { x: number; y: number } | null
+  /**
+   * How long a bubble stays on screen before it takes itself away, in seconds.
+   *
+   * Everything the pet says used to sit there until somebody pressed it away, and what it
+   * says is a READING - "closed pane 3 a moment ago" is true for a second and then it is a
+   * sentence covering the corner of a window nobody is reading it in. A minute is long
+   * enough to notice one and short enough that the corner is clear again by the time you
+   * look back. 0 keeps the old behaviour: up until it is dismissed.
+   *
+   * A countdown is deliberately NOT covered by it - that bubble has a deadline of its own
+   * and two named answers, and taking it away early would remove the press that stops it.
+   */
+  hideSeconds?: number
 }
+
+/** The default bubble life, and the bounds anything typed into the box is held to. */
+export const HIDE_SECONDS = 60
+const HIDE_MIN = 5
+const HIDE_MAX = 3600
 
 export const DEFAULT_MASCOT: MascotConfig = {
   enabled: false,
   voice: false,
   roam: true,
   pet: 'bot',
-  spot: null
+  spot: null,
+  hideSeconds: HIDE_SECONDS
+}
+
+/**
+ * How long this config wants a bubble kept, in ms. 0 means "until it is pressed away".
+ *
+ * An absent value is the default rather than 0: a config written before this existed is a
+ * desk that never chose, and the choice it never made is the one everybody else gets.
+ */
+export function hideAfterMs(cfg: Partial<MascotConfig>): number {
+  const raw = cfg.hideSeconds
+  if (raw === undefined || raw === null || !Number.isFinite(raw)) return HIDE_SECONDS * 1000
+  if (raw <= 0) return 0
+  return Math.min(HIDE_MAX, Math.max(HIDE_MIN, Math.round(raw))) * 1000
 }
 
 /**
@@ -179,6 +211,16 @@ export interface MascotPane {
   /** Another device's pty. Closing it here frees nothing here. */
   remote: boolean
   /**
+   * What this pane was asked to do, in one line - History's own `gist`.
+   *
+   * A pane is a folder and a number until this is on it, and "closed pane 3" is then a
+   * sentence nobody can judge: the whole question somebody has when a pane disappears is
+   * WHICH conversation it was. Free by construction (`shared/gist.ts`) - keystrokes the
+   * app already relays on their way to the pty, never a summary anything was paid for.
+   * Absent for a pane nobody has typed into yet, and then it is simply not said.
+   */
+  doing?: string
+  /**
    * The agent has a LIVE question on screen, right now.
    *
    * `fleetState` cannot answer this: it calls both a finished turn and an unanswered
@@ -251,15 +293,60 @@ function byName(text: string, panes: MascotPane[]): MascotPane[] {
   return hit
 }
 
-/** How the mascot refers to a pane in a sentence: the number is the keystroke that reaches it. */
+/**
+ * How the mascot refers to a pane in a sentence: the project first, then the number.
+ *
+ * The number is the keystroke that reaches it (Ctrl+N) and the project is what a person
+ * has in their head, so "taskdriver pane 1" is both halves in the order they are thought
+ * of. It used to be `pane 1 (taskdriver)`, which reads as an id with a note after it.
+ */
 export function paneWord(p: MascotPane): string {
-  return `pane ${p.pane} (${p.name})`
+  return p.name ? `${p.name} pane ${p.pane}` : `pane ${p.pane}`
+}
+
+/** The most of a pane's ask that goes in a sentence. Longer than this is a paragraph. */
+const SUBJECT_MAX = 64
+
+/** One line of what a pane was asked to do, or '' when the app does not know. */
+export function paneSubject(doing?: string): string {
+  const t = (doing ?? '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  return t.length > SUBJECT_MAX ? `${t.slice(0, SUBJECT_MAX - 1).trimEnd()}\u2026` : t
+}
+
+/**
+ * The pane, and what it was working on when there is an answer to that.
+ *
+ * Never invented: a pane with no recorded ask is named and nothing more. A confident
+ * wrong sentence about which conversation just closed is worse than no sentence, which is
+ * the same rule History's own row is written under.
+ */
+export function paneDoing(p: { name?: string; pane: number; doing?: string }, tense: 'is' | 'was' = 'was'): string {
+  const word = paneWord(p as MascotPane)
+  const s = paneSubject(p.doing)
+  return s ? `${word} - ${tense} working on "${s}"` : word
 }
 
 export function paneLine(p: MascotPane): string {
   const mem = p.memMb === null ? 'not measured yet' : formatMb(p.memMb)
   const idle = p.idleMs >= MIN ? `, quiet ${humanMins(p.idleMs)}` : ''
-  return `${paneWord(p)} - ${p.state}, ${mem}${idle}`
+  const s = paneSubject(p.doing)
+  return `${paneWord(p)} - ${p.state}, ${mem}${idle}${s ? `\n   on "${s}"` : ''}`
+}
+
+/**
+ * How long ago something happened, said the way somebody would say it.
+ *
+ * The pet's report of what the ladder did used to carry no time at all, so a bubble that
+ * had been sitting in the corner for ten minutes read as something that had just happened
+ * - which is the one thing about an automatic close somebody needs to place. Seconds
+ * below a minute (rounded to five, because a number changing every second in the corner of
+ * an eye is motion, not information), then minutes, then hours.
+ */
+export function agoWords(ms: number): string {
+  if (!(ms > 0) || ms < 10_000) return 'just now'
+  if (ms < MIN) return `${Math.round(ms / 5000) * 5}s ago`
+  return `${humanMins(ms)} ago`
 }
 
 export function humanMins(ms: number): string {
@@ -448,7 +535,7 @@ export function notice(
     about: ids[0],
     say:
       stale.length === 1
-        ? `${paneWord(stale[0])} finished ${humanMins(stale[0].idleMs)} ago and is holding ${formatMb(total)}. Close it?`
+        ? `${paneDoing(stale[0])} - finished ${humanMins(stale[0].idleMs)} ago and is holding ${formatMb(total)}. Close it?`
         : `${stale.length} panes have been quiet over ${humanMins(mins * MIN)} and are holding ${formatMb(total)}. Close them?`,
     action: {
       kind: 'close',
@@ -458,12 +545,50 @@ export function notice(
   }
 }
 
-/** What it says after the ladder acted by itself, so an invisible action stops being invisible. */
-export function actedWords(what: 'closed' | 'moved' | 'trimmed', panes: string[], mb?: number): string {
-  const who = panes.length === 1 ? panes[0] : `${panes.length} panes`
-  if (what === 'trimmed') return `Trimmed ${who} back${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
-  if (what === 'moved') return `Moved ${who} to the paired device - this machine was out of memory.`
-  return `Closed ${who}${mb ? `, about ${formatMb(mb)} back` : ''} - reopen from History, nothing is lost.`
+/**
+ * A pane the ladder acted on, as much of it as the sentence needs.
+ *
+ * A string was enough while the sentence was "closed a pane": it is not enough for "which
+ * one, and what was it in the middle of", which is the only question anybody has when a
+ * pane they were using is not there any more.
+ */
+export interface ActedPane {
+  /** Already `paneWord`, worked out where the pane list lives. */
+  word: string
+  /** What it was asked to do, if the app knows. Never invented. */
+  doing?: string
+}
+
+/**
+ * What it says after the ladder acted by itself, so an invisible action stops being invisible.
+ *
+ * `agoMs` is passed rather than stored because the sentence is re-rendered while it is on
+ * screen: a bubble saying "just now" that is still saying it four minutes later is the
+ * bug this argument exists to close.
+ */
+export function actedWords(
+  what: 'closed' | 'moved' | 'trimmed',
+  panes: ActedPane[],
+  mb?: number,
+  agoMs = 0
+): string {
+  const subject = (p: ActedPane): string => {
+    const s = paneSubject(p.doing)
+    return s ? `${p.word} - was working on "${s}"` : p.word
+  }
+  const one = panes.length === 1
+  const who = one ? subject(panes[0]) : `${panes.length} panes`
+  const when = agoWords(agoMs)
+  const back = mb ? `, about ${formatMb(mb)} back` : ''
+  const head =
+    what === 'trimmed'
+      ? `Trimmed ${who} ${when}${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
+      : what === 'moved'
+        ? `Moved ${who} to the paired device ${when} - this machine was out of memory.`
+        : `Closed ${who} ${when}${back} - reopen from History, nothing is lost.`
+  // Several panes are listed under the sentence rather than folded into it: the whole
+  // point is which conversations went, and a comma-joined run of four is unreadable.
+  return one ? head : [head, ...panes.map(subject)].join('\n')
 }
 
 

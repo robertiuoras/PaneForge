@@ -1057,6 +1057,20 @@ Full reasoning: `docs/design-notes.md`.
 - **It is not a model.** Every sentence is arithmetic over readings the app already holds,
   and every typed command is a small parser over the same list. Nothing leaves the machine,
   so it costs nothing to leave on.
+- **What it says names the pane, what that pane was in the middle of, and when.** `Closed a
+  pane, about 190 MB back` answers none of the three questions somebody has when a pane they
+  were using is gone. `paneWord` is now `taskdriver pane 1` (the project first - the number
+  is the Ctrl key, the project is what is in your head), the subject comes off
+  `Session.gist` - History's own line, pushed onto the LIVE session because by the time a
+  disk read came back the pane it names is closed - and the time is `agoWords`, rebuilt as
+  the bubble draws rather than written once, so a report that has sat in the corner for ten
+  minutes stops reading as something that just happened. A pane nobody has typed a real ask
+  into says nothing about one: a confident wrong subject is worse than none.
+- **A bubble takes itself away** (`mascot.hideSeconds`, 60s, 0 = until pressed). Everything
+  it says is a READING and a reading left on screen stops being one. The clock restarts on
+  every keystroke in the ask box, and a COUNTDOWN is exempt - that bubble has a deadline of
+  its own and the press that stops the close is on it, which is the load-bearing case in
+  `test:mascot`.
 - **A guess is never an action.** "close pane 9" with five panes closes nothing and says how
   many there are; names match longest-first with a contained name dropped (`service` inside
   `service-a`); every destructive intent is OFFERED as a press. `closeable()` is `reclaim.ts`'s
