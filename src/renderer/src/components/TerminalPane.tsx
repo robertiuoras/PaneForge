@@ -1346,7 +1346,20 @@ function TerminalPane({
         // character reads as a dead key, not as "the pane could not find the composer".
         inputRows: () => inputRowsRef.current?.() ?? null,
         // TEMP DEBUG
-        composer: () => { const b = t.buffer.active; return composerAt((r) => b.getLine(r)?.translateToString(true) ?? '', b.baseY + b.cursorY) }
+        composer: () => {
+          const b = t.buffer.active
+          const rd = (r: number): string => b.getLine(r)?.translateToString(true) ?? ''
+          const cur = b.baseY + b.cursorY
+          return {
+            cur,
+            comp: composerAt(rd, cur),
+            frameHere: frameAt(rd(cur)),
+            startAbove: inputStart(rd(cur - 1)),
+            endAbove: inputEnd(rd(cur - 1)),
+            below: rd(cur + 1).length,
+            above2: rd(cur - 2).length
+          }
+        }
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
