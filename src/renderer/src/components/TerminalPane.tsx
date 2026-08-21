@@ -1344,7 +1344,9 @@ function TerminalPane({
         // composer, or of a wrapped shell line. On the handle because every symptom of
         // this being wrong looks like something else: a selection that deletes one
         // character reads as a dead key, not as "the pane could not find the composer".
-        inputRows: () => inputRowsRef.current?.() ?? null
+        inputRows: () => inputRowsRef.current?.() ?? null,
+        // TEMP DEBUG
+        composer: () => { const b = t.buffer.active; return composerAt((r) => b.getLine(r)?.translateToString(true) ?? '', b.baseY + b.cursorY) }
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
