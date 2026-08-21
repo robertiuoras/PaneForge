@@ -145,19 +145,59 @@ export function laneState(
   lane: LaneBoardEntry,
   mine = false,
   now = Date.now(),
-  pane?: number
+  pane?: number,
+  hold: { reason: string; at: number } | null = null
 ): string {
   // "conflicts with master" was written for the person who wrote the release script.
   // What a reader needs is what it means (this work is being left out) and what ends it
   // (somebody picks between two versions) - the tooltip carries the git specifics.
   if (lane.conflicted) return `won't merge - needs a decision, ${ago(lane.conflictSince ?? now, now)}`
-  if (lane.ready) return 'done - ships with the next update'
+  // "done - ships with the next update" on its own is a promise, and it was on screen
+  // unchanged for hours while the release was refusing for a reason the app already had
+  // on disk. The promise is still made when nothing is holding it up; when something is,
+  // that is what the row says instead.
+  if (lane.ready) {
+    const why = holdWords(hold, now)
+    return why ? `done, ${why}` : 'done - ships with the next update'
+  }
   if (!lane.held) return 'free'
   // "working" was a lie the strip told about every lane: a chat claims one the moment it
   // starts, so four chats that had typed nothing all read as busy. What the lane file
   // actually knows is who holds it and when that chat was last heard from.
   const who = mine ? '' : `${holderName(lane, pane)} has it, `
   return now - lane.seen < FRESH_MS ? `${who}busy now` : `${who}quiet ${ago(lane.seen, now)}`
+}
+
+/**
+ * How long a release may be "running" before that stops being an explanation.
+ *
+ * The same window lane.mjs clears its own lock after (LOCK_MS): past it, a release is not
+ * running, it is a machine that went away mid-release. The badge said "releasing" either
+ * way, which is the one word that makes somebody wait instead of looking.
+ */
+export const RELEASE_STUCK_MS = 20 * 60 * 1000
+
+/**
+ * The release gate's own reason, in the words a row has space for.
+ *
+ * The gate writes a paragraph, because its reader is usually an agent about to do
+ * something rash with a version number. A person reading a sidebar needs the half that
+ * says what is being waited on. Nothing is decided here - an unrecognised reason is
+ * printed as it stands rather than dropped, since a reason this has never seen is exactly
+ * the one worth reading.
+ */
+export function holdWords(hold: { reason: string; at: number } | null, now = Date.now()): string {
+  const r = hold?.reason?.trim()
+  if (!r) return ''
+  if (/^another chat is mid-release/i.test(r)) return 'a release is running'
+  const busy = r.match(/^waiting on chats still working:\s*(.+)$/i)
+  if (busy) return `waiting for the chats still working in ${busy[1]}`
+  const soon = r.match(/about (\d+)m\)/)
+  if (soon) return `releases batch - the next one is about ${soon[1]}m away`
+  if (/test suite/i.test(r)) return `held back ${ago(hold!.at, now)}: master fails its own tests`
+  if (/typecheck|does not compile/i.test(r)) return `held back ${ago(hold!.at, now)}: master does not compile`
+  // The first sentence, whole. Cutting mid-sentence is how a reason becomes a riddle.
+  return r.split('. ')[0].slice(0, 140)
 }
 
 /** The holder, spelled out in full: the tooltip is where the whole path and id belong. */

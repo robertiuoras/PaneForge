@@ -448,6 +448,8 @@ function read() {
     s.conflicts ??= {}
     s.release ??= null
     s.lastShip ??= null
+    // Why the last automatic release did not go out. See noteHold below.
+    s.hold ??= null
     // What THIS device last told the other one, so a turn ending can tell whether a
     // refresh is due without asking the network on every turn.
     s.peer ??= null
@@ -456,7 +458,7 @@ function read() {
     s.peers ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, peer: null, peers: null }
+    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
   }
 }
 
@@ -2091,7 +2093,43 @@ function suiteFailure(state) {
  * the version goes out the moment the last chat with unfinished work finishes it - and
  * silently does nothing while any chat is still mid-edit.
  */
+/**
+ * A release attempt, with its answer written down where the app can read it.
+ *
+ * The gate has always known exactly why nothing went out - a lane still being typed in,
+ * the two-hour batching window, a red suite - and said so to whichever hook happened to
+ * ask. Nothing kept it, so the one surface a person actually looks at drew a finished
+ * lane as "done - ships with the next update" for hours with no way to tell a release
+ * that is ten minutes away from one that is blocked on a failing test. Robert's report
+ * was that sentence read literally: "it says done, and it says releasing, and neither is
+ * true".
+ *
+ * `hold.at` is when this reason STARTED, not when it was last checked - "waiting 40m" has
+ * to be the wait itself, or every poll resets the clock and nothing ever looks stuck.
+ */
 function autoship(kind = 'auto', session = 'auto') {
+  const out = autoshipRun(kind, session)
+  noteHold(out)
+  return out
+}
+
+/** Record (or clear) why the work is being held. Never allowed to break the release. */
+function noteHold(out) {
+  try {
+    const state = read()
+    const reason = out?.shipped ? null : (out?.reason ?? null)
+    // "nothing to release" is the ordinary quiet state, not a hold: there is no finished
+    // work waiting, so there is nothing for a person to be told about.
+    const keep = reason && !/^nothing to release/i.test(reason) ? reason : null
+    if (keep && state.hold?.reason === keep) state.hold.seen = now()
+    else state.hold = keep ? { reason: keep, at: now(), seen: now() } : null
+    write(state)
+  } catch {
+    // A ledger this cannot write is a ledger the release itself already survived without.
+  }
+}
+
+function autoshipRun(kind = 'auto', session = 'auto') {
   // Before `shippable` asks whether anything is unreleased - that question is answered
   // against local tags, and a stale one turns "already released" into "release it again".
   syncTags()

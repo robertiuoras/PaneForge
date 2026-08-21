@@ -126,6 +126,8 @@ interface RawState {
   conflicts?: Record<string, RawConflict>
   release?: { session: string; at: number } | null
   lastShip?: { version: string; at: number; lanes: string[] } | null
+  /** The release gate's own last answer for why nothing went out. Written by lane.mjs. */
+  hold?: { reason: string; at: number; seen?: number } | null
   /**
    * What the OTHER desks last told this one, cached by lane.mjs whenever it already had a
    * reason to ask origin. Read here off the same disk read as everything else: the strip
@@ -817,6 +819,9 @@ function readRepo(main: string): LaneBoard | null {
     lanes,
     device: DEVICE,
     releasing: state.release?.at ?? null,
-    lastShip: state.lastShip ?? null
+    lastShip: state.lastShip ?? null,
+    // Repeated, never re-derived: duplicating the gate's conditions here is how two halves
+    // of one app end up disagreeing about whether a release is blocked.
+    hold: state.hold?.reason ? { reason: state.hold.reason, at: state.hold.at } : null
   }
 }

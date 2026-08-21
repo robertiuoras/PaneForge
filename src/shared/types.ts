@@ -429,6 +429,17 @@ export interface LaneBoard {
   /** epoch ms a release started, when one is running */
   releasing: number | null
   lastShip: { version: string; at: number; lanes: string[] } | null
+  /**
+   * Why the finished work has not gone out yet, as the release gate itself last answered
+   * it (`noteHold` in scripts/lane.mjs), and when that answer STARTED being true.
+   *
+   * The strip used to draw a finished lane as "done - ships with the next update" and
+   * leave it at that, which is a promise rather than a state: the same words are on
+   * screen whether the release is ten minutes away, waiting on another chat, or refusing
+   * because master fails its own tests. Nothing here is computed a second time - the gate
+   * is the only thing allowed to decide, and this is its answer repeated.
+   */
+  hold: { reason: string; at: number } | null
 }
 
 export interface WindowBounds {

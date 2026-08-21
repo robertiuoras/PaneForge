@@ -3,13 +3,16 @@ import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
 import {
+  ago,
   deviceTip,
+  holdWords,
   laneBusy,
   laneChipLabel,
   laneLabel,
   laneProject,
   laneState,
-  laneTip
+  laneTip,
+  RELEASE_STUCK_MS
 } from '../laneWords'
 
 const api = window.api
@@ -208,11 +211,16 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
       .filter((l) => !laneOwner(l, sessions))
       // `here` travels with the row because a board is one machine's reading of one repo,
       // and a row may be about the other machine - see LaneRow's device tag.
-      .map((l) => ({ repo: b.repo, lane: l, here: b.device }))
+      .map((l) => ({ repo: b.repo, lane: l, here: b.device, hold: b.hold }))
   )
   if (!orphans.length) return null
   const stuck = orphans.filter((o) => o.lane.conflicted).length
-  const releasing = boards.some((b) => b.releasing !== null)
+  // The oldest running release, so "releasing" can stop being said about one that is not.
+  const releasingAt = boards
+    .map((b) => b.releasing)
+    .filter((at): at is number => at !== null)
+    .sort((a, b) => a - b)[0]
+  const wedged = releasingAt !== undefined && Date.now() - releasingAt > RELEASE_STUCK_MS
 
   return (
     <>
@@ -226,9 +234,17 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
             {stuck} stuck
           </span>
         )}
-        {releasing && (
-          <span className="badge run" title="Finished lanes are being folded into one update right now">
-            releasing
+        {releasingAt !== undefined && (
+          <span
+            className={'badge ' + (wedged ? 'stuck' : 'run')}
+            title={
+              wedged
+                ? 'A release started and never finished - usually a machine that went away mid-release. ' +
+                  'It is dropped by itself after twenty minutes and the work goes out with the next one.'
+                : 'Finished lanes are being folded into one update right now'
+            }
+          >
+            {wedged ? `release stuck ${ago(releasingAt)}` : 'releasing'}
           </span>
         )}
         <button className="ghost small lane-what" onClick={onHelp} title="How lanes work">
@@ -244,6 +260,7 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
             lane={o.lane}
             repo={o.repo}
             here={o.here}
+            hold={o.hold}
             sessions={sessions}
             onFocus={onFocus}
           />
@@ -257,6 +274,7 @@ function LaneRow({
   lane,
   repo,
   here,
+  hold,
   sessions,
   onFocus
 }: {
@@ -264,6 +282,8 @@ function LaneRow({
   repo: string
   /** the machine this window is running on, to tell "here" from "the other desk" */
   here: string | null
+  /** this repo's release gate, on why finished work has not gone out */
+  hold: { reason: string; at: number } | null
   sessions: Session[]
   onFocus: (id: string) => void
 }): JSX.Element {
@@ -301,7 +321,7 @@ function LaneRow({
         (lane.ready ? ' done' : '') +
         (busy ? ' busy' : '')
       }
-      title={laneTip(lane, holderPane)}
+      title={laneTip(lane, holderPane) + (lane.ready && hold ? `\n\n${hold.reason}` : '')}
     >
       <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
         {lane.lane}
@@ -312,7 +332,7 @@ function LaneRow({
             nothing on any of them naming one. */}
         <div className="row-title">{laneLabel(lane)}</div>
         <div className="row-sub">
-          {laneState(lane, false, Date.now(), holderPane)}
+          {laneState(lane, false, Date.now(), holderPane, hold)}
           {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
         </div>
       </div>
