@@ -153,6 +153,26 @@ export function noteCols(id: string, cols: number): void {
   widths.set(id, cols)
 }
 
+/**
+ * The width a session's output was painted at, or 0 when nothing on disk says.
+ *
+ * Asked of a session that is usually GONE - a restored pane replaying the log of the pane
+ * it is coming back from - so the live map is only the first place to look. `writeEnd`
+ * puts the last known width into the metadata on the way out, and `recordStart` wrote the
+ * launch width before that, so a session killed without an end still answers something
+ * usable. See `shared/replayWidth.ts` for what the answer is for.
+ */
+export function colsOf(id: string): number {
+  const live = widths.get(id)
+  if (live && live > 0) return live
+  try {
+    const entry = JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry
+    return entry.cols && entry.cols > 0 ? entry.cols : 0
+  } catch {
+    return 0
+  }
+}
+
 export function recordData(id: string, chunk: string): void {
   if (!enabled) return
   if ((sizes.get(id) ?? 0) > MAX_LOG_BYTES) return

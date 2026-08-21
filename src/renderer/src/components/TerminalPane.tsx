@@ -26,6 +26,7 @@ import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
+import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { placeTurnCopies } from '../../../shared/turnCopy'
@@ -85,6 +86,16 @@ interface Props {
    * attach paths.
    */
   grid?: { cols: number; rows: number } | null
+  /**
+   * The width the restored part of this pane's buffer was painted at.
+   *
+   * A CLI draws in absolute column moves, and a terminal clamps one past its own last
+   * column - so a 159-column screen replayed into an 85-column pane collapses onto the
+   * right-hand edge, one word over the last, and no repaint fixes it because the damage
+   * is in the scrollback. The replay is written at this width and the terminal is put
+   * back afterwards. See `shared/replayWidth.ts`.
+   */
+  replayCols?: number
   /**
    * The four colours the terminal's own chrome is drawn in, from the app's theme.
    *
@@ -538,6 +549,7 @@ function TerminalPane({
   autoFixUi,
   mirror = null,
   grid = null,
+  replayCols,
   termTheme,
   ask = null,
   autoAnswerAt,
@@ -576,6 +588,19 @@ function TerminalPane({
   const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  // The width this pane's replayed history was painted at, where the effect that owns the
+  // terminal can read it. See `Props.replayCols`.
+  const replayColsRef = useRef(replayCols)
+  replayColsRef.current = replayCols
+  /**
+   * The replay is mid-flight and the terminal is deliberately the WRONG shape for its box.
+   *
+   * `reshape` is called by the resize observer, by the visibility effect and by the grid -
+   * any one of them landing between the two halves of a staged replay would fit the
+   * terminal back to the window while the old screen is still being written into it, which
+   * is the bug this exists to fix, arriving from the other side.
+   */
+  const replaying = useRef(false)
   /**
    * The question this pane is sitting on, where the mouse handlers can see it.
    *
@@ -650,6 +675,7 @@ function TerminalPane({
    * frame it is showing was drawn on the other machine to begin with.
    */
   const reshape = (t: Terminal, f: FitAddon): boolean => {
+    if (replaying.current) return false
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
@@ -2297,21 +2323,49 @@ function TerminalPane({
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
-      // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
-      if (b) {
-        sawOutput = true
+      if (!b) return
+      sawOutput = true
+      // There is history on this pane, so it was drawn somewhere else first. See
+      // `needRestoreFix`.
+      needRestoreFix.current = true
+      armRestoreFix()
+      const done = (): void => {
+        // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
+        t.scrollToBottom()
+        // Held until here rather than dropped before the write: a staged replay resizes
+        // the terminal twice, and the dim "Starting…" line is what covers that.
         setBlank(false)
-        // There is history on this pane, so it was drawn somewhere else first. See
-        // `needRestoreFix`.
-        needRestoreFix.current = true
-        armRestoreFix()
-        t.write(keep(b), () => {
-          t.scrollToBottom()
-          // The replay IS the conversation this pane is being reopened into, so its
-          // prompts get their tags back. See seedMarks.
-          seedMarks()
-        })
+        // The replay IS the conversation this pane is being reopened into, so its
+        // prompts get their tags back. See seedMarks.
+        seedMarks()
       }
+      // Its real shape before a byte lands. xterm opens at 80x24 and the fit otherwise
+      // arrives a frame or two later, which is the first half of "after the update
+      // restart it looks broken".
+      reshape(t, f)
+      // The second half, and the one no repaint can undo: the restored part of this
+      // buffer was painted in absolute column moves at the OLD pane's width, and a
+      // terminal clamps a column it cannot reach. See `shared/replayWidth.ts`.
+      const split = splitReplay(b, replayColsRef.current, t.cols)
+      if (!split) {
+        t.write(keep(b), done)
+        return
+      }
+      const back = t.cols
+      replaying.current = true
+      t.resize(Math.max(20, split.cols), t.rows)
+      // In the write CALLBACK, never after the call: xterm parses what it is given on its
+      // own schedule, so a resize issued straight after `write` can land before the bytes
+      // it is meant to be wider than.
+      t.write(keep(split.before), () => {
+        t.resize(back, t.rows)
+        replaying.current = false
+        // ...and a fit, because a resize that arrived while `replaying` was set was
+        // refused, and because a pane put back by hand is only right until the next one.
+        reshape(t, f)
+        if (split.after) t.write(keep(split.after), done)
+        else done()
+      })
     })
 
     /**
@@ -3536,6 +3590,7 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.onToast === b.onToast &&
     a.autoAnswerAt === b.autoAnswerAt &&
     a.autoAnswerN === b.autoAnswerN &&
+    a.replayCols === b.replayCols &&
     sameAsk(a.ask, b.ask) &&
     sameGrid(a.mirror, b.mirror) &&
     sameGrid(a.grid, b.grid) &&

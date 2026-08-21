@@ -868,7 +868,24 @@ screen. Why each rule below: `docs/design-notes.md`.
   makes an update restart obey the same offer as a quit or a crash. Off by default - asking
   several times a day costs more than the inconsistency - and inert while `restoreAfterUpdate`
   is off.
-- **It presses Fix for itself.** The tail was hard-wrapped at the old pty's width and is
+- **It is replayed at the width it was PAINTED at, and Fix cannot do this job.** Every agent
+  CLI here draws in absolute column moves - one real line off this machine's log is
+  `Cause:\x1b[10G...` out to `\x1b[143G`, because that pane was 159 columns - and a terminal
+  CLAMPS a move past its own last column. Replayed into an 85-column pane the old screen
+  therefore piles onto the right-hand edge, one word over the last, which is "the text at the
+  top is broken and pressing Fix does not fix it": Fix asks the CLI to repaint the SCREEN, and
+  the wreckage is in the scrollback where the agent has nothing to say. So `restoredTail`
+  carries the old session's width out with the bytes (`colsOf`, off its history metadata),
+  `Session.replayCols` takes it to the pane, and the pane writes that part of the buffer at
+  that width and hands the terminal back afterwards - xterm re-wraps what is already in its
+  buffer. **Only the part before the restore mark**, and only when the mark is still there: a
+  pane that has printed past it holds nothing old, and staging then paints its own output at
+  somebody else's width. The resize goes in the write CALLBACK, never after the call - xterm
+  parses on its own schedule. Measured with a real headless xterm over the real bytes: at 85
+  the sentence is destroyed, at 159-then-85 it reads back whole; and in a live pane 80 columns
+  wide, intact. `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- **It presses Fix for itself**, which is the OTHER half - a frame drawn at 80x24 before the
+  fit landed, not a scrollback painted at another pane's width. The tail was hard-wrapped at the old pty's width and is
   replayed into a terminal xterm opens at 80x24, so the frame that lands is regularly drawn
   at the wrong width. A pane that came back with history runs `repair()` once,
   `RESTORE_FIX_MS` (1.2s) after its output stops. It is `autoFixUi`'s; a mirror is refused; a
@@ -1159,6 +1176,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run smoke` | the pty layer |
 | `npm run test:restore` | which conversation a reopened pane goes back into |
 | `npm run test:scrollback` | and what is on its screen when it gets there |
+| `npm run test:replaywidth` | ...drawn at the width it was drawn at: a real 159-column frame off this machine's log, with the shipped behaviour (write it at 85) kept as the control that must FAIL, and the refusals that stop a pane painting its OWN output at somebody else's width |
 | `npm run test:restoreturn` | what else it inherits: the display clock, the engaged flag, and continuing a turn a restart cut in half (with the refusals, and source assertions so a green test over a function nothing calls cannot pass) |
 | `npm run test:promptecho` | rebuilding a restored pane's prompt tags from the CLI's own `❯` echo, and the four things that must NOT become tags (a `>` quote, a diff, a shell prompt, the live composer) |
 | `npm run test:consoles` | sweeping console hosts left behind |

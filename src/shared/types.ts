@@ -158,6 +158,16 @@ export interface Session {
    */
   borrowed?: boolean
   /**
+   * The width the RESTORED part of this pane's buffer was painted at, when it has one.
+   *
+   * A reopened pane replays the log of the pane it is coming back from, and those bytes
+   * are absolute cursor moves made in that pane's width - so the terminal has to be that
+   * width while they are written, or the old screen piles up on its right-hand edge and
+   * no repaint can ever repair it. Set once at start and never moved: the restore mark in
+   * the buffer is where it stops applying. See `shared/replayWidth.ts`.
+   */
+  replayCols?: number
+  /**
    * This pane is on its way to another device, or waiting for its turn to end so it can be.
    *
    * On the session rather than in the sender, because two other things have to see it: the

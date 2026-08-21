@@ -14,7 +14,8 @@ import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -103,7 +104,7 @@ const RESET = '\x1bc'
  * `\x1b[0m` first because the tail is cut mid-run: whatever attribute was in force at the
  * cut would otherwise bleed into the caption and into everything the new process writes.
  */
-const RESTORE_MARK = '\x1b[0m\r\n\x1b[2m—— above: this pane before the restart ——\x1b[0m\r\n'
+const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -119,10 +120,15 @@ const RESTORE_MARK = '\x1b[0m\r\n\x1b[2m—— above: this pane before the resta
  * not try to be the live terminal's own scrollback: the cap is the buffer's, so what
  * comes back is the same amount a pane already keeps in memory, not the whole day.
  */
-function restoredTail(scrollbackId: string | undefined): string {
-  if (!scrollbackId) return ''
+function restoredTail(scrollbackId: string | undefined): { text: string; cols: number } {
+  if (!scrollbackId) return { text: '', cols: 0 }
   const back = tail(scrollbackId, BUFFER_LIMIT)
-  return back ? back + RESTORE_MARK : ''
+  if (!back) return { text: '', cols: 0 }
+  // The width those bytes were PAINTED at, carried out to the pane with them. A CLI draws
+  // in absolute column moves, and a terminal clamps one it cannot reach - so replayed into
+  // a narrower pane the old screen collapses onto its right-hand edge and the reopened
+  // pane's history is unreadable. See `shared/replayWidth.ts`.
+  return { text: back + RESTORE_MARK, cols: colsOf(scrollbackId) }
 }
 /**
  * A slash command that is still running after this long is real work, not
@@ -434,7 +440,10 @@ export class SessionManager extends EventEmitter {
     // What this pane had on screen last time, put back before the new process says
     // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
     const back = restoredTail(req.scrollbackId)
-    if (back) live.buffer.set(back)
+    if (back.text) {
+      live.buffer.set(back.text)
+      if (back.cols > 0) meta.replayCols = back.cols
+    }
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)

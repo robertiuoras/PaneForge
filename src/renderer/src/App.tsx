@@ -4088,6 +4088,9 @@ export default function App(): JSX.Element {
               // Not `mirror`: this pane's pty is still ours, and everything else a mirror
               // implies (no busy reading, no local clipboard) is wrong for it.
               grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // A restored pane replays the screen of the pane it came back from, painted
+              // in absolute column moves at THAT pane's width. See shared/replayWidth.ts.
+              replayCols={s.replayCols}
             />
             {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
