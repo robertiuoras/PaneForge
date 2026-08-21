@@ -191,6 +191,27 @@ writeFileSync(
     // this machine drives git repositories and loses races on a busy box. It disarms itself,
     // so the second run is green without the test having to time anything.
     `if (mode === 'flake') writeFileSync(${JSON.stringify(exitFile)}, '0')\n` +
+    // Tooling that is not there. It must NOT be asked twice: a missing binary does not
+    // install itself between two runs, and re-running only doubles the wait.
+    `if (mode === 'cannotrun') {\n` +
+    `  console.log('sh: npm: command not found')\n` +
+    `  process.exit(1)\n` +
+    `}\n` +
+    // Two real failures with DIFFERENT text, so the cached reason says which run it came
+    // from. It must be the second: that is the one the decision was made on.
+    `if (mode === 'twofail') {\n` +
+    `  console.log('FAIL  attempt ' + readFileSync(${JSON.stringify(runs)}, 'utf8').length)\n` +
+    `  process.exit(1)\n` +
+    `}\n` +
+    // Another chat writing the shared ledger WHILE the suite runs - which is the whole
+    // window the retry doubled. It runs inside that window by construction.
+    `if (mode === 'concurrent') {\n` +
+    `  const st = JSON.parse(readFileSync(${JSON.stringify(statePath)}, 'utf8'))\n` +
+    `  st.conflicts = { ...(st.conflicts || {}), 'somebody-else': 'was here' }\n` +
+    `  writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(st, null, 2))\n` +
+    `  console.log('FAIL  the one that broke')\n` +
+    `  process.exit(1)\n` +
+    `}\n` +
     `if (mode !== '0') {\n` +
     `  console.log('FAIL  the one that broke')\n` +
     `  process.exit(1)\n` +
@@ -251,6 +272,45 @@ const flakeOut = lane('autoship')
 ok('a flaky suite does not hold the release', !/test suite/.test(flakeOut), flakeOut)
 ok('and it really was asked twice', readFileSync(runs, 'utf8').length === 5, `ran ${readFileSync(runs, 'utf8').length} times`)
 ok('the verdict cached is the second answer', state().suite?.ok === true, JSON.stringify(state().suite))
+
+// Tooling that is not there is NOT asked twice - it cannot repair itself, and the second
+// run is only another 20-minute wait. Without this case a logic inversion on the
+// `!cannotRun(first)` guard passes every test above.
+writeFileSync(exitFile, 'cannotrun')
+git(repo, 'commit', '-qm', 'no npm on this box', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const before = readFileSync(runs, 'utf8').length
+const toolOut = lane('autoship')
+ok('missing tooling is named as tooling, not as broken code', /could not run/.test(toolOut), toolOut)
+ok(
+  'and it is not asked a second time',
+  readFileSync(runs, 'utf8').length === before + 1,
+  `ran ${readFileSync(runs, 'utf8').length - before} times`
+)
+
+// Both runs red, with different text: the cached reason must be the SECOND one, because
+// that is the answer the refusal was made on.
+writeFileSync(exitFile, 'twofail')
+git(repo, 'commit', '-qm', 'red twice over', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const twoOut = lane('autoship')
+const attempts = readFileSync(runs, 'utf8').length
+ok('two red runs still stop the release', /fails its own test suite/.test(twoOut), twoOut)
+ok('and the reason quoted is the second run', new RegExp(`attempt ${attempts}`).test(state().suite?.reason ?? ''), JSON.stringify(state().suite))
+
+// The ledger this process read is minutes old by the time the verdict is written, and
+// `write()` replaces the whole file. Another chat's claim landing inside that window must
+// survive it - the suite key is merged into a fresh read, not stamped onto a stale copy.
+writeFileSync(exitFile, 'concurrent')
+git(repo, 'commit', '-qm', 'somebody else is working too', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const clobberOut = lane('autoship')
+ok('the refusal still stands', /fails its own test suite/.test(clobberOut), clobberOut)
+ok(
+  'a write that landed while the suite ran is not clobbered',
+  state().conflicts?.['somebody-else'] === 'was here',
+  JSON.stringify(state().conflicts)
+)
 
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')

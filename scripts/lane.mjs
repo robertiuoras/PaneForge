@@ -2056,12 +2056,27 @@ function suiteFailure(state) {
       timeout: SUITE_TIMEOUT_MS,
       shell: true
     })
+  /**
+   * The verdict, written onto the ledger AS IT IS NOW rather than onto the copy this
+   * process read minutes ago.
+   *
+   * `write()` replaces the whole file, and the suite is the one thing in here that holds a
+   * `state` across a span of real time - up to 20 minutes for one run, and twice that since
+   * a red answer is confirmed. Another chat marking a lane ready, a claim, a peer ref: all
+   * of it lands on disk inside that window and all of it was overwritten by the stale copy.
+   * So the suite key is merged into a fresh read; the in-memory `state` is updated too,
+   * because the caller goes on to use it.
+   */
+  const cacheSuite = (verdict) => {
+    if (!commit) return
+    state.suite = verdict
+    const fresh = read()
+    fresh.suite = verdict
+    write(fresh)
+  }
   const pass = (r) => {
     if (r.status !== 0) return false
-    if (commit) {
-      state.suite = { commit, ok: true, at: now() }
-      write(state)
-    }
+    cacheSuite({ commit, ok: true, at: now() })
     return true
   }
   let r = runSuite()
@@ -2106,10 +2121,7 @@ function suiteFailure(state) {
     r.signal || (r.status == null && !all.trim())
       ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
       : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
-  if (commit) {
-    state.suite = { commit, ok: false, at: now(), reason }
-    write(state)
-  }
+  cacheSuite({ commit, ok: false, at: now(), reason })
   return reason
 }
 
