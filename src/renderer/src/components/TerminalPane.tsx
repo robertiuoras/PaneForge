@@ -573,6 +573,7 @@ function TerminalPane({
   // reaches them through here.
   const selectInputRef = useRef<() => boolean>(() => false)
   const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
+  const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
   /**
@@ -1338,7 +1339,12 @@ function TerminalPane({
         // never ran", and the second is how a regression here would pass unnoticed.
         restoreFixes: () => restoreFixes.current,
         // What the mouse handlers have typed into the pty, newest last. See `clickKeys`.
-        clickKeys: () => [...clickKeys.current]
+        clickKeys: () => [...clickKeys.current],
+        // What this pane believes is being TYPED right now - the rows of the CLI's own
+        // composer, or of a wrapped shell line. On the handle because every symptom of
+        // this being wrong looks like something else: a selection that deletes one
+        // character reads as a dead key, not as "the pane could not find the composer".
+        inputRows: () => inputRowsRef.current?.() ?? null
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
@@ -2074,6 +2080,7 @@ function TerminalPane({
       lastSelection.current = ''
       return 'done'
     }
+    inputRowsRef.current = inputRows
     selectInputRef.current = selectInput
     deleteSelectionRef.current = deleteSelection
 
