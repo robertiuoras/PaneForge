@@ -105,8 +105,32 @@ export const DEFAULT_RECLAIM: ReclaimConfig = {
 export interface ReclaimPane {
   id: string
   state: FleetState
-  /** Epoch ms of this pane's most recent user input (better idle signal than pty output, which repaints). */
+  /** Epoch ms of this pane's most recent user input. */
   lastKeyboard: number
+  /**
+   * Epoch ms the pty last printed anything, when the caller knows it.
+   *
+   * Keystrokes alone are not idleness, and reading them as idleness is what closed a pane
+   * mid-answer on 2026-08-21: a person types one prompt, the agent works for two hours,
+   * and `lastKeyboard` says the pane has been quiet for two hours the entire time. The
+   * only thing standing between that and a kill was the pane's STATE, and `status` goes
+   * `working` -> `idle` after four seconds of silence with no readable busy footer - so
+   * one quiet moment inside a long turn was enough to call the pane finished and start
+   * the countdown on it.
+   *
+   * So quiet means quiet: nobody has typed AND the pane has printed nothing. A pane whose
+   * agent is producing output is not idle no matter how long ago somebody last touched
+   * the keyboard. Optional because a caller that cannot supply it keeps the old reading.
+   */
+  lastOutput?: number
+  /**
+   * A turn is in flight (the pane's run clock is going).
+   *
+   * Belt and braces beside `state`: `endRun` clears the run clock and flips the status in
+   * the same pass, so this rarely disagrees - but closing somebody's pane is the one act
+   * where a second, independent "is it working" reading is worth its line.
+   */
+  busy?: boolean
   /** The pane being read. Never closed, at any pressure. */
   focused: boolean
   /** Drawn in the grid right now. Never closed - it is on somebody's screen. */
@@ -130,6 +154,16 @@ export interface ReclaimPane {
    * handoff sweep above this one.
    */
   handingOff?: boolean
+}
+
+/**
+ * When this pane last did anything at all - the later of a keystroke and a printed byte.
+ *
+ * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
+ * not `lastKeyboard` on its own.
+ */
+export function quietSince(p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput'>): number {
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0)
 }
 
 export interface Reclaim {
@@ -160,11 +194,14 @@ export function reclaimPlan(
   const minIdle = Math.max(0, cfg.minIdleMinutes) * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && CLOSEABLE.has(p.state))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
+    .filter(
+      (p) =>
+        !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+    )
+    .filter((p) => now - quietSince(p) >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
     // morning is the safer one to close than the one that finished a minute ago.
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Never the last pane. An app that empties its own window under memory pressure has
   // not solved the problem, it has removed the reason the window is open.
@@ -173,7 +210,7 @@ export function reclaimPlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - p.lastKeyboard,
+    idleMs: now - quietSince(p),
     // An exited pane's process is already gone: closing it returns a buffer, not an agent.
     // Saying so keeps the log line honest about what was actually bought.
     hadAgent: p.state !== 'exited'
@@ -204,9 +241,9 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && CLOSEABLE.has(p.state))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state))
+    .filter((p) => now - quietSince(p) >= minIdle)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Same last-pane rule as the pressure sweep: an app that empties its own window has not
   // saved anything, it has removed the reason the window is open.
@@ -215,7 +252,7 @@ export function idleClosePlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - p.lastKeyboard,
+    idleMs: now - quietSince(p),
     hadAgent: p.state !== 'exited'
   }))
 }

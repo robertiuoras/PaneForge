@@ -45,6 +45,7 @@
 
 import type { OffloadCandidate, Verdict } from './capacity'
 import type { FleetState } from './fleet'
+import { quietSince } from './reclaim'
 
 export interface AutoHandoffConfig {
   /** Move finished panes to a paired device when this machine runs out of memory. */
@@ -120,6 +121,15 @@ export interface AutoPane {
   state: FleetState
   /** epoch ms of the last thing a person typed into it */
   lastKeyboard: number
+  /**
+   * epoch ms the pty last printed anything, when the caller knows it.
+   *
+   * Same reading, and the same reason, as `ReclaimPane.lastOutput`: a person types one
+   * prompt and the agent works for two hours, so keystrokes alone call a pane that has
+   * never stopped working "quiet for two hours". Quiet means nobody has typed AND the
+   * pane has printed nothing.
+   */
+  lastOutput?: number
   focused: boolean
   visible: boolean
   /** another device's pty, mirrored here - moving it frees nothing on this machine */
@@ -239,9 +249,9 @@ function pick(
   const eligible = panes
     .filter((p) => !p.focused && !p.remote && !p.handingOff && movable(p))
     .filter((p) => !(screen && p.visible))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
+    .filter((p) => now - quietSince(p) >= minIdle)
     .filter((p) => !((blocked[p.id] ?? 0) > now))
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Never the last pane, for the same reason reclaim never empties the window: a desk with
   // nothing on it has not been helped.
@@ -251,7 +261,7 @@ function pick(
   for (const p of eligible.slice(0, room)) {
     const host = hostFor(peers, p.projectName)
     if (!host) continue
-    out.push({ id: p.id, ...host, idleMs: now - p.lastKeyboard })
+    out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
     if (out.length >= cfg.maxPerSweep) break
   }
   return out

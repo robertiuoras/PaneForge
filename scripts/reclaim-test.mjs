@@ -209,4 +209,32 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('a config from before this feature closes nothing', idleClosePlan(panes, legacy, NOW).length, 0)
 }
 
+// The pane that was closed mid-answer on 2026-08-21, in both sweeps.
+//
+// A person types one prompt and walks away; the agent works for two hours. `lastKeyboard`
+// has not moved in those two hours, so every idle reading in the app said "quiet since
+// this morning" about a pane that had never stopped printing - and `status` needs only
+// four seconds of silence with no readable footer to call the turn finished, so one pause
+// inside a long turn made it `needsYou` and the countdown started over a live session.
+//
+// The load-bearing half is the CONTROL beneath each: the same pane with its output as old
+// as its keystrokes is still closed, or these pass by refusing everything.
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 120 }
+  const working = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 2000 })
+  const finished = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+  const pad = pane({ id: 'pad', lastKeyboard: NOW, lastOutput: NOW })
+  eq('the clock never closes a pane that is still printing', idleClosePlan([working, pad], CLOCKED, NOW).length, 0)
+  eq('...and the control: the same pane, actually quiet, IS closed', ids(idleClosePlan([finished, pad], CLOCKED, NOW)), 'x')
+  eq('pressure never closes a pane that is still printing', reclaimPlan([working, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
+  eq(
+    '...and the control under pressure',
+    ids(reclaimPlan([finished, pad], over, DEFAULT_RECLAIM, NOW)),
+    'x'
+  )
+  const busy = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR, busy: true })
+  eq('a run clock that is still going is a refusal of its own', idleClosePlan([busy, pad], CLOCKED, NOW).length, 0)
+  eq('and under pressure too', reclaimPlan([busy, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
+}
+
 console.log(`reclaim: ${checks} checks passed`)

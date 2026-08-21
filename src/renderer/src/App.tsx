@@ -83,7 +83,14 @@ import {
   type MascotPane
 } from '../../shared/mascot'
 import type { RunningDev } from '../../shared/devList'
-import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb, type Reclaim } from '../../shared/reclaim'
+import {
+  DEFAULT_RECLAIM,
+  idleClosePlan,
+  quietSince,
+  reclaimPlan,
+  reclaimedMb,
+  type Reclaim
+} from '../../shared/reclaim'
 import {
   autoHandoffPlan,
   idleOffloadPlan,
@@ -1753,6 +1760,7 @@ export default function App(): JSX.Element {
         id: s.id,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
+        lastOutput: s.lastOutput,
         focused: s.id === activeRef.current,
         visible: visibleRef.current.has(s.id),
         remote: !!s.remote,
@@ -1845,7 +1853,7 @@ export default function App(): JSX.Element {
         !p.remote &&
         !p.handingOff &&
         handoffMovable(p) &&
-        now - p.lastKeyboard >= Math.max(0, cfg.minIdleMinutes) * 60_000 &&
+        now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000 &&
         !((handoffBlocked.current[p.id] ?? 0) > now)
     )
     if (!worthAsking) return
@@ -1899,7 +1907,7 @@ export default function App(): JSX.Element {
           !p.remote &&
           !p.handingOff &&
           handoffMovable(p) &&
-          now - p.lastKeyboard >= minutes * 60_000 &&
+          now - quietSince(p) >= minutes * 60_000 &&
           !((handoffBlocked.current[p.id] ?? 0) > now)
       )
       if (!worthAsking) return
@@ -1922,6 +1930,10 @@ export default function App(): JSX.Element {
         id: s.id,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
+        // Quiet means quiet. `lastKeyboard` alone called a pane whose agent had been
+        // printing for two hours "idle for two hours" - see ReclaimPane.lastOutput.
+        lastOutput: s.lastOutput,
+        busy: s.runSince !== undefined,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
@@ -1959,6 +1971,8 @@ export default function App(): JSX.Element {
           id: s.id,
           state: fleetState(s),
           lastKeyboard: s.lastKeyboard,
+          lastOutput: s.lastOutput,
+          busy: s.runSince !== undefined,
           focused: s.id === activeRef.current,
           visible: false,
           remote: !!s.remote,
@@ -2956,11 +2970,46 @@ export default function App(): JSX.Element {
   const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
   mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
 
-  const doClose = useCallback((ids: string[], mb: number) => {
-    for (const id of ids) void api.killSession(id)
-    setCloseSoon(undefined)
-    setActed({ what: 'closed', panes: ids.map((id) => paneWordRef.current(id)), mb, at: Date.now() })
+  /**
+   * Is this pane STILL one this app may close - asked at the moment of the kill, not when
+   * the plan was made.
+   *
+   * A plan is a snapshot and the countdown is fifteen seconds long, so between the two the
+   * pane can start a turn, be asked a question, or be handed off. Killing off the snapshot
+   * closes a pane that is working, which is exactly the report this exists for: "the
+   * countdown started before the session even ended". Every refusal here is `reclaim.ts`'s
+   * own, read live: a live question, a run clock that is going, a move in flight, and any
+   * state that is not one of the three the sweeps may reach.
+   */
+  const stillCloseable = useCallback((id: string): boolean => {
+    const s = sessionsRef.current.find((x) => x.id === id)
+    if (!s) return false
+    if (s.ask || s.bell) return false
+    if (s.runSince !== undefined) return false
+    if (s.handingOff) return false
+    const st = fleetState(s)
+    return st === 'ready' || st === 'exited' || st === 'needsYou'
   }, [])
+
+  const doClose = useCallback(
+    (ids: string[], mb: number) => {
+      setCloseSoon(undefined)
+      const live = ids.filter((id) => stillCloseable(id))
+      if (!live.length) {
+        console.info(`reclaim: nothing left to close - ${ids.join(', ')} woke up during the countdown`)
+        return
+      }
+      if (live.length !== ids.length) {
+        console.info(
+          `reclaim: sparing ${ids.filter((id) => !live.includes(id)).join(', ')} - woke up during the countdown`
+        )
+        mb = Math.round((mb * live.length) / ids.length)
+      }
+      for (const id of live) void api.killSession(id)
+      setActed({ what: 'closed', panes: live.map((id) => paneWordRef.current(id)), mb, at: Date.now() })
+    },
+    [stillCloseable]
+  )
 
   armCloseRef.current = (plan, why, log) => {
     const now = Date.now()
@@ -2992,6 +3041,21 @@ export default function App(): JSX.Element {
     return () => window.clearTimeout(t)
   }, [closeSoon, doClose])
 
+  /**
+   * A pane that wakes up mid-countdown takes the countdown down with it.
+   *
+   * The kill re-checks too, but only at the deadline: without this the app draws "closing
+   * pane 1 in 9s" over a pane that has just started answering, which is a sentence saying
+   * it is about to do something it will not do. `sessions` is the dependency because that
+   * is what changes when a pane goes busy or is asked something.
+   */
+  useEffect(() => {
+    if (!closeSoon) return
+    if (closeSoon.ids.every((id) => stillCloseable(id))) return
+    console.info('reclaim: countdown dropped - a pane it named went back to work')
+    setCloseSoon(undefined)
+  }, [closeSoon, sessions, stillCloseable])
+
   const keepOpen = useCallback((ids: string[]) => {
     const until = Date.now() + KEEP_MINUTES * 60_000
     for (const id of ids) keptUntil.current[id] = until
@@ -3012,7 +3076,7 @@ export default function App(): JSX.Element {
         name: projectNameOf(s.cwd) || s.title,
         state: fleetState(s),
         memMb: usage?.panes[s.id]?.rssMb ?? null,
-        idleMs: Math.max(0, Date.now() - (s.lastKeyboard || s.createdAt || Date.now())),
+        idleMs: Math.max(0, Date.now() - (Math.max(s.lastKeyboard, s.lastOutput ?? 0) || s.createdAt || Date.now())),
         remote: !!s.remote,
         asking: !!s.ask
       })),
