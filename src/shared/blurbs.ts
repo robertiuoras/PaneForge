@@ -46,7 +46,7 @@ export const BLURBS: Blurb[] = [
   {
     id: 'swarm',
     title: 'Swarm',
-    text: 'Start several agents on one project at once, each told what it owns. Roles give them different jobs on the same code; Split cuts one job into pieces that touch different files, so they cannot overwrite each other.'
+    text: 'Start several agents on one project at once, each told what it owns. They share the folder, so what keeps them apart is their briefs - and the shared memory file is the handover between them. Work whose parts are genuinely independent wants a lane each instead.'
   },
   {
     id: 'lane',
