@@ -184,9 +184,14 @@ writeFileSync(runs, '')
 writeFileSync(exitFile, '1')
 writeFileSync(
   join(repo, 'scripts', 'fake-test.mjs'),
-  `import { appendFileSync, readFileSync } from 'node:fs'\n` +
+  `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'\n` +
     `appendFileSync(${JSON.stringify(runs)}, 'x')\n` +
-    `if (readFileSync(${JSON.stringify(exitFile)}, 'utf8').trim() !== '0') {\n` +
+    `const mode = readFileSync(${JSON.stringify(exitFile)}, 'utf8').trim()\n` +
+    // 'flake' is a suite that fails once and passes when it is asked again - a real one on
+    // this machine drives git repositories and loses races on a busy box. It disarms itself,
+    // so the second run is green without the test having to time anything.
+    `if (mode === 'flake') writeFileSync(${JSON.stringify(exitFile)}, '0')\n` +
+    `if (mode !== '0') {\n` +
     `  console.log('FAIL  the one that broke')\n` +
     `  process.exit(1)\n` +
     `}\n` +
@@ -211,13 +216,18 @@ patchState((s) => {
 const redOut = lane('autoship')
 ok('a failing suite stops the release', /fails its own test suite/.test(redOut), redOut)
 ok('and it quotes the check that failed', /the one that broke/.test(redOut), redOut)
-ok('the suite really ran', readFileSync(runs, 'utf8').length === 1, `ran ${readFileSync(runs, 'utf8').length} times`)
+// TWICE, and that is the point: the verdict is cached on the commit and the retry timer
+// never asks again, so one flaky run would pin a green tree as broken until somebody
+// hand-edited .git/paneforge-lanes.json. A red answer is confirmed before it is written
+// down. (Measured 2026-08-22: this repo's own gate failed twice on a commit whose suite
+// passed standalone twice - once as `could not run`, once as `FAIL conflict`.)
+ok('a red suite is asked twice before it is believed', readFileSync(runs, 'utf8').length === 2, `ran ${readFileSync(runs, 'utf8').length} times`)
 
 const redAgain = lane('autoship')
 ok('it still refuses on the next attempt', /fails its own test suite/.test(redAgain), redAgain)
 ok(
   'but does not run the suite again for the same commit',
-  readFileSync(runs, 'utf8').length === 1,
+  readFileSync(runs, 'utf8').length === 2,
   `ran ${readFileSync(runs, 'utf8').length} times`
 )
 
@@ -227,8 +237,20 @@ writeFileSync(exitFile, '0')
 git(repo, 'commit', '-qm', 'fix the suite', '--allow-empty')
 lane('ready', '--session', 'sess-main')
 const greenOut = lane('autoship')
-ok('a new commit re-runs it', readFileSync(runs, 'utf8').length === 2, `ran ${readFileSync(runs, 'utf8').length} times`)
+ok('a new commit re-runs it', readFileSync(runs, 'utf8').length === 3, `ran ${readFileSync(runs, 'utf8').length} times`)
 ok('and a passing suite no longer holds the release', !/test suite/.test(greenOut), greenOut)
+
+// The load-bearing case for the retry: a suite that fails once and passes when it is asked
+// again must not hold the release, and must not leave a red verdict cached on the commit.
+// Without the second ask this reads as broken master for ever, and the only way out is a
+// file nobody knows about.
+writeFileSync(exitFile, 'flake')
+git(repo, 'commit', '-qm', 'a suite that loses a race', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const flakeOut = lane('autoship')
+ok('a flaky suite does not hold the release', !/test suite/.test(flakeOut), flakeOut)
+ok('and it really was asked twice', readFileSync(runs, 'utf8').length === 5, `ran ${readFileSync(runs, 'utf8').length} times`)
+ok('the verdict cached is the second answer', state().suite?.ok === true, JSON.stringify(state().suite))
 
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')

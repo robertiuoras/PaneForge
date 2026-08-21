@@ -147,7 +147,11 @@ measurements behind every number here are in `docs/design-notes.md`.
   and never that the app works), and a lane conflicting with master. The conflicting lane is
   left out; the rest still goes. `rerere` is on and the retry timer re-tries every minute -
   which is why the suite answer is **cached on the COMMIT** in the shared ledger, invalidated
-  only by a new commit. A suite that could not START is named as this checkout's tooling, is
+  only by a new commit. **A red answer is therefore asked TWICE before it is written down**:
+  a cache the retry timer never re-asks turns one flaky run into a commit that can only be
+  released by hand-editing `.git/paneforge-lanes.json`, which nobody would guess to do. This
+  repo's own gate did exactly that on 2026-08-22 - two refusals, two different reasons, over
+  a suite that passed standalone twice. A genuinely red suite costs one extra run. A suite that could not START is named as this checkout's tooling, is
   not cached, and that sentence decides where the next person looks. `npm run test:gate`.
 - Release notes come from Conventional Commit subjects between tags
   (`scripts/release-notes.mjs`, `.github/release-notes.md`, `npm run test:notes`). **Only

@@ -2049,18 +2049,43 @@ function suiteFailure(state) {
     if (failed) return failed
   }
   // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
-  const r = spawnSync('npm test --silent', {
-    cwd: MAIN,
-    encoding: 'utf8',
-    timeout: SUITE_TIMEOUT_MS,
-    shell: true
-  })
-  if (r.status === 0) {
+  const runSuite = () =>
+    spawnSync('npm test --silent', {
+      cwd: MAIN,
+      encoding: 'utf8',
+      timeout: SUITE_TIMEOUT_MS,
+      shell: true
+    })
+  const pass = (r) => {
+    if (r.status !== 0) return false
     if (commit) {
       state.suite = { commit, ok: true, at: now() }
       write(state)
     }
-    return null
+    return true
+  }
+  let r = runSuite()
+  if (pass(r)) return null
+  /**
+   * A red answer is CONFIRMED before it is written down, because the verdict is cached on
+   * the commit and the retry timer never asks again - so one flaky run pins a green tree
+   * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
+   * ever guess to do.
+   *
+   * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
+   * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
+   * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
+   * repositories and is timing-sensitive on a loaded machine.
+   *
+   * Only the second run's answer counts, so a genuinely red suite costs one extra pass
+   * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
+   * for the same reason: missing tooling does not repair itself between two runs, but a
+   * spawn that lost a race does.
+   */
+  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (!cannotRun(first)) {
+    r = runSuite()
+    if (pass(r)) return null
   }
   const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
   if (cannotRun(all)) {
