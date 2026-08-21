@@ -30,9 +30,11 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
-import { ANTENNA, ARMS, BEACON, BLINK, BODY, EYES, GRID, runsOf, TREADS, type Rect } from '@shared/botSprite'
+import { GRID, petFor, runsOf, type Rect } from '@shared/pets'
 import {
   actedWords,
+  DASH_MS,
+  dueDash,
   bubbleSpot,
   clampSpot,
   countdownWords,
@@ -45,6 +47,7 @@ import {
   type MascotPane
 } from '@shared/mascot'
 import type { RunningDev } from '@shared/devList'
+import { appVisible, onAppVisible } from '../appVisible'
 
 /** A close the app has decided on and has not done yet. The person gets the seconds. */
 export interface CloseSoon {
@@ -106,6 +109,12 @@ const HOME: Spot = { x: 0.06, y: 0.86 }
 const SPRITE = 48
 /** Below this the gesture was a press, not a drag. A finger is never still. */
 const DRAG_SLOP = 4
+/** Where a dash starts and ends, along the bottom of the window. */
+const DASH_LEFT = 0.06
+const DASH_RIGHT = 0.94
+const DASH_Y = 0.93
+/** How often the dash timer LOOKS at whether it may run. It almost always may not. */
+const DASH_TICK_MS = 30_000
 
 /**
  * One layer of the sprite, as horizontal runs rather than as cells: the whole robot is
@@ -138,6 +147,18 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [blink, setBlink] = useState(false)
   const [dragging, setDragging] = useState(false)
+  /**
+   * The run along the bottom of the window, in two frames.
+   *
+   * 'port' places the sprite at the starting edge with the transition OFF for exactly one
+   * frame; without that frame the browser coalesces both writes and it slides gently to
+   * the start line instead of appearing there and then running. 'run' is then a single
+   * `left` transition across the window - one composited property, and the only thing
+   * about this pet that ever moves horizontally.
+   */
+  const [dash, setDash] = useState<null | 'port' | 'run'>(null)
+  /** Is anybody looking? A pet animating behind a minimised window is pure waste. */
+  const [awake, setAwake] = useState(true)
   // Re-read once a second while a close is counting down, and never otherwise: the number
   // on screen is the only thing that changes, and a timer running when nothing is pending
   // is a re-render of the whole layer for no reading at all.
@@ -160,6 +181,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   const panes = props.panes
   const soon = props.closeSoon
+  // Ten of them, one drawing machine (shared/pets.ts). Only THIS one's layers are ever
+  // mounted, and each layer is walked into horizontal runs once per app run and cached by
+  // identity - so switching pet costs one walk and changing nothing costs none.
+  const pet = petFor(cfg.pet)
+  const A = pet.art
 
   /** Say it, and - only if the speaker has been pressed - say it out loud. */
   const say = useCallback(
@@ -243,6 +269,49 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     }, 5200)
     return () => window.clearInterval(t)
   }, [cfg.enabled])
+
+  // Whether anybody is looking. `document.hidden` is dead code in this window
+  // (backgroundThrottling is off, so Chromium never marks it hidden - see appVisible.ts),
+  // so the answer comes from the main process. Asleep the whole sprite's animations are
+  // paused in CSS and the dash never starts: a pet is the one thing in this app with
+  // literally no reason to run when it cannot be seen.
+  useEffect(() => {
+    if (!cfg.enabled) return
+    let live = true
+    void appVisible().then((v) => live && setAwake(v))
+    const off = window.api.onAppVisible?.((v: boolean) => setAwake(v))
+    return () => {
+      live = false
+      off?.()
+    }
+  }, [cfg.enabled])
+
+  // The dash. Everything about it is a refusal: it is checked twice a minute, runs at most
+  // once every DASH_EVERY_MS, and stands down for anything the pet is already saying, a
+  // spot somebody dragged it to, `roam` off and a window nobody is looking at.
+  const lastDash = useRef(Date.now())
+  useEffect(() => {
+    if (!cfg.enabled) return
+    const t = window.setInterval(() => {
+      if (
+        !dueDash({
+          enabled: cfg.enabled,
+          roam: cfg.roam,
+          pinned: !!pinned,
+          saying: !!bubble || open || !!soon,
+          visible: awake,
+          sinceMs: Date.now() - lastDash.current
+        })
+      )
+        return
+      lastDash.current = Date.now()
+      setDash('port')
+      // One frame at the start line with no transition, THEN the run.
+      requestAnimationFrame(() => requestAnimationFrame(() => setDash('run')))
+      window.setTimeout(() => setDash(null), DASH_MS + 120)
+    }, DASH_TICK_MS)
+    return () => window.clearInterval(t)
+  }, [cfg.enabled, cfg.roam, pinned, bubble, open, soon, awake])
 
   // The drag itself. Pointer events, so a mouse, a pen and a touch are one path, and the
   // pointer is CAPTURED - without it a fast drag leaves the sprite behind the moment the
@@ -359,9 +428,16 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const secs = Math.max(0, Math.ceil(left / 1000))
   const showBubble = counting || !!bubble || open
 
+  // Where it is DRAWN. A dash overrides the walk for its two and a half seconds and then
+  // hands the sprite straight back - it never writes `spot`, so nothing about the run
+  // outlives it.
+  const at = dash ? { x: dash === 'port' ? DASH_LEFT : DASH_RIGHT, y: DASH_Y } : spot
+
+  const ground = A.shadow ?? { cx: GRID / 2 - 0.5, cy: GRID - 1.4, rx: GRID / 3, ry: 1 }
+
   const box = bubbleSpot({
-    cx: spot.x * vp.w,
-    cy: spot.y * vp.h,
+    cx: at.x * vp.w,
+    cy: at.y * vp.h,
     sprite: SPRITE,
     width: bubbleSize.w,
     height: bubbleSize.h,
@@ -370,7 +446,16 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   })
 
   return (
-    <div className="mascot-layer" aria-hidden={false}>
+    <div className={'mascot-layer' + (awake ? '' : ' asleep')} aria-hidden={false}>
+      {/* Something to chase. It is drawn only while the run is on, it is a circle with a
+          transform on it and nothing else, and it leads the pet by a little so the run
+          reads as chasing rather than as fleeing. */}
+      {dash && (
+        <div
+          className={'mascot-ball' + (dash === 'port' ? ' port' : '')}
+          style={{ left: `${(dash === 'port' ? DASH_LEFT + 0.05 : DASH_RIGHT + 0.04) * 100}%`, top: `${DASH_Y * 100}%` }}
+        />
+      )}
       {/* The bubble is a SIBLING of the sprite, not a child of it. As a child it widened
           the sprite's own box - which is centred on the spot - so saying anything shoved
           the sprite ~155px sideways and hung the left half of the bubble off the window.
@@ -466,8 +551,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         </div>
       )}
       <div
-        className={'mascot' + (dragging ? ' dragging' : '')}
-        style={{ left: `${spot.x * 100}%`, top: `${spot.y * 100}%` }}
+        className={
+          'mascot' +
+          (dragging ? ' dragging' : '') +
+          (dash === 'port' ? ' dash-port' : '') +
+          (dash === 'run' ? ' dashing' : '')
+        }
+        style={{ left: `${at.x * 100}%`, top: `${at.y * 100}%` }}
         data-open={open ? '1' : '0'}
       >
         <button
@@ -513,32 +603,57 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           >
             {/* The ground shadow. It is the one thing here not on the pixel grid: a 1px-tall
                 ellipse would be a rectangle. Nothing above it translates vertically, so the
-                shadow is still - the old sprite bobbed, and a floating mascot is what this
-                drawing replaced. */}
-            <ellipse className="m-shadow" cx="11" cy="22.6" rx="8" ry="1" />
+                shadow is still - the first mascot bobbed, and a floating pet is what the
+                pixel grid replaced. A hovering pet (the drone, the wisp) puts its own
+                shadow lower and fainter, which is the only thing that says it is off the
+                ground at all. */}
+            <ellipse
+              className="m-shadow"
+              cx={ground.cx}
+              cy={ground.cy}
+              rx={ground.rx}
+              ry={ground.ry}
+              style={ground.opacity ? { opacity: ground.opacity } : undefined}
+            />
             <g className="m-rig">
-              {/* Arms and treads first, so the chassis overlaps their roots. Every pose is
-                  its own drawing and the motion is WHICH drawing is showing - a pixel grid
+              {/* Moving parts first, so the body overlaps their roots. Every pose is its
+                  own drawing and the motion is WHICH drawing is showing - a pixel grid
                   cannot be rotated without resampling, so an opacity step is the only free
-                  move. Standing still is four clocks that never line up: the arms settle
-                  over three drawings, the treads tick between two, the visor scans and the
-                  beacon pulses. */}
-              <Layer art={ARMS.idleA} cls="m-arm-a" />
-              <Layer art={ARMS.idleB} cls="m-arm-b" />
-              <Layer art={ARMS.idleC} cls="m-arm-c" />
-              <Layer art={TREADS.stand} cls="m-treads m-treads-a" />
-              <Layer art={TREADS.standB} cls="m-treads m-treads-b" />
-              <Layer art={BODY} cls="m-body" />
-              {/* Antenna, beacon and pupil are drawn OVER the chassis rather than inside
-                  it: a part that moves cannot live in the drawing that does not, or there
-                  is a second chassis to keep in step with this one. */}
-              <Layer art={ANTENNA.mast} cls="m-antenna" />
-              <Layer art={ANTENNA.tilt} cls="m-antenna-tilt" />
-              <Layer art={BEACON.off} cls="m-beacon-off" />
-              <Layer art={BEACON.on} cls="m-beacon-on" />
-              <Layer art={EYES.ahead} cls="m-eye-ahead" />
-              <Layer art={EYES.look} cls="m-eye-look" />
-              <Layer art={BLINK} cls="m-lid" />
+                  move. Standing still is four clocks that never line up. A pet that leaves
+                  a slot out is simply stiller; nothing here is required. */}
+              {A.arms && (
+                <>
+                  <Layer art={A.arms.a} cls="m-arm-a" />
+                  <Layer art={A.arms.b} cls="m-arm-b" />
+                  <Layer art={A.arms.c} cls="m-arm-c" />
+                </>
+              )}
+              {A.treads && (
+                <>
+                  <Layer art={A.treads.a} cls="m-treads m-treads-a" />
+                  <Layer art={A.treads.b} cls="m-treads m-treads-b" />
+                </>
+              )}
+              <Layer art={A.body} cls="m-body" />
+              {A.antenna && (
+                <>
+                  <Layer art={A.antenna.mast} cls="m-antenna" />
+                  <Layer art={A.antenna.tilt} cls="m-antenna-tilt" />
+                </>
+              )}
+              {A.beacon && (
+                <>
+                  <Layer art={A.beacon.off} cls="m-beacon-off" />
+                  <Layer art={A.beacon.on} cls="m-beacon-on" />
+                </>
+              )}
+              {A.eyes && (
+                <>
+                  <Layer art={A.eyes.ahead} cls="m-eye-ahead" />
+                  <Layer art={A.eyes.look} cls="m-eye-look" />
+                </>
+              )}
+              {A.blink && <Layer art={A.blink} cls="m-lid" />}
             </g>
           </svg>
         </button>

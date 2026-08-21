@@ -43,7 +43,9 @@ const {
   countdownWords,
   CLOSE_COUNTDOWN_MS,
   KEEP_MINUTES,
-  DEFAULT_MASCOT
+  DEFAULT_MASCOT,
+  dueDash,
+  DASH_EVERY_MS
 } =
   createRequire(import.meta.url)(outfile)
 
@@ -52,7 +54,7 @@ const {
 const spriteFile = join(work, 'sprite.bundle.cjs')
 buildSync({
   absWorkingDir: root,
-  entryPoints: ['src/shared/botSprite.ts'],
+  entryPoints: ['src/shared/pets.ts'],
   bundle: true,
   format: 'cjs',
   platform: 'node',
@@ -266,10 +268,13 @@ const desk = [
 }
 
 {
-  // It arrives silent. The app's standing law is that nothing it decided itself may take
-  // the screen, and a voice is that intrusion through the other sense.
-  eq('the mascot is on', DEFAULT_MASCOT.enabled, true)
+  // It arrives OFF, and silent. A pet is the one thing in this app that is decoration
+  // before it is a reading, so it is asked for rather than arrived with - and the switch
+  // that turns it on is beside the ten it can be. A config written while it was on by
+  // default carries `enabled: true` explicitly and is untouched by this.
+  eq('the mascot is off until somebody asks for one', DEFAULT_MASCOT.enabled, false)
   eq('and mute', DEFAULT_MASCOT.voice, false)
+  eq('and it is the robot unless another is picked', DEFAULT_MASCOT.pet, 'bot')
   // ...and where the APP put it, not where a person did. A spot is only ever written by a
   // drag, so an unpinned mascot is what every desk that has not moved it still gets.
   eq('and unpinned', DEFAULT_MASCOT.spot ?? null, null)
@@ -290,49 +295,63 @@ const desk = [
   // The sprite is a grid, and a row one cell short does not draw a wonky fox - it shifts
   // every colour after it left on that row, which reads as corruption rather than as a
   // typo. Nothing in the drawing code can notice; this is where it is caught.
-  const { ALL_LAYERS, GRID, CLASS_OF, ARMS, TREADS, ANTENNA, BEACON, EYES, BODY, runsOf } = sprite
-  let square = true
-  let known = true
-  for (const layer of ALL_LAYERS) {
-    if (layer.length !== GRID) square = false
-    for (const row of layer) {
-      if (row.length !== GRID) square = false
-      for (const c of row) if (c !== '.' && !(c in CLASS_OF)) known = false
+  const { PETS, GRID, CLASS_OF, layersOf, petFor, runsOf } = sprite
+  eq('there are ten pets', PETS.length, 10)
+  eq('and no two share an id', new Set(PETS.map((p) => p.id)).size, PETS.length)
+  eq('an id nothing answers falls back rather than drawing nothing', petFor('nope').id, PETS[0].id)
+
+  // Every layer of every pet is a square grid, and a row one cell short does not draw a
+  // wonky pet - it shifts every colour after it left on that row, which reads as
+  // corruption rather than as a typo. Nothing in the drawing code can notice; this is
+  // where it is caught.
+  let square = 'none'
+  let known = 'none'
+  for (const pet of PETS) {
+    for (const layer of layersOf(pet)) {
+      if (layer.length !== GRID) square = pet.id
+      for (const row of layer) {
+        if (row.length !== GRID) square = pet.id
+        for (const c of row) if (c !== '.' && !(c in CLASS_OF)) known = `${pet.id}:${c}`
+      }
     }
   }
-  eq('every layer is a square grid', square, true)
-  eq('and uses no colour the stylesheet has never heard of', known, true)
+  eq('every layer of every pet is a square grid', square, 'none')
+  eq('and uses no colour the stylesheet has never heard of', known, 'none')
 
-  // Standing still is not one frame: three arm heights, two tread poses, two antenna
-  // poses, two beacon states and two visor positions, each on its own clock. A pose
-  // identical to another is dead art that reads as a still picture.
-  const distinct = (o) => new Set(Object.values(o).map((a) => a.join('|'))).size
-  eq('the arms settle over three drawings', distinct(ARMS), 3)
-  eq('the treads tick between two', distinct(TREADS), 2)
-  eq('the antenna has two poses', distinct(ANTENNA), 2)
-  eq('the beacon two', distinct(BEACON), 2)
-  eq('and the visor two', distinct(EYES), 2)
+  // A pet standing still is not one frame, and a pose identical to its neighbour is dead
+  // art that reads as a still picture. A pet is allowed to leave a slot OUT - it is simply
+  // stiller - but a slot it declares has to move.
+  const dead = []
+  for (const pet of PETS) {
+    const a = pet.art
+    const distinct = (arr) => new Set(arr.map((x) => x.join('|'))).size
+    if (a.arms && distinct([a.arms.a, a.arms.b, a.arms.c]) !== 3) dead.push(`${pet.id}.arms`)
+    if (a.treads && distinct([a.treads.a, a.treads.b]) !== 2) dead.push(`${pet.id}.treads`)
+    if (a.antenna && distinct([a.antenna.mast, a.antenna.tilt]) !== 2) dead.push(`${pet.id}.antenna`)
+    if (a.beacon && distinct([a.beacon.on, a.beacon.off]) !== 2) dead.push(`${pet.id}.beacon`)
+    if (a.eyes && distinct([a.eyes.ahead, a.eyes.look]) !== 2) dead.push(`${pet.id}.eyes`)
+    // ...and a pet that declares nothing at all is a picture, not a pet.
+    if (!a.arms && !a.treads && !a.antenna && !a.beacon && !a.eyes) dead.push(`${pet.id}.still`)
+    // A blink is a shutter over the eyes: a pet with eyes and no blink stares for ever.
+    if (a.eyes && !a.blink) dead.push(`${pet.id}.blink`)
+  }
+  eq('and every pose a pet declares really moves', dead.join(',') || 'none', 'none')
 
   // Runs, not cells: the whole point of the walk is that a row of eight identical cells is
   // one rect. A per-cell version passes every other check here and quadruples the DOM.
-  const rects = runsOf(BODY)
-  eq('the chassis is drawn as runs', rects.length < 90, true)
-  eq('and every run has width', rects.every((r) => r.w >= 1), true)
-  const widest = Math.max(...rects.map((r) => r.w))
-  eq('with at least one long one', widest >= 6, true)
-  eq('and none off the grid', rects.every((r) => r.x + r.w <= GRID && r.y < GRID), true)
+  for (const pet of PETS) {
+    const rects = runsOf(pet.art.body)
+    check(`${pet.id} is drawn as runs`, rects.length < 110, rects.length)
+    check(`${pet.id} keeps every run on the grid`, rects.every((r) => r.x + r.w <= GRID && r.y < GRID), pet.id)
+  }
 
-  // A pose defined and never drawn is dead art nobody will notice for a year. Every one of
-  // them has to appear in the component that draws the sprite.
+  // A SLOT defined and never drawn is dead art nobody will notice for a year. The drawing
+  // is generic now - one component for ten pets - so what is checked is that every slot
+  // the art can carry has a branch in the component that draws it.
   const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
-  const missing = [
-    ...Object.keys(ARMS).map((k) => `ARMS.${k}`),
-    ...Object.keys(TREADS).map((k) => `TREADS.${k}`),
-    ...Object.keys(ANTENNA).map((k) => `ANTENNA.${k}`),
-    ...Object.keys(BEACON).map((k) => `BEACON.${k}`),
-    ...Object.keys(EYES).map((k) => `EYES.${k}`)
-  ].filter((ref) => !drawn.includes(ref))
-  eq('every pose is drawn', missing.join(',') || 'none', 'none')
+  const missing = ['A.arms', 'A.treads', 'A.antenna', 'A.beacon', 'A.eyes', 'A.blink', 'A.body']
+    .filter((ref) => !drawn.includes(ref))
+  eq('every slot is drawn', missing.join(',') || 'none', 'none')
 
   // ...and the stylesheet has to carry a rule for each of the classes the drawing hangs the
   // animation on, or a pose is on screen for ever or never.
@@ -342,15 +361,26 @@ const desk = [
     'm-treads-a', 'm-treads-b',
     'm-antenna', 'm-antenna-tilt', 'm-beacon-on',
     'm-eye-ahead', 'm-eye-look', 'm-lid',
-    'm-shell', 'm-shell-d', 'm-shell-l', 'm-visor'
+    'm-shell', 'm-shell-d', 'm-shell-l', 'm-visor', 'm-accent'
   ].filter((c) => !css.includes(`.${c}`))
   eq('and every layer has a rule', classless.join(',') || 'none', 'none')
 
-  // IT DOES NOT FLOAT. The old sprite bobbed on a 4.2s `translateY` loop and that is the
+  // The dash. It is the one thing a pet does that is not a reading, so every refusal is
+  // load-bearing: the negatives here are the test, not the positive.
+  const ready = { enabled: true, roam: true, pinned: false, saying: false, visible: true, sinceMs: DASH_EVERY_MS }
+  check('a pet with nothing to say runs', dueDash(ready), ready)
+  check('one that is talking does not', !dueDash({ ...ready, saying: true }), 'saying')
+  check('nor one somebody put somewhere', !dueDash({ ...ready, pinned: true }), 'pinned')
+  check('nor one behind a minimised window', !dueDash({ ...ready, visible: false }), 'hidden')
+  check('nor one with roam off', !dueDash({ ...ready, roam: false }), 'roam')
+  check('nor one that ran a moment ago', !dueDash({ ...ready, sinceMs: 1000 }), 'too soon')
+  check('and never one that is switched off', !dueDash({ ...ready, enabled: false }), 'off')
+
+  // IT DOES NOT FLOAT. The first sprite bobbed on a 4.2s `translateY` loop and that is the
   // first thing anybody said about it, so a vertical loop coming back is a regression and
   // not a taste change. The sprite still MOVES - it walks to the card of the pane it is
-  // talking about - but that is a `left`/`top` transition on the layer, not a loop on the
-  // drawing, and it is a sentence rather than scenery.
+  // talking about, and every so often it runs along the bottom - but both of those are a
+  // `left`/`top` transition on the layer, not a loop on the drawing.
   const spriteCss = css.slice(css.indexOf('---- the mascot'))
   check('the sprite has no vertical loop left in it', !/translateY/.test(spriteCss), 'translateY')
   check('and no bob keyframes', !/mascot-bob/.test(css), 'mascot-bob')

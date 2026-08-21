@@ -2367,7 +2367,7 @@ draws it. `npm run test:mascot`.
   minutes, and all three were scenery. They are gone: movement is now a sentence (it walks
   to the card of the pane it is talking about) and the drawing holds still while a beacon
   pulses, a visor scans, the treads tick and the arms settle - four opacity clocks on
-  periods that never line up. `src/shared/botSprite.ts`; `test:mascot` fails on a
+  periods that never line up. `src/shared/pets.ts`; `test:mascot` fails on a
   `translateY` anywhere in the sprite's stylesheet, because a float coming back is a
   regression rather than a taste change.
 - **It speaks unasked exactly once per situation**, and only where the app is otherwise
@@ -2434,11 +2434,11 @@ draws it. `npm run test:mascot`.
   frames a second), and opacity is the one thing besides a transform that `npm run test:anim`
   lets loop. Dust off the back paws is a transform and an opacity too.
 - **A pose defined and never drawn is dead art nobody notices for a year**, so
-  `npm run test:mascot` reads `Mascot.tsx` for every entry in `LEGS` and `TAILS` and the
+  `npm run test:mascot` reads `Mascot.tsx` for every entry in every slot every pet can carry and the
   stylesheet for every layer class, and checks the grid is square - a row one cell short
   does not draw a wonky fox, it shifts every colour after it on that row.
 - **It runs along the bottom of the window every so often** (`DASH_MS` / `DASH_EVERY_MS`,
-  2.5 minutes), and that run is the one thing here that is not a reading - so it stands down
+  nine minutes, chasing a ball), and that run is the one thing here that is not a reading - so it stands down
   the moment it would be in the way: a bubble up, the ask box open, a spot somebody dragged
   it to, or `roam` off. It is placed at the starting edge with the transition OFF for one
   frame (`dash-port`) and then given a single `left` transition across the window; without

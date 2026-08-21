@@ -5,6 +5,7 @@ import type { AttachIn, AttachResult } from './attach'
 import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
 import type { MascotConfig } from './mascot'
+import type { TipsConfig } from './tips'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
 import type { ReclaimConfig } from './reclaim'
@@ -1547,6 +1548,12 @@ export interface Config {
    * by an older build still loads.
    */
   mascot?: MascotConfig
+  /**
+   * The occasional "did you know" card - src/shared/tips.ts. Optional so a config written
+   * before it existed still loads, and defaulted ON: the features it names are ones
+   * nothing else in the window would ever mention.
+   */
+  tips?: TipsConfig
   reclaim?: ReclaimConfig
   /**
    * Move finished panes to a paired device when this machine runs out of memory, rather

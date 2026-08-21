@@ -40,6 +40,14 @@ export interface MascotConfig {
    */
   roam: boolean
   /**
+   * Which of `shared/pets.ts` is drawn.
+   *
+   * A name rather than a number, because the list is ordered for the picker and a number
+   * would silently re-point every existing config the day one is inserted. An id nothing
+   * in the catalogue answers falls back to the robot rather than drawing nothing.
+   */
+  pet?: string
+  /**
    * Where somebody PUT it, as a fraction of the window.
    *
    * Absent means the app places it: bottom-left, and walking to whichever pane it is
@@ -52,7 +60,43 @@ export interface MascotConfig {
   spot?: { x: number; y: number } | null
 }
 
-export const DEFAULT_MASCOT: MascotConfig = { enabled: true, voice: false, roam: true, spot: null }
+export const DEFAULT_MASCOT: MascotConfig = {
+  enabled: false,
+  voice: false,
+  roam: true,
+  pet: 'bot',
+  spot: null
+}
+
+/**
+ * How long a dash across the bottom of the window takes, and how often one happens.
+ *
+ * The run is the ONE thing the pet does that is not a reading, and it is why it is rare
+ * and why it stands down so easily: a decoration moving in the corner of somebody's eye
+ * while they are reading an agent's answer is a cost, not a feature. It stands down for a
+ * bubble, the ask box, a countdown, a spot somebody dragged it to, `roam` off, and a
+ * window nobody is looking at.
+ */
+export const DASH_MS = 2800
+export const DASH_EVERY_MS = 9 * 60 * 1000
+
+/** Everything that has to be true before the pet may run. Pure, so the test can say why. */
+export interface DashContext {
+  enabled: boolean
+  roam: boolean
+  /** A person put it somewhere. That beats every automatic move, including this one. */
+  pinned: boolean
+  /** Anything on screen from the mascot itself - a notice, the ask box, a countdown. */
+  saying: boolean
+  visible: boolean
+  sinceMs: number
+}
+
+export function dueDash(ctx: DashContext): boolean {
+  if (!ctx.enabled || !ctx.roam || ctx.pinned) return false
+  if (ctx.saying || !ctx.visible) return false
+  return ctx.sinceMs >= DASH_EVERY_MS
+}
 
 /** Keep a dropped sprite inside the window, whatever the pointer did on the way out. */
 export function clampSpot(x: number, y: number): { x: number; y: number } {

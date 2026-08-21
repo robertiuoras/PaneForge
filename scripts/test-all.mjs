@@ -52,6 +52,7 @@ const TESTS = [
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
+  ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
   ['devlist', 'devlist-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],

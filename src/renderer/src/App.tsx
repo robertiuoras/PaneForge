@@ -120,6 +120,16 @@ import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
+import Tips from './components/Tips'
+import { DEFAULT_TIPS } from '../../shared/tips'
+
+/**
+ * When this window opened.
+ *
+ * Module level rather than state: it is the age of the WINDOW, and a state initialiser
+ * would be re-read on a remount and hand the tips clock a fresh start it has not had.
+ */
+const OPENED_AT = Date.now()
 import VersionBadge from './components/VersionBadge'
 import { playEvent, playTick } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
@@ -4769,6 +4779,27 @@ export default function App(): JSX.Element {
         }
       />
       <UpdateToast />
+      {/* One quiet card in the corner, saying one thing this app can do. It is the only
+          thing here that talks about the app rather than about the work, so every other
+          card in this corner - and every dialog, and any pane holding a question - stands
+          it down. shared/tips.ts owns every judgement in it. */}
+      <Tips
+        cfg={config?.tips ?? DEFAULT_TIPS}
+        busy={
+          !!ask ||
+          settings ||
+          help ||
+          palette ||
+          !!restore ||
+          !!info ||
+          !!handoff ||
+          !!remote?.asking ||
+          !!phone?.ask
+        }
+        asking={sessions.some((s) => Boolean(s.ask))}
+        since={OPENED_AT}
+        onConfig={(patch) => void api.setConfig({ tips: { ...DEFAULT_TIPS, ...config?.tips, ...patch } })}
+      />
     </div>
     </BlurbContext.Provider>
   )

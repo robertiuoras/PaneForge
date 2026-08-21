@@ -1130,10 +1130,26 @@ Full reasoning: `docs/design-notes.md`.
 - **It speaks unasked once per situation**, and only where the app is otherwise silent: two or
   more finished panes, quiet over an hour, over 1.2 GB, with the idle-close clock OFF. What
   the ladder DID always gets a sentence.
-- **The sprite is a ROBOT that does not float** (`src/shared/botSprite.ts`): movement is a
-  sentence - it walks to the card of the pane it is talking about - while a beacon pulses, a
-  visor scans, the treads tick and the arms settle on four clocks that never line up.
-  `test:mascot` fails on a `translateY` anywhere in that stylesheet.
+- **There are TEN of them and they cost the same** (`src/shared/pets.ts`). The animation is
+  keyed on the SLOT rather than on the animal - `m-arm-*` is a settle on three frames whether
+  the pet means a tail, a wing, a claw or a drip, `m-treads-*` is the slow tick - so a new pet
+  is ART and nothing else: no keyframes, no timers, no cost. Only the picked one is ever
+  mounted, each layer is walked into runs once per app run and cached by identity, and the
+  whole rig is `animation-play-state: paused` behind a minimised window. Every pet is on the
+  SAME 24x24 grid, which is a decision about PIXELS: drawn at 48 CSS px that is exactly 2
+  device pixels a cell and `crispEdges` never has a half pixel to resolve - a "more detailed"
+  32x32 pet would be 1.5 and is the blur the grid replaced. Detail comes from layers and
+  shades, never from more cells. A pet may leave a slot out and be stiller; what it may not do
+  is float, and `test:mascot` fails on a `translateY` anywhere in that stylesheet.
+- **It arrives OFF.** A pet is decoration before it is a reading, so it is asked for rather
+  than arrived with (Settings -> the ten, under the ladder's own switches). `defaults()` is
+  written at first launch, so a desk that already had the robot keeps it: only a new install
+  gets the off.
+- **It runs about, rarely, and every condition is a refusal** (`dueDash`, `DASH_EVERY_MS` 9
+  min): nothing to say, where the app put it, `roam` on, and somebody looking at this window.
+  The run is placed at the start line with the transition OFF for one frame (`dash-port`) and
+  is then a single `left` transition with a ball ahead of it; without that frame the browser
+  coalesces both writes and the pet slides gently to the start instead of appearing there.
 - **It can be picked up.** Pointer events, captured, storing the GRAB offset (writing the raw
   pointer teleports it under the cursor); a drop writes `mascot.spot` as a fraction of the
   window and **beats every automatic move**. The pin icon gives it back. Under `DRAG_SLOP` the
@@ -1147,9 +1163,27 @@ Full reasoning: `docs/design-notes.md`.
   `pointer-events: none` except the sprite and its bubble. Never focuses, never raises.
 - **Mute by default** - nothing the app decided by itself may make a noise into a room.
 - **It never picks which machine**: `hand off pane 2` opens the box with the panes chosen.
-- The dash along the bottom (`DASH_MS` / `DASH_EVERY_MS`) stands down for a bubble, the ask
-  box, a dragged spot or `roam` off, and needs one frame with the transition off (`dash-port`)
-  or the browser coalesces both writes. A press closes whichever half is up.
+- A press closes whichever half is up.
+
+## ...and one card says what this app can even do
+
+Most of what is in this file is invisible from the window: a highlight in a pane can be
+DELETED, a phone is this window, a pane can be handed to another machine mid-turn. None of
+it is discoverable and none of it is worth a dialog, so it is one quiet card in the
+bottom-right - `shared/tips.ts` for the catalogue and every judgement, `components/Tips.tsx`
+for the card, `npm run test:tips`.
+
+- **It costs nothing**: a fixed sentence, chosen by arithmetic over what has been seen. No
+  model, no request, one minute tick that almost always does nothing.
+- **It never interrupts**: silent while any dialog is open, while an update card is up, while
+  ANY pane is holding a question, behind a minimised window, and for the first four minutes
+  of a session. `FIRST_MS` 4 min, `EVERY_MS` 40 min, and the load-bearing half of the test is
+  those negatives.
+- **It says how to stop it before anybody has to go looking**: the first card and every fourth
+  after it carry the sentence and the button (`offersOff`). Settings is the way back on.
+- **It cycles rather than repeating**: every tip is shown once before any is shown twice, and
+  `seen` resets rather than going quiet - a tip added in a later version has to be able to
+  reach somebody who has already been round.
 
 ## Checks
 

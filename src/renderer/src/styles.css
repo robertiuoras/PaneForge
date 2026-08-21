@@ -3415,3 +3415,80 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .mascot-icon:hover { opacity: 1; }
 /* A phone has no room for something walking over the one pane it can show. */
 @media (max-width: 720px) { .mascot-layer { display: none; } }
+
+/* ---- the pets ---------------------------------------------------------------
+   Ten of them (src/shared/pets.ts), one stylesheet. The animation is keyed on the
+   SLOT, not on the animal: `m-arm-*` is a settle on three frames whatever the pet
+   means by it (a tail, a wing, a claw, a drip), `m-treads-*` is the slow tick, and
+   a pet that leaves a slot out is simply stiller. That is what makes a new pet ART
+   and nothing else - no new keyframes, no new timers, no new cost. */
+
+/* The accent cell. Neon collars, lit eyes, strobes - the one colour on a pet that is
+   the window's own accent rather than a shade of it. */
+.m-accent { fill: var(--accent); }
+
+/* Nobody is looking: the window is minimised or hidden. Chromium already stops
+   PAINTING there, but the compositor still holds every animation, so this says so
+   out loud and costs nothing to be wrong about - the class is dropped the moment
+   the window comes back. */
+.mascot-layer.asleep .m-rig *,
+.mascot-layer.asleep .mascot-ball { animation-play-state: paused; }
+
+/* The dash. One `left` transition across the window, which is a composited property
+   and the only horizontal move this sprite ever makes. `dash-port` is the single
+   frame at the start line with the transition off - without it the browser
+   coalesces both writes and the pet slides gently to the start instead of appearing
+   there and then running. */
+.mascot.dash-port { transition: none; }
+.mascot.dashing { transition: left 2800ms cubic-bezier(.42,0,.58,1), top 380ms ease; }
+/* Running the other way is a mirrored sprite, never a moon-walk. */
+.mascot.dashing .bot { transform: scaleX(-1); }
+/* Legs, treads and arms move at a run's rate while it is running, and only then. */
+.mascot.dashing .m-arm-a,
+.mascot.dashing .m-arm-b,
+.mascot.dashing .m-arm-c { animation-duration: 480ms; }
+.mascot.dashing .m-treads-a,
+.mascot.dashing .m-treads-b { animation-duration: 320ms; }
+
+/* Something to chase. A circle, a transform, and nothing else - it exists for the
+   two and a half seconds of a run and is gone. */
+.mascot-ball {
+  position: absolute; width: 11px; height: 11px; margin: -5px 0 0 -5px;
+  border-radius: 50%; background: var(--accent); opacity: 0.85;
+  transition: left 2800ms cubic-bezier(.36,0,.62,1);
+  animation: m-ball-roll 700ms linear infinite;
+}
+.mascot-ball.port { transition: none; }
+@keyframes m-ball-roll { to { transform: rotate(360deg); } }
+
+/* ---- tips -------------------------------------------------------------------
+   One quiet card, bottom-right, saying one thing this app can do. It sits BELOW the
+   update card's z-index and never appears while one is up: an update is a decision,
+   a tip is a hint, and two cards in one corner is the app talking over itself. */
+.tip-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 55; width: 320px;
+  background: var(--surface-3); border: 1px solid var(--line-strong);
+  border-left: 3px solid color-mix(in oklab, var(--accent) 60%, var(--line-strong));
+  border-radius: var(--r); box-shadow: var(--shadow);
+  padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
+}
+.tip-head { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.tip-head .tip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.tip-say { color: var(--text); font-size: 12.5px; line-height: 1.5; }
+.tip-off { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.tip-acts { display: flex; justify-content: flex-end; gap: 6px; }
+@media (max-width: 720px) { .tip-toast { display: none; } }
+
+/* The pet picker. Ten still sprites - the picker is a decision that takes two seconds and
+   ten looping sprites in a dialog is the animation budget spent on it. */
+.pet-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+.pet-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px 6px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--accent-text); cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.pet-swatch:hover { border-color: var(--line-strong); background: var(--surface-3); }
+.pet-swatch.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
+.pet-name { font-size: 10.5px; color: var(--muted); }
+.pet-swatch.on .pet-name { color: var(--text); }

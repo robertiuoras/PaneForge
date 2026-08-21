@@ -3,6 +3,8 @@ import { findSettings } from '@shared/settingsIndex'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
 import { DEFAULT_MASCOT } from '@shared/mascot'
+import { DEFAULT_TIPS } from '@shared/tips'
+import PetPicker from './PetPicker'
 import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
@@ -538,23 +540,46 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   />
                 )}
                 <Switch
-                  checked={config.mascot?.enabled !== false}
+                  checked={(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled)}
                   onChange={(v) =>
                     onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, enabled: v } })
                   }
                   label="Let the little one keep an eye on this machine"
                   hint="Everything above happens silently - panes are trimmed, moved and closed by three timers whose only output is a line in a console nobody has open. This is the face on them: it walks to the pane it is talking about, says what was done in a bubble, and offers a press before anything is closed. It answers typed questions about this window too - 'what are the two biggest', 'close the idle ones', 'what is pane 3' - out of readings the app already holds, with no model and no request to anywhere. It never takes focus, never opens a dialog, and it is silent until you press the speaker on its bubble."
                 />
-                {config.mascot?.enabled !== false && (
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
                   <Switch
                     checked={config.mascot?.roam !== false}
                     onChange={(v) =>
                       onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, roam: v } })
                     }
-                    label="...and let it wander over to the pane it means"
-                    hint="Walking to the card is how it says WHICH pane without you reading an id. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
+                    label="...and let it wander over to the pane it means, and run about now and then"
+                    hint="Walking to the card is how it says WHICH pane without you reading an id, and every nine minutes or so it chases a ball along the bottom of the window - only ever while it has nothing to say, is where the app put it, and somebody is looking at this window. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
                   />
                 )}
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+                  <div className="setting">
+                    <label>Which pet</label>
+                    <PetPicker
+                      value={config.mascot?.pet ?? DEFAULT_MASCOT.pet ?? 'bot'}
+                      onChange={(pet) =>
+                        onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, pet } })
+                      }
+                    />
+                    <p className="hint">
+                      Ten of them, and they cost the same: one drawing, in layers, where the
+                      movement is which layer is showing rather than anything being redrawn.
+                      Only the one you pick is ever on screen, and all of it stops while the
+                      window is minimised.
+                    </p>
+                  </div>
+                )}
+                <Switch
+                  checked={config.tips?.enabled ?? DEFAULT_TIPS.enabled}
+                  onChange={(v) => onChange({ tips: { ...DEFAULT_TIPS, ...config.tips, enabled: v } })}
+                  label="Show the occasional tip about what this app can do"
+                  hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
+                />
                 <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
                   onChange={(v) =>

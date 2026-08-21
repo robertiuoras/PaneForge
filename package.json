@@ -190,7 +190,8 @@
     "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build",
     "test:borrow": "node scripts/borrow-cycle-test.mjs",
     "test:shipimports": "node scripts/ship-imports-test.mjs",
-    "test:askrender": "node scripts/ask-render-test.mjs"
+    "test:askrender": "node scripts/ask-render-test.mjs",
+    "test:tips": "node scripts/tips-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

@@ -11,6 +11,7 @@ import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import { DEFAULT_MASCOT } from '../shared/mascot'
+import { DEFAULT_TIPS } from '../shared/tips'
 import { DEFAULT_RECLAIM } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
@@ -281,6 +282,7 @@ function defaults(): Config {
     // a pane that is working or waiting for a person. Closing keeps the History row, the
     // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
     mascot: DEFAULT_MASCOT,
+    tips: DEFAULT_TIPS,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // Off by default. Quitting the app takes every pane with it, so it ships as a number
@@ -340,6 +342,7 @@ export function getConfig(): Config {
       recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
       autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
       mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
+      tips: { ...DEFAULT_TIPS, ...(base.tips ?? {}), ...(raw.tips ?? {}) },
       reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
       autoHandoff: {
         ...DEFAULT_AUTO_HANDOFF,
