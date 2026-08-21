@@ -144,7 +144,7 @@ buildSync({
   outfile: join(out, 'laneWords.mjs')
 })
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-const { deviceTip, holderName, laneBusy, laneChipLabel, laneDoing, laneLabel, laneProject, laneState, laneTip } = await import(
+const { deviceTip, holdWords, holderName, laneBusy, laneChipLabel, laneDoing, laneLabel, laneProject, laneState, laneTip } = await import(
   pathToFileURL(join(out, 'laneWords.mjs')).href
 )
 
@@ -267,6 +267,43 @@ ok(
 ok(
   'finished work says it ships with the next update',
   laneState(entry({ ready: true }), false, NOW) === 'done - ships with the next update'
+)
+
+// ...and it only says that while nothing is holding it up. The strip drew that promise
+// unchanged for hours over a release the gate had already refused, which is the report:
+// "it says done - ships with next update, and it says releasing, and neither is true".
+// The gate's reason is REPEATED here, never re-derived - see LaneBoard.hold.
+const heldFor = (reason, at = NOW) => ({ reason, at })
+ok(
+  'a finished lane waiting on another chat says which',
+  laneState(entry({ ready: true }), false, NOW, undefined, heldFor('waiting on chats still working: main (uncommitted edits, 4m ago)')) ===
+    'done, waiting for the chats still working in main (uncommitted edits, 4m ago)',
+  laneState(entry({ ready: true }), false, NOW, undefined, heldFor('waiting on chats still working: main (uncommitted edits, 4m ago)'))
+)
+ok(
+  'one waiting on the clock says how long',
+  laneState(entry({ ready: true }), false, NOW, undefined,
+    heldFor('v0.8.138 went out 40m ago. The work is committed and still on its lane; it merges and goes out with the next release (about 80m). Do not ship it separately - run autoship again then.')) ===
+    'done, releases batch - the next one is about 80m away'
+)
+ok(
+  'and a red suite is named as a refusal rather than as a promise',
+  laneState(entry({ ready: true }), false, NOW + 40 * 60_000, undefined,
+    heldFor('master fails its own test suite, so it was not released - FAIL cardfit')) ===
+    'done, held back 40m: master fails its own tests'
+)
+// The load-bearing negative: a reason nothing here recognises must still reach the screen.
+// A hold this has never seen is exactly the one worth reading, and dropping it puts the
+// old empty promise back for every future failure shape.
+ok(
+  'an unrecognised reason is printed, not swallowed',
+  holdWords(heldFor('origin refused the push. Try again later.')) === 'origin refused the push',
+  holdWords(heldFor('origin refused the push. Try again later.'))
+)
+ok('and no hold at all changes nothing', holdWords(null) === '' && holdWords(heldFor('   ')) === '')
+ok(
+  'a release that IS running is not a hold anybody can act on',
+  holdWords(heldFor('another chat is mid-release')) === 'a release is running'
 )
 
 // The tooltip is where the whole path and the full id go, so the row can stay short.

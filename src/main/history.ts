@@ -8,9 +8,13 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   rmSync,
   statSync,
@@ -286,14 +290,36 @@ export function read(id: string): string {
  */
 export function tail(id: string, bytes: number): string {
   flush()
+  let fd: number | undefined
   try {
-    const raw = readFileSync(logFile(id), 'utf8')
-    if (raw.length <= bytes) return raw
-    const cut = raw.slice(-bytes)
+    // The LAST `bytes`, read as the last `bytes` - not as the whole file with the front
+    // thrown away. A pane's log is capped at 8 MB (LOG_LIMIT) and a restore asks every
+    // reopened pane for its tail, all in one tick, on the main process: measured on this
+    // Mac 2026-08-21, `readFileSync(8 MB, 'utf8')` plus the slice is **22.7ms** against
+    // **1.2ms** for an fd read of the last 400 KB - so nine restored panes were 200ms of
+    // blocked main process, which on Windows is the busy cursor and here is a desk that
+    // does not answer while it comes back.
+    fd = openSync(logFile(id), 'r')
+    const size = fstatSync(fd).size
+    const want = Math.min(bytes, size)
+    const buf = Buffer.alloc(want)
+    readSync(fd, buf, 0, want, size - want)
+    const cut = buf.toString('utf8')
+    if (size <= bytes) return cut
     const nl = cut.indexOf('\n')
-    return nl === -1 ? cut : cut.slice(nl + 1)
+    // No newline in the whole tail: the read may have started inside a UTF-8 sequence, and
+    // the decoder leaves that as one replacement character at the very front.
+    return nl === -1 ? cut.replace(/^\uFFFD+/, '') : cut.slice(nl + 1)
   } catch {
     return ''
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        /* already gone */
+      }
+    }
   }
 }
 
