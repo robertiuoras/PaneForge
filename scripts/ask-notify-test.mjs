@@ -106,5 +106,54 @@ ok(
   seen.every((s) => !s.url.includes('getUpdates'))
 )
 
+
+// ---------------------------------------------------------------------------
+// One question, several frames. The CLI streams the option labels in, so the pane reads
+// the same chooser three times with a longer label each time - which is three phone
+// messages for ONE question unless the frames are allowed to settle first.
+const posts = []
+const notifier = new A.AskNotifier({
+  settleMs: 30,
+  post: async (text) => {
+    posts.push(text)
+    return true
+  }
+})
+const frame = (labels) => ({
+  key: `Data source right now?|${labels.map((l, i) => `${i + 1}.${l}`).join("|")}`,
+  text: `taskdriver.ai is asking:\n\nData source right now?\n\n${labels.map((l, i) => `${i + 1}. ${l}`).join("\n")}`
+})
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const streamed = [["eve"], ["everythi"], ["everything live"]]
+for (const labels of streamed) {
+  notifier.schedule("p1", () => frame(labels))
+  await sleep(5)
+}
+await sleep(60)
+ok("a question arriving over three frames is ONE message", posts.length === 1, JSON.stringify(posts))
+ok("and it is the finished text, not the first frame", posts[0]?.includes("everything live"), posts[0])
+
+// A late frame of the SAME question, after the message already went: a label that is
+// still growing must not buy a second notification.
+notifier.schedule("p1", () => frame(["everything live now"]))
+await sleep(60)
+ok("a label that keeps growing does not send again", posts.length === 1, JSON.stringify(posts))
+
+// Answered at the desk inside the settle window: nothing is left to tell anyone about.
+notifier.schedule("p2", () => null)
+await sleep(60)
+ok("a question answered while it settled sends nothing", posts.length === 1, JSON.stringify(posts))
+
+// A genuinely different question on the same pane still gets through.
+notifier.schedule("p1", () => ({ key: "Ship it?|1.Yes|2.No", text: "taskdriver.ai is asking:\n\nShip it?" }))
+await sleep(60)
+ok("a different question is still sent", posts.length === 2, JSON.stringify(posts))
+
+ok("nothing is left waiting", notifier.pending() === 0)
+ok(
+  "a growing key is the same question",
+  A.sameQuestionGrowing("Q|1.eve", "Q|1.everything live") && !A.sameQuestionGrowing("Q|1.Yes", "Ship it?|1.Yes")
+)
+
 console.log(failed ? `\n${failed} failed` : '\nall ask-notify checks passed')
 process.exit(failed ? 1 : 0)

@@ -30,7 +30,8 @@ import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
-import { askMessage, postAsk, telegramCreds } from './askNotify'
+import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { askKeyOf } from '../shared/autoAnswer'
 import type { AttachIn, AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
@@ -746,6 +747,18 @@ manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
 
 /**
+ * One phone message per question. The pane raises `ask` once per FRAME of a question and
+ * a chooser arrives over several frames, so the notifier waits for the frames to stop.
+ */
+const askNotifier = new AskNotifier({
+  post: (text: string) =>
+    postAsk(text).then((sent) => {
+      if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
+      return sent
+    })
+})
+
+/**
  * A running turn that has said nothing for minutes, and a terminal bell.
  *
  * Both go out on their own channel and neither reuses `raiseAttention`, because that
@@ -792,9 +805,15 @@ function raiseAsk(s: Session): void {
   // stopped dead is not a notification preference.
   send('sessions:ask', s)
   if (!s.remote && getConfig().telegramAsk) {
-    void postAsk(askMessage(s.title, s.ask!, undefined)).then((sent) => {
-      if (!sent && telegramCreds())
-        console.log(`telegram: could not post the question from ${s.title}`)
+    // Debounced, and resolved at the END of the wait rather than now: the option labels
+    // stream in, so this same event fires several times for ONE question with a longer
+    // label each time. Sending on the frame would put three messages on the phone for one
+    // chooser, which is exactly what happened. See ASK_SETTLE_MS in askNotify.ts.
+    askNotifier.schedule(s.id, () => {
+      const live = allSessions().find((x) => x.id === s.id)
+      // Answered at the desk while this was waiting: there is nothing left to ask about.
+      if (!live?.ask) return null
+      return { key: askKeyOf(live.ask), text: askMessage(live.title, live.ask, undefined) }
     })
   }
   if (!getConfig().notifyOnIdle || isGameActive()) return

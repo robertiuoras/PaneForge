@@ -122,3 +122,117 @@ export async function postAsk(text: string): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * How long the question has to stop CHANGING before a word of it leaves the machine.
+ *
+ * A chooser is not painted in one frame. The CLI streams the option labels in, so the
+ * pane reads `4. eve`, then `4. everythi`, then `4. everything live` - three different
+ * questions by `sameAsk`, which compares labels, and therefore three `ask` events and
+ * three phone notifications for ONE question. That is what a person sees as spam, and it
+ * is not a rare race: it happens on every question whose options are still arriving.
+ *
+ * Two and a half seconds is longer than a repaint and far shorter than a person walking
+ * back to the desk, and the wait costs nothing - the pane is already red at the desk from
+ * the frame the question first appeared in.
+ */
+export const ASK_SETTLE_MS = 2500
+
+/** How long one question stays "already sent" for a pane. */
+export const ASK_REPEAT_WINDOW_MS = 5 * 60_000
+
+/**
+ * Is `next` the same question as `prev`, only more of it?
+ *
+ * The settle timer covers the common case; this covers the one it cannot - a label that
+ * is still arriving when the timer fires, so the post goes out on a half-typed question
+ * and the rest of it lands a moment later as a second one. A streamed question only ever
+ * GROWS, so a key that is a prefix of the one already sent (or vice versa) is the same
+ * question and must not be sent twice.
+ */
+export function sameQuestionGrowing(prev: string, next: string): boolean {
+  if (!prev || !next) return false
+  return next.startsWith(prev) || prev.startsWith(next)
+}
+
+/** What the notifier asks for at the moment it is about to post - never before. */
+export interface AskSnapshot {
+  key: string
+  text: string
+}
+
+export interface AskNotifierOpts {
+  settleMs?: number
+  repeatWindowMs?: number
+  post?: (text: string) => Promise<boolean>
+  now?: () => number
+}
+
+/**
+ * One phone message per question, no matter how many frames that question arrived in.
+ *
+ * Every `ask` frame calls `schedule`, which restarts the timer. When it finally fires the
+ * caller is asked for the question as it stands RIGHT THEN - so a question answered at the
+ * desk inside the settle window sends nothing at all, and a question still being typed
+ * sends its finished text rather than the first frame of it.
+ */
+export class AskNotifier {
+  private timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private lastKey = new Map<string, string>()
+  private lastAt = new Map<string, number>()
+  private readonly settleMs: number
+  private readonly repeatWindowMs: number
+  private readonly post: (text: string) => Promise<boolean>
+  private readonly now: () => number
+
+  constructor(opts: AskNotifierOpts = {}) {
+    this.settleMs = opts.settleMs ?? ASK_SETTLE_MS
+    this.repeatWindowMs = opts.repeatWindowMs ?? ASK_REPEAT_WINDOW_MS
+    this.post = opts.post ?? postAsk
+    this.now = opts.now ?? (() => Date.now())
+  }
+
+  /** A frame carrying a question. `resolve` is called once, at the end of the wait. */
+  schedule(id: string, resolve: () => AskSnapshot | null): void {
+    const running = this.timers.get(id)
+    if (running) clearTimeout(running)
+    const timer = setTimeout(() => {
+      this.timers.delete(id)
+      void this.fire(id, resolve)
+    }, this.settleMs)
+    // A pending notification must never hold the app open.
+    timer.unref?.()
+    this.timers.set(id, timer)
+  }
+
+  /** The pane went away. Anything still waiting for it is not worth sending. */
+  cancel(id: string): void {
+    const running = this.timers.get(id)
+    if (running) clearTimeout(running)
+    this.timers.delete(id)
+    this.lastKey.delete(id)
+    this.lastAt.delete(id)
+  }
+
+  /** For the test: how many panes have a message waiting. */
+  pending(): number {
+    return this.timers.size
+  }
+
+  private async fire(id: string, resolve: () => AskSnapshot | null): Promise<boolean> {
+    const snap = resolve()
+    // Answered, or the pane is gone: the question this was about no longer exists.
+    if (!snap || !snap.key) return false
+    const prev = this.lastKey.get(id) ?? ''
+    const at = this.lastAt.get(id) ?? 0
+    const now = this.now()
+    if (prev && now - at < this.repeatWindowMs && sameQuestionGrowing(prev, snap.key)) {
+      // Keep the LONGER key so the growing question converges on one identity.
+      if (snap.key.length > prev.length) this.lastKey.set(id, snap.key)
+      return false
+    }
+    this.lastKey.set(id, snap.key)
+    this.lastAt.set(id, now)
+    return await this.post(snap.text)
+  }
+}
