@@ -355,8 +355,12 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   }
 
   {
+    // ...and it does not take a slot with it: the other pane still moves, and the window
+    // is still not emptied.
     const panes = [pane({ id: 'a', projectName: 'elsewhere' }), pane({ id: 'keep' })]
-    eq('a project the peer does not have stays here', autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+    eq('a project the peer does not have stays here', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+    const alone = [pane({ id: 'a', projectName: 'elsewhere' })]
+    eq('and with nowhere for any of them, nothing moves', autoHandoffPlan(alone, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
   }
 
   eq('the budget respects the off switch like everything else', autoHandoffPlan(three(), budget, peers, { ...DEFAULT_AUTO_HANDOFF, enabled: false }, {}, NOW).length, 0)
