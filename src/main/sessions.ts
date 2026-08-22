@@ -403,6 +403,10 @@ export class SessionManager extends EventEmitter {
       // pane inherits it: the conversation is live even though nobody has typed since.
       engaged: clock.engaged,
       role: req.role,
+      // Which device handed this pane over, when one did. Kept because the budget rule
+      // must never send it straight back: two desks each keeping two agents would
+      // otherwise pass one pane between them for ever, each one correct on its own.
+      arrivedFrom: req.arrivedFrom,
       lane: req.lane,
       laneNote: req.laneNote,
       cols: 120,

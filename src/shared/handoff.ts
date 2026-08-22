@@ -25,6 +25,16 @@ export interface HandoffPayload {
   spec: StartSessionRequest
   /** the sender's projects root, so relative layout survives the machine change */
   senderRoot: string
+  /**
+   * Who is sending it, by device id.
+   *
+   * Only one thing reads it, and it is worth the field: the receiver stamps it on the pane
+   * so its own local-pane budget can refuse to hand that pane straight back. Two desks each
+   * keeping two agents are each right on their own, and between them they would pass one
+   * pane back and forth for ever. Optional - a build older than this sends nothing, and an
+   * absent sender simply means the refusal has nothing to match.
+   */
+  senderDevice?: string
   repo?: HandoffRepo
   /** announced ahead of its chunks; `name` is `<conversation-id>.jsonl` */
   transcript?: { name: string; size: number }

@@ -177,6 +177,11 @@ export interface Session {
    */
   handingOff?: boolean
   /**
+   * The device that handed this pane here, when one did - see `StartSessionRequest`.
+   * Read by the local-pane budget, which may not send it straight back where it came from.
+   */
+  arrivedFrom?: string
+  /**
    * This pane's agent runs on another machine and is mirrored here. The id is
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
    * resizes and closes are routed back over the link by the main process.
@@ -238,6 +243,15 @@ export interface StartSessionRequest {
    * restored pane is issued a new one. Only the desk sets it.
    */
   scrollbackId?: string
+  /**
+   * The device this pane was handed over FROM. Set only by `receiveHandoff`.
+   *
+   * It exists for one refusal: the local-pane budget may not hand a pane straight back to
+   * the machine that just handed it here. Two desks that each keep two agents are each
+   * right about their own budget, and between them they would pass one pane back and
+   * forth for ever - the one failure mode of a policy that fires while nothing is wrong.
+   */
+  arrivedFrom?: string
   /** filled in by the main process when the launch was moved into a worktree lane */
   lane?: string
   /** one-line explanation of the lane decision, shown as a toast after launch */

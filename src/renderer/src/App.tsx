@@ -1791,6 +1791,8 @@ export default function App(): JSX.Element {
         // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
         // picked, main queues it and moves it the moment the turn ends.
         busy: s.runSince !== undefined,
+        // The device that handed it here, so the budget never hands it straight back.
+        arrivedFrom: s.arrivedFrom,
         projectName: projectNameOf(s.cwd)
       })),
     []

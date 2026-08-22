@@ -374,6 +374,21 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     eq('...and by the clock sweep too', ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }, {}, NOW)), 'keep')
   }
 
+  // The one failure mode a POLICY has that a pressure reading does not. Two desks each
+  // keeping two agents are each right about their own budget, and between them they would
+  // pass one pane back and forth for ever - so a pane never goes back where it came from.
+  {
+    const panes = [pane({ id: 'came', arrivedFrom: 'pc' }), pane({ id: 'me', focused: true })]
+    eq('a pane handed here is never handed straight back', autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+    // ...and the control: it is refused because of WHERE it came from, not because it
+    // arrived. A second machine that did not send it can still take it.
+    const two = [...peers, { device: 'mini', deviceName: 'Mini', online: true, projects: [{ name: 'proj', path: '/mini/proj' }] }]
+    const plan = autoHandoffPlan(panes, { ...ok, over: 1 }, two, DEFAULT_AUTO_HANDOFF, {}, NOW)
+    eq('but another machine may still take it', plan.map((p) => p.device).join(','), 'mini')
+    eq('and hostFor is where that is decided', hostFor(peers, 'proj', 'pc'), null)
+  }
+
   check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
   check('and a question is neither', !queueable({ state: 'needsYou', asking: true }) && !movable({ state: 'needsYou', asking: true }))
   check('the default keeps a couple here', DEFAULT_AUTO_HANDOFF.keepLocal === 2)

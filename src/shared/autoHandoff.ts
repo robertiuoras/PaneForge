@@ -180,6 +180,16 @@ export interface AutoPane {
    * `movable` refuses it outright.
    */
   busy?: boolean
+  /**
+   * The device that handed this pane here, when one did.
+   *
+   * The budget rule refuses to send it back there, and that refusal is what stops the one
+   * failure mode a policy has that a pressure reading does not: two desks each keeping two
+   * agents are each correct about their own budget, and between them they would pass one
+   * pane back and forth for ever. A pressure sweep cannot do this - the other machine has
+   * to be genuinely out of memory for its half of the loop, and the move fixes that.
+   */
+  arrivedFrom?: string
   /** what this pane's folder is called as a project - the only portable name for it */
   projectName: string
 }
@@ -221,11 +231,14 @@ export function queueable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
 /** The peer that can take this project, or null. Same rules as `offloadTarget`. */
 export function hostFor(
   peers: OffloadCandidate[],
-  projectName: string
+  projectName: string,
+  /** a device this pane may not go to - the one it was handed here from */
+  avoid?: string
 ): { device: string; deviceName: string; cwd: string } | null {
   if (!projectName) return null
   for (const c of peers) {
     if (!c.online) continue
+    if (avoid && c.device === avoid) continue
     const hit = c.projects.find((p) => p.name === projectName)
     if (hit) return { device: c.device, deviceName: c.deviceName, cwd: hit.path }
   }
@@ -301,7 +314,8 @@ export function budgetPlan(
 
   const out: AutoHandoff[] = []
   for (const p of eligible.slice(0, room)) {
-    const host = hostFor(peers, p.projectName)
+    // Never back where it came from. The desk over there runs this same rule.
+    const host = hostFor(peers, p.projectName, p.arrivedFrom)
     if (!host) continue
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
     if (out.length >= over) break

@@ -1444,6 +1444,12 @@ many. Measured on this desk while writing it: pressure `normal`, load 0.53 per c
   set for everybody and the migration runs on nothing). The dialog was right while the app
   could see the memory and not the reason to keep the pane here; a budget IS that reason,
   given once.
+- **A pane is never handed back where it came from**, which is the one failure mode a
+  policy has that a pressure reading does not: two desks each keeping two agents are each
+  correct about their own budget and would pass one pane between them for ever. The sender
+  puts its own id in the payload (`senderDevice`), the receiver stamps it on the pane
+  (`arrivedFrom`), and `hostFor` skips that device. A second machine that did not send it
+  may still take it - the refusal is about WHERE it came from, not that it arrived.
 - Both hardened like `offloadMinutes` and for the same reason - these come off config.json
   and off `pf-ctl call config:set`, so `true` is not a budget of one (`keepLocalOf`).
 

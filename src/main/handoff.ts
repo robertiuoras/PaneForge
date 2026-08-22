@@ -89,6 +89,8 @@ export interface SendDeps {
   transcriptFileFor(cwd: string, resumeId: string): string | null
   deliver(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   deviceName(device: string): string
+  /** This device's own id, stamped on the pane over there so it is never sent back here. */
+  selfDevice?(): string
   /**
    * Whether this pane is mid-turn, or sitting on a question it drew on screen.
    *
@@ -167,6 +169,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   const payload: HandoffPayload = {
     spec,
     senderRoot: deps.root(),
+    senderDevice: deps.selfDevice?.() || undefined,
     repo: repo ?? undefined,
     tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
     closeReceiverWhenDone: closeReceiverWhenDone || undefined,
@@ -286,6 +289,10 @@ export async function receiveHandoff(
     role: spec.role,
     laneEnv: spec.laneEnv
   })
+
+  // Where it came from, kept on the pane. The budget rule over here is the same rule that
+  // sent it, so without this the two desks pass one pane between them for ever.
+  if (payload.senderDevice) req.arrivedFrom = payload.senderDevice
 
   // After placement, never before: a lane split moves the cwd, and the CLI reads
   // transcripts from a folder named after the cwd it actually starts in.

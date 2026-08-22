@@ -1863,6 +1863,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
+      selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
       queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
       devServersOf: (id, cwd) => {
