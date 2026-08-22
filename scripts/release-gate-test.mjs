@@ -17,16 +17,23 @@
 //   node scripts/release-gate-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-release-gate-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+// Its own fixture path per run - see the same note in `conflict-test.mjs`. A fixed name
+// that this line deleted at startup is a race as soon as two runs overlap, and the release
+// gate is the thing that overlaps them: it runs the suite twice to confirm a red answer and
+// retries every minute. This test drives `lane.mjs` against real repositories, so the other
+// run deleting them mid-test surfaced as `lane.mjs ready` failing - which the gate reports
+// as "the suite could not run", about a suite that is green standalone.
+const root = mkdtempSync(join(tmpdir(), 'paneforge-release-gate-test-'))
+process.on('exit', (code) => {
+  if (!code) rmSync(root, { recursive: true, force: true })
+})
 
 let failed = 0
 const ok = (name, cond, detail) => {
