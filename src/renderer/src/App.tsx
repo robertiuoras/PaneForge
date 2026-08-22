@@ -35,8 +35,8 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import FleetDialog from './components/FleetDialog'
-import { fleetRow, fleetSections, fleetWaiting, type FleetPane } from '@shared/fleet'
+import { fleetRow, fleetWaiting } from '@shared/fleet'
+import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   BoardIcon,
   FleetIcon,
@@ -268,22 +268,6 @@ interface AskState {
   onCancel?: (checked: boolean) => void
 }
 
-/**
- * One row of the sidebar.
- *
- * Either a pane on this desk (`session`), or one that is merely LISTED from a paired
- * device (`listed`) - running over there, drawn here, and not mirrored. It carries the
- * fields `shared/fleet.ts` reads flat, so both kinds sort into the same sections by the
- * same rules and the list cannot disagree with itself about which pane wants a person.
- */
-interface DeskRow extends FleetPane {
-  key: string
-  /** Ctrl+N. 0 for a listed pane - there is nothing on this machine to switch to yet. */
-  number: number
-  session?: Session
-  listed?: { pane: RemotePaneInfo; device: { id: string; name: string } }
-}
-
 export default function App(): JSX.Element {
   const [rawSessions, setSessions] = useState<Session[]>([])
   /** Which device's panes the sidebar is showing. `all` remains the default desk view. */
@@ -303,13 +287,6 @@ export default function App(): JSX.Element {
       (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
     )
   }, [rawSessions, order])
-  const deviceChoices = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const session of sessions) {
-      if (session.remote) seen.set(session.remote.device, session.remote.name)
-    }
-    return [...seen].map(([id, name]) => ({ id, name }))
-  }, [sessions])
   const shownSessions = useMemo(
     () =>
       sessions.filter(
@@ -319,10 +296,6 @@ export default function App(): JSX.Element {
       ),
     [sessions, deviceFilter]
   )
-  useEffect(() => {
-    if (deviceFilter !== 'all' && deviceFilter !== 'local' && !deviceChoices.some((d) => d.id === deviceFilter))
-      setDeviceFilter('all')
-  }, [deviceFilter, deviceChoices])
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
@@ -352,7 +325,6 @@ export default function App(): JSX.Element {
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
   /** the pane whose output is being read as text (and therefore selected with a finger) */
   const [textPane, setTextPane] = useState<string | null>(null)
-  const [fleet, setFleet] = useState(false)
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
    * sharing the width - see handheld.ts. Nothing else in here has to know: the classes go
@@ -366,6 +338,23 @@ export default function App(): JSX.Element {
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
+  const deviceChoices = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const session of sessions) {
+      if (session.remote) seen.set(session.remote.device, session.remote.name)
+    }
+    // ...and every device that is merely CONNECTED, whether or not a pane of its is being
+    // mirrored. Built from mirrored sessions alone, the filter could not name the one
+    // machine somebody opens this list to look at: a PC running everything and mirroring
+    // nothing was absent from its own dropdown.
+    for (const peer of remote?.peers ?? [])
+      if (peer.status === 'online') seen.set(peer.id, peer.name)
+    return [...seen].map(([id, name]) => ({ id, name }))
+  }, [sessions, remote])
+  useEffect(() => {
+    if (deviceFilter !== 'all' && deviceFilter !== 'local' && !deviceChoices.some((d) => d.id === deviceFilter))
+      setDeviceFilter('all')
+  }, [deviceFilter, deviceChoices])
   const [phone, setPhone] = useState<PhoneState | null>(null)
   // The panes the last run left behind, when the launch decided to ask about them.
   const [restore, setRestore] = useState<RestoreOffer | null>(null)
@@ -517,7 +506,6 @@ export default function App(): JSX.Element {
     swarm ||
     history ||
     devices ||
-    fleet ||
     board !== null ||
     diff !== null ||
     ask !== null ||
@@ -2241,7 +2229,6 @@ export default function App(): JSX.Element {
         setBoard(null)
         setHistory(false)
         setDevices(false)
-        setFleet(false)
         setRenaming(null)
         return
       }
@@ -2373,7 +2360,7 @@ export default function App(): JSX.Element {
         // Shift for the whole Fleet, plain for find inside one pane: same letter, and the
         // difference between them is the difference between one pane and all of them.
         e.preventDefault()
-        setFleet((f) => !f)
+        setByState((v) => !v)
       } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
@@ -2490,10 +2477,10 @@ export default function App(): JSX.Element {
       {
         id: 'fleet',
         group: 'Actions',
-        title: 'Fleet: every pane on one screen',
-        hint: 'sorted by who needs a person first',
+        title: 'Sort the sessions list by who needs you',
+        hint: 'or leave it in the order you dragged it into',
         keys: 'Ctrl Shift F',
-        run: () => setFleet(true)
+        run: () => setByState((v) => !v)
       },
       {
         id: 'changes',
@@ -2958,7 +2945,6 @@ export default function App(): JSX.Element {
   // a PERSON. `working` is the app being busy, which nobody has to do anything about, and
   // `waiting` above is narrower than this - it clears the moment you LOOK at the pane,
   // where this keeps counting until the pane is actually answered.
-  const needsYou = fleetWaiting(sessions)
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
@@ -3143,6 +3129,163 @@ export default function App(): JSX.Element {
       .catch(() => setDevs([]))
   }, [mascotPanes])
 
+  /**
+   * Whether the list is grouped by who needs a person, or left in the order it was
+   * dragged into.
+   *
+   * Grouped is the default, and is what replaced the Fleet dialog: the whole point of
+   * that screen was "sorted by whoever needs you first", and it was a screen you had to
+   * remember to open. The arranged order is still one press away (Ctrl Shift F) for a
+   * desk somebody has deliberately laid out. Kept in this window rather than in
+   * config.json - it is a view, not a setting, and two machines have no reason to agree
+   * about it.
+   */
+  const [byState, setByState] = useState(() => {
+    try {
+      return window.localStorage.getItem('pf.listByState') !== 'off'
+    } catch {
+      return true
+    }
+  })
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('pf.listByState', byState ? 'on' : 'off')
+    } catch {
+      /* a window with site data blocked still sorts; it just forgets between launches */
+    }
+  }, [byState])
+
+  /**
+   * Every pane on the desk, this machine's and every paired machine's, as one list.
+   *
+   * A pane on the PC used to be invisible here until somebody picked it for mirroring in
+   * Devices, so "is anything running over there" was a question you had to go and ask -
+   * which is no way to watch a machine that is meant to be doing the work. Everything
+   * needed to answer it already crosses the link (`RemotePaneInfo` rides the
+   * `remote:changed` message), so the sidebar draws them all and mirrors none of them.
+   *
+   * That split is the whole design. LISTING a remote pane costs a few fields in a message
+   * that is already sent whenever anything over there moves; MIRRORING one costs a live
+   * byte stream and an xterm buffer on this laptop, per pane. Pressing the row is what
+   * turns one into the other, so a desk showing fifty PC panes costs what showing none
+   * used to.
+   *
+   * A listed row has no pane NUMBER: there is nothing on this machine for Ctrl+N to
+   * switch to until it has been opened.
+   */
+  const deskRows = useMemo(
+    () => buildDeskRows(sessions, shownSessions, remote?.peers ?? [], deviceFilter),
+    [sessions, shownSessions, remote, deviceFilter]
+  )
+
+  const groups = useMemo(() => deskGroups(deskRows, byState), [deskRows, byState])
+
+  /**
+   * How many panes want a person - on EITHER machine.
+   *
+   * It counted this desk's own panes, which is backwards for a laptop whose agents run
+   * on the other box: the number would sit at zero all day while the PC piled up
+   * finished turns. A listed pane is ranked by the same `fleet.ts` rules as a local one,
+   * so counting it is the same call over a longer list.
+   */
+  const needsYou = fleetWaiting(deskRows)
+
+  /**
+   * Open a pane that is running on another machine: mirror it, then switch to it.
+   *
+   * `remote:watch` takes the whole list rather than a delta, so the ones already being
+   * mirrored are re-sent with this one added. The row leaves the listed half the instant
+   * the mirror arrives, because it is a session from then on - which is why the focus is
+   * deferred to an effect rather than done here: the session it wants does not exist yet.
+   */
+  const pendingOpen = useRef<{ device: string; remoteId: string } | null>(null)
+  const openListed = useCallback(
+    (deviceId: string, remoteId: string) => {
+      const peer = remote?.peers.find((p) => p.id === deviceId)
+      const watched = (peer?.panes ?? []).filter((p) => p.watched).map((p) => p.id)
+      if (!watched.includes(remoteId)) watched.push(remoteId)
+      pendingOpen.current = { device: deviceId, remoteId }
+      void api.watchRemote(deviceId, watched, false)
+    },
+    [remote]
+  )
+  useEffect(() => {
+    const want = pendingOpen.current
+    if (!want) return
+    const arrived = rawSessions.find(
+      (s) => s.remote?.device === want.device && s.id.endsWith(want.remoteId)
+    )
+    if (!arrived) return
+    pendingOpen.current = null
+    setActiveId(arrived.id)
+    handheld.showPane()
+  }, [rawSessions])
+
+  /**
+   * A pane running on another machine, drawn without being mirrored.
+   *
+   * Deliberately thinner than a local row: there is no git badge (the repo is on that
+   * disk), no resource chip (the agent is that machine's process), no close button (it
+   * is not ours to end from a list) and no rename. What it keeps is the four things that
+   * make it worth pressing - which machine, what it is, what it is doing, and for how
+   * long.
+   */
+  const listedRow = (row: DeskRow): JSX.Element => {
+    const { pane, device } = row.listed!
+    const place = describePlace({ cwd: pane.cwd, lane: pane.lane })
+    const state = fleetRow(row)
+    const agent = agents.find((a) => a.id === pane.agent)
+    return (
+      <div
+        key={row.key}
+        className={'row listed' + (pane.asking ? ' asking' : '')}
+        title={
+          `${pane.title} - running on ${device.name}.\n\n` +
+          'Nothing of it is on this machine yet. Click to watch it here; the agent, the ' +
+          'folder and the transcript stay over there.'
+        }
+        onClick={() => openListed(device.id, pane.id)}
+      >
+        <StatusDot status={pane.status} engaged={pane.engaged} />
+        <div className="row-text">
+          <div className="row-title has-key">
+            <span className="row-remote">
+              <RemoteIcon size={13} />
+            </span>
+            <span className="row-name">{pane.title}</span>
+            {pane.asking ? (
+              <span
+                className="chip asks"
+                title="The CLI over there is sitting on a question. Open the pane to see it and press an answer."
+              >
+                asks you
+              </span>
+            ) : state.since !== undefined ? (
+              <Elapsed since={state.since} title={state.label} />
+            ) : null}
+          </div>
+          <div className="row-sub">
+            <AgentLogo id={pane.agent} spec={agent} size={12} />
+            <span className="row-agent">{agent?.label ?? pane.agent}</span>
+            <span className="chip" title={`Running on ${device.name}`}>
+              {device.name}
+            </span>
+            {place.short.trim() === pane.title.trim() ? null : (
+              <span className="chip place" title={place.full}>
+                {place.short}
+              </span>
+            )}
+          </div>
+        </div>
+        {/* Not an icon: this is the one row in the list whose click does something other
+            than switch to a pane, and a word is the cheapest way to say so. */}
+        <span className="row-open" aria-hidden="true">
+          watch
+        </span>
+      </div>
+    )
+  }
+
   const sessionRow = (s: Session, paneNumber: number): JSX.Element => (
             <div
               key={s.id}
@@ -3168,12 +3311,17 @@ export default function App(): JSX.Element {
                 // meant nothing the card was not already saying twice. The chip keeps the
                 // colour, because the chip can be hovered and can say why.
               }
-              onPointerDown={(e) =>
-                beginDrag(e, s.id, () => {
+              onPointerDown={(e) => {
+                const pick = (): void => {
                   setActiveId(s.id)
                   handheld.showPane()
-                })
-              }
+                }
+                // Dragging reorders `order`, and `order` decides nothing while the list is
+                // grouped by state - the row would follow the pointer and snap back to
+                // wherever its state puts it, which reads as a list that is broken.
+                if (byState) pick()
+                else beginDrag(e, s.id, pick)
+              }}
               onClick={() => {
                 if (draggedRef.current) return
                 setActiveId(s.id)
@@ -3509,15 +3657,18 @@ export default function App(): JSX.Element {
           {/* First in the row because it is the one that can be UNREAD: the others open
               something you went looking for, this one tells you something arrived. */}
           <button
-            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
+            className={'ghost quick-btn' + (needsYou ? ' live' : '') + (byState ? ' on' : '')}
             title={
-              needsYou
-                ? keyLabel(
-                    `Fleet: ${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you (Ctrl Shift F)`
-                  )
-                : keyLabel('Fleet: every pane on one screen, whoever needs you first (Ctrl Shift F)')
+              (needsYou
+                ? `${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you. `
+                : '') +
+              keyLabel(
+                byState
+                  ? 'The list is sorted by who needs you first. Press to put it back in the order you arranged (Ctrl Shift F)'
+                  : 'The list is in the order you arranged. Press to sort it by who needs you first (Ctrl Shift F)'
+              )
             }
-            onClick={() => setFleet(true)}
+            onClick={() => setByState((v) => !v)}
           >
             <FleetIcon />
             {needsYou > 0 && <span className="quick-dot" />}
@@ -3677,7 +3828,7 @@ export default function App(): JSX.Element {
           </label>
         )}
         <div className="list" ref={listRef}>
-          {deskGroups.map((g) => (
+          {groups.map((g) => (
             <Fragment key={g.key}>
               {g.title && (
                 <div className={`list-sec sec-${g.key}`}>
@@ -4319,16 +4470,6 @@ export default function App(): JSX.Element {
       {/* Drawn BEFORE the diff on purpose: both are `.overlay`, so the later one in the
           tree is the one on top, and reading a pane's changes has to open OVER the list
           you picked it from rather than under it. */}
-      {fleet && (
-        <FleetDialog
-          sessions={sessions}
-          agents={agents}
-          activeId={activeId}
-          onFocus={setActiveId}
-          onDiff={(cwd, lane, pane, scope) => setDiff({ cwd, lane, pane, scope })}
-          onClose={() => setFleet(false)}
-        />
-      )}
       {diff && (
         <DiffDialog
           cwd={diff.cwd}

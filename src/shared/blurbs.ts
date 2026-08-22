@@ -74,11 +74,6 @@ export const BLURBS: Blurb[] = [
     text: 'Every line the agent in this pane has written, read here instead of in its terminal. Switch between what is uncommitted, what the whole branch holds, or both at once before merging a lane back. Nothing here stages, commits or discards anything.'
   },
   {
-    id: 'fleet',
-    title: 'Fleet',
-    text: 'Every open pane on one screen, sorted by who needs a person first: a finished turn at the top, a run that has gone quiet under it, and whatever the app is happily busy with below both. The bar on each row is how much that folder has changed, and clicking it opens the lines.'
-  },
-  {
     id: 'restore',
     title: 'Restore',
     text: 'The panes that were open when PaneForge last closed. Reopening puts each agent back in its folder and, where the CLI supports it, back into the conversation it was in.'

@@ -470,6 +470,42 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   transition: background var(--fast), border-color var(--fast);
 }
 .row:hover { background: #ffffff09; }
+
+/* The sessions list is grouped by who needs a person, so it needs headings. A micro
+   uppercase label with a hairline running out to the edge, rather than a bar with a fill:
+   in a 260px column a heading has to cost less than a row of height, and a hairline is
+   the separator this whole app uses instead of shadows (design-vault/linear.app.md). */
+.list-sec {
+  display: flex; align-items: center; gap: 7px;
+  margin: 8px 2px 3px; padding: 0 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--muted);
+}
+.list-sec:first-child { margin-top: 2px; }
+.list-sec .n { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.list-sec::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.list-sec.sec-yourMove { color: var(--accent-text); }
+.list-sec.sec-yourMove::after { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* A pane running on a paired machine that this one is NOT mirroring. Dimmer, because
+   nothing of it is on this disk yet and it must not read as a pane you can type into;
+   full strength the moment it is pointed at, or the moment it is owed an answer. */
+/* 0.82, not the 0.68 this was first drawn at. Measured in a real window over the shipped
+   stylesheet: at 0.68 the sub-line (`.row-agent`, 11px) composites to 3.71:1 against the
+   sidebar, which fails AA, and it is the line carrying WHICH MACHINE the pane is on. 0.82
+   reads as 4.93:1 and is still plainly dimmer than a live row. */
+.row.listed { opacity: 0.82; }
+.row.listed:hover, .row.listed.asking { opacity: 1; }
+/* This is the one row in the list whose press does something other than switch panes,
+   and a word is the cheapest way to say so. */
+.row-open {
+  flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--accent-text);
+  opacity: 0; transition: opacity var(--fast);
+}
+.row.listed:hover .row-open { opacity: 0.9; }
+/* The sort button is a mode, so it says which mode it is in. */
+.quick-btn.on { color: var(--accent-text); }
 .row.active { background: #ffffff0f; border-color: var(--line-strong); }
 /* A card is a handle as well as a button. The grab cursor appears neither on hover nor
    on the press itself: hovering a card is what you do before clicking it, and a click is
@@ -730,7 +766,7 @@ html.app-blurred .dot.working { animation: none; }
    would freeze it wherever it happened to be, leaving a half-grown halo at half opacity
    sitting around the dot for as long as the window is unfocused. Dropping the layer
    instead leaves the dot's own static ring, which is what the ring grows out of. */
-html.app-blurred .dot.idle::after, html.app-blurred .fleet-dot::after { content: none; }
+html.app-blurred .dot.idle::after { content: none; }
 /* Nothing at all loops behind an unfocused window. The five rules above are the ones
    that also need a resting VALUE (a glow held at full, a band parked off the edge); this
    catches everything else that loops - the badges, the connecting dot, the stuck lane -
@@ -779,26 +815,6 @@ html.hi-refresh .num.live::after { animation: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.starting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
 .dot.working { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; animation: pulse 2s ease-in-out infinite; }
-/* A finished turn is the one state in this list that wants a PERSON, so it is the one
-   given a motion of its own: a ring that spreads and fades, rather than the breath the
-   working dot uses. Two motions, meaning different things - the app is busy, or the app
-   is waiting on you - and everything terminal is perfectly still, so a movement stopping
-   is itself the event. `shared/fleet.ts` owns the same rule in words. */
-/* The ring is a LAYER that grows, never a box-shadow whose spread grows. A spread radius
-   is a paint property: every frame invalidates the dot's rect and the sidebar tile under
-   it is rasterised again, on the main thread, at whatever the panel runs at. Measured on
-   the 120Hz MacBook with a test copy carrying eighteen dots: the box-shadow version held
-   the GPU process at 122% of a core and the renderer at 34%, against a 20% floor with the
-   animation off - and it ran on IDLE panes, which is what a desk full of finished turns
-   is most of the time. The same ring drawn as a pseudo-element animating `transform` and
-   `opacity` composites without repainting anything and measured 35%. Same motion, same
-   colour, same meaning; ~90 points of a core back. Anything animating box-shadow, filter,
-   width or top belongs in this shape, not in a keyframe. */
-.dot.idle {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
-  position: relative;
-}
 .dot.idle::after {
   content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
   box-shadow: 0 0 0 2px var(--accent-dim);
@@ -1907,7 +1923,6 @@ button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
 }
 .tab-body .found-top { box-shadow: 0 0 0 2px var(--accent); }
 
-
 input[type='range'] {
   -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px;
   background: var(--surface-3); outline: none;
@@ -2875,77 +2890,6 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 button.git-badge { font: inherit; font-size: 10.5px; cursor: pointer; }
 button.git-badge.pressable:hover { border-color: var(--line-strong); color: var(--text); }
 button.git-badge.pressable.dirty:hover { color: var(--warn); }
-
-/* ---------------------------------------------------------------------------
-   Fleet: every pane on one screen, sorted by who needs a person.
-
-   The row is a grid rather than a flex line so eight rows agree on where each
-   column starts - the whole value of the screen is scanning DOWN one column
-   (every clock, every bar) rather than reading each row left to right.
-
-   Borders are hairlines in the palette's own line colour and there are no
-   shadows: this sits inside a dialog that already has one, and a second
-   elevation inside the first is what makes a dense list look muddy.
-   ------------------------------------------------------------------------- */
-.dialog.fleet { gap: 10px; }
-.fleet-list {
-  display: flex; flex-direction: column; gap: 2px;
-  overflow: auto; min-height: 0; max-height: min(60vh, 520px);
-  margin: 0 -4px; padding: 0 4px;
-}
-.fleet-row {
-  display: grid;
-  grid-template-columns: 10px 12px 15px minmax(0, 1fr) 152px 168px;
-  align-items: center; gap: 10px;
-  padding: 8px 9px; border-radius: var(--r);
-  border: 1px solid transparent;
-  cursor: pointer;
-  /* Two durations for the whole screen, the way the reference dark dashboards do it:
-     120ms for anything the pointer causes, and the long ones above for status. */
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.fleet-row.hi { background: var(--surface-2); border-color: var(--line); }
-.fleet-row.current { border-color: var(--accent-dim); }
-.fleet-row.current.hi { border-color: var(--line-strong); }
-
-/* The dot carries the same contract as the sidebar's, said in CSS: `pulse` is the app
-   working, `call` is the app waiting on you, `still` is a state nobody has to act on. */
-.fleet-dot { width: 9px; height: 9px; border-radius: 50%; justify-self: center; position: relative; }
-.fleet-row.is-working .fleet-dot { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
-.fleet-row.is-starting .fleet-dot { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
-.fleet-row.is-needsYou .fleet-dot { background: var(--accent); }
-.fleet-row.is-stalled .fleet-dot { background: var(--warn); }
-.fleet-row.is-ready .fleet-dot { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
-.fleet-row.is-exited .fleet-dot { background: #55555f; }
-.fleet-dot.m-pulse { animation: pulse 2s ease-in-out infinite; }
-/* The ring is a layer that grows, for the reason written over `.dot.idle` - a spread
-   radius animated in a keyframe repaints, and this list draws one per row. */
-.fleet-dot.m-call::after,
-.fleet-row.drive-passed .fleet-dot::after {
-  content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  box-shadow: 0 0 0 2px var(--accent-dim);
-  animation: callRing 2.4s ease-out infinite;
-  will-change: transform, opacity;
-}
-/* Same ring, taking its colour from the row rather than the accent, so a stall is
-   amber all the way through instead of amber wearing an orange halo. */
-.fleet-row.is-stalled .fleet-dot.m-call::after { box-shadow: 0 0 0 2px #f0b42933; }
-
-/* A run the app is driving itself. Grouped under its mission rather than mixed into the
-   pane rows, because these have no pane number, no Ctrl+N and nothing to focus - the only
-   click they answer is "show me the diff". Colour says the same three things it says
-   everywhere else on this screen: green is going, amber wants watching, accent is done
-   and waiting on you. */
-.fleet-drive {
-  border: 1px solid var(--line); border-radius: var(--r);
-  padding: 6px; margin-top: 6px; background: var(--surface-2);
-}
-.fleet-drive-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 2px 6px 6px; font-size: 12px; min-width: 0;
-}
-.fleet-drive-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-drive-head .muted { margin-left: auto; white-space: nowrap; }
 /* K4. What this run's agents are allowed to do. A statement of fact, not an alarm, so it
    is the warn hue at low weight rather than danger: the posture is deliberate and the
    only defect was that nobody could see it. Colours come from the derived palette. */
@@ -2960,104 +2904,13 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   border: 1px solid color-mix(in srgb, var(--warn) 18%, transparent);
 }
 .perm-note.refused { color: var(--danger); background: #ff8f8f14; border-color: #ff8f8f2b; }
-/* One column fewer than a pane row: no agent logo, no diff bar. */
-.fleet-row.is-drive { grid-template-columns: 10px 12px minmax(0, 1fr) 152px; }
-.fleet-row.drive-working .fleet-dot,
-.fleet-row.drive-verifying .fleet-dot { background: var(--ok); animation: pulse 2s ease-in-out infinite; }
-.fleet-row.drive-retrying .fleet-dot { background: var(--warn); animation: pulse 2s ease-in-out infinite; }
-.fleet-row.drive-queued .fleet-dot { background: #6d6d7c; }
-.fleet-row.drive-passed .fleet-dot { background: var(--accent); }
-.fleet-row.drive-failed .fleet-dot { background: var(--bad, #e05252); }
-.fleet-row.drive-stopped .fleet-dot { background: #55555f; }
-
-.fleet-num {
-  color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-/* Section headings: the reading stops at the first boundary - everything under "Your
-   move" wants a person, nothing below it does. Uppercase micro-label with a hairline
-   running out to the right, the quietest way a dense list marks a boundary. */
-.fleet-sec {
-  display: flex; align-items: center; gap: 7px;
-  margin: 7px 2px 2px; padding: 0 4px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--muted);
-}
-.fleet-sec:first-child { margin-top: 0; }
-.fleet-sec .n { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.85; }
-.fleet-sec::after { content: ''; flex: 1; height: 1px; background: var(--line); }
-.fleet-sec.sec-yourMove { color: var(--accent-text); }
-.fleet-sec.sec-yourMove::after { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-
-.fleet-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-/* The pane's own last line, verbatim. Monospace because it IS terminal text, and one
-   line only: this is a glance, not a transcript - the pane is one Enter away. */
-.fleet-preview {
-  font-family: var(--mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
-  font-size: 10.5px; line-height: 1.5; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  opacity: 0.9; margin-top: 1px;
-}
-.fleet-row.is-needsYou .fleet-preview { color: var(--text); opacity: 0.85; }
-.fleet-title {
-  font-size: 12.5px; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.fleet-place {
-  font-size: 10.5px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.fleet-remote { color: var(--info); }
-
-.fleet-state { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
-.fleet-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.fleet-row.is-needsYou .fleet-label { color: var(--accent-text); }
-.fleet-row.is-stalled .fleet-label { color: var(--warn); }
-.fleet-clock {
-  font-size: 10.5px; color: var(--muted);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-
-/* The diff bar. A button, because it opens the lines it is drawing - so it has to put
-   back the font and background a button brings with it. */
-.fleet-diff {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  font: inherit; background: none; border: 1px solid transparent;
-  border-radius: var(--r-sm); padding: 4px 6px; margin: -4px -6px;
-  text-align: left; cursor: default; min-width: 0;
-}
-.fleet-diff.has { cursor: pointer; }
-.fleet-diff.has:hover { background: var(--surface-3); border-color: var(--line); }
-.fleet-bar {
-  display: flex; height: 4px; width: 0; min-width: 0; border-radius: 2px; overflow: hidden;
-  background: var(--line);
-  /* The width IS the amount of work, so it is the one thing here allowed to move when
-     the number behind it moves. */
-  transition: width 240ms ease;
-}
-.fleet-bar .add { background: var(--diff-add); }
-.fleet-bar .del { background: var(--diff-del); }
-.fleet-diff:not(.has) .fleet-bar { width: 100% !important; opacity: 0.35; }
-.fleet-git {
-  font-size: 10.5px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
-}
-.dialog.fleet .dialog-foot { display: flex; align-items: center; gap: 12px; }
-.dialog.fleet .dialog-foot .primary { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-  .fleet-dot, .fleet-dot::after { animation: none !important; }
-  .fleet-dot::after { content: none; }
-  .fleet-row.is-needsYou .fleet-dot { box-shadow: 0 0 0 3px var(--accent-dim); }
-  .fleet-row.is-stalled .fleet-dot { box-shadow: 0 0 0 3px #f0b42933; }
-  .fleet-bar { transition: none; }
 }
 
 /* Narrow window: the state column and the diff column are the two that can afford to
    go, in that order - the row still says which pane it is and what colour it is. */
 @media (max-width: 720px) {
-  .fleet-row { grid-template-columns: 10px 12px 15px minmax(0, 1fr) 118px; }
-  .fleet-diff { display: none; }
 }
 
 /* --- Dictation, full screen ------------------------------------------------
@@ -3261,7 +3114,6 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   background: var(--danger); color: var(--surface-1);
   font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
 }
-
 
 /* ---- the mascot ------------------------------------------------------------
    The face on the resource ladder (src/shared/mascot.ts, components/Mascot.tsx).

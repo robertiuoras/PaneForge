@@ -1,7 +1,7 @@
 // One pane, reduced to the three things you want without opening it: what it is doing,
 // who is expected to act, and how much it has changed.
 //
-// This is the arithmetic half of the Fleet view, kept out of the component for the same
+// This is the arithmetic half of the sessions list, kept out of the component for the same
 // reason `place.ts` is - it is a pile of small judgements about words and ordering, every
 // one of which is worth pinning, and none of which needs a window. `npm run test:fleet`.
 //

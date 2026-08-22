@@ -59,6 +59,7 @@
     "test:versions": "node scripts/version-sync-test.mjs",
     "test:confirmfit": "node scripts/confirm-fit-test.mjs",
     "test:fleet": "node scripts/fleet-test.mjs",
+    "test:desk": "node scripts/desk-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",
     "test:routeview": "node scripts/route-view-test.mjs",
     "test:sessionchoice": "node scripts/session-choice-test.mjs",
