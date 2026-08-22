@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentInfo } from '@shared/agents'
-import { installCommand, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
+import { installCommand, modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
 import Select, { type SelectOption } from './Select'
@@ -51,7 +51,12 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
     { value: '', label: 'Default model', hint: spec?.label },
     // A model carried over from another agent (or typed by hand) must still show.
     ...(model && !known.includes(model) ? [{ value: model, label: model, hint: 'typed in' }] : []),
-    ...models.map((m) => ({ value: modelValue(m), label: modelLabel(m), hint: modelHint(m) })),
+    ...models.map((m) => ({
+      value: modelValue(m),
+      label: modelLabel(m),
+      hint: modelHint(m),
+      group: modelGroup(m)
+    })),
     { value: CUSTOM, label: 'Other...' }
   ]
 

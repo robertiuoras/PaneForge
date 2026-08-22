@@ -23,7 +23,15 @@ export const PLATFORM: string = (() => {
  * label; the object form exists so `claude-opus-4-8` can read as "Opus 4.8" in
  * the menu without hiding the real id that gets passed to the CLI.
  */
-export type ModelChoice = string | { value: string; label: string; hint?: string }
+export type ModelChoice =
+  | string
+  | {
+      value: string
+      label: string
+      hint?: string
+      /** menu heading; set when a list mixes hand-written shortcuts with a fetched one */
+      group?: string
+    }
 
 /** How the model reaches the CLI: as `--model x` (default) or as a bare argument. */
 export type ModelStyle = 'flag' | 'arg'
@@ -137,7 +145,22 @@ export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
 // Measured against openrouter.ai/api/v1/models on 2026-08-15. Prices are per million
 // input tokens and are in the hint because the whole point of this entry is that a
 // pane can cost a fiftieth of what the same pane costs on a frontier model.
+//
+// This is no longer the whole menu: `main/orModels.ts` fetches OpenRouter's own
+// catalogue and `mergeOrModels` appends it, so a model published after this build was
+// cut still reaches the picker. These stay because a hand-written row says WHY a model
+// is worth reaching for, which a price and a context length cannot.
 const OPENROUTER_MODELS: ModelChoice[] = [
+  // Free, 1M context, tool calling, and published 2026-08-20 - after the prices below
+  // were measured, which is the case the live catalogue exists for. "Stealth" means the
+  // provider will not say who it is and KEEPS every prompt and completion (its terms say
+  // it does not train on them). That belongs in the hint, where the choice is made,
+  // rather than in a document nobody opens.
+  {
+    value: 'stealth/ox-alpha',
+    label: 'Ox Alpha',
+    hint: 'free · 1M context · anonymous provider keeps your prompts'
+  },
   { value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: '$1.19/M · 1M context' },
   { value: 'z-ai/glm-5', label: 'GLM 5', hint: '$0.60/M' },
   { value: 'z-ai/glm-4.7', label: 'GLM 4.7', hint: '$0.40/M' },
@@ -212,7 +235,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     install: 'npm i -g @anthropic-ai/claude-code',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
-    note: 'One OpenRouter key, any model on it - GLM, DeepSeek, Qwen, Kimi. Paste the key in Settings.',
+    note: 'One OpenRouter key, any model on it - free ones included. Paste the key in Settings.',
     docs: 'https://openrouter.ai/docs/community/claude-code'
   },
   {
@@ -616,6 +639,11 @@ export function modelLabel(m: ModelChoice): string {
 
 export function modelHint(m: ModelChoice): string | undefined {
   return typeof m === 'string' ? undefined : m.hint
+}
+
+/** The menu heading a choice sits under, when its list has headings at all. */
+export function modelGroup(m: ModelChoice): string | undefined {
+  return typeof m === 'string' ? undefined : m.group
 }
 
 /** The friendly model name for a pane card, without ever changing what reaches the CLI. */

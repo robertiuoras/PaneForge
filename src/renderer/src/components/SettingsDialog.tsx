@@ -13,6 +13,7 @@ import {
   KEY_PROVIDERS,
   installCommand,
   keyProviderFor,
+  modelGroup,
   modelHint,
   modelLabel,
   modelValue,
@@ -1084,7 +1085,8 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                             ...(a.models ?? []).map((m) => ({
                               value: modelValue(m),
                               label: modelLabel(m),
-                              hint: modelHint(m)
+                              hint: modelHint(m),
+                              group: modelGroup(m)
                             }))
                           ]}
                         />

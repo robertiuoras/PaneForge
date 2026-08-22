@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import { modelLabel, modelValue, supportsModel } from '@shared/agents'
+import { modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import type { Project, SwarmRole } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -169,7 +169,9 @@ export default function SwarmDialog({
                         { value: '', label: 'Default model' },
                         ...(spec?.models ?? []).map((m) => ({
                           value: modelValue(m),
-                          label: modelLabel(m)
+                          label: modelLabel(m),
+                          hint: modelHint(m),
+                          group: modelGroup(m)
                         }))
                       ]}
                     />

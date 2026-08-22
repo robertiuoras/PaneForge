@@ -420,6 +420,40 @@ which it is on its card.
   headless flags are unverified, and `drivable()` refusing is better than a guess.
 - `npm run test:agentenv`.
 
+## ...and the model list is not this build's opinion of what exists
+
+`OPENROUTER_MODELS` was measured on one day in August and a model published after it was
+reachable only by typing its id into "Other..." - which is how `stealth/ox-alpha` (free,
+1M context, tool calling, published 2026-08-20) was invisible in an app whose whole point
+is running a pane on somebody else's model. `main/orModels.ts` keeps a copy of
+OpenRouter's own public list on disk and `shared/orCatalogue.ts` turns it into the menu.
+`npm run test:orcatalogue`.
+
+- **It may never be in anybody's way.** `listAgents` is synchronous and runs on every
+  dialog open, so it reads the catalogue from MEMORY and kicks the fetch with `void`; a
+  list that arrives late reaches the next open. Missing, stale, empty, offline, a 502, an
+  error page: every one of them leaves the app exactly as it was, a hand-written shortcut
+  list plus "Other...". An empty answer is a FAILED answer and is never written over a
+  good one - writing it would blank the menu for twelve hours.
+- **Only models that can call tools.** A model without them answers the first turn in a
+  Claude Code pane and then cannot read a file: a pane that looks perfectly healthy and can
+  do nothing. A row that does not declare its parameters is dropped rather than guessed
+  at - this is a shortcut list, and everything left out is still one "Other..." away.
+- **Free is complete, paid is a shortcut.** Every free tool-capable model is carried
+  because that answer is small and is the reason anybody opens the list; the several
+  hundred paid ones are capped at the newest 25 on top of the curated rows. Newest first,
+  in both: a list that exists so last Tuesday's model can be found must put it where it
+  can be seen.
+- **A stealth model says so in the hint, where the choice is made.** OpenRouter's own
+  words: developed and operated by a provider who has chosen to remain anonymous, and
+  "prompts and completions are retained by the provider and are not used for training".
+  Retained by somebody unnamed is a fact a person needs at the moment they pick it, not in
+  a document nobody opens.
+- **How a CLI addresses the model is read off its own `env`**, never off a list of ids: an
+  agent that authenticates with the OpenRouter key names it bare (`z-ai/glm-5.2`), one that
+  passes the key to a provider of its own reaches it through `openrouter/`. So an agent
+  added to the catalogue is covered with no edit here.
+
 ## Every colour is derived, and every pane says which project it is in
 
 **There is no palette.** `src/shared/theme.ts` computes one from a single accent;
@@ -1206,6 +1240,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
+| `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, free models are complete while paid ones are a capped shortcut, and a stealth model says in the picker that an anonymous provider keeps your prompts |
 | `npm run test:devicewatch` | noticing a copied cookie - and the negatives that decide whether the mark is ever read (a phone leaving the house, an iOS bump, a reloaded tab) |
 | `npm run test:projects` | which folders are projects and which are copies of one (`service-a` beside `service` stays a project) |
 | `npm run test:cardfit` | that a session card can still be read at 190px once a lane loads it up |
