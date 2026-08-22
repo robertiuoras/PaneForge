@@ -49,7 +49,28 @@ assert.equal(yes.quit, true, 'an hour quiet at a 15 min setting must quit')
 assert.match(yes.reason, /no input for 60 min/)
 
 // Every refusal.
-assert.equal(idleQuitVerdict(input({ focused: true })).quit, false, 'focused window must never quit')
+// A focused window DOUBLES the wait; it does not veto for ever. The outright veto is what
+// killed this feature on the desk it was built for: nobody is at the PC, so PaneForge is
+// simply the last window Windows ever focused and `document.hasFocus()` stays true - the
+// app never quit, never installed its staged update, and sat 41 versions behind.
+const focusedShort = input({
+  focused: true,
+  lastAppInput: NOW - 20 * MIN,
+  panes: [pane({ lastKeyboard: NOW - 20 * MIN })]
+})
+assert.equal(idleQuitVerdict(focusedShort).quit, false, 'a focused window past the plain limit still waits')
+assert.match(idleQuitVerdict(focusedShort).reason, /focused/, 'and it says focus is why')
+assert.equal(
+  idleQuitVerdict(input({ focused: true })).quit,
+  true,
+  'but an hour of nothing at a focused window is nobody there, and it quits'
+)
+// The control: unfocused, the plain limit still decides. Doubling must not leak into it.
+assert.equal(
+  idleQuitVerdict(input({ lastAppInput: NOW - 20 * MIN, panes: [pane({ lastKeyboard: NOW - 20 * MIN })] })).quit,
+  true,
+  'unfocused, the configured limit is the whole of it'
+)
 assert.equal(idleQuitVerdict(input({ panes: [] })).quit, false, 'no panes must never quit')
 for (const state of ['working', 'starting', 'stalled']) {
   const v = idleQuitVerdict(input({ panes: [pane({ state })] }))
