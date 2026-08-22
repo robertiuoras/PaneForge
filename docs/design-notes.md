@@ -2527,3 +2527,91 @@ which is how the first version of this ran on nothing and left this desk exactly
   stop asking me" (not the two strings this desk has captured), the timing behaviourally
   over a fake clock, and source assertions on the STATE the guards read, because a test
   that only matches the comparison lets the assignment making it true be deleted.
+
+## The sessions list is the whole desk, both machines
+
+Two changes, and the second is only possible because of what the first one found.
+
+**Why the Fleet dialog is gone.** It was a modal listing every pane sorted by who needs a
+person, with a preview line and a diff bar. Everything about it was right except that it
+was a SCREEN: the sidebar is what somebody is already looking at when they want to know
+which pane to go to, and asking them to press Ctrl+Shift+F to get that answer means the
+answer is not there the rest of the time. Robert's own words when asked which half was
+confusing: "it's a separate screen at all". So the arithmetic stayed (`shared/fleet.ts`,
+unchanged apart from being typed over a shape rather than over `Session`) and only the
+surface moved. The dialog, its 61 CSS rules and its blurb are deleted rather than left
+behind - a stylesheet keeping rules for a component that no longer exists is debt nothing
+reports.
+
+Ctrl+Shift+F did not become dead: it toggles the grouping. The setting lives in
+`localStorage` rather than `config.json` because it is a VIEW, and the phone, the PC and
+this laptop have no reason to agree about which way one person's sidebar is sorted.
+
+The one interaction the move breaks is dragging. `order` is what a drag writes and `order`
+decides nothing while the list is grouped, so a dragged row would follow the pointer and
+then snap back to wherever its state puts it - which reads as a list that is broken rather
+than as a mode that does not support dragging. Grouped, `onPointerDown` only selects.
+
+**Why the other machine's panes were invisible, and what it cost to fix.** The link has
+always mirrored a pane only once it was picked in Devices. That is right for MIRRORING and
+was quietly wrong for KNOWING: a laptop whose agents all run on the PC showed an empty
+sidebar and a `0` on the Fleet badge while nine agents worked over there.
+
+The fix turned out to be a deletion rather than a protocol change. `RemoteClient.available`
+has always held every pane the far end has, as whole `Session` objects, pushed on every
+change - and `remote/index.ts` mapped them down to six fields on the way to the renderer,
+because its only reader was the Devices pick list, where a name and a folder is all you
+need to choose what to watch. So the data crossed the wire the whole time and was thrown
+away one function before the screen. `RemotePaneInfo` now carries every field `FleetPane`
+reads. No new message, no new round trip, no version bump on the wire.
+
+**Listing is not mirroring.** This is the sentence to keep. A LISTED pane costs a few
+fields on `remote:changed`, which is sent whenever anything over there moves anyway. A
+MIRRORED pane costs a live byte stream and an xterm buffer on this machine, per pane -
+which is exactly the bill a laptop acting as the screen for another machine's work cannot
+pay at scale, and the one thing left unmeasured by the handoff work before it (100+
+mirrored panes on this laptop). So the list is free, the stream is bought one press at a
+time, and the pane's own agent is not in the trade at all: it runs on the PC either way,
+at the speed it always ran.
+
+Four refusals, each of which fails silently in a way that reads as a different bug:
+
+- **A mirrored pane is not listed twice.** For a beat while a mirror attaches, the pane is
+  both a `Session` here and a `watched` entry over there. Drawn twice - once live, once as
+  an invitation to open it - it reads as a duplicate rather than as a race.
+- **An offline device lists nothing.** `peer.panes` after a disconnect is the list from
+  before it went. Nine rows saying `working` about a machine that is asleep is worse than
+  no rows at all, because it is a confident answer to the question this screen exists for.
+- **A listed row has no pane number.** There is nothing on this machine for Ctrl+N to
+  reach. And a REAL row's number still comes off the full ordered list rather than off this
+  screen's order: the device filter is visual, and a number that moved with the filter
+  would move the Ctrl key under somebody's finger.
+- **A question over there is ranked but not answerable.** The buttons need the frame the
+  chooser was read off (`shared/choices.ts`), which needs a mirror. But it is the loudest
+  reason to open a pane, so `asking` ranks the row exactly as a local question does and the
+  press is what gets you the buttons.
+
+Two things had to widen with it. `fleetWaiting` now counts the whole list - the badge read
+zero all day on a desk whose work was all remote, which is the number being wrong in the
+one situation it exists for. And the device filter offers a machine that is merely
+CONNECTED: built from mirrored sessions alone, its dropdown could not name the one machine
+somebody opens the list to look at.
+
+**Measured in a real window** over the shipped stylesheet, because a dimmed row is a
+contrast question and a screenshot cannot answer one. At the 0.68 opacity this was first
+drawn at, `.row-agent` (11px, and the line carrying WHICH MACHINE the pane is on)
+composited to **3.71:1** against the sidebar - a fail. The sweep: 0.74 → 4.20, 0.78 → 4.56,
+0.82 → 4.93, 1.0 → 6.91. Shipped at **0.82**, which passes AA with room and still reads as
+plainly dimmer than a live row. The name measures 11.33:1 and the hover word 5.73:1.
+
+**`shared/desk.ts` is the arithmetic**, out of the component for the same reason `fleet.ts`
+and `place.ts` are. `npm run test:desk` is 43 checks whose weight is in the negatives above,
+and whose last block is a SOURCE assertion rather than a behaviour one: a field added to
+`FleetPane` and not forwarded through the peer map typechecks (every added field is
+optional), renders, and sorts every remote pane wrong for ever. Red-proofed by deleting
+`stalledSince` from the map - the test names the field and the consequence.
+
+**Not built:** the panes on that machine that PaneForge did not open. A `claude -p` started
+by Task Scheduler is not a pane and nothing here can see it; that is a process-table read on
+the far end (`shared/devList.ts` is the shape, and it only ever runs locally), and it is the
+next thing worth doing for a machine meant to run automated work.
