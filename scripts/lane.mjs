@@ -2303,8 +2303,19 @@ function ready(session, wanted) {
   let id = mine?.[0]
   // `--lane b` is how the chat that took a stuck conflict over finishes it: the lane is
   // still held by the chat that made it, and that chat may never come back.
+  //
+  // Two marks let this session finish a lane it never claimed. The resolver mark is one,
+  // but on its own it is a dead end: `retryConflicts()` re-attempts the merge on every
+  // lane command, and the resolving commit is exactly what makes it succeed, so the
+  // conflict record - the adopter's only claim - is dropped somewhere in the minutes
+  // between the resolution and `ready`. Then `ready --lane b` said this session does not
+  // hold lane b while `resolve --lane b` said lane b is not conflicted: the two steps
+  // pointed at each other and fifteen finished commits sat out every release for a day.
+  // So the second mark is the lane having no chat at all, which is the same authority
+  // `retry` already grants itself on a clock. A lane a live chat still holds is untouched.
   if (wanted && wanted !== id) {
-    if (state.conflicts[wanted]?.resolver !== session) {
+    const unheld = !state.lanes[wanted] && existsSync(laneDir(wanted))
+    if (state.conflicts[wanted]?.resolver !== session && !unheld) {
       throw new Error(`this session does not hold lane ${wanted} - run resolve --lane ${wanted} first`)
     }
     id = wanted
