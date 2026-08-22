@@ -36,6 +36,7 @@
     "test:restoreturn": "node scripts/restore-turn-test.mjs",
     "test:quitwords": "node scripts/quit-words-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
+    "test:uploadretry": "node scripts/release-upload-retry-test.mjs",
     "test:promote": "node scripts/promote-test.mjs",
     "test:dropimage": "node scripts/drop-image-test.mjs",
     "test:favicon": "node scripts/favicon-test.mjs",
