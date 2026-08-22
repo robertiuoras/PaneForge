@@ -73,8 +73,19 @@ const GOES = /^(?:yes|y|ok(?:ay)?|sure|allow|approve|accept|proceed|continue|con
  * choice again, and picking between them would be the invention this file exists to avoid.
  * A marked option that widens permission or stops is still refused by the guards above -
  * the marker raises an option's rank and can never lift it over a refusal.
+ *
+ * **A MARKER, never the word.** This read `\b(recommended|suggested)\b` and `\bthe
+ * default\b` anywhere in the label, which is not a marker at all - it is prose. "Keep the
+ * default permissions", "Overwrite with the suggested fix" and "Delete files not in the
+ * recommended set" all describe what an option DOES, and each of them would have been
+ * pressed as though the CLI had endorsed it, in the strict mode, five seconds after
+ * appearing. So the marker has to be punctuated: parenthesised, bracketed, or a trailing
+ * dash at the very END of the label, which is where every CLI here appends one. A real
+ * recommendation this misses costs a question left for a person, which is the direction
+ * this file is allowed to be wrong in.
  */
-const RECOMMENDED = /\(\s*(?:recommended|suggested|default)\s*\)|\[\s*(?:recommended|suggested|default)\s*\]|\b(?:recommended|suggested)\b|\bthe default\b/i
+const RECOMMENDED =
+  /\(\s*(?:recommended|suggested|default)\s*\)|\[\s*(?:recommended|suggested|default)\s*\]|[-–—·]\s*(?:recommended|suggested|the default)\s*$/i
 
 export interface AutoAnswerConfig {
   /** Press the obvious answer without being asked. */

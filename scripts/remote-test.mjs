@@ -299,6 +299,25 @@ async function main() {
     jobs[0]?.kind === 'agent' && jobs[0]?.headless === true && jobs[0]?.where === 'vrb' && jobs[0]?.elapsed === 900,
     JSON.stringify(jobs[0])
   )
+
+  // A backend that REJECTS has to answer. The host's try/catch is synchronous, so it never
+  // sees a rejected promise - without an explicit `.catch` the guest waits out its own 20s
+  // timeout and reports "did not answer" about a machine that answered at once and said no.
+  // Timed here, because the whole failure is that it takes too long rather than that it is
+  // wrong: a hang would pass an assertion that only looked at the message.
+  const good = be.api.jobs
+  be.api.jobs = async () => {
+    throw new Error('could not read the process table')
+  }
+  const t0 = Date.now()
+  const refused = await client.jobs().then(
+    () => null,
+    (e) => e
+  )
+  const took = Date.now() - t0
+  be.api.jobs = good
+  ok('a refusal comes back as a refusal', refused instanceof Error && /process table/.test(refused.message), String(refused))
+  ok('and it comes back at once rather than timing out', took < 3000, `${took}ms`)
   const started = await client.startSession({
     cwd: '/w/assistant',
     agent: 'codex',

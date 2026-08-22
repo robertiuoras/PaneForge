@@ -40,3 +40,4 @@ stable/
 
 # npm run try stashes the real node_modules here while it builds a test copy.
 node_modules.pf-tmp/
+.DS_Store

@@ -182,6 +182,27 @@ ok('a recommendation may not lift an option over a refusal', () => {
   assert.equal(pickAnswer(stops, ANY)?.n, 1)
 })
 
+ok('the WORD is not the marker - prose describing an option is not an endorsement', () => {
+  // The first version read `\b(recommended|suggested)\b` and `\bthe default\b` anywhere in
+  // the label, which is prose and not a marking. Each of these describes what the option
+  // DOES, and each would have been pressed five seconds later as though the CLI had said
+  // to. A marker is punctuated - (), [], or a trailing dash at the very end.
+  // None of these leads with a yes-shaped word, so the ONLY thing that could pick them is
+  // the marker rule - which is what makes this a test of the marker and not of GOES.
+  // ("Use the default database" would be picked, correctly, by the yes rule instead.)
+  for (const label of [
+    'Keep the default permissions',
+    'Overwrite with the suggested fix',
+    'Delete files not in the recommended set',
+    'Restore the default database'
+  ]) {
+    const a = ask(1, label, 'Configure it by hand')
+    assert.equal(pickAnswer(a, ON), null, label)
+  }
+  // ...and a real trailing marker still counts.
+  assert.equal(pickAnswer(ask(1, 'Patch it in place - recommended', 'Rewrite it'), ON)?.n, 1)
+})
+
 ok('two recommendations are a choice again', () => {
   // A tool recommending two things has not stated an answer, and picking between them is
   // the invention this file exists to refuse.
