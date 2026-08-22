@@ -32,6 +32,16 @@ export type ModelChoice =
       /** menu heading; set when a list mixes hand-written shortcuts with a fetched one */
       group?: string
       /**
+       * The human half of the hint - "fastest", "the one this entry was added for".
+       *
+       * Separate from `hint` because `hint` is where the PRICE lives, and a price typed
+       * into this file is out of date the week after it is written. When the live
+       * catalogue carries this id its hint REPLACES the hand-written one, and this is
+       * what is kept and appended: the number comes from OpenRouter, the judgement from
+       * whoever put the row on the list.
+       */
+      note?: string
+      /**
        * The agent this model belongs to, when it is NOT the one whose menu it appears in.
        *
        * A model list is per agent for a good reason - `z-ai/glm-5.2` in a plain Claude Code
@@ -175,7 +185,7 @@ const OPENROUTER_MODELS: ModelChoice[] = [
   { value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: '$1.19/M · 1M context' },
   { value: 'z-ai/glm-5', label: 'GLM 5', hint: '$0.60/M' },
   { value: 'z-ai/glm-4.7', label: 'GLM 4.7', hint: '$0.40/M' },
-  { value: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', hint: '$0.06/M · fastest' },
+  { value: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', hint: '$0.06/M', note: 'fastest' },
   { value: 'deepseek/deepseek-chat', label: 'DeepSeek' },
   { value: 'qwen/qwen3-coder', label: 'Qwen3 Coder' },
   { value: 'moonshotai/kimi-k2', label: 'Kimi K2' }
@@ -694,16 +704,27 @@ export function siblingModels(
       const value = modelValue(m)
       if (mine.has(value)) continue
       mine.add(value)
+      const heading = modelGroup(m)
       out.push({
         value,
         label: modelLabel(m),
         hint: modelHint(m),
-        group: other.label,
+        // The PROVIDER's name, never the runner's. "Claude Code on OpenRouter" as a
+        // heading over a model list reads as a second product to choose between, which
+        // is the confusion this borrowing exists to remove - the runner is plumbing and
+        // the person is picking a model. "OpenRouter · Free" says where the model comes
+        // from and what it costs, which is the whole of the decision.
+        group: heading ? `${providerLabel(provider) ?? other.label} · ${heading}` : providerLabel(provider) ?? other.label,
         agent: other.id
       })
     }
   }
   return out
+}
+
+/** What Settings calls a provider, for the heading its models sit under. */
+export function providerLabel(id: string): string | undefined {
+  return KEY_PROVIDERS.find((p) => p.id === id)?.label
 }
 
 /** The friendly model name for a pane card, without ever changing what reaches the CLI. */

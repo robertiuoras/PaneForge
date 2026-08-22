@@ -80,7 +80,7 @@ const all = orChoices(payload)
 const ox = all.find((m) => m.value === 'stealth/ox-alpha')
 ok('Ox Alpha reaches the menu', !!ox)
 eq('...under its own name', ox.label, 'Ox Alpha')
-eq('...in the free group', ox.group, 'Free on OpenRouter')
+eq('...in the free group', ox.group, 'Free')
 ok('...says it is free', ox.hint.includes('free'))
 ok('...says how much it holds', ox.hint.includes('1M context'))
 ok(
@@ -103,11 +103,12 @@ eq('...as is the wrong shape', orChoices({ models: [OX] }), [])
 eq('a bare array is still read', parseCatalogue([OX]).length, 1)
 eq('rows with no id are not rows', parseCatalogue({ data: [{ name: 'x' }, OX] }).length, 1)
 
-// --- free is complete, paid is a shortcut ---------------------------------
+// --- nothing is capped: a cap inside a filter box is a search that finds nothing ---
 const many = { data: [...Array(40)].map((_, i) => ({ ...GLM, id: `paid/m${i}`, created: 1780000000 + i })) }
-eq('paid models are capped', orChoices(many, { paidLimit: 25 }).length, 25)
+eq('every paid model is carried by default', orChoices(many).length, 40)
 const freeMany = { data: [...Array(40)].map((_, i) => ({ ...OX, id: `free/m${i}`, created: 1780000000 + i })) }
-eq('free ones never are - the whole answer is small and is why anybody opens this', orChoices(freeMany).length, 40)
+eq('and every free one, same as before', orChoices(freeMany).length, 40)
+eq('paid rows sit under one heading', orChoices(many)[0].group, 'All models')
 eq('newest first', orChoices(many, { paidLimit: 3 }).map((m) => m.value), ['paid/m39', 'paid/m38', 'paid/m37'])
 
 // --- how each CLI addresses it --------------------------------------------
@@ -124,12 +125,40 @@ ok(
 // --- words ----------------------------------------------------------------
 eq('a vendor prefix is already in the id', labelFor(GLM), 'GLM 5.2')
 eq('"(free)" is already in the price', labelFor({ id: 'a/b', name: 'X: Thing (free)' }), 'Thing')
-eq('price per million input tokens', hintFor(GLM), '$1.19/M · 1M context')
-eq('a cheap one keeps its precision', hintFor({ ...GLM, pricing: { prompt: '0.00000006', completion: '1' } }).split(' ')[0], '$0.06/M')
+// Both prices, because an agent pane is mostly OUTPUT and output is the dearer half:
+// showing input alone is the cheap-looking number over the expensive one.
+eq('per million tokens, both ways', hintFor(GLM), '$1.19 in · $4.00 out /M · 1M context')
+eq(
+  'a cheap one keeps its precision',
+  hintFor({ ...GLM, pricing: { prompt: '0.00000006', completion: '0.0000005' } }).split(' /M')[0],
+  '$0.06 in · $0.50 out'
+)
+eq(
+  'half a price is still worth saying',
+  hintFor({ id: 'a/b', name: 'X', supported_parameters: TOOLS, pricing: { prompt: '0.000001' } }),
+  '$1.00 in /M'
+)
 eq('context in the unit a person reads', contextWords(128000), '128k context')
 eq('...and a million is 1M', contextWords(1048576), '1M context')
 eq('no context, no words', contextWords(undefined), '')
 ok('free is decided by BOTH halves', isFree(OX) && !isFree({ ...OX, pricing: { prompt: '0', completion: '1' } }))
+
+// A curated row takes the LIVE price. A number typed into a source file was measured on
+// one day; the row's own words ("fastest") are what survive beside it.
+const stale = [{ value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: '$1.19/M · 1M context', note: 'fastest' }]
+const refreshed = mergeOrModels(stale, orChoices(payload))
+eq(
+  'the hand-written price is replaced by the live one, the human note is kept',
+  refreshed[0].hint,
+  '$1.19 in · $4.00 out /M · 1M context · fastest'
+)
+eq('...and the curated label and heading still win', [refreshed[0].label, refreshed[0].group], ['GLM 5.2', 'Suggested'])
+eq('...and the id is not offered twice', refreshed.filter((m) => m.value === 'z-ai/glm-5.2').length, 1)
+eq(
+  'with no live row the hand-written hint is exactly what it always was',
+  mergeOrModels(stale, [])[0].hint,
+  '$1.19/M · 1M context'
+)
 
 // --- the merge is additive, never a replacement ----------------------------
 const curated = [{ value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: 'the one this entry was added for' }]

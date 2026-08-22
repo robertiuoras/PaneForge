@@ -9,7 +9,6 @@ import {
   allAgents,
   findAgent,
   keyProviderFor,
-  modelValue,
   OPENROUTER_KEY_VAR,
   siblingModels,
   type AgentInfo,
@@ -40,7 +39,9 @@ function withLiveModels(spec: AgentSpec): AgentSpec {
   const prefix = orPrefix(spec)
   if (prefix === null) return spec
   const curated = spec.models ?? []
-  const live = orChoices(orCatalogue(), { prefix, have: curated.map(modelValue) })
+  // No `have` filter: `mergeOrModels` dedupes, and it can only refresh a curated row's
+  // price if the live row for that id actually reaches it.
+  const live = orChoices(orCatalogue(), { prefix })
   if (!live.length) return spec
   return { ...spec, models: mergeOrModels(curated, live) }
 }

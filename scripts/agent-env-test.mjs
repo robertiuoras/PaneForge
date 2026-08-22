@@ -176,8 +176,12 @@ ok(
   'and every borrowed row says which runner it belongs to, so the press switches both'
 )
 ok(
-  withOr.every((m) => m.group === orSpec.label),
-  'they sit under the sibling\'s own heading, never mixed into the Anthropic models'
+  withOr.every((m) => m.group.startsWith('OpenRouter')),
+  'they sit under the PROVIDER\'s heading, never mixed into the Anthropic models'
+)
+ok(
+  !withOr.some((m) => m.group.includes('Claude Code')),
+  'and the runner name never becomes a heading - "Claude Code on OpenRouter" over a model list reads as a second product to choose'
 )
 ok(
   withOr.some((m) => m.value === 'z-ai/glm-5.2'),

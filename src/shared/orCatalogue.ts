@@ -41,6 +41,11 @@ export function inputPrice(m: OrRawModel): number {
   return num(m.pricing?.prompt) * 1_000_000
 }
 
+/** Dollars per MILLION output tokens. NaN when the row does not say. */
+export function outputPrice(m: OrRawModel): number {
+  return num(m.pricing?.completion) * 1_000_000
+}
+
 /**
  * Can an agent CLI actually work in this pane?
  *
@@ -81,11 +86,26 @@ export function contextWords(n: unknown): string {
   return `${Math.round(v / 1000)}k context`
 }
 
+const dollars = (p: number): string =>
+  p >= 1 ? `$${p.toFixed(2)}` : `$${p.toFixed(3).replace(/0$/, '')}`
+
+/**
+ * What a million tokens costs, BOTH ways.
+ *
+ * Input alone is the number that fits, and it is the wrong one to show alone: output runs
+ * three to five times input on most rows, and an agent pane is mostly output. Somebody
+ * picking a model to run a coding agent on is picking on the pair, so the row says the
+ * pair - read off the same live row the id came from, never a price measured on one day
+ * in August and typed into a file.
+ */
 export function priceWords(m: OrRawModel): string {
   if (isFree(m)) return 'free'
-  const p = inputPrice(m)
-  if (!Number.isFinite(p)) return ''
-  return p >= 1 ? `$${p.toFixed(2)}/M` : `$${p.toFixed(3).replace(/0$/, '')}/M`
+  const inp = inputPrice(m)
+  const out = outputPrice(m)
+  if (!Number.isFinite(inp) && !Number.isFinite(out)) return ''
+  if (!Number.isFinite(out)) return `${dollars(inp)} in /M`
+  if (!Number.isFinite(inp)) return `${dollars(out)} out /M`
+  return `${dollars(inp)} in · ${dollars(out)} out /M`
 }
 
 /** The right-hand line in the menu: what it costs, how much it holds, and who keeps it. */
@@ -106,24 +126,33 @@ export interface ChoiceOpts {
   prefix?: string
   /** ids already in the hand-written list, so the curated label wins and nothing repeats. */
   have?: string[]
-  /** how many PAID rows to carry. Free ones are never capped - see below. */
+  /**
+   * How many PAID rows to carry. Undefined is ALL of them, and that is the default.
+   *
+   * It was 25 - "several hundred paid models does not fit a dropdown" - which answered a
+   * question the control had already solved: `Select` becomes a filter box past eight
+   * options, so this list is typed at rather than scrolled. A cap inside a filter box is
+   * invisible: you type the name of the model you want, get nothing, and cannot tell
+   * "OpenRouter does not have it" from "this build chose not to show it". Kept as a
+   * parameter because the tests need a short list to assert an order on.
+   */
   paidLimit?: number
 }
 
 /**
  * The live half of the menu.
  *
- * Free models are all carried and paid ones are capped, because the two answer
- * different questions. "What can I run today at no cost" has a small, complete
- * answer and is the reason anybody opens this list; "which of OpenRouter's several
- * hundred paid models" does not fit a dropdown and never did - those stay a curated
- * shortcut plus the id you type. Within each group, NEWEST first: a list that exists
- * so a model published last Tuesday can be found must put it where it can be seen.
+ * Every tool-capable model OpenRouter publishes, free ones first under their own
+ * heading. Free leads because "what can I run today at no cost" is why anybody opens
+ * this list; the rest follow under one heading rather than being cut to 25, because the
+ * control is a filter box and a cap inside one is a search that silently finds nothing.
+ * Within each group, NEWEST first: a list that exists so a model published last Tuesday
+ * can be found must put it where it can be seen.
  */
 export function orChoices(payload: unknown, opts: ChoiceOpts = {}): ModelChoice[] {
   const prefix = opts.prefix ?? ''
   const have = new Set(opts.have ?? [])
-  const paidLimit = opts.paidLimit ?? 25
+  const paidLimit = opts.paidLimit ?? Infinity
   const rows = parseCatalogue(payload).filter(usableInPane)
   const byNew = (a: OrRawModel, b: OrRawModel): number => num(b.created) - num(a.created) || String(a.id).localeCompare(String(b.id))
   const choice = (m: OrRawModel, group: string): ModelChoice => ({
@@ -132,23 +161,37 @@ export function orChoices(payload: unknown, opts: ChoiceOpts = {}): ModelChoice[
     hint: hintFor(m),
     group
   })
-  const free = rows.filter(isFree).sort(byNew).map((m) => choice(m, 'Free on OpenRouter'))
-  const paid = rows.filter((m) => !isFree(m)).sort(byNew).slice(0, paidLimit).map((m) => choice(m, 'More on OpenRouter'))
+  // Short headings on purpose: `siblingModels` prefixes them with the provider's name
+  // when these rows are borrowed into another runner's menu, so spelling "OpenRouter"
+  // here would read "OpenRouter - Free on OpenRouter" there.
+  const free = rows.filter(isFree).sort(byNew).map((m) => choice(m, 'Free'))
+  const paid = rows.filter((m) => !isFree(m)).sort(byNew).slice(0, paidLimit).map((m) => choice(m, 'All models'))
   return [...free, ...paid].filter((c) => !have.has((c as { value: string }).value))
 }
 
 /**
  * The hand-written shortcuts, then whatever OpenRouter has published since.
  *
- * The curated rows keep their own labels and their own prices - they were written by
- * somebody who knew why that model is on the list - and they are grouped so the menu
- * still opens on them. Nothing is replaced by the live list; it is only ever added to,
- * which is what makes a stale or unreachable catalogue cost nothing at all.
+ * The curated rows keep their own LABELS and their own order - somebody knew why that
+ * model is on the list - and they are grouped so the menu still opens on them. What they
+ * do NOT keep is their price: a number typed into a source file was measured on one day
+ * and is wrong by the next release, so when the live catalogue carries that id its hint
+ * wins and the row's `note` is appended to it. With no live row - offline, first launch,
+ * a 502 - the hand-written hint is exactly what it always was, which is what keeps a
+ * missing catalogue costing nothing at all.
  */
 export function mergeOrModels(curated: ModelChoice[], live: ModelChoice[]): ModelChoice[] {
-  const head = curated.map((m) =>
-    typeof m === 'string' ? { value: m, label: m, group: 'Suggested' } : { group: 'Suggested', ...m }
-  )
+  const liveBy = new Map(live.map((m) => [typeof m === 'string' ? m : m.value, m]))
+  const head = curated.map((m) => {
+    const row = typeof m === 'string' ? { value: m, label: m } : m
+    const fresh = liveBy.get(row.value)
+    const freshHint = fresh && typeof fresh !== 'string' ? fresh.hint : undefined
+    return {
+      group: 'Suggested',
+      ...row,
+      hint: freshHint ? [freshHint, row.note].filter(Boolean).join(' · ') : row.hint
+    }
+  })
   const have = new Set(head.map((m) => m.value))
   return [...head, ...live.filter((m) => !have.has(typeof m === 'string' ? m : m.value))]
 }
