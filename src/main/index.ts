@@ -1347,6 +1347,10 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
+  // A key pasted into Settings changes which models the picker may offer, and the
+  // availability cache is 20s long - long enough that "I pasted the key and the models
+  // are still not there" is the first thing anybody sees.
+  if (patch.providerKeys || patch.openrouterKey !== undefined) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.discordPresence !== undefined || patch.discordStyle !== undefined) {
     presence.configure(next.discordPresence, next.discordStyle)

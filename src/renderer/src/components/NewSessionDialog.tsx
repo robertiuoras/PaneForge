@@ -373,8 +373,11 @@ export default function NewSessionDialog({
               model={model}
               onInstalled={reprobe}
               onChange={(a, m) => {
-                // Switching CLI carries its own remembered model, not the previous one's.
-                const nextModel = a === agent ? m : defaultModels[a] ?? ''
+                // Switching CLI carries its own remembered model, not the previous one's -
+                // UNLESS the change came from picking a model, which is how a borrowed
+                // OpenRouter model arrives. The runner dropdown always sends an empty
+                // model, so a non-empty one means somebody chose it and it must survive.
+                const nextModel = a === agent || m ? m : defaultModels[a] ?? ''
                 setAgent(a)
                 setModel(nextModel)
                 onDefaultsChange(a, nextModel)

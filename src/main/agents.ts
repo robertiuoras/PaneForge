@@ -11,6 +11,7 @@ import {
   keyProviderFor,
   modelValue,
   OPENROUTER_KEY_VAR,
+  siblingModels,
   type AgentInfo,
   type AgentSpec
 } from '../shared/agents'
@@ -50,11 +51,20 @@ export function listAgents(force = false): AgentInfo[] {
   // network that may not be there.
   if (orStale()) void refreshOrModels(invalidateAgents)
   if (!force && cache && Date.now() - cache.at < TTL_MS) return cache.list
-  const list = allAgents(getConfig().customAgents).map((spec) => {
+  const cfg = getConfig()
+  const keys = cfg.providerKeys ?? {}
+  const hasKey = (provider: string): boolean => Boolean(keys[provider]?.trim())
+  // Enriched FIRST, so a sibling's list carries the live OpenRouter catalogue too: a
+  // key pasted today must reach the models published this week, not only the eight
+  // hand-written shortcuts.
+  const specs = allAgents(cfg.customAgents).map(withLiveModels)
+  const list = specs.map((spec) => {
     const path = which(spec.bin)
     // which() returns the input unchanged when it finds nothing.
     const available = path !== spec.bin
-    return { ...withLiveModels(spec), available, path: available ? path : '' }
+    const siblings = siblingModels(spec, specs, hasKey)
+    const models = siblings.length ? [...(spec.models ?? []), ...siblings] : spec.models
+    return { ...spec, models, available, path: available ? path : '' }
   })
   cache = { at: Date.now(), list }
   return list

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentInfo } from '@shared/agents'
-import { installCommand, modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
+import { installCommand, modelAgent, modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import AgentLogo from './AgentLogo'
 import InstallConsole from './InstallConsole'
 import Select, { type SelectOption } from './Select'
@@ -47,6 +47,11 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
   }))
 
   const known = models.map(modelValue)
+  // Which runner a model belongs to, for the rows a provider key added from another
+  // agent's list. Keyed by value because that is all the Select hands back.
+  const runnerOf = new Map(
+    models.map((m) => [modelValue(m), modelAgent(m) ?? agent] as const)
+  )
   const modelOptions: SelectOption[] = [
     { value: '', label: 'Default model', hint: spec?.label },
     // A model carried over from another agent (or typed by hand) must still show.
@@ -61,7 +66,10 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
   ]
 
   const pickModel = (value: string): void => {
-    if (value !== CUSTOM) return onChange(agent, value)
+    // A model borrowed from a sibling runner switches the runner with it - picking
+    // `z-ai/glm-5.2` while the card says "Claude Code" would be a 401 in a healthy
+    // looking pane, which is the one failure nobody can act on.
+    if (value !== CUSTOM) return onChange(runnerOf.get(value) ?? agent, value)
     const typed = window.prompt(`Model for ${spec?.label ?? agent}`, model)
     if (typed !== null) onChange(agent, typed.trim())
   }

@@ -38,6 +38,7 @@ const {
   OPENROUTER_BASE,
   OPENROUTER_KEY_VAR,
   buildArgs,
+  siblingModels,
   findAgent,
   keyProviderFor,
   keyVar,
@@ -159,5 +160,57 @@ is(resolved.KEEP, 'literal', 'and the ordinary values beside it still pass throu
 // Keys are looked up by PROVIDER, so one provider's key can never fill another's slot.
 const wrongKey = resolveEnv(or, { deepseek: 'sk-deepseek' })
 ok(!('ANTHROPIC_AUTH_TOKEN' in wrongKey), "another provider's key does not fill this one's variable")
+
+// A key pasted into Settings must reach the picker somebody is actually looking at.
+//
+// The model list is per agent for a good reason - `z-ai/glm-5.2` in a plain Claude Code
+// pane is a 401 - but that made the key do nothing visible: the runner still says
+// "Claude Code", so nothing on screen said the models were one menu away. `siblingModels`
+// borrows them onto the sibling's own heading, and carries the runner with each row.
+const claudeSpec = BUILTIN_AGENTS.find((a) => a.id === 'claude')
+const orSpec = BUILTIN_AGENTS.find((a) => a.id === 'openrouter')
+const withOr = siblingModels(claudeSpec, BUILTIN_AGENTS, (p) => p === 'openrouter')
+ok(withOr.length > 0, 'an OpenRouter key puts OpenRouter models in Claude Code\'s own menu')
+ok(
+  withOr.every((m) => m.agent === 'openrouter'),
+  'and every borrowed row says which runner it belongs to, so the press switches both'
+)
+ok(
+  withOr.every((m) => m.group === orSpec.label),
+  'they sit under the sibling\'s own heading, never mixed into the Anthropic models'
+)
+ok(
+  withOr.some((m) => m.value === 'z-ai/glm-5.2'),
+  'the sibling\'s own shortcuts are what is borrowed'
+)
+ok(
+  !withOr.some((m) => (claudeSpec.models ?? []).some((c) => (typeof c === 'string' ? c : c.value) === m.value)),
+  'nothing already in this runner\'s list is offered twice'
+)
+
+// The refusals are the feature. No key means no rows: offering a model that cannot
+// authenticate is the same 401-inside-a-healthy-pane this whole file exists to stop.
+is(siblingModels(claudeSpec, BUILTIN_AGENTS, () => false).length, 0, 'no key saved, nothing borrowed')
+is(
+  siblingModels(claudeSpec, BUILTIN_AGENTS, (p) => p === 'deepseek').length,
+  BUILTIN_AGENTS.find((a) => a.id === 'deepseek').models.length,
+  "one provider's key borrows that provider's models and no others"
+)
+
+// ...and only a sibling running the SAME binary. Codex's ids in Claude Code's menu
+// would be a launch that dies in a second.
+const codexSpec = BUILTIN_AGENTS.find((a) => a.id === 'codex')
+ok(
+  !siblingModels(claudeSpec, BUILTIN_AGENTS, () => true).some((m) =>
+    (codexSpec.models ?? []).some((c) => (typeof c === 'string' ? c : c.value) === m.value)
+  ),
+  'a runner on another binary is never borrowed from, whatever keys are saved'
+)
+
+// An agent with no model flag has no menu to borrow into.
+ok(
+  siblingModels({ id: 'z', label: 'z', bin: 'claude', color: '#fff' }, BUILTIN_AGENTS, () => true).length === 0,
+  'a runner with no model flag is left alone'
+)
 
 console.log(`agent env: ${checks} checks OK`)

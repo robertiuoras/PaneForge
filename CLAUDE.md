@@ -411,6 +411,15 @@ which it is on its card.
   does traces to a non-xAI page — so Grok is its own CLI entry (`grok`, installed by
   x.ai's script into `~/.grok/bin`, which `which.ts` now hydrates because the script only
   *tries* to symlink onto PATH). Neither base URL carries `/v1`: the CLI appends it.
+- **A key pasted in Settings reaches the menu somebody is actually looking at.** The model
+  list is per agent for a good reason - `z-ai/glm-5.2` under plain Claude Code is a 401 in a
+  healthy-looking pane - but that made the key do nothing VISIBLE: the runner still says
+  "Claude Code", so 51 models sat one menu away with nothing on screen saying which menu.
+  `siblingModels` borrows another runner's models into this one's dropdown under that
+  runner's own heading, each row carrying `agent`, so the press switches the runner and the
+  model together. Two refusals hold it honest: only a provider whose key is actually SAVED,
+  and only a sibling on the same `bin`. `config:set` invalidates the 20s agent cache, or the
+  first dialog after pasting the key still shows nothing.
 - **A blank key drops the token and KEEPS the base URL.** Dropping both would run plain
   Claude Code inside a pane whose card says GLM — worse than an error, because nothing
   says so. The Settings card names the missing key instead (`missingKeyFor`), which is

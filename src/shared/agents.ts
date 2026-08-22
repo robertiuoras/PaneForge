@@ -31,6 +31,17 @@ export type ModelChoice =
       hint?: string
       /** menu heading; set when a list mixes hand-written shortcuts with a fetched one */
       group?: string
+      /**
+       * The agent this model belongs to, when it is NOT the one whose menu it appears in.
+       *
+       * A model list is per agent for a good reason - `z-ai/glm-5.2` in a plain Claude Code
+       * pane is a 401 - but that made a key pasted into Settings do nothing visible: the
+       * runner dropdown still says "Claude Code", so the models the key just paid for are
+       * two menus away and nothing on screen says which menu. Picking one of these switches
+       * the runner AND the model in one press, which is what somebody who pasted an
+       * OpenRouter key was asking for.
+       */
+      agent?: string
     }
 
 /** How the model reaches the CLI: as `--model x` (default) or as a bare argument. */
@@ -644,6 +655,55 @@ export function modelHint(m: ModelChoice): string | undefined {
 /** The menu heading a choice sits under, when its list has headings at all. */
 export function modelGroup(m: ModelChoice): string | undefined {
   return typeof m === 'string' ? undefined : m.group
+}
+
+/** The runner a choice belongs to, when picking it also changes the runner. */
+export function modelAgent(m: ModelChoice): string | undefined {
+  return typeof m === 'string' ? undefined : m.agent
+}
+
+/**
+ * Models from the OTHER runners that share this one's binary and have their key.
+ *
+ * Every "Claude Code on <provider>" entry here is the same binary with two variables
+ * set, so the CLI in the pane is identical and only the endpoint differs - which is
+ * exactly why a person who pasted an OpenRouter key expects its models where the models
+ * are. They are offered on the sibling's own heading, so nothing pretends a GLM id will
+ * run against Anthropic, and picking one carries `agent` so the press switches both.
+ *
+ * Two refusals, and both are the point:
+ *   - **only a provider whose key is actually saved.** Offering a model that cannot
+ *     authenticate is a pane that 401s inside a healthy-looking window, the failure this
+ *     repo refuses everywhere else. `hasKey` is passed in so this stays pure.
+ *   - **only a sibling on the same `bin`.** Codex's models in Claude Code's menu would be
+ *     a launch that dies in a second, and the runner dropdown is still one press away.
+ */
+export function siblingModels(
+  spec: AgentSpec,
+  all: AgentSpec[],
+  hasKey: (provider: string) => boolean
+): ModelChoice[] {
+  if (!supportsModel(spec)) return []
+  const mine = new Set((spec.models ?? []).map(modelValue))
+  const out: ModelChoice[] = []
+  for (const other of all) {
+    if (other.id === spec.id || other.bin !== spec.bin || !supportsModel(other)) continue
+    const provider = keyProviderFor(other)
+    if (!provider || !hasKey(provider)) continue
+    for (const m of other.models ?? []) {
+      const value = modelValue(m)
+      if (mine.has(value)) continue
+      mine.add(value)
+      out.push({
+        value,
+        label: modelLabel(m),
+        hint: modelHint(m),
+        group: other.label,
+        agent: other.id
+      })
+    }
+  }
+  return out
 }
 
 /** The friendly model name for a pane card, without ever changing what reaches the CLI. */
