@@ -345,6 +345,11 @@ export class SessionManager extends EventEmitter {
         agent: s.meta.agent,
         model: s.meta.model,
         role: s.meta.role,
+        // Where it was handed here from, or the restart is what breaks the loop guard: the
+        // pane comes back with no `arrivedFrom`, and this desk's budget is then free to
+        // hand it straight back to the machine that sent it - which is the exact ping-pong
+        // that field exists to stop, arriving one restart later.
+        arrivedFrom: s.meta.arrivedFrom,
         // Already the lane's own folder: reopening must land back in it, not be
         // treated as a fresh clash and pushed one lane further along.
         lane: s.meta.lane,

@@ -312,13 +312,19 @@ export function budgetPlan(
   const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
   const room = Math.max(0, eligible.length - keepAtLeastOne)
 
+  // The cap is on how many are MOVED, never on how many are looked at. `slice(0, room)`
+  // reads the same and is not: a pane whose project no peer has fails `hostFor` and is
+  // skipped, but it has already spent one of the slots, so a desk whose quietest panes
+  // belong to a project the other machine does not hold moves one pane instead of three
+  // and is still over budget on the next sweep, for ever - a plan that cannot converge.
+  const cap = Math.min(over, room)
   const out: AutoHandoff[] = []
-  for (const p of eligible.slice(0, room)) {
+  for (const p of eligible) {
+    if (out.length >= cap) break
     // Never back where it came from. The desk over there runs this same rule.
     const host = hostFor(peers, p.projectName, p.arrivedFrom)
     if (!host) continue
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
-    if (out.length >= over) break
   }
   return out
 }
@@ -384,11 +390,15 @@ function pick(
   const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
   const room = Math.max(0, eligible.length - keepAtLeastOne)
 
-  for (const p of eligible.slice(0, room)) {
+  // Same shape as `budgetPlan`: the cap is on moves, not on candidates examined. A pane
+  // no peer can host is skipped rather than spending a slot, or a desk whose quietest pane
+  // belongs to a project the other machine does not have moves nothing at all.
+  const cap = Math.min(Math.max(0, cfg.maxPerSweep), room)
+  for (const p of eligible) {
+    if (out.length >= cap) break
     const host = hostFor(peers, p.projectName)
     if (!host) continue
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
-    if (out.length >= cfg.maxPerSweep) break
   }
   return out
 }

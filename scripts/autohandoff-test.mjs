@@ -389,6 +389,24 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     eq('and hostFor is where that is decided', hostFor(peers, 'proj', 'pc'), null)
   }
 
+  // A plan that cannot converge. The cap has to be on how many are MOVED, not on how many
+  // are looked at: a pane whose project no peer holds is skipped, and if it has already
+  // spent a slot the desk moves one instead of three and is over budget again next sweep,
+  // for ever. The quietest panes sort first, so "the ones that cannot move are first" is
+  // the ordinary case, not a contrived one.
+  {
+    const panes = [
+      pane({ id: 'orphan1', projectName: 'nowhere', lastKeyboard: NOW - 90 * MIN }),
+      pane({ id: 'orphan2', projectName: 'nowhere', lastKeyboard: NOW - 80 * MIN }),
+      pane({ id: 'a', lastKeyboard: NOW - 70 * MIN }),
+      pane({ id: 'b', lastKeyboard: NOW - 60 * MIN }),
+      pane({ id: 'c', lastKeyboard: NOW - 50 * MIN }),
+      pane({ id: 'me', focused: true })
+    ]
+    eq('panes no peer can host do not eat the moves', ids(autoHandoffPlan(panes, { ...ok, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b,c')
+    eq('...and the pressure sweep counts the same way', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b')
+  }
+
   check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
   check('and a question is neither', !queueable({ state: 'needsYou', asking: true }) && !movable({ state: 'needsYou', asking: true }))
   check('the default keeps a couple here', DEFAULT_AUTO_HANDOFF.keepLocal === 2)
