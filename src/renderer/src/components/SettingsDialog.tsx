@@ -505,10 +505,10 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   hint="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
                 />
                 <Switch
-                  checked={config.offloadAsk !== false}
-                  onChange={(v) => onChange({ offloadAsk: v })}
+                  checked={config.offloadAsk === true}
+                  onChange={(v) => onChange({ offloadAsk: v, offloadDefaultsV2: true })}
                   label="Ask first, rather than moving it"
-                  hint="A pane is moved for a reason this machine can see - it is out of memory - and kept here for one it cannot: the checkout you are editing, the dev server your browser is pointed at, the fact that you are sitting in front of this screen. So the launch asks, recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off moves it silently and tells you afterwards."
+                  hint="Off, and off is the default: where a pane runs is answered by the budget below rather than by a dialog per launch. On puts the question back - it recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once."
                 />
                 <Switch
                   checked={config.autoHandoff?.enabled !== false}
@@ -518,8 +518,42 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     })
                   }
                   label="Move a finished pane to a paired device when this machine is full"
-                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. Only once the machine is genuinely out of memory, only a pane nobody is looking at that has been quiet for ten minutes, and only to a device that is online and has the same project. A pane mid-turn is never moved - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
+                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. It fires on the budget below, and on either sign of a machine in trouble - the kernel saying it is out of memory, or the load average saying this desk is lagging, whichever comes first (memory says so late: nine agents here once read as merely tight while the load ran at 8.7 on 10 cores). Only to a device that is online and has the same project. A pane mid-turn is never killed - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
                 />
+                {config.autoHandoff?.enabled !== false && (
+                  <div className="setting">
+                    <label>Panes this machine runs itself</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={0}
+                      max={64}
+                      step={1}
+                      value={config.autoHandoff?.keepLocal ?? DEFAULT_AUTO_HANDOFF.keepLocal}
+                      onChange={(e) =>
+                        onChange({
+                          autoHandoff: {
+                            ...DEFAULT_AUTO_HANDOFF,
+                            ...config.autoHandoff,
+                            keepLocal: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                    <p className="hint">
+                      The budget, and the only rule here that does not wait for something to
+                      go wrong. Past this many agents running on this machine, the rest move
+                      to a paired device and come straight back as mirrors - so they are all
+                      still on this screen, still typed into from here, and the memory and
+                      the CPU are over there. It is the one rule allowed to move a pane that
+                      is on screen and a pane that is mid-turn (that one is queued and goes
+                      the moment the turn ends, never killed); the pane you are typing in,
+                      one holding a question, and the last pane on the desk are refused as
+                      always. 0 turns the budget off and leaves the two readings below. With
+                      nothing paired and online it does nothing at all.
+                    </p>
+                  </div>
+                )}
                 {config.autoHandoff?.enabled !== false && (
                   <Switch
                     checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}

@@ -171,7 +171,7 @@ import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
-import { readPressure, totalMb, watchPressure } from './memory'
+import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { trackUsage } from './usage'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
@@ -980,9 +980,14 @@ function publishCapacity(): void {
     assess({
       totalMb: totalMb(),
       pressure: lastPressure,
+      // What a person calls lagging, and it moves minutes before the memory verdict does.
+      load: loadPerCore(),
       localPanes: manager.list().length,
       remotePanes: mirrored,
-      peerAvailable: peers > 0
+      peerAvailable: peers > 0,
+      // How many agents this desk agreed to run itself. Read live rather than captured:
+      // changing it in Settings has to reach the next reading, which is this one.
+      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal
     })
   )
 }

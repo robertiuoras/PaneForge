@@ -98,6 +98,7 @@ import {
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
+  queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
   type AutoHandoff,
   type AutoPane
@@ -1787,6 +1788,9 @@ export default function App(): JSX.Element {
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
         asking: !!s.ask || !!s.bell,
+        // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
+        // picked, main queues it and moves it the moment the turn ends.
+        busy: s.runSince !== undefined,
         projectName: projectNameOf(s.cwd)
       })),
     []
@@ -1862,24 +1866,32 @@ export default function App(): JSX.Element {
 
   const sweepHandoff = useCallback(() => {
     const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
-    if (!capacity || capacity.level === 'ok' || !cfg.enabled) return
+    if (!capacity || !cfg.enabled) return
+    // Past the budget the desk has already said where these panes belong, so this runs at
+    // `ok` too - and it is then the only sweep that will, since both of the others are
+    // readings about a machine in trouble.
+    const over = Math.max(0, capacity.over ?? 0)
+    if (!over && capacity.level === 'ok') return
     const now = Date.now()
     const panes = handoffPanes()
-    const worthAsking = panes.some(
-      (p) =>
-        !p.focused &&
+    // The same eligibility the plan applies, asked here first so the peers are not called
+    // over the link to find out there was nothing to move. Two shapes, because the budget
+    // rule drops the idle wait and the on-screen refusal and takes busy panes as well.
+    const worthAsking = panes.some((p) => {
+      if (p.focused || p.remote || p.handingOff) return false
+      if ((handoffBlocked.current[p.id] ?? 0) > now) return false
+      if (over) return handoffQueueable(p)
+      return (
         !p.visible &&
-        !p.remote &&
-        !p.handingOff &&
         handoffMovable(p) &&
-        now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000 &&
-        !((handoffBlocked.current[p.id] ?? 0) > now)
-    )
+        now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000
+      )
+    })
     if (!worthAsking) return
     runHandoffs(
       panes,
       (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
-      `capacity: ${capacity.level}`,
+      over ? `budget: ${over} pane(s) past ${cfg.keepLocal}` : `capacity: ${capacity.level}`,
       cfg.cooldownMinutes
     )
   }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])

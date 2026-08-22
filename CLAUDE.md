@@ -1405,6 +1405,48 @@ now four rungs, each firing only where the one above it did not solve it: trim s
 (~5%) → start the NEXT pane over there → **move a finished pane over there** → close it.
 `shared/autoHandoff.ts` is rung three; `npm run test:autohandoff`.
 
+**...and none of that fires until something has already gone wrong, which is the wrong
+moment.** Both triggers were readings about a machine in trouble - the kernel's memory
+verdict, or a pane quiet for half an hour - and a laptop that is meant to be the SCREEN for
+work running on a second machine is asking a different question: not "am I full" but "how
+many agents do I run at all". So `Machine.keepLocal` (`autoHandoff.keepLocal`, **2**) is a
+budget, `Verdict.over` is how many panes are past it, and `budgetPlan` moves exactly that
+many. Measured on this desk while writing it: pressure `normal`, load 0.53 per core, five
+`claude` panes -> `over: 3`, `why: 'budget'`, `offload: true` at `level: 'ok'`.
+
+- **The budget is a policy, so it holds at `ok`** - which is the one sentence in
+  `offloadTarget` that had to change. A desk that says it keeps two agents is not in
+  trouble with five open; it is three panes past what it asked for, and the launch sends
+  the next one over there for that reason alone.
+- **It is the only rule allowed to move a pane that is ON SCREEN or MID-TURN.** Those two
+  gates only ever meant "there is no emergency" - and with the grid on, `visible` is every
+  pane, which is why the pressure sweep could never fire on a one-window desk. Past the
+  budget there is no emergency and the move is still right. A busy pane is picked LAST
+  (`rank`: quiet-and-offscreen, then quiet, then mid-turn) and goes through the same queue,
+  so nothing is killed mid-answer; `queueable` is the wider set `movable` cannot be.
+  Everything that could lose work is refused unchanged: the focused pane, a live question,
+  a mirror, one already moving, one on a failure cooldown, the last pane on the desk.
+- **The number moved is the overshoot, not `maxPerSweep`.** That cap exists so a machine
+  under pressure re-reads its own recovery between moves; here the number is not a guess
+  about how much would help, and moving two of five per minute while somebody opens panes
+  faster than that never converges.
+- **Lag is read as well as memory, and the worse of the two decides** (`lagLevel`,
+  `worstPressure`). Memory pressure is the kernel admitting it has already lost: this desk
+  sat at `warn` for an afternoon with nine agent CLIs up while the load average ran at
+  **8.70 on 10 cores**, which is the number that had actually moved. One runnable thread
+  per core is `warn`, 1.8 is `critical`. NOT a CPU percentage - the desk that produced
+  these figures had 32.73% of its CPU idle at load 105. `os.loadavg()` is 0 on Windows, so
+  0 means "nobody measured" and never "idle": an absent signal may not move a pane.
+  `watchPressure` watches the lag BAND too, or a desk whose memory is steady while its load
+  climbs is never told.
+- **Nothing asks any more.** `offloadAsk` defaults off with a one-time `offloadDefaultsV2`
+  migration (the `migrateAutoAnswer` shape - read off the SAVED config, or the marker is
+  set for everybody and the migration runs on nothing). The dialog was right while the app
+  could see the memory and not the reason to keep the pane here; a budget IS that reason,
+  given once.
+- Both hardened like `offloadMinutes` and for the same reason - these come off config.json
+  and off `pf-ctl call config:set`, so `true` is not a budget of one (`keepLocalOf`).
+
 - **A pane mid-turn is queued, never killed.** A handoff ends in `kill()`, and a pty killed
   mid-answer loses that answer for good: the far end resumes from the transcript file, which
   holds only turns the CLI has already flushed. Refusing a busy pane would be honest and

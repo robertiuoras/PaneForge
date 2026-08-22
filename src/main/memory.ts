@@ -21,8 +21,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { freemem, totalmem, platform } from 'node:os'
-import type { Pressure } from '../shared/capacity'
+import { cpus, freemem, loadavg, totalmem, platform } from 'node:os'
+import { lagLevel, type Pressure } from '../shared/capacity'
 
 /** How often the level is re-read. Cheap on every platform; a sysctl is microseconds. */
 export const SAMPLE_MS = 15_000
@@ -86,6 +86,22 @@ export function totalMb(): number {
 }
 
 /**
+ * How many runnable threads there are per core, or 0 where the platform has no answer.
+ *
+ * This is the "my laptop is lagging" reading, and it exists because the memory verdict
+ * above arrives late: this desk sat at `warn` all afternoon with nine agent CLIs up while
+ * the load average ran at 8.70 on 10 cores. Windows has no load average at all - Node
+ * returns [0, 0, 0] there - and 0 is read as "no reading" rather than "idle" by
+ * `lagLevel`, so nothing on that platform is ever moved because of a number that was never
+ * measured.
+ */
+export function loadPerCore(): number {
+  const cores = cpus().length || 1
+  const one = loadavg()[0]
+  return Number.isFinite(one) && one > 0 ? one / cores : 0
+}
+
+/**
  * Poll the level and call back only when it CHANGES.
  *
  * Only on change because the consumer of this trims scrollback: firing every 15 seconds
@@ -94,10 +110,17 @@ export function totalMb(): number {
  */
 export function watchPressure(onChange: (p: Pressure) => void): () => void {
   let last: Pressure | null = null
+  let lastLag: Pressure | null = null
   const tick = (): void => {
     const now = readPressure()
-    if (now === last) return
+    // The lag band is watched here as well as the memory verdict, and for a reason that is
+    // easy to miss: the consumer re-reads BOTH when this fires, so a desk whose memory is
+    // steady at `normal` while its load climbs past a core apiece would otherwise never be
+    // told - the reading that changed is not the one this poll was written for.
+    const lag = lagLevel(loadPerCore())
+    if (now === last && lag === lastLag) return
     last = now
+    lastLag = lag
     onChange(now)
   }
   tick()

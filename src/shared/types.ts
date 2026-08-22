@@ -1383,6 +1383,14 @@ export interface Config {
    * restores the silent move.
    */
   offloadAsk: boolean
+  /**
+   * The marker that says this config has been through the move onto `offloadAsk: false`.
+   *
+   * It is a separate key rather than an absent `offloadAsk`, because every config ever
+   * written by this app has that key set - see the migration in `getConfig`. Optional so a
+   * config from before it existed is recognised as one that has NOT been migrated.
+   */
+  offloadDefaultsV2?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
