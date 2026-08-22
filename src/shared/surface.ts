@@ -184,6 +184,8 @@ export const SURFACE: Surface = {
   usage: ['invoke', 'usage:get'],
   listDevServers: ['invoke', 'devs:list'],
   stopDevServer: ['invoke', 'devs:stop'],
+  listJobs: ['invoke', 'jobs:list'],
+  listRemoteJobs: ['invoke', 'jobs:remote'],
   onPaneReset: ['on', 'pane:reset'],
   onVoiceHotkey: ['on', 'voice:hotkey'],
   onRecents: ['on', 'recents:changed'],

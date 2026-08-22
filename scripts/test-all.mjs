@@ -56,6 +56,7 @@ const TESTS = [
   ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
   ['devlist', 'devlist-test.mjs'],
+  ['backjobs', 'backjobs-test.mjs'],
   ['orcatalogue', 'or-catalogue-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],

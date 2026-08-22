@@ -2,6 +2,7 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { AttachIn, AttachResult } from './attach'
+import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
 import type { MascotConfig } from './mascot'
@@ -2137,6 +2138,20 @@ export interface Api {
   listDevServers(panes: Array<{ id: string; pane: number; name: string }>): Promise<RunningDev[]>
   /** Stop one of them, and the tree under it. Re-validated in main - a pid is reused. */
   stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }>
+  /**
+   * What THIS machine is running that no pane owns: scheduled agent turns, cron loops,
+   * dev servers. See `shared/backJobs.ts`. Read on demand - it is a whole process table.
+   */
+  listJobs(): Promise<BackJob[]>
+  /**
+   * The same question asked of a paired machine, which is the point of it: a PC running
+   * unattended work had no surface in this app at all.
+   *
+   * REJECTS when that device is not connected. An empty array means "it is running
+   * nothing", which is the answer somebody opens this to check, so a read that could not
+   * happen must never share its shape.
+   */
+  listRemoteJobs(device: string): Promise<BackJob[]>
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending

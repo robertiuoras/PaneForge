@@ -634,7 +634,12 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get',
     // A read of the process table, filtered to dev servers. `devs:stop` is the other half
     // and is GATED - it kills a process on this desk.
-    'devs:list'
+    'devs:list',
+    // Reviewed 2026-08-22. The same process table filtered to work no pane owns, here and
+    // on a paired machine. Both are reads and neither can start or stop anything: the
+    // remote one goes out as a `jobs` frame the other end answers by reading ITS table,
+    // and there is no `jobs:stop`. What comes back is a pid, a label and an age.
+    'jobs:list', 'jobs:remote'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
   ok(

@@ -9,6 +9,7 @@ import type {
   RemoteState
 } from '@shared/types'
 import { reachWords } from '@shared/net'
+import { ageWords, jobsSummary, type BackJob } from '@shared/backJobs'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import AgentPicker from './AgentPicker'
@@ -48,6 +49,74 @@ function Fold({ label, children }: { label: string; children: ReactNode }): JSX.
       <summary>{label}</summary>
       <div className="dev-fold-body">{children}</div>
     </details>
+  )
+}
+
+/**
+ * What a paired machine is running that has no pane.
+ *
+ * The sessions list already carries every pane the other device has, which answered "what
+ * is open over there". It could not answer the question actually being asked of a machine
+ * that runs work unattended: the `claude -p` a scheduled task fires, the loop that has been
+ * wedged since Tuesday, the dev server on a port nobody can reach. None of that is a pane,
+ * so none of it was anywhere in this app - you went and looked over SSH.
+ *
+ * Asked on demand, never on a tick: answering it is a whole process table read on the
+ * other machine (`shared/backJobs.ts`), and this panel is opened rarely and read slowly.
+ * A refusal is printed as a sentence rather than as an empty list - "nothing is running"
+ * is the answer somebody came here to check, and a read that could not happen must never
+ * be able to look like it.
+ */
+function PeerJobs({ id, name }: { id: string; name: string }): JSX.Element {
+  const [jobs, setJobs] = useState<BackJob[] | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = (): void => {
+    setBusy(true)
+    setErr('')
+    void api
+      .listRemoteJobs(id)
+      .then((list) => setJobs(list))
+      .catch((e: Error) => setErr(e.message || `${name} did not answer`))
+      .finally(() => setBusy(false))
+  }
+
+  // Once when the device card appears, and by hand after that. A machine's background work
+  // changes on the scale of minutes, and a poll would be a process table per tick.
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  return (
+    <div className="dev-jobs">
+      <div className="dev-jobs-head">
+        <span className="hint">
+          {err
+            ? `Could not ask ${name}: ${err}`
+            : jobs === null
+              ? `Asking ${name} what else it is running…`
+              : jobs.length === 0
+                ? `Nothing running on ${name} outside its panes.`
+                : `Outside its panes, ${name} is running ${jobsSummary(jobs)}.`}
+        </span>
+        <button className="ghost small" disabled={busy} onClick={load} title={`Ask ${name} again`}>
+          {busy ? 'Asking…' : 'Refresh'}
+        </button>
+      </div>
+      {jobs?.map((j) => (
+        <div key={j.pid} className={'dev-job ' + j.kind} title={j.cmd}>
+          <span className={'dev-job-kind ' + j.kind}>
+            {j.kind === 'agent' ? (j.headless ? 'agent run' : 'agent') : j.kind === 'dev' ? 'dev' : 'script'}
+          </span>
+          <span className="dev-job-nm">{j.label}</span>
+          {j.port ? <code className="dev-job-port">:{j.port}</code> : null}
+          {j.where ? <span className="dev-job-where">{j.where}</span> : null}
+          <span className="dev-job-age">{ageWords(j.elapsed)}</span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -1075,6 +1144,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     ))}
                   </div>
                 )}
+                {p.status === 'online' && <PeerJobs id={p.id} name={p.name} />}
                 {opening === p.id && (
                   <div className="dev-launch">
                     {!far && <span className="hint">Asking {p.name} what it has...</span>}

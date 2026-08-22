@@ -2412,6 +2412,36 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; align-items: start;
 }
 .dev-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* ---- what a machine is running that has no pane ----
+   Under the pane picker on a device's card, because it is the same question one step
+   further out: those are the panes over there, these are everything else over there. */
+.dev-jobs {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px 9px; border-top: 1px solid var(--line);
+}
+.dev-jobs-head { display: flex; align-items: center; gap: 8px; }
+.dev-jobs-head .hint { flex: 1 1 auto; min-width: 0; }
+.dev-job {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  padding: 3px 6px; border-radius: 6px; background: var(--surface-1);
+  font-size: 11.5px; color: var(--muted);
+}
+/* The kind is a word rather than a colour: "agent run" and "dev" are different KINDS of
+   thing to find running on a machine you are not sitting at, and a legend nobody can see
+   is not a distinction. */
+.dev-job-kind {
+  flex: none; min-width: 58px;
+  font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted);
+}
+/* An agent turn nobody is watching is the one worth spotting from across the room. */
+.dev-job.agent .dev-job-kind { color: var(--accent); }
+.dev-job-nm { color: var(--text); font-weight: 550; white-space: nowrap; }
+.dev-job-port { flex: none; color: var(--accent); font-size: 11px; }
+.dev-job-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* How long it has been going, hard right: on a wedged loop it is the whole answer. */
+.dev-job-age { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 /* Below this there is no second column to be had, and one narrow column of pairing codes
    and addresses reads worse than one wide one. */
 @media (max-width: 1000px) {

@@ -25,6 +25,7 @@ import type {
 } from '../../shared/types'
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
+import type { BackJob } from '../../shared/backJobs'
 import type { HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
@@ -195,6 +196,21 @@ export class Remote extends EventEmitter {
     const client = this.clients.get(device)
     if (!client) return Promise.reject(new Error('That device is not connected'))
     return client.agents()
+  }
+
+  /**
+   * What that machine is running outside its panes.
+   *
+   * It REJECTS rather than answering an empty list when the device is not connected, and
+   * that distinction is the whole contract: `[]` is "that machine has nothing running",
+   * which is exactly the answer somebody opening this panel is checking, and a failed read
+   * that shared its shape would say the PC is idle every time the link is down. Same rule
+   * as `peerRefs()` returning null in the lane code, for the same reason.
+   */
+  jobsOn(device: string): Promise<BackJob[]> {
+    const client = this.clients.get(device)
+    if (!client) return Promise.reject(new Error('That device is not connected'))
+    return client.jobs()
   }
 
   // -------------------------------------------------------------------------

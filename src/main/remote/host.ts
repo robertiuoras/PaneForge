@@ -13,6 +13,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
 import type { AttachIn, AttachResult } from '../../shared/attach'
+import type { BackJob } from '../../shared/backJobs'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
@@ -39,6 +40,14 @@ export interface HostBackend {
   receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
+  /**
+   * What this machine is running that no pane owns - see `shared/backJobs.ts`.
+   *
+   * Read here, on this device, because it is a question about THIS process table. Asked
+   * only when a guest asks: it is a whole `ps -Ao command=`, so it is never on a timer and
+   * never rides the `remote:changed` message the pane list travels on.
+   */
+  jobs(): Promise<BackJob[]>
   /** files a guest wants put in front of one of THIS device’s panes */
   attachFiles(files: AttachIn[]): AttachResult
   /** subscribe to pty output; returns an unsubscribe */
@@ -323,6 +332,12 @@ export class RemoteHost extends EventEmitter {
           return
         case 'agents':
           void this.backend.agents().then((list) => conn.send({ t: 'agents', rid: m.rid, list }))
+          return
+        case 'jobs':
+          // A refusal here is a `failed` frame by way of the catch below, which the guest
+          // turns into a sentence. An empty list means "nothing running", and a read that
+          // could not happen must never share that shape - see the note in `Remote.jobsOn`.
+          void this.backend.jobs().then((list) => conn.send({ t: 'jobslist', rid: m.rid, list }))
           return
         case 'files': {
           // The bytes are written here because here is where the pty is. A refusal is a

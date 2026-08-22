@@ -88,6 +88,7 @@ import { receiveHandoff, sendHandoff } from './handoff'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
+import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
   clearDesk,
@@ -914,6 +915,7 @@ const remote = new Remote({
     }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
+  jobs: () => ownJobs(),
   attachFiles: (files) => writeAttachments(files),
   onData: (cb) => {
     manager.on('data', cb)
@@ -1042,6 +1044,26 @@ ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; 
 })
 
 ipcMain.handle('devs:stop', (_e, pid: number) => stopDevServer(Number(pid)))
+
+/**
+ * What this machine is running that no pane owns - see `shared/backJobs.ts`.
+ *
+ * Every fact is read here: the pane ptys off the manager and the projects root off the
+ * config, so neither a renderer nor a guest on the device link can point this at pids or
+ * folders it does not own. It is one whole `ps -Ao command=`, so it is asked when a person
+ * opens the panel and never on a timer.
+ */
+function ownJobs(): Promise<BackJob[]> {
+  return listBackJobs(
+    manager.roots().map((r) => r.pid),
+    [projectsRoot()]
+  )
+}
+ipcMain.handle('jobs:list', () => ownJobs())
+// The same question asked of a paired machine, which is the whole reason this exists: a
+// PC running scheduled agent turns and cron loops had no surface here at all. A device
+// that is not connected REJECTS rather than answering an empty list - see `Remote.jobsOn`.
+ipcMain.handle('jobs:remote', (_e, device: string) => remote.jobsOn(String(device)))
 
 let lastPressure: Pressure = 'normal'
 // Only fires on a CHANGE of level, so this is a handful of messages in a session rather
