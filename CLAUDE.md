@@ -508,6 +508,55 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
 
+## The sessions list is the whole desk, both machines
+
+There is no Fleet screen any more. It answered "which pane needs me first", which is the
+question the sidebar is looked at for, and it answered it somewhere you had to remember to
+open - so the sidebar answers it instead: grouped **Your move / Running / Ready / Ended**,
+`shared/fleet.ts` still deciding, Ctrl+Shift+F toggling back to the order the cards were
+dragged into (kept in `localStorage`, not config - it is a view, and two machines have no
+reason to agree about it). While grouped a press is only a press: a drag reorders `order`,
+`order` decides nothing in that view, and a row that followed the pointer and then snapped
+back to wherever its state puts it reads as a broken list.
+
+**And every pane on a paired machine is in it, without being mirrored.** A pane on the PC
+used to be invisible here until somebody picked it in Devices, so "is anything running over
+there" was a question you went and asked - no way to watch the machine that is meant to be
+doing the work. Nothing new crosses the link for this: `client.panes()` has always held
+every pane the far end has, as whole `Session` objects, and `remote/index.ts` was throwing
+all but six fields away on the way to the renderer. `RemotePaneInfo` now carries everything
+`FleetPane` reads, so a PC pane sorts into `Your move` beside a local one.
+
+- **Listing is not mirroring, and that split is the whole design.** LISTING a remote pane
+  costs a few fields on the `remote:changed` message that is already sent whenever anything
+  over there moves. MIRRORING one costs a live byte stream and an xterm buffer **on this
+  machine, per pane** - which is the one cost a laptop acting as the screen for another
+  machine's work cannot pay at scale. So every pane is listed, none is mirrored until it is
+  pressed, and `openListed` is what turns one into the other. The agent's own speed is not
+  in this trade at all: it runs over there either way.
+- **A listed row has no pane NUMBER.** There is nothing on this machine for Ctrl+N to reach
+  until it has been opened. The number of a real row still comes off the FULL ordered list,
+  never off this screen's order - the device filter is visual, and a number that moved with
+  the filter would move the Ctrl key under somebody's finger.
+- **A mirrored pane is never listed twice.** Both halves are true for a beat while a mirror
+  attaches, and a pane drawn once live and once as an invitation to open it reads as a
+  duplicate rather than as a bug.
+- **A device that is off, connecting or in error lists nothing.** Its pane list is from
+  before it went, and drawing that as live work is worse than drawing nothing.
+- **The badge counts both machines.** `fleetWaiting` over the whole list, not over this
+  desk's panes - the number sat at zero all day on a laptop whose agents all run on the PC.
+- **The device filter offers a machine that is merely CONNECTED**, not only one with a pane
+  mirrored: built from mirrored sessions alone it could not name the one machine somebody
+  opens the list to look at.
+- A question over there cannot be ANSWERED from a row (the buttons need the frame the
+  chooser was read off, which needs a mirror), but it is the loudest reason to open one, so
+  it ranks the row exactly as a local question does.
+- `shared/desk.ts` is the arithmetic, out of the component for the same reason `fleet.ts`
+  and `place.ts` are. `npm run test:desk`, whose load-bearing half is the negatives and
+  whose last block is a SOURCE assertion: a field added to `FleetPane` and not forwarded
+  through the peer map still typechecks, still renders, and sorts every remote pane wrong
+  for ever.
+
 ## Finding a setting
 
 The search box above the rail used to filter the RAIL, so it could only ever say which
@@ -1255,6 +1304,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:desk` | the sessions list with both machines in it: a device that is offline lists nothing, a mirrored pane is not offered twice, a listed pane carries no Ctrl+N number, and a source assertion that every field `FleetPane` ranks by is actually forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
 | `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, nothing is capped (a cap inside a filter box is a search that silently finds nothing), both prices are on every row, and a stealth model says in the picker that an anonymous provider keeps your prompts |
 | `npm run test:devicewatch` | noticing a copied cookie - and the negatives that decide whether the mark is ever read (a phone leaving the house, an iOS bump, a reloaded tab) |
