@@ -78,9 +78,10 @@ export interface ReclaimConfig {
    * it verbatim: never a pane that is working, starting, stalled or waiting for a person,
    * never a mirror of some other machine's pty, never the focused pane, never the last one.
    *
-   * Long by default when it is turned on at all: the cost of closing too early is somebody
-   * reopening from History, and the cost of never closing is a machine that is out of
-   * memory in the morning. 120 minutes is the number set on this desk's PC.
+   * The cost of closing too early is somebody reopening from History - one click, with the
+   * conversation and the screen both intact - and the cost of never closing is a machine
+   * that is out of memory in the morning. Those are not the same size, which is why this
+   * is half an hour rather than the two hours it started at.
    */
   idleCloseMinutes: number
 }
@@ -88,12 +89,15 @@ export interface ReclaimConfig {
 /**
  * What the Settings switch sets `idleCloseMinutes` to when it is turned on.
  *
- * Two hours, which is eight times what the pressure sweep waits, for the reason the
- * field's own comment gives: being early under pressure costs a reopen from History, and
- * being early on a clock closes a pane somebody was coming back to. It is the number
- * already running on this desk's PC.
+ * Half an hour. It was two, on the reasoning that being early closes a pane somebody was
+ * coming back to - true, and it priced that at far more than it costs. A closed pane here
+ * keeps its History row, its `resumeId` and its `scrollbackId`, so coming back to one is
+ * a click that restores the conversation AND the screen; a pane held open for two hours
+ * on a machine nobody is at is ~190 MB of agent doing nothing. Measured on this desk's PC
+ * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
+ * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 120
+export const IDLE_CLOSE_MINUTES = 30
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,

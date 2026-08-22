@@ -415,9 +415,11 @@ which it is on its card.
   list is per agent for a good reason - `z-ai/glm-5.2` under plain Claude Code is a 401 in a
   healthy-looking pane - but that made the key do nothing VISIBLE: the runner still says
   "Claude Code", so 51 models sat one menu away with nothing on screen saying which menu.
-  `siblingModels` borrows another runner's models into this one's dropdown under that
-  runner's own heading, each row carrying `agent`, so the press switches the runner and the
-  model together. Two refusals hold it honest: only a provider whose key is actually SAVED,
+  `siblingModels` borrows another runner's models into this one's dropdown under the
+  PROVIDER's heading (`OpenRouter · Free`, never `Claude Code on OpenRouter` - a runner
+  name over a model list reads as a second product to choose between, which is the
+  confusion the borrowing exists to remove), each row carrying `agent`, so the press
+  switches the runner and the model together. Two refusals hold it honest: only a provider whose key is actually SAVED,
   and only a sibling on the same `bin`. `config:set` invalidates the 20s agent cache, or the
   first dialog after pasting the key still shows nothing.
 - **A blank key drops the token and KEEPS the base URL.** Dropping both would run plain
@@ -448,11 +450,16 @@ OpenRouter's own public list on disk and `shared/orCatalogue.ts` turns it into t
   Claude Code pane and then cannot read a file: a pane that looks perfectly healthy and can
   do nothing. A row that does not declare its parameters is dropped rather than guessed
   at - this is a shortcut list, and everything left out is still one "Other..." away.
-- **Free is complete, paid is a shortcut.** Every free tool-capable model is carried
-  because that answer is small and is the reason anybody opens the list; the several
-  hundred paid ones are capped at the newest 25 on top of the curated rows. Newest first,
-  in both: a list that exists so last Tuesday's model can be found must put it where it
-  can be seen.
+- **Nothing is capped, and every row carries BOTH prices.** Free models lead under their
+  own heading because that answer is small and is why anybody opens the list; every paid
+  tool-capable model follows under one heading. The 25-row cap that used to sit there was
+  answering a question `Select` had already solved - it becomes a filter box past eight
+  options - and a cap inside a filter box is invisible: you type the model you want, get
+  nothing, and cannot tell "OpenRouter does not have it" from "this build chose not to
+  show it". `Select` searches the VALUE as well as the label, because `labelFor` strips
+  the vendor (`Z.ai: GLM 5.2` -> `GLM 5.2`) and the vendor is what people type. The hint
+  is `$in in · $out out /M`: input alone is the cheap-looking half, and an agent pane is
+  mostly output. Newest first, in both groups.
 - **A stealth model says so in the hint, where the choice is made.** OpenRouter's own
   words: developed and operated by a provider who has chosen to remain anonymous, and
   "prompts and completions are retained by the provider and are not used for training".
@@ -1249,7 +1256,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
-| `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, free models are complete while paid ones are a capped shortcut, and a stealth model says in the picker that an anonymous provider keeps your prompts |
+| `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, nothing is capped (a cap inside a filter box is a search that silently finds nothing), both prices are on every row, and a stealth model says in the picker that an anonymous provider keeps your prompts |
 | `npm run test:devicewatch` | noticing a copied cookie - and the negatives that decide whether the mark is ever read (a phone leaving the house, an iOS bump, a reloaded tab) |
 | `npm run test:projects` | which folders are projects and which are copies of one (`service-a` beside `service` stays a project) |
 | `npm run test:cardfit` | that a session card can still be read at 190px once a lane loads it up |
@@ -1361,7 +1368,10 @@ by closing the pane. `npm run test:reclaim`.
   pressure has removed the reason the window is open.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has
   typed into for that long whatever the memory says; 0 is the default, so the paragraph
-  above still describes every desk that has not asked otherwise. It exists for the second
+  above still describes every desk that has not asked otherwise. The switch sets
+  `IDLE_CLOSE_MINUTES`, which is **30 minutes** - it was 120, priced on "being early closes
+  a pane somebody was coming back to", which is a click that restores the conversation and
+  the screen against ~190 MB of agent doing nothing for two hours. It exists for the second
   machine — a desk driven over the device link, which fills with finished panes and has no
   person to close them. Every refusal above is shared verbatim except **visible**, which it
   cannot keep: on a machine nobody is at, every pane in the grid is "on screen", and
