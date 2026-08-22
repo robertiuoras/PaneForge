@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { stripAnsi } from '@shared/ansi'
 import type {
@@ -10,6 +10,7 @@ import type {
   Project,
   RecentItem,
   PhoneState,
+  RemotePaneInfo,
   RemoteState,
   RestoreOffer,
   Session,
@@ -35,7 +36,7 @@ import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import FleetDialog from './components/FleetDialog'
-import { fleetWaiting } from '@shared/fleet'
+import { fleetRow, fleetSections, fleetWaiting, type FleetPane } from '@shared/fleet'
 import {
   BoardIcon,
   FleetIcon,
@@ -265,6 +266,22 @@ interface AskState {
   onConfirm: (value: string, checked: boolean) => void
   /** Only for a question whose two answers are both real choices. Esc means cancel. */
   onCancel?: (checked: boolean) => void
+}
+
+/**
+ * One row of the sidebar.
+ *
+ * Either a pane on this desk (`session`), or one that is merely LISTED from a paired
+ * device (`listed`) - running over there, drawn here, and not mirrored. It carries the
+ * fields `shared/fleet.ts` reads flat, so both kinds sort into the same sections by the
+ * same rules and the list cannot disagree with itself about which pane wants a person.
+ */
+interface DeskRow extends FleetPane {
+  key: string
+  /** Ctrl+N. 0 for a listed pane - there is nothing on this machine to switch to yet. */
+  number: number
+  session?: Session
+  listed?: { pane: RemotePaneInfo; device: { id: string; name: string } }
 }
 
 export default function App(): JSX.Element {
@@ -3126,220 +3143,7 @@ export default function App(): JSX.Element {
       .catch(() => setDevs([]))
   }, [mascotPanes])
 
-  return (
-    <BlurbContext.Provider value={blurbs}>
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-name">
-            <AppLogo size={17} />
-            PaneForge
-          </span>
-          <span className="icons">
-            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
-              ⚙
-            </button>
-            <button
-              className="icon help"
-              title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
-              onClick={() => setHelp(true)}
-            >
-              ?
-            </button>
-          </span>
-        </div>
-
-        <button className="primary" onClick={() => setPicking(true)}>
-          <span className="plus">+</span> New session <span className="kbd">{keyLabel('Ctrl T')}</span>
-        </button>
-        <button className="ghost search-btn" onClick={() => setPalette(true)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
-        </button>
-
-        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
-            fourth would not have fitted at all; a fixed-width row has room to grow and
-            reads faster once you know it. Every one keeps its full sentence on hover. */}
-        <div className="quick">
-          {/* First in the row because it is the one that can be UNREAD: the others open
-              something you went looking for, this one tells you something arrived. */}
-          <button
-            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
-            title={
-              needsYou
-                ? keyLabel(
-                    `Fleet: ${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you (Ctrl Shift F)`
-                  )
-                : keyLabel('Fleet: every pane on one screen, whoever needs you first (Ctrl Shift F)')
-            }
-            onClick={() => setFleet(true)}
-          >
-            <FleetIcon />
-            {needsYou > 0 && <span className="quick-dot" />}
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
-            onClick={() => setSwarm(true)}
-          >
-            <SwarmIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
-            disabled={!activeId}
-            onClick={() => {
-              const s = sessions.find((x) => x.id === activeId)
-              if (s) setBoard(s.cwd)
-            }}
-          >
-            <BoardIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel('History: search past sessions (Ctrl H)')}
-            onClick={() => setHistory(true)}
-          >
-            <HistoryIcon />
-          </button>
-          <button
-            className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
-            title={
-              remoteLive
-                ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
-                : keyLabel('Devices: work on another machine’s panes from here (Ctrl Shift D)')
-            }
-            onClick={() => setDevices(true)}
-          >
-            <RemoteIcon />
-            {remoteLive > 0 && <span className="quick-dot" />}
-          </button>
-        </div>
-
-        {config && config.presets.length > 0 && (
-          <>
-            <div className="section">Workspaces</div>
-            <div className="presets">
-              {config.presets.map((p) => (
-                <div key={p.id} className="row preset" onClick={() => launchPreset(p)}>
-                  <div className="row-text">
-                    <div className="row-title">{p.name}</div>
-                    <div className="row-sub">{p.items.length} projects</div>
-                  </div>
-                  <button
-                    className="x"
-                    title="Delete workspace"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      patchConfig({ presets: config.presets.filter((x) => x.id !== p.id) })
-                    }}
-                  >
-                    x
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Only the lanes no open pane accounts for, across every open repo; the rest are
-            chips on the session cards below. Renders nothing without a lane-using repo. */}
-        <LaneStrip
-          boards={laneBoards}
-          sessions={sessions}
-          onFocus={setActiveId}
-          onHelp={() => setLaneHelp(true)}
-        />
-
-        {/* What the machine can still hold, in the one place a person is already looking
-            when they are about to open another pane. Only when it is NOT ok: a line that
-            is always there is a line nobody reads, and on a healthy desk there is nothing
-            to say. The wording carries the numbers (see capacity.ts) because "low memory"
-            with no figure is the message that got the app blamed for the browsers. */}
-        {capacity && capacity.level !== 'ok' && (
-          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
-            {capacity.advice}
-          </div>
-        )}
-
-        <div className="section">
-          {/* "Running" read as "these are all busy" on a list of idle panes. */}
-          <span className="section-title">
-            Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
-          </span>
-          {/* Badges and the empty-everything button travel together, hard right. One
-              wrapper rather than three margin rules: whichever of them are showing, the
-              rest keep their place. */}
-          <span className="section-tail">
-            {/* The desk's total, beside the pane count it belongs to: panes plus the app
-                itself, which is the figure that answers "what would quitting give me
-                back". The per-pane chips say which one to close; this says whether to
-                bother. Only once something is running - a total of "250 MB" over an
-                empty desk is a number about nothing. */}
-            {usage && usage.totalMb > 0 && sessions.length > 0 && (
-              <span
-                className="badge res"
-                title={
-                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
-                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
-                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
-                }
-              >
-                {formatMb(usage.totalMb)}
-                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
-              </span>
-            )}
-            {working > 0 && (
-              <span className="badge run" title="Agents whose own footer says they are still running">
-                {working} working
-              </span>
-            )}
-            {waiting > 0 && (
-              <span className="badge" title="Turns that finished while you were looking elsewhere">
-                {waiting} waiting
-              </span>
-            )}
-            {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
-                ending. Only there when there is something to empty. */}
-            {sessions.length > 0 && (
-              <button
-                className="icon danger section-btn"
-                title={
-                  sessions.length === 1
-                    ? 'Close the last pane - the transcript stays in history'
-                    : `Close all ${sessions.length} panes - every run ends, the transcripts stay in history`
-                }
-                aria-label="Close every session"
-                onClick={closeAll}
-              >
-                <TrashIcon size={13} />
-              </button>
-            )}
-          </span>
-        </div>
-        {deviceChoices.length > 0 && (
-          <label className="device-filter">
-            <span>Show</span>
-            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
-              <option value="all">All devices</option>
-              <option value="local">This device</option>
-              {deviceChoices.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="list" ref={listRef}>
-          {shownSessions.map((s) => {
-            // Device filtering is visual only. The badge must retain the full-list
-            // number because Ctrl+1..9 always address that full ordered session list.
-            const paneNumber = sessions.indexOf(s) + 1
-            return (
+  const sessionRow = (s: Session, paneNumber: number): JSX.Element => (
             <div
               key={s.id}
               data-id={s.id}
@@ -3662,9 +3466,229 @@ export default function App(): JSX.Element {
                 x
               </button>
             </div>
-            )
-          })}
-          {sessions.length === 0 && (
+  )
+
+  return (
+    <BlurbContext.Provider value={blurbs}>
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-name">
+            <AppLogo size={17} />
+            PaneForge
+          </span>
+          <span className="icons">
+            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
+              ⚙
+            </button>
+            <button
+              className="icon help"
+              title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
+              onClick={() => setHelp(true)}
+            >
+              ?
+            </button>
+          </span>
+        </div>
+
+        <button className="primary" onClick={() => setPicking(true)}>
+          <span className="plus">+</span> New session <span className="kbd">{keyLabel('Ctrl T')}</span>
+        </button>
+        <button className="ghost search-btn" onClick={() => setPalette(true)}>
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
+        </button>
+
+        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
+            fourth would not have fitted at all; a fixed-width row has room to grow and
+            reads faster once you know it. Every one keeps its full sentence on hover. */}
+        <div className="quick">
+          {/* First in the row because it is the one that can be UNREAD: the others open
+              something you went looking for, this one tells you something arrived. */}
+          <button
+            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
+            title={
+              needsYou
+                ? keyLabel(
+                    `Fleet: ${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you (Ctrl Shift F)`
+                  )
+                : keyLabel('Fleet: every pane on one screen, whoever needs you first (Ctrl Shift F)')
+            }
+            onClick={() => setFleet(true)}
+          >
+            <FleetIcon />
+            {needsYou > 0 && <span className="quick-dot" />}
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
+            onClick={() => setSwarm(true)}
+          >
+            <SwarmIcon />
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
+            disabled={!activeId}
+            onClick={() => {
+              const s = sessions.find((x) => x.id === activeId)
+              if (s) setBoard(s.cwd)
+            }}
+          >
+            <BoardIcon />
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel('History: search past sessions (Ctrl H)')}
+            onClick={() => setHistory(true)}
+          >
+            <HistoryIcon />
+          </button>
+          <button
+            className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
+            title={
+              remoteLive
+                ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
+                : keyLabel('Devices: work on another machine’s panes from here (Ctrl Shift D)')
+            }
+            onClick={() => setDevices(true)}
+          >
+            <RemoteIcon />
+            {remoteLive > 0 && <span className="quick-dot" />}
+          </button>
+        </div>
+
+        {config && config.presets.length > 0 && (
+          <>
+            <div className="section">Workspaces</div>
+            <div className="presets">
+              {config.presets.map((p) => (
+                <div key={p.id} className="row preset" onClick={() => launchPreset(p)}>
+                  <div className="row-text">
+                    <div className="row-title">{p.name}</div>
+                    <div className="row-sub">{p.items.length} projects</div>
+                  </div>
+                  <button
+                    className="x"
+                    title="Delete workspace"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      patchConfig({ presets: config.presets.filter((x) => x.id !== p.id) })
+                    }}
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Only the lanes no open pane accounts for, across every open repo; the rest are
+            chips on the session cards below. Renders nothing without a lane-using repo. */}
+        <LaneStrip
+          boards={laneBoards}
+          sessions={sessions}
+          onFocus={setActiveId}
+          onHelp={() => setLaneHelp(true)}
+        />
+
+        {/* What the machine can still hold, in the one place a person is already looking
+            when they are about to open another pane. Only when it is NOT ok: a line that
+            is always there is a line nobody reads, and on a healthy desk there is nothing
+            to say. The wording carries the numbers (see capacity.ts) because "low memory"
+            with no figure is the message that got the app blamed for the browsers. */}
+        {capacity && capacity.level !== 'ok' && (
+          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
+            {capacity.advice}
+          </div>
+        )}
+
+        <div className="section">
+          {/* "Running" read as "these are all busy" on a list of idle panes. */}
+          <span className="section-title">
+            Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
+          </span>
+          {/* Badges and the empty-everything button travel together, hard right. One
+              wrapper rather than three margin rules: whichever of them are showing, the
+              rest keep their place. */}
+          <span className="section-tail">
+            {/* The desk's total, beside the pane count it belongs to: panes plus the app
+                itself, which is the figure that answers "what would quitting give me
+                back". The per-pane chips say which one to close; this says whether to
+                bother. Only once something is running - a total of "250 MB" over an
+                empty desk is a number about nothing. */}
+            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+              <span
+                className="badge res"
+                title={
+                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
+                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
+                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
+                }
+              >
+                {formatMb(usage.totalMb)}
+                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
+              </span>
+            )}
+            {working > 0 && (
+              <span className="badge run" title="Agents whose own footer says they are still running">
+                {working} working
+              </span>
+            )}
+            {waiting > 0 && (
+              <span className="badge" title="Turns that finished while you were looking elsewhere">
+                {waiting} waiting
+              </span>
+            )}
+            {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
+                ending. Only there when there is something to empty. */}
+            {sessions.length > 0 && (
+              <button
+                className="icon danger section-btn"
+                title={
+                  sessions.length === 1
+                    ? 'Close the last pane - the transcript stays in history'
+                    : `Close all ${sessions.length} panes - every run ends, the transcripts stay in history`
+                }
+                aria-label="Close every session"
+                onClick={closeAll}
+              >
+                <TrashIcon size={13} />
+              </button>
+            )}
+          </span>
+        </div>
+        {deviceChoices.length > 0 && (
+          <label className="device-filter">
+            <span>Show</span>
+            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
+              <option value="all">All devices</option>
+              <option value="local">This device</option>
+              {deviceChoices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="list" ref={listRef}>
+          {deskGroups.map((g) => (
+            <Fragment key={g.key}>
+              {g.title && (
+                <div className={`list-sec sec-${g.key}`}>
+                  {g.title}
+                  <span className="n">{g.rows.length}</span>
+                </div>
+              )}
+              {g.rows.map((row) => (row.session ? sessionRow(row.session, row.number) : listedRow(row)))}
+            </Fragment>
+          ))}
+          {deskRows.length === 0 && (
             <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
           )}
         </div>

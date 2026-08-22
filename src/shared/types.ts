@@ -815,7 +815,25 @@ export interface RemotePeer {
   mirrorAll?: boolean
 }
 
-/** One pane on a paired device, as the Devices panel offers it. */
+/**
+ * One pane on a paired device, whether or not this one is mirroring it.
+ *
+ * This used to carry six fields, because its only reader was the Devices panel's pick
+ * list - a name and a folder is enough to decide what to mirror. The sidebar reads it
+ * now, and the sidebar is answering a different question: not "what could I watch" but
+ * "what is that machine DOING". So it carries everything `shared/fleet.ts` reads, and
+ * a PC pane can be sorted into `Your move` beside a local one without a byte of its
+ * output crossing the link.
+ *
+ * That distinction is the whole design. LISTING a remote pane costs one field in a
+ * message that is already sent whenever anything over there changes; MIRRORING one
+ * costs a live byte stream and an xterm buffer on this machine, per pane. So every
+ * pane is listed and none is mirrored until it is opened.
+ *
+ * The question itself (`Session.ask`) is deliberately NOT here - answering a chooser
+ * needs the frame it was read off, which is a mirror's job. `asking` is the fact the
+ * sidebar draws, and pressing the row is what gets you the buttons.
+ */
 export interface RemotePaneInfo {
   /** its id ON that device - what `watch` holds and `remote:watch` is given */
   id: string
@@ -825,6 +843,20 @@ export interface RemotePaneInfo {
   status: SessionStatus
   /** this device is mirroring it right now */
   watched: boolean
+  /** worktree lane suffix, so `describePlace` says the same thing it says here */
+  lane?: string
+  // Everything below is what `fleetState`/`fleetRow` read. Same names as `Session`, so
+  // one function serves a local pane and a listed one.
+  engaged?: boolean
+  bell?: boolean
+  /** the CLI over there is sitting on a question - it cannot be answered without opening it */
+  asking?: boolean
+  attention?: boolean
+  exitCode?: number
+  lastOutput?: number
+  runSince?: number
+  stalledSince?: number
+  createdAt?: number
 }
 
 /** Live state of one paired device. */

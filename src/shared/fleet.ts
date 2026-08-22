@@ -13,6 +13,26 @@
 
 import type { GitInfo, Session } from './types'
 
+/**
+ * The fields these judgements read, and nothing else.
+ *
+ * Written as a shape rather than as `Session` because a pane on a PAIRED DEVICE is
+ * ranked by exactly the same rules and is not a Session on this machine - it has no
+ * pty here, no scrollback here and no xterm here. `RemotePaneInfo` carries these
+ * fields for that reason, so one function sorts both lists and the sidebar cannot
+ * disagree with itself about which pane wants a person.
+ */
+export interface FleetPane {
+  status: Session['status']
+  bell?: boolean
+  stalledSince?: number
+  engaged?: boolean
+  runSince?: number
+  lastOutput?: number
+  createdAt?: number
+  exitCode?: number
+}
+
 export type FleetState =
   | 'needsYou'  // a turn ended, or the terminal rang: your move
   | 'stalled'   // a turn is still running and the pane has gone quiet mid-run
@@ -76,7 +96,7 @@ const RANK: Record<FleetState, number> = {
   exited: 5
 }
 
-export function fleetState(s: Session): FleetState {
+export function fleetState(s: FleetPane): FleetState {
   if (s.status === 'exited') return 'exited'
   // A rung bell outranks everything a live process could be doing: the CLI is asking a
   // question, and it can ask one mid-turn.
@@ -89,7 +109,7 @@ export function fleetState(s: Session): FleetState {
   return s.engaged ? 'needsYou' : 'ready'
 }
 
-export function fleetRow(s: Session): FleetRow {
+export function fleetRow(s: FleetPane): FleetRow {
   const state = fleetState(s)
   const since =
     state === 'stalled'
@@ -118,7 +138,7 @@ export function fleetRow(s: Session): FleetRow {
  * that finished four seconds ago, and a stall gets worse with age. Panes with no clock
  * keep the order they were opened in, so the screen does not reshuffle under the mouse.
  */
-export function fleetOrder(sessions: Session[]): Session[] {
+export function fleetOrder<T extends FleetPane & { id: string }>(sessions: T[]): T[] {
   const rows = new Map(sessions.map((s) => [s.id, fleetRow(s)]))
   const at = new Map(sessions.map((s, i) => [s.id, i]))
   return [...sessions].sort((a, b) => {
@@ -141,10 +161,10 @@ export function fleetOrder(sessions: Session[]): Session[] {
  * nobody in them are not drawn - an empty "Ended" heading is a line of chrome saying
  * nothing.
  */
-export interface FleetSection {
+export interface FleetSection<T = Session> {
   key: 'yourMove' | 'running' | 'idle' | 'ended'
   title: string
-  sessions: Session[]
+  sessions: T[]
 }
 
 const SECTION_OF: Record<FleetState, FleetSection['key']> = {
@@ -163,9 +183,9 @@ const SECTION_TITLE: Record<FleetSection['key'], string> = {
   ended: 'Ended'
 }
 
-export function fleetSections(sessions: Session[]): FleetSection[] {
+export function fleetSections<T extends FleetPane & { id: string }>(sessions: T[]): FleetSection<T>[] {
   const ordered = fleetOrder(sessions)
-  const out: FleetSection[] = (['yourMove', 'running', 'idle', 'ended'] as const).map((key) => ({
+  const out: FleetSection<T>[] = (['yourMove', 'running', 'idle', 'ended'] as const).map((key) => ({
     key,
     title: SECTION_TITLE[key],
     sessions: []
@@ -199,7 +219,7 @@ export function previewFrom(lines: string[]): string | null {
 }
 
 /** How many rows want a person right now - the number the button wears. */
-export function fleetWaiting(sessions: Session[]): number {
+export function fleetWaiting(sessions: FleetPane[]): number {
   return sessions.filter((s) => {
     const st = fleetState(s)
     return st === 'needsYou' || st === 'stalled'

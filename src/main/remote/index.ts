@@ -233,13 +233,32 @@ export class Remote extends EventEmitter {
           ...p,
           status: client?.status ?? 'off',
           error: client?.error || undefined,
+          // Everything `shared/fleet.ts` reads travels, so a pane on that machine can be
+          // ranked and drawn here without being mirrored. This map used to keep six
+          // fields, which was enough for the Devices pick list and left the sidebar with
+          // no way to say that a PC pane was mid-turn or owed an answer. None of it costs
+          // anything: it rides the `remote:changed` message that is already sent whenever
+          // anything over there moves.
           panes: (client?.panes() ?? []).map((s) => ({
             id: s.id,
             title: s.title,
             cwd: s.cwd,
             agent: s.agent,
             status: s.status,
-            watched: watched.has(s.id)
+            watched: watched.has(s.id),
+            lane: s.lane,
+            engaged: s.engaged,
+            bell: s.bell,
+            // The question itself stays over there - answering one needs the frame it was
+            // read off, which arrives only with a mirror. This is the FACT, which is what
+            // puts the row under `Your move`.
+            asking: !!s.ask,
+            attention: s.attention,
+            exitCode: s.exitCode,
+            lastOutput: s.lastOutput,
+            runSince: s.runSince,
+            stalledSince: s.stalledSince,
+            createdAt: s.createdAt
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,
