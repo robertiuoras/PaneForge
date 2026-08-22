@@ -49,7 +49,7 @@ const WIDENS =
  * leaves the CLI holding an empty composer waiting for a sentence, so picking it turns a
  * pane that was merely waiting into one that is waiting AND has lost its question.
  */
-const STOPS = /^(?:no|n|cancel|skip|quit|exit|abort|stop|reject|deny|don'?t)\b|tell (?:claude|codex|it)|something (?:else|different)|go back|leave (?:it|as)|keep (?:current|existing|it as)/i
+const STOPS = /^(?:no|n|cancel|skip|quit|exit|abort|stop|reject|deny|don'?t)\b|tell (?:claude|codex|it)|something (?:else|different)|go back|leave (?:it|as)|keep (?:the |my |its )?(?:current|existing|it as)/i
 
 /**
  * An option that means "go on with what you were doing".
@@ -59,6 +59,22 @@ const STOPS = /^(?:no|n|cancel|skip|quit|exit|abort|stop|reject|deny|don'?t)\b|t
  * the word the option LEADS with, which is how every one of these CLIs writes them.
  */
 const GOES = /^(?:yes|y|ok(?:ay)?|sure|allow|approve|accept|proceed|continue|confirm|apply|run|do it|go ahead|keep going|use)\b/i
+
+/**
+ * An option the CLI itself points at.
+ *
+ * This is the difference between choosing the BEST option and choosing the first one. Every
+ * agent CLI here marks its own preference in the label when it has one - `(recommended)`,
+ * `[default]`, `- suggested` - and that is a statement from the tool rather than a guess by
+ * this app, so it outranks both a yes-shaped word and the row the arrow happens to be
+ * sitting on. Read anywhere in the label, not anchored, because it is written as a suffix.
+ *
+ * Exactly ONE marked option counts. Two are a tool that recommends two things, which is a
+ * choice again, and picking between them would be the invention this file exists to avoid.
+ * A marked option that widens permission or stops is still refused by the guards above -
+ * the marker raises an option's rank and can never lift it over a refusal.
+ */
+const RECOMMENDED = /\(\s*(?:recommended|suggested|default)\s*\)|\[\s*(?:recommended|suggested|default)\s*\]|\b(?:recommended|suggested)\b|\bthe default\b/i
 
 export interface AutoAnswerConfig {
   /** Press the obvious answer without being asked. */
@@ -223,7 +239,22 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
   if (!cfg.enabled) return null
   if (!ask.options.length) return null
 
-  const good = ask.options.filter((o) => GOES.test(o.label) && !WIDENS.test(o.label) && !STOPS.test(o.label))
+  // The two refusals come first and apply to every rule below. Nothing a later rule finds
+  // may reach an option that widens permission or that stops and asks for a sentence.
+  const usable = ask.options.filter((o) => !WIDENS.test(o.label) && !STOPS.test(o.label))
+  if (!usable.length) return null
+
+  // The CLI's own recommendation, when it made exactly one. This is the tool stating the
+  // answer, so it outranks a yes-shaped word and it outranks the arrow - which is the
+  // whole of "pick the best option rather than the first one". It is allowed in the strict
+  // mode too: a question whose own tool has marked the answer is not a question somebody
+  // is being asked to decide.
+  const marked = usable.filter((o) => RECOMMENDED.test(o.label))
+  if (marked.length === 1) {
+    return { n: marked[0].n, why: `the option "${marked[0].label}", which the CLI marks as its own recommendation` }
+  }
+
+  const good = usable.filter((o) => GOES.test(o.label))
 
   // Exactly one. Two options both leading with "yes" are two different yeses - the second
   // is nearly always the widening one, and when it is not it is a choice between them.
@@ -231,11 +262,13 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
 
   if (!cfg.anyQuestion) return null
 
-  const dflt = ask.options.find((o) => o.n === ask.selected)
+  // The CLI's own default, only while it survived the refusals above. A default that
+  // widens permission, or that stops and asks for a sentence, is one this may not take on
+  // somebody's behalf however the setting is written.
+  // The arrow sitting on an option this may not take is not a licence to take a different
+  // one: at that point the CLI's preference has been refused and there is no second signal
+  // to fall back on, so the question is a person's again.
+  const dflt = usable.find((o) => o.n === ask.selected)
   if (!dflt) return null
-  // The CLI's own default is only borrowable while it is an ordinary answer. A default
-  // that widens permission, or that stops and asks for a sentence, is one this may not
-  // take on somebody's behalf however the setting is written.
-  if (WIDENS.test(dflt.label) || STOPS.test(dflt.label)) return null
   return { n: dflt.n, why: `the CLI's own default, "${dflt.label}"` }
 }

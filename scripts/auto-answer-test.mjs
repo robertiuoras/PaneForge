@@ -151,6 +151,52 @@ ok('a default that stops and asks for a sentence is not taken', () => {
   assert.equal(pickAnswer(noYes, ANY), null)
 })
 
+// ---------------------------------------------------------------------------
+// The BEST option, not the first one. Every agent CLI here marks its own preference in
+// the label when it has one, and that marker is a statement from the tool rather than a
+// guess by this app - so it outranks a yes-shaped word and it outranks the arrow.
+// ---------------------------------------------------------------------------
+ok('the option the CLI marks recommended is the one taken, not the first', () => {
+  const a = ask(1, 'Rewrite the file', 'Patch it in place (recommended)', 'Skip')
+  for (const cfg of [ON, ANY]) {
+    const pick = pickAnswer(a, cfg)
+    assert.equal(pick?.n, 2, `mode=${cfg.anyQuestion}`)
+    assert.match(pick.why, /recommend/i)
+  }
+})
+
+ok('a recommendation outranks the arrow, wherever the arrow is', () => {
+  for (const sel of [1, 2, 3]) {
+    const a = ask(sel, 'Taskbar icon', 'Alt-Tab entry [default]', 'Tray area')
+    assert.equal(pickAnswer(a, ANY)?.n, 2, `sel=${sel}`)
+  }
+})
+
+ok('a recommendation may not lift an option over a refusal', () => {
+  // The marker raises rank. It can never reach past the two guards, in either mode.
+  const widens = ask(1, "Yes, and don't ask again (recommended)", 'No')
+  assert.equal(pickAnswer(widens, ON), null)
+  assert.equal(pickAnswer(widens, ANY), null)
+  const stops = ask(1, 'Do it', 'No, tell Claude what to do differently (recommended)')
+  assert.equal(pickAnswer(stops, ON)?.n, 1, 'the plain yes is still the answer')
+  assert.equal(pickAnswer(stops, ANY)?.n, 1)
+})
+
+ok('two recommendations are a choice again', () => {
+  // A tool recommending two things has not stated an answer, and picking between them is
+  // the invention this file exists to refuse.
+  const a = ask(1, 'Squash (recommended)', 'Rebase (recommended)', 'Cancel')
+  assert.equal(pickAnswer(a, ON), null)
+})
+
+ok('"keep the current X" stops, the same as "keep current X"', () => {
+  // The guard read `keep current` and the CLIs write `Keep the current plan`, so the one
+  // wording anybody actually sees walked straight past it.
+  const a = ask(2, 'Keep the current plan', 'No, tell Claude what to do differently')
+  assert.equal(pickAnswer(a, ON), null)
+  assert.equal(pickAnswer(a, ANY), null)
+})
+
 ok('"no" leading an answer is never read as yes', () => {
   assert.equal(pickAnswer(ask(1, 'No - I already said yes to that', 'Stop'), ON), null)
 })

@@ -145,6 +145,39 @@ check((drawn.text ?? '').includes('Yes, run it'), 'it names the option it will p
 const marked = drawn.btns.filter((b) => b.auto)
 check(marked.length === 1 && marked[0].text.includes('Yes, run it'), 'that option is the marked one on the row', JSON.stringify(marked))
 
+// WHERE it is drawn, which is the other half of "I want to see the countdown on the
+// terminal". The card used to lie across the bottom of the pane - which is where a CLI
+// draws its chooser - so the thing being answered was underneath the thing answering it,
+// and the card repeated the question, clamped to two lines, to make up for covering it.
+// Docked right: the CLI's own question stays readable beside it, and the copy is gone.
+const dock = await evalIn(`(() => {
+  const pane = window.__pf[${JSON.stringify(ids[0])}].host.parentElement
+  const card = pane.querySelector('.pane-ask')
+  if (!card) return null
+  const r = card.getBoundingClientRect()
+  const h = pane.getBoundingClientRect()
+  return {
+    rightGap: Math.round(h.right - r.right),
+    leftGap: Math.round(r.left - h.left),
+    w: Math.round(r.width),
+    paneW: Math.round(h.width),
+    copy: !!card.querySelector('.pane-ask-q'),
+    btnW: [...card.querySelectorAll('.pane-ask-btn')].map((b) => Math.round(b.getBoundingClientRect().width))
+  }
+})()`)
+check(Boolean(dock) && dock.rightGap <= 12, 'the card is docked to the right edge', `${dock && dock.rightGap}px gap`)
+check(
+  Boolean(dock) && dock.leftGap > dock.rightGap && dock.w < dock.paneW * 0.75,
+  'and leaves the CLI its own question to the left of it',
+  dock && `${dock.w} of ${dock.paneW}, ${dock.leftGap}px clear`
+)
+check(Boolean(dock) && !dock.copy, 'the question is not drawn a second time inside it')
+check(
+  Boolean(dock) && dock.btnW.length > 1 && new Set(dock.btnW).size === 1,
+  'the answers are one per line and all the same width, so arrowing moves no button',
+  dock && JSON.stringify(dock.btnW)
+)
+
 // The sidebar half. The pane's countdown is drawn inside a pane that is very often not
 // the one on screen, which is exactly the report this answers ("I cannot even see the
 // timer counting down"), so the card carries the seconds too.

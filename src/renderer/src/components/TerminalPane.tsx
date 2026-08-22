@@ -3491,7 +3491,12 @@ function TerminalPane({
           this only draws it. */}
       {ask && (
         <div className="pane-ask">
-          {ask.question && <div className="pane-ask-q">{ask.question}</div>}
+          {/* The question is NOT repeated here. The CLI has it on screen a few rows to the
+              left, in full, with its own wording and its own numbers - drawing it again in
+              a card that also carries the answers made two questions out of one, and the
+              copy was clamped to two lines so it was the worse of the two. What this holds
+              is the part the terminal cannot say: what this app is about to press, when,
+              and a target for a pointer or a thumb. */}
           {autoAnswerAt ? <AskCountdown at={autoAnswerAt} n={autoAnswerN} ask={ask} /> : null}
           <div className="pane-ask-row">
             {ask.options.map((o) => (

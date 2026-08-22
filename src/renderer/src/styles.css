@@ -1332,28 +1332,33 @@ body.sizing * { user-select: none !important; }
    No animation anywhere in here - it appears when an agent stops and waits, which is
    exactly when somebody is looking at another window, and a pulsing row on an idle pane
    is what test:anim exists to refuse. */
+/* Docked to the RIGHT of the question rather than across the bottom of the pane.
+   Two things were wrong with the full-width strip. It sat ON the chooser it was about -
+   a CLI draws its question near the bottom of the frame, which is exactly where this
+   was - so reading the real question meant reading it around a card that was also
+   repeating it, badly, clamped to two lines. And every arrow key reflowed a wrapping row
+   of pills across the pane's whole width, which is the "laggy when I arrow up and down"
+   report: a fixed-width column of rows re-paints one border colour instead.
+
+   `top: auto` is load-bearing while this stays a sibling of the terminal host. */
 .pane-ask {
   position: absolute; z-index: 10;
-  left: 8px; right: 8px; bottom: 8px;
+  right: 8px; bottom: 8px; left: auto; top: auto;
+  width: 260px; max-width: calc(100% - 16px); max-height: calc(100% - 16px);
   display: flex; flex-direction: column; gap: 6px;
-  padding: 8px 10px;
+  padding: 8px; overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface-2); border: 1px solid var(--accent);
   border-radius: 10px; box-shadow: var(--shadow);
 }
-.pane-ask-q {
-  color: var(--text); font-size: 12px; line-height: 1.35;
-  /* Two lines and no more: the question is on screen a few rows above in full, and this
-     is a label on a row of buttons, not a second copy of the transcript. */
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.pane-ask-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* One answer per line. A pill row wrapped differently for every option length, so the
+   button under the pointer moved as the arrow moved; a column is a stable target. */
+.pane-ask-row { display: flex; flex-direction: column; gap: 4px; }
 .pane-ask-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 100%;
-  padding: 6px 10px; min-height: 30px;
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; text-align: left;
+  padding: 5px 8px; min-height: 28px;
   background: var(--surface-3); color: var(--text);
-  border: 1px solid var(--line); border-radius: 999px;
+  border: 1px solid var(--line); border-radius: 7px;
   font-size: 12px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1371,6 +1376,10 @@ body.sizing * { user-select: none !important; }
    thumb, and answering from the phone is most of why this exists. */
 @media (pointer: coarse) {
   .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
+  /* A phone gives the answers the width of the screen. The right-hand dock exists so a
+     desk can read the CLI's own question beside the card; a handset is showing one pane
+     at a time and has nothing to read beside it. */
+  .pane-ask { left: 8px; right: 8px; width: auto; max-height: 60%; }
 }
 
 /* A pane whose pty has not printed anything yet. No animation: this sits on screen for
@@ -1705,6 +1714,7 @@ body.sizing * { user-select: none !important; }
 .dialog > .proj-list,
 .dialog > .keys,
 .dialog > .hist-list,
+.dialog > .dev-cols,
 .dialog > .transcript {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px;
 }
@@ -1719,6 +1729,7 @@ body.sizing * { user-select: none !important; }
 .dialog:has(> .keys),
 .dialog:has(> .hist-list),
 .dialog:has(> .diff-body),
+.dialog:has(> .dev-cols),
 .dialog:has(> .transcript) { overflow: hidden; }
 /* In the fallback case above the button row would scroll away with everything else;
    pinning it to the bottom of the scroll area keeps the actions on screen. The
@@ -1729,6 +1740,13 @@ body.sizing * { user-select: none !important; }
   position: sticky; bottom: 0; z-index: 1;
   background: var(--surface-2);
   padding-bottom: 16px; margin-bottom: -16px;
+  /* A strip of the dialog's own background ABOVE the row as well as below it. Without it
+     the pinned row covers nothing on its top edge, so a section scrolling past ends up
+     touching - and visibly under - the buttons: reported as the Close button overlapping
+     the panel. The negative margin cancels it again, so nothing moves in the ordinary
+     case where the dialog is not scrolling at all. Same fix, same reason, as the
+     new-session dialog's `.dialog-foot` below. */
+  padding-top: 10px; margin-top: -10px;
 }
 /* More than the buttons has to be pinned in the new-session dialog: the install chips
    sit directly above them, and pinning the row alone parked it ON them the moment the
@@ -2384,7 +2402,21 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   display: inline-flex; align-items: center; gap: 3px;
   color: var(--ok); border-color: #35d07f33; background: #35d07f14;
 }
-.dialog.devices { gap: 14px; }
+.dialog.devices { gap: 14px; width: min(1120px, 96vw); }
+/* Measured before this existed, in a real window at 1500x912 with nothing paired: 1057px
+   of content in an 812px box. Two columns halve the tallest thing on screen instead of
+   summing it, and a paired machine adds a row per pane it has - so stacked, this only
+   ever gets worse. `align-items: start` so a short column does not stretch to match a
+   tall one; `min-width: 0` so a long address inside a column can still ellipsis. */
+.dev-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; align-items: start;
+}
+.dev-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* Below this there is no second column to be had, and one narrow column of pairing codes
+   and addresses reads worse than one wide one. */
+@media (max-width: 1000px) {
+  .dev-cols { grid-template-columns: 1fr; }
+}
 /* The launcher button stays lit while its folder picker is folded open, so it
    is obvious which device the picker underneath belongs to. */
 button.ghost.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
@@ -3083,7 +3115,10 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    Its own line rather than a chip beside them: it is the one thing on the card that is
    about to happen without a press, so it may not be read as another option. */
 .pane-ask-auto {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  /* In a 260px column the seconds and the sentence do not fit on one line, and the
+     sentence is the half that may wrap - the pill may never be pushed off. */
+  flex-wrap: wrap;
   font-size: 12px; color: var(--danger);
   /* Its own banded row rather than a line of small text: at 11px on a dark card, under a
      question and above a row of buttons, it was reported as not being on screen at all. */
@@ -3099,7 +3134,12 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   font-size: 13px; font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.pane-ask-auto-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-ask-auto-word {
+  flex: 1 1 120px; min-width: 0; line-height: 1.3;
+  /* Two lines: the option's own label is in here and they run long ("Yes, and run the
+     tests afterwards"). Beyond two this is a paragraph rather than a label. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .pane-ask-auto-pick { color: var(--text); font-weight: 600; }
 /* The option about to be pressed for you. Dashed rather than solid so it cannot be
    confused with `.on` - where the CLI's own arrow is - which is a different fact and is

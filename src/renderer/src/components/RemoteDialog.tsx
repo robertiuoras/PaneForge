@@ -764,6 +764,24 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         </div>
         <Blurb id="devices" />
 
+        {/* Two columns, and the reason is arithmetic rather than taste: measured in a real
+            window at 1500x912 with NOTHING paired, this panel was 1057px of content in an
+            812px box - so it scrolled on an empty desk, and every section below the fold
+            was found by dragging. Stacked, it can only get worse: a paired machine adds a
+            row per pane it has.
+
+            It is also the ONE growing child this dialog never had. Without one the whole
+            dialog scrolls and the footer is pinned over it with `position: sticky`, which
+            is why the Close button had content sliding under its top edge. With the
+            columns as the scroll body, the head and the footer are outside it and nothing
+            can reach them.
+
+            Left is the phone, which is the one thing here that finishes in a single action
+            and is the tallest section by far - measured at 801px against the other three
+            put together at 145. Right is this machine, what it is already paired with, and
+            how to add another. One column again under 1000px. */}
+        <div className="dev-cols">
+          <div className="dev-col">
         {/* ------------------------------------------------------------------- phone
             First, above the desktop card, because it is the one people arrive here for
             and because it is the one that finishes in a single action - point a camera at
@@ -771,6 +789,9 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             but it is not a peer: there is no app at the far end to pair with, only a
             browser, and what it loads is this window's own UI. See main/phone.ts. */}
         <PhonePanel flash={flash} />
+          </div>
+
+          <div className="dev-col">
 
         {/* ------------------------------------------------------------- this device
             The hero card. It is the only thing on this screen that is about the
@@ -1223,6 +1244,8 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           </div>
           </Fold>
           {error && <div className="dev-error">{error}</div>}
+        </div>
+          </div>
         </div>
 
         <div className="dialog-row">
