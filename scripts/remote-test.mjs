@@ -114,6 +114,12 @@ function backend() {
       },
       projects: async () => [{ name: 'assistant', path: '/w/assistant', lastUsed: 0, isGit: true }],
       agents: async () => [{ id: 'claude', label: 'Claude Code', available: true }],
+      // What that machine is running outside its panes. The host reads its OWN process
+      // table for this; here it is a fixture, because what this test owns is the frame
+      // crossing the socket - `npm run test:backjobs` owns the reading.
+      jobs: async () => [
+        { pid: 4242, kind: 'agent', label: 'claude', cmd: 'claude -p sweep', port: null, where: 'vrb', elapsed: 900, headless: true }
+      ],
       onData: (cb) => (listeners.data.push(cb), () => {}),
       onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
       onAttention: (cb) => (listeners.attention.push(cb), () => {})
@@ -282,6 +288,17 @@ async function main() {
   // Request/response.
   const projects = await client.projects()
   ok('the far project list can be asked for', projects.length === 1 && projects[0].name === 'assistant')
+
+  // What that machine is running with no pane on it. This is the whole reason the class
+  // exists: a scheduled `claude -p` on the desk that does the unattended work was
+  // invisible from here, because it is not a pane and nothing else crossed the link.
+  const jobs = await client.jobs()
+  ok('a paired machine says what it is running outside its panes', jobs.length === 1, JSON.stringify(jobs))
+  ok(
+    'and the job arrives whole, not reduced on the way',
+    jobs[0]?.kind === 'agent' && jobs[0]?.headless === true && jobs[0]?.where === 'vrb' && jobs[0]?.elapsed === 900,
+    JSON.stringify(jobs[0])
+  )
   const started = await client.startSession({
     cwd: '/w/assistant',
     agent: 'codex',

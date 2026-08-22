@@ -91,6 +91,7 @@
     "test:devservers": "node scripts/devservers-test.mjs",
     "test:devlist": "node scripts/devlist-test.mjs",
     "test:backjobs": "node scripts/backjobs-test.mjs",
+    "test:devicesfit": "node scripts/devices-fit-test.mjs",
     "test:autohandoff": "node scripts/autohandoff-test.mjs",
     "test:idlequit": "node scripts/idlequit-test.mjs",
     "test:promptecho": "node scripts/promptecho-test.mjs",

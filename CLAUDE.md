@@ -282,6 +282,38 @@ older build does not recognise `askpair` and refuses, which is correct — it ha
 show. `npm run test:pairask`, whose load-bearing case is a real relay proving the two
 numbers differ.
 
+**...and a paired machine says what it is running OUTSIDE its panes.** The sessions list
+carries every pane the other device has, which answers "what is open over there". It could
+not answer the question actually asked of the machine doing the unattended work: the
+`claude -p` a scheduled task fires, the loop wedged since Tuesday, the dev server on a port
+nobody can reach. None of that is a pane, so none of it was anywhere in this app - you went
+and looked over SSH. `shared/backJobs.ts` is the reading, `main/backJobs.ts` the one process
+table it needs, `jobs`/`jobslist` the frame, and `PeerJobs` in `RemoteDialog.tsx` the rows
+under a device's pane picker.
+
+- **Three narrow classes, and the narrowness is the feature**: an agent CLI outside a pane
+  (`agent`, marked as a *run* when it carries a print/exec flag - the shape a scheduler
+  makes, and the one that can fail silently for a week because there is no screen to print
+  onto), a dev server (`dev`, borrowed from `devList.ts`), and a script under the projects
+  root that has been alive longer than `LOOP_MIN_SECONDS` (`loop`). A process table is ~700
+  rows here and a list of 700 answers nothing.
+- **Anything under a pane's own tree is left out.** That work already has a card, and
+  listing it twice is the duplicate-row bug `shared/desk.ts` documents at length.
+- **The age floor belongs to the loop class alone.** Without it the list is mostly Claude
+  Code's own hooks, several per prompt, each alive under a second - a list that flickers is
+  one nobody trusts. An agent or a dev server two seconds old is exactly what somebody
+  opened this to see.
+- **The fold is kind-aware, unlike `devList.ts`'s.** `npm run dev` and the `next dev` it
+  spawned are one server; a dev server an AGENT started is two different facts, and folding
+  it in leaves a card saying an agent is listening on port 5173.
+- **A refusal may never share a shape with an empty answer.** `Remote.jobsOn` rejects when
+  the device is not connected, because `[]` means "that machine is running nothing" - which
+  is the answer being checked - and a failed read wearing it says the PC is idle every time
+  the link is down.
+- **On demand, never on a tick**: it is a whole `ps -Ao command=` on the other machine.
+  `npm run test:backjobs` (the last block reads THIS machine's real table), and the frame
+  itself is proved crossing a real socket in `npm run test:remote`.
+
 **A handoff moves the WORK, still never the pty.** `Hand off` on a pane's own card asks
 one question — which machine — in a box of its own (`HandoffDialog.tsx`), because the
 answer used to be a ghost button on the third row of a card inside Devices, a screen
@@ -750,6 +782,18 @@ that is the rest of the run, and the pane goes idle and green looking exactly li
 finished. `shared/choices.ts` reads the chooser off the pane's own frame, so it covers every
 CLI here rather than whichever one has a hook. Why each rule: `docs/design-notes.md`.
 
+**The card is docked to the RIGHT of the question, and does not repeat it.** It used to lie
+across the bottom of the pane, which is exactly where a CLI draws its chooser - so the thing
+being answered was underneath the thing answering it, and the card carried a second copy of
+the question, clamped to two lines, to make up for covering it. Two questions out of one,
+and the worse of the two was on top. Docked right (260px, `max-width: calc(100% - 16px)`,
+full-width again on a coarse pointer), the CLI's own question stays readable beside it -
+measured live at 260 of 1198 with 930px clear. The answers are one per line and all the
+same width, so arrowing repaints one border colour instead of reflowing a wrapping row of
+pills across the pane: that reflow was the "laggy when I arrow up and down" report, on top
+of the render cost the memo below already fixed. `npm run test:askrender` pins the dock,
+the absent copy, and the equal button widths.
+
 - **The reading is narrow because the expensive failure is a FALSE question**, not a missed
   one: buttons over a numbered list in an answer would type arrows into somebody's draft.
   Three things must all be true - the CLI's own `Enter to select` footer, options numbered
@@ -823,8 +867,18 @@ second** default. It was off for one reason - arriving switched on with an updat
 answer a permission prompt on a desk that never asked - and the answer to that is the
 countdown, not silence. Detail: `docs/design-notes.md`.
 
+- **It takes the BEST option, not the first one.** Every CLI here marks its own preference
+  in the label when it has one - `(recommended)`, `[default]`, `- suggested` - and that is
+  the tool STATING the answer rather than this app guessing, so exactly one marked option
+  outranks a yes-shaped word and outranks the row the arrow happens to be on, in both
+  modes. Two marked options are a tool recommending two things, which is a choice again.
+  The marker raises rank and can never lift an option past a refusal.
 - **The refusals are the feature.** Exactly ONE option leading with a yes-shaped word is
-  answered; two are a choice, none is a decision somebody is being asked to make. An option
+  answered; two are a choice, none is a decision somebody is being asked to make. And the
+  arrow sitting on a REFUSED option is not a licence to take a different one: the CLI's
+  preference has been refused and there is no second signal, so the question is a person's
+  again (`Keep the current plan` now stops too - the guard read `keep current` and every
+  CLI writes `keep the current`). An option
   that WIDENS permission (`don't ask again`, the bare word `always`) is never reachable in
   either mode, and neither is one that stops or answers with a question of its own (`No, tell
   Claude what to do differently` leaves the CLI holding an empty composer). `anyQuestion` is
@@ -1355,6 +1409,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
 | `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting |
 | `npm run test:devlist` | what is serving now and which one a sentence names (a server and its child are ONE; "close the dev" with three running picks none) |
+| `npm run test:backjobs` | what a machine runs with no pane on it: a hook alive for 300ms is not a job, a pane's own build is never listed twice, `--max-old-space-size=4096` is not a port, a dev server an agent started is a second fact - and a last block that reads THIS machine's real process table, because the `etime` parsing is the half a fixture cannot check |
 | `npm run test:devservers` | turning a running server back into the package.json script that starts it, and the drops |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 | `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back, and the three refusals |
@@ -1363,7 +1418,14 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 Needing a real window (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view`, `test:stashdrag`, `test:activate`,
 `test:turncopyview` (happy minimized), `test:restorefix` (two launches),
-`test:askclick`, `test:askrender`, `test:phoneview`.
+`test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`.
+
+`test:devicesfit` measures the Devices panel in the running app: two columns on a window
+wide enough, the shell itself never scrolling, and nothing reaching the Close button. Both
+faults were real and both were measured at 1500x912 - **1057px of content in an 812px box
+with nothing paired**, and a sticky footer with a background but no cover strip above it,
+so 228px of content sat under the button. Red-proofed by putting the single column and the
+missing `padding-top` back: 4 of its 6 checks fail.
 
 Out of the default suite because they need the network: `test:discordbrand` (asks Discord
 what `DISCORD_APP_ID` is called AND whether `PRESENCE_IMAGE`'s asset still exists - the two
