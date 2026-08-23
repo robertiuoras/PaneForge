@@ -85,6 +85,7 @@ import {
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
+import { readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -1250,6 +1251,10 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 ipcMain.on('pty:write', (_e, id: string, data: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
+  // Somebody is using this pane, so the promise the countdown made is off. Only THIS path
+  // cancels - the clear itself types through `manager.write` inside the manager and never
+  // reaches this handler, so it cannot stand its own countdown down on the way out.
+  manager.cancelAutoClear(id, 'typed')
   manager.write(id, data)
 })
 
@@ -1954,6 +1959,17 @@ ipcMain.handle('remote:handoffPending', () =>
 )
 // False means nothing was waiting: the pane is already on its way, or was never queued.
 ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
+// A session clearing ITSELF once it has grown too big and written its handoff. The decision
+// is the Stop hook's (`claude-config/autoclear.mjs`); this end owns the countdown, which is
+// the only part a person can stop. Payload is re-read here because the phone server reaches
+// this channel too - see `readAutoClearAsk`.
+ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
+  const ask = readAutoClearAsk(raw)
+  if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
+  if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  return manager.armAutoClear(ask.paneId, ask)
+})
+ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the

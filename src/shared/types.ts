@@ -2119,6 +2119,14 @@ export interface Api {
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
+  /**
+   * Arm a pane's own /clear, from the `autoclear` Stop hook. See `shared/autoclear.ts`.
+   *
+   * Answers `{ ok: false, reason }` rather than throwing, because the caller is a detached
+   * child process whose stderr nobody reads: a refusal has to be something it can log.
+   */
+  askAutoClear(ask: unknown): Promise<{ ok: boolean; reason?: string }>
+  cancelAutoClear(id: string): Promise<boolean>
 
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
