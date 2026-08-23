@@ -2985,6 +2985,45 @@ export default function App(): JSX.Element {
   // pane, which looks exactly like a session that froze.
   useEffect(() => api.onHandoffMoved((message) => flash(message)), [flash])
 
+  /**
+   * Bring a mirrored pane back to this machine, in one press.
+   *
+   * Handing a pane OUT has been one press for a long time and handing it back was not a
+   * press at all: the button is drawn only for a local pane, so the way back was to walk
+   * to the other machine. It cannot be a pull - the pty, the repo and the transcript are
+   * over there - so this asks that device to run its own handoff at us, and every answer
+   * below is its report rather than a guess made here. A pane mid-turn is QUEUED by the
+   * far end and comes back when the turn ends; nothing is killed to make it travel.
+   */
+  const bringHere = useCallback(
+    (s: Session) => {
+      const where = s.remote?.name ?? 'that machine'
+      flash(`Asking ${where} to send ${s.title} back…`)
+      void api
+        .bringPaneHere(s.id)
+        .then((items) => {
+          const item = items[0]
+          if (!item) {
+            flash(`${where} has no such pane any more`)
+            return
+          }
+          if (item.ok) {
+            flash(`${s.title} is back on this machine`)
+            return
+          }
+          // Not a failure: the pane is mid-turn and the far end is holding it. Saying so
+          // in the far end's own words keeps this from reading as "it refused".
+          if (item.pending) {
+            flash(item.error || `${s.title} comes back when its turn ends`)
+            return
+          }
+          flash(item.error || `${where} would not send it back`)
+        })
+        .catch((err: Error) => flash(err.message))
+    },
+    [flash]
+  )
+
   // The "what is this feature" notes, and the × that retires one. Held here rather than
   // passed down because eight dialogs would otherwise each grow a config prop to draw
   // one sentence - see components/Blurb.tsx.
@@ -4207,6 +4246,21 @@ export default function App(): JSX.Element {
                     Hand off
                   </button>
                 )}
+                {/* The same question from the other side of it. Drawn in the same slot as
+                    `Hand off` because it is the same decision - WHERE this agent runs -
+                    and a mirrored pane had no answer to it at all until now. */}
+                {s.remote && s.status !== 'exited' && (
+                  <button
+                    className="ghost small desk-only pt-handoff"
+                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      bringHere(s)
+                    }}
+                  >
+                    Bring here
+                  </button>
+                )}
                 <button
                   className="icon"
                   title="Copy this pane's complete terminal output"
@@ -4590,6 +4644,17 @@ export default function App(): JSX.Element {
                     }
                   ]
                 : []),
+              ...(s.remote && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'bring',
+                      label: 'Bring it here',
+                      hint: 'move it back from that machine',
+                      icon: '⤵',
+                      run: () => bringHere(s)
+                    }
+                  ]
+                : []),
               ...(grid
                 ? [
                     {
@@ -4682,6 +4747,16 @@ export default function App(): JSX.Element {
                           busy: s.status === 'working' || s.status === 'starting',
                           asking: Boolean(s.ask)
                         })
+                    }
+                  ]
+                : []),
+              ...(!local && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'bring',
+                      label: 'Bring it here',
+                      hint: `move it back from ${s.remote?.name ?? 'that machine'}`,
+                      run: () => bringHere(s)
                     }
                   ]
                 : []),

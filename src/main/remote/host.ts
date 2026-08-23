@@ -11,7 +11,12 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
-import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
+import {
+  HANDOFF_MAX_FILE,
+  type HandoffItem,
+  type HandoffPayload,
+  type HandoffResult
+} from '../../shared/handoff'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
@@ -40,6 +45,14 @@ export interface HostBackend {
   startSession(req: StartSessionRequest): Session | Promise<Session>
   /** a pane another device is handing to this one - pull, restore, start */
   receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
+  /**
+   * A guest asking for one of THIS device's panes back. It is the ordinary outward
+   * handoff - queue, repo push, refusals and all - aimed at the guest's own device id,
+   * which is why it returns `HandoffItem[]` and not a bare ok.
+   *
+   * Optional so a backend that cannot do it refuses in a sentence rather than throwing.
+   */
+  handBack?(id: string, device: string): Promise<HandoffItem[]>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /**
@@ -332,6 +345,27 @@ export class RemoteHost extends EventEmitter {
             return
           }
           this.runHandoff(conn, rid, payload, null)
+          return
+        }
+        // "Bring it back here". The pane lives on THIS machine, so this machine is the
+        // one that can move it: the guest only names the pane, and the device it goes to
+        // is the one on the other end of this socket - never a device id in the frame,
+        // which a guest could otherwise point anywhere.
+        case 'takeback': {
+          const rid = Number(m.rid ?? 0)
+          const device = conn.peer.id
+          if (!device) {
+            conn.send({ t: 'failed', rid, error: 'That device has not identified itself' })
+            return
+          }
+          if (!this.backend.handBack) {
+            conn.send({ t: 'failed', rid, error: 'This machine cannot send a pane back yet' })
+            return
+          }
+          void this.backend
+            .handBack(id, device)
+            .then((items) => conn.send({ t: 'takebackdone', rid, items }))
+            .catch((err: Error) => conn.send({ t: 'failed', rid, error: err.message }))
           return
         }
         case 'handoffdata': {

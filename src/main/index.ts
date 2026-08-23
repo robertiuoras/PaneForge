@@ -920,6 +920,10 @@ const remote = new Remote({
       }
       return result
     }),
+  // A device that mirrors one of our panes asking for it back. It is the ordinary
+  // outward handoff, aimed at the device that asked - so a mid-turn pane is queued and
+  // travels when its turn ends, exactly as it would had somebody pressed Hand off here.
+  handBack: (id, device) => runHandoff(device, { ids: [id], waitForTurn: true }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
@@ -1954,6 +1958,9 @@ ipcMain.handle(
       waitForTurn: waitForTurn !== false
     })
 )
+// One press on a mirrored pane's own card. The answer is the far end's report, so a
+// refusal ("dirty checkout over there") arrives as a sentence naming the pane.
+ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(id)))
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )

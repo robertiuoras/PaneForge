@@ -2115,6 +2115,14 @@ export interface Api {
     /** false moves a pane mid-turn and loses the answer being written. Default true. */
     waitForTurn?: boolean
   ): Promise<HandoffItem[]>
+  /**
+   * Bring a MIRRORED pane back to this device - the other direction of the same move.
+   *
+   * The pty never travels, so this cannot pull: the device that owns the pane is asked to
+   * run its own handoff at us. Every refusal and the mid-turn queue are therefore the far
+   * end's, and the report is the same `HandoffItem[]` a local hand-off gives.
+   */
+  bringPaneHere(id: string): Promise<HandoffItem[]>
   /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */

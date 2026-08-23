@@ -26,7 +26,7 @@ import type {
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
-import type { HandoffPayload, HandoffResult } from '../../shared/handoff'
+import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
@@ -176,6 +176,22 @@ export class Remote extends EventEmitter {
       this.rememberWatch(client)
       return r
     })
+  }
+
+  /**
+   * Bring a mirrored pane back to this device.
+   *
+   * `handoffTo` above is this device pushing a pane out; this is the same move asked for
+   * from the other side of it. It reaches the far end as a request rather than a pull -
+   * see `RemoteClient.takeBack` - so everything that decides whether a pane may move is
+   * decided over there, where the pty is.
+   */
+  bringHere(id: string): Promise<HandoffItem[]> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!cut || !client) return Promise.reject(new Error('That pane is not on a paired device'))
+    if (client.status !== 'online') return Promise.reject(new Error('That device is not connected'))
+    return client.takeBack(cut.local)
   }
 
   /** Keep a pick the link made on its own (a launch, a handoff) across restarts. */
