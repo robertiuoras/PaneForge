@@ -155,8 +155,20 @@ const CLAUDE_MODELS: ModelChoice[] = [
 /** The placeholder an agent's `env` uses to ask for the OpenRouter key from Settings. */
 export const OPENROUTER_KEY_VAR = '${OPENROUTER_KEY}'
 
-/** OpenRouter's own address, and the one it answers the Anthropic Messages API on. */
-export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
+/**
+ * OpenRouter's own address, and the one it answers the Anthropic Messages API on.
+ *
+ * NO `/v1` - the CLI appends `/v1/messages` itself, exactly as the DeepSeek and Z.ai
+ * entries below document. This carried the suffix for eight days and every OpenRouter
+ * pane in that time posted to `https://openrouter.ai/api/v1/v1/messages`, which is a
+ * 404 HTML page. What the CLI prints for that is NOT a transport error: it is
+ * `There's an issue with the selected model (<id>). It may not exist or you may not
+ * have access to it.` - a sentence about the MODEL, in a pane whose model is fine, so
+ * every report of it was a hunt for a model id that did not need fixing. Measured
+ * 2026-08-23 against the real `claude` binary: with `/api/v1` both `stealth/ox-alpha`
+ * and `z-ai/glm-5.2` print that line and exit; with `/api` both answer.
+ */
+export const OPENROUTER_BASE = 'https://openrouter.ai/api'
 
 // A shortcut list, same as every other one here - OpenRouter carries hundreds of ids
 // and any of them can be typed. These are the ones worth reaching for by name: GLM is
