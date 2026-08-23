@@ -18,6 +18,18 @@ export interface HandoffRepo {
   branch: string
   /** repo top-level, relative to the sender's projects root - where a clone goes */
   dirRel: string
+  /**
+   * The commit the sender is handing over, so the receiver can find out it already has it
+   * without asking the network.
+   *
+   * Measured 2026-08-23 between this Mac and the PC: the sender's push and the receiver's
+   * fetch are 944 ms and 1042 ms of the ~2.3 s a handoff takes, and on a desk whose two
+   * checkouts are already on one commit - which is the ordinary case, since both machines
+   * autosync - neither of them transfers a single object. Everything else in the transfer
+   * is tens of milliseconds. Absent means an older sender, and the receiver then does what
+   * it always did.
+   */
+  sha?: string
 }
 
 export interface HandoffPayload {
