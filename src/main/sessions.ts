@@ -917,6 +917,7 @@ export class SessionManager extends EventEmitter {
   resize(id: string, cols: number, rows: number, borrowed = false, viewer = 'guest'): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
+    console.info(`PFDBG resize ${id} ${cols}x${rows} borrowed=${borrowed} viewer=${viewer} was=${s.cols}x${s.rows} map=${JSON.stringify([...(s.borrows ?? new Map())])}`)
     // Several screens may be borrowing this pane at once, so a borrow is RECORDED against
     // whoever asked and the pty is then set to the one grid they can all draw - never to
     // the last number that arrived. Without this two viewers flip the pty between their
