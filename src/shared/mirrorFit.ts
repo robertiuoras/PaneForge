@@ -58,9 +58,17 @@ export interface MirrorFitOut {
  * implies is a step; the observer that called this runs again on the layout that
  * results. What makes the walk terminate is that the step never rounds UP.
  */
+/**
+ * The floors the CALLER applies to `t.resize`, mirrored here so this answers about the
+ * grid that will actually be drawn. A host reporting 8 columns is resized to 20, and
+ * asking this about 8 would size the font for a grid that does not exist.
+ */
+export const MIN_COLS = 20
+export const MIN_ROWS = 5
+
 export function mirrorFit(i: MirrorFitIn): MirrorFitOut {
-  const hostCols = Math.max(1, i.hostCols)
-  const hostRows = Math.max(1, i.hostRows)
+  const hostCols = Math.max(MIN_COLS, i.hostCols)
+  const hostRows = Math.max(MIN_ROWS, i.hostRows)
   const maxFont = Math.max(MIN_FONT, i.maxFont)
 
   if (!(i.fitCols > 0) || !(i.fitRows > 0)) return { font: i.font, scale: 1 }
