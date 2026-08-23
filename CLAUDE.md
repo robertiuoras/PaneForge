@@ -490,6 +490,19 @@ which it is on its card.
   headless flags are unverified, and `drivable()` refusing is better than a guess.
 - `npm run test:agentenv`.
 
+**Gemini CLI no longer has a login of its own.** Google ended the free "sign in with
+Google" tier for that client on 2026-08-23: every launch dies `IneligibleTierError ...
+UNSUPPORTED_CLIENT ... migrate to the Antigravity suite`, inside a pane that otherwise
+looks perfectly healthy. Probed here against 0.56.0 - an api-key auth type with a junk key
+reaches `generativelanguage.googleapis.com` and comes back `400 API key not valid`, which
+is what tells a live path from a dead one. So `google` (AI Studio) is a `KEY_PROVIDERS`
+entry, the agent's `env` names `keyVar('google')`, and `keyProviderFor` reads
+`GEMINI_API_KEY` as an authenticating token - so Settings says the key is missing rather
+than leaving somebody to find out when the first turn fails. `GEMINI_DEFAULT_AUTH_TYPE` is
+set beside it and is NOT enough on its own: it is a default, and a machine whose
+`~/.gemini/settings.json` already says `oauth-personal` keeps going to the dead endpoint
+until that file is changed. Nothing in the environment can overrule it.
+
 ## ...and the model list is not this build's opinion of what exists
 
 `OPENROUTER_MODELS` was measured on one day in August and a model published after it was
@@ -1349,6 +1362,13 @@ Full reasoning: `docs/design-notes.md`.
   `closeable()` and `CLOSEABLE` - both written as `ready | exited` - refused every pane anybody
   would want closed. The refusal that was meant is the pane's own live question (`asking`, off
   `Session.ask`), never the word for its state.
+- **The countdown is HEARD, not only drawn.** It lives beside the mascot in a corner, takes
+  itself away after a minute and is behind whatever window is on top, so a pane can leave
+  the machine with nothing on screen at the moment it mattered. `sounds.move` (default
+  `bowl`, its own Settings row) plays once when a countdown arms and the last five seconds
+  tick, exactly as `AskCountdown` does for the other thing this app decides on somebody's
+  behalf - and it is the only alert here that is not about an agent, because it is the app
+  announcing itself.
 - **Nothing decides and then reports: it counts down first.** Both sweeps hand their plan to
   `armCloseRef` and the mascot draws `CLOSE_COUNTDOWN_MS` (15s) with the pane named, `Keep it
   open` and `Close now`. Doing nothing still closes it - a sentence with a clock in it, not a
@@ -1534,7 +1554,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
-| `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting |
+| `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting - and what the BUDGET rung may move at all, whose load-bearing case is that a desk three panes over budget with nothing expensive on it moves nothing (red-proofed: without the gate it moves two), with the pressure sweep still taking a cheap pane as the control |
 | `npm run test:devlist` | what is serving now and which one a sentence names (a server and its child are ONE; "close the dev" with three running picks none) |
 | `npm run test:backjobs` | what a machine runs with no pane on it: a hook alive for 300ms is not a job, a pane's own build is never listed twice, `--max-old-space-size=4096` is not a port, a dev server an agent started is a second fact - and a last block that reads THIS machine's real process table, because the `etime` parsing is the half a fixture cannot check |
 | `npm run test:devservers` | turning a running server back into the package.json script that starts it, and the drops |
@@ -1653,6 +1673,20 @@ budget, `Verdict.over` is how many panes are past it, and `budgetPlan` moves exa
 many. Measured on this desk while writing it: pressure `normal`, load 0.53 per core, five
 `claude` panes -> `over: 3`, `why: 'budget'`, `offload: true` at `level: 'ok'`.
 
+- **Past the budget the question is what a pane COSTS, never how many there are.** A count
+  is not a cost: five idle agent panes at ~190 MB apiece are three over a budget of two and
+  are costing this machine nothing anybody can feel, and moving one is the app rearranging
+  somebody's desk for a number - reported 2026-08-23 as "randomly 2 sessions moved". So the
+  budget rung filters by `expensive()`: a live shell/dev-server job (`AutoPane.job`, which
+  outranks both numbers - a server that just started holds nothing and is exactly the pane
+  to move), or `budgetMinMb` (500, above an ordinary agent pane and below a build), or
+  `budgetMinCpu` (50% of one core). Dearest first, then the old quiet-and-off-screen order.
+  **An unmeasured pane is not expensive**: the sampler does not read the process table
+  behind a hidden window, and an absent reading may not move somebody's work - the same
+  rule `os.loadavg()` returning 0 on Windows already has. A desk far over budget with
+  nothing expensive on it therefore moves NOTHING and stays over, which is the honest
+  answer. The pressure sweep and the idle clock are untouched: when the kernel is objecting
+  a cheap pane is still memory back, and `test:autohandoff` keeps that as its control.
 - **The budget is a policy, so it holds at `ok`** - which is the one sentence in
   `offloadTarget` that had to change. A desk that says it keeps two agents is not in
   trouble with five open; it is three panes past what it asked for, and the launch sends
