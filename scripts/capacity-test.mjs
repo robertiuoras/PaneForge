@@ -404,5 +404,37 @@ const offerBody = mainSrc
 ok('the restore offer asks the kernel now', /restorePlan\(/.test(offerBody) && /readPressure\(\)/.test(offerBody))
 ok('and never off the sampler variable', !/lastPressure/.test(offerBody))
 
+// ------------------------------------------- what the strip says while the ladder acts
+
+// The complaint this closes: "memory is tight / each pane costs ..." on a desk whose next
+// move the app was already making. The reading stays true and stays in the verdict; what
+// changes is whether it is put in front of somebody who has nothing to do about it.
+{
+  const tight = { localPanes: 6, pressure: 'warn', peerAvailable: true }
+  const nagging = assess(machine(tight))
+  ok('a tight desk with nobody acting still says so', nagging.say === true, nagging.advice)
+  const acting = assess(machine({ ...tight, willMove: true }))
+  ok('...and goes quiet once the ladder is going to move the pane', acting.say === false)
+  ok('but the reading itself is unchanged', acting.level === 'tight' && acting.advice === nagging.advice)
+
+  // The control that stops this being a switch that silences the strip outright.
+  ok(
+    'a switched-on handoff with no device online is not silence',
+    assess(machine({ localPanes: 6, pressure: 'warn', willMove: true })).say === true
+  )
+  ok(
+    'and out of memory says so whatever the ladder is doing',
+    assess(machine({ localPanes: 6, pressure: 'critical', peerAvailable: true, willMove: true })).say === true
+  )
+  ok(
+    'a healthy desk is never silenced by this',
+    assess(machine({ localPanes: 1, peerAvailable: true, willMove: true })).say === true
+  )
+  // The other tight branch: room ran out by arithmetic rather than by the kernel.
+  const cramped = { totalMb: 512, pressure: 'normal', localPanes: 4, peerAvailable: true }
+  ok('the no-room branch nags when nothing will act', assess(cramped).say === true)
+  ok('...and not when something will', assess({ ...cramped, willMove: true }).say === false)
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

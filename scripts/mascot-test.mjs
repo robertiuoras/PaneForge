@@ -529,4 +529,16 @@ const desk = [
   )
 }
 
+{
+  // The rung above the close. With the handoff on and a device online these panes are
+  // going to MOVE, so offering to close them is the app asking to do the worse of the two
+  // things it had already decided to do better.
+  const stale = [
+    pane({ id: 'a', state: 'ready', idleMs: 90 * 60_000, memMb: 300 }),
+    pane({ id: 'b', state: 'ready', idleMs: 90 * 60_000, memMb: 300 })
+  ]
+  check('it offers to close idle panes when nothing else will', notice(stale, { idleCloseOn: false }) !== null)
+  eq('and says nothing when the handoff is going to move them', notice(stale, { idleCloseOn: false, willMove: true }), null)
+}
+
 console.log(`mascot: ${checks} checks passed`)
