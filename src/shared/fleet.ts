@@ -161,10 +161,17 @@ export function fleetRow(s: FleetPane): FleetRow {
 /**
  * The order the rows are drawn in.
  *
- * By state first, then by how long the row has been in that state, oldest first - the
- * pane that has been waiting on you for eleven minutes is more interesting than the one
- * that finished four seconds ago, and a stall gets worse with age. Panes with no clock
- * keep the order they were opened in, so the screen does not reshuffle under the mouse.
+ * By state, and then by the order the caller handed them in - which is the order the
+ * sidebar numbers them, so pane 1 is above pane 2 inside every group and Ctrl+N matches
+ * what is on screen.
+ *
+ * It used to break the tie on `since`, oldest first, which reads well and is wrong: the
+ * clock a `needsYou` row counts from is `lastOutput`, and a `working` row falls back to
+ * the same field, so the sort key MOVED every time a pane painted. Eight panes printing
+ * is eight keys changing a few times a second, and the rows swapped places under the
+ * pointer - "sessions keep moving up or down randomly". A list whose order is only
+ * settled while nothing is happening cannot be pointed at, and the age it was sorting by
+ * is on each row's own clock anyway.
  */
 export function fleetOrder<T extends FleetPane & { id: string }>(sessions: T[]): T[] {
   const rows = new Map(sessions.map((s) => [s.id, fleetRow(s)]))
@@ -173,8 +180,6 @@ export function fleetOrder<T extends FleetPane & { id: string }>(sessions: T[]):
     const ra = rows.get(a.id)!
     const rb = rows.get(b.id)!
     if (ra.rank !== rb.rank) return ra.rank - rb.rank
-    if (ra.since !== undefined && rb.since !== undefined && ra.since !== rb.since)
-      return ra.since - rb.since
     return at.get(a.id)! - at.get(b.id)!
   })
 }

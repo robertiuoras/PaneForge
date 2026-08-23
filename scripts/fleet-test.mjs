@@ -167,15 +167,27 @@ is(fleetRow(sess({ status: 'idle', engaged: false })).motion, 'still', 'and so i
 }
 
 {
-  // Two panes in the same state: the one that has been there longer is the interesting
-  // one. A stall gets worse with age; a pane that finished four seconds ago does not.
+  // Two panes in the same state keep the numbering they were handed in. Sorting them by
+  // age reads well and is what made the list unpointable: the clock a finished pane
+  // counts from is `lastOutput`, so every frame either of them painted swapped the rows.
   const old = sess({ status: 'idle', engaged: true, lastOutput: 100 })
   const recent = sess({ status: 'idle', engaged: true, lastOutput: 900 })
   is(
     fleetOrder([recent, old]).map((s) => s.id),
-    [old.id, recent.id],
-    'inside one state, oldest first'
+    [recent.id, old.id],
+    'inside one state, the order the sidebar numbers them - never the clock, which moves'
   )
+}
+
+{
+  // The control for the case above: a pane whose clock moves must not move the row. Same
+  // two panes, one of them having just printed, and the order is unchanged.
+  const a = sess({ status: 'working', runSince: 10, lastOutput: 10 })
+  const b = sess({ status: 'working', runSince: 20, lastOutput: 20 })
+  const before = fleetOrder([a, b]).map((s) => s.id)
+  b.lastOutput = 9999
+  b.runSince = 9999
+  is(fleetOrder([a, b]).map((s) => s.id), before, 'a pane printing does not reshuffle the list')
 }
 
 {
