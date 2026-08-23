@@ -31,7 +31,7 @@ import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
-import { dropSelf, isSelfPeer } from './peers'
+import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 
@@ -263,7 +263,7 @@ export class Remote extends EventEmitter {
         hosting: this.host.listening,
         error: this.host.error || undefined,
         addresses: localAddresses(),
-        pairByAsking: c.pairByAsking !== false
+        pairByAsking: pairAskingOn(c)
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
@@ -326,7 +326,7 @@ export class Remote extends EventEmitter {
    */
   private onAsked(peer: PeerIdentity, sas: string, address: string): Promise<boolean> {
     const c = getConfig().remote
-    if (!c.host || !c.pairByAsking) return Promise.resolve(false)
+    if (!c.host || !pairAskingOn(c)) return Promise.resolve(false)
     if (this.asking) return Promise.resolve(false)
     return new Promise<boolean>((resolve) => {
       let settled = false
