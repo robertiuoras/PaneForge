@@ -1263,7 +1263,12 @@ function TerminalPane({
     const t = new Terminal({
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
-      cursorBlink: true,
+      // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the
+      // pane is idle and nothing on it changed. Measured 2026-08-23 with 6 panes open
+      // and no output at all: renderer 42-46% CPU, GPU helper 30-34%, WindowServer 46%,
+      // GPU device utilisation 50% - enough to make every other app on the machine
+      // judder. A steady block cursor is just as visible and costs nothing.
+      cursorBlink: false,
       allowProposedApi: true,
       scrollback: FULL_SCROLLBACK,
       theme: themeRef.current ?? {
