@@ -19,7 +19,7 @@ const { Terminal } = req('@xterm/headless')
 const log = readFileSync(join(homedir(), 'Library/Application Support/claude-orchestrator/history/s1-mt5w0f6v.log'))
 const bannerAt = log.lastIndexOf(Buffer.from('~/Projects/PaneForge\x1b[39m'))
 // The clear starts at the ESC[H that begins the erase-per-row walk.
-const clearAt = log.lastIndexOf(Buffer.from('\x1b[H\x1b[2K\x1b[1B'), bannerAt)
+const clearAt = Number(process.argv[2])
 const before = log.subarray(Math.max(0, clearAt - 400000), clearAt).toString('utf8')
 const during = log.subarray(clearAt, bannerAt + 3000).toString('utf8')
 console.log('clearAt', clearAt, 'bannerAt', bannerAt, 'before bytes', before.length)
