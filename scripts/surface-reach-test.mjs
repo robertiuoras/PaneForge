@@ -67,11 +67,50 @@ export function surfaceKeys(src) {
 }
 
 /**
+ * Comments, gone. String literals are LEFT.
+ *
+ * Without the comment pass the guard can pass VACUOUSLY, which is the one way a test
+ * like this is worse than no test: this file's own header names `remote:handoffCancel`
+ * and `listJobs`, and a line reading `// call .ask() to query` counted as a call site.
+ *
+ * Strings are deliberately not stripped, and the first attempt at it is why. These are
+ * .tsx files: an apostrophe in ordinary JSX text - `don't`, `machine's` - is not a
+ * string delimiter, but a quote-pairing lexer reads it as one and swallows everything
+ * to the next apostrophe. Measured: stripping strings that way took the reachable count
+ * from 153 to 131 and reported `startSessions`, `redraw` and `onData` as dead. A method
+ * whose only mention is inside a string literal is a risk this accepts; a method whose
+ * only mention is in a comment was an observed fact about this very file.
+ */
+export function stripComments(src) {
+  let out = ''
+  let i = 0
+  const n = src.length
+  while (i < n) {
+    if (src[i] === '/' && src[i + 1] === '/') {
+      while (i < n && src[i] !== '\n') i++
+      continue
+    }
+    if (src[i] === '/' && src[i + 1] === '*') {
+      i += 2
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+      out += ' '
+      continue
+    }
+    out += src[i]
+    i++
+  }
+  return out
+}
+
+/**
  * Is `key` called anywhere in `text`?
  *
  * `.key(` covers `api.key(...)` and `window.api.key(...)`, which is how all but a
  * handful are written. A destructured `const { key } = window.api` is matched by
  * the second form, which is why it is not enough to look for the dot alone.
+ *
+ * `text` must already have been through `stripComments`.
  */
 export function calls(text, key) {
   if (new RegExp(`\\.${key}\\s*\\(`).test(text)) return true
@@ -86,7 +125,7 @@ function main() {
   // browserApi.ts IS a transport - it is built from SURFACE and answers a few
   // methods itself, so it can never be evidence that the window reaches one.
   const files = walk(rendererDir).filter((f) => !/browserApi\.ts$/.test(f))
-  const text = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n')
+  const text = files.map((f) => stripComments(fs.readFileSync(f, 'utf8'))).join('\n')
 
   const unreached = keys.filter((k) => !calls(text, k))
   const findings = unreached.filter((k) => !(k in DESK_SIDE))
@@ -105,6 +144,21 @@ function main() {
   for (const k of stale) {
     console.log(`  STALE EXCUSE: ${k} is reachable now - drop it from DESK_SIDE`)
     bad++
+  }
+
+  // The guard's own guard. A stripper that silently stopped working would make every
+  // method look reachable and this file would go green for ever.
+  const probes = [
+    ['// call .ask() to query', false],
+    ['/* .ask() in a block */', false],
+    ['api.ask(1)', true],
+    ["<b>don't</b> {api.ask(1)}", true],
+  ]
+  for (const [probe, want] of probes) {
+    if (calls(stripComments(probe), 'ask') !== want) {
+      console.log(`FAIL: stripComments/calls disagree on ${JSON.stringify(probe)}`)
+      process.exit(1)
+    }
   }
 
   if (!keys.length) {

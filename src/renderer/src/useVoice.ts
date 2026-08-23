@@ -54,6 +54,14 @@ export interface Voice {
 
 const SAMPLE_RATE = 16_000
 
+/**
+ * How long the in-window model may go SILENT before the attempt is abandoned. It is a
+ * deadline on quiet, not on the whole load: every `progress` message restarts it, so a
+ * slow 40 MB download is fine and a dead worker is not.
+ */
+const LOAD_TIMEOUT_MS = 90_000
+const LOAD_TIMEOUT_MSG = 'the in-window model stopped responding while loading'
+
 /** Electron's Chromium has the constructor and no key behind it. Only the UA can tell. */
 const IS_ELECTRON = /electron/i.test(navigator.userAgent)
 
@@ -154,19 +162,47 @@ export function useVoice(
     }
     const w = worker.current
     return new Promise((resolve, reject) => {
+      // A worker that answers NEITHER `ready` nor `error` - it died, or the model
+      // fetch hung - left this promise pending for ever, with its listener still
+      // attached and another one added on the next attempt. Downstream that is the
+      // loading spinner that never goes away and no way back except restarting the
+      // app. `settle` is the one exit: it removes the listener, stops the clock, and
+      // on a failure throws the worker away so the next clip builds a fresh one
+      // rather than talking to a half-loaded model.
+      let done = false
+      const settle = (err: Error | null): void => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        w.removeEventListener('message', onMsg)
+        if (!err) return resolve(w)
+        workerReady.current = false
+        if (worker.current === w) {
+          worker.current = null
+          try {
+            w.terminate()
+          } catch {
+            /* already gone */
+          }
+        }
+        reject(err)
+      }
       const onMsg = (e: MessageEvent<VoiceWorkerOut>): void => {
         const m = e.data
-        if (m.type === 'progress') setProgress(m.pct)
-        else if (m.type === 'ready') {
+        if (m.type === 'progress') {
+          setProgress(m.pct)
+          // Progress IS liveness: a 40 MB download must not trip the deadline.
+          clearTimeout(timer)
+          timer = setTimeout(() => settle(new Error(LOAD_TIMEOUT_MSG)), LOAD_TIMEOUT_MS)
+        } else if (m.type === 'ready') {
           workerReady.current = true
           setProgress(-1)
-          w.removeEventListener('message', onMsg)
-          resolve(w)
+          settle(null)
         } else if (m.type === 'error') {
-          w.removeEventListener('message', onMsg)
-          reject(new Error(m.error))
+          settle(new Error(m.error))
         }
       }
+      let timer = setTimeout(() => settle(new Error(LOAD_TIMEOUT_MSG)), LOAD_TIMEOUT_MS)
       w.addEventListener('message', onMsg)
       const load: VoiceWorkerIn = {
         type: 'load',
