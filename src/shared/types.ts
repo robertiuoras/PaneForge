@@ -10,6 +10,7 @@ import type { MascotConfig } from './mascot'
 import type { TipsConfig } from './tips'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
+import type { PaneTrustConfig } from './paneTrust'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
 import type { RunningDev } from './devList'
@@ -1529,6 +1530,13 @@ export interface Config {
    * ladder: closing is what happens when there is nowhere to move a pane to.
    */
   autoHandoff?: AutoHandoffConfig
+
+  /**
+   * Where a pane on somebody else's inference provider may be opened, and whether it is
+   * confined at all - see `shared/paneTrust.ts`. Absent means unconfined, which is what
+   * every desk that has not asked otherwise gets.
+   */
+  paneTrust?: PaneTrustConfig
   /**
    * Quit the WHOLE app after this many minutes with no input - see shared/idlequit.ts.
    * 0 (the default) is off. Distinct from `reclaim`, which closes single panes: this

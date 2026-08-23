@@ -1101,6 +1101,50 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </span>
                   </div>
                 ))}
+                {/*
+                  The key fields above are what a pane authenticates WITH. This is the other
+                  half: what it may read. An agent pointed at another provider posts every
+                  file it opens to that provider, and a stealth model's provider states that
+                  it RETAINS what it is sent - so the control that matters is the folder, and
+                  it has to be decided before the pty exists. shared/paneTrust.ts.
+
+                  An allowlist rather than a denylist: a list of forbidden places is wrong
+                  the day a new repo is cloned, and it fails silently - the pane opens and
+                  the secret leaves. This fails the other way, with a named refusal.
+                */}
+                <div className="setting">
+                  <Switch
+                    label="Confine a third-party model to certain folders"
+                    hint="An agent on OpenRouter, DeepSeek, Z.ai or Grok posts every file it opens to that provider - and a stealth model's provider keeps what it is sent. With this on, such a pane will only open inside the folders below."
+                    checked={!!config.paneTrust?.restrictThirdParty}
+                    onChange={(v) =>
+                      onChange({ paneTrust: { ...(config.paneTrust ?? {}), restrictThirdParty: v } })
+                    }
+                  />
+                  <textarea
+                    className="search"
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={'~/Projects/PaneForge\n~/Projects/toolstash'}
+                    value={(config.paneTrust?.allowedRoots ?? []).join('\n')}
+                    onChange={(e) =>
+                      onChange({
+                        paneTrust: {
+                          ...(config.paneTrust ?? {}),
+                          allowedRoots: e.target.value
+                            .split('\n')
+                            .map((r) => r.trim())
+                            .filter(Boolean)
+                        }
+                      })
+                    }
+                  />
+                  <span className="hint">
+                    One folder per line; everything under it counts. Leave the switch off and
+                    nothing is confined - which is what every desk that has not asked for this
+                    gets. First-party panes are never confined.
+                  </span>
+                </div>
                 <div className="setting-row">
                   <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>

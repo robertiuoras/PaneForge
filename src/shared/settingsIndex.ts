@@ -59,6 +59,7 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'stash', label: "Never remember", find: "Never remember" },
   { tab: 'agents', label: "Agents on this machine", find: "Agents on this machine" },
   { tab: 'agents', label: "key", find: "key" },
+  { tab: 'agents', label: "Confine a third-party model to certain folders", find: "Confine a third-party model to certain folders An agent on OpenRouter, DeepSeek, Z.ai or Grok posts every file it opens to that provider - and a stealth model's provider keeps what it is sent. With this on, such a pane will only open inside the folders below." },
   { tab: 'agents', label: "Default model per agent", find: "Default model per agent" },
   { tab: 'voice', label: "Dictation", find: "Dictation" },
   { tab: 'voice', label: "Transcriber", find: "Transcriber" },

@@ -212,6 +212,9 @@ function reclaimPaneOf(s: Session, activeId: string | null): ReclaimPane {
     // A shell pane running `npm run build` is BUSY, and looks identical to a finished one
     // in the sidebar. `paneJob.ts` is what tells them apart, through `runSince`.
     busy: s.runSince !== undefined,
+    // ...and the job itself, which is set by a different reading than `runSince` is. See
+    // `ReclaimPane.job`: a BACKGROUND command is exactly the case the run clock missed.
+    job: s.job ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.

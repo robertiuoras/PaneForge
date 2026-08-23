@@ -290,4 +290,28 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 
+// A shell pane running a BACKGROUND command.
+//
+// `busy` is set from `runSince`, which on POSIX is set from the tty's FOREGROUND process -
+// and `cmd &` leaves the shell itself in front of the tty. So a pane with two monitors
+// running in it reported `busy: false` and the clock started on it (2026-08-24: "1 shell 2
+// monitors running in session 2, why is it trying to close it"). `job` is the second,
+// independent reading; the load-bearing case is that it refuses ON ITS OWN, with `busy`
+// false, because that is exactly the shape the bug had.
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: IDLE_CLOSE_MINUTES }
+  const HOURS = 5 * 60 * 60 * 1000
+  const withJob = pane({ id: 'mon', job: 'monitor', busy: false, lastKeyboard: NOW - HOURS })
+  const noJob = pane({ id: 'plain', job: null, busy: false, lastKeyboard: NOW - HOURS })
+
+  eq('a background job refuses the clock with busy false', idleCloseAt(withJob, CLOCKED, NOW), null)
+  check('...and the idle sweep leaves it alone', !idleClosePlan([withJob, noJob], CLOCKED, NOW).some((r) => r.id === 'mon'))
+  // The control: without the job that same pane IS closeable, or the assertion above would
+  // pass on a plan that closes nothing at all.
+  check('control - the same pane with no job is closed', idleClosePlan([withJob, noJob], CLOCKED, NOW).some((r) => r.id === 'plain'))
+
+  const CRITICAL = { level: 'critical', mb: 0, panes: 0 }
+  check('and the pressure sweep refuses it too', !reclaimPlan([withJob, noJob], CRITICAL, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'mon'))
+}
+
 console.log(`reclaim: ${checks} checks passed`)
