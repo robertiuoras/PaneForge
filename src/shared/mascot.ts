@@ -516,11 +516,17 @@ export interface Notice {
  */
 export function notice(
   panes: MascotPane[],
-  opts: { idleCloseOn: boolean; idleMinutes?: number; minMb?: number }
+  opts: { idleCloseOn: boolean; willMove?: boolean; idleMinutes?: number; minMb?: number }
 ): Notice | null {
   const mins = opts.idleMinutes ?? 45
   const minMb = opts.minMb ?? 400
   if (opts.idleCloseOn) return null // the clock is on; it will handle these itself
+  // ...and so is the rung above it: with the automatic handoff on and a device online,
+  // these panes are going to MOVE, so offering to close them is the app asking permission
+  // to do the worse of the two things it was already going to do better. What the ladder
+  // then did still gets said - that is `actedWords`, and it is a report rather than an
+  // offer.
+  if (opts.willMove) return null
   const stale = closeable(panes).filter((p) => p.idleMs >= mins * MIN && p.memMb !== null)
   // One is enough. Two was the old floor and it was set while `closeable` could not see a
   // finished pane at all, so between the two rules the notice had never once fired on this

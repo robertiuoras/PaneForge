@@ -3750,9 +3750,11 @@ export default function App(): JSX.Element {
         {/* What the machine can still hold, in the one place a person is already looking
             when they are about to open another pane. Only when it is NOT ok: a line that
             is always there is a line nobody reads, and on a healthy desk there is nothing
-            to say. The wording carries the numbers (see capacity.ts) because "low memory"
+            to say. And only when the app is not already DOING something about it
+            (`Verdict.say`) - a reading whose whole advice is a job the ladder is about to
+            perform is narration, and it is what got this strip complained about. The wording carries the numbers (see capacity.ts) because "low memory"
             with no figure is the message that got the app blamed for the browsers. */}
-        {capacity && capacity.level !== 'ok' && (
+        {capacity && capacity.level !== 'ok' && capacity.say && (
           <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
             {capacity.advice}
           </div>
@@ -4740,6 +4742,7 @@ export default function App(): JSX.Element {
         panes={mascotPanes}
         config={config?.mascot ?? DEFAULT_MASCOT}
         idleCloseOn={(config?.reclaim?.idleCloseMinutes ?? 0) > 0}
+        willMove={(config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true && capacity?.offload === true}
         acted={acted}
         closeSoon={closeSoon}
         devs={devs}

@@ -989,7 +989,10 @@ function publishCapacity(): void {
       peerAvailable: peers > 0,
       // How many agents this desk agreed to run itself. Read live rather than captured:
       // changing it in Settings has to reach the next reading, which is this one.
-      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal
+      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
+      // Whether the ladder is going to answer this reading itself. Only decides whether the
+      // strip SAYS it - see `Verdict.say`.
+      willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
     })
   )
 }

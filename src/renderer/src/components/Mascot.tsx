@@ -83,6 +83,8 @@ export interface MascotProps {
   onConfig: (patch: Partial<MascotConfig>) => void
   /** Whether the app's own idle-close clock is running - it stays quiet if so. */
   idleCloseOn: boolean
+  /** The automatic handoff is on and has somewhere to move a pane to. */
+  willMove: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
   acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
   /** A close that is about to happen, counted down out loud. */
@@ -253,12 +255,12 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // countdown is up - that IS the app talking about idle panes already.
   useEffect(() => {
     if (!cfg.enabled || bubble || open || soon) return
-    const n = notice(panes, { idleCloseOn: props.idleCloseOn })
+    const n = notice(panes, { idleCloseOn: props.idleCloseOn, willMove: props.willMove })
     if (!n || said.current.has(n.key)) return
     said.current.add(n.key)
     walkTo(n.about)
     say({ say: n.say, action: n.action, key: n.key })
-  }, [panes, cfg.enabled, props.idleCloseOn, bubble, open, soon, say, walkTo])
+  }, [panes, cfg.enabled, props.idleCloseOn, props.willMove, bubble, open, soon, say, walkTo])
 
   // ...and the one report that is not a suggestion: the ladder acted, so it says what it
   // did. This is the whole reason the mascot is worth having - those three sweeps have

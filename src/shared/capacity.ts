@@ -115,6 +115,19 @@ export interface Machine {
    * a question about sockets rather than about RAM.
    */
   keepLocal?: number
+  /**
+   * Is the ladder going to act on this by itself - the automatic handoff switched on, with
+   * somewhere to move a pane to?
+   *
+   * It changes nothing about the verdict and only decides whether the verdict is SAID. A
+   * strip that reports "memory is tight, each pane costs ~190 MB" on a desk whose next
+   * move is already being made is narrating rather than helping: the reading is true, the
+   * advice in it ("start the next one on the paired device") is a job the app is about to
+   * do, and the person reading it has nothing to do about either. What the ladder DID
+   * still gets a sentence - that one is not a reading, it is an action somebody's panes
+   * were subject to.
+   */
+  willMove?: boolean
 }
 
 export type Level = 'ok' | 'tight' | 'over'
@@ -148,6 +161,16 @@ export interface Verdict {
   over: number
   /** Which reading is the binding one, for the sentence and for the log line. */
   why: 'ok' | 'memory' | 'lag' | 'budget'
+  /**
+   * Should `advice` be put in front of a person, or only logged?
+   *
+   * False exactly when the ladder is about to act on this reading anyway (`Machine.willMove`
+   * with a peer online) AND the machine is not yet out of memory. Out of memory keeps its
+   * sentence whatever else is happening: that one is not advice, it is the state the desk
+   * is in, and finding out afterwards from a pane that is no longer there is the failure
+   * the strip exists to prevent.
+   */
+  say: boolean
 }
 
 /** Cost in MB of one pane holding this many scrollback lines, agent included. */
@@ -222,6 +245,9 @@ export function assess(m: Machine): Verdict {
   const usedMb = Math.round(APP_BASE_MB + localCost + remoteCost)
   const nextPaneMb = paneCostMb(FULL_SCROLLBACK)
   const peer = m.peerAvailable === true
+  // The ladder can only act where there is somewhere to act TO, so a switched-on handoff
+  // with no peer online is silence that fixes nothing - which is why this is both halves.
+  const ladder = m.willMove === true && peer
 
   // The lag reading and the memory reading answer the same question a few minutes apart,
   // so the worse of the two decides. A machine at load 2 per core with memory to spare is
@@ -253,6 +279,8 @@ export function assess(m: Machine): Verdict {
       offload: peer,
       over,
       why,
+      // Out of memory always says so, ladder or not.
+      say: true,
       advice: peer
         ? `${head} Panes here hold ~${usedMb} MB; start the next one on the paired device.`
         : `${head} Panes here hold ~${usedMb} MB and background scrollback is being trimmed.`,
@@ -276,6 +304,7 @@ export function assess(m: Machine): Verdict {
       offload: peer,
       over,
       why,
+      say: !ladder,
       advice: peer
         ? `${head} Each pane here costs ~${nextPaneMb} MB - the paired device can take the next one.`
         : `${head} Each pane here costs ~${nextPaneMb} MB; background panes are trimmed to keep this responsive.`,
@@ -292,6 +321,7 @@ export function assess(m: Machine): Verdict {
       offload: peer,
       over,
       why: why === 'ok' ? 'memory' : why,
+      say: !ladder,
       advice: `${m.localPanes} panes here hold ~${usedMb} MB of ${Math.round(m.totalMb / 1024)} GB. Another one will start swapping.`,
     }
   }
@@ -309,6 +339,7 @@ export function assess(m: Machine): Verdict {
       offload: peer,
       over,
       why: 'budget',
+      say: !ladder,
       advice: peer
         ? `${m.localPanes} panes here, ${over} past the ${budget} this machine keeps - moving ${over === 1 ? 'it' : 'them'} to the paired device.`
         : `${m.localPanes} panes here, ${over} past the ${budget} this machine keeps. No paired device is online to take ${over === 1 ? 'it' : 'them'}.`,
@@ -324,6 +355,7 @@ export function assess(m: Machine): Verdict {
     offload: false,
     over: 0,
     why: 'ok',
+    say: true,
     advice: `${m.localPanes} panes, ~${usedMb} MB. Room for about ${roomFor} more here.`,
   }
 }
