@@ -27,6 +27,7 @@ import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
+import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -1261,6 +1262,12 @@ function TerminalPane({
   useEffect(() => {
     if (!host.current) return
     const t = new Terminal({
+      // The pty is already this wide (see shared/paneGrid.ts). xterm's own default is
+      // 80, and every byte a resumed CLI prints before the first fit is drawn at the
+      // PTY's width - into whatever grid this terminal happens to be. Clamped, and no
+      // repaint can undo it.
+      cols: START_COLS,
+      rows: START_ROWS,
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
       // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the

@@ -17,6 +17,7 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
+import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { CHUNK_GAP_MS, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
@@ -445,18 +446,18 @@ export class SessionManager extends EventEmitter {
       arrivedFrom: req.arrivedFrom,
       lane: req.lane,
       laneNote: req.laneNote,
-      cols: 120,
-      rows: 30
+      cols: START_COLS,
+      rows: START_ROWS
     }
     const live: Live = {
       meta,
-      proc: this.spawn(req, agent, 120, 30),
+      proc: this.spawn(req, agent, START_COLS, START_ROWS),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
-      cols: 120,
-      rows: 30,
-      deskCols: 120,
-      deskRows: 30,
+      cols: START_COLS,
+      rows: START_ROWS,
+      deskCols: START_COLS,
+      deskRows: START_ROWS,
       runner: specFor(agent).bin,
       jobName: null,
       busyUntil: 0,
