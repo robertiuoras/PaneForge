@@ -1265,8 +1265,19 @@ body.sizing * { user-select: none !important; }
    No inset on the right, though: the scrollbar lives at the host's content edge, and 7px of
    padding there pushed it into the middle of nowhere - you had to aim 17px in from the pane
    border for a bar that looks like it hugs it. Flush right, the border is the aim point. */
-.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-.xterm-host { flex: 1; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
+.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
+/* `min-width: 0` is load-bearing and was missing. A flex item defaults to
+   `min-width: auto`, which means it may not shrink below its CONTENT - so a pane
+   drawing a grid wider than the window (a mirror at the far end's cols, a phone's
+   borrowed grid) stretched this box to the terminal's own width instead of clipping.
+   Measured live at a forced 600x150 grid: the wrap was 1198px and this box was
+   1700px, 502px of it off the right edge. Worse, `proposeDimensions()` measures THIS
+   element, so the fit was asking a container that is by definition exactly as wide as
+   its content - the column ratio came out at ~1 every time and only the ROW count
+   could ever constrain the font. That is why a mirror ended up cut across the screen
+   rather than merely small. `overflow: hidden` on the wrap is the belt to this brace:
+   whatever is left over is clipped to this pane instead of drawn over its neighbour. */
+.xterm-host { flex: 1; min-width: 0; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
 
 /* Dropping files onto a pane types their paths at the prompt. */
 .xterm-wrap.dropping::after {

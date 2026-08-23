@@ -400,6 +400,8 @@ function mirrorFit(
 ): boolean {
   const cols = t.cols
   const rows = t.rows
+  let stepped = false
+  let scaleWanted = 1
   const d = f.proposeDimensions()
   if (d && d.cols > 0 && d.rows > 0) {
     const current = t.options.fontSize ?? maxFont
@@ -411,20 +413,59 @@ function mirrorFit(
       font: current,
       maxFont
     })
-    if (out.font !== current) t.options.fontSize = out.font
+    if (out.font !== current) {
+      t.options.fontSize = out.font
+      stepped = true
+    }
+    scaleWanted = out.scale
     // Below the font floor the only lever left is the element itself. Without this
     // the pane simply drew a grid wider than itself and the far end's screen was cut
     // off at the edge - reported as "half way cut across the screen". xterm's hit
     // testing reads getBoundingClientRect, which includes the transform, so a click
     // in a scaled mirror still lands on the cell under the pointer.
-    if (host) {
-      host.style.transformOrigin = 'top left'
-      host.style.transform = out.scale < 1 ? `scale(${out.scale})` : ''
-    }
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
+
+  // The scale is MEASURED, not walked.
+  //
+  // `mirrorSize` says whether the font alone can do it; how much is left over is a
+  // question about pixels that are already on the screen, and asking the DOM is exact
+  // where another ratio-of-a-ratio step is not. It also cannot stall: the walk stops
+  // as soon as the font settles, so a scale derived from it never got a pass with the
+  // font already at the floor - measured live at a forced 600x150 grid, 902px of the
+  // far end's screen stayed clipped with no transform at all.
+  if (host) {
+    const screen = host.querySelector('.xterm-screen') as HTMLElement | null
+    // `offsetWidth` and `clientWidth` are LAYOUT sizes: a transform on this element
+    // does not move them, so reading them back after applying one cannot feed on
+    // itself and walk the pane down to nothing.
+    const room = host.clientWidth
+    const drawn = screen ? screen.offsetWidth : 0
+    const tall = screen ? screen.offsetHeight : 0
+    const measured =
+      drawn > 0 && room > 0 ? Math.min(1, room / drawn, host.clientHeight / Math.max(1, tall)) : 1
+    // The arithmetic answer and the measured one, whichever is smaller. `mirrorSize`
+    // decides whether scaling is needed at all and is what the tests pin; the DOM
+    // decides by how much.
+    const fits = Math.min(scaleWanted, measured)
+    const want = fits < 0.999 ? `scale(${Math.max(0.05, fits).toFixed(3)})` : ''
+    if (host.style.transform !== want) {
+      host.style.transformOrigin = 'top left'
+      host.style.transform = want
+      stepped = true
+    }
+  }
   if (pinned) t.scrollToBottom()
-  return t.cols !== cols || t.rows !== rows
+  // The FONT and the SCALE count as a change, not just the grid.
+  //
+  // This walk converges over frames - each pass measures the layout the previous one
+  // produced - and the only thing that makes the next pass happen is this returning
+  // true. Reporting only `cols/rows` meant a mirror whose grid was already correct
+  // stopped after ONE step: measured live at a forced 600x150 grid, the scale settled
+  // at 0.807 where 0.565 was needed and 502px stayed off the right edge, stable and
+  // wrong. The grid is the one thing that does NOT change here - a mirror takes the
+  // host's cols and rows verbatim - so it was the wrong thing to key on.
+  return t.cols !== cols || t.rows !== rows || stepped
 }
 
 /**
