@@ -57,7 +57,8 @@ function fromSession(s: Session, number: number): DeskRow {
     runSince: s.runSince,
     lastOutput: s.lastOutput,
     createdAt: s.createdAt,
-    exitCode: s.exitCode
+    exitCode: s.exitCode,
+    job: s.job
   }
 }
 
@@ -76,7 +77,8 @@ function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }):
     runSince: pane.runSince,
     lastOutput: pane.lastOutput,
     createdAt: pane.createdAt,
-    exitCode: pane.exitCode
+    exitCode: pane.exitCode,
+    job: pane.job
   }
 }
 

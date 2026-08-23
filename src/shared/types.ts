@@ -213,6 +213,16 @@ export interface Session {
   stalledSince?: number
   /** The terminal rang its bell and nobody has looked at the pane since. */
   bell?: boolean
+  /**
+   * The command running in this pane's foreground, when it is a SHELL pane running one.
+   *
+   * A shell pane has neither of the readings an agent pane has - no prompt this app
+   * watched being submitted, no CLI footer saying it is busy - so `npm run build` typed
+   * into one read as `ready - type to start` for the whole two minutes it took. This is
+   * the pty's own foreground process (`shared/paneJob.ts`), which is what puts the pane
+   * in Running with a clock counting the command rather than nothing at all.
+   */
+  job?: string
 }
 
 /**
@@ -869,6 +879,8 @@ export interface RemotePaneInfo {
   runSince?: number
   stalledSince?: number
   createdAt?: number
+  /** the command running in that pane's foreground, when it is a shell pane running one */
+  job?: string
 }
 
 /** Live state of one paired device. */

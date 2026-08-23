@@ -15,6 +15,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { paneJob } from '../shared/paneJob'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
@@ -175,6 +176,13 @@ interface Live {
   /** the size the DESK window last fitted this pane to - see `resize` */
   deskCols: number
   deskRows: number
+  /**
+   * The program this pane was spawned as, and what `shared/paneJob.ts` last saw running
+   * in front of it. Only a SHELL pane ever has a job: an agent CLI's turn is tracked by
+   * its own footer, which knows things a foreground reading cannot.
+   */
+  runner: string
+  jobName: string | null
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
@@ -426,6 +434,8 @@ export class SessionManager extends EventEmitter {
       rows: 30,
       deskCols: 120,
       deskRows: 30,
+      runner: specFor(agent).bin,
+      jobName: null,
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
@@ -542,6 +552,9 @@ export class SessionManager extends EventEmitter {
       live.req.resume ? live.req.resumeId : undefined
     )
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.runner = specFor(live.meta.agent).bin
+    live.jobName = null
+    live.meta.job = undefined
     live.buffer.set(RESET)
     live.meta.status = 'starting'
     live.meta.exitCode = undefined
@@ -1499,6 +1512,20 @@ export class SessionManager extends EventEmitter {
     this.choose(live.meta.id, pick.n)
   }
 
+  /**
+   * The command running in front of a pane, or null.
+   *
+   * Wrapped because `IPty.process` reads the tty and a pane whose pty has just died
+   * throws from it - inside a sweep that runs every second, for every pane.
+   */
+  private jobOf(live: Live): string | null {
+    try {
+      return paneJob(live.proc.process, live.runner)
+    } catch {
+      return null
+    }
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -1509,7 +1536,22 @@ export class SessionManager extends EventEmitter {
       // quiet clock everywhere below: silence during a five minute tool call is not
       // the same thing as silence at an empty prompt, and treating them alike is what
       // made the dot go grey mid-turn and the bell ring over a running agent.
-      const busyOnScreen = live.busyUntil > now
+      // What a SHELL pane is running, which is the one kind of pane nothing else in this
+      // loop can speak about: no prompt this app watched being submitted, no CLI footer.
+      // It costs one syscall (the tty already knows its own foreground process) and it
+      // feeds straight into `busyOnScreen` below, because a live command is exactly what
+      // that flag means everywhere else - the pane is working, do not call the turn over.
+      const job = meta.status === 'exited' ? null : this.jobOf(live)
+      if (job !== live.jobName) {
+        live.jobName = job
+        meta.job = job ?? undefined
+        // The clock has to count the COMMAND. A shell pane's `runSince` is otherwise
+        // never set by anything, and a pane sorted into Running with no clock on it is
+        // half an answer: it says something is happening and not for how long.
+        if (job) meta.runSince = meta.runSince ?? now
+        changed = true
+      }
+      const busyOnScreen = live.busyUntil > now || job !== null
       // Backstop for the run clock: an agent whose footer this app cannot read (or
       // a pane that was torn down mid-turn) would otherwise count forever. Quiet,
       // and nothing on screen claiming to be busy, is the end of the turn.

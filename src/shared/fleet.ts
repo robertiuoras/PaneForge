@@ -31,6 +31,12 @@ export interface FleetPane {
   lastOutput?: number
   createdAt?: number
   exitCode?: number
+  /**
+   * The command this pane is running, when the app can name one - see `paneJob.ts`.
+   * Only the label reads it: a row saying `working` about a shell pane is true and says
+   * nothing, and `running npm` is the reason somebody looked at the list.
+   */
+  job?: string
 }
 
 export type FleetState =
@@ -123,7 +129,12 @@ export function fleetRow(s: FleetPane): FleetRow {
             : undefined
   return {
     state,
-    label: state === 'exited' && s.exitCode ? `exited (${s.exitCode})` : LABEL[state],
+    label:
+      state === 'exited' && s.exitCode
+        ? `exited (${s.exitCode})`
+        : state === 'working' && s.job
+          ? `running ${s.job}`
+          : LABEL[state],
     motion: MOTION[state],
     since,
     rank: RANK[state]
