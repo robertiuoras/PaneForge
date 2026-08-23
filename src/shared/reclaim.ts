@@ -160,6 +160,18 @@ export interface ReclaimPane {
    */
   asking?: boolean
   /**
+   * The command a SHELL pane is running right now, when there is one.
+   *
+   * `busy` already carries this through `runSince`, and this is the second, independent
+   * reading beside it - the same belt-and-braces `busy` itself is beside `state`. It earns
+   * its line because the two are set by different things and one of them was wrong: a
+   * background job (`cmd &`) leaves the SHELL in front of the tty, so `paneJob` saw
+   * nothing, `runSince` was never set, and a pane with two monitors running in it read as
+   * idle and started counting down. Reported 2026-08-24: "1 shell 2 monitors running in
+   * session 2, why is it trying to close it".
+   */
+  job?: string | null
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -210,7 +222,14 @@ export function reclaimPlan(
   const eligible = panes
     .filter(
       (p) =>
-        !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+        !p.focused &&
+        !p.visible &&
+        !p.remote &&
+        !p.handingOff &&
+        !p.asking &&
+        !p.busy &&
+        !p.job &&
+        CLOSEABLE.has(p.state)
     )
     .filter((p) => now - quietSince(p) >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
@@ -293,7 +312,13 @@ export function reclaimedMb(plan: Reclaim[]): number {
  */
 function onTheClock(p: ReclaimPane): boolean {
   return (
-    !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+    !p.focused &&
+    !p.remote &&
+    !p.handingOff &&
+    !p.asking &&
+    !p.busy &&
+    !p.job &&
+    CLOSEABLE.has(p.state)
   )
 }
 
