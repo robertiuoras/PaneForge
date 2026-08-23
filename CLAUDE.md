@@ -289,6 +289,20 @@ can host and each can connect out. Three decisions not to re-litigate:
   host that has not applied the borrow yet or is an older build, and the leftover slack it
   centres is only split when it is bigger than two cells - inside that, the pane is full
   and belongs flush against the edge the scrollbar hugs.
+- **Several screens may borrow ONE pty, and the smallest grid wins.** The borrow was a
+  boolean and one pair of numbers, written for a single phone - so a second viewer simply
+  overwrote the first and the two traded the pty between their windows for as long as both
+  were open, with a full-screen CLI redrawing every round. That is "the remote window keeps
+  changing sizes". `shared/paneSize.ts` holds a borrow PER VIEWER and lends them all the
+  smallest grid asked for (each axis separately): everybody can draw it, the losers get
+  slack, and the number does not depend on who spoke last. A viewer looking away drops only
+  its own borrow (`returnSize(id, viewer)`), and the pane goes back to the desk when the
+  last one lets go. **The name must be forwarded, never invented at the boundary**: the api
+  object in `main/index.ts` is the phone's surface AND the remote host's backend, so
+  hardcoding `'phone'` there filed every paired device under the phone's slot and rebuilt
+  the same last-writer-wins one layer down - measured with a real guest, `guest:1` arrived
+  at the manager as `viewer=phone`. A guest is keyed per CONNECTION (`GuestConn.key`), since
+  two windows on one machine are two viewers. `npm run test:panesize`.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
@@ -1530,7 +1544,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:settingsearch` | that a setting is findable by what it DOES - the index is generated from the dialog's source, so one added without regenerating turns this red |
 | `npm run test:onestash` | that there is one Stash |
 | `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |
-| `npm run test:panesize` | who owns a pane's shape when a desk and a phone both draw it |
+| `npm run test:panesize` | who owns a pane's shape when a desk and a phone both draw it - and what happens when SEVERAL screens borrow one pty at once: they are lent the smallest grid asked for, one letting go leaves the others holding it, and a phone's "I have looked away" no longer ends a mirror's borrow |
 | `npm run test:tunnel` | a URL never called up before it resolves, a cloudflared that hangs settling anyway, and the per-platform asset names |
 | `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
 | `npm run test:gist` | the one line History puts under a closed session |
