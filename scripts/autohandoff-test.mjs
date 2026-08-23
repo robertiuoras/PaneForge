@@ -458,6 +458,23 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 
     check('expensive() refuses a pane with no reading at all', !expensive({}, DEFAULT_AUTO_HANDOFF))
     check('...and takes a job whatever the numbers say', expensive({ memMb: 1, job: 'vite' }, DEFAULT_AUTO_HANDOFF))
+    // config.json is also what `pf-ctl call config:set` writes, so a threshold arrives
+    // unvalidated. `Math.max(0, NaN)` is NaN and every `>=` against NaN is false, so a
+    // junk value did not fall back - it switched BOTH cost gates off and left the budget
+    // rung deciding on `job` alone. Same hardening as keepLocalOf.
+    const junk = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 'lots', budgetMinCpu: null }
+    check(
+      'a non-numeric threshold falls back to the default, it does not disable the gate',
+      expensive({ memMb: DEFAULT_AUTO_HANDOFF.budgetMinMb + 1 }, junk)
+    )
+    check(
+      '...and a pane under that default is still refused',
+      !expensive({ memMb: DEFAULT_AUTO_HANDOFF.budgetMinMb - 1, cpuPct: 0 }, junk)
+    )
+    check(
+      'a NEGATIVE threshold is clamped at 0, not honoured as a floor below zero',
+      expensive({ memMb: 0, cpuPct: 0 }, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: -5 })
+    )
     check('the floor sits above an ordinary agent pane and below a build', DEFAULT_AUTO_HANDOFF.budgetMinMb > 197 && DEFAULT_AUTO_HANDOFF.budgetMinMb < 1024)
   }
 

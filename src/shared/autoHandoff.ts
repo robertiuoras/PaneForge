@@ -361,8 +361,29 @@ export function expensive(
   cfg: Pick<AutoHandoffConfig, 'budgetMinMb' | 'budgetMinCpu'> = DEFAULT_AUTO_HANDOFF
 ): boolean {
   if (p.job) return true
-  if ((p.memMb ?? 0) >= Math.max(0, cfg.budgetMinMb)) return true
-  return (p.cpuPct ?? 0) >= Math.max(0, cfg.budgetMinCpu)
+  if ((p.memMb ?? 0) >= thresholdOf(cfg.budgetMinMb, DEFAULT_AUTO_HANDOFF.budgetMinMb)) return true
+  return (p.cpuPct ?? 0) >= thresholdOf(cfg.budgetMinCpu, DEFAULT_AUTO_HANDOFF.budgetMinCpu)
+}
+
+/**
+ * A cost threshold off config.json, which is also what `pf-ctl call config:set` writes.
+ *
+ * `Math.max(0, NaN)` is NaN and every `>=` against NaN is false, so a non-numeric value
+ * did not fall back to the default - it silently switched BOTH cost gates off and left the
+ * budget rung deciding on `job` alone. Same hardening as `keepLocalOf`, and for the same
+ * reason: a value nobody validated on the way in must not disable a rule on the way out.
+ */
+function thresholdOf(value: unknown, fallback: number): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.max(0, value) : fallback
+  // `Number(null)` and `Number('')` are BOTH 0, not NaN - so a coercion-only guard turns a
+  // missing value into a threshold of zero, which every pane clears. That is not the safe
+  // direction: it moves work off the machine on a value nobody set. Only a non-empty
+  // numeric string is believed.
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return Math.max(0, n)
+  }
+  return fallback
 }
 
 export function budgetPlan(
