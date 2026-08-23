@@ -576,7 +576,10 @@ export function actedWords(
   what: 'closed' | 'moved' | 'trimmed',
   panes: ActedPane[],
   mb?: number,
-  agoMs = 0
+  agoMs = 0,
+  /** Which machine it went to. Named, because "the paired device" is the one fact a
+   *  person cannot get back from anywhere on screen once the pane has gone. */
+  where?: string
 ): string {
   const subject = (p: ActedPane): string => {
     const s = paneSubject(p.doing)
@@ -590,7 +593,7 @@ export function actedWords(
     what === 'trimmed'
       ? `Trimmed ${who} ${when}${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
       : what === 'moved'
-        ? `Moved ${who} to the paired device ${when} - this machine was out of memory.`
+        ? `Moved ${who} to ${where || 'the paired device'} ${when} - it is mirrored here, so it is still on screen.`
         : `Closed ${who} ${when}${back} - reopen from History, nothing is lost.`
   // Several panes are listed under the sentence rather than folded into it: the whole
   // point is which conversations went, and a comma-joined run of four is unreadable.
@@ -619,13 +622,29 @@ export const CLOSE_COUNTDOWN_MS = 15_000
  */
 export const KEEP_MINUTES = 60
 
-/** The countdown, in words. `names` are already `paneWord` strings. */
-export function countdownWords(names: string[], msLeft: number, why: 'idle' | 'pressure'): string {
+/**
+ * The countdown, in words. `names` are already `paneWord` strings.
+ *
+ * `toDevice` turns it into the OTHER thing the ladder does by itself. A close counted
+ * down and could be stopped; a move said nothing at all - `runHandoffs` reported into a
+ * console nobody has open - so a pane simply left the machine. Same countdown, same
+ * press, and the machine is named: where it went is the one fact that cannot be
+ * recovered from the screen afterwards.
+ */
+export function countdownWords(
+  names: string[],
+  msLeft: number,
+  why: 'idle' | 'pressure',
+  toDevice?: string
+): string {
   const secs = Math.max(0, Math.ceil(msLeft / 1000))
   const who = names.length === 1 ? names[0] : `${names.length} panes (${names.join(', ')})`
   const reason =
     why === 'pressure'
       ? 'this machine is out of memory'
       : 'nobody has typed there in a while'
+  if (toDevice) {
+    return `Moving ${who} to ${toDevice} in ${secs}s - ${reason}. The conversation and the screen go too, and it comes straight back as a mirror. A pane mid-turn travels when its turn ends.`
+  }
   return `Closing ${who} in ${secs}s - ${reason}. Nothing is lost: History reopens the conversation and the screen.`
 }
