@@ -276,6 +276,9 @@ function defaults(): Config {
     // Off by default. Quitting the app takes every pane with it, so it ships as a number
     // somebody has to set rather than a behaviour that arrives with an update.
     idleQuitMinutes: 0,
+    // On. It only ever holds while a pane is actually working, and it lets go on its
+    // own after one long busy stretch - see shared/awake.ts.
+    keepDisplayAwake: true,
     // Empty list means "use the built-in one" (gameMode.ts owns it), so a default
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },

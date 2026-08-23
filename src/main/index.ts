@@ -40,6 +40,7 @@ import { PhoneServer, newPhoneCode } from './phone'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
+import { startDisplayAwake } from './awake'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
@@ -647,10 +648,19 @@ function alive(): boolean {
   return !!win && !win.isDestroyed() && !win.webContents.isDestroyed()
 }
 
+/**
+ * Things that re-read the desk whenever it changes: the display-sleep hold and any
+ * /clear countdown in flight. A mutable holder rather than a direct call because `send`
+ * is defined above the things it pokes, and a startup broadcast would otherwise hit a
+ * const that has not been initialised yet.
+ */
+let onDeskChanged: (() => void) | null = null
+
 function send(channel: string, ...args: unknown[]): void {
   // Ahead of the window check on purpose: a phone watching this desk must keep getting
   // output while the window is minimized, hidden, or being rebuilt after a quiet restart.
   phone.broadcast(channel, args)
+  if (channel === 'sessions:changed') onDeskChanged?.()
   if (!alive()) return
   win!.webContents.send(channel, ...args)
 }
@@ -1259,7 +1269,8 @@ ipcMain.on('sessions:bell', (_e, id: string) => manager.bell(id))
 ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
-ipcMain.on('pty:write', (_e, id: string, data: string) => {
+/** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
+function writePane(id: string, data: string): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
   // Somebody is using this pane, so the promise the countdown made is off. Only THIS path
@@ -1267,7 +1278,21 @@ ipcMain.on('pty:write', (_e, id: string, data: string) => {
   // reaches this handler, so it cannot stand its own countdown down on the way out.
   manager.cancelAutoClear(id, 'typed')
   manager.write(id, data)
+}
+
+ipcMain.on('pty:write', (_e, id: string, data: string) => writePane(id, data))
+
+// ---- and the screen staying on while a pane works ------------------------------------
+const displayAwake = startDisplayAwake({
+  panes: () =>
+    allSessions().map((s) => ({ runSince: s.runSince, status: s.status, asking: !!s.ask })),
+  enabled: () => getConfig().keepDisplayAwake !== false,
+  log: (line) => console.log(`[awake] ${line}`)
 })
+
+onDeskChanged = (): void => {
+  displayAwake.tick()
+}
 
 // A job the APP hands a chat, not bytes a person typed: the text goes in and the return is
 // pressed for real. Never `notePaneInput` - that means a person took a dispatched pane

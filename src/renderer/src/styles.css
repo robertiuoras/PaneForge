@@ -575,14 +575,25 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px;
   border-radius: 3px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
 }
-.chip.asks { color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c; flex: none; margin-left: auto; }
-/* How long is left before that question is answered for you. Beside the chip above and in
-   the same red, because it is the same fact one step further on - and tabular so a card
-   does not jog sideways as 10 becomes 9. It is the sidebar half of `AskCountdown`: the
-   pane draws the full sentence, and the pane is regularly not what is on screen. */
-.chip.asks-in {
-  color: var(--surface-1); background: var(--danger); border-color: var(--danger);
-  flex: none; font-variant-numeric: tabular-nums; font-weight: 600;
+.chip.asks {
+  color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c;
+  flex: none; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+/* How long is left before that question is answered for you, drawn INSIDE the red box
+   above rather than as a second chip beside it: "asks you" and the seconds are one fact a
+   step apart, and two red boxes on the title line read as two separate readings.
+
+   Solid on the tinted box, which is the same figure/ground the pane's own card uses
+   (`.pane-ask-auto-left` is a solid danger pill inside a danger-bordered row) - so the
+   number is the thing the eye lands on, which is the whole point of moving it in here.
+   Tabular and wide enough for two digits plus the word "now", so a card does not jog
+   sideways as 10 becomes 9 and does not reflow on the last tick either. */
+.chip.asks .asks-in {
+  flex: none; min-width: 30px; text-align: center;
+  padding: 0 4px; border-radius: 4px;
+  color: var(--bg); background: var(--danger);
+  font-variant-numeric: tabular-nums; font-weight: 600;
 }
 /* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
    beside it rather than pushing it off the end. */
@@ -648,7 +659,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    is a readout nobody reads. Heavy is 2 GB (a pane running a build), hot is a full core. */
 .chip.res, .badge.res { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chip.res { background: transparent; }
-.chip.res.heavy { color: var(--fg); border-color: var(--line-strong); }
+.chip.res.heavy { color: var(--text); border-color: var(--line-strong); }
 .chip.res.hot { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
 .badge.res { background: #ffffff0f; color: var(--muted); border-color: var(--line); font-weight: 500; }
 /* Second figure, same chip: dimmer, because memory is the one that answers "which pane
@@ -951,7 +962,7 @@ html.app-blurred .elapsed::after { animation: none; }
   color: var(--muted); border-color: var(--line); background: transparent;
   font: inherit; font-size: 10px; line-height: inherit; cursor: pointer;
 }
-.chip.piping:hover { color: var(--fg); border-color: var(--muted); }
+.chip.piping:hover { color: var(--text); border-color: var(--muted); }
 .chip.piping.behind { color: var(--danger); border-color: var(--danger); }
 
 /* The lane's own dialog: the state of the checkout, then why a merge will not run. */
@@ -974,7 +985,7 @@ html.app-blurred .elapsed::after { animation: none; }
 /* The help button was a 150px pill on a 433px card, which is a third of the header spent on
    a footnote. It is a link now: same target, same words, no box. */
 .lane-dialog .lane-what { padding: 0; border: 0; background: none; font-size: 11.5px; text-decoration: underline; text-underline-offset: 3px; }
-.lane-plain { color: var(--fg); line-height: 1.55; }
+.lane-plain { color: var(--text); line-height: 1.55; }
 .lane-plain code, .lane-git code { font-size: 11.5px; color: var(--muted); }
 .lane-git { margin-top: 10px; }
 .lane-git .lane-dialog-sub { margin-top: 0; display: block; }
@@ -997,7 +1008,7 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-copy.done .lane-copy-tag { color: var(--ok); }
 .lane-copy.stuck .lane-copy-tag { color: var(--danger); }
 .lane-copy-text { min-width: 0; flex: 1; }
-.lane-copy-title { color: var(--fg); font-size: 12px; }
+.lane-copy-title { color: var(--text); font-size: 12px; }
 .lane-copy-held { color: var(--muted); }
 /* Two lines at most: a commit subject is a sentence and clipping it to one line is how a
    summary stops being one, but four lines of somebody else's commit message is the list
@@ -1007,7 +1018,7 @@ html.app-blurred .elapsed::after { animation: none; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .lane-dialog-warn { margin-top: 6px; color: var(--danger); }
-.lane-dialog-said { margin-top: 8px; color: var(--fg); }
+.lane-dialog-said { margin-top: 8px; color: var(--text); }
 
 /* The PaneForge dev lane a pane holds, on that pane's own card. Quiet while the lane is
    merely held - it is one more fact on a crowded line - and red once the lane's finished
@@ -1061,7 +1072,7 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-help-now li { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .lane-help-who { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lane-help-states { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 12px; }
-.lane-help-states b { color: var(--fg); font-weight: 600; }
+.lane-help-states b { color: var(--text); font-weight: 600; }
 .lane-help-states li { color: var(--muted); line-height: 1.45; }
 
 /* There was a `.lane-live` ring here: a breathing blue halo around the whole card of a
@@ -1413,7 +1424,7 @@ body.sizing * { user-select: none !important; }
 .pane-ask-n {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 16px; height: 16px; border-radius: 4px;
-  background: var(--surface-1); color: var(--muted);
+  background: var(--surface); color: var(--muted);
   font-size: 10px;
 }
 /* A finger, not a pointer: 30px is a comfortable target for a mouse and a miss for a
@@ -1895,7 +1906,7 @@ body.sizing * { user-select: none !important; }
    with the body rather than in the button row: it changes what the answer MEANS, and a
    tick box between two buttons reads as a third button. */
 .confirm-check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
-.confirm-check input { accent-color: var(--acc); width: 14px; height: 14px; }
+.confirm-check input { accent-color: var(--accent); width: 14px; height: 14px; }
 /* Three things measured wrong on the offload question ("Start this pane on <PC>?"), all
    of them inherited from the dialog shell rather than written here:
 
@@ -2381,7 +2392,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .text-sheet {
   flex: 1; display: flex; flex-direction: column; min-width: 0;
   margin: max(8px, env(safe-area-inset-top)) 8px max(8px, calc(env(safe-area-inset-bottom) + 4px));
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: var(--shadow); overflow: hidden;
 }
 .text-sheet-head {
@@ -2468,7 +2479,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .dev-jobs-head .hint { flex: 1 1 auto; min-width: 0; }
 .dev-job {
   display: flex; align-items: center; gap: 7px; min-width: 0;
-  padding: 3px 6px; border-radius: 6px; background: var(--surface-1);
+  padding: 3px 6px; border-radius: 6px; background: var(--surface);
   font-size: 11.5px; color: var(--muted);
 }
 /* The kind is a word rather than a colour: "agent run" and "dev" are different KINDS of
@@ -2610,7 +2621,7 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .peer-dot.live { background: var(--ok, #6ec46e); border-color: transparent; }
 .peer .ghost.small { margin-left: auto; flex: none; }
 .peer-since { flex: none; }
-.peer-tailnet .peer-dot { background: var(--acc); }
+.peer-tailnet .peer-dot { background: var(--accent); }
 .peer-internet .peer-dot { background: var(--warn, #f0a868); }
 /* ---- a device that stopped looking like itself ----
    The wrap is on the marked row ONLY. `.peer` is a single flex line whose `since` and
@@ -3197,14 +3208,14 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   /* Its own banded row rather than a line of small text: at 11px on a dark card, under a
      question and above a row of buttons, it was reported as not being on screen at all. */
   padding: 4px 8px; border-radius: 8px;
-  border: 1px solid var(--danger); background: var(--surface-1);
+  border: 1px solid var(--danger); background: var(--surface);
 }
 /* The seconds. Tabular so the row does not jog sideways as 10 becomes 9, and wide enough
    for two digits plus the word "now", so nothing reflows on the last tick either. */
 .pane-ask-auto-left {
   flex: none; min-width: 34px; text-align: center;
   padding: 2px 6px; border-radius: 6px;
-  background: var(--danger); color: var(--surface-1);
+  background: var(--danger); color: var(--bg);
   font-size: 13px; font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -3225,7 +3236,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pane-ask-btn.auto::after {
   content: 'auto';
   margin-left: 2px; padding: 0 5px; border-radius: 999px;
-  background: var(--danger); color: var(--surface-1);
+  background: var(--danger); color: var(--bg);
   font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
 }
 
@@ -3360,7 +3371,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .mascot-say { white-space: pre-wrap; color: var(--text); line-height: 1.45; }
 /* The countdown. The number is TABULAR and given its own column, so the sentence beside
    it does not jog sideways as 10 becomes 9 - the same reading `AskCountdown` needed. */
-.mascot-bubble.counting { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+.mascot-bubble.counting { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
 .mascot-count { display: flex; gap: 9px; align-items: flex-start; }
 .mascot-secs {
   font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 590;
@@ -3370,7 +3381,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .mascot-acts { display: flex; gap: 6px; }
 .mascot-ask { display: flex; gap: 6px; }
 .mascot-ask input {
-  flex: 1; min-width: 0; background: var(--surface-1); color: var(--text);
+  flex: 1; min-width: 0; background: var(--surface); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: 12px;
 }
 .mascot-tools { display: flex; gap: 4px; justify-content: flex-end; }
@@ -3471,6 +3482,16 @@ button.chip:hover {
   opacity: 0.85;
 }
 
+/* --------------------------------------------------------------------------
+   The automatic-/clear countdown. Same card as the update toast, plus the two
+   things that card never needed: what is about to be continued, and how long
+   is left to stop it. It sits ABOVE the update card when both are up - one is
+   a new version waiting, the other is a session about to end. */
+.update-toast.autoclear { z-index: 62; }
+.ac-steps { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+.ac-steps li { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.ac-bar { height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.ac-bar > i { display: block; height: 100%; background: var(--accent); transition: width 0.25s linear; }
 /* A session about to clear itself. Corner card, never a dialog - nothing the app decided
    by itself may take the screen. Under every dialog and over the panes. */
 .autoclear-card {
@@ -3481,8 +3502,8 @@ button.chip:hover {
   max-width: 340px;
   padding: 12px 14px;
   border-radius: 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
   color: var(--text);
   font-size: 13px;
   display: flex;
@@ -3499,16 +3520,16 @@ button.chip:hover {
   font-size: 18px;
   font-weight: 590;
   letter-spacing: -0.022em;
-  color: var(--acc);
+  color: var(--accent);
 }
 .autoclear-word {
-  color: var(--text-secondary);
+  color: var(--text);
   line-height: 1.35;
 }
 .autoclear-steps {
   margin: 0;
   padding-left: 16px;
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -3516,7 +3537,7 @@ button.chip:hover {
   align-self: flex-start;
   padding: 5px 10px;
   border-radius: 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   background: transparent;
   color: var(--text);
   font-size: 12px;
@@ -3524,5 +3545,5 @@ button.chip:hover {
   transition: background 0.1s ease;
 }
 .autoclear-keep:hover {
-  background: var(--hover);
+  background: var(--surface-3);
 }

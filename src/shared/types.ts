@@ -1,3 +1,4 @@
+import type { AutoClearAsk } from './autoclear'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
@@ -1525,6 +1526,14 @@ export interface Config {
    */
   idleQuitMinutes?: number
   /**
+   * Hold the display (and so the machine) awake while any pane has an agent mid-turn or
+   * is sitting on a question - see shared/awake.ts. On by default: this Mac had
+   * `displaysleep 1` on battery, so a ten-minute turn ran behind a black screen and the
+   * question at the end of it was never seen. Capped at one unbroken busy stretch, so a
+   * wedged pane cannot keep a laptop lit all night.
+   */
+  keepDisplayAwake?: boolean
+  /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
    */
@@ -1899,6 +1908,13 @@ export interface Api {
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
+  /**
+   * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
+   * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
+   */
+  askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
+  /** The two buttons on that card. */
+  /** Countdowns in flight, for a window that has just opened. */
   checkForUpdates(): Promise<UpdateState>
   /**
    * Start the restart-into-the-new-version. Resolves to what actually happened, because

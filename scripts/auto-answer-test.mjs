@@ -364,6 +364,29 @@ ok('no clock is drawn for anything that will not be pressed', () => {
   assert.equal(autoAnswerAt(spent, ON, PERMISSION), 0, 'out of automatic presses')
 })
 
+// ---------------------------------------------------------------------------
+// The screen that ENDS a multi-question ask. Every question in the set was already
+// answered - by hand, or by this file - and nothing is sent until this list is.
+// ---------------------------------------------------------------------------
+ok('a review screen is submitted', () => {
+  const review = ask(1, 'Submit answers', 'Cancel')
+  const pick = pickAnswer(review, ON)
+  assert.ok(pick, 'a set of answered questions must not sit on its own last screen')
+  assert.equal(pick.n, 1)
+})
+
+ok('...and Cancel is never the one taken', () => {
+  // Not merely "not preferred": Cancel throws away every answer on the screens before
+  // it, so it has to be refused outright rather than out-ranked.
+  assert.equal(pickAnswer(ask(2, 'Cancel', 'Submit answers'), ON).n, 2)
+  // The arrow sitting on Cancel is not a signal to take it, in either mode.
+  assert.equal(pickAnswer(ask(1, 'Cancel', 'Submit answers'), ANY).n, 2)
+})
+
+ok('...and a submit that also widens permission is still refused', () => {
+  assert.equal(pickAnswer(ask(1, "Submit answers and don't ask again", 'Cancel'), ON), null)
+})
+
 ok('the plan is refreshed from the TIMER as well as from a frame', () => {
   // A frame only arrives when the screen changes, so computing it there alone means
   // turning the setting on over a question already on screen shows no countdown at all

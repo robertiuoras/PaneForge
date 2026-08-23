@@ -568,6 +568,17 @@ slider**; Paper is 0.98. Default accent `#f0a868`; the sidebar mark is the icon'
 geometry in `currentColor`. `npm run test:theme` is 358 assertions whose load-bearing half
 is contrast: 4.5:1 body and 3:1 secondary, for every preset and every hue at full tint.
 
+**A `var()` naming a token that does not exist never errors** - in a `color` it inherits
+something plausible instead. `--surface-1` was defined nowhere and eight rules asked for
+it, so `.pane-ask-auto-left` drew the auto-answer countdown in `--danger` on `--danger`:
+**1.00:1**, a red box with the seconds invisible inside it, which is how it was reported.
+The same sweep caught `var(--acc)` (the palette is `--accent`), `var(--fg)` (`--text`) and
+the whole `.autoclear-card` block written against five tokens that do not exist. Before
+trusting any colour, resolve it in a real window - and check every `var(--x)` in the
+stylesheets against the keys `paletteFor` returns. Only `--agent`, `--level` and `--mono`
+are legitimately absent: the first two are set inline per element, and every `--mono` use
+carries a font-family fallback.
+
 **The floating Stash is a second window and it obeys the same law.** It keeps its own
 rules (`shelf.css` — 140KB of app CSS to draw a 172x38 pill is the thing being avoided)
 and takes its colours from `applyTheme`, called there exactly as in the main window. Two
@@ -921,6 +932,18 @@ the absent copy, and the equal button widths.
   Three things must all be true - the CLI's own `Enter to select` footer, options numbered
   1..N with no gaps, and exactly one row carrying the arrow. Both positive fixtures in
   `npm run test:choices` are real frames off this machine.
+- **The screen that ENDS a multi-question ask prints no footer.** Claude Code asks its
+  questions one at a time and then draws a review - the answers listed back, and `1. Submit
+  answers / 2. Cancel` - with no `Enter to select` anywhere on it. The last footer in the
+  tail then belongs to the question asked BEFORE it, so the app drew buttons for a question
+  the CLI had moved past while a fully answered set sat unsent: "it asks questions and does
+  not finish and submit answers". `REVIEW` is a second anchor that sits ABOVE its list, so
+  `readReview` walks DOWN, and it wins only when it is newer than the last footer. Two
+  refusals keep it as narrow as the footer: 1..N with exactly one `❯`, and **nothing but
+  blanks and rules below it** - once the answers are sent the CLI prints its transcript
+  under those same rows and a return there lands in somebody's composer. `submit`/`done`/
+  `finish` join `GOES` for the same screen; `Submit answers and don't ask again` is still
+  refused by `WIDENS`.
 - **A RULE in the list is read exactly like a blank line.** Claude Code 2.1.235 draws a
   full-width rule before the options it always appends, and treating it as prose stopped the
   walk one option in - so a live 159-column pane with a question plainly on screen read as NO
@@ -1446,6 +1469,35 @@ for the card, `npm run test:tips`.
   `seen` resets rather than going quiet - a tip added in a later version has to be able to
   reach somebody who has already been round.
 
+## A session that clears itself asks first
+
+`claude-config/autoclear.mjs` (a Claude Code Stop hook) decides a session is past its
+context line AND that its handoff lists work a fresh session could start, and asks this app
+to clear that pane. It used to type `/clear` into the pty itself, so the first anybody knew
+was the session already gone.
+
+Now it asks over the phone server (`pane-clear.mjs` -> `autoclear:ask`) and the desk draws a
+countdown card: what would be continued, how long is left, **Keep this session** and **Clear
+now**. Nobody at the desk means it still happens by itself - that is the point of the
+feature, a clear that needs a person is a reminder.
+
+`shared/autoclear.ts` holds every refusal and `main/autoclear.ts` the clock; both are
+re-evaluated against a FRESH pane reading each tick, so a pane that starts another turn, is
+typed into, exits or disappears drops its countdown. An ask with no open steps is refused at
+both ends. A PaneForge older than the channel makes the hook REFUSE rather than fall back to
+the instant clear. `npm run test:autoclear`.
+
+## The screen stays on while a pane works
+
+`shared/awake.ts` + `main/awake.ts` hold a `powerSaveBlocker` while any pane has an agent
+mid-turn or is sitting on a question, and let go when the desk goes quiet. On this Mac
+`displaysleep` was **1 minute** on battery, so a ten-minute turn ran behind a black screen
+and the question at the end of it was never seen.
+
+The cap is the load-bearing part: it is on the BUSY STRETCH, not on the hold, so a wedged
+pane (which keeps `runSince` for as long as the app is open) cannot keep a laptop lit all
+night, and cannot re-arm the hold by ticking. `config.keepDisplayAwake` turns it off.
+`npm run test:awake`.
 ## A pane's two ends open at the same width
 
 Everything an agent CLI prints is absolute column moves, and a terminal CLAMPS a column it
@@ -1512,6 +1564,8 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals (dirty far checkout, unpushed far commits, a folder outside the root) |
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it, measured with a Range over the text |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:autoclear` | the countdown in front of an automatic /clear: every refusal (no steps, the pane started a turn, somebody typed into it, the pane went away), that Cancel types NOTHING, and that the three keystroke chunks arrive in order |
+| `npm run test:awake` | holding the display awake while a pane works, and letting go: the setting off, the desk quiet, and the CAP on one unbroken busy stretch (which a wedged pane may not re-arm) |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |

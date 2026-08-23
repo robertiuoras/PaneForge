@@ -183,14 +183,12 @@ function AskClock({ at }: { at: number }): React.JSX.Element | null {
   // Nothing is drawn once the clock has run out: the keys are landing, and a chip stuck at
   // 0s reads as a timer that jammed.
   if (left < 0) return null
-  return (
-    <span
-      className="chip asks-in"
-      title="This question is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent's question for me."
-    >
-      {left > 0 ? `${left}s` : 'now'}
-    </span>
-  )
+  // Inside the red "asks you" chip, not beside it. Two chips on the title line were two
+  // marks for one fact, and the seconds - the half that is actually moving - read as a
+  // separate reading about something else. One red box that says what is happening and
+  // how long is left is the same shape the pane's own card already uses
+  // (`.pane-ask-auto`: a danger-bordered row with the seconds as a solid pill in it).
+  return <span className="asks-in">{left > 0 ? `${left}s` : 'now'}</span>
 }
 
 const api = window.api
@@ -3641,16 +3639,19 @@ export default function App(): JSX.Element {
                         title={
                           `${s.ask.question}\n\n` +
                           s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
-                          '\n\nNothing runs until this is answered. Open the pane and press one.'
+                          (s.autoAnswerAt
+                            ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
+                            : '\n\nNothing runs until this is answered. Open the pane and press one.')
                         }
                       >
                         asks you
+                        {/* ...and, when it is about to be answered for you, how long is
+                            left - INSIDE this box rather than in a second one beside it.
+                            "asks you" and the seconds are one fact a step apart, and two
+                            red boxes on a 190px title line read as two readings. */}
+                        {s.autoAnswerAt ? <AskClock at={s.autoAnswerAt} /> : null}
                       </span>
                     )}
-                    {/* ...and, when it is about to be answered for you, how long is left.
-                        Beside the word rather than instead of it: "asks you" is what the
-                        pane needs, and the seconds are what is about to happen to it. */}
-                    {s.ask && s.autoAnswerAt ? <AskClock at={s.autoAnswerAt} /> : null}
                     {/* A pane on its way out says so, and says it here for the same reason
                         the chip above is here: the sub-line has no room and this is
                         transient - it takes the clock's place for the few seconds a move
