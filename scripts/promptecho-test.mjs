@@ -7,7 +7,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -56,5 +56,31 @@ assert.equal(promptEcho('❯'), '')
 assert.equal(promptEcho('❯    '), '')
 assert.equal(promptEcho(''), '')
 assert.equal(promptEcho('the answer mentioned ❯ in the middle'), '', 'the marker must start the line')
+
+// ---------------------------------------------------------------------------------------
+// The WIRING, as a source assertion.
+//
+// Everything above is the reader. What the reader is worth depends entirely on something
+// calling it, and a mirrored pane called nobody: its screen arrives from the other device
+// as one `buffer` frame, which reaches the renderer as a pane reset - not as the disk
+// replay `seedMarks` was written for - so the rail was empty on every mirrored pane while
+// this file, the suite and the typecheck all stayed green. That is exactly the shape
+// `test:desk`'s last block exists for, so it is pinned the same way.
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const reset = pane.slice(pane.indexOf('api.onPaneReset('))
+const body = reset.slice(0, reset.indexOf('\n    const off = api.onData('))
+assert.ok(body.length > 100 && body.length < 2000, 'could not isolate the pane-reset handler')
+assert.ok(
+  body.includes('seedMarks()'),
+  'the pane-reset handler must seed the rail: it is the only place a MIRRORED pane ever gets its prompts'
+)
+assert.ok(
+  /list\.splice\(0\)/.test(body) && body.includes('marker.dispose()'),
+  'it must drop the old tags first - they point into the buffer reset threw away, and seedMarks refuses on a non-empty rail'
+)
+assert.ok(
+  body.indexOf('marker.dispose()') < body.indexOf('seedMarks()'),
+  'the drop has to come before the seed, or the seed refuses'
+)
 
 console.log('promptecho: ok')

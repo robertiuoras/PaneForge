@@ -2628,16 +2628,31 @@ function TerminalPane({
      * The link to the other device came back and it re-sent the whole scrollback.
      * Everything already on screen is a prefix of what just arrived, so the pane is
      * wiped and redrawn from it - appending would show the run twice.
+     *
+     * This is also how a mirror gets its screen in the FIRST place: attaching asks the
+     * far end for the pane, which answers with one `buffer` frame, and that arrives here
+     * as a reset. So it is the only moment a mirrored pane's prompts can get their rail
+     * tags - the disk replay at the top of this effect never runs for one, and everything
+     * after this is ordinary streamed output with no prompt echoes in it. That is why the
+     * rail was empty on every mirrored pane: nothing here called `seedMarks`.
      */
     const offReset = api.onPaneReset((id) => {
       if (id !== sessionId) return
       t.reset()
+      // Every tag was anchored into the buffer that reset just threw away, and the tail
+      // about to arrive carries those same prompts for `seedMarks` to read back out.
+      // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
+      for (const m of list.splice(0)) m.marker.dispose()
+      publish()
       void api.getBuffer(sessionId).then((b) => {
         if (dead) return
         sawOutput = Boolean(b)
         if (b) setBlank(false)
         pinned.current = true
-        t.write(keep(b), () => t.scrollToBottom())
+        t.write(keep(b), () => {
+          t.scrollToBottom()
+          seedMarks()
+        })
       })
     })
 
