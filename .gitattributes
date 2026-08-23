@@ -1,3 +1,13 @@
 # Shell scripts are served raw to macOS/Linux (curl | bash), where a CRLF
 # line ending is a syntax error. Store them as LF whatever the checkout does.
 *.sh text eol=lf
+
+# Files this repo GENERATES. Every generator here writes plain 
+, and with
+# core.autocrlf=true git hands the worktree CRLF - so the moment one of them runs, git
+# reports the file as modified with an EMPTY diff and the release gate refuses to cut a
+# version ("main checkout is dirty"), which is a stop nobody can act on because there is
+# nothing to commit. Declaring them eol=lf, so the worktree matches what the generator
+# writes, is what keeps the working tree clean by itself.
+*.svg text eol=lf
+src/shared/settingsIndex.ts text eol=lf
