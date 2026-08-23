@@ -794,8 +794,9 @@ function readRepo(main: string): LaneBoard | null {
   // is also exactly the row Robert asked about: `main` appeared under "lanes elsewhere"
   // with nothing on it saying where elsewhere was, because the answer was another machine
   // and this window had never been told.
+  const existingLanes = new Set(lanes.map((l) => l.lane))
   for (const c of peerClaims(state, now).values()) {
-    if (!pool.includes(c.slot)) continue
+    if (!pool.includes(c.slot) || existingLanes.has(c.slot)) continue
     lanes.push({
       lane: c.slot,
       dir: laneDir(main, c.slot),
