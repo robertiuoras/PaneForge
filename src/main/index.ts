@@ -1351,7 +1351,7 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?:
   // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
   // never borrows, it owns. Named so a mirror watching the same pane is a separate
   // borrower rather than the same one changing its mind.
-  else manager.resize(id, cols, rows, borrowed === true, 'phone')
+  else manager.resize(id, cols, rows, borrowed === true, 'window')
 })
 /**
  * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at
