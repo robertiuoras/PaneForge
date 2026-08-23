@@ -2615,3 +2615,48 @@ optional), renders, and sorts every remote pane wrong for ever. Red-proofed by d
 by Task Scheduler is not a pane and nothing here can see it; that is a process-table read on
 the far end (`shared/devList.ts` is the shape, and it only ever runs locally), and it is the
 next thing worth doing for a machine meant to run automated work.
+
+
+## A session that clears itself asks first
+
+2026-08-23. The instant version shipped the same morning and Robert saw it as a session that
+vanished: "it shouldnt be auto clearing instantly or at least put popup for a countdown when
+its about to auto clear just so i can stop it if needed". The same day, a test for the tool
+that typed it had itself typed `/clear` plus the literal string `--not-a-flag` into his live
+pane - so the feature's whole failure mode was already on the record before this was built.
+
+Three decisions worth keeping:
+
+- **The countdown lives in the app, not in the hook.** Its refusals - the pane started
+  another turn, somebody typed into it, the pane went away - can only be seen from inside
+  PaneForge, and the card is the thing being added. The hook only asks.
+- **A refusal is re-read every tick**, never trusted from when the ask arrived. Same rule as
+  `handoffQueue`, and it is what makes "he asked it something during the countdown" safe.
+- **An older build refuses rather than falling back.** The fallback would be the exact
+  behaviour this replaced, and it would fire on the machine that had not been updated - i.e.
+  silently, where nobody was looking.
+
+Verified in the dev copy over CDP, not by reading the diff: the card renders with its steps
+(`Clearing clearprobe in 25s`, both buttons, contrast 14.1 title / 5.78 hint and steps at
+12px on `rgb(37,29,23)`), the countdown really counts (25s -> 23s), **Keep this session**
+leaves the pane's buffer with no `/clear` in it, and a 5s countdown left alone put `/clear`
+and then the resume prompt into a real bash pane.
+
+## The screen stays on while a pane works
+
+2026-08-23, Robert: "dont sleep if sessions running in paneforge because right now its
+sleep/screen off to quickly". Measured on the Mac first: `pmset -g custom` had
+`displaysleep 1` on battery and 10 on AC, and the screensaver was at 300s - so the machine
+was behaving exactly as configured, and an agent turn longer than a minute always ran behind
+a black screen. The OS side was fixed too (battery `displaysleep 10`, screensaver 900s).
+
+The app half exists because settings are global and this is not: the screen should stay on
+while THIS app has work running, not always. `powerSaveBlocker('prevent-display-sleep')`
+also prevents system sleep, which is what a long turn needs.
+
+The cap is on the busy STRETCH rather than the hold, and that is the part a naive
+implementation gets wrong: `runSince` survives an agent that wedged, so "hold while busy"
+with no cap means a laptop lit until somebody notices. `nextBusySince` only moves on the
+0 -> n edge, so a capped stretch cannot re-arm itself by ticking; a real quiet moment does
+re-arm it. Verified live against `pmset -g assertions`: nothing before,
+`NoDisplaySleepAssertion named: "Electron"` while a pane was busy, nothing after.

@@ -1385,6 +1385,36 @@ for the card, `npm run test:tips`.
   `seen` resets rather than going quiet - a tip added in a later version has to be able to
   reach somebody who has already been round.
 
+## A session that clears itself asks first
+
+`claude-config/autoclear.mjs` (a Claude Code Stop hook) decides a session is past its
+context line AND that its handoff lists work a fresh session could start, and asks this app
+to clear that pane. It used to type `/clear` into the pty itself, so the first anybody knew
+was the session already gone.
+
+Now it asks over the phone server (`pane-clear.mjs` -> `autoclear:ask`) and the desk draws a
+countdown card: what would be continued, how long is left, **Keep this session** and **Clear
+now**. Nobody at the desk means it still happens by itself - that is the point of the
+feature, a clear that needs a person is a reminder.
+
+`shared/autoclear.ts` holds every refusal and `main/autoclear.ts` the clock; both are
+re-evaluated against a FRESH pane reading each tick, so a pane that starts another turn, is
+typed into, exits or disappears drops its countdown. An ask with no open steps is refused at
+both ends. A PaneForge older than the channel makes the hook REFUSE rather than fall back to
+the instant clear. `npm run test:autoclear`.
+
+## The screen stays on while a pane works
+
+`shared/awake.ts` + `main/awake.ts` hold a `powerSaveBlocker` while any pane has an agent
+mid-turn or is sitting on a question, and let go when the desk goes quiet. On this Mac
+`displaysleep` was **1 minute** on battery, so a ten-minute turn ran behind a black screen
+and the question at the end of it was never seen.
+
+The cap is the load-bearing part: it is on the BUSY STRETCH, not on the hold, so a wedged
+pane (which keeps `runSince` for as long as the app is open) cannot keep a laptop lit all
+night, and cannot re-arm the hold by ticking. `config.keepDisplayAwake` turns it off.
+`npm run test:awake`.
+
 ## Checks
 
 `npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything in
@@ -1422,6 +1452,8 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals (dirty far checkout, unpushed far commits, a folder outside the root) |
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it, measured with a Range over the text |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:autoclear` | the countdown in front of an automatic /clear: every refusal (no steps, the pane started a turn, somebody typed into it, the pane went away), that Cancel types NOTHING, and that the three keystroke chunks arrive in order |
+| `npm run test:awake` | holding the display awake while a pane works, and letting go: the setting off, the desk quiet, and the CAP on one unbroken busy stretch (which a wedged pane may not re-arm) |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
