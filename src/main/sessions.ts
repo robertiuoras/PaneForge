@@ -914,7 +914,24 @@ export class SessionManager extends EventEmitter {
    * phone stream closes. A desk resize takes ownership back on the spot: a window the user
    * is dragging is a person at the desk, and they win.
    */
-  resize(id: string, cols: number, rows: number, borrowed = false, viewer = 'guest'): void {
+  resize(
+    id: string,
+    cols: number,
+    rows: number,
+    borrowed = false,
+    viewer = 'guest',
+    /**
+     * false RE-APPLIES a borrow without recording it against anybody.
+     *
+     * `smallestBorrow` mins each axis SEPARATELY, so the grid it returns is regularly one
+     * no single viewer asked for - and recording it under a name is then a lie about what
+     * that screen wants. `returnSize` used to hand the surviving `[0]` key those numbers,
+     * which overwrote a real request with somebody else's and left every later smallest
+     * calculation reading from a corrupted entry. Invisible with two borrowers, because
+     * the survivor IS the smallest; permanent with three.
+     */
+    record = true
+  ): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
     // Several screens may be borrowing this pane at once, so a borrow is RECORDED against
@@ -923,7 +940,7 @@ export class SessionManager extends EventEmitter {
     // two windows for as long as both are open. See `shared/paneSize.ts`.
     if (borrowed) {
       const borrows = s.borrows ?? (s.borrows = new Map())
-      borrows.set(viewer, { cols: Math.max(cols, 20), rows: Math.max(rows, 5) })
+      if (record) borrows.set(viewer, { cols: Math.max(cols, 20), rows: Math.max(rows, 5) })
       const all = smallestBorrow(borrows.values())
       if (all) {
         cols = all.cols
@@ -1012,7 +1029,9 @@ export class SessionManager extends EventEmitter {
       s.borrows.delete(viewer)
       const rest = smallestBorrow(s.borrows.values())
       if (rest) {
-        this.resize(id, rest.cols, rest.rows, true, [...s.borrows.keys()][0])
+        // Applied, not recorded: nobody asked for this grid, it is the floor of what the
+        // viewers still watching asked for. See `record` on resize().
+        this.resize(id, rest.cols, rest.rows, true, '', false)
         return
       }
     }
