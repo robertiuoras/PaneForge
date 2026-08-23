@@ -13,7 +13,7 @@
 // promise resolves is gone.
 
 import { buildSync } from 'esbuild'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -154,6 +154,35 @@ function harness(overrides = {}) {
   await new Promise((r) => setTimeout(r, 20))
   ok('the move itself re-marks the pane with no wait time', going.some((m) => m.on === true && m.queuedAt === undefined), JSON.stringify(going))
   ok('...and the mark comes off at the end', going.at(-1)?.on === false, JSON.stringify(going.at(-1)))
+}
+
+// 8. Changing your mind. `drop` is what the window calls to take a pane off the queue, and
+//    its ANSWER is the whole point: a move already in flight has left the map, so a `true`
+//    there would tell somebody their pane was staying while it left.
+{
+  const marks = []
+  const h = harness({ busy: () => true, mark: (id, on, queuedAt) => marks.push({ id, on, queuedAt }) })
+  h.queue.add('p1', 'dev-pc')
+  ok('dropping a queued pane says it did', h.queue.drop('p1') === true)
+  ok('...and the mark comes off, so nothing still reads as moving', marks.at(-1)?.on === false, JSON.stringify(marks.at(-1)))
+  ok('...and it is no longer waiting', h.queue.pending().length === 0)
+  ok('dropping it twice does NOT claim a second success', h.queue.drop('p1') === false)
+  ok('dropping a pane that was never queued says so', h.queue.drop('never') === false)
+}
+
+// 9. ...and the window has to actually call it. `remote:handoffCancel` shipped with the
+//    queue and nothing in the renderer ever invoked it, so the only way off the list was a
+//    script - which is how two panes sat under a `waiting` chip for 13 and 18 minutes.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  ok('the renderer calls cancelHandoff', /api\s*\n?\s*\.cancelHandoff\(/.test(app) || /api\.cancelHandoff\(/.test(app))
+  const at = app.indexOf('waiting <Elapsed')
+  const opens = at > 0 ? app.slice(Math.max(0, at - 800), at) : ''
+  ok('the waiting chip is a button, not a label', at > 0 && opens.lastIndexOf('<button') > opens.lastIndexOf('<span'), 'the chip that reports the wait must be the control that ends it')
+  ok('the chip presses stopMove', /stopMove\(s\)/.test(app))
+  ok('the context menu and the phone sheet both offer it', (app.match(/'stop-move'/g) ?? []).length >= 2)
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  ok('the channel returns the queue answer rather than a bare true', /handoffCancel'[^\n]*handoffQueue\.drop\(String\(id\)\)\)/.test(main), 'remote:handoffCancel')
 }
 
 rmSync(out, { recursive: true, force: true })
