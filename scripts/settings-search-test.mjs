@@ -54,7 +54,7 @@ for (const tab of TABS) {
 // and this test may not need a compiler to run.
 const src = readFileSync(GENERATED, 'utf8')
 const body = src
-  .replace(/export interface SettingEntry \{[\s\S]*?\n\}\n/, '')
+  .replace(/export interface SettingEntry \{[\s\S]*?\r?\n\}\r?\n/, '')
   .replace(/export const SETTINGS: SettingEntry\[\]/, 'const SETTINGS')
   .replace(/export function findSettings\(query: string\): SettingEntry\[\]/, 'function findSettings(query)')
   .replace(/const scored: \{ entry: SettingEntry; score: number \}\[\] = \[\]/, 'const scored = []')

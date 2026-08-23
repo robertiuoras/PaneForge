@@ -514,7 +514,7 @@ const desk = [
   const drawn = readFileSync(join(root, 'src/renderer/src/components/Mascot.tsx'), 'utf8')
   check(
     'the hide timer stands down for a countdown',
-    /const ms = hideAfterMs\(cfg\)\n\s*if \(!ms \|\| soon\) return/.test(drawn),
+    /const ms = hideAfterMs\(cfg\)\r?\n\s*if \(!ms \|\| soon\) return/.test(drawn),
     'the hide effect must return early while `soon` is set'
   )
   check(
