@@ -36,6 +36,14 @@ export interface DeskRow extends FleetPane {
   number: number
   session?: Session
   listed?: { pane: RemotePaneInfo; device: { id: string; name: string } }
+  /**
+   * When the desk that OWNS this pane will close it for being idle, epoch ms.
+   *
+   * Forwarded from whichever machine holds the pty, exactly like `job`: this desk does not
+   * close another device's pane and cannot know its settings, so a listed row draws the
+   * far end's own number or nothing at all.
+   */
+  closingAt?: number
 }
 
 export interface DeskGroup {
@@ -58,7 +66,8 @@ function fromSession(s: Session, number: number): DeskRow {
     lastOutput: s.lastOutput,
     createdAt: s.createdAt,
     exitCode: s.exitCode,
-    job: s.job
+    job: s.job,
+    closingAt: s.closingAt
   }
 }
 
@@ -78,7 +87,8 @@ function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }):
     lastOutput: pane.lastOutput,
     createdAt: pane.createdAt,
     exitCode: pane.exitCode,
-    job: pane.job
+    job: pane.job,
+    closingAt: pane.closingAt
   }
 }
 

@@ -87,7 +87,17 @@ const ASK_WINDOW_MS = 10 * 60_000
  * transports, and a channel that is desk-only is a property of the TRANSPORT, not of the
  * surface. The window keeps reaching these through ipcMain exactly as before.
  */
-const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey', 'phone:clearMark'])
+// ...and `sessions:closing` is desk-only for the reason the pty's SIZE is: it is a
+// decision made from facts that are true of the machine holding the pane. The phone runs
+// the same renderer, so it would publish a deadline computed against ITS idea of which
+// pane is focused - and the two would then overwrite each other's number on every session
+// broadcast, which is the same last-writer-wins fight `shared/paneSize.ts` documents.
+const DESK_ONLY = new Set([
+  'phone:typeGate',
+  'phone:forgetKey',
+  'phone:clearMark',
+  'sessions:closing'
+])
 
 /**
  * The channels a browser may not reach without a passkey touch.

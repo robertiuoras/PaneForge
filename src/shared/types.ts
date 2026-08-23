@@ -116,6 +116,15 @@ export interface Session {
    * the first anybody hears of it.
    */
   autoAnswerAt?: number
+  /**
+   * When the idle clock will CLOSE this pane, epoch ms, or absent when nothing will.
+   *
+   * Published by the desk that owns the pty (`shared/reclaim.ts`'s `idleCloseAt`), never
+   * derived by a viewer: the deadline is a fact about the owner's settings and its own
+   * refusals - which pane is focused over there, whether a shell job is still running -
+   * and a second machine guessing at it would draw a countdown nobody is going to honour.
+   */
+  closingAt?: number
   autoAnswerN?: number
   /**
    * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
@@ -894,6 +903,8 @@ export interface RemotePaneInfo {
   createdAt?: number
   /** the command running in that pane's foreground, when it is a shell pane running one */
   job?: string
+  /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
+  closingAt?: number
 }
 
 /** Live state of one paired device. */
@@ -1776,6 +1787,12 @@ export interface Api {
    * this app happened to notice the turn.
    */
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
+  /**
+   * When the idle clock will close this pane, or null when nothing will. The window
+   * decides it (it holds the focus and the config); the session carries it, so this
+   * desk's card and every paired device's listing draw the same number.
+   */
+  setClosing(id: string, at: number | null): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**

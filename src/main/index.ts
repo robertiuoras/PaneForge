@@ -1423,6 +1423,13 @@ ipcMain.on(
   }
 )
 
+// The idle clock's deadline, from the window that decides it. Refused for a mirrored id
+// for the same reason the busy footer is: the pane lives on the other machine, and its
+// own desk publishes when it will close it.
+ipcMain.on('sessions:closing', (_e, id: string, at: number | null) => {
+  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null)
+})
+
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 
 ipcMain.handle('config:get', () => getConfig())

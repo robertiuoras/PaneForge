@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -429,8 +429,12 @@ function mirrorFit(
   let stepped = false
   let scaleWanted = 1
   const d = f.proposeDimensions()
+  // The font the measurement was TAKEN at, read before anything below changes it. `d`
+  // answers for the font that is set right now, so every conversion off it has to use
+  // THIS number and not the one the shrink is about to write - see `borrowGrid`, whose
+  // comment carries the infinite loop that cost.
+  const current = t.options.fontSize ?? maxFont
   if (d && d.cols > 0 && d.rows > 0) {
-    const current = t.options.fontSize ?? maxFont
     const out = mirrorSize({
       fitCols: d.cols,
       fitRows: d.rows,
@@ -451,14 +455,10 @@ function mirrorFit(
     // in a scaled mirror still lands on the cell under the pointer.
   }
   if (ask && d && d.cols > 0 && d.rows > 0) {
-    // `proposeDimensions()` answers at the font that is set right now, which may be a
-    // shrunken one; the grid to ask for is the one that fits at the USER's font, so the
-    // answer arrives and needs no shrinking at all.
-    const current = t.options.fontSize ?? maxFont
-    const k = current / Math.max(1, maxFont)
-    const cols = Math.max(20, Math.floor(d.cols * k))
-    const rows = Math.max(5, Math.floor(d.rows * k))
-    if (cols !== mirror.cols || rows !== mirror.rows) ask(cols, rows)
+    // The grid to ask for is the one that fits at the USER's font, so the answer arrives
+    // and needs no shrinking at all - converted with the font `d` was measured at.
+    const want = borrowGrid({ fitCols: d.cols, fitRows: d.rows, font: current, maxFont })
+    if (want.cols !== mirror.cols || want.rows !== mirror.rows) ask(want.cols, want.rows)
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
 

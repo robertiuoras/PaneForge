@@ -116,3 +116,38 @@ function clamp01(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 0.05
   return Math.min(1, n)
 }
+
+/**
+ * The grid to ASK the host to lend this window: what fits here at the USER's own font.
+ *
+ * `proposeDimensions()` answers for the font that is SET RIGHT NOW, which is regularly a
+ * shrunken one - so turning its answer into "the grid at my own font" is a conversion, and
+ * the number it converts with is the font the measurement was taken at. Using the font the
+ * shrink has just written instead is a two-line slip with an infinite loop behind it, and
+ * it shipped: measured live 2026-08-23 against a real PC pane, a 458x459 mirror flipped
+ * between `27x13 @ font 13` and `126x65 @ font 6` several times a second, for ever.
+ *
+ *   at font 13 the room is 59x30, the host is drawing 126x65, so the font floors to 6...
+ *   ...and the ask converts 59x30 with k = 6/13 and asks for 27x13. The host obeys.
+ *   at font 6 the room measures 126x65, so the font grows back to 13...
+ *   ...and the ask converts 126x65 with k = 13/13 and asks for 126x65. The host obeys.
+ *
+ * Each half is individually plausible and the pair is a stable 2-cycle, which is why it
+ * survived a test suite: no single frame is wrong, the SEQUENCE is. Converting with the
+ * measurement's own font makes the target font-independent, so the walk has a fixed point.
+ */
+export function borrowGrid(i: {
+  fitCols: number
+  fitRows: number
+  /** the font `fitCols`/`fitRows` were measured at - NOT the one being set now */
+  font: number
+  maxFont: number
+}): { cols: number; rows: number } {
+  const maxFont = Math.max(MIN_FONT, i.maxFont)
+  const font = Math.max(MIN_FONT, Math.min(maxFont, i.font))
+  const k = font / maxFont
+  return {
+    cols: Math.max(MIN_COLS, Math.floor(i.fitCols * k)),
+    rows: Math.max(MIN_ROWS, Math.floor(i.fitRows * k))
+  }
+}

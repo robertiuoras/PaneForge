@@ -12,7 +12,7 @@ import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
-import { DEFAULT_RECLAIM } from '../shared/reclaim'
+import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS } from '../shared/sounds'
@@ -334,7 +334,7 @@ export function getConfig(): Config {
       autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
       mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
       tips: { ...DEFAULT_TIPS, ...(base.tips ?? {}), ...(raw.tips ?? {}) },
-      reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
+      reclaim: migrateReclaim(base.reclaim, raw.reclaim),
       autoHandoff: {
         ...DEFAULT_AUTO_HANDOFF,
         ...(base.autoHandoff ?? {}),
@@ -400,6 +400,38 @@ function migrateAutoAnswer(
   // the old default is a value written by the app and is safe to move. Anything else is a
   // number somebody typed.
   if (merged.waitMs === 1200) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+  merged.defaultsV2 = true
+  return merged
+}
+
+/**
+ * The one-time move onto the idle clock being on.
+ *
+ * It shipped off, on the argument that a pane closing by itself is worse than a desk full
+ * of idle agents - which was right while the only warning was a mascot bubble in a corner
+ * that takes itself away after a minute. The card now carries the countdown and the press
+ * that stops it, so the close is visible for the whole of the wait, wherever you happen to
+ * be looking. Robert, 2026-08-23: "so i know how long until it closes ... 5min".
+ *
+ * The marker is read off the SAVED config, never the merge - `DEFAULT_RECLAIM` carries it,
+ * so asking the merged object answers yes for every config in existence and the migration
+ * runs on nothing.
+ */
+function migrateReclaim(
+  base: ReclaimConfig | undefined,
+  raw: ReclaimConfig | undefined
+): ReclaimConfig {
+  const merged: ReclaimConfig = { ...DEFAULT_RECLAIM, ...(base ?? {}), ...(raw ?? {}) }
+  if (raw?.defaultsV2) return merged
+  // A zero, and the one number the app itself could have written. The Settings control is
+  // a SWITCH, not a field, so the only values that ever reached this key are 0 and the old
+  // `IDLE_CLOSE_MINUTES` of 30 - both of them the app's own, and neither of them anybody's
+  // choice of duration. Anything else was typed through `pf-ctl call config:set` and is
+  // left exactly as it is.
+  const OLD_SWITCH_MINUTES = 30
+  if (!(merged.idleCloseMinutes > 0) || merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
+    merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
+  }
   merged.defaultsV2 = true
   return merged
 }

@@ -58,6 +58,7 @@ export const SURFACE: Surface = {
   paneVisibility: ['send', 'pty:visible'],
   redraw: ['send', 'pty:redraw'],
   setBusy: ['send', 'sessions:busy'],
+  setClosing: ['send', 'sessions:closing'],
   startSwarm: ['invoke', 'sessions:swarm'],
   getConfig: ['invoke', 'config:get'],
   setConfig: ['invoke', 'config:set'],

@@ -84,6 +84,15 @@ export interface ReclaimConfig {
    * is half an hour rather than the two hours it started at.
    */
   idleCloseMinutes: number
+  /**
+   * Marker for the one-time move onto the clock being ON by default.
+   *
+   * `defaults()` is WRITTEN to config.json at first launch, so every install in existence
+   * carries `idleCloseMinutes: 0` explicitly and a flip in `DEFAULT_RECLAIM` alone would be
+   * read as somebody's own choice and never applied. Same shape as `autoAnswer.defaultsV2`,
+   * and read off the SAVED config for the same reason.
+   */
+  defaultsV2?: boolean
 }
 
 /**
@@ -97,13 +106,14 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 30
+export const IDLE_CLOSE_MINUTES = 5
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
   maxPerSweep: 2,
-  idleCloseMinutes: 0
+  idleCloseMinutes: IDLE_CLOSE_MINUTES,
+  defaultsV2: true
 }
 
 export interface ReclaimPane {
@@ -245,7 +255,7 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state))
+    .filter(onTheClock)
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
 
@@ -264,4 +274,54 @@ export function idleClosePlan(
 /** MB the plan is expected to return, for the line that says whether it was worth doing. */
 export function reclaimedMb(plan: Reclaim[]): number {
   return plan.reduce((mb, p) => mb + (p.hadAgent ? SESSION_MB : 0), 0)
+}
+
+/**
+ * Whether this pane is ON THE CLOCK at all - the whole refusal set, in one place.
+ *
+ * `idleClosePlan` decides WHO closes and `idleCloseAt` decides WHEN the card says it will,
+ * and those two disagreeing is the worst failure this feature has: a card counting down on
+ * a pane that will never be closed is a threat the app does not carry out, and a pane
+ * closing with no countdown in front of it is the thing the countdown exists to prevent.
+ * So there is one predicate and both read it.
+ *
+ * `busy` is the load-bearing one for a SHELL pane. A pane whose agent has finished and a
+ * pane running `npm run build` look identical in the sidebar - both quiet, both green -
+ * and `paneJob.ts` is what tells them apart: a live foreground command sets `runSince`,
+ * which arrives here as `busy`. Robert, 2026-08-23: "its actually stopped not just stopped
+ * but shell or something background still running".
+ */
+function onTheClock(p: ReclaimPane): boolean {
+  return (
+    !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+  )
+}
+
+/**
+ * When this pane is due to be closed by the idle clock, or null when it is not on it.
+ *
+ * null is a REFUSAL and never "soon": the caller draws nothing for it. A pane that is
+ * working, holding a question, focused, mid-handoff, another device's, or simply not in a
+ * closeable state has no deadline at all, and inventing one for it - even a far-off one -
+ * would put a countdown on a card nothing is going to close.
+ *
+ * This is deliberately per-pane and ignores `maxPerSweep` and the last-pane rule, which
+ * are about which of several due panes go FIRST. Both can only ever delay a close, and a
+ * countdown that says "about now" for a pane that goes one sweep later is honest; one that
+ * says nothing because the pane happened to be third in the list is not.
+ */
+export function idleCloseAt(
+  pane: ReclaimPane,
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0
+): number | null {
+  if (!cfg.enabled) return null
+  const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
+  if (!minutes) return null
+  if (!onTheClock(pane)) return null
+  const at = quietSince(pane) + minutes * 60_000
+  // A pane already past its deadline is due NOW, not overdue by four minutes: the sweep
+  // runs on a minute timer, so `now` is regularly a little past the moment it was due and
+  // a chip counting UP from zero reads as a clock that jammed.
+  return Math.max(at, now)
 }

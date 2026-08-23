@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, reclaimedMb, DEFAULT_RECLAIM } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleCloseAt, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -154,7 +154,11 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     pane({ id: 'b', lastKeyboard: NOW - 3 * HOUR }),
     pane({ id: 'fresh', lastKeyboard: NOW - 30 * 60_000 })
   ]
-  eq('off unless somebody sets a number', idleClosePlan(panes, DEFAULT_RECLAIM, NOW).length, 0)
+  // It ships ON now, at five minutes - the card carries the countdown and the press that
+  // stops it, so the close is visible for the whole wait rather than only in a mascot
+  // bubble in a corner. Zero is still how it is turned off.
+  eq('on by default, at five minutes', DEFAULT_RECLAIM.idleCloseMinutes, IDLE_CLOSE_MINUTES)
+  eq('off when the number is zero', idleClosePlan(panes, { ...DEFAULT_RECLAIM, idleCloseMinutes: 0 }, NOW).length, 0)
   eq('and off when reclaim itself is off', idleClosePlan(panes, { ...CLOCKED, enabled: false }, NOW).length, 0)
   eq('oldest quiet first, and only past the clock', ids(idleClosePlan(panes, CLOCKED, NOW)), 'a,b')
   eq('a pane inside the window is left alone', ids(idleClosePlan([panes[2], pane({ id: 'k', lastKeyboard: NOW })], CLOCKED, NOW)), '')
@@ -236,5 +240,54 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('a run clock that is still going is a refusal of its own', idleClosePlan([busy, pad], CLOCKED, NOW).length, 0)
   eq('and under pressure too', reclaimPlan([busy, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
 }
+
+
+{
+  // ---------------------------------------------------------------------------
+  // The deadline the CARD draws. Its whole job is to agree with the sweep: a countdown on
+  // a pane nothing will close is a threat the app does not carry out, and a pane closing
+  // with no countdown in front of it is what the countdown exists to prevent.
+  // ---------------------------------------------------------------------------
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 60 }
+  const quiet = pane({ id: 'q', lastKeyboard: NOW - 30 * 60_000 })
+  eq('the deadline is quiet-since plus the setting', idleCloseAt(quiet, CLOCKED, NOW), NOW - 30 * 60_000 + 60 * 60_000)
+  eq('nothing to draw with the clock off', idleCloseAt(quiet, { ...CLOCKED, idleCloseMinutes: 0 }, NOW), null)
+  eq('nor with reclaim itself off', idleCloseAt(quiet, { ...CLOCKED, enabled: false }, NOW), null)
+
+  // A pane already past its deadline is due NOW, never overdue: the sweep runs on a minute
+  // timer, so `now` is regularly a little past the moment, and a chip counting UP from zero
+  // reads as a clock that has jammed.
+  const late = pane({ id: 'late', lastKeyboard: NOW - 5 * HOUR })
+  eq('a pane past its deadline is due now, not overdue', idleCloseAt(late, CLOCKED, NOW), NOW)
+
+  // The refusals, and the shell one is the reason this was asked for: a pane running
+  // `npm run build` and a pane that has finished look identical in the sidebar, and
+  // `paneJob.ts` is the only thing that tells them apart (through `runSince` -> busy).
+  eq('a shell pane still running a command has no deadline', idleCloseAt(pane({ id: 'b', busy: true, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  eq('nor does a pane holding a question', idleCloseAt(pane({ id: 'a', state: 'needsYou', asking: true, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  eq('nor the pane being looked at', idleCloseAt(pane({ id: 'f', focused: true, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  eq('nor another device pty', idleCloseAt(pane({ id: 'r', remote: true, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  eq('nor one already being moved', idleCloseAt(pane({ id: 'h', handingOff: true, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  for (const state of ['working', 'starting', 'stalled']) {
+    eq(`nor one that is ${state}`, idleCloseAt(pane({ id: 'x', state, lastKeyboard: NOW - 5 * HOUR }), CLOCKED, NOW), null)
+  }
+
+  // ...and the two must not drift: everything the sweep closes had a deadline, and it had
+  // already passed. This is the assertion that fails if either side grows a refusal the
+  // other does not have.
+  const many = [
+    pane({ id: 'a', lastKeyboard: NOW - 5 * HOUR }),
+    pane({ id: 'b', lastKeyboard: NOW - 3 * HOUR }),
+    pane({ id: 'busy', busy: true, lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'ask', state: 'needsYou', asking: true, lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'fresh', lastKeyboard: NOW })
+  ]
+  for (const r of idleClosePlan(many, CLOCKED, NOW)) {
+    const p = many.find((m) => m.id === r.id)
+    check(`${r.id} was counted down before it was closed`, idleCloseAt(p, CLOCKED, NOW) === NOW, String(idleCloseAt(p, CLOCKED, NOW)))
+  }
+  check('and a pane with no deadline is never in the plan', !idleClosePlan(many, CLOCKED, NOW).some((r) => idleCloseAt(many.find((m) => m.id === r.id), CLOCKED, NOW) === null))
+}
+
 
 console.log(`reclaim: ${checks} checks passed`)
