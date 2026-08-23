@@ -239,6 +239,34 @@ ok('the refused pane was NOT closed', killed.length === 1)
 ok('the receiver kept its local edit', readFileSync(join(clone, 'local-edit.txt'), 'utf8').includes('someone'))
 rmSync(join(clone, 'local-edit.txt'))
 
+// ------------------------------------------ the network is not asked for what both have
+// Measured 2026-08-23 between this Mac and the PC over the real origin: the sender's push
+// is 944 ms and the receiver's fetch 1042 ms, of a transfer whose every other step is tens
+// of milliseconds - and on two desks that autosync, neither of them moves a single object.
+// The proof is that the handoff still works with origin pointed at nothing: if either end
+// touched the remote it could not.
+{
+  const nowhere = join(out, 'no-such-origin.git')
+  git(repo, 'remote', 'set-url', 'origin', nowhere)
+  git(clone, 'remote', 'set-url', 'origin', nowhere)
+  const insync = await sendHandoff(sender, 'pc', { ids: ['s1'] })
+  ok('an in-sync handoff never touches the remote', insync[0]?.ok === true, insync[0]?.error)
+  ok(
+    'the sender hands over the commit it is standing on',
+    received.at(-1)?.repo?.sha === git(repo, 'rev-parse', 'HEAD'),
+    received.at(-1)?.repo?.sha
+  )
+  // The control. Without it the two skips above would pass while the handoff had simply
+  // stopped carrying code at all.
+  writeFileSync(join(repo, 'app.js'), 'one\ntwo\nthree\n')
+  const broken = await sendHandoff(sender, 'pc', { ids: ['s1'] })
+  ok('...but real work still has to reach it', broken[0]?.ok === false && /Push failed/.test(broken[0]?.error ?? ''), broken[0]?.error)
+  git(repo, 'remote', 'set-url', 'origin', origin)
+  git(clone, 'remote', 'set-url', 'origin', origin)
+  git(repo, 'checkout', '--', 'app.js')
+  git(repo, 'reset', '--hard', 'HEAD')
+}
+
 const outside = await sendHandoff(
   { ...sender, list: () => [{ id: 's9', title: 'sys', cwd: '/etc', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }], snapshot: () => [{ cwd: '/etc', agent: 'claude', scrollbackId: 's9' }] },
   'pc'
