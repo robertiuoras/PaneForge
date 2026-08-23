@@ -539,7 +539,12 @@ body.dragging .list .row:not(.dragging) { opacity: 0.5; transition: none; }
 body.dragging, body.dragging * { cursor: grabbing !important; }
 /* Its turn just ended and the bell just rang: this is the card that made the sound.
    It fades out on its own - the standing amber mark is what remains afterwards. */
-.row.just-done { animation: doneGlow 1.75s ease-out 3; }
+/* ONCE. It used to run three times over 5.2 seconds, which is not a flash announcing an
+   arrival - it is a card that keeps flickering while you read it, on the one card you
+   just turned to look at. "Fix the shimmer on Your move, it should only go once when it
+   gets moved there." A single pass still answers "which one was that"; the standing amber
+   mark below is what says "and it is still unread", and that one no longer moves at all. */
+.row.just-done { animation: doneGlow 1.9s ease-out 1; }
 @keyframes doneGlow {
   0% { background: #f0b42921; box-shadow: 0 0 0 1px #f0b42959, 0 0 18px #f0b4293d; }
   70% { background: #f0b4290f; box-shadow: 0 0 0 1px #f0b42924, 0 0 8px #f0b42921; }
@@ -549,9 +554,14 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 @media (prefers-reduced-motion: reduce) {
   .row.just-done { animation: none; background: #f0b4291a; box-shadow: 0 0 0 1px #f0b42933; }
 }
+/* The standing mark, and it is STILL. The bar used to breathe for as long as the pane sat
+   unread, so a desk with four finished panes had four bars pulsing out of step for ever -
+   motion that carries no news, on rows that are not going to change until a person acts.
+   The arrival flash above is the event; the colour is the state. A red `asking` bar keeps
+   its pulse: that one is a live question, and it goes away when it is answered. */
 .row.attn::before {
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
-  border-radius: 2px; background: var(--warn); animation: pulse 1.8s ease-in-out infinite;
+  border-radius: 2px; background: var(--warn);
 }
 /* A pane sitting on a question, in the one colour nothing else in this list uses.
    Amber (`attn`) means "it went quiet while you were looking elsewhere" and is a nudge;
@@ -708,10 +718,13 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   animation: glowBreath 2.4s ease-in-out infinite;
   will-change: opacity;
 }
+/* Held lit, never breathing. A LIVE key breathes because something is happening behind it
+   and the movement is the news; a waiting key is a state that will not change until a
+   person acts, and a halo breathing under a finished pane's number for an hour is the
+   shimmer this pass removed. No `will-change` either - a layer promoted for an animation
+   it no longer has is a compositor layer for nothing. */
 .num-wrap:has(> .num.attn)::before {
   box-shadow: 0 0 9px color-mix(in srgb, #f0b429 55%, transparent);
-  animation: glowBreath 2s ease-in-out infinite;
-  will-change: opacity;
 }
 /* The floor is not 0: at rest the key still carries its own static 6px glow, so the
    breath only has to travel the distance between "lit" and "lit brighter". */

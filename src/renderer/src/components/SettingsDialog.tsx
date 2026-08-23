@@ -506,9 +506,11 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                 />
                 <Switch
                   checked={config.offloadAsk === true}
-                  onChange={(v) => onChange({ offloadAsk: v, offloadDefaultsV2: true })}
+                  onChange={(v) =>
+                    onChange({ offloadAsk: v, offloadDefaultsV2: true, offloadDefaultsV3: true })
+                  }
                   label="Ask first, rather than moving it"
-                  hint="Off, and off is the default: where a pane runs is answered by the budget below rather than by a dialog per launch. On puts the question back - it recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once."
+                  hint="On, and on is the default: a pane starting on the other machine is something you can say no to in the moment, rather than something the app decides and reports afterwards. It recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off restores the silent move, decided by the budget below."
                 />
                 <Switch
                   checked={config.autoHandoff?.enabled !== false}
