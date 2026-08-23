@@ -1429,7 +1429,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:pickrelease` | the newest release carrying an asset THIS platform can install, so a win-only build is skipped rather than 404'd at for ever |
 | `npm run test:promote` | a soaked dev build promoting to stable with a younger one on top of it |
-| `npm run test:remote` | the device link end to end over a real loopback socket |
+| `npm run test:remote` | the device link end to end over a real loopback socket, including the size BORROW: a mirror lends its grid to the far pty, it arrives flagged as a borrow rather than as an owned resize, a pane this device does not watch is never resized, and looking away returns that pane's size and only that pane's |
 | `npm run test:pairask` | six digits that agree between two ends, and DISAGREE through a real relay |
 | `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals (dirty far checkout, unpushed far commits, a folder outside the root) |
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it, measured with a Range over the text |
