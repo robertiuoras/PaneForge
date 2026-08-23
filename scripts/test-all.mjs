@@ -47,6 +47,7 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
+  ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
