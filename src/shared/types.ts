@@ -116,6 +116,18 @@ export interface Session {
    */
   autoAnswerAt?: number
   autoAnswerN?: number
+  /**
+   * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
+   *
+   * Armed by the `autoclear` Stop hook once context is past its line and a handoff on disk
+   * lists steps a fresh session could start on. On the session rather than in a map of its
+   * own because every refusal that drops it - a keystroke, another turn, a live question -
+   * is already a fact about the session, and a countdown nobody can see is the bug this
+   * replaced. See `shared/autoclear.ts`.
+   */
+  autoClearAt?: number
+  autoClearPrompt?: string
+  autoClearSteps?: string[]
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
