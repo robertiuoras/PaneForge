@@ -3455,12 +3455,25 @@ export default function App(): JSX.Element {
                         lasts, or for as long as a queued pane's turn runs. It cannot appear
                         beside "asks you": a pane holding a question is never moved. */}
                     {s.handingOff ? (
-                      <span
-                        className="chip"
-                        title="Moving to a paired device. A pane mid-turn goes as soon as its turn ends; nothing is killed to make it happen."
-                      >
-                        moving
-                      </span>
+                      s.handoffQueuedAt ? (
+                        // Waiting for its own turn to end, which is as long as the agent
+                        // takes. Drawn as a clock rather than as the word `moving`: a
+                        // ten-minute build under a chip that says moving reads as a broken
+                        // handoff, which is exactly how three of these were reported.
+                        <span
+                          className="chip"
+                          title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting."
+                        >
+                          waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                        </span>
+                      ) : (
+                        <span
+                          className="chip"
+                          title="Moving to a paired device now."
+                        >
+                          moving
+                        </span>
+                      )
                     ) : s.status === 'exited' ? (
                       <span className="chip dead">exited {s.exitCode ?? ''}</span>
                     ) : s.runSince ? (

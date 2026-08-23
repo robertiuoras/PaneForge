@@ -133,6 +133,29 @@ function harness(overrides = {}) {
   ok('a queue with no notify still logs and does not throw', h.logged.length >= 1)
 }
 
+// 7. Waiting is not moving. Three panes sat under a chip reading `moving` on 2026-08-23
+//    while every one of them was queued behind its own live turn, and it read as a broken
+//    handoff. The mark carries WHEN it was queued, and drops that the moment it goes.
+{
+  const marks = []
+  const h = harness({
+    busy: () => true, // mid-turn: it can only wait
+    mark: (id, on, queuedAt) => marks.push({ id, on, queuedAt })
+  })
+  h.queue.add('p1', 'dev-pc')
+  ok('a queued pane is marked with the time it started waiting', marks[0]?.on === true && marks[0]?.queuedAt === NOW, JSON.stringify(marks[0]))
+  h.queue.tick()
+  ok('...and stays waiting while the turn runs', marks.length === 1, JSON.stringify(marks))
+
+  const going = []
+  const g = harness({ mark: (id, on, queuedAt) => going.push({ id, on, queuedAt }) })
+  g.queue.add('p1', 'dev-pc')
+  g.queue.tick()
+  await new Promise((r) => setTimeout(r, 20))
+  ok('the move itself re-marks the pane with no wait time', going.some((m) => m.on === true && m.queuedAt === undefined), JSON.stringify(going))
+  ok('...and the mark comes off at the end', going.at(-1)?.on === false, JSON.stringify(going.at(-1)))
+}
+
 rmSync(out, { recursive: true, force: true })
 console.log(`handoff-notify: ${checks} checks, ${failures} failed`)
 process.exit(failures ? 1 : 0)

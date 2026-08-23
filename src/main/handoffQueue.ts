@@ -149,6 +149,9 @@ export class HandoffQueue {
 
   private run(q: Queued): void {
     this.running.add(q.id)
+    // It has stopped waiting and started moving. Same paint, different sentence - see
+    // `Session.handoffQueuedAt`.
+    this.deps.mark(q.id, true)
     // Read the title BEFORE the move: a successful handoff kills the pane, so by the
     // time the promise resolves there is nothing left to name it with.
     const name = this.paneName(q.id)

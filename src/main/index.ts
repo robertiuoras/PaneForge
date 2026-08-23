@@ -1916,7 +1916,7 @@ const handoffQueue = new HandoffQueue({
   busy: paneBusy,
   send: (id, device, closeAfter) =>
     runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false }),
-  mark: (id, on) => manager.setHandingOff(id, on),
+  mark: (id, on, queuedAt) => manager.setHandingOff(id, on, queuedAt),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
   log: (line) => console.info(line),

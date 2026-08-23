@@ -119,7 +119,12 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
           {s.remote && <Row label="Runs on">{s.remote.name} (mirrored here)</Row>}
           {s.role && <Row label="Role">{s.role}</Row>}
           {s.piping && <Row label="Recording to">{s.piping.path}</Row>}
-          {s.handingOff && <Row label="Moving">on its way to a paired device</Row>}
+          {s.handingOff &&
+            (s.handoffQueuedAt ? (
+              <Row label="Queued">waiting for this turn to end, then it moves to a paired device</Row>
+            ) : (
+              <Row label="Moving">on its way to a paired device</Row>
+            ))}
           {/* A reading, never a model: `src/main/usage.ts` samples the pty's whole
               descendant tree every few seconds, so this is the build the agent started as
               well as the agent. Absent for a mirror, whose processes are elsewhere. */}
