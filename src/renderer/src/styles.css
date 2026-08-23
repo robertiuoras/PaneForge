@@ -3450,3 +3450,59 @@ button.chip {
 button.chip:hover {
   opacity: 0.85;
 }
+
+/* A session about to clear itself. Corner card, never a dialog - nothing the app decided
+   by itself may take the screen. Under every dialog and over the panes. */
+.autoclear-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 45;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.autoclear-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.autoclear-left {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 590;
+  letter-spacing: -0.022em;
+  color: var(--acc);
+}
+.autoclear-word {
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+.autoclear-steps {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.autoclear-keep {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.autoclear-keep:hover {
+  background: var(--hover);
+}
