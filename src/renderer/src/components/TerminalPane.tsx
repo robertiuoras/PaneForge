@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import { mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -394,16 +395,32 @@ function mirrorFit(
   f: FitAddon,
   pinned: boolean,
   mirror: { cols: number; rows: number },
-  maxFont: number
+  maxFont: number,
+  host: HTMLElement | null
 ): boolean {
   const cols = t.cols
   const rows = t.rows
   const d = f.proposeDimensions()
   if (d && d.cols > 0 && d.rows > 0) {
-    const k = Math.min(d.cols / Math.max(1, mirror.cols), d.rows / Math.max(1, mirror.rows))
     const current = t.options.fontSize ?? maxFont
-    const next = Math.max(6, Math.min(maxFont, Math.round(current * k)))
-    if (next !== current) t.options.fontSize = next
+    const out = mirrorSize({
+      fitCols: d.cols,
+      fitRows: d.rows,
+      hostCols: mirror.cols,
+      hostRows: mirror.rows,
+      font: current,
+      maxFont
+    })
+    if (out.font !== current) t.options.fontSize = out.font
+    // Below the font floor the only lever left is the element itself. Without this
+    // the pane simply drew a grid wider than itself and the far end's screen was cut
+    // off at the edge - reported as "half way cut across the screen". xterm's hit
+    // testing reads getBoundingClientRect, which includes the transform, so a click
+    // in a scaled mirror still lands on the cell under the pointer.
+    if (host) {
+      host.style.transformOrigin = 'top left'
+      host.style.transform = out.scale < 1 ? `scale(${out.scale})` : ''
+    }
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
   if (pinned) t.scrollToBottom()
@@ -677,13 +694,17 @@ function TerminalPane({
   const reshape = (t: Terminal, f: FitAddon): boolean => {
     if (replaying.current) return false
     const m = mirrorRef.current
-    if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
+    if (m && m.cols > 0 && m.rows > 0)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
     const g = gridRef.current
     if (g && !isPhoneClient() && g.cols > 0 && g.rows > 0)
-      return mirrorFit(t, f, pinned.current, g, fontRef.current)
+      return mirrorFit(t, f, pinned.current, g, fontRef.current, host.current)
+    // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
+    // or the pane keeps drawing at two thirds size with nothing to explain it.
+    if (host.current && host.current.style.transform) host.current.style.transform = ''
     const changed = refit(t, f, pinned.current)
     // A phone BORROWS the pty's shape rather than owning it. One pty cannot be 50 columns
     // for a phone and 157 for the window it is also drawn in, and before this the phone
