@@ -75,6 +75,31 @@ export const SLASH_OPTIONS: DraftOptions = {
 }
 
 /**
+ * "Was anything actually SENT by this Enter."
+ *
+ * A different question from `SLASH_OPTIONS` above, and it needs the opposite settings.
+ * That preset skips any chunk beginning with ESC and never decodes a bracketed paste,
+ * so `text` is empty after a paste, after a history recall and after a Tab completion -
+ * which is fine for "does this line start with a slash" and useless for "is the composer
+ * empty". This one decodes the paste and lets an arrow or a Tab set `certain` false, so
+ * an empty line with `certain` true is the one shape that really means NOTHING WAS
+ * TYPED: a bare return at an idle composer.
+ *
+ * Measured 2026-08-23 in a dev copy: the second return of a `/clear` (Claude Code's own
+ * completion menu takes the first) arrived with an empty composer and re-engaged the
+ * pane, so a cleared pane went straight back out of Ready. See `sessions.ts`.
+ */
+export const SUBMIT_OPTIONS: DraftOptions = {
+  max: 200,
+  keep: 'tail',
+  skipEscapeChunks: false,
+  paste: true,
+  escapeAbandons: true,
+  enterSubmits: false,
+  killClears: true
+}
+
+/**
  * laneWork's `/clear` watch. Same question as `SLASH_OPTIONS` but it parses escapes
  * properly, and it keeps only the tail: a pasted prompt can be thousands of characters
  * and none of them can make the last word `/clear` on their own.

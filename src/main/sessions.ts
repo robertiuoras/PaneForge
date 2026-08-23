@@ -32,7 +32,16 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
 import { killPaneStrays, trackStrays } from './strays'
-import { clearsConversation, isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
+import {
+  clearsConversation,
+  feedSubmitLine,
+  isBareReturn,
+  isQuietSlash,
+  isSlashCommand,
+  newSubmitLine,
+  typeLine
+} from '../shared/slashTurn'
+import type { DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
@@ -296,6 +305,14 @@ interface Live {
    * bell over a pane the user had cleared two seconds earlier and was still sitting at.
    */
   typed: string
+  /**
+   * The SAME keystrokes, read a second way - see `slashTurn.isBareReturn`.
+   *
+   * `typed` is deliberately blind to a paste and to a history recall, so it cannot tell
+   * an empty composer from one holding a pasted prompt. This one can, and that is the
+   * only question it is asked: did this Enter send anything at all.
+   */
+  submitLine: DraftState
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -487,6 +504,7 @@ export class SessionManager extends EventEmitter {
       autoAt: 0,
       lastTail: '',
       typed: '',
+      submitLine: newSubmitLine(),
       slashAt: 0,
       slashQuietUntil: 0,
       stallRaised: false
@@ -757,6 +775,7 @@ export class SessionManager extends EventEmitter {
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
     live.typed = typeLine(live.typed, data)
+    live.submitLine = feedSubmitLine(live.submitLine, data)
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
@@ -780,10 +799,27 @@ export class SessionManager extends EventEmitter {
     // screen for the reason the whole of `slashTurn.ts` is: the keystrokes look the same
     // for every CLI and the drawn composer does not.
     let cleared = false
+    // A return pressed at an EMPTY composer sent nothing, so it asked nothing.
+    //
+    // This used to be indistinguishable from a real prompt and the cost was the one
+    // thing "Ready" is for: Claude Code's completion menu takes the FIRST return of a
+    // `/clear` (measured in a dev copy 2026-08-23 - the command is completed into the
+    // box and stays there), so the return that actually runs it is a second keypress at
+    // a composer this app has already emptied. That second one read as a fresh prompt:
+    // `engaged` came straight back on and the pane a person had just cleared went to
+    // Running and then sat under "Your move" for ever. Reported as "even after doing
+    // /clear it moves the pane to running when it should've gone to ready".
+    //
+    // Every stray return has the same shape - answering nothing, waking a screensaver,
+    // a phone's send button on an empty box - and none of them is work anybody is
+    // waiting on.
+    let bare = false
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
+      bare = !slash && isBareReturn(live.submitLine)
+      live.submitLine = newSubmitLine()
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a
       // second pane on the same repo must not be able to drift onto it), so this is
@@ -793,7 +829,10 @@ export class SessionManager extends EventEmitter {
       }
       const quiet = slash && isQuietSlash(live.typed)
       live.typed = ''
-      this.beginRun(live)
+      // A bare return starts no turn. If it turns out to have answered a chooser the
+      // agent's own busy footer starts one a moment later, which is the same path a
+      // turn this app never saw typed has always come in on.
+      if (!bare) this.beginRun(live)
       // A slash command still gets the run clock (the readout should say how long
       // /compact took) but not the bell: turnPending stays down unless the run turns
       // out to be real work - see SLASH_TURN_MS where the footer ends.
@@ -805,14 +844,19 @@ export class SessionManager extends EventEmitter {
       if (slash) live.turnPending = false
     }
     // Typing into a pane is both "I have asked it something" (so its next quiet
-    // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
-    if (!live.meta.engaged || live.meta.attention) {
-      live.meta.engaged = true
+    // moment is a real end-of-turn) and "I have seen it" (so drop any nag). A bare
+    // return is only the second of those: somebody is at the pane, and nothing was
+    // asked of the agent.
+    let touched = false
+    if (live.meta.attention) {
       live.meta.attention = false
-      this.emitSessions()
-    } else if (submitted) {
-      this.emitSessions()
+      touched = true
     }
+    if (!bare && !live.meta.engaged) {
+      live.meta.engaged = true
+      touched = true
+    }
+    if (touched || submitted) this.emitSessions()
     // ...and a `/clear` un-asks it, AFTER the rule above has treated the keystroke as
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running

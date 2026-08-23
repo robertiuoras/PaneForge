@@ -473,6 +473,16 @@ reads a Claude pane keeps working. Separate ids rather than a switch on `claude`
 because the two have different histories, costs and failure modes and a pane must say
 which it is on its card.
 
+- **A base URL carries NO `/v1`; the CLI appends `/v1/messages` itself.** OpenRouter's
+  shipped as `https://openrouter.ai/api/v1`, so every OpenRouter pane posted to
+  `.../api/v1/v1/messages` - a 404 HTML page. What the CLI prints for that is not a
+  transport error, it is `There's an issue with the selected model (<id>). It may not
+  exist or you may not have access to it.`, a sentence about the MODEL in a pane whose
+  model is fine, so every report of it sent somebody hunting a model id. Measured
+  2026-08-23 against the real binary: with `/api/v1` both `stealth/ox-alpha` and
+  `z-ai/glm-5.2` print that line and exit; with `/api` both answer, and a real pane
+  replies. The DeepSeek and Z.ai entries had this right and said so; the OpenRouter one
+  did not.
 - **A provider is an entry in `KEY_PROVIDERS` plus an agent whose `env` names
   `keyVar(id)`.** Settings draws its key field off that list, so a provider added to
   the catalogue reaches the screen by itself; it used to be one hardcoded OpenRouter
@@ -668,6 +678,21 @@ all but six fields away on the way to the renderer. `RemotePaneInfo` now carries
   partial forms included - a completion menu turns `/cle` into `/clear`), which is the one
   thing that genuinely puts a pane back where a new one starts. `/compact` and `/resume`
   do not: both leave a conversation somebody may want to read.
+- **A return pressed at an EMPTY composer asked nothing**, so it neither engages a pane
+  nor starts its clock. Claude Code's completion menu takes the FIRST return of a
+  `/clear` - measured in a dev copy 2026-08-23, the command is completed into the box and
+  stays there - so the return that actually runs it is a second keypress at a composer
+  this app has already emptied. That one read as a fresh prompt, `engaged` came straight
+  back on, and the pane somebody had just cleared went to Running and then sat under Your
+  move for ever. The reading cannot be `typed === ''`: `SLASH_OPTIONS` is blind to a
+  paste and to a history recall on purpose, so a pasted prompt has that exact shape and
+  calling it "nothing was asked" would park a real turn in Ready - a worse bug than the
+  one being fixed. `slashTurn.isBareReturn` reads the same keystrokes a second way
+  (`SUBMIT_OPTIONS`: pastes decoded, arrows and Tab setting `certain` false) and is true
+  only for an empty line the parser followed every edit of. If a bare return turns out to
+  have answered a chooser, the agent's own busy footer starts the turn a moment later -
+  the same path a turn this app never saw typed has always arrived on. `npm run
+  test:slash`, whose load-bearing half is the negatives.
 - **A shell pane's turn ends with its COMMAND, with no quiet clock in front of it.** The
   backstop that ends a run waits for the pane to go quiet, and a shell echoes every
   keystroke - so a shell pane that had ever submitted anything kept its clock for as long
