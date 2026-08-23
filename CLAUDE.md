@@ -588,10 +588,19 @@ reading; `npm run test:panejob`.
   `IPty.process`). One syscall, on the same 1s sweep.
 - **Windows has no such reading, and the failure is a LIE rather than an absence**:
   `IPty.process` there returns `"xterm-256color"` idle AND busy. So the answer comes off the
-  process table (`jobFromTable`, `WIN_JOB_MS` 4s, only while a shell pane is open, never twice
+  process table (`jobFromTable`, `TABLE_JOB_MS` 4s, only while a shell pane is open, never twice
   at once): the pty pid IS the shell and the command is its child. That path knows how long the
   command has been alive, so the clock is its real age. An empty table leaves every pane as it
   was — "the table did not answer" may not wear the shape of "nothing is running".
+- **A BACKGROUND job is invisible to the foreground reading, and that read as idle.** `cmd &`
+  leaves the SHELL in front of the tty, so `paneJob` says nothing, `runSince` is never set,
+  and `reclaim.ts` saw `busy: false` on a pane with two monitors running in it and started the
+  idle countdown. So the same table answers on POSIX too (`sweepTableJobs`), asked ONLY for a
+  shell pane whose foreground reading already came back empty — the tty answer is exact and
+  free, and paying for a `ps` to repeat it is the waste this narrowness avoids.
+- **`reclaim.ts` refuses on `job` as well as on `busy`.** They are set by different readings and
+  one of them was wrong; the load-bearing test case is `job` refusing ON ITS OWN, with `busy`
+  false, because that is the exact shape the bug had.
 - **It feeds `busyOnScreen`, rather than being a state of its own**, so the pane sorts into
   Running and the 4s silent-turn backstop stands down.
 - **The clock counts the COMMAND** — the row says `running npm`, not `working`.
