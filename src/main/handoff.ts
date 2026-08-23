@@ -275,6 +275,12 @@ export interface ReceiveDeps {
   start(req: StartSessionRequest): Session | Promise<Session>
   /** where this machine keeps pane history logs */
   historyDir(): string
+  /**
+   * Record the width the arriving screen was painted at, against the id it is written
+   * under. `restoredTail` asks `colsOf` for exactly this a moment later, and an unknown
+   * width means the far desk's frame is replayed raw into this one.
+   */
+  noteTailCols?(id: string, cols: number): void
   /** where this machine's Claude CLI keeps transcripts for a folder */
   claudeProjectDir(cwd: string): string
   /**

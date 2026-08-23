@@ -906,6 +906,7 @@ const remote = new Remote({
         place: (req) => laneFor(req),
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
+        noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
         startDev: (dir, script) => startDevServer(dir, script)
       },
@@ -1897,6 +1898,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       snapshot: () => manager.snapshot(),
       kill: (id) => manager.kill(id),
       tailOf: (id, bytes) => history.tail(id, bytes),
+      tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
