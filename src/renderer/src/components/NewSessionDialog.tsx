@@ -358,6 +358,10 @@ export default function NewSessionDialog({
             install chips ended at 620px and the pinned row started at 616. */}
         <div className="dialog-foot">
           <AgentInstallBar agents={agents} onInstalled={reprobe} />
+          {/* Above the picker rather than at the top of the dialog: it explains the two
+              boxes on the row underneath it, and a note about a control somebody has not
+              reached yet is one nobody connects to the control. */}
+          <Blurb id="agentPick" />
 
           <div className="dialog-row">
             <Checkbox

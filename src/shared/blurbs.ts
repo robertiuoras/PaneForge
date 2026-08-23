@@ -59,6 +59,11 @@ export const BLURBS: Blurb[] = [
     text: 'Open one or more panes, each an agent running in a project folder. Tick several projects to start them all in one go, and each pane keeps its own terminal, history and folder.'
   },
   {
+    id: 'agentPick',
+    title: 'Agent',
+    text: 'The left box is the program that runs in this pane; the right one is the model it talks to. Most models are not programs of their own, so picking one under a provider\u2019s heading - OpenRouter, DeepSeek, GLM - switches the program to the one that can reach it.'
+  },
+  {
     id: 'stash',
     title: 'Stash',
     text: 'Everything you copy, kept in a list you can float over any window. Click an entry to put it back on the clipboard, pin the ones you keep needing, and drag files or images straight out of it.'

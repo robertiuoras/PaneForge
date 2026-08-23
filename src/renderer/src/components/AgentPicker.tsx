@@ -82,7 +82,7 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
         value={agent}
         options={agentOptions}
         onChange={(v) => onChange(v, '')}
-        title="Which AI runs in this pane"
+        title="The program that runs in this pane. The model it talks to is the box beside it."
         menuWidth={300}
       />
       {supportsModel(spec) && (
@@ -91,7 +91,7 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
           value={model}
           options={modelOptions}
           onChange={pickModel}
-          title="Model passed to the CLI"
+          title="Which model this program talks to. A model under a provider's heading switches the program with it."
           placeholder="Default model"
           menuWidth={260}
         />
