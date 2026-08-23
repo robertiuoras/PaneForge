@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.149",
+  "version": "0.8.150",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -60,6 +60,7 @@
     "test:confirmfit": "node scripts/confirm-fit-test.mjs",
     "test:fleet": "node scripts/fleet-test.mjs",
     "test:desk": "node scripts/desk-test.mjs",
+    "test:panejob": "node scripts/panejob-test.mjs",
     "test:surfacereach": "node scripts/surface-reach-test.mjs",
     "test:mirrorfit": "node scripts/mirrorfit-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",

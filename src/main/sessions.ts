@@ -15,6 +15,8 @@ import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { jobTable } from './backJobs'
+import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
@@ -50,6 +52,17 @@ import type {
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
+
+const WIN = process.platform === 'win32'
+
+/**
+ * How often Windows re-reads the process table for what its shell panes are running.
+ *
+ * 4s rather than the 1s sweep, because this one is a CIM query rather than a syscall - the
+ * same figure `usage.ts` settled on, and for the same reason: the answer is read by a
+ * person glancing at a row, not by a control loop. POSIX needs none of it.
+ */
+const WIN_JOB_MS = 4000
 /**
  * How long it must stay quiet before the pane is treated as *waiting for you*.
  * A single turn goes quiet many times - the model thinking, a long tool call, a
@@ -176,6 +189,13 @@ interface Live {
   /** the size the DESK window last fitted this pane to - see `resize` */
   deskCols: number
   deskRows: number
+  /**
+   * The program this pane was spawned as, and what `shared/paneJob.ts` last saw running
+   * in front of it. Only a SHELL pane ever has a job: an agent CLI's turn is tracked by
+   * its own footer, which knows things a foreground reading cannot.
+   */
+  runner: string
+  jobName: string | null
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
@@ -291,6 +311,12 @@ interface Live {
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
+  /**
+   * Windows only: what each shell pane's pty had running at the last table read.
+   * Empty on POSIX, where the tty answers the same question for free.
+   */
+  private winJobs = new Map<string, { name: string; elapsed?: number }>()
+  private winJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -300,6 +326,8 @@ export class SessionManager extends EventEmitter {
     // Single timer for all sessions: flipping working -> idle per session with its
     // own timer would mean N timers doing the same 1s tick.
     setInterval(() => this.sweepIdle(), 1000).unref()
+    // Windows only, and it stops itself when no shell pane is open. See `sweepWinJobs`.
+    if (WIN) setInterval(() => this.sweepWinJobs(), WIN_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
     trackStrays(() => this.roots())
@@ -427,6 +455,8 @@ export class SessionManager extends EventEmitter {
       rows: 30,
       deskCols: 120,
       deskRows: 30,
+      runner: specFor(agent).bin,
+      jobName: null,
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
@@ -543,6 +573,9 @@ export class SessionManager extends EventEmitter {
       live.req.resume ? live.req.resumeId : undefined
     )
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.runner = specFor(live.meta.agent).bin
+    live.jobName = null
+    live.meta.job = undefined
     live.buffer.set(RESET)
     live.meta.status = 'starting'
     live.meta.exitCode = undefined
@@ -1156,7 +1189,7 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
-  setHandingOff(id: string, on: boolean, queuedAt?: number): void {
+  setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return
     const was = !!s.meta.handingOff
@@ -1166,8 +1199,17 @@ export class SessionManager extends EventEmitter {
     // A queued pane and one actually in transit are the same paint to `reclaim.ts` and two
     // different sentences to a person, so the moment it stops waiting and starts moving is
     // a change the card has to see.
-    if (on && queuedAt) s.meta.handoffQueuedAt = queuedAt
-    else delete s.meta.handoffQueuedAt
+    //
+    // Three values, not two, and the third is the bug this had. `undefined` means LEAVE THE
+    // STAMP ALONE; only an explicit `null` takes a waiting pane off its clock. Every entry
+    // into a handoff paints the pane before it knows whether it will be sent or queued, so
+    // an `undefined` that CLEARED meant a second press - or the budget sweep asking again -
+    // silently turned `waiting 12m` into `moving` on a pane that was still only waiting for
+    // its turn to end. Measured live 2026-08-23: `handingOff: true`, no `handoffQueuedAt`,
+    // and `remote:handoffPending` listing that very pane. That is the whole of "I pressed
+    // hand off, it says moving, and it is not moving".
+    if (!on || queuedAt === null) delete s.meta.handoffQueuedAt
+    else if (queuedAt) s.meta.handoffQueuedAt = queuedAt
     if (was === on && wasAt === s.meta.handoffQueuedAt) return
     this.emitSessions()
   }
@@ -1501,6 +1543,65 @@ export class SessionManager extends EventEmitter {
     this.choose(live.meta.id, pick.n)
   }
 
+  /**
+   * The command running in front of a pane, and when it started, or null.
+   *
+   * Two readings for two platforms, because Windows has none of the cheap one: measured on
+   * the PC, `IPty.process` there answers with the terminal NAME whatever is running, so
+   * believing it would mark every shell pane on that machine working for ever. There it is
+   * the process table instead, sampled on its own slower timer.
+   *
+   * The POSIX call is wrapped because it reads the tty, and a pane whose pty has just died
+   * throws from it - inside a sweep that runs every second, for every pane.
+   */
+  private jobOf(live: Live, now: number): { name: string; since: number } | null {
+    if (WIN) {
+      const found = this.winJobs.get(live.meta.id)
+      // The table knows how long it has been alive, so the pane's clock is the command's
+      // real age rather than the moment this app noticed it - which matters most for the
+      // pane that was already running when the app restarted.
+      return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+    }
+    try {
+      const name = paneJob(live.proc.process, live.runner)
+      return name ? { name, since: now } : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Windows only: one process table, folded into `winJobs`.
+   *
+   * On demand rather than always - a CIM query is expensive and most desks have no shell
+   * pane at all - and never twice at once. Silent about everything it cannot read: an
+   * empty table leaves every pane exactly as it was, because "the table did not answer"
+   * and "nothing is running" must not share a shape.
+   */
+  private sweepWinJobs(): void {
+    if (!WIN || this.winJobsBusy) return
+    const shells = [...this.sessions.values()].filter(
+      (l) => l.meta.status !== 'exited' && SHELLS.has(programName(l.runner).toLowerCase())
+    )
+    if (!shells.length) {
+      if (this.winJobs.size) this.winJobs.clear()
+      return
+    }
+    this.winJobsBusy = true
+    void jobTable()
+      .then((procs) => {
+        if (!procs.length) return
+        this.winJobs.clear()
+        for (const live of shells) {
+          const found = jobFromTable(procs, live.proc.pid, live.runner)
+          if (found) this.winJobs.set(live.meta.id, found)
+        }
+      })
+      .finally(() => {
+        this.winJobsBusy = false
+      })
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -1511,7 +1612,23 @@ export class SessionManager extends EventEmitter {
       // quiet clock everywhere below: silence during a five minute tool call is not
       // the same thing as silence at an empty prompt, and treating them alike is what
       // made the dot go grey mid-turn and the bell ring over a running agent.
-      const busyOnScreen = live.busyUntil > now
+      // What a SHELL pane is running, which is the one kind of pane nothing else in this
+      // loop can speak about: no prompt this app watched being submitted, no CLI footer.
+      // It costs one syscall (the tty already knows its own foreground process) and it
+      // feeds straight into `busyOnScreen` below, because a live command is exactly what
+      // that flag means everywhere else - the pane is working, do not call the turn over.
+      const job = meta.status === 'exited' ? null : this.jobOf(live, now)
+      const jobName = job?.name ?? null
+      if (jobName !== live.jobName) {
+        live.jobName = jobName
+        meta.job = jobName ?? undefined
+        // The clock has to count the COMMAND. A shell pane's `runSince` is otherwise
+        // never set by anything, and a pane sorted into Running with no clock on it is
+        // half an answer: it says something is happening and not for how long.
+        if (job) meta.runSince = meta.runSince ?? job.since
+        changed = true
+      }
+      const busyOnScreen = live.busyUntil > now || jobName !== null
       // Backstop for the run clock: an agent whose footer this app cannot read (or
       // a pane that was torn down mid-turn) would otherwise count forever. Quiet,
       // and nothing on screen claiming to be busy, is the end of the turn.

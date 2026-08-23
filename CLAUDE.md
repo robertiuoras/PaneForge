@@ -566,6 +566,14 @@ all but six fields away on the way to the renderer. `RemotePaneInfo` now carries
   machine's work cannot pay at scale. So every pane is listed, none is mirrored until it is
   pressed, and `openListed` is what turns one into the other. The agent's own speed is not
   in this trade at all: it runs over there either way.
+- **The order inside a group is the sidebar's own numbering, and nothing else.** It used
+  to break the tie on how long a row had been in its state, oldest first, which reads well
+  and is wrong: the clock a `needsYou` row counts from is `lastOutput`, and a `working` row
+  falls back to the same field, so the sort key MOVED every time a pane painted. Eight
+  panes printing is eight keys changing several times a second and rows swapping places
+  under the pointer - "sessions keep moving up or down randomly". A list only settled while
+  nothing is happening cannot be pointed at, and the age it sorted by is on each row's own
+  clock anyway.
 - **A listed row has no pane NUMBER.** There is nothing on this machine for Ctrl+N to reach
   until it has been opened. The number of a real row still comes off the FULL ordered list,
   never off this screen's order - the device filter is visual, and a number that moved with
@@ -727,6 +735,41 @@ modifier and why this one did too.
   and is still the only path that can emit an up or a down OUTSIDE a box.
 - The clicked column is clamped to what is written on that row. Without it, a click in the
   empty half of a row is a burst of rights a CLI reading arrows as menu steps acts on.
+
+## A shell pane says what it is running
+
+Every "is this pane working" reading in the app is about an AGENT: `engaged` is a prompt
+this app watched being submitted, `busyUntil` is the CLI's own footer saying it is running.
+A plain shell pane has neither, so `npm run build` typed into one printed nothing for two
+minutes while the card read `ready - type to start` and sat in **Ready** with no clock -
+the desk calling a busy machine idle. `shared/paneJob.ts` is the reading and
+`npm run test:panejob`.
+
+- **On POSIX it is the pty's own foreground process**, which the tty already knows
+  (`tcgetpgrp`, behind node-pty's `IPty.process`). One syscall, no process table, asked on
+  the same 1s sweep everything else here runs on. Measured against a real pty: `zsh` at the
+  prompt, `sleep` a beat after `sleep 20` was typed.
+- **Windows has no such reading, and the failure is a LIE rather than an absence.**
+  Measured on the PC: `IPty.process` there returns the TERMINAL NAME - `"xterm-256color"`
+  idle and `"xterm-256color"` with a command up - so believing it marks every shell pane on
+  that machine working for ever. There the answer comes off the process table instead
+  (`jobFromTable`, `WIN_JOB_MS` 4s, only while a shell pane is open, never twice at once):
+  the pty pid IS the shell, measured, and the command is its child. That path also knows
+  how long the command has been alive, so the pane's clock is its real age rather than the
+  moment the app noticed it. An empty table leaves every pane as it was - "the table did
+  not answer" may not wear the shape of "nothing is running".
+- **It feeds `busyOnScreen`, rather than being a state of its own.** A live command means
+  exactly what that flag means everywhere else in `sweepIdle` - the pane is working, do not
+  call the turn over - so the pane sorts into **Running** and the backstop that ends a
+  silent turn after 4s stands down while the command runs.
+- **The clock counts the COMMAND.** A shell pane's `runSince` is otherwise never set by
+  anything, and a pane in Running with no clock is half an answer: something is happening
+  and not for how long. The row says `running npm`, not `working`.
+- **Narrow on purpose, because the expensive failure is a FALSE job**: a pane wrongly
+  marked working never goes quiet, so `reclaim.ts` never closes it, the budget never hands
+  it off, and its clock is a lie that ticks. So only a pane whose RUNNER is a shell is ever
+  spoken about - an agent CLI can report its own foreground as `node`, which would read as
+  a job for ever - and a foreground that is itself a shell is a subshell, not work.
 
 ## What a pane leaves running
 
@@ -1360,6 +1403,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:surfacereach` | that every method the window exposes has a way IN: for each key of `SURFACE`, a call site under `src/renderer/src`. A handler with no caller passes typecheck, the suite and surface parity - `remote:handoffCancel` and `listJobs` both shipped that way. Four are desk-side on purpose and each names who calls it instead |
 | `npm run test:mirrorfit` | how small a mirrored pane draws somebody else's grid, and every way that walk fails to converge: the shipped `Math.round` stalls a column short, flooring only the shrink cycles 11/12/11/12 for ever, and the bare font floor leaves a wide grid simply cut off. All three kept as controls |
+| `npm run test:panejob` | what a shell pane is running, and the refusals that are the feature: a shell at its own prompt, a subshell, an agent CLI reporting its own runtime. The last block asks a REAL pty, which is the half no fixture can check |
 | `npm run test:desk` | the sessions list with both machines in it: a device that is offline lists nothing, a mirrored pane is not offered twice, a listed pane carries no Ctrl+N number, and a source assertion that every field `FleetPane` ranks by is actually forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
 | `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, nothing is capped (a cap inside a filter box is a search that silently finds nothing), both prices are on every row, and a stealth model says in the picker that an anonymous provider keeps your prompts |
@@ -1580,6 +1624,22 @@ many. Measured on this desk while writing it: pressure `normal`, load 0.53 per c
   turns ran. Pressing the chip, or `Keep it here` in the card menu or the phone's sheet,
   drops the entry; a move already IN FLIGHT has left the queue and says so rather than
   claiming a success it cannot deliver.
+- **`undefined` means keep the stamp; only `null` clears it.** `handoffQueuedAt` is what
+  makes the chip say `waiting 12m` instead of `moving`, and EVERY entry into a handoff
+  paints the pane before it knows which of the two this is - the button, a second press,
+  the budget sweep asking again. While `setHandingOff(id, on, queuedAt?)` cleared on an
+  absent third argument, any of those silently turned a queued pane into one that reads as
+  in transit and never arrives. Measured live 2026-08-23: `handingOff: true`, no
+  `handoffQueuedAt`, and `remote:handoffPending` listing that same pane - "I pressed hand
+  off, it says moving, and it is not moving". `run()` is the one caller that passes `null`.
+- **The turn ending is an EVENT, not something to poll for.** `handoffQueue.poke()` on
+  every `sessions` change is what makes "as soon as the turn ends" mean it, instead of up
+  to `TICK_MS` (5s) of a finished pane sitting under a `waiting` chip. Free when nothing is
+  queued; the tick stays as the backstop, since an expiry has no event to hang off.
+- The local half of a move is not where the time goes: measured on this Mac, the whole
+  preparation is ~100ms (git `status` and `rev-list` 23-25ms each, the process table 43ms,
+  a 2.7 MB transcript read in 3ms), and the push is SKIPPED outright when nothing is
+  unpushed - the 1015ms it costs is the one leg worth avoiding, and already is.
 - **A pane holding a question is never moved, queued or otherwise.** The chooser is drawn on
   a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
   question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the
