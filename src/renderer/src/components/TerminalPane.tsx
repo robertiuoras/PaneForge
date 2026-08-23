@@ -488,8 +488,18 @@ function mirrorFit(
     const pad = getComputedStyle(host)
     const padX = parseFloat(pad.paddingLeft) || 0
     const padY = (parseFloat(pad.paddingTop) || 0) + (parseFloat(pad.paddingBottom) || 0)
-    const slackX = Math.max(0, Math.round((room - padX - drawn * s) / 2))
-    const slackY = Math.max(0, Math.round((host.clientHeight - padY - tall * s) / 2))
+    // ...and only when the leftover is worth splitting. A borrowed mirror fills its pane
+    // to within a cell, and nudging THAT by 7px only moves the pane off the left edge it
+    // is meant to sit flush against (the scrollbar hugs the right, see styles.css).
+    const cellW = drawn / Math.max(1, t.cols)
+    const cellH = tall / Math.max(1, t.rows)
+    const halfX = Math.max(0, Math.round((room - padX - drawn * s) / 2))
+    const halfY = Math.max(0, Math.round((host.clientHeight - padY - tall * s) / 2))
+    // Two cells, not one: a grid is whole cells, so a pane that took everything it
+    // could still leaves up to a cell over on each axis, and that is not slack - it is
+    // the pane being full.
+    const slackX = halfX * 2 >= cellW * 2 ? halfX : 0
+    const slackY = halfY * 2 >= cellH * 2 ? halfY : 0
     const move = slackX || slackY ? `translate(${slackX}px, ${slackY}px)` : ''
     const zoom = s < 0.999 ? `scale(${s.toFixed(3)})` : ''
     const want = [move, zoom].filter(Boolean).join(' ')
