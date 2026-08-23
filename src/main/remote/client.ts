@@ -25,8 +25,8 @@ import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import {
   HANDOFF_ASK_MS,
-  type HandoffItem,
   HANDOFF_CHUNK,
+  type HandoffItem,
   type HandoffPayload,
   type HandoffResult
 } from '../../shared/handoff'
