@@ -883,7 +883,8 @@ const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
   write: (id, data) => manager.write(id, data),
-  resize: (id, cols, rows) => manager.resize(id, cols, rows),
+  resize: (id, cols, rows, borrowed) => manager.resize(id, cols, rows, borrowed === true),
+  returnSize: (id) => manager.returnSize(id),
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
   clearAttention: (id) => manager.clearAttention(id),
@@ -1333,7 +1334,11 @@ async function laneWentQuiet(id: string): Promise<void> {
  * host's own cols/rows and scaled to fit whatever window is watching it.
  */
 ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?: boolean) => {
-  if (!remote.owns(id)) manager.resize(id, cols, rows, borrowed === true)
+  // A mirrored pane's resize is not dropped any more: it is sent to the machine that
+  // owns the pty as a BORROW, so the far end draws at the grid this window has room for
+  // and keeps its own desk size to go back to. See `mirrorFit` in TerminalPane.
+  if (remote.owns(id)) remote.resizeOn(id, cols, rows)
+  else manager.resize(id, cols, rows, borrowed === true)
 })
 /**
  * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at

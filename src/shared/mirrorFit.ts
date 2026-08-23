@@ -1,5 +1,12 @@
 // How a mirrored pane is drawn at somebody else's grid.
 //
+// SECOND: this is now the FALLBACK, not the answer. A mirror asks the host to lend it
+// the pty at the grid this window has room for (`pty:resize` with `borrowed`, the same
+// path a phone uses), so in the ordinary case the host's grid IS this pane's grid and
+// everything below is a no-op. It still runs, because a host that has not applied the
+// borrow yet - or an older build that ignores it - must draw something sane rather than
+// a screen cut off at the edge.
+//
 // The host owns the terminal's size - a mirror that resized the pty would trade
 // SIGWINCHes with the far end forever - so this window has exactly one lever: how
 // SMALL it draws that grid. It shrinks its font until the host's cols x rows fit.
@@ -27,21 +34,7 @@
 /** Smallest font worth setting. Below this, scaling takes over. */
 export const MIN_FONT = 6
 
-/**
- * The biggest a mirror may draw somebody else's grid, whatever the room.
- *
- * A mirror was capped at the USER's own font, which is right when the far end's grid is
- * the bigger of the two and wrong the moment it is smaller. Measured live 2026-08-23
- * against the PC: its pane is 69x35 (its window is small - the desk is a disconnected
- * RDP session), the Mac pane had room for 152x58 at 13px, and the cap meant the far
- * end's screen was drawn 518x525 inside 1191x880 - a small block of text in the top-left
- * corner of a mostly black pane, reported as the remote view being broken. There is
- * nothing else to put in that space: the pane IS that one screen, so it should fill it.
- *
- * A ceiling is still needed, because a host reporting a 20x5 grid would otherwise ask
- * for a font of ~90px and read as a fault of its own.
- */
-export const MAX_FILL_FONT = 28
+
 
 export interface MirrorFitIn {
   /** cols x rows this window has room for at the CURRENT font */
@@ -52,14 +45,8 @@ export interface MirrorFitIn {
   hostRows: number
   /** the font this pane is set to right now */
   font: number
-  /** the user's own font size - the size a mirror prefers when the grid fits as-is */
+  /** the user's own font size - a mirror never draws bigger than this */
   maxFont: number
-  /**
-   * How big this pane may grow the font to FILL itself when the host's grid is smaller
-   * than the room. Omitted (or below `maxFont`) keeps the old behaviour exactly: the
-   * user's own font is the ceiling. Capped at `MAX_FILL_FONT`.
-   */
-  fillFont?: number
 }
 
 export interface MirrorFitOut {
@@ -92,10 +79,6 @@ export function mirrorFit(i: MirrorFitIn): MirrorFitOut {
   const hostCols = Math.max(MIN_COLS, i.hostCols)
   const hostRows = Math.max(MIN_ROWS, i.hostRows)
   const maxFont = Math.max(MIN_FONT, i.maxFont)
-  // The ceiling: the user's font, or the fill ceiling when this pane was told it may
-  // grow past it. `Math.min` with MAX_FILL_FONT is what stops a tiny host grid asking
-  // for a font nobody would call a terminal.
-  const ceiling = Math.max(maxFont, Math.min(MAX_FILL_FONT, i.fillFont ?? maxFont))
 
   if (!(i.fitCols > 0) || !(i.fitRows > 0)) return { font: i.font, scale: 1 }
 
@@ -117,7 +100,7 @@ export function mirrorFit(i: MirrorFitIn): MirrorFitOut {
   // pixel genuinely fits, so the walk has a fixed point instead of a cycle. It still
   // returns to the user's own size the moment the room is really there.
   const want = Math.floor(i.font * k)
-  const font = Math.max(MIN_FONT, Math.min(ceiling, want))
+  const font = Math.max(MIN_FONT, Math.min(maxFont, want))
 
   // The scale is only ever read off a measurement taken AT the floor font. Deriving
   // it on the way down uses a `k` measured at 13px to describe a pane that is about

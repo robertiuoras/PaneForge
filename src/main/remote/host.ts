@@ -22,7 +22,9 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   write(id: string, data: string): void
-  resize(id: string, cols: number, rows: number): void
+  resize(id: string, cols: number, rows: number, borrowed?: boolean): void
+  /** Give a pane whose size a guest borrowed back to this desk. */
+  returnSize(id: string): void
   redraw(id: string): void
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   clearAttention(id: string): void
@@ -193,7 +195,11 @@ export class RemoteHost extends EventEmitter {
     this.pending.add(conn)
     conn.on('gone', () => {
       this.pending.delete(conn)
-      if (this.guests.delete(guest)) this.emit('changed')
+      if (this.guests.delete(guest)) {
+        // A guest that vanished cannot detach, so its borrows are returned here too.
+        for (const id of guest.attached) this.backend.returnSize(id)
+        this.emit('changed')
+      }
     })
     try {
       const how = await conn.accept(
@@ -255,17 +261,22 @@ export class RemoteHost extends EventEmitter {
         }
         case 'detach':
           guest.attached.delete(id)
+          // Whatever that guest borrowed goes back to this desk the moment it looks
+          // away - the same contract a phone has. Without this, one look from another
+          // machine would leave this pane at somebody else's width for ever.
+          this.backend.returnSize(id)
           this.emit('changed')
           return
         case 'write':
           this.backend.write(id, String(m.data ?? ''))
           return
         case 'resize':
-          // Honoured, but nothing sends it: this device owns the size of its own
-          // panes and a mirror draws itself at whatever cols/rows the session says.
-          // Two windows both fitting one pty would trade SIGWINCHes forever, with a
-          // full-screen CLI repainting its entire frame every round.
-          this.backend.resize(id, Number(m.cols ?? 80), Number(m.rows ?? 24))
+          // A mirror asking to BORROW the size, which is what stops the far end drawing
+          // this desk's grid at the wrong scale. Borrowed, never owned: this desk keeps
+          // `deskCols/deskRows` and gets them back on detach or when the guest goes.
+          // The old ping-pong worry does not apply - a mirror fits itself to its own
+          // window and asks for that, so it never chases the number it was sent.
+          this.backend.resize(id, Number(m.cols ?? 80), Number(m.rows ?? 24), m.borrowed === true)
           return
         case 'redraw':
           this.backend.redraw(id)
