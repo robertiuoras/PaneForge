@@ -171,8 +171,15 @@ if (process.platform !== 'win32') {
       jobs.every((j) => isCommandShell(rows.find((r) => r.pid === j.pid).cmd)),
       `every job under live pid ${cli.pid} is a command shell`
     )
+    // The claim is that DIRECTLY spawned machinery is never listed - not that the word
+    // never appears anywhere. A test in this very suite runs `caffeinate` through a shell,
+    // which is a real job, and it failed the first version of this assertion only under
+    // `npm test`: the suite runs as a child of the very pane being read.
+    const machinery = rows
+      .filter((r) => /--mcp|caffeinate/.test(r.cmd) && !isCommandShell(r.cmd))
+      .map((r) => r.pid)
     ok(
-      !jobs.some((j) => /--mcp|caffeinate/.test(rows.find((r) => r.pid === j.pid).cmd)),
+      !jobs.some((j) => machinery.includes(j.pid)),
       `and no MCP server or caffeinate reached the list under ${cli.pid}`
     )
   }
