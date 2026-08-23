@@ -92,6 +92,7 @@ const TESTS = [
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
   ['desk', 'desk-test.mjs'],
+  ['panejob', 'panejob-test.mjs'],
   ['surfacereach', 'surface-reach-test.mjs'],
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
