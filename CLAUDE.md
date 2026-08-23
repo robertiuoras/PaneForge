@@ -118,18 +118,33 @@ this repo has already shipped once.
   two in a test. `npm run test:lanepeers` is the arithmetic; `npm run test:lanedevice` is
   the plumbing, against a real bare repo and two real clones.
 
-## Releasing happens by itself
+## Releasing happens when Robert asks, and not before
 
-One command, and it is not a release:
+**`.lanes.json` says `"release": "merge"`, and that is deliberate.** Finishing work merges
+it into master and pushes it - it does NOT cut a version, publish a build, or move anybody's
+installed copy. Robert's words, 2026-08-23: *"make changes to code but need to have manual
+test in dev window so i can check instead of wasting time with releases"*. Every release is
+a build to install and a restart to take it, and he was getting one per session for work he
+had not looked at yet.
+
+So the end of a piece of work is: build it, **prove it in a second copy he can open** -
+`npm run try -- --keep --remote-debugging-port=9333`, then `npm run probe` for the numbers -
+report what was measured, and stop. The dev copy stays open for him. Nothing else about the
+verification bar changes: `npm run typecheck` and `npm test` still gate a commit, and a
+change nobody has seen running is still not finished.
 
 ```
 node scripts/lane.mjs ready --repo <dir> --session <id>   # this lane is done and verified
+npm run ship                                              # ONLY when Robert asks for a build
 ```
 
 `ready` merges master into your lane first, refuses to mark anything while that merge is
-dirty, then releases once **no chat is mid-work** - one version bump for everyone, whoever
-finishes last. Edit or commit after marking and the mark is dropped, by name. The
-measurements behind every number here are in `docs/design-notes.md`.
+dirty, then merges once **no chat is mid-work**. Edit or commit after marking and the mark
+is dropped, by name.
+
+Everything below describes what a release does WHEN ONE IS ASKED FOR - flipping
+`.lanes.json` back to `"release": "version"` restores the automatic path, and no rule here
+has been deleted. The measurements behind every number are in `docs/design-notes.md`.
 
 - **Below 1.0 an automatic release only ever moves the patch.** `bumpFor` still reads the
   commit subjects, and `nextVersion` demotes it: `feat:` is a patch, `feat!:` is the one bump

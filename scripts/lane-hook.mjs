@@ -377,9 +377,17 @@ if (event === 'prompt') {
       `When the work is done and verified, run: node ${ENGINE} ready --repo ${repo} --session ${session}`,
       info.release === 'version'
         ? `That is the whole release. It cuts the version by itself once no other chat is mid-work, and says so. Never run npm version / git tag / npm run ship yourself.`
-        : // `mainBranch`, not `branch` - `branch` is this lane's own, and saying "merges into
-          // lane-a" to the chat sitting in lane-a is a sentence that answers nothing.
-          `That merges this lane into ${info.mainBranch} and pushes, batched with every other finished lane. No version is cut here - this repo is not set up for releases (\`"release": "version"\` in .lanes.json turns that on).`
+        : info.own
+          ? // This repo CAN cut releases and is deliberately set not to. Robert's words,
+            // 2026-08-23: "make changes to code but need to have manual test in dev window
+            // so i can check instead of wasting time with releases". A release is a build
+            // to install and a restart to take it, and he was getting one per session for
+            // work he had not looked at yet - so the proof is now a dev copy he can see,
+            // and the release waits for him to ask.
+            `That merges this lane into ${info.mainBranch} and pushes - it does NOT cut a version. Prove the change in a second copy instead (\`npm run try -- --keep --remote-debugging-port=9333\` plus \`npm run probe\`), report what you measured, and leave it there. Only cut a release when Robert asks for one, with \`npm run ship\`.`
+          : // `mainBranch`, not `branch` - `branch` is this lane's own, and saying "merges into
+            // lane-a" to the chat sitting in lane-a is a sentence that answers nothing.
+            `That merges this lane into ${info.mainBranch} and pushes, batched with every other finished lane. No version is cut here - this repo is not set up for releases (\`"release": "version"\` in .lanes.json turns that on).`
     )
   }
   lines.push(
