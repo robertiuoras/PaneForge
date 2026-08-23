@@ -39,28 +39,30 @@ const render = (paintAt, viewAt) =>
       const b = t.buffer.active
       const rows = []
       for (let i = 0; i < b.length; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
-      res(rows.join('\n'))
+      res(rows)
     })
   })
 
 // The last word sits at column 10 + 6*15 = 100, so 120 is wide enough and 80 is not.
 const wide = await render(120, 157)
 const narrow = await render(80, 157)
+// How many rows the one line ended up spread across. A clamp does not delete a word - the
+// terminal wraps it onto the next row instead - so the damage is in the LAYOUT, which is
+// what the screen shows: one sentence torn into two ragged columns.
+const spread = (rows) => rows.filter((r) => WORDS.some((w) => r.includes(w))).length
+const flat = (rows) => rows.join('\n')
 
 check(
   'painted at the pty width, every word survives being widened',
-  WORDS.every((w) => wide.includes(w))
+  WORDS.every((w) => flat(wide).includes(w)) && spread(wide) === 1
 )
 eq(
   '...in the order they were written',
-  WORDS.every((w, i) => (i === 0 ? true : wide.indexOf(w) > wide.indexOf(WORDS[i - 1]))),
+  WORDS.every((w, i) => (i === 0 ? true : flat(wide).indexOf(w) > flat(wide).indexOf(WORDS[i - 1]))),
   true
 )
 // CONTROL. If this ever passes, the test has stopped being able to see the bug.
-check(
-  'CONTROL: painted into a narrower grid, words are lost to the clamp',
-  !WORDS.every((w) => narrow.includes(w))
-)
+eq('CONTROL: painted into a narrower grid, one line tears across several rows', spread(narrow) > 1, true)
 
 // --- the source contract: exactly one number, and both ends read it -----------------
 const grid = readFileSync(join(root, 'src/shared/paneGrid.ts'), 'utf8')
