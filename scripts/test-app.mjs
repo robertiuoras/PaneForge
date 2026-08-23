@@ -11,14 +11,31 @@
 // closes the previous one before launching a new one (a stale copy holds the
 // single-instance lock and looks exactly like "my change did not apply").
 //
-// It only ever kills Electron started from THIS checkout's node_modules. The matched
-// path includes `/node_modules/electron`, so closing the main lane cannot touch
-// claude-orchestrator-b, whose directory has main's as a prefix. The installed
-// PaneForge.exe - which usually hosts the session doing the killing - is a different
-// binary in a different folder and is never matched.
+// IT MATCHES EVERY SIBLING CHECKOUT, not only this one, and that is the whole point.
+// There is one dev copy per machine now (see dev-profile.mjs), so the copy holding the
+// shared `dev` lock is regularly one another lane started - and a launch that leaves it
+// alive is a launch that silently exits on the lock with no window and no error. The
+// match is `<projects>/PaneForge*/node_modules/electron`, so it still cannot touch
+// another Electron app on the machine, and the installed PaneForge.exe - which usually
+// hosts the session doing the killing - is a different binary in a different folder and
+// is never matched.
 
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { checkoutFamily } from './dev-profile.mjs'
+
+/** `pgrep -f` takes an extended regex, so a path's own metacharacters must be quoted. */
+function rxEscape(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Electron started from ANY checkout of this repo - a regex for pgrep, a glob for CIM. */
+function markers(root) {
+  const family = checkoutFamily(root)
+  return {
+    rx: `${rxEscape(family)}[^/]*/node_modules/electron`,
+    like: `${family.replace(/'/g, "''")}*\\node_modules\\electron*`
+  }
+}
 
 /**
  * Wait until the copy that was just told to close has actually gone.
@@ -31,13 +48,12 @@ import { join } from 'node:path'
  * and every second one worked, which reads as a flaky test rather than a race here.
  */
 export async function waitTestAppsGone(root, ms = 8000) {
-  const marker = join(root, 'node_modules', 'electron')
+  const { rx, like } = markers(root)
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {
     let running = false
     try {
       if (process.platform === 'win32') {
-        const like = `${marker.replace(/'/g, "''")}*`
         const r = spawnSync(
           'powershell',
           [
@@ -51,7 +67,7 @@ export async function waitTestAppsGone(root, ms = 8000) {
         )
         running = Number((r.stdout ?? '').trim()) > 0
       } else {
-        const r = spawnSync('pgrep', ['-f', marker], { encoding: 'utf8', timeout: 15000 })
+        const r = spawnSync('pgrep', ['-f', rx], { encoding: 'utf8', timeout: 15000 })
         running = !!(r.stdout ?? '').trim()
       }
     } catch {
@@ -64,10 +80,9 @@ export async function waitTestAppsGone(root, ms = 8000) {
 }
 
 export function closeTestApps(root) {
-  const marker = join(root, 'node_modules', 'electron')
+  const { rx, like } = markers(root)
   try {
     if (process.platform === 'win32') {
-      const like = `${marker.replace(/'/g, "''")}*`
       spawnSync(
         'powershell',
         [
@@ -81,7 +96,7 @@ export function closeTestApps(root) {
         { stdio: 'ignore', timeout: 15000 }
       )
     } else {
-      spawnSync('pkill', ['-f', marker], { stdio: 'ignore', timeout: 15000 })
+      spawnSync('pkill', ['-f', rx], { stdio: 'ignore', timeout: 15000 })
     }
   } catch {
     /* best effort - a lane release must never fail because a window would not close */
