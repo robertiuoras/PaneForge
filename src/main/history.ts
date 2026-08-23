@@ -249,7 +249,12 @@ export function list(): HistoryEntry[] {
         }
       })
       .filter((e): e is HistoryEntry => Boolean(e) && Boolean(e!.id))
-      .sort((a, b) => b.startedAt - a.startedAt)
+      // Newest CLOSED first, not newest opened. This list is read to find the session you
+      // were last in - "which one do I want back" - and a window opened this morning and
+      // left running sorted above the one closed a minute ago, which is the opposite of
+      // what the reader is looking for. A session still open has no `endedAt` and falls
+      // back to when it started, which keeps it at the top where it belongs.
+      .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
       .map(backfill)
   } catch {
     return []

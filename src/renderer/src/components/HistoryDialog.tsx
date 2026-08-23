@@ -152,7 +152,14 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                   <AgentLogo id={e.agent} spec={agents.find((a) => a.id === e.agent)} size={13} />
                   <strong>{e.title}</strong>
                   <span className="hint">{e.cwd}</span>
-                  <span className="chip">{new Date(e.startedAt).toLocaleString()}</span>
+                  {/* The time the list is SORTED by, so the order can be read off the
+                      rows. A session still open has no closing time and says when it
+                      started instead. */}
+                  <span className="chip">
+                    {e.endedAt
+                      ? `closed ${new Date(e.endedAt).toLocaleString()}`
+                      : new Date(e.startedAt).toLocaleString()}
+                  </span>
                   <span className="chip">{Math.max(1, Math.round(e.bytes / 1024))} KB</span>
                 </div>
                 {/* What it was working on: the opening ask, plus the first ask after each
