@@ -713,6 +713,10 @@ manager.on('sessions', () => {
   // or the final lines land after the pane has already been drawn as dead.
   pump.flush()
   send('sessions:changed', allSessions())
+  // A queued handoff is waiting for a turn to END, and a turn ending is exactly this
+  // event. On the 5s tick alone, "as soon as the turn ends" was up to five seconds of a
+  // finished pane sitting under a `waiting` chip. Free when nothing is queued.
+  handoffQueue.poke()
   // Every pane start, exit, rename and agent switch arrives here, which is the
   // whole of "the desk changed". Debounced inside: a swarm launch is six of these
   // in a second and they are worth one write.
@@ -1877,6 +1881,9 @@ function startDevServer(dir: string, script: string): string | null {
 /** One place both the button and the queue go through, so they cannot drift apart. */
 function runHandoff(device: string, request: HandoffRequest): Promise<HandoffItem[]> {
   const wanted = request.ids ?? []
+  // Paint them before anything starts, so nothing closes a pane mid-move - and with NO
+  // third argument, which would clear the stamp on a pane that is already queued and turn
+  // its honest `waiting 12m` into `moving`. See `setHandingOff`.
   for (const id of wanted) manager.setHandingOff(id, true)
   return sendHandoff(
     {

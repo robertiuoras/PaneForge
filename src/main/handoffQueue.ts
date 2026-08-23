@@ -35,9 +35,11 @@ export interface QueueDeps {
    * Paint the pane as on its way, so nothing else closes or moves it.
    *
    * `queuedAt` says it is WAITING rather than moving, which is a different sentence on the
-   * card - and it is dropped the moment the move really starts.
+   * card. `null` is what drops it when the move really starts; `undefined` leaves whatever
+   * stamp is already there, because every other entry into a handoff paints the pane before
+   * it knows which of the two this is.
    */
-  mark(id: string, on: boolean, queuedAt?: number): void
+  mark(id: string, on: boolean, queuedAt?: number | null): void
   deviceName(device: string): string
   config(): AutoHandoffConfig
   log(line: string): void
@@ -96,6 +98,18 @@ export class HandoffQueue {
     this.deps.mark(id, false)
     this.deps.log(`handoff: ${id} taken off the queue - it stays here`)
     return true
+  }
+
+  /**
+   * A turn just ended somewhere - look now rather than on the next tick.
+   *
+   * The queue's whole promise is "it moves as soon as the turn ends", and the turn ending
+   * is an EVENT this app already emits. Waiting for the 5s tick meant up to five seconds
+   * of a finished pane sitting under a `waiting` chip doing nothing, which is the same
+   * shape of complaint as the chip itself. Free when nothing is queued.
+   */
+  poke(): void {
+    if (this.entries.size) this.tick()
   }
 
   stop(): void {
@@ -159,8 +173,10 @@ export class HandoffQueue {
   private run(q: Queued): void {
     this.running.add(q.id)
     // It has stopped waiting and started moving. Same paint, different sentence - see
-    // `Session.handoffQueuedAt`.
-    this.deps.mark(q.id, true)
+    // `Session.handoffQueuedAt`. `null`, not `undefined`: this is the one caller that means
+    // "take it off the clock", and that difference is what stops a queued pane reading as
+    // one already in transit.
+    this.deps.mark(q.id, true, null)
     // Read the title BEFORE the move: a successful handoff kills the pane, so by the
     // time the promise resolves there is nothing left to name it with.
     const name = this.paneName(q.id)

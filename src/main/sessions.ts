@@ -1188,7 +1188,7 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
-  setHandingOff(id: string, on: boolean, queuedAt?: number): void {
+  setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return
     const was = !!s.meta.handingOff
@@ -1198,8 +1198,17 @@ export class SessionManager extends EventEmitter {
     // A queued pane and one actually in transit are the same paint to `reclaim.ts` and two
     // different sentences to a person, so the moment it stops waiting and starts moving is
     // a change the card has to see.
-    if (on && queuedAt) s.meta.handoffQueuedAt = queuedAt
-    else delete s.meta.handoffQueuedAt
+    //
+    // Three values, not two, and the third is the bug this had. `undefined` means LEAVE THE
+    // STAMP ALONE; only an explicit `null` takes a waiting pane off its clock. Every entry
+    // into a handoff paints the pane before it knows whether it will be sent or queued, so
+    // an `undefined` that CLEARED meant a second press - or the budget sweep asking again -
+    // silently turned `waiting 12m` into `moving` on a pane that was still only waiting for
+    // its turn to end. Measured live 2026-08-23: `handingOff: true`, no `handoffQueuedAt`,
+    // and `remote:handoffPending` listing that very pane. That is the whole of "I pressed
+    // hand off, it says moving, and it is not moving".
+    if (!on || queuedAt === null) delete s.meta.handoffQueuedAt
+    else if (queuedAt) s.meta.handoffQueuedAt = queuedAt
     if (was === on && wasAt === s.meta.handoffQueuedAt) return
     this.emitSessions()
   }
