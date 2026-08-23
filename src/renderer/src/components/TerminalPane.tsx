@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import { MAX_FILL_FONT, mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -411,7 +411,11 @@ function mirrorFit(
       hostCols: mirror.cols,
       hostRows: mirror.rows,
       font: current,
-      maxFont
+      maxFont,
+      // A mirror is the whole pane: there is nothing else to put beside the far end's
+      // screen, so it grows to fill rather than stopping at the size this window's own
+      // panes are typed at. See MAX_FILL_FONT.
+      fillFont: MAX_FILL_FONT
     })
     if (out.font !== current) {
       t.options.fontSize = out.font
@@ -448,7 +452,23 @@ function mirrorFit(
     // decides whether scaling is needed at all and is what the tests pin; the DOM
     // decides by how much.
     const fits = Math.min(scaleWanted, measured)
-    const want = fits < 0.999 ? `scale(${Math.max(0.05, fits).toFixed(3)})` : ''
+    const s = fits < 0.999 ? Math.max(0.05, fits) : 1
+    // ...and whatever room is STILL left over is split, not left on one side.
+    //
+    // A grid is a whole number of cells, so a mirror almost never fills its pane
+    // exactly - and the leftover used to sit entirely at the right and the bottom,
+    // which is what makes a correctly-drawn remote screen read as a broken one: text
+    // jammed into the top-left corner with a black L around it. Centring is layout
+    // arithmetic only (`clientWidth`, `offsetWidth` - neither moves under a transform)
+    // so it cannot feed on itself the way a rect-based measurement would.
+    const pad = getComputedStyle(host)
+    const padX = parseFloat(pad.paddingLeft) || 0
+    const padY = (parseFloat(pad.paddingTop) || 0) + (parseFloat(pad.paddingBottom) || 0)
+    const slackX = Math.max(0, Math.round((room - padX - drawn * s) / 2))
+    const slackY = Math.max(0, Math.round((host.clientHeight - padY - tall * s) / 2))
+    const move = slackX || slackY ? `translate(${slackX}px, ${slackY}px)` : ''
+    const zoom = s < 0.999 ? `scale(${s.toFixed(3)})` : ''
+    const want = [move, zoom].filter(Boolean).join(' ')
     if (host.style.transform !== want) {
       host.style.transformOrigin = 'top left'
       host.style.transform = want

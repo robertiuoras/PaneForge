@@ -10,7 +10,7 @@
 // far too wide simply cut off at the pane edge.
 
 import { strict as assert } from 'node:assert'
-import { mirrorFit, MIN_FONT } from '../src/shared/mirrorFit.ts'
+import { mirrorFit, MAX_FILL_FONT, MIN_FONT } from '../src/shared/mirrorFit.ts'
 
 let pass = 0
 const t = (name, fn) => {
@@ -23,7 +23,7 @@ const t = (name, fn) => {
  * The real loop: a font change re-measures, so the space available in COLS scales
  * with the font. `roomCols` is what fits at font 1; the caller sees `roomCols/font`.
  */
-function walk({ hostCols, hostRows, roomCols, roomRows, maxFont = 13, steps = 12 }) {
+function walk({ hostCols, hostRows, roomCols, roomRows, maxFont = 13, fillFont, steps = 12 }) {
   let font = maxFont
   let scale = 1
   let settled = false
@@ -36,6 +36,7 @@ function walk({ hostCols, hostRows, roomCols, roomRows, maxFont = 13, steps = 12
       hostRows,
       font,
       maxFont,
+      fillFont,
     })
     seen.push(`${out.font}@${out.scale.toFixed(2)}`)
     if (out.font === font && out.scale === scale) {
@@ -108,6 +109,51 @@ t('rows can be the binding constraint, not just columns', () => {
 // The property that matters more than any single case: whatever the room and whatever
 // the host grid, the walk must reach a fixed point AND that point must show the whole
 // grid. A rule that cycles repaints a mirrored pane every frame for ever.
+// ---------------------------------------------------------------------------
+// Growing. A mirror capped at the user's own font draws a SMALL host grid as a block
+// of text in the corner of a mostly empty pane - measured live 2026-08-23 against the
+// PC (69x35 drawn 518x525 inside 1191x880), and reported as the remote view being
+// broken. The pane is that one screen and nothing else, so it fills.
+
+t('a host grid smaller than the room grows past the user’s own font', () => {
+  const r = walk({ hostCols: 69, hostRows: 35, roomCols: 69 * 26, roomRows: 35 * 26, fillFont: MAX_FILL_FONT })
+  assert.ok(r.font > 13, `stayed at the user font: ${r.seen.join(' ')}`)
+  assert.equal(r.scale, 1)
+  assert.ok(r.fits, `grew past the room: ${r.seen.join(' ')}`)
+})
+
+t('CONTROL: without a fill ceiling the same grid stays at the user’s font', () => {
+  const r = walk({ hostCols: 69, hostRows: 35, roomCols: 69 * 26, roomRows: 35 * 26 })
+  assert.equal(r.font, 13, 'the old behaviour is unchanged when nothing asks for it')
+})
+
+t('growing is capped, so a tiny host grid is not drawn at 90px', () => {
+  const r = walk({ hostCols: 20, hostRows: 5, roomCols: 20 * 200, roomRows: 5 * 200, fillFont: MAX_FILL_FONT })
+  assert.equal(r.font, MAX_FILL_FONT)
+  assert.ok(r.fits)
+})
+
+t('a grid too big to fit still shrinks with the fill ceiling on', () => {
+  const r = walk({ hostCols: 159, hostRows: 40, roomCols: 120 * 6, roomRows: 40 * 6, fillFont: MAX_FILL_FONT })
+  assert.ok(r.font <= 13 && r.fits, `${r.seen.join(' ')}`)
+})
+
+t('growing has a fixed point too: no 21/22/21 cycle', () => {
+  for (const hostCols of [20, 40, 69, 80, 100])
+    for (const roomCols of [700, 900, 1200, 1500, 1900, 2400]) {
+      const r = walk({
+        hostCols,
+        hostRows: 35,
+        roomCols,
+        roomRows: 35 * 20,
+        fillFont: MAX_FILL_FONT,
+        steps: 30,
+      })
+      assert.ok(r.settled, `${hostCols} cols into ${roomCols}px never settled: ${r.seen.join(' ')}`)
+      assert.ok(r.fits, `${hostCols} cols into ${roomCols}px overflowed: ${r.seen.join(' ')}`)
+    }
+})
+
 t('the font never oscillates: the walk has a fixed point', () => {
   for (const hostCols of [80, 100, 120, 159, 200, 240]) {
     for (const roomCols of [700, 900, 1200, 1500, 1900, 2400]) {
