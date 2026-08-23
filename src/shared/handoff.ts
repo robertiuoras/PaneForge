@@ -18,6 +18,18 @@ export interface HandoffRepo {
   branch: string
   /** repo top-level, relative to the sender's projects root - where a clone goes */
   dirRel: string
+  /**
+   * The commit the sender is handing over, so the receiver can find out it already has it
+   * without asking the network.
+   *
+   * Measured 2026-08-23 between this Mac and the PC: the sender's push and the receiver's
+   * fetch are 944 ms and 1042 ms of the ~2.3 s a handoff takes, and on a desk whose two
+   * checkouts are already on one commit - which is the ordinary case, since both machines
+   * autosync - neither of them transfers a single object. Everything else in the transfer
+   * is tens of milliseconds. Absent means an older sender, and the receiver then does what
+   * it always did.
+   */
+  sha?: string
 }
 
 export interface HandoffPayload {
@@ -25,6 +37,16 @@ export interface HandoffPayload {
   spec: StartSessionRequest
   /** the sender's projects root, so relative layout survives the machine change */
   senderRoot: string
+  /**
+   * Who is sending it, by device id.
+   *
+   * Only one thing reads it, and it is worth the field: the receiver stamps it on the pane
+   * so its own local-pane budget can refuse to hand that pane straight back. Two desks each
+   * keeping two agents are each right on their own, and between them they would pass one
+   * pane back and forth for ever. Optional - a build older than this sends nothing, and an
+   * absent sender simply means the refusal has nothing to match.
+   */
+  senderDevice?: string
   repo?: HandoffRepo
   /** announced ahead of its chunks; `name` is `<conversation-id>.jsonl` */
   transcript?: { name: string; size: number }
@@ -120,4 +142,38 @@ export function mapCwd(cwd: string, fromRoot: string, toRoot: string): string | 
   const root = toRoot.replace(/[\\/]+$/, '')
   if (!rel) return root
   return winish ? root + '\\' + rel.replace(/\//g, '\\') : root + '/' + rel
+}
+
+/**
+ * What to say about a handoff, once every pane has answered.
+ *
+ * A pure function because the interesting case is the MIXED one and it cannot be reached
+ * from the dialog: three panes where one moved, one is queued mid-turn and one refused.
+ * The first version of this was a chain of `bad.length === 0` branches, so a single
+ * failure silenced both the pane that moved and the pane still waiting - the same class of
+ * lie as saying "moved" about a pane that is still running here, in the other direction.
+ * Every outcome that happened gets a clause; nothing that did not happen is mentioned.
+ */
+export function handoffReport(items: HandoffItem[], deviceName: string, title?: string): string {
+  if (items.length === 0) return 'Nothing to hand off - those panes have already closed'
+  const moved = items.filter((i) => i.ok)
+  const held = items.filter((i) => !i.ok && i.pending)
+  const bad = items.filter((i) => !i.ok && !i.pending)
+  const one = items.length === 1
+  const parts: string[] = []
+  if (moved.length)
+    parts.push(
+      one && title
+        ? `Moved ${title} to ${deviceName}. It is still on screen here, as a mirror.`
+        : `Moved ${moved.length} ${moved.length === 1 ? 'pane' : 'panes'} to ${deviceName}.`
+    )
+  if (held.length)
+    parts.push(
+      one && title
+        ? `${title} is mid-turn - it moves to ${deviceName} the moment the turn ends. Nothing was interrupted.`
+        : `${held.length} still working - ${held.length === 1 ? 'it goes' : 'they go'} as soon as the turn ends.`
+    )
+  // Named, not counted: an error nobody can read is a pane that quietly stayed put.
+  for (const b of bad) parts.push(`${b.title}: ${b.error || 'refused over there'}`)
+  return parts.join(' ')
 }

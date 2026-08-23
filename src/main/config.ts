@@ -10,8 +10,10 @@ import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
+import { DEFAULT_MASCOT } from '../shared/mascot'
+import { DEFAULT_TIPS } from '../shared/tips'
 import { DEFAULT_RECLAIM } from '../shared/reclaim'
-import { DEFAULT_AUTO_ANSWER } from '../shared/autoAnswer'
+import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
@@ -169,6 +171,7 @@ function defaults(): Config {
     defaultModels: {},
     customAgents: [],
     openrouterKey: '',
+    providerKeys: {},
     fontSize: 13,
     copyOnSelect: true,
     clickMovesCursor: true,
@@ -225,6 +228,7 @@ function defaults(): Config {
     // makes THIS install the dev copy that takes every build the moment it is cut.
     devUpdates: false,
     restoreAfterUpdate: true,
+    askAfterUpdate: false,
     restoreAfterRestart: 'ask',
     saveHistory: true,
     historyDays: 30,
@@ -235,7 +239,12 @@ function defaults(): Config {
     offloadWhenFull: true,
     // Ask rather than move. See the field's note in shared/types.ts: the machine knows it
     // is full, it does not know that this pane is the one being worked in.
-    offloadAsk: true,
+    // Off: the machine decides and says so afterwards. Asking was the right shape while
+    // this only fired on a desk that was already out of memory - the app could see the
+    // memory and not the reason to keep the pane here. With a local-pane budget it is a
+    // policy somebody set on purpose, and a dialog per pane in front of it is a question
+    // whose answer was given when the budget was.
+    offloadAsk: false,
     // `small` and `en`, not `base` and `auto`, both measured 2026-08-17 on an 11.9 s clip
     // through `whisper-ctranslate2` (int8, warm weights): `small` returned the sentence
     // verbatim with correct punctuation in 5.2 s, `base` dropped a word ("it so
@@ -243,25 +252,6 @@ function defaults(): Config {
     // and missing-full-stop complaint. `auto` also spends a language-detection pass on
     // every clip and can mis-detect on an accent; dictation here is always English.
     voice: { enabled: true, model: 'small', language: 'en', engine: 'auto' },
-    // `suggest`, since 2026-08-09: quiet triggers the OFFER only, so idling still spends
-    // nothing and nothing runs until a person clicks - which is what made off-by-default
-    // overcautious: the one person who wanted it on had to find a setting to learn the
-    // feature existed. Every other default still chosen so the first use changes as
-    // little as possible: the pane's own agent, one question at most, balanced budget,
-    // no telemetry, and no knowledge source until the user points at one.
-    promptImprove: {
-      mode: 'suggest',
-      engine: '',
-      model: '',
-      clarify: 'minimal',
-      optimise: 'balanced',
-      capabilities: true,
-      idleMs: 1200,
-      vaultPath: '',
-      indexScript: '',
-      telemetry: false,
-      telemetryText: false
-    },
     // On, unlike promptImprove: this one spends nothing and starts nothing. No archive is
     // configured by default - the app's own history is what it runs on, and a second one is
     // only worth naming if the person already has prompts written down somewhere else.
@@ -270,13 +260,15 @@ function defaults(): Config {
     // pane that is idle with an unfinished answer on it, and it stops after three in a row.
     // Off by default would ship a feature whose entire value is that nobody has to notice.
     recover: DEFAULT_RECOVER,
-    // Off. Every question it would press through is one a CLI chose to ask - most often
-    // "may I edit this file" - so shipping it on would answer a permission prompt on a
-    // desk whose owner never asked for that. Settings turns it on in one line.
+    // On, with a five-second countdown on the pane naming the option it is about to press.
+    // The refusals are what make that safe: one plainly-yes option and nothing else, never
+    // one that widens permission, never one that stops. Settings turns it off in one line.
     autoAnswer: DEFAULT_AUTO_ANSWER,
     // On, but it only ever acts on a machine the kernel says is out of memory, and never on
     // a pane that is working or waiting for a person. Closing keeps the History row, the
     // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
+    mascot: DEFAULT_MASCOT,
+    tips: DEFAULT_TIPS,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // Off by default. Quitting the app takes every pane with it, so it ships as a number
@@ -286,13 +278,6 @@ function defaults(): Config {
     // config does not freeze today's game list into every user's settings file.
     gameMode: { enabled: true, processes: [], manual: false },
     swarmRoles: DEFAULT_ROLES,
-    // On: every agent the app can drive only runs headlessly with its prompt off, so off
-    // by default would ship the feature dead. What K4 adds is that it is now sayable.
-    driveUnattended: true,
-    // The report is on by default because it costs nothing when the ask never came from
-    // a channel - TaskDriver stores the row and posts nowhere. The key is empty until
-    // the endpoint starts demanding one.
-    dispatch: { reportUrl: 'https://app.taskdriver.ai/api/dispatch/report', reportKey: '' },
     remote: defaultRemote(),
     // Off, and it stays off until Settings says otherwise: serving the UI over HTTP hands
     // a browser a pane, and a pane runs commands on this machine.
@@ -326,26 +311,26 @@ export function getConfig(): Config {
     cache = {
       ...base,
       ...raw,
+      // The one-time move off "ask before moving a pane", same shape as `migrateAutoAnswer`
+      // and for the same reason: `defaults()` is WRITTEN at first launch, so every config
+      // in existence carries `offloadAsk: true` explicitly and a flip in the default alone
+      // would be read as somebody's own choice and never applied. Read off the SAVED
+      // config, never off the merge, or the marker is set for everybody and this runs on
+      // nothing. After it, off stays off and on stays on.
+      ...(raw.offloadDefaultsV2 ? {} : { offloadAsk: false, offloadDefaultsV2: true }),
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
-      // Merged rather than replaced: a config written before this feature existed has the
-      // key missing entirely, and an upgrade must land on `mode: 'off'` rather than on
-      // `undefined`, which every read below would then have to guard.
-      promptImprove: { ...base.promptImprove, ...(raw.promptImprove ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
       recover: { ...DEFAULT_RECOVER, ...(base.recover ?? {}), ...(raw.recover ?? {}) },
-      autoAnswer: {
-        ...DEFAULT_AUTO_ANSWER,
-        ...(base.autoAnswer ?? {}),
-        ...(raw.autoAnswer ?? {})
-      },
+      autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
+      mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
+      tips: { ...DEFAULT_TIPS, ...(base.tips ?? {}), ...(raw.tips ?? {}) },
       reclaim: { ...DEFAULT_RECLAIM, ...(base.reclaim ?? {}), ...(raw.reclaim ?? {}) },
       autoHandoff: {
         ...DEFAULT_AUTO_HANDOFF,
         ...(base.autoHandoff ?? {}),
         ...(raw.autoHandoff ?? {})
       },
-      dispatch: { ...base.dispatch, ...(raw.dispatch ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },
@@ -365,12 +350,55 @@ export function getConfig(): Config {
       // missing `accent` reaches `paletteFor` as `undefined.trim()`. Merged, not replaced,
       // so a theme saved before a knob was added still gains that knob's default.
       theme: { ...base.theme!, ...(raw.theme ?? {}) },
-      defaultModels: migrateModels(raw.defaultModels)
+      defaultModels: migrateModels(raw.defaultModels),
+      providerKeys: migrateKeys(raw)
     }
   } catch {
     cache = base
   }
   return cache
+}
+
+/**
+ * The provider keys, with the one that used to have a field of its own folded in.
+ *
+ * `openrouterKey` was a top-level string before there was more than one provider to
+ * hold a key for. It is still written by every config on disk, and by an older build
+ * anybody rolls back to, so it is read here rather than deleted - and `setConfig`
+ * writes it back, which is what keeps a downgrade from losing the key silently. The
+ * record wins when both carry something: it is the one the UI edits.
+ */
+/**
+ * The one-time move onto autoAnswer's new defaults.
+ *
+ * A changed default cannot reach an existing desk on its own: `defaults()` is WRITTEN to
+ * config.json at first launch, so every install carries `enabled: false` explicitly and a
+ * flip in `DEFAULT_AUTO_ANSWER` would be read as somebody's own choice. `defaultsV2` is the
+ * marker that separates the two, and it is applied once - after this, off stays off.
+ */
+function migrateAutoAnswer(
+  base: AutoAnswerConfig | undefined,
+  raw: AutoAnswerConfig | undefined
+): AutoAnswerConfig {
+  const merged: AutoAnswerConfig = { ...DEFAULT_AUTO_ANSWER, ...(base ?? {}), ...(raw ?? {}) }
+  // The marker is read off the SAVED config, never off the merged one: `DEFAULT_AUTO_ANSWER`
+  // carries it (so a config written from here already has it), and asking the merge whether
+  // it is set therefore answers yes for every config in existence - which is how the first
+  // version of this ran the migration on nothing at all and left this desk exactly as it was.
+  if (raw?.defaultsV2) return merged
+  merged.enabled = DEFAULT_AUTO_ANSWER.enabled
+  // Only the wait nobody could have chosen: there was no control for it before this, so
+  // the old default is a value written by the app and is safe to move. Anything else is a
+  // number somebody typed.
+  if (merged.waitMs === 1200) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+  merged.defaultsV2 = true
+  return merged
+}
+
+function migrateKeys(raw: Partial<Config>): Record<string, string> {
+  const out: Record<string, string> = { ...(raw.providerKeys ?? {}) }
+  if (!out.openrouter?.trim() && raw.openrouterKey?.trim()) out.openrouter = raw.openrouterKey.trim()
+  return out
 }
 
 /**
@@ -407,6 +435,10 @@ function dropSavedDiscordId(raw: Record<string, unknown>): void {
 
 export function setConfig(patch: Partial<Config>): Config {
   const next = { ...getConfig(), ...patch }
+  // The deprecated single field is kept in step with the record it became, so a build
+  // rolled back to before `providerKeys` existed still finds the OpenRouter key where
+  // it looks for it. One line, in the one place a key can change.
+  next.openrouterKey = next.providerKeys?.openrouter ?? ''
   cache = next
   try {
     mkdirSync(dirname(file()), { recursive: true })

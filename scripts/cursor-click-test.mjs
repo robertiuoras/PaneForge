@@ -32,7 +32,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { keysForClick, keysAlongLine, keysForDelete, cellAt, ARROW, BACKSPACE } =
+const { keysForClick, keysAlongLine, keysForRows, keysToPoint, offsetIn, cellAt, ARROW, BACKSPACE } =
   createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -215,60 +215,52 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
 // far end has never heard of it. So it is walked to and backspaced over, and the risk is
 // entirely in the count - one too many eats a character nobody selected, and a guess
 // across a line boundary eats the line above.
+//
+// The input is described as ROWS rather than as a rectangle of `cols`, because the shape
+// that actually needed deleting is not a rectangle: Claude Code's composer indents every
+// row after the first, ends each one where the text ends, and is neither framed nor
+// xterm-wrapped. `full` is the one bit that decides a character - see `InputRow`.
 {
-  const sel = (o) => ({
-    cursorRow: 10,
-    cursorCol: 30,
-    startRow: 10,
-    startCol: 10,
-    endRow: 10,
-    endCol: 20,
-    cols: 80,
-    wrapped: false,
-    ...o
-  })
+  /** A shell's wrapped line: nothing indented, every row out to the width. */
+  const wrapped = (n) => Array.from({ length: n }, () => ({ start: 0, end: 80, full: true }))
+  const del = (o) =>
+    keysForRows({
+      rows: wrapped(2),
+      cursor: { row: 0, col: 30 },
+      start: { row: 0, col: 10 },
+      end: { row: 0, col: 20 },
+      ...o
+    })
 
   eq(
     'the cursor walks back to the end of the selection, then backspaces over it',
-    keysForDelete(sel({})),
+    del({}),
     ARROW.left.repeat(10) + BACKSPACE.repeat(10)
   )
-  eq(
-    'a cursor already at the end sends only backspaces',
-    keysForDelete(sel({ cursorCol: 20 })),
-    BACKSPACE.repeat(10)
-  )
+  eq('a cursor already at the end sends only backspaces', del({ cursor: { row: 0, col: 20 } }), BACKSPACE.repeat(10))
   eq(
     'a cursor before the selection walks forward first',
-    keysForDelete(sel({ cursorCol: 4 })),
+    del({ cursor: { row: 0, col: 4 } }),
     ARROW.right.repeat(16) + BACKSPACE.repeat(10)
   )
-  eq('an empty selection sends nothing', keysForDelete(sel({ endCol: 10 })), '')
-  eq('a backwards selection sends nothing', keysForDelete(sel({ endCol: 4 })), '')
+  eq('an empty selection sends nothing', del({ end: { row: 0, col: 10 } }), '')
+  eq('a backwards selection sends nothing', del({ end: { row: 0, col: 4 } }), '')
 
-  // A wrapped line is one line to the far end, `cols` characters a row, so the count
+  // A wrapped line is one line to the far end, a row's width per row, so the count
   // crosses the wrap by itself - exactly as the arrows do for a click.
   eq(
     'a selection across a wrap counts a whole row per row',
-    keysForDelete(sel({ cursorRow: 11, cursorCol: 20, startRow: 10, startCol: 70, endRow: 11, endCol: 20, wrapped: true })),
+    del({ cursor: { row: 1, col: 20 }, start: { row: 0, col: 70 }, end: { row: 1, col: 20 } }),
     BACKSPACE.repeat(80 - 70 + 20)
   )
 
-  // The load-bearing refusal. Rows of a DRAWN input box are separate lines carrying a
-  // newline and a frame of unknown width; counting them as `cols` would send a burst of
-  // backspaces into whatever is above.
-  eq(
-    'a selection across separate lines is refused, not guessed',
-    keysForDelete(sel({ endRow: 11, endCol: 5, wrapped: false })),
-    ''
-  )
-  eq(
-    'and so is one whose cursor is on another line',
-    keysForDelete(sel({ cursorRow: 9, wrapped: false })),
-    ''
-  )
-  eq('no width, no keys', keysForDelete(sel({ cols: 0 })), '')
-  eq('past the key limit sends nothing', keysForDelete(sel({ startCol: 0, endCol: 40, keyLimit: 20 })), '')
+  // The load-bearing refusal: a position that is not in the input at all. The pane reads
+  // '' as "refused" and SWALLOWS the key rather than handing a bare Backspace to the pty,
+  // which would delete one character out of a highlighted block.
+  eq('a row that is not part of the input sends nothing', del({ end: { row: 2, col: 5 } }), '')
+  eq('and neither does a cursor outside it', del({ cursor: { row: -1, col: 5 } }), '')
+  eq('no rows, no keys', del({ rows: [] }), '')
+  eq('past the key limit sends nothing', del({ start: { row: 0, col: 0 }, end: { row: 0, col: 40 }, keyLimit: 20 }), '')
 
   // "Highlight it and press delete and it doesn't delete fully."
   //
@@ -276,41 +268,79 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
   // produced '' - which the pane read as "not eligible" and handed the key to the pty, and
   // a bare Backspace at a pty removes exactly one character. A Mod+A over a paragraph is
   // past 400 immediately, so the select-all the feature exists for was the case that could
-  // not work. These two are the same selection either side of the old ceiling.
-  const long = (chars) =>
-    sel({
-      cursorRow: 10 + Math.floor(chars / 80),
-      cursorCol: chars % 80,
-      startRow: 10,
-      startCol: 0,
-      endRow: 10 + Math.floor(chars / 80),
-      endCol: chars % 80,
-      wrapped: true
-    })
-  eq(
-    'a 399-character selection worked before and still does',
-    keysForDelete(long(399)),
-    BACKSPACE.repeat(399)
-  )
-  eq(
-    'a 401-character selection is deleted whole, not dropped on the old arrow limit',
-    keysForDelete(long(401)),
-    BACKSPACE.repeat(401)
-  )
-  eq(
-    'and a full 200x50 screenful still answers',
-    keysForDelete(long(9600)),
-    BACKSPACE.repeat(9600)
-  )
+  // not work. These are the same selection either side of the old ceiling.
+  const long = (chars) => {
+    const rows = wrapped(Math.floor(chars / 80) + 1)
+    const last = { row: Math.floor(chars / 80), col: chars % 80 }
+    return keysForRows({ rows, cursor: last, start: { row: 0, col: 0 }, end: last })
+  }
+  eq('a 399-character selection worked before and still does', long(399), BACKSPACE.repeat(399))
+  eq('a 401-character selection is deleted whole, not dropped on the old arrow limit', long(401), BACKSPACE.repeat(401))
+  eq('and a full 200x50 screenful still answers', long(9600), BACKSPACE.repeat(9600))
   // The backstop is raised, not removed: past a screenful something is wrong with the
   // caller, and a burst that size is not a keystroke anybody typed.
-  eq('past a screenful it still refuses', keysForDelete(long(10001)), '')
-  // An explicitly passed limit is still obeyed, so the arrow paths are unaffected.
+  eq('past a screenful it still refuses', long(10001), '')
+}
+
+// --- a composer the CLI draws itself ----------------------------------------------
+//
+// Every number below was measured against a live Claude Code pane at 157 columns, and
+// they are the reason this is rows-and-offsets rather than rows-times-cols: what is on
+// the screen is NOT what the CLI is holding. See `InputRow`.
+{
+  // A 244-character prompt, broken at a space: 151 drawn on the first row and 91 on the
+  // second, so one character - the space the wrap ate - is on screen nowhere.
+  const spaceWrap = [
+    { start: 2, end: 153, full: false },
+    { start: 2, end: 94, full: true }
+  ]
+  const whole = { rows: spaceWrap, cursor: { row: 1, col: 94 }, start: { row: 0, col: 2 }, end: { row: 1, col: 94 } }
   eq(
-    'an explicit limit still wins',
-    keysForDelete(sel({ startCol: 0, endCol: 40, keyLimit: 20 })),
-    ''
+    'a prompt wrapped at a space is 244 backspaces, not the 242 that are drawn',
+    keysForRows(whole),
+    BACKSPACE.repeat(244)
   )
+  eq('the offset past the wrap counts the eaten space', offsetIn(spaceWrap, 1, 2), 152)
+
+  // 300 unbroken characters: the wrapper SPLIT the word, so nothing was eaten and the
+  // screen count is the true count. Getting this one wrong deletes a character nobody
+  // highlighted, which is why a row within a column of the width counts as full.
+  const split = [
+    { start: 2, end: 155, full: true },
+    { start: 2, end: 149, full: true }
+  ]
+  eq(
+    'a word too long for the line was split, and costs nothing to cross',
+    keysForRows({ rows: split, cursor: { row: 1, col: 149 }, start: { row: 0, col: 2 }, end: { row: 1, col: 149 } }),
+    BACKSPACE.repeat(300)
+  )
+
+  // Half a prompt, selected from the middle of the first row to the middle of the second.
+  eq(
+    'a selection across the boundary walks back and deletes exactly its own length',
+    keysForRows({ rows: spaceWrap, cursor: { row: 1, col: 94 }, start: { row: 0, col: 100 }, end: { row: 1, col: 40 } }),
+    ARROW.left.repeat(54) + BACKSPACE.repeat(92)
+  )
+
+  // A click, which is the same arithmetic without the backspaces - and never an up arrow,
+  // whatever rows it crosses: measured, 92 lefts walk the width of the second row and the
+  // 93rd steps onto the end of the first.
+  eq(
+    'a click at the start of the second row is 92 lefts',
+    keysToPoint(spaceWrap, { row: 1, col: 94 }, { row: 1, col: 2 }),
+    ARROW.left.repeat(92)
+  )
+  eq(
+    'and one more crosses onto the row above',
+    keysToPoint(spaceWrap, { row: 1, col: 2 }, { row: 0, col: 153 }),
+    ARROW.left
+  )
+  eq(
+    'a click past what is written on a row stops at the last character',
+    keysToPoint(spaceWrap, { row: 1, col: 2 }, { row: 1, col: 150 }),
+    ARROW.right.repeat(92)
+  )
+  eq('a click on the indent of a row lands at its first character', keysToPoint(spaceWrap, { row: 1, col: 10 }, { row: 1, col: 0 }), ARROW.left.repeat(8))
 }
 
 console.log(`cursor click: ${checks} checks passed`)

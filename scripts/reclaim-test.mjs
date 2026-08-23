@@ -83,11 +83,25 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 {
-  // Never somebody's business. `needsYou` is the load-bearing one - it is quiet BECAUSE it
-  // is waiting for a person, so every "is it idle" test in the app says yes about it.
-  for (const state of ['needsYou', 'working', 'starting', 'stalled']) {
+  // Never somebody's business. A live QUESTION is the load-bearing one - the pane is quiet
+  // BECAUSE it is waiting for a person, so every "is it idle" test in the app says yes
+  // about it.
+  for (const state of ['working', 'starting', 'stalled']) {
     const panes = [pane({ id: 'x', state }), pane({ id: 'keep' })]
     eq(`never closes a pane that is ${state}`, ids(reclaimPlan(panes, over, DEFAULT_RECLAIM, NOW)), 'keep')
+  }
+  {
+    const asked = [pane({ id: 'x', state: 'needsYou', asking: true }), pane({ id: 'keep' })]
+    eq('never closes a pane holding a live question', ids(reclaimPlan(asked, over, DEFAULT_RECLAIM, NOW)), 'keep')
+  }
+  {
+    // ...and the other half of `needsYou`, which is the only pane anybody ever wants
+    // closed. The state is one word for two facts - an agent that ASKED something, and an
+    // agent that FINISHED and is sitting at its composer - and refusing the state to
+    // protect the first refused the second too. Measured on this desk 2026-08-20: every
+    // pane on it was `needsYou`, so this sweep had never closed anything in its life.
+    const done = [pane({ id: 'x', state: 'needsYou', asking: false }), pane({ id: 'keep' }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('a FINISHED turn is closeable', ids(reclaimPlan(done, over, DEFAULT_RECLAIM, NOW)).includes('x'), ids(reclaimPlan(done, over, DEFAULT_RECLAIM, NOW)))
   }
 }
 
@@ -149,13 +163,24 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // the one it cannot keep: on a desk nobody is sitting at, every pane in the grid is "on
   // screen", and keeping it would mean the feature can never fire on the machine it was
   // built for.
-  for (const state of ['needsYou', 'working', 'starting', 'stalled']) {
+  for (const state of ['working', 'starting', 'stalled']) {
     const p = [pane({ id: 'x', state, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'keep', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
     check(
       `the clock never closes a pane that is ${state}`,
       !idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'),
       ids(idleClosePlan(p, CLOCKED, NOW))
     )
+  }
+  {
+    const p = [pane({ id: 'x', state: 'needsYou', asking: true, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'keep', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('the clock never closes a pane holding a live question', !idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'), ids(idleClosePlan(p, CLOCKED, NOW)))
+  }
+  {
+    // The pair that decides whether the clock can ever fire at all: with `needsYou`
+    // refused outright it could only reach a CLI nobody had typed into, which on a real
+    // desk is no pane at all.
+    const p = [pane({ id: 'x', state: 'needsYou', asking: false, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check('but a finished turn is exactly what it is for', idleClosePlan(p, CLOCKED, NOW).some((r) => r.id === 'x'), ids(idleClosePlan(p, CLOCKED, NOW)))
   }
   const guarded = [
     pane({ id: 'focused', focused: true, lastKeyboard: NOW - 9 * HOUR }),
@@ -182,6 +207,34 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // as "close everything that is older than never" would be the worst possible default.
   const legacy = { enabled: true, minIdleMinutes: 15, maxPerSweep: 2 }
   eq('a config from before this feature closes nothing', idleClosePlan(panes, legacy, NOW).length, 0)
+}
+
+// The pane that was closed mid-answer on 2026-08-21, in both sweeps.
+//
+// A person types one prompt and walks away; the agent works for two hours. `lastKeyboard`
+// has not moved in those two hours, so every idle reading in the app said "quiet since
+// this morning" about a pane that had never stopped printing - and `status` needs only
+// four seconds of silence with no readable footer to call the turn finished, so one pause
+// inside a long turn made it `needsYou` and the countdown started over a live session.
+//
+// The load-bearing half is the CONTROL beneath each: the same pane with its output as old
+// as its keystrokes is still closed, or these pass by refusing everything.
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 120 }
+  const working = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 2000 })
+  const finished = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+  const pad = pane({ id: 'pad', lastKeyboard: NOW, lastOutput: NOW })
+  eq('the clock never closes a pane that is still printing', idleClosePlan([working, pad], CLOCKED, NOW).length, 0)
+  eq('...and the control: the same pane, actually quiet, IS closed', ids(idleClosePlan([finished, pad], CLOCKED, NOW)), 'x')
+  eq('pressure never closes a pane that is still printing', reclaimPlan([working, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
+  eq(
+    '...and the control under pressure',
+    ids(reclaimPlan([finished, pad], over, DEFAULT_RECLAIM, NOW)),
+    'x'
+  )
+  const busy = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR, busy: true })
+  eq('a run clock that is still going is a refusal of its own', idleClosePlan([busy, pad], CLOCKED, NOW).length, 0)
+  eq('and under pressure too', reclaimPlan([busy, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
 }
 
 console.log(`reclaim: ${checks} checks passed`)

@@ -46,7 +46,7 @@ export const BLURBS: Blurb[] = [
   {
     id: 'swarm',
     title: 'Swarm',
-    text: 'Start several agents on one project at once, each told what it owns. Roles give them different jobs on the same code; Split cuts one job into pieces that touch different files, so they cannot overwrite each other.'
+    text: 'Start several agents on one project at once, each told what it owns. They share the folder, so what keeps them apart is their briefs - and the shared memory file is the handover between them. Work whose parts are genuinely independent wants a lane each instead.'
   },
   {
     id: 'lane',
@@ -59,9 +59,9 @@ export const BLURBS: Blurb[] = [
     text: 'Open one or more panes, each an agent running in a project folder. Tick several projects to start them all in one go, and each pane keeps its own terminal, history and folder.'
   },
   {
-    id: 'improve',
-    title: 'Improve',
-    text: 'A pass over the prompt before it is sent: it clarifies what you asked, adds the context the agent would otherwise ask for, and shows you the rewrite so you can edit it or send the original.'
+    id: 'agentPick',
+    title: 'Agent',
+    text: 'The left box is the program that runs in this pane; the right one is the model it talks to. Most models are not programs of their own, so picking one under a provider\u2019s heading - OpenRouter, DeepSeek, GLM - switches the program to the one that can reach it.'
   },
   {
     id: 'stash',
@@ -77,11 +77,6 @@ export const BLURBS: Blurb[] = [
     id: 'changes',
     title: 'Changes',
     text: 'Every line the agent in this pane has written, read here instead of in its terminal. Switch between what is uncommitted, what the whole branch holds, or both at once before merging a lane back. Nothing here stages, commits or discards anything.'
-  },
-  {
-    id: 'fleet',
-    title: 'Fleet',
-    text: 'Every open pane on one screen, sorted by who needs a person first: a finished turn at the top, a run that has gone quiet under it, and whatever the app is happily busy with below both. The bar on each row is how much that folder has changed, and clicking it opens the lines.'
   },
   {
     id: 'restore',

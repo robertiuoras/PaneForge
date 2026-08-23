@@ -31,8 +31,13 @@ export interface QueueDeps {
   busy(s: Session): boolean
   /** move it now - the same path the button takes, with the wait already spent */
   send(id: string, device: string, closeReceiverWhenDone: boolean): Promise<HandoffItem[]>
-  /** paint the pane as on its way, so nothing else closes or moves it */
-  mark(id: string, on: boolean): void
+  /**
+   * Paint the pane as on its way, so nothing else closes or moves it.
+   *
+   * `queuedAt` says it is WAITING rather than moving, which is a different sentence on the
+   * card - and it is dropped the moment the move really starts.
+   */
+  mark(id: string, on: boolean, queuedAt?: number): void
   deviceName(device: string): string
   config(): AutoHandoffConfig
   log(line: string): void
@@ -71,16 +76,26 @@ export class HandoffQueue {
     // Re-queueing an id keeps its ORIGINAL wait: pressing the button again while a pane is
     // still working must not push its deadline out for ever.
     const had = this.entries.get(id)
-    this.entries.set(id, { id, device, since: had?.since ?? this.now(), closeReceiverWhenDone })
-    this.deps.mark(id, true)
+    const since = had?.since ?? this.now()
+    this.entries.set(id, { id, device, since, closeReceiverWhenDone })
+    this.deps.mark(id, true, since)
     if (!had) this.deps.log(`handoff: ${id} queued for ${this.deps.deviceName(device)} - waiting for the turn to end`)
     this.arm()
   }
 
-  /** A person changed their mind, or the pane was closed by hand. */
-  drop(id: string): void {
-    if (!this.entries.delete(id)) return
+  /**
+   * A person changed their mind, or the pane was closed by hand.
+   *
+   * The answer is whether anything was actually waiting, and it is load-bearing: a move
+   * already in flight is past this point - `run()` took the entry out of the map and the
+   * far end is already being written to - so answering `true` there would tell somebody
+   * their pane was staying while it left. A refusal may not share a shape with a success.
+   */
+  drop(id: string): boolean {
+    if (!this.entries.delete(id)) return false
     this.deps.mark(id, false)
+    this.deps.log(`handoff: ${id} taken off the queue - it stays here`)
+    return true
   }
 
   stop(): void {
@@ -143,6 +158,9 @@ export class HandoffQueue {
 
   private run(q: Queued): void {
     this.running.add(q.id)
+    // It has stopped waiting and started moving. Same paint, different sentence - see
+    // `Session.handoffQueuedAt`.
+    this.deps.mark(q.id, true)
     // Read the title BEFORE the move: a successful handoff kills the pane, so by the
     // time the promise resolves there is nothing left to name it with.
     const name = this.paneName(q.id)

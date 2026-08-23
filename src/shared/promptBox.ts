@@ -101,6 +101,19 @@ const TOP_RULE = /^[─-╿]{4}[─-╿\s]*$/
 /** The same, but closing a box: whatever it belongs to is above the composer, not in it. */
 const BOTTOM_RULE = /^[╰╯└┘┴┸┺┷┻╧╩]/
 
+/**
+ * What counts as blank between the frame, the marker and the text.
+ *
+ * A plain space is not enough, and this cost the whole feature: measured off a live
+ * Claude Code 2.1.x pane, its composer draws `❯` followed by **U+00A0**, a non-breaking
+ * space. Testing for `' '` alone made `inputStart` answer 0 on the row the prompt is on -
+ * so a select-all highlighted the CLI's own marker, and the composer walk, which proves
+ * it found a composer by finding that marker, found none and refused every multi-row
+ * delete. The bug was invisible in every test and in every reading: the two characters
+ * are drawn identically and JSON prints them the same.
+ */
+const BLANKS = ' \u00a0\u2007\u202f'
+
 /** The prompt markers a CLI draws between the frame and what you typed. */
 const MARKERS = ['>', '❯', '›', '»', '$', '#', '%']
 
@@ -128,20 +141,31 @@ export function inputStart(text: string): number {
     // was typed, so a `$` inside the text cannot win - and under-selecting is the one
     // failure that would leave characters behind.
     for (let i = 0; i + 1 < cap; i++) {
-      if (MARKERS.includes(text[i]) && text[i + 1] === ' ') {
+      if (MARKERS.includes(text[i]) && BLANKS.includes(text[i + 1])) {
         let j = i + 1
-        while (j < cap && text[j] === ' ') j++
+        while (j < cap && BLANKS.includes(text[j])) j++
         return j
       }
     }
     return 0
   }
   let i = frame + 1
-  while (i < cap && text[i] === ' ') i++
+  while (i < cap && BLANKS.includes(text[i])) i++
   if (i < cap && MARKERS.includes(text[i])) {
     i++
-    while (i < cap && text[i] === ' ') i++
+    while (i < cap && BLANKS.includes(text[i])) i++
   }
+  return i
+}
+
+/**
+ * How far the indent runs on a row that carries no marker - the continuation rows of a
+ * composer, which are indented to line up under the first one. Blank means `BLANKS`, not
+ * `' '`: see the note there.
+ */
+export function leadingBlanks(text: string): number {
+  let i = 0
+  while (i < text.length && BLANKS.includes(text[i])) i++
   return i
 }
 
@@ -152,11 +176,105 @@ export function inputStart(text: string): number {
  */
 export function inputEnd(text: string): number {
   let end = text.length
-  while (end > 0 && text[end - 1] === ' ') end--
+  while (end > 0 && BLANKS.includes(text[end - 1])) end--
   if (end > 0 && RULES.includes(text[end - 1])) {
     end--
-    while (end > 0 && text[end - 1] === ' ') end--
+    while (end > 0 && BLANKS.includes(text[end - 1])) end--
   }
   const frame = frameAt(text)
   return frame < 0 ? end : Math.max(end, frame + 1)
+}
+
+/**
+ * The rows of the CLI's own composer, when the cursor is inside one.
+ *
+ * `sameBox` answers this for a CLI that frames its input with vertical rules, and for
+ * three releases that was every CLI here. Claude Code 2.1.x draws no frame at all: a
+ * horizontal rule, then `❯ what you typed` with each further row indented two spaces,
+ * then another rule. Measured live at 157 columns, a 244-character prompt drew across two
+ * rows and NEITHER carried a frame and NEITHER said `isWrapped` - so "are these one input"
+ * was answered no by both tests the pane had, and a selection across them deleted a single
+ * character. That is the whole of "it doesn't delete all the highlighted text".
+ *
+ * The walk is bounded on both sides and refuses rather than guesses: a top rule above, a
+ * rule of the SAME width below, a prompt marker on the first row, and the cursor between
+ * them. A pane scrolling ordinary output has no such sandwich, and a shell draws neither
+ * rule - so nothing here can fire in one.
+ */
+export interface Composer {
+  /** first row of what was typed, counted the way the caller counts rows */
+  top: number
+  /** last row of it */
+  bottom: number
+  /** how wide the composer is drawn, so a row that FILLS it can be told from one that does not */
+  width: number
+}
+
+export function composerAt(
+  read: (row: number) => string,
+  cursorRow: number,
+  opts: { maxUp?: number; maxDown?: number } = {}
+): Composer | null {
+  const here = read(cursorRow)
+  // A framed box says what it is on every row of itself - that is `sameBox`, unchanged.
+  if (frameAt(here) >= 0) {
+    let top = cursorRow
+    while (top > 0 && sameBox(read(top - 1), here)) top--
+    let bottom = cursorRow
+    while (sameBox(read(bottom + 1), here)) bottom++
+    return { top, bottom, width: trimmed(here).length }
+  }
+  const maxUp = opts.maxUp ?? 12
+  const maxDown = opts.maxDown ?? 8
+  let top = -1
+  let width = 0
+  let blanks = 0
+  for (let up = 1; up <= maxUp; up++) {
+    const r = cursorRow - up
+    if (r < 0) return null
+    const s = trimmed(read(r)).trim()
+    if (!s) {
+      // Two blank rows are the gap between the transcript and the composer, so anything
+      // above them belongs to something else - the same stop `promptTop` walks under.
+      if (++blanks >= 2) return null
+      continue
+    }
+    blanks = 0
+    if (BOTTOM_RULE.test(s)) return null
+    if (frameAt(read(r)) >= 0) return null
+    if (isRule(s)) {
+      top = r + 1
+      width = s.length
+      break
+    }
+  }
+  if (top < 0 || top > cursorRow) return null
+  // The first row of a composer carries the CLI's own prompt marker. Requiring it is what
+  // keeps a paragraph sandwiched between two rules in an ANSWER from reading as one.
+  if (inputStart(read(top)) === 0) return null
+  let bottom = -1
+  for (let down = cursorRow + 1; down <= cursorRow + maxDown; down++) {
+    const s = trimmed(read(down)).trim()
+    if (!s) return null
+    if (isRule(s)) {
+      // A closing rule of another width closes something else.
+      if (s.length !== width) return null
+      bottom = down - 1
+      break
+    }
+  }
+  if (bottom < cursorRow) return null
+  return { top, bottom, width }
+}
+
+/** Trailing blanks off, which is how every row here is compared. */
+function trimmed(text: string): string {
+  let end = text.length
+  while (end > 0 && BLANKS.includes(text[end - 1])) end--
+  return text.slice(0, end)
+}
+
+/** A drawn rule, long enough that a line of prose cannot be mistaken for one. */
+function isRule(s: string): boolean {
+  return s.length >= 8 && TOP_RULE.test(s)
 }

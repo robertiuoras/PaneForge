@@ -87,14 +87,26 @@ if (!existsSync(electron)) {
   process.exit(1)
 }
 
-if (!keep) {
-  console.log('== Building')
+// `--keep` skips the build, and a missing build is then indistinguishable from a working
+// one: Electron's `loadFile` on an absent index.html lands on `chrome-error://chromewebdata/`
+// and paints an EMPTY WINDOW, with `window shown` in the log and no error anywhere. That is
+// "the dev copy isn't loading", and it survives every relaunch because `--keep` never looks.
+// So the page the launch depends on is checked, and a build that is not there is built
+// whatever was asked for - being loud costs a few seconds, being blank costs an hour.
+const page = join(root, 'out', 'renderer', 'index.html')
+if (!keep || !existsSync(page)) {
+  if (keep) console.log('== out/renderer/index.html is missing - building anyway (--keep would open a blank window)')
+  else console.log('== Building')
   const r = spawnSync('npm', ['run', 'build'], {
     cwd: root,
     stdio: 'inherit',
     shell: process.platform === 'win32'
   })
   if (r.status !== 0) process.exit(r.status ?? 1)
+  if (!existsSync(page)) {
+    console.error('Build finished but out/renderer/index.html is still missing - refusing to open a blank window.')
+    process.exit(1)
+  }
 }
 
 console.log(`== Launching the ${profile} copy`)

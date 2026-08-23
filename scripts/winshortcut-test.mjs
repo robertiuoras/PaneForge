@@ -10,7 +10,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -72,5 +72,35 @@ assert.equal(
   true,
   'the installed-path test must not be case sensitive'
 )
+
+
+// --- the installer script's own labels -------------------------------------------------
+// Every Windows build from v0.8.105 on failed here and nothing in this repo could see it:
+// `build/installer.nsh` built a jump target and its label out of `${__LINE__}`, which
+// expands to the CURRENT source line, so the two names never matched -
+// `could not resolve label "portableGone_239.1.11" in uninstall section`, makensis exit 1.
+// The mac leg kept publishing, so four releases went out with no exe and no latest.yml and
+// every Windows install sat on v0.8.104. makensis does not run on this desk, so the shape
+// is checked instead: a label built out of a preprocessor token is refused outright, and
+// every jump has to land somewhere that exists.
+{
+  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8')
+  const defined = new Set()
+  const targets = []
+  for (const raw of nsh.split(/\r?\n/)) {
+    const line = raw.replace(/;.*$/, '').trim()
+    const label = /^([A-Za-z_][\w.$={}]*):$/.exec(line)
+    if (label) defined.add(label[1])
+    const jump = /^(IfFileExists|IfErrors|StrCmp|IntCmp)\b.*?(\S+)$/.exec(line)
+    if (jump && !/^[+-]?\d+$/.test(jump[2])) targets.push(jump[2])
+  }
+  assert.ok(targets.length > 0, 'the installer still has a jump to check')
+  for (const t of [...targets, ...defined]) {
+    assert.ok(!t.includes('${'), `a label built from a preprocessor token cannot resolve: ${t}`)
+  }
+  for (const t of targets) {
+    assert.ok(defined.has(t), `jump to a label that is never defined: ${t}`)
+  }
+}
 
 console.log('winshortcut: ok')

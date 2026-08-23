@@ -38,8 +38,19 @@
 import { SESSION_MB, type Verdict } from './capacity'
 import type { FleetState } from './fleet'
 
-/** States that may be closed to reclaim memory. Everything else is somebody's business. */
-const CLOSEABLE: ReadonlySet<FleetState> = new Set<FleetState>(['ready', 'exited'])
+/**
+ * States that may be closed to reclaim memory. Everything else is somebody's business.
+ *
+ * `needsYou` is in the list and `asking` is what keeps it honest. That state is two facts
+ * wearing one name - an agent that ASKED something, and an agent that FINISHED and is
+ * sitting at its composer - and refusing the whole state to protect the first refused the
+ * second as well. A finished pane is the only pane anybody ever wants closed, so with
+ * `ready | exited` this sweep could only ever reach a CLI nobody had typed into at all:
+ * measured on this desk 2026-08-20, every pane on it was `needsYou` and the sweep had
+ * therefore never closed anything in its life. The refusal that was actually meant is the
+ * one below, and it reads the pane's own live question rather than the word for its state.
+ */
+const CLOSEABLE: ReadonlySet<FleetState> = new Set<FleetState>(['ready', 'exited', 'needsYou'])
 
 export interface ReclaimConfig {
   /** Close idle panes when this machine runs out of memory. */
@@ -67,12 +78,26 @@ export interface ReclaimConfig {
    * it verbatim: never a pane that is working, starting, stalled or waiting for a person,
    * never a mirror of some other machine's pty, never the focused pane, never the last one.
    *
-   * Long by default when it is turned on at all: the cost of closing too early is somebody
-   * reopening from History, and the cost of never closing is a machine that is out of
-   * memory in the morning. 120 minutes is the number set on this desk's PC.
+   * The cost of closing too early is somebody reopening from History - one click, with the
+   * conversation and the screen both intact - and the cost of never closing is a machine
+   * that is out of memory in the morning. Those are not the same size, which is why this
+   * is half an hour rather than the two hours it started at.
    */
   idleCloseMinutes: number
 }
+
+/**
+ * What the Settings switch sets `idleCloseMinutes` to when it is turned on.
+ *
+ * Half an hour. It was two, on the reasoning that being early closes a pane somebody was
+ * coming back to - true, and it priced that at far more than it costs. A closed pane here
+ * keeps its History row, its `resumeId` and its `scrollbackId`, so coming back to one is
+ * a click that restores the conversation AND the screen; a pane held open for two hours
+ * on a machine nobody is at is ~190 MB of agent doing nothing. Measured on this desk's PC
+ * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
+ * teatime, which is the report this number answers.
+ */
+export const IDLE_CLOSE_MINUTES = 30
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
@@ -84,14 +109,46 @@ export const DEFAULT_RECLAIM: ReclaimConfig = {
 export interface ReclaimPane {
   id: string
   state: FleetState
-  /** Epoch ms of this pane's most recent user input (better idle signal than pty output, which repaints). */
+  /** Epoch ms of this pane's most recent user input. */
   lastKeyboard: number
+  /**
+   * Epoch ms the pty last printed anything, when the caller knows it.
+   *
+   * Keystrokes alone are not idleness, and reading them as idleness is what closed a pane
+   * mid-answer on 2026-08-21: a person types one prompt, the agent works for two hours,
+   * and `lastKeyboard` says the pane has been quiet for two hours the entire time. The
+   * only thing standing between that and a kill was the pane's STATE, and `status` goes
+   * `working` -> `idle` after four seconds of silence with no readable busy footer - so
+   * one quiet moment inside a long turn was enough to call the pane finished and start
+   * the countdown on it.
+   *
+   * So quiet means quiet: nobody has typed AND the pane has printed nothing. A pane whose
+   * agent is producing output is not idle no matter how long ago somebody last touched
+   * the keyboard. Optional because a caller that cannot supply it keeps the old reading.
+   */
+  lastOutput?: number
+  /**
+   * A turn is in flight (the pane's run clock is going).
+   *
+   * Belt and braces beside `state`: `endRun` clears the run clock and flips the status in
+   * the same pass, so this rarely disagrees - but closing somebody's pane is the one act
+   * where a second, independent "is it working" reading is worth its line.
+   */
+  busy?: boolean
   /** The pane being read. Never closed, at any pressure. */
   focused: boolean
   /** Drawn in the grid right now. Never closed - it is on somebody's screen. */
   visible: boolean
   /** Another device's pty, mirrored here. Closing it frees no agent on this machine. */
   remote: boolean
+  /**
+   * The agent has a question on screen that nobody has answered.
+   *
+   * This is the one that would feel like theft, and it is the reason `needsYou` alone is
+   * not a refusal: the pane is quiet BECAUSE it is owed an answer, and every idle reading
+   * in the app says yes about it. It comes from the pane's own `ask`, never from its state.
+   */
+  asking?: boolean
   /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
@@ -101,6 +158,16 @@ export interface ReclaimPane {
    * handoff sweep above this one.
    */
   handingOff?: boolean
+}
+
+/**
+ * When this pane last did anything at all - the later of a keystroke and a printed byte.
+ *
+ * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
+ * not `lastKeyboard` on its own.
+ */
+export function quietSince(p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput'>): number {
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0)
 }
 
 export interface Reclaim {
@@ -131,11 +198,14 @@ export function reclaimPlan(
   const minIdle = Math.max(0, cfg.minIdleMinutes) * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.visible && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
+    .filter(
+      (p) =>
+        !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+    )
+    .filter((p) => now - quietSince(p) >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
     // morning is the safer one to close than the one that finished a minute ago.
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Never the last pane. An app that empties its own window under memory pressure has
   // not solved the problem, it has removed the reason the window is open.
@@ -144,7 +214,7 @@ export function reclaimPlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - p.lastKeyboard,
+    idleMs: now - quietSince(p),
     // An exited pane's process is already gone: closing it returns a buffer, not an agent.
     // Saying so keeps the log line honest about what was actually bought.
     hadAgent: p.state !== 'exited'
@@ -175,9 +245,9 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && CLOSEABLE.has(p.state))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state))
+    .filter((p) => now - quietSince(p) >= minIdle)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Same last-pane rule as the pressure sweep: an app that empties its own window has not
   // saved anything, it has removed the reason the window is open.
@@ -186,7 +256,7 @@ export function idleClosePlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - p.lastKeyboard,
+    idleMs: now - quietSince(p),
     hadAgent: p.state !== 'exited'
   }))
 }

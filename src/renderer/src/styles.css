@@ -470,6 +470,42 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   transition: background var(--fast), border-color var(--fast);
 }
 .row:hover { background: #ffffff09; }
+
+/* The sessions list is grouped by who needs a person, so it needs headings. A micro
+   uppercase label with a hairline running out to the edge, rather than a bar with a fill:
+   in a 260px column a heading has to cost less than a row of height, and a hairline is
+   the separator this whole app uses instead of shadows (design-vault/linear.app.md). */
+.list-sec {
+  display: flex; align-items: center; gap: 7px;
+  margin: 8px 2px 3px; padding: 0 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--muted);
+}
+.list-sec:first-child { margin-top: 2px; }
+.list-sec .n { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.list-sec::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.list-sec.sec-yourMove { color: var(--accent-text); }
+.list-sec.sec-yourMove::after { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* A pane running on a paired machine that this one is NOT mirroring. Dimmer, because
+   nothing of it is on this disk yet and it must not read as a pane you can type into;
+   full strength the moment it is pointed at, or the moment it is owed an answer. */
+/* 0.82, not the 0.68 this was first drawn at. Measured in a real window over the shipped
+   stylesheet: at 0.68 the sub-line (`.row-agent`, 11px) composites to 3.71:1 against the
+   sidebar, which fails AA, and it is the line carrying WHICH MACHINE the pane is on. 0.82
+   reads as 4.93:1 and is still plainly dimmer than a live row. */
+.row.listed { opacity: 0.82; }
+.row.listed:hover, .row.listed.asking { opacity: 1; }
+/* This is the one row in the list whose press does something other than switch panes,
+   and a word is the cheapest way to say so. */
+.row-open {
+  flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--accent-text);
+  opacity: 0; transition: opacity var(--fast);
+}
+.row.listed:hover .row-open { opacity: 0.9; }
+/* The sort button is a mode, so it says which mode it is in. */
+.quick-btn.on { color: var(--accent-text); }
 .row.active { background: #ffffff0f; border-color: var(--line-strong); }
 /* A card is a handle as well as a button. The grab cursor appears neither on hover nor
    on the press itself: hovering a card is what you do before clicking it, and a click is
@@ -530,12 +566,20 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    and the question itself is on its hover: the blue lane glow that was removed from this
    card was removed for being a colour with nothing to read, not for being a colour.
    Only opacity moves (anim-cost-test.mjs), on the 2px bar and not on the card. */
-.row.asking { background: #ff8f8f12; box-shadow: inset 0 0 0 1px #ff8f8f3d; }
+.row.asking { background: #ff8f8f26; box-shadow: inset 0 0 0 1px #ff8f8f80; }
 .row.asking::before {
-  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
-  border-radius: 2px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 3px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
 }
 .chip.asks { color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c; flex: none; margin-left: auto; }
+/* How long is left before that question is answered for you. Beside the chip above and in
+   the same red, because it is the same fact one step further on - and tabular so a card
+   does not jog sideways as 10 becomes 9. It is the sidebar half of `AskCountdown`: the
+   pane draws the full sentence, and the pane is regularly not what is on screen. */
+.chip.asks-in {
+  color: var(--surface-1); background: var(--danger); border-color: var(--danger);
+  flex: none; font-variant-numeric: tabular-nums; font-weight: 600;
+}
 /* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
    beside it rather than pushing it off the end. */
 .row-title .chip.asks + .elapsed, .row-title .chip.asks + .chip.dead { margin-left: 6px; }
@@ -731,7 +775,7 @@ html.app-blurred .dot.working { animation: none; }
    would freeze it wherever it happened to be, leaving a half-grown halo at half opacity
    sitting around the dot for as long as the window is unfocused. Dropping the layer
    instead leaves the dot's own static ring, which is what the ring grows out of. */
-html.app-blurred .dot.idle::after, html.app-blurred .fleet-dot::after { content: none; }
+html.app-blurred .dot.idle::after { content: none; }
 /* Nothing at all loops behind an unfocused window. The five rules above are the ones
    that also need a resting VALUE (a glow held at full, a band parked off the edge); this
    catches everything else that loops - the badges, the connecting dot, the stuck lane -
@@ -1254,8 +1298,19 @@ body.sizing * { user-select: none !important; }
    No inset on the right, though: the scrollbar lives at the host's content edge, and 7px of
    padding there pushed it into the middle of nowhere - you had to aim 17px in from the pane
    border for a bar that looks like it hugs it. Flush right, the border is the aim point. */
-.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-.xterm-host { flex: 1; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
+.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
+/* `min-width: 0` is load-bearing and was missing. A flex item defaults to
+   `min-width: auto`, which means it may not shrink below its CONTENT - so a pane
+   drawing a grid wider than the window (a mirror at the far end's cols, a phone's
+   borrowed grid) stretched this box to the terminal's own width instead of clipping.
+   Measured live at a forced 600x150 grid: the wrap was 1198px and this box was
+   1700px, 502px of it off the right edge. Worse, `proposeDimensions()` measures THIS
+   element, so the fit was asking a container that is by definition exactly as wide as
+   its content - the column ratio came out at ~1 every time and only the ROW count
+   could ever constrain the font. That is why a mirror ended up cut across the screen
+   rather than merely small. `overflow: hidden` on the wrap is the belt to this brace:
+   whatever is left over is clipped to this pane instead of drawn over its neighbour. */
+.xterm-host { flex: 1; min-width: 0; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
 
 /* Dropping files onto a pane types their paths at the prompt. */
 .xterm-wrap.dropping::after {
@@ -1263,15 +1318,11 @@ body.sizing * { user-select: none !important; }
   border: 1.5px dashed color-mix(in srgb, var(--agent) 70%, transparent);
   border-radius: var(--r); background: color-mix(in srgb, var(--agent) 8%, transparent);
 }
-/* ...and the same fact on the pane itself, for a grid where the card is off to the side.
-   A static ring, because this one is drawn over an agent's output all the while the
-   question is up and a breathing border over live text is the thing anim-cost-test.mjs
-   exists to refuse. The buttons themselves (shared/choices.ts) are the action; this is
-   only what makes the pane findable from across the room. */
-.xterm-wrap.asking::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: var(--r);
-  box-shadow: inset 0 0 0 1.5px #ff8f8f66, inset 0 0 22px #ff8f8f1f;
-}
+/* There WAS a red ring around the pane itself here, for the same question the card's
+   left bar already marks. It is gone on purpose: the sidebar is where a person looks to
+   find WHICH pane is owed an answer, and inset 34px of red over an agent's live output
+   reads as part of what the agent printed rather than as the app saying something. The
+   buttons (shared/choices.ts) are the action; the card is the flag. */
 .drop-hint {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
@@ -1325,28 +1376,33 @@ body.sizing * { user-select: none !important; }
    No animation anywhere in here - it appears when an agent stops and waits, which is
    exactly when somebody is looking at another window, and a pulsing row on an idle pane
    is what test:anim exists to refuse. */
+/* Docked to the RIGHT of the question rather than across the bottom of the pane.
+   Two things were wrong with the full-width strip. It sat ON the chooser it was about -
+   a CLI draws its question near the bottom of the frame, which is exactly where this
+   was - so reading the real question meant reading it around a card that was also
+   repeating it, badly, clamped to two lines. And every arrow key reflowed a wrapping row
+   of pills across the pane's whole width, which is the "laggy when I arrow up and down"
+   report: a fixed-width column of rows re-paints one border colour instead.
+
+   `top: auto` is load-bearing while this stays a sibling of the terminal host. */
 .pane-ask {
   position: absolute; z-index: 10;
-  left: 8px; right: 8px; bottom: 8px;
+  right: 8px; bottom: 8px; left: auto; top: auto;
+  width: 260px; max-width: calc(100% - 16px); max-height: calc(100% - 16px);
   display: flex; flex-direction: column; gap: 6px;
-  padding: 8px 10px;
+  padding: 8px; overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface-2); border: 1px solid var(--accent);
   border-radius: 10px; box-shadow: var(--shadow);
 }
-.pane-ask-q {
-  color: var(--text); font-size: 12px; line-height: 1.35;
-  /* Two lines and no more: the question is on screen a few rows above in full, and this
-     is a label on a row of buttons, not a second copy of the transcript. */
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.pane-ask-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* One answer per line. A pill row wrapped differently for every option length, so the
+   button under the pointer moved as the arrow moved; a column is a stable target. */
+.pane-ask-row { display: flex; flex-direction: column; gap: 4px; }
 .pane-ask-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 100%;
-  padding: 6px 10px; min-height: 30px;
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; text-align: left;
+  padding: 5px 8px; min-height: 28px;
   background: var(--surface-3); color: var(--text);
-  border: 1px solid var(--line); border-radius: 999px;
+  border: 1px solid var(--line); border-radius: 7px;
   font-size: 12px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1364,6 +1420,10 @@ body.sizing * { user-select: none !important; }
    thumb, and answering from the phone is most of why this exists. */
 @media (pointer: coarse) {
   .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
+  /* A phone gives the answers the width of the screen. The right-hand dock exists so a
+     desk can read the CLI's own question beside the card; a handset is showing one pane
+     at a time and has nothing to read beside it. */
+  .pane-ask { left: 8px; right: 8px; width: auto; max-height: 60%; }
 }
 
 /* A pane whose pty has not printed anything yet. No animation: this sits on screen for
@@ -1698,6 +1758,7 @@ body.sizing * { user-select: none !important; }
 .dialog > .proj-list,
 .dialog > .keys,
 .dialog > .hist-list,
+.dialog > .dev-cols,
 .dialog > .transcript {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px;
 }
@@ -1712,6 +1773,7 @@ body.sizing * { user-select: none !important; }
 .dialog:has(> .keys),
 .dialog:has(> .hist-list),
 .dialog:has(> .diff-body),
+.dialog:has(> .dev-cols),
 .dialog:has(> .transcript) { overflow: hidden; }
 /* In the fallback case above the button row would scroll away with everything else;
    pinning it to the bottom of the scroll area keeps the actions on screen. The
@@ -1722,6 +1784,13 @@ body.sizing * { user-select: none !important; }
   position: sticky; bottom: 0; z-index: 1;
   background: var(--surface-2);
   padding-bottom: 16px; margin-bottom: -16px;
+  /* A strip of the dialog's own background ABOVE the row as well as below it. Without it
+     the pinned row covers nothing on its top edge, so a section scrolling past ends up
+     touching - and visibly under - the buttons: reported as the Close button overlapping
+     the panel. The negative margin cancels it again, so nothing moves in the ordinary
+     case where the dialog is not scrolling at all. Same fix, same reason, as the
+     new-session dialog's `.dialog-foot` below. */
+  padding-top: 10px; margin-top: -10px;
 }
 /* More than the buttons has to be pinned in the new-session dialog: the install chips
    sit directly above them, and pinning the row alone parked it ON them the moment the
@@ -1899,6 +1968,22 @@ button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
 .sound-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setting-row .search { flex: 1; }
 .switches { display: flex; flex-direction: column; gap: 2px; }
+
+/* Settings search marks the rows it found rather than hiding the rest: a switch read out
+   of the group that explains it is a switch nobody can judge.
+
+   A RING and never a tint behind the words. A wash of `--accent-dim` under a row measured
+   3.91:1 for body text on the Paper preset - a WCAG AA failure introduced by searching,
+   silently, on exactly the light themes nobody tests a highlight against - and no guard in
+   `test:theme` covers text on that colour. A ring changes no text's backdrop, so it cannot
+   fail contrast at any accent or any depth. `found-top` is the one the panel scrolled to
+   and is the only one drawn at full strength. No animation: this is drawn while somebody
+   is reading, and `test:anim` refuses a loop that costs a GPU core. */
+.tab-body .found {
+  border-radius: 7px;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.tab-body .found-top { box-shadow: 0 0 0 2px var(--accent); }
 
 input[type='range'] {
   -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px;
@@ -2264,9 +2349,24 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .hist-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The one line saying what a session was for. Indented to the title above it and clipped
    to one line: it is a way to recognise a row, not a thing to read. */
-.hist-gist { color: var(--text); font-size: 12px; padding: 3px 0 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two lines, not one: this used to be a single ask and is now up to three chapters, and
+   the half that gets clipped off one line is the newest work - the useful half. */
+.hist-gist {
+  color: var(--text); font-size: 12px; padding: 3px 0 0 20px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
 .hist-line { color: var(--muted); font: 11.5px/1.6 ui-monospace, Consolas, monospace; padding-left: 20px; user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-actions { display: flex; gap: 5px; margin-top: 6px; }
+/* The chapters of an opened session: what it was asked, in order, above what it printed.
+   Pre-wrapped rather than a list because it is one string out of `summaryFull`, and the
+   numbering is what makes several subjects in one window read as several. */
+.hist-chapters {
+  white-space: pre-wrap; user-select: text;
+  color: var(--text); font-size: 12px; line-height: 1.6;
+  padding: 8px 10px; margin: 6px 0 4px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+  max-height: 22vh; overflow-y: auto;
+}
 /* ---- a pane's output as selectable text ------------------------------------
    The one surface in the app whose job is selecting: xterm draws to a canvas, and a
    finger dragged over a canvas is a scroll, so on a phone there was no gesture that could
@@ -2346,7 +2446,51 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   display: inline-flex; align-items: center; gap: 3px;
   color: var(--ok); border-color: #35d07f33; background: #35d07f14;
 }
-.dialog.devices { gap: 14px; }
+.dialog.devices { gap: 14px; width: min(1120px, 96vw); }
+/* Measured before this existed, in a real window at 1500x912 with nothing paired: 1057px
+   of content in an 812px box. Two columns halve the tallest thing on screen instead of
+   summing it, and a paired machine adds a row per pane it has - so stacked, this only
+   ever gets worse. `align-items: start` so a short column does not stretch to match a
+   tall one; `min-width: 0` so a long address inside a column can still ellipsis. */
+.dev-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; align-items: start;
+}
+.dev-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* ---- what a machine is running that has no pane ----
+   Under the pane picker on a device's card, because it is the same question one step
+   further out: those are the panes over there, these are everything else over there. */
+.dev-jobs {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px 9px; border-top: 1px solid var(--line);
+}
+.dev-jobs-head { display: flex; align-items: center; gap: 8px; }
+.dev-jobs-head .hint { flex: 1 1 auto; min-width: 0; }
+.dev-job {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  padding: 3px 6px; border-radius: 6px; background: var(--surface-1);
+  font-size: 11.5px; color: var(--muted);
+}
+/* The kind is a word rather than a colour: "agent run" and "dev" are different KINDS of
+   thing to find running on a machine you are not sitting at, and a legend nobody can see
+   is not a distinction. */
+.dev-job-kind {
+  flex: none; min-width: 58px;
+  font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted);
+}
+/* An agent turn nobody is watching is the one worth spotting from across the room. */
+.dev-job.agent .dev-job-kind { color: var(--accent); }
+.dev-job-nm { color: var(--text); font-weight: 550; white-space: nowrap; }
+.dev-job-port { flex: none; color: var(--accent); font-size: 11px; }
+.dev-job-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* How long it has been going, hard right: on a wedged loop it is the whole answer. */
+.dev-job-age { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+/* Below this there is no second column to be had, and one narrow column of pairing codes
+   and addresses reads worse than one wide one. */
+@media (max-width: 1000px) {
+  .dev-cols { grid-template-columns: 1fr; }
+}
 /* The launcher button stays lit while its folder picker is folded open, so it
    is obvious which device the picker underneath belongs to. */
 button.ghost.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
@@ -2852,77 +2996,6 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 button.git-badge { font: inherit; font-size: 10.5px; cursor: pointer; }
 button.git-badge.pressable:hover { border-color: var(--line-strong); color: var(--text); }
 button.git-badge.pressable.dirty:hover { color: var(--warn); }
-
-/* ---------------------------------------------------------------------------
-   Fleet: every pane on one screen, sorted by who needs a person.
-
-   The row is a grid rather than a flex line so eight rows agree on where each
-   column starts - the whole value of the screen is scanning DOWN one column
-   (every clock, every bar) rather than reading each row left to right.
-
-   Borders are hairlines in the palette's own line colour and there are no
-   shadows: this sits inside a dialog that already has one, and a second
-   elevation inside the first is what makes a dense list look muddy.
-   ------------------------------------------------------------------------- */
-.dialog.fleet { gap: 10px; }
-.fleet-list {
-  display: flex; flex-direction: column; gap: 2px;
-  overflow: auto; min-height: 0; max-height: min(60vh, 520px);
-  margin: 0 -4px; padding: 0 4px;
-}
-.fleet-row {
-  display: grid;
-  grid-template-columns: 10px 12px 15px minmax(0, 1fr) 152px 168px;
-  align-items: center; gap: 10px;
-  padding: 8px 9px; border-radius: var(--r);
-  border: 1px solid transparent;
-  cursor: pointer;
-  /* Two durations for the whole screen, the way the reference dark dashboards do it:
-     120ms for anything the pointer causes, and the long ones above for status. */
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.fleet-row.hi { background: var(--surface-2); border-color: var(--line); }
-.fleet-row.current { border-color: var(--accent-dim); }
-.fleet-row.current.hi { border-color: var(--line-strong); }
-
-/* The dot carries the same contract as the sidebar's, said in CSS: `pulse` is the app
-   working, `call` is the app waiting on you, `still` is a state nobody has to act on. */
-.fleet-dot { width: 9px; height: 9px; border-radius: 50%; justify-self: center; position: relative; }
-.fleet-row.is-working .fleet-dot { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; }
-.fleet-row.is-starting .fleet-dot { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
-.fleet-row.is-needsYou .fleet-dot { background: var(--accent); }
-.fleet-row.is-stalled .fleet-dot { background: var(--warn); }
-.fleet-row.is-ready .fleet-dot { background: #6d6d7c; box-shadow: 0 0 0 3px #ffffff0f; }
-.fleet-row.is-exited .fleet-dot { background: #55555f; }
-.fleet-dot.m-pulse { animation: pulse 2s ease-in-out infinite; }
-/* The ring is a layer that grows, for the reason written over `.dot.idle` - a spread
-   radius animated in a keyframe repaints, and this list draws one per row. */
-.fleet-dot.m-call::after,
-.fleet-row.drive-passed .fleet-dot::after {
-  content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  box-shadow: 0 0 0 2px var(--accent-dim);
-  animation: callRing 2.4s ease-out infinite;
-  will-change: transform, opacity;
-}
-/* Same ring, taking its colour from the row rather than the accent, so a stall is
-   amber all the way through instead of amber wearing an orange halo. */
-.fleet-row.is-stalled .fleet-dot.m-call::after { box-shadow: 0 0 0 2px #f0b42933; }
-
-/* A run the app is driving itself. Grouped under its mission rather than mixed into the
-   pane rows, because these have no pane number, no Ctrl+N and nothing to focus - the only
-   click they answer is "show me the diff". Colour says the same three things it says
-   everywhere else on this screen: green is going, amber wants watching, accent is done
-   and waiting on you. */
-.fleet-drive {
-  border: 1px solid var(--line); border-radius: var(--r);
-  padding: 6px; margin-top: 6px; background: var(--surface-2);
-}
-.fleet-drive-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 2px 6px 6px; font-size: 12px; min-width: 0;
-}
-.fleet-drive-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-drive-head .muted { margin-left: auto; white-space: nowrap; }
 /* K4. What this run's agents are allowed to do. A statement of fact, not an alarm, so it
    is the warn hue at low weight rather than danger: the posture is deliberate and the
    only defect was that nobody could see it. Colours come from the derived palette. */
@@ -2937,104 +3010,13 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   border: 1px solid color-mix(in srgb, var(--warn) 18%, transparent);
 }
 .perm-note.refused { color: var(--danger); background: #ff8f8f14; border-color: #ff8f8f2b; }
-/* One column fewer than a pane row: no agent logo, no diff bar. */
-.fleet-row.is-drive { grid-template-columns: 10px 12px minmax(0, 1fr) 152px; }
-.fleet-row.drive-working .fleet-dot,
-.fleet-row.drive-verifying .fleet-dot { background: var(--ok); animation: pulse 2s ease-in-out infinite; }
-.fleet-row.drive-retrying .fleet-dot { background: var(--warn); animation: pulse 2s ease-in-out infinite; }
-.fleet-row.drive-queued .fleet-dot { background: #6d6d7c; }
-.fleet-row.drive-passed .fleet-dot { background: var(--accent); }
-.fleet-row.drive-failed .fleet-dot { background: var(--bad, #e05252); }
-.fleet-row.drive-stopped .fleet-dot { background: #55555f; }
-
-.fleet-num {
-  color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-/* Section headings: the reading stops at the first boundary - everything under "Your
-   move" wants a person, nothing below it does. Uppercase micro-label with a hairline
-   running out to the right, the quietest way a dense list marks a boundary. */
-.fleet-sec {
-  display: flex; align-items: center; gap: 7px;
-  margin: 7px 2px 2px; padding: 0 4px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--muted);
-}
-.fleet-sec:first-child { margin-top: 0; }
-.fleet-sec .n { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.85; }
-.fleet-sec::after { content: ''; flex: 1; height: 1px; background: var(--line); }
-.fleet-sec.sec-yourMove { color: var(--accent-text); }
-.fleet-sec.sec-yourMove::after { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-
-.fleet-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-/* The pane's own last line, verbatim. Monospace because it IS terminal text, and one
-   line only: this is a glance, not a transcript - the pane is one Enter away. */
-.fleet-preview {
-  font-family: var(--mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
-  font-size: 10.5px; line-height: 1.5; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  opacity: 0.9; margin-top: 1px;
-}
-.fleet-row.is-needsYou .fleet-preview { color: var(--text); opacity: 0.85; }
-.fleet-title {
-  font-size: 12.5px; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.fleet-place {
-  font-size: 10.5px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.fleet-remote { color: var(--info); }
-
-.fleet-state { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
-.fleet-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.fleet-row.is-needsYou .fleet-label { color: var(--accent-text); }
-.fleet-row.is-stalled .fleet-label { color: var(--warn); }
-.fleet-clock {
-  font-size: 10.5px; color: var(--muted);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-
-/* The diff bar. A button, because it opens the lines it is drawing - so it has to put
-   back the font and background a button brings with it. */
-.fleet-diff {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  font: inherit; background: none; border: 1px solid transparent;
-  border-radius: var(--r-sm); padding: 4px 6px; margin: -4px -6px;
-  text-align: left; cursor: default; min-width: 0;
-}
-.fleet-diff.has { cursor: pointer; }
-.fleet-diff.has:hover { background: var(--surface-3); border-color: var(--line); }
-.fleet-bar {
-  display: flex; height: 4px; width: 0; min-width: 0; border-radius: 2px; overflow: hidden;
-  background: var(--line);
-  /* The width IS the amount of work, so it is the one thing here allowed to move when
-     the number behind it moves. */
-  transition: width 240ms ease;
-}
-.fleet-bar .add { background: var(--diff-add); }
-.fleet-bar .del { background: var(--diff-del); }
-.fleet-diff:not(.has) .fleet-bar { width: 100% !important; opacity: 0.35; }
-.fleet-git {
-  font-size: 10.5px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
-}
-.dialog.fleet .dialog-foot { display: flex; align-items: center; gap: 12px; }
-.dialog.fleet .dialog-foot .primary { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-  .fleet-dot, .fleet-dot::after { animation: none !important; }
-  .fleet-dot::after { content: none; }
-  .fleet-row.is-needsYou .fleet-dot { box-shadow: 0 0 0 3px var(--accent-dim); }
-  .fleet-row.is-stalled .fleet-dot { box-shadow: 0 0 0 3px #f0b42933; }
-  .fleet-bar { transition: none; }
 }
 
 /* Narrow window: the state column and the diff column are the two that can afford to
    go, in that order - the row still says which pane it is and what colour it is. */
 @media (max-width: 720px) {
-  .fleet-row { grid-template-columns: 10px 12px 15px minmax(0, 1fr) 118px; }
-  .fleet-diff { display: none; }
 }
 
 /* --- Dictation, full screen ------------------------------------------------
@@ -3107,4 +3089,384 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 @media (prefers-reduced-motion: reduce) {
   .voice-ring { transition: none; }
   .voice-dots i { animation: none; opacity: 0.7; }
+}
+
+/* ---------------------------------------------------------------- right-click a card
+   The desktop twin of `.pane-menu` (the phone's bottom sheet, in the handheld block
+   above). Rows are 30px rather than 52 because this is a pointer surface; the shape,
+   the wording and the destructive-last order are the same, so the two read as one
+   control seen by two hands. */
+.ctx-back { position: fixed; inset: 0; z-index: 95; }
+.ctx-menu {
+  position: fixed;
+  min-width: 216px; max-width: 320px;
+  padding: 5px;
+  border: 1px solid var(--line-strong); border-radius: var(--r);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  animation: pop 120ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.ctx-head {
+  padding: 5px 8px 6px;
+  color: var(--muted);
+  font: 600 11px/1.2 inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ctx-row {
+  display: flex; align-items: baseline; gap: 8px;
+  width: 100%; padding: 6px 8px;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text);
+  font: 500 12.5px/1.3 inherit; text-align: left;
+}
+.ctx-row:hover:not(:disabled), .ctx-row.on { background: var(--surface-3); }
+.ctx-row:disabled { opacity: 0.45; }
+.ctx-row.danger { color: var(--danger); }
+.ctx-label { flex: none; }
+.ctx-hint {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--muted); font-size: 11px; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------------ hand off
+   One question - which machine - so the box holds a picker and nothing else. */
+.dialog.handoff-dialog { width: 480px; }
+.ho-lead { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ho-lead code { font-size: 11px; }
+.ho-note {
+  margin: 0; padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3); color: var(--text);
+  font-size: 12px; line-height: 1.45;
+}
+.ho-note.warn { color: var(--warn); }
+.ho-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+.ho-dev {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--text);
+  text-align: left;
+}
+.ho-dev.picked { border-color: var(--accent); background: var(--accent-soft); }
+.ho-dev:hover:not(.off) { border-color: var(--line-strong); }
+.ho-dev.off { opacity: 0.6; }
+.ho-dev-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.ho-dev-name {
+  font-weight: 600; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ho-dev-sub {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ho-tick { flex: none; width: 14px; color: var(--accent); font-size: 13px; }
+/* A row, against `.dialog > .dialog-foot`'s column. `.ho-spacer` does the separating
+   rather than `margin-left: auto` on the primary: a margin there silently beats a
+   parent's justification and is what left a 99px hole between two answers once. */
+.dialog > .ho-foot, .dialog > .si-foot {
+  flex-direction: row; align-items: center; gap: 8px;
+}
+.ho-spacer, .si-spacer { flex: 1 1 auto; }
+
+/* --------------------------------------------------------------------- session info */
+.dialog.session-info { width: 470px; }
+.si-body { display: flex; flex-direction: column; gap: 7px; min-height: 0; overflow-y: auto; }
+.si-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.si-key { flex: none; width: 106px; color: var(--muted); font-size: 11.5px; }
+.si-val { flex: 1 1 auto; min-width: 0; }
+.si-dim { color: var(--muted); font-size: 11.5px; }
+.si-inline { font-size: 11.5px; }
+.si-path {
+  color: var(--muted); font-size: 11px; font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.si-id { color: var(--muted); font-size: 11px; }
+
+/* "Answering in 3s", above the answer buttons.
+   Its own line rather than a chip beside them: it is the one thing on the card that is
+   about to happen without a press, so it may not be read as another option. */
+.pane-ask-auto {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  /* In a 260px column the seconds and the sentence do not fit on one line, and the
+     sentence is the half that may wrap - the pill may never be pushed off. */
+  flex-wrap: wrap;
+  font-size: 12px; color: var(--danger);
+  /* Its own banded row rather than a line of small text: at 11px on a dark card, under a
+     question and above a row of buttons, it was reported as not being on screen at all. */
+  padding: 4px 8px; border-radius: 8px;
+  border: 1px solid var(--danger); background: var(--surface-1);
+}
+/* The seconds. Tabular so the row does not jog sideways as 10 becomes 9, and wide enough
+   for two digits plus the word "now", so nothing reflows on the last tick either. */
+.pane-ask-auto-left {
+  flex: none; min-width: 34px; text-align: center;
+  padding: 2px 6px; border-radius: 6px;
+  background: var(--danger); color: var(--surface-1);
+  font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pane-ask-auto-word {
+  flex: 1 1 120px; min-width: 0; line-height: 1.3;
+  /* Two lines: the option's own label is in here and they run long ("Yes, and run the
+     tests afterwards"). Beyond two this is a paragraph rather than a label. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pane-ask-auto-pick { color: var(--text); font-weight: 600; }
+/* The option about to be pressed for you. Dashed rather than solid so it cannot be
+   confused with `.on` - where the CLI's own arrow is - which is a different fact and is
+   often a different row. The word is drawn by CSS because the button already has a
+   number and a label in it, and a third element per option is a wrapped row on a phone. */
+.pane-ask-btn.auto {
+  border-color: var(--danger); border-style: dashed;
+}
+.pane-ask-btn.auto::after {
+  content: 'auto';
+  margin-left: 2px; padding: 0 5px; border-radius: 999px;
+  background: var(--danger); color: var(--surface-1);
+  font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+/* ---- the mascot ------------------------------------------------------------
+   The face on the resource ladder (src/shared/mascot.ts, components/Mascot.tsx).
+
+   The LAYER never takes a click: it covers the window so the sprite can stand
+   anywhere, and everything in it is `pointer-events: none` except the sprite and
+   its bubble. A decoration that eats a click meant for a terminal is the one bug
+   this app cannot afford, and it is the reason the layer is a layer at all.
+
+   z-index 40 on purpose: over the panes and the sidebar, UNDER every dialog
+   (60+) and under the pairing cards. Nothing it draws may sit on top of a
+   question somebody is being asked.
+
+   Every colour is a theme variable and every loop is transform/opacity only -
+   `npm run test:anim` refuses anything else, having measured a box-shadow loop
+   at 136% of a GPU core on idle panes. */
+.mascot-layer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.mascot {
+  position: absolute; transform: translate(-50%, -50%);
+  /* The walk. One property, composited, and slow enough to read as a walk rather
+     than a jump - it is how the mascot says WHICH pane without printing an id. */
+  transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
+  line-height: 0;
+}
+/* A drag has to land under the pointer, not walk there 900ms later - the walk's easing
+   is what made a dragged sprite feel stuck to the corner it started in. */
+.mascot.dragging { transition: none; }
+.mascot-body {
+  pointer-events: auto; background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--accent-text); line-height: 0; filter: none;
+}
+/* `scale`, not `transform: scale()`. The bob is a transform animation on the group
+   INSIDE the svg, and a hover rule setting `transform` on an animated element replaces it
+   outright rather than composing - the mascot stopped bobbing while the pointer was on it
+   and jumped back to whatever frame the animation had reached on the way out. The
+   standalone `scale` property is its own thing and multiplies with the animated
+   transform. */
+.mascot-body:hover { scale: 1.06; }
+.mascot-body { cursor: grab; }
+.mascot-body.dragging { cursor: grabbing; scale: 1.06; }
+.mascot-body { transition: scale 160ms ease; }
+
+/* NOTHING ON THIS SPRITE MOVES VERTICALLY. The old fox bobbed on a 4.2s loop, and
+   floating up and down is the first thing anybody said about it - so the rig is still,
+   the ground shadow is still, and what moves is what a machine moves while it is
+   standing still: a beacon, a scanning visor, the treads ticking over, the arms
+   settling. Every one of those is an opacity step, which is the cheapest loop there is
+   and the only kind `npm run test:anim` allows besides a transform. */
+.m-shadow { fill: currentColor; opacity: 0.12; }
+
+/* Four shades, all derived from the one accent `currentColor` carries, never from a
+   literal - the sprite re-tints with the theme like everything else in this window, and
+   keeps its light-to-dark reading on a light theme. */
+.m-shell { fill: color-mix(in oklab, currentColor 88%, #000); }
+.m-shell-d { fill: color-mix(in oklab, currentColor 44%, #000); }
+.m-shell-l { fill: color-mix(in oklab, currentColor 70%, #fff); }
+.m-visor { fill: color-mix(in oklab, currentColor 14%, #000); }
+
+/* Every alternate pose starts hidden. The animations below turn them on for their share
+   of the cycle; a layer with no animation on it is simply never drawn, which is what
+   makes a pose that was defined and never wired VISIBLE as dead art to the test. */
+.m-lid, .m-arm-b, .m-arm-c, .m-treads-b, .m-antenna-tilt, .m-eye-look { opacity: 0; }
+.mascot-body.blink .m-lid { opacity: 1; }
+
+/* The arms settle over three drawings, on a clock that is deliberately not a multiple of
+   the treads' or the visor's - three loops that line up read as one loop anybody can
+   count, and a mascot with a countable loop is a gif. */
+.m-arm-a { animation: m-arm-a 4.8s steps(1, end) infinite; }
+.m-arm-b { animation: m-arm-b 4.8s steps(1, end) infinite; }
+.m-arm-c { animation: m-arm-c 4.8s steps(1, end) infinite; }
+@keyframes m-arm-a { 0% { opacity: 1; } 25%, 100% { opacity: 0; } }
+@keyframes m-arm-b {
+  0% { opacity: 0; } 25% { opacity: 1; } 50% { opacity: 0; }
+  75% { opacity: 1; } 100% { opacity: 0; }
+}
+@keyframes m-arm-c { 0% { opacity: 0; } 50% { opacity: 1; } 75%, 100% { opacity: 0; } }
+
+/* The treads tick over: the slowest clock on the sprite. */
+.m-treads-a { animation: m-treads-a 7s steps(1, end) infinite; }
+.m-treads-b { animation: m-treads-b 7s steps(1, end) infinite; }
+@keyframes m-treads-a { 0% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes m-treads-b { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+/* The antenna is knocked sideways for a BEAT rather than held there - a pose held half
+   the time reads as a broken antenna. */
+.m-antenna { animation: m-antenna 9s steps(1, end) infinite; }
+.m-antenna-tilt { animation: m-antenna-tilt 9s steps(1, end) infinite; }
+@keyframes m-antenna { 0% { opacity: 1; } 88% { opacity: 0; } 94%, 100% { opacity: 1; } }
+@keyframes m-antenna-tilt { 0% { opacity: 0; } 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
+
+/* The beacon. The one thing on the drawing that says it is powered rather than parked. */
+.m-beacon-on { animation: m-beacon 2.4s steps(1, end) infinite; }
+@keyframes m-beacon { 0% { opacity: 1; } 55%, 100% { opacity: 0; } }
+
+/* The visor scans. */
+.m-eye-ahead { animation: m-eye-ahead 6.5s steps(1, end) infinite; }
+.m-eye-look { animation: m-eye-look 6.5s steps(1, end) infinite; }
+@keyframes m-eye-ahead { 0% { opacity: 1; } 72% { opacity: 0; } 84%, 100% { opacity: 1; } }
+@keyframes m-eye-look { 0% { opacity: 0; } 72% { opacity: 1; } 84%, 100% { opacity: 0; } }
+
+/* A pointer on it holds the antenna up and speeds the arms: the one signal that says the
+   sprite is a control rather than a picture. */
+.mascot-body:hover .m-arm-a,
+.mascot-body:hover .m-arm-b,
+.mascot-body:hover .m-arm-c { animation-duration: 2.2s; }
+.mascot-body:hover .m-antenna-tilt { opacity: 0; animation: none; }
+.mascot-body:hover .m-antenna { opacity: 1; animation: none; }
+
+/* Counting down to a close: the beacon goes to a hard blink and the visor stops
+   wandering, because the sprite is now the thing being read rather than scenery. */
+.mascot-body.alert .m-beacon-on { animation-duration: 700ms; }
+.mascot-body.alert .m-eye-look { animation: none; opacity: 0; }
+.mascot-body.alert .m-eye-ahead { animation: none; opacity: 1; }
+/* The bubble is placed in the LAYER, in pixels, by `bubbleSpot` in shared/mascot.ts - it
+   is NOT a child of the sprite. As a child it widened the sprite's own box, which is
+   centred on the spot, so saying anything shoved the fox sideways by half a bubble and
+   hung the rest of it off the left edge of the window. `min-width: 0` and the max-width
+   the placer computes keep it inside a narrow window as well as a wide one. */
+.mascot-bubble {
+  position: absolute; pointer-events: auto; min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong); border-radius: var(--r);
+  padding: 9px 10px; box-shadow: var(--shadow); font-size: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
+}
+/* A dragged sprite lands under the pointer; a bubble walking after it for 900ms
+   reads as the drag not having worked. */
+.mascot-bubble.dragging { transition: none; }
+.mascot-say { white-space: pre-wrap; color: var(--text); line-height: 1.45; }
+/* The countdown. The number is TABULAR and given its own column, so the sentence beside
+   it does not jog sideways as 10 becomes 9 - the same reading `AskCountdown` needed. */
+.mascot-bubble.counting { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+.mascot-count { display: flex; gap: 9px; align-items: flex-start; }
+.mascot-secs {
+  font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 590;
+  line-height: 1.05; color: var(--accent); min-width: 26px; text-align: right;
+}
+.mascot-count-say { color: var(--text); line-height: 1.45; }
+.mascot-acts { display: flex; gap: 6px; }
+.mascot-ask { display: flex; gap: 6px; }
+.mascot-ask input {
+  flex: 1; min-width: 0; background: var(--surface-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: 12px;
+}
+.mascot-tools { display: flex; gap: 4px; justify-content: flex-end; }
+.mascot-icon {
+  pointer-events: auto; background: none; border: 0; cursor: pointer;
+  font-size: 12px; opacity: 0.6; padding: 2px 4px; line-height: 1;
+}
+.mascot-icon:hover { opacity: 1; }
+/* A phone has no room for something walking over the one pane it can show. */
+@media (max-width: 720px) { .mascot-layer { display: none; } }
+
+/* ---- the pets ---------------------------------------------------------------
+   Ten of them (src/shared/pets.ts), one stylesheet. The animation is keyed on the
+   SLOT, not on the animal: `m-arm-*` is a settle on three frames whatever the pet
+   means by it (a tail, a wing, a claw, a drip), `m-treads-*` is the slow tick, and
+   a pet that leaves a slot out is simply stiller. That is what makes a new pet ART
+   and nothing else - no new keyframes, no new timers, no new cost. */
+
+/* The accent cell. Neon collars, lit eyes, strobes - the one colour on a pet that is
+   the window's own accent rather than a shade of it. */
+.m-accent { fill: var(--accent); }
+
+/* Nobody is looking: the window is minimised or hidden. Chromium already stops
+   PAINTING there, but the compositor still holds every animation, so this says so
+   out loud and costs nothing to be wrong about - the class is dropped the moment
+   the window comes back. */
+.mascot-layer.asleep .m-rig *,
+.mascot-layer.asleep .mascot-ball { animation-play-state: paused; }
+
+/* The dash. One `left` transition across the window, which is a composited property
+   and the only horizontal move this sprite ever makes. `dash-port` is the single
+   frame at the start line with the transition off - without it the browser
+   coalesces both writes and the pet slides gently to the start instead of appearing
+   there and then running. */
+.mascot.dash-port { transition: none; }
+.mascot.dashing { transition: left 2800ms cubic-bezier(.42,0,.58,1), top 380ms ease; }
+/* Running the other way is a mirrored sprite, never a moon-walk. */
+.mascot.dashing .bot { transform: scaleX(-1); }
+/* Legs, treads and arms move at a run's rate while it is running, and only then. */
+.mascot.dashing .m-arm-a,
+.mascot.dashing .m-arm-b,
+.mascot.dashing .m-arm-c { animation-duration: 480ms; }
+.mascot.dashing .m-treads-a,
+.mascot.dashing .m-treads-b { animation-duration: 320ms; }
+
+/* Something to chase. A circle, a transform, and nothing else - it exists for the
+   two and a half seconds of a run and is gone. */
+.mascot-ball {
+  position: absolute; width: 11px; height: 11px; margin: -5px 0 0 -5px;
+  border-radius: 50%; background: var(--accent); opacity: 0.85;
+  transition: left 2800ms cubic-bezier(.36,0,.62,1);
+  animation: m-ball-roll 700ms linear infinite;
+}
+.mascot-ball.port { transition: none; }
+@keyframes m-ball-roll { to { transform: rotate(360deg); } }
+
+/* ---- tips -------------------------------------------------------------------
+   One quiet card, bottom-right, saying one thing this app can do. It sits BELOW the
+   update card's z-index and never appears while one is up: an update is a decision,
+   a tip is a hint, and two cards in one corner is the app talking over itself. */
+.tip-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 55; width: 320px;
+  background: var(--surface-3); border: 1px solid var(--line-strong);
+  border-left: 3px solid color-mix(in oklab, var(--accent) 60%, var(--line-strong));
+  border-radius: var(--r); box-shadow: var(--shadow);
+  padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
+}
+.tip-head { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.tip-head .tip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.tip-say { color: var(--text); font-size: 12.5px; line-height: 1.5; }
+.tip-off { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.tip-acts { display: flex; justify-content: flex-end; gap: 6px; }
+@media (max-width: 720px) { .tip-toast { display: none; } }
+
+/* The pet picker. Ten still sprites - the picker is a decision that takes two seconds and
+   ten looping sprites in a dialog is the animation budget spent on it. */
+.pet-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+.pet-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px 6px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--accent-text); cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.pet-swatch:hover { border-color: var(--line-strong); background: var(--surface-3); }
+.pet-swatch.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
+.pet-name { font-size: 10.5px; color: var(--muted); }
+.pet-swatch.on .pet-name { color: var(--text); }
+
+/* A chip that is also a control - the queued-move chip cancels the move. It has to look
+   exactly like the chip beside it, so this undoes the button element's own defaults and
+   nothing else. */
+button.chip {
+  font: inherit;
+  border: 0;
+  cursor: pointer;
+}
+button.chip:hover {
+  opacity: 0.85;
 }

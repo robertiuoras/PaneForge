@@ -37,6 +37,10 @@ export function hydrateUserPath(): string {
     add(home && join(home, '.npm-global', 'bin'))
     add(home && join(home, '.local', 'share', 'pnpm'))
     add(home && join(home, '.bun', 'bin'))
+    // x.ai's installer puts `grok` here and only THEN tries to symlink it somewhere
+    // already on PATH, so a machine where that symlink could not be made has the CLI
+    // installed and invisible - which the agent list reports as "grok not on PATH".
+    add(home && join(home, '.grok', 'bin'))
     add(home && join(home, '.volta', 'bin'))
     // nvm keeps one bin folder per installed Node version. Keeping all of them means
     // a GUI launch finds the same global CLIs as a normal shell, without sourcing

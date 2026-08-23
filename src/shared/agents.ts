@@ -23,7 +23,36 @@ export const PLATFORM: string = (() => {
  * label; the object form exists so `claude-opus-4-8` can read as "Opus 4.8" in
  * the menu without hiding the real id that gets passed to the CLI.
  */
-export type ModelChoice = string | { value: string; label: string; hint?: string }
+export type ModelChoice =
+  | string
+  | {
+      value: string
+      label: string
+      hint?: string
+      /** menu heading; set when a list mixes hand-written shortcuts with a fetched one */
+      group?: string
+      /**
+       * The human half of the hint - "fastest", "the one this entry was added for".
+       *
+       * Separate from `hint` because `hint` is where the PRICE lives, and a price typed
+       * into this file is out of date the week after it is written. When the live
+       * catalogue carries this id its hint REPLACES the hand-written one, and this is
+       * what is kept and appended: the number comes from OpenRouter, the judgement from
+       * whoever put the row on the list.
+       */
+      note?: string
+      /**
+       * The agent this model belongs to, when it is NOT the one whose menu it appears in.
+       *
+       * A model list is per agent for a good reason - `z-ai/glm-5.2` in a plain Claude Code
+       * pane is a 401 - but that made a key pasted into Settings do nothing visible: the
+       * runner dropdown still says "Claude Code", so the models the key just paid for are
+       * two menus away and nothing on screen says which menu. Picking one of these switches
+       * the runner AND the model in one press, which is what somebody who pasted an
+       * OpenRouter key was asking for.
+       */
+      agent?: string
+    }
 
 /** How the model reaches the CLI: as `--model x` (default) or as a bare argument. */
 export type ModelStyle = 'flag' | 'arg'
@@ -137,11 +166,26 @@ export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
 // Measured against openrouter.ai/api/v1/models on 2026-08-15. Prices are per million
 // input tokens and are in the hint because the whole point of this entry is that a
 // pane can cost a fiftieth of what the same pane costs on a frontier model.
+//
+// This is no longer the whole menu: `main/orModels.ts` fetches OpenRouter's own
+// catalogue and `mergeOrModels` appends it, so a model published after this build was
+// cut still reaches the picker. These stay because a hand-written row says WHY a model
+// is worth reaching for, which a price and a context length cannot.
 const OPENROUTER_MODELS: ModelChoice[] = [
+  // Free, 1M context, tool calling, and published 2026-08-20 - after the prices below
+  // were measured, which is the case the live catalogue exists for. "Stealth" means the
+  // provider will not say who it is and KEEPS every prompt and completion (its terms say
+  // it does not train on them). That belongs in the hint, where the choice is made,
+  // rather than in a document nobody opens.
+  {
+    value: 'stealth/ox-alpha',
+    label: 'Ox Alpha',
+    hint: 'free · 1M context · anonymous provider keeps your prompts'
+  },
   { value: 'z-ai/glm-5.2', label: 'GLM 5.2', hint: '$1.19/M · 1M context' },
   { value: 'z-ai/glm-5', label: 'GLM 5', hint: '$0.60/M' },
   { value: 'z-ai/glm-4.7', label: 'GLM 4.7', hint: '$0.40/M' },
-  { value: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', hint: '$0.06/M · fastest' },
+  { value: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', hint: '$0.06/M', note: 'fastest' },
   { value: 'deepseek/deepseek-chat', label: 'DeepSeek' },
   { value: 'qwen/qwen3-coder', label: 'Qwen3 Coder' },
   { value: 'moonshotai/kimi-k2', label: 'Kimi K2' }
@@ -212,8 +256,108 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     install: 'npm i -g @anthropic-ai/claude-code',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
-    note: 'One OpenRouter key, any model on it - GLM, DeepSeek, Qwen, Kimi. Paste the key in Settings.',
+    note: 'One OpenRouter key, any model on it - free ones included. Paste the key in Settings.',
     docs: 'https://openrouter.ai/docs/community/claude-code'
+  },
+  {
+    // Same shape as the OpenRouter entry and for the same reason, but pointed at
+    // DeepSeek's own Anthropic-protocol endpoint rather than at a broker: one hop
+    // fewer, and the price is DeepSeek's rather than DeepSeek's plus a margin.
+    //
+    // The base URL carries the `/anthropic` suffix and NO `/v1` - the CLI appends
+    // `/v1/messages` itself, so the request lands on
+    // `https://api.deepseek.com/anthropic/v1/messages`. Probed 2026-08-18 with a junk
+    // key: it answers 401 `authentication_error` in Anthropic's own error shape, which
+    // is how a real implementation of that API is told from a rewrite of the
+    // chat-completions one. Bare `api.deepseek.com` is the OpenAI-compatible endpoint
+    // and is NOT a documented Messages host - it also answered 401 to that probe, so
+    // the suffix is taken from DeepSeek's own Claude Code page rather than from a
+    // failure that would announce itself. That page is also where `ANTHROPIC_AUTH_TOKEN`
+    // (not `ANTHROPIC_API_KEY`) comes from.
+    id: 'deepseek',
+    label: 'Claude Code on DeepSeek',
+    bin: 'claude',
+    alwaysArgs: BYPASS_ARGS,
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
+    modelFlag: '--model',
+    // `[1m]` is not a decoration: it is the model id DeepSeek's own config example
+    // uses to ask for the 1M-context variant, and it is passed through verbatim.
+    models: [
+      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', hint: 'strongest' },
+      { value: 'deepseek-v4-pro[1m]', label: 'DeepSeek V4 Pro 1M', hint: '1M context' },
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', hint: 'fast, cheapest' }
+    ],
+    env: {
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      ANTHROPIC_AUTH_TOKEN: keyVar('deepseek'),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    },
+    color: '#4d6bfe',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
+    free: true,
+    note: 'DeepSeek key in Settings - no subscription, pay per token',
+    docs: 'https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/'
+  },
+  {
+    // Z.ai publishes no coding CLI of its own - ZCode is a desktop app and
+    // `@z_ai/coding-helper` is a wizard that writes these two variables into somebody
+    // else's tool. So this entry IS that wizard's output, without the wizard.
+    //
+    // `/api/anthropic`, no `/v1`, same rule as DeepSeek above. The OpenAI-compatible
+    // `/api/paas/v4` and the Coding-Plan `/api/coding/paas/v4` are different endpoints
+    // and neither speaks the Messages API.
+    id: 'glm',
+    label: 'Claude Code on GLM',
+    bin: 'claude',
+    alwaysArgs: BYPASS_ARGS,
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
+    modelFlag: '--model',
+    models: [
+      { value: 'glm-5.2', label: 'GLM 5.2', hint: 'flagship' },
+      { value: 'glm-5.2[1m]', label: 'GLM 5.2 1M', hint: '1M context' },
+      { value: 'glm-5.1', label: 'GLM 5.1' },
+      { value: 'glm-5', label: 'GLM 5' },
+      { value: 'glm-4.7', label: 'GLM 4.7' },
+      { value: 'glm-4.7-flashx', label: 'GLM 4.7 FlashX', hint: 'fastest' }
+    ],
+    env: {
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+      ANTHROPIC_AUTH_TOKEN: keyVar('zai'),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    },
+    color: '#14b8a6',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    uninstall: 'npm rm -g @anthropic-ai/claude-code',
+    free: true,
+    note: 'Z.ai key in Settings - pay per token, or a GLM Coding Plan',
+    docs: 'https://docs.z.ai/devpack/tool/claude'
+  },
+  {
+    // xAI's own CLI, NOT Claude Code with a base URL: x.ai documents an
+    // OpenAI-compatible endpoint and nothing else, and the "Grok speaks the Anthropic
+    // Messages API" claims in circulation trace to no xAI-owned page. Shipping that as
+    // a spec would be a pane that 404s several seconds into its first turn, which is
+    // the one failure this catalogue is written to avoid.
+    id: 'grok',
+    label: 'Grok Build',
+    bin: 'grok',
+    modelFlag: '--model',
+    models: [{ value: 'grok-4.6', label: 'Grok 4.6', hint: 'coding and agentic work' }],
+    // Offered rather than required: the CLI signs in on its own as well, so a blank
+    // key box leaves it on whatever login this machine already has.
+    env: { XAI_API_KEY: keyVar('xai') },
+    color: '#cbd5e1',
+    // The curl script is the install x.ai documents. On Windows there is no shell to
+    // pipe it into, so that platform gets the npm package instead.
+    installMac: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    installWin: 'npm i -g @xai-official/grok',
+    uninstallWin: 'npm rm -g @xai-official/grok',
+    note: 'xAI account, or an xAI key in Settings',
+    docs: 'https://docs.x.ai/build/overview'
   },
   {
     id: 'codex',
@@ -267,7 +411,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     install: 'npm i -g @qwen-code/qwen-code',
     uninstall: 'npm rm -g @qwen-code/qwen-code',
     free: true,
-    note: 'Free daily quota with a Qwen account',
+    // Node 22 is its `engines` floor, not a suggestion: npm installs it anyway on
+    // Node 20 with a warning nobody reads in an install log, and the CLI then fails
+    // at its first launch inside a pane that looks like a bad install.
+    note: 'Free daily quota with a Qwen account - needs Node 22+',
     docs: 'https://github.com/QwenLM/qwen-code'
   },
   {
@@ -402,6 +549,31 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
 ]
 
 /** Built-ins first, then the user's own entries; a custom id overrides a built-in. */
+/**
+ * The CLIs that read an image off the OS clipboard when a raw ^V reaches them.
+ *
+ * Claude Code does; the other twelve take a PATH and read the file. It matters for what a
+ * dropped screenshot becomes: for these, the bytes can be put on the clipboard and pasted,
+ * so the agent attaches a real IMAGE ("[Image #1]") and can see it. For the rest, a path
+ * typed at the prompt is the only thing that works at all.
+ *
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic'
+])
+
+/** Would a raw ^V put an image in front of this agent, rather than nothing? */
+export function pastesClipboardImage(agent: string | undefined): boolean {
+  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
+}
+
 export function allAgents(custom: AgentSpec[] = []): AgentSpec[] {
   const out = [...BUILTIN_AGENTS]
   for (const c of custom) {
@@ -490,16 +662,147 @@ export function modelHint(m: ModelChoice): string | undefined {
   return typeof m === 'string' ? undefined : m.hint
 }
 
+/** The menu heading a choice sits under, when its list has headings at all. */
+export function modelGroup(m: ModelChoice): string | undefined {
+  return typeof m === 'string' ? undefined : m.group
+}
+
+/** The runner a choice belongs to, when picking it also changes the runner. */
+export function modelAgent(m: ModelChoice): string | undefined {
+  return typeof m === 'string' ? undefined : m.agent
+}
+
+/**
+ * Models from the OTHER runners that share this one's binary and have their key.
+ *
+ * Every "Claude Code on <provider>" entry here is the same binary with two variables
+ * set, so the CLI in the pane is identical and only the endpoint differs - which is
+ * exactly why a person who pasted an OpenRouter key expects its models where the models
+ * are. They are offered on the sibling's own heading, so nothing pretends a GLM id will
+ * run against Anthropic, and picking one carries `agent` so the press switches both.
+ *
+ * Two refusals, and both are the point:
+ *   - **only a provider whose key is actually saved.** Offering a model that cannot
+ *     authenticate is a pane that 401s inside a healthy-looking window, the failure this
+ *     repo refuses everywhere else. `hasKey` is passed in so this stays pure.
+ *   - **only a sibling on the same `bin`.** Codex's models in Claude Code's menu would be
+ *     a launch that dies in a second, and the runner dropdown is still one press away.
+ */
+export function siblingModels(
+  spec: AgentSpec,
+  all: AgentSpec[],
+  hasKey: (provider: string) => boolean
+): ModelChoice[] {
+  if (!supportsModel(spec)) return []
+  const mine = new Set((spec.models ?? []).map(modelValue))
+  const out: ModelChoice[] = []
+  for (const other of all) {
+    if (other.id === spec.id || other.bin !== spec.bin || !supportsModel(other)) continue
+    const provider = keyProviderFor(other)
+    if (!provider || !hasKey(provider)) continue
+    for (const m of other.models ?? []) {
+      const value = modelValue(m)
+      if (mine.has(value)) continue
+      mine.add(value)
+      const heading = modelGroup(m)
+      out.push({
+        value,
+        label: modelLabel(m),
+        hint: modelHint(m),
+        // The PROVIDER's name, never the runner's. "Claude Code on OpenRouter" as a
+        // heading over a model list reads as a second product to choose between, which
+        // is the confusion this borrowing exists to remove - the runner is plumbing and
+        // the person is picking a model. "OpenRouter · Free" says where the model comes
+        // from and what it costs, which is the whole of the decision.
+        group: heading ? `${providerLabel(provider) ?? other.label} · ${heading}` : providerLabel(provider) ?? other.label,
+        agent: other.id
+      })
+    }
+  }
+  return out
+}
+
+/** What Settings calls a provider, for the heading its models sit under. */
+export function providerLabel(id: string): string | undefined {
+  return KEY_PROVIDERS.find((p) => p.id === id)?.label
+}
+
 /** The friendly model name for a pane card, without ever changing what reaches the CLI. */
 export function agentModelLabel(agent: Pick<AgentSpec, 'models'> | undefined, value: string): string {
   const choice = agent?.models?.find((m) => modelValue(m) === value)
   return choice ? modelLabel(choice) : value
 }
 
-/** The keys Settings holds, by the placeholder they answer. */
-export interface AgentKeys {
-  openrouter?: string
+/**
+ * The keys Settings holds, by provider id. `Record`, not a field per provider: the
+ * providers are a list here, so a new one is an entry in `KEY_PROVIDERS` and nothing
+ * else - a typed field would need a matching edit in the config, the settings dialog
+ * and the session spawn, which is three places for one fact.
+ */
+export type AgentKeys = Record<string, string | undefined>
+
+/** Where one provider's key comes from, and what it is called on the way in. */
+export interface KeyProvider {
+  /** stable id, and the key under which the pasted string is stored in config */
+  id: string
+  label: string
+  /** the literal an agent's `env` uses to ask for it, e.g. `${OPENROUTER_KEY}` */
+  placeholder: string
+  /** shown in the empty input, so a pasted key can be eyeballed as the right shape */
+  hint: string
+  /** where to go and make one */
+  url: string
+  /** one line under the field: what having this key buys */
+  note: string
 }
+
+/** The literal an `env` value uses to ask Settings for a provider's key. */
+export function keyVar(id: string): string {
+  return '${' + id.toUpperCase() + '_KEY}'
+}
+
+/**
+ * Every provider PaneForge can hold a key for.
+ *
+ * Adding a provider is an entry here plus an agent whose `env` names `keyVar(id)`.
+ * Settings draws its field off this list, so there is no per-provider UI to forget.
+ */
+export const KEY_PROVIDERS: KeyProvider[] = [
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    placeholder: OPENROUTER_KEY_VAR,
+    hint: 'sk-or-...',
+    url: 'https://openrouter.ai/keys',
+    note: 'One key, hundreds of models - GLM, DeepSeek, Qwen, Kimi, Grok.'
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    placeholder: keyVar('deepseek'),
+    hint: 'sk-...',
+    url: 'https://platform.deepseek.com/api_keys',
+    note: 'Runs Claude Code straight on DeepSeek V4, at DeepSeek prices.'
+  },
+  {
+    id: 'zai',
+    label: 'Z.ai (GLM)',
+    placeholder: keyVar('zai'),
+    hint: 'your Z.ai API key',
+    url: 'https://z.ai/manage-apikey/apikey-list',
+    note: 'Runs Claude Code on GLM 5.2, including a GLM Coding Plan subscription.'
+  },
+  {
+    id: 'xai',
+    label: 'xAI (Grok)',
+    placeholder: keyVar('xai'),
+    hint: 'xai-...',
+    url: 'https://console.x.ai',
+    note: 'The key Grok Build reads. It can also sign in on its own.'
+  }
+]
+
+const KEY_BY_PLACEHOLDER = new Map(KEY_PROVIDERS.map((p) => [p.placeholder, p.id]))
 
 /**
  * The extra environment one agent's pty gets, with the key placeholders filled in.
@@ -509,12 +812,17 @@ export interface AgentKeys {
  * with that literal string and fails as a 401 several seconds into a pane that looks
  * perfectly healthy; dropped, it falls back to whatever login the machine already has
  * and says so in its own words on the first line.
+ *
+ * An UNKNOWN placeholder is dropped too. It can only mean a custom agent asking for a
+ * provider this build has never heard of, and handing a CLI the literal `${FOO_KEY}`
+ * is the exact failure above with nobody to blame it on.
  */
 export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(spec.env ?? {})) {
-    if (v === OPENROUTER_KEY_VAR) {
-      const key = keys.openrouter?.trim()
+    if (/^\$\{[A-Z0-9_]+\}$/.test(v)) {
+      const provider = KEY_BY_PLACEHOLDER.get(v)
+      const key = provider ? keys[provider]?.trim() : ''
       if (key) out[k] = key
       continue
     }
@@ -523,11 +831,20 @@ export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string
   return out
 }
 
+/**
+ * The provider whose key this agent AUTHENTICATES with, or '' when it has a login of
+ * its own. Only the entries whose auth token is the placeholder, never the ones that
+ * merely pass a key along: opencode and aider run on their own logins and take
+ * OpenRouter as one option among several.
+ */
+export function keyProviderFor(spec: AgentSpec): string {
+  const token = spec.env?.ANTHROPIC_AUTH_TOKEN ?? spec.env?.ANTHROPIC_API_KEY ?? ''
+  return KEY_BY_PLACEHOLDER.get(token) ?? ''
+}
+
 /** Whether this agent cannot run at all until a key is pasted into Settings. */
 export function needsOpenRouterKey(spec: AgentSpec): boolean {
-  // Only the entries whose AUTH is the key, not the ones that merely pass it along:
-  // opencode and aider work on their own logins and take OpenRouter as one option.
-  return spec.env?.ANTHROPIC_AUTH_TOKEN === OPENROUTER_KEY_VAR
+  return keyProviderFor(spec) === 'openrouter'
 }
 
 /** Full argv for one launch: resume form or fresh form, plus the model. */

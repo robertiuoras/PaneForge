@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import { gistLine } from '@shared/gist'
+import { summaryFull, summaryOf } from '@shared/gist'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
+import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 
 const api = window.api
+
+/**
+ * How much of a session's transcript to read back. The per-session log is capped at 8 MB
+ * as it is written, so this is "all of it" for every session there has ever been.
+ */
+const LOG_BYTES = 8 * 1024 * 1024
 
 interface Props {
   agents: AgentInfo[]
@@ -42,8 +49,38 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
     return () => window.clearTimeout(t)
   }, [query])
 
+  /**
+   * The whole terminal window of that session, as it looked - not as it was stripped.
+   *
+   * `readHistory` strips the escape sequences, and a transcript is a stream of REPAINTS:
+   * every frame of an agent's "thinking" line and every keystroke of a redrawn composer
+   * then lands on its own line, which is pages of noise around the answer somebody opened
+   * this to read. So the raw bytes are replayed through an off-screen terminal at the
+   * width the pane was, exactly as the phone's text sheet does it, and its buffer is what
+   * is shown. Stripping stays as the fallback: a transcript that will not render is still
+   * worth reading.
+   */
   useEffect(() => {
-    if (open) api.readHistory(open.id).then(setText)
+    if (!open) return
+    let dead = false
+    setText('')
+    void (async () => {
+      try {
+        const raw = await api.paneLog(open.id, LOG_BYTES)
+        if (dead) return
+        if (!raw) {
+          setText(await api.readHistory(open.id))
+          return
+        }
+        const lines = await renderLines(raw, open.cols ?? 100)
+        if (!dead) setText(lines.join('\n'))
+      } catch {
+        if (!dead) api.readHistory(open.id).then((t) => !dead && setText(t))
+      }
+    })()
+    return () => {
+      dead = true
+    }
   }, [open])
 
   const grouped = useMemo(() => {
@@ -80,7 +117,10 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                 Back
               </button>
             </div>
-            <pre className="transcript">{text || 'Empty transcript.'}</pre>
+            {/* What the session worked on, in order - the chapters the row could only
+                count. Above the transcript because it is the map of what is below it. */}
+            {summaryFull(open) && <div className="hist-chapters">{summaryFull(open)}</div>}
+            <pre className="transcript">{text || 'Reading the transcript…'}</pre>
           </>
         ) : grouped ? (
           <div className="hist-list">
@@ -115,17 +155,31 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                   <span className="chip">{new Date(e.startedAt).toLocaleString()}</span>
                   <span className="chip">{Math.max(1, Math.round(e.bytes / 1024))} KB</span>
                 </div>
-                {/* What it was working on. Absent rather than guessed for a session that
-                    closed before the app recorded one - a wrong sentence about which
-                    session to bring back is worse than no sentence. */}
-                {e.gist && (
-                  <div className="hist-gist" title={e.gist}>
-                    {gistLine(e.gist, e.asks)}
+                {/* What it was working on: the opening ask, plus the first ask after each
+                    clear, because a session that cleared four times is four subjects in
+                    one window and only the first of them used to be shown. Absent rather
+                    than guessed for a session that closed before the app recorded one - a
+                    wrong sentence about which session to bring back is worse than none. */}
+                {summaryOf(e) && (
+                  <div className="hist-gist" title={summaryFull(e)}>
+                    {summaryOf(e)}
                   </div>
                 )}
                 <div className="hist-actions">
-                  <button className="ghost small" onClick={() => onResume(e)}>
-                    Open again
+                  {/* A folder that is not there any more cannot be reopened, and pressing
+                      the button did nothing at all: main catches a missing folder per
+                      request so one bad row cannot abort a workspace launch, and the row
+                      was then silently not started. Most of this list is temp folders from
+                      tests and swept lane worktrees, so say it on the row instead. The
+                      transcript is still readable and Delete still works - the session's
+                      output is the reason to keep the row. */}
+                  <button
+                    className="ghost small"
+                    disabled={e.gone}
+                    title={e.gone ? `${e.cwd} is not on this machine any more` : undefined}
+                    onClick={() => !e.gone && onResume(e)}
+                  >
+                    {e.gone ? 'Folder is gone' : 'Open again'}
                   </button>
                   <button
                     className="ghost small"

@@ -114,6 +114,12 @@ function backend() {
       },
       projects: async () => [{ name: 'assistant', path: '/w/assistant', lastUsed: 0, isGit: true }],
       agents: async () => [{ id: 'claude', label: 'Claude Code', available: true }],
+      // What that machine is running outside its panes. The host reads its OWN process
+      // table for this; here it is a fixture, because what this test owns is the frame
+      // crossing the socket - `npm run test:backjobs` owns the reading.
+      jobs: async () => [
+        { pid: 4242, kind: 'agent', label: 'claude', cmd: 'claude -p sweep', port: null, where: 'vrb', elapsed: 900, headless: true }
+      ],
       onData: (cb) => (listeners.data.push(cb), () => {}),
       onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
       onAttention: (cb) => (listeners.attention.push(cb), () => {})
@@ -282,6 +288,36 @@ async function main() {
   // Request/response.
   const projects = await client.projects()
   ok('the far project list can be asked for', projects.length === 1 && projects[0].name === 'assistant')
+
+  // What that machine is running with no pane on it. This is the whole reason the class
+  // exists: a scheduled `claude -p` on the desk that does the unattended work was
+  // invisible from here, because it is not a pane and nothing else crossed the link.
+  const jobs = await client.jobs()
+  ok('a paired machine says what it is running outside its panes', jobs.length === 1, JSON.stringify(jobs))
+  ok(
+    'and the job arrives whole, not reduced on the way',
+    jobs[0]?.kind === 'agent' && jobs[0]?.headless === true && jobs[0]?.where === 'vrb' && jobs[0]?.elapsed === 900,
+    JSON.stringify(jobs[0])
+  )
+
+  // A backend that REJECTS has to answer. The host's try/catch is synchronous, so it never
+  // sees a rejected promise - without an explicit `.catch` the guest waits out its own 20s
+  // timeout and reports "did not answer" about a machine that answered at once and said no.
+  // Timed here, because the whole failure is that it takes too long rather than that it is
+  // wrong: a hang would pass an assertion that only looked at the message.
+  const good = be.api.jobs
+  be.api.jobs = async () => {
+    throw new Error('could not read the process table')
+  }
+  const t0 = Date.now()
+  const refused = await client.jobs().then(
+    () => null,
+    (e) => e
+  )
+  const took = Date.now() - t0
+  be.api.jobs = good
+  ok('a refusal comes back as a refusal', refused instanceof Error && /process table/.test(refused.message), String(refused))
+  ok('and it comes back at once rather than timing out', took < 3000, `${took}ms`)
   const started = await client.startSession({
     cwd: '/w/assistant',
     agent: 'codex',

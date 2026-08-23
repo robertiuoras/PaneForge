@@ -68,3 +68,120 @@ export function gistLine(gist: string | undefined, asks: number | undefined): st
   const more = (asks ?? 1) - 1
   return more > 0 ? `${gist}  ·  +${more} more ${more === 1 ? 'ask' : 'asks'}` : gist
 }
+
+// ---------------------------------------------------------------------------
+// What a whole session was about
+//
+// One line taken from the FIRST ask answers "what was this" for a session that asked one
+// thing. It is wrong for the sessions worth coming back to: a long one is several jobs in
+// a row, and `/clear` is where one ends and the next begins - the context is thrown away
+// and what follows is a new subject in the same window. A row reading `fix the tunnel`
+// for a session that went on to do four other things is not a summary, it is the first
+// sentence of a long document.
+//
+// So every ask that opens a CHAPTER is kept: the first one, and the first one after each
+// clear. Still no model, no request and no token - the same keystrokes History already
+// sees. The decision is here rather than in `main/history.ts` because it is arithmetic
+// over a small record and is worth pinning by test (`npm run test:gist`); main reads the
+// JSON, hands it to `noteAskInto` and writes what comes back.
+
+import { mayClearScreen } from './keepScrollback'
+
+/** Chapters kept per session. Past this the count is kept and the text is not. */
+export const MAX_CHAPTERS = 12
+
+/** How many chapters a one-line row shows before it starts counting instead. */
+const ROW_CHAPTERS = 3
+
+/** A chapter's share of a row when it is sharing that row with others. */
+const SHORT = 70
+
+/** What History remembers about what a session was asked. */
+export interface SessionNotes {
+  /** the first thing typed at the agent, kept for every row that has one */
+  gist?: string
+  /** the ask that opened each chapter, oldest first */
+  chapters?: string[]
+  /**
+   * Asks that were WORK: `/clear`, `/model` and friends are not counted.
+   *
+   * The number is on the row as "+12 more asks", and it is there to say how far a session
+   * got - a count made mostly of slash commands says the opposite of what it looks like.
+   */
+  asks?: number
+  /** chapters that happened after the cap; their count is the honest part */
+  dropped?: number
+  /** a clear threw the context away, so the next real ask opens a chapter */
+  fresh?: boolean
+}
+
+/** A slash command says what was DONE to the pane, never what it was working on. */
+function isCommand(line: string): boolean {
+  return line.startsWith('/')
+}
+
+function clip(text: string, cap: number): string {
+  return text.length > cap ? text.slice(0, cap - 1).trimEnd() + '…' : text
+}
+
+/**
+ * Fold one submitted prompt into a session's notes.
+ *
+ * Pure, and it never throws: the caller is a fire-and-forget IPC on a pane's keystroke
+ * path, and a note is a nicety.
+ *
+ * A clear is a boundary and not a topic - `/clear` as a chapter heading says nothing about
+ * the work - so it only arms the next one. Every other slash command (`/model`, `/doctor`)
+ * is counted as an ask and heads nothing, for the same reason. The first ask still becomes
+ * `gist` whatever it is, because a row with one command in it is better than a blank one.
+ */
+export function noteAskInto(notes: SessionNotes, prompt: string): SessionNotes {
+  const line = gistOf(prompt)
+  if (!line) return notes
+  const out: SessionNotes = { ...notes }
+  if (!out.gist) out.gist = line
+  if (mayClearScreen(prompt)) {
+    out.fresh = true
+    return out
+  }
+  if (isCommand(line)) return out
+  out.asks = (out.asks ?? 0) + 1
+  const chapters = out.chapters ? [...out.chapters] : []
+  const opens = chapters.length === 0 || Boolean(out.fresh)
+  out.fresh = false
+  if (opens && chapters[chapters.length - 1] !== line) {
+    if (chapters.length < MAX_CHAPTERS) chapters.push(line)
+    else out.dropped = (out.dropped ?? 0) + 1
+  }
+  out.chapters = chapters
+  return out
+}
+
+/**
+ * The one line under a History row: what the session worked on, and how much of it.
+ *
+ * Several chapters share the row, so each is clipped - three whole asks do not fit and the
+ * one that would survive is the oldest, which is the least useful half of the answer.
+ * Everything past the third is counted rather than shown, and `summaryFull` is what the
+ * hover and the opened transcript print.
+ */
+export function summaryOf(notes: SessionNotes): string {
+  const topics = notes.chapters?.length ? notes.chapters : notes.gist ? [notes.gist] : []
+  if (!topics.length) return ''
+  const shown = topics.slice(0, ROW_CHAPTERS).map((t) => (topics.length > 1 ? clip(t, SHORT) : t))
+  const bits = [shown.join('  ·  ')]
+  const extra = Math.max(0, topics.length - ROW_CHAPTERS) + (notes.dropped ?? 0)
+  if (extra > 0) bits.push(`+${extra} more ${extra === 1 ? 'topic' : 'topics'}`)
+  const more = (notes.asks ?? 1) - 1
+  if (more > 0) bits.push(`+${more} more ${more === 1 ? 'ask' : 'asks'}`)
+  return bits.join('  ·  ')
+}
+
+/** Every chapter, one per line, numbered - the hover and the opened session's header. */
+export function summaryFull(notes: SessionNotes): string {
+  const topics = notes.chapters?.length ? notes.chapters : notes.gist ? [notes.gist] : []
+  if (!topics.length) return ''
+  const lines = topics.map((t, i) => `${i + 1}. ${t}`)
+  if (notes.dropped) lines.push(`… and ${notes.dropped} more after this`)
+  return lines.join('\n')
+}

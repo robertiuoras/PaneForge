@@ -24,49 +24,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { renderLines } from '../termRender'
 
 const api = window.api
 
 /** How much of the transcript to ask for. 2 MB is ~10x the live replay and renders fast. */
 const LOG_BYTES = 2_000_000
-
-/**
- * Replay `raw` through a terminal nobody can see and read the lines back out.
- *
- * `cols` is the pane's own width: the CLI hard-wrapped its output at that width, so
- * rendering at any other one re-flows box drawing into soup. `rows` is small on purpose -
- * only the scrollback is being read, and the screen is just the last few lines of it.
- */
-async function renderLines(raw: string, cols: number): Promise<string[]> {
-  const host = document.createElement('div')
-  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:800px;height:400px'
-  document.body.appendChild(host)
-  const t = new Terminal({
-    cols: Math.max(20, cols),
-    rows: 24,
-    // Deep enough for 2 MB of an agent's output; the terminal is thrown away immediately.
-    scrollback: 200_000,
-    allowProposedApi: true
-  })
-  try {
-    t.open(host)
-    await new Promise<void>((resolve) => t.write(raw, resolve))
-    const buf = t.buffer.active
-    const lines: string[] = []
-    for (let i = 0; i < buf.length; i++) {
-      // `true` keeps trailing whitespace off, which is most of a terminal line.
-      lines.push(buf.getLine(i)?.translateToString(true) ?? '')
-    }
-    // A terminal's buffer is `rows` tall even when nothing was printed into it, so the
-    // tail is usually blank rows. They are noise in a document.
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
-    return lines
-  } finally {
-    t.dispose()
-    host.remove()
-  }
-}
 
 export function TextSheet({
   sessionId,

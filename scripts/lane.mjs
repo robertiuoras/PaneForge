@@ -403,7 +403,17 @@ const LOCK_MS = 20 * 60 * 1000
 // with the next release, which every later `ready` and every SessionEnd triggers - so
 // it ships the next time anyone finishes anything here, and `npm run ship` still
 // releases immediately when something must go out now.
-const COOLDOWN_MS = 30 * 60 * 1000
+//
+// Two hours, not the half hour it was until 2026-08-20. Measured that day: 130 releases
+// in the 14 days since v0.8.0 - 9 to 13 a day, peak 18, at 3.8 commits each. "A release
+// costs nothing to ignore" is true of the update PROMPT and false of everything else: on
+// the dev channel each one is a build to install, a restart to take it, and a version
+// number that has to be read to know what is in it. Half an hour is shorter than one
+// build-and-verify cycle, so it batched almost nothing - a release carried whatever one
+// chat had just finished, which is the same thing as no batching at all. Two hours is
+// still same-day for every fix and roughly quarters the number of builds anybody has to
+// take. Nothing waits longer to be SAFE; it waits longer for company.
+const COOLDOWN_MS = 2 * 60 * 60 * 1000
 // And a longer window when everything waiting is SMALL - only fix/docs/chore subjects and
 // under 150 changed lines between them (`smallOnly` in release-notes.mjs, which explains
 // why it is both halves). A version is a claim that something changed, and a release whose
@@ -438,6 +448,8 @@ function read() {
     s.conflicts ??= {}
     s.release ??= null
     s.lastShip ??= null
+    // Why the last automatic release did not go out. See noteHold below.
+    s.hold ??= null
     // What THIS device last told the other one, so a turn ending can tell whether a
     // refresh is due without asking the network on every turn.
     s.peer ??= null
@@ -446,7 +458,7 @@ function read() {
     s.peers ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, peer: null, peers: null }
+    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
   }
 }
 
@@ -1988,12 +2000,173 @@ function typecheckFailure() {
   return `${MB} does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
 }
 
+// A suite that has not finished in this long is not going to.
+const SUITE_TIMEOUT_MS = 20 * 60 * 1000
+
+/**
+ * Empty when the release branch's own test suite passes, a sentence when it does not.
+ *
+ * The typecheck above was the ONLY thing between a commit and a tag, and a typecheck
+ * proves the types agree - never that the app works. That is how 130 dev builds went out
+ * in 14 days carrying bugs the checked-in suite already knew about, and the cost lands
+ * entirely on whoever runs the dev channel: the app updates itself, restarts, and is
+ * still wrong. `npm test` is 81 checks in ~145s and needs no window, no network and no
+ * agent CLI - which is exactly why it is the right gate and why it was worth having
+ * before this was written. Nobody is watching an automatic release; it checks itself.
+ *
+ * **Cached on the COMMIT**, in the ledger every worktree shares, because the app's retry
+ * timer asks this every minute. Without the cache a red branch burns the whole suite once
+ * a minute for as long as it stays red, and a green one re-proves itself for every
+ * attempt that then loses on some other check. A new commit is the only thing that
+ * invalidates it, which is the only thing that should: the suite is a fact about a tree.
+ *
+ * A suite that could not START is reported as this checkout's tooling, never as a failing
+ * test - same distinction `typecheckFailure` draws, and for the same reason: the sentence
+ * decides where the next person looks. That case is deliberately NOT cached; a missing
+ * node_modules is fixed outside this file and the next attempt should find out.
+ *
+ * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
+ * hands now, and it is typed by a person who is watching.
+ */
+function suiteFailure(state) {
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  // A repo with no suite is not held to one. Nor is npm's own "no test specified" stub,
+  // which exits 1 by design and would block every release in a repo that never had tests.
+  const script = pkg.scripts?.test
+  if (!script || /no test specified/i.test(script)) return null
+
+  const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
+  const commit = head.ok ? head.out : null
+  if (commit && state.suite?.commit === commit) return state.suite.ok ? null : state.suite.reason
+
+  if (dependenciesMissing(pkg)) {
+    const failed = installDeps()
+    if (failed) return failed
+  }
+  // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
+  const runSuite = () =>
+    spawnSync('npm test --silent', {
+      cwd: MAIN,
+      encoding: 'utf8',
+      timeout: SUITE_TIMEOUT_MS,
+      shell: true
+    })
+  /**
+   * The verdict, written onto the ledger AS IT IS NOW rather than onto the copy this
+   * process read minutes ago.
+   *
+   * `write()` replaces the whole file, and the suite is the one thing in here that holds a
+   * `state` across a span of real time - up to 20 minutes for one run, and twice that since
+   * a red answer is confirmed. Another chat marking a lane ready, a claim, a peer ref: all
+   * of it lands on disk inside that window and all of it was overwritten by the stale copy.
+   * So the suite key is merged into a fresh read; the in-memory `state` is updated too,
+   * because the caller goes on to use it.
+   */
+  const cacheSuite = (verdict) => {
+    if (!commit) return
+    state.suite = verdict
+    const fresh = read()
+    fresh.suite = verdict
+    write(fresh)
+  }
+  const pass = (r) => {
+    if (r.status !== 0) return false
+    cacheSuite({ commit, ok: true, at: now() })
+    return true
+  }
+  let r = runSuite()
+  if (pass(r)) return null
+  /**
+   * A red answer is CONFIRMED before it is written down, because the verdict is cached on
+   * the commit and the retry timer never asks again - so one flaky run pins a green tree
+   * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
+   * ever guess to do.
+   *
+   * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
+   * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
+   * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
+   * repositories and is timing-sensitive on a loaded machine.
+   *
+   * Only the second run's answer counts, so a genuinely red suite costs one extra pass
+   * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
+   * for the same reason: missing tooling does not repair itself between two runs, but a
+   * spawn that lost a race does.
+   */
+  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (!cannotRun(first)) {
+    r = runSuite()
+    if (pass(r)) return null
+  }
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (cannotRun(all)) {
+    return (
+      `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
+      `That is this checkout's tooling, not the code.`
+    )
+  }
+  // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
+  // rest is noise. A suite with some other shape falls back to its first real line.
+  const failed = all
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
+    .slice(0, 4)
+    .join('; ')
+  const reason =
+    r.signal || (r.status == null && !all.trim())
+      ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
+      : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
+  cacheSuite({ commit, ok: false, at: now(), reason })
+  return reason
+}
+
 /**
  * The release nobody has to ask for. Called at the end of `ready` and of `release`, so
  * the version goes out the moment the last chat with unfinished work finishes it - and
  * silently does nothing while any chat is still mid-edit.
  */
+/**
+ * A release attempt, with its answer written down where the app can read it.
+ *
+ * The gate has always known exactly why nothing went out - a lane still being typed in,
+ * the two-hour batching window, a red suite - and said so to whichever hook happened to
+ * ask. Nothing kept it, so the one surface a person actually looks at drew a finished
+ * lane as "done - ships with the next update" for hours with no way to tell a release
+ * that is ten minutes away from one that is blocked on a failing test. Robert's report
+ * was that sentence read literally: "it says done, and it says releasing, and neither is
+ * true".
+ *
+ * `hold.at` is when this reason STARTED, not when it was last checked - "waiting 40m" has
+ * to be the wait itself, or every poll resets the clock and nothing ever looks stuck.
+ */
 function autoship(kind = 'auto', session = 'auto') {
+  const out = autoshipRun(kind, session)
+  noteHold(out)
+  return out
+}
+
+/** Record (or clear) why the work is being held. Never allowed to break the release. */
+function noteHold(out) {
+  try {
+    const state = read()
+    const reason = out?.shipped ? null : (out?.reason ?? null)
+    // "nothing to release" is the ordinary quiet state, not a hold: there is no finished
+    // work waiting, so there is nothing for a person to be told about.
+    const keep = reason && !/^nothing to release/i.test(reason) ? reason : null
+    if (keep && state.hold?.reason === keep) state.hold.seen = now()
+    else state.hold = keep ? { reason: keep, at: now(), seen: now() } : null
+    write(state)
+  } catch {
+    // A ledger this cannot write is a ledger the release itself already survived without.
+  }
+}
+
+function autoshipRun(kind = 'auto', session = 'auto') {
   // Before `shippable` asks whether anything is unreleased - that question is answered
   // against local tags, and a stale one turns "already released" into "release it again".
   syncTags()
@@ -2033,6 +2206,10 @@ function autoship(kind = 'auto', session = 'auto') {
   // installer - and the next chat inherits both.
   const broken = typecheckFailure()
   if (broken) return { shipped: false, reason: broken }
+  // ...and then whether it WORKS, which the typecheck never answered. Second because it
+  // is ten times the cost and a tree that does not compile cannot pass it anyway.
+  const red = suiteFailure(state)
+  if (red) return { shipped: false, reason: red }
   try {
     return ship(kind, session)
   } catch (e) {
@@ -2126,8 +2303,19 @@ function ready(session, wanted) {
   let id = mine?.[0]
   // `--lane b` is how the chat that took a stuck conflict over finishes it: the lane is
   // still held by the chat that made it, and that chat may never come back.
+  //
+  // Two marks let this session finish a lane it never claimed. The resolver mark is one,
+  // but on its own it is a dead end: `retryConflicts()` re-attempts the merge on every
+  // lane command, and the resolving commit is exactly what makes it succeed, so the
+  // conflict record - the adopter's only claim - is dropped somewhere in the minutes
+  // between the resolution and `ready`. Then `ready --lane b` said this session does not
+  // hold lane b while `resolve --lane b` said lane b is not conflicted: the two steps
+  // pointed at each other and fifteen finished commits sat out every release for a day.
+  // So the second mark is the lane having no chat at all, which is the same authority
+  // `retry` already grants itself on a clock. A lane a live chat still holds is untouched.
   if (wanted && wanted !== id) {
-    if (state.conflicts[wanted]?.resolver !== session) {
+    const unheld = !state.lanes[wanted] && existsSync(laneDir(wanted))
+    if (state.conflicts[wanted]?.resolver !== session && !unheld) {
       throw new Error(`this session does not hold lane ${wanted} - run resolve --lane ${wanted} first`)
     }
     id = wanted
@@ -2414,6 +2602,24 @@ function ship(kind, session) {
     pkg.version = next
     writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
     git(MAIN, 'add', 'package.json')
+    // The lockfile carries the version TWICE and neither copy was ever bumped, so it had
+    // drifted nine releases behind the tag (0.8.105 against 0.8.114) - a stale answer to
+    // "what version is this" for every tool that reads the lockfile rather than the
+    // manifest, and the shape of drift nothing ever complains about out loud. Rewritten
+    // here rather than by running `npm install`, which would also churn the dependency
+    // tree in a commit whose only job is a number. Silent when there is no lockfile.
+    try {
+      const lockPath = join(MAIN, 'package-lock.json')
+      if (existsSync(lockPath)) {
+        const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+        if (lock.version !== undefined) lock.version = next
+        if (lock.packages?.['']?.version !== undefined) lock.packages[''].version = next
+        writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n', 'utf8')
+        git(MAIN, 'add', 'package-lock.json')
+      }
+    } catch {
+      /* a lockfile we cannot parse is not a reason to hold a release */
+    }
     git(MAIN, 'commit', '-m', `release: v${next}`)
     git(MAIN, 'tag', `v${next}`)
     git(MAIN, 'push')

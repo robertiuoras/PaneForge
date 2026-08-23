@@ -21,16 +21,27 @@
 //   node scripts/conflict-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-conflict-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+// A fixture path of its OWN, per run. It used to be a fixed name that this line then
+// deleted at startup - which is fine once and is a race the moment two runs overlap, and
+// the release gate produces exactly that: `suiteFailure` runs the suite twice to confirm a
+// red answer, and its retry timer fires every minute. The second run wiped the first's
+// repositories mid-test, so `git commit` and `lane.mjs ready` failed inside a tree that had
+// been deleted underneath them - reported as the suite being unable to run, on a suite that
+// passes standalone every time. Measured 2026-08-22: `gate` and `conflict` red under the
+// gate, both green on their own, twice.
+const root = mkdtempSync(join(tmpdir(), 'paneforge-conflict-test-'))
+// Kept when something failed, so there is still a tree to look at; swept when it passed,
+// because a unique name per run leaks one directory per run otherwise.
+process.on('exit', (code) => {
+  if (!code) rmSync(root, { recursive: true, force: true })
+})
 
 let failed = 0
 const ok = (name, cond, detail) => {

@@ -51,29 +51,55 @@
 // something that ships next month) it does to a screen that is already blank, with the
 // conversation one wheel-notch up. It needs to know nothing about any CLI.
 //
-// `ESC[1;1H` at the end, rather than a save/restore: the CLI's redraw is relative to where
-// it left the cursor, so leaving it near the bottom draws the banner near the bottom under
-// forty blank rows. Homing it first is what puts the banner back at the top of a blank
-// screen, which is what a clear has always looked like.
+// `ESC[1;1H` then `ESC[J` at the end, rather than a save/restore: the CLI's redraw is
+// relative to where it left the cursor, so leaving it near the bottom draws the banner
+// near the bottom under forty blank rows. Homing it first is what puts the banner back at
+// the top, and erasing from there down is what makes the screen it is drawn on genuinely
+// blank - see `blank` below for why the scroll alone does not.
 //
 // The `2J`/`3J` rewrite below stays for a CLI that clears without being asked, and is
 // stood down for the moment after an armed scroll: the screen is already blank and
 // rewriting the `2J` that follows would push a screenful of blank rows into the scrollback
 // in front of the thing being kept.
 
+// ---------------------------------------------------------------------------------------
+//
+// ...and then 2.1.235 wiped the screen a third way, which is why the answer below stopped
+// being a list of the shapes a vendor has used.
+//
+// Measured 2026-08-19 against a live `claude` in a real pty, capturing the bytes a
+// submitted `/clear` really produces (`2J` 0, `3J` 0, `ESC[J` 0):
+//
+//   ESC[H  (ESC[2K ESC[1B) x29  ESC[H  <banner>
+//
+// A home, then every row on the screen erased in place walking down, then the banner drawn
+// on top. An erase-in-line blanks a row where it sits; nothing is scrolled, so nothing
+// reaches the scrollback and the turn that was on screen is gone. Three releases, three
+// different byte patterns (`2J`+`3J`, a bare cursor-up overdraw, and this), and a guard
+// written against any one of them is dead the week after.
+//
+// What all three have in common is not a sequence, it is a SHAPE: the cursor is sent to
+// the top of the screen and the first thing that happens there is an erase rather than
+// something being written. Nothing repaints that way except a wipe - a CLI redrawing its
+// composer erases the rows it is standing on, and one redrawing a frame writes over it.
+// Measured over this machine's own pane logs, a home is rare enough to key on: 0-12 bare
+// `ESC[H` and 4-28 `ESC[1;1H` per 8 MB of output, and the ones that are there ARE wipes
+// (a CLI's startup repaint, Codex's `ESC[1;1H ESC[J`).
+//
+// So `homeWipe` below files the screen when it sees home-then-erase, whatever the bytes
+// after that turn out to be, and whoever asked for it. That last part matters as much as
+// the shape: `arm()` is fed by keystrokes in ONE window, so the app's own Clear button
+// (which writes `/clear` straight at the pty), a phone typing into a desk pane, a prompt
+// the app queues, and the CLI compacting itself when its context fills all cleared the
+// screen with nothing armed. Measured in the running app: a pane cleared by keystrokes
+// kept its screen, the same pane cleared through `api.write` lost it.
+//
+// `arm()` stays, because it is the only thing that can act BEFORE a CLI that erases
+// nothing at all, and it stands the data path down for a moment so one clear is not filed
+// twice.
+
 /** How long an armed clear stands the rewrite below down for. */
 const ARM_MS = 10_000
-
-/** The sequences a chunk may be part-way through. */
-const NEEDLES = ['\x1b[2J', '\x1b[3J']
-/** The most bytes a sequence this cares about can be part-way through. */
-const MAX_PARTIAL = 3
-
-/** Could `tail` be the start of one of them, with the rest still to come? */
-function partial(tail: string): boolean {
-  for (const n of NEEDLES) if (tail.length < n.length && n.startsWith(tail)) return true
-  return false
-}
 
 /** Is this submitted line an ask for the screen to be cleared? */
 export function clearsScreen(line: string): boolean {
@@ -118,6 +144,8 @@ export interface ScreenReader {
   buffer: {
     active: {
       baseY: number
+      /** Where the caret is on the screen. The composer is drawn around it. */
+      cursorY?: number
       getLine(y: number): { translateToString(trim?: boolean): string } | undefined
     }
   }
@@ -137,6 +165,68 @@ export function writtenRows(t: ScreenReader): number {
     if (b.getLine(b.baseY + y)?.translateToString(true).trim()) return y + 1
   }
   return 0
+}
+
+/**
+ * The glyphs a CLI rules its composer off with. Claude Code 2.1.234 draws a horizontal
+ * rule above and below the input; Codex and Gemini draw a full box, whose corners and
+ * sides are in the same block.
+ */
+const FRAME = /^[\s\u2500-\u257f]+$/
+/** How short a run of them is still a markdown separator rather than a composer edge. */
+const FRAME_MIN = 8
+
+/** This row is nothing but frame: a composer edge, not something somebody wrote. */
+export function ruleRow(text: string): boolean {
+  const t = text.trim()
+  return t.length >= FRAME_MIN && FRAME.test(t)
+}
+
+/** How far above the caret a composer's top edge may be before this stops believing it. */
+const COMPOSER_MAX = 20
+
+/**
+ * The screen row the composer starts on, or null when this pane draws none.
+ *
+ * The caret has to be INSIDE the pair of rules for them to count, which is what keeps a
+ * markdown separator in an answer from being read as an input box and swallowing the rows
+ * under it.
+ */
+export function composerTop(t: ScreenReader, written: number): number | null {
+  const b = t.buffer.active
+  const cur = b.cursorY
+  if (cur === undefined || cur < 1) return null
+  const line = (y: number): string => b.getLine(b.baseY + y)?.translateToString(true) ?? ''
+  let bottom = -1
+  for (let y = Math.min(t.rows - 1, written); y > cur; y--) {
+    if (ruleRow(line(y))) {
+      bottom = y
+      break
+    }
+  }
+  if (bottom < 0) return null
+  for (let y = cur - 1; y >= Math.max(0, bottom - COMPOSER_MAX); y--) {
+    if (ruleRow(line(y))) return y
+  }
+  return null
+}
+
+/**
+ * How much of the screen is HISTORY - everything above the composer the CLI is drawing.
+ *
+ * `writtenRows` on its own files the composer too, and at the moment a clear is submitted
+ * the composer is still showing the very line that was submitted. So `/clear` was kept
+ * TWICE: once as the box that still held it, and once as the CLI's own echo of it on the
+ * fresh screen. Measured in a live pane before this - six `❯ /clear` rows in the
+ * scrollback for three clears, which is "it shows duplicated /clear message".
+ *
+ * The composer is live UI redrawn on every keystroke and is never a record of anything, so
+ * it and the hint lines under it are left where they are rather than filed.
+ */
+export function keptRows(t: ScreenReader): number {
+  const written = writtenRows(t)
+  const top = composerTop(t, written)
+  return top === null ? written : Math.min(written, top)
 }
 
 export interface ScrollKeeper {
@@ -165,10 +255,17 @@ export function keepScrollback(
   rows: () => number,
   alternate: () => boolean,
   clock: () => number = Date.now,
-  used: () => number = rows
+  used: () => number = rows,
+  onWipe: () => void = () => {}
 ): ScrollKeeper {
   let carry = ''
-  let armedAt = 0
+  // Negative infinity rather than 0: a clock that starts at 0 is a real clock (a test's,
+  // a monotonic one), and `armedAt > 0` quietly turned the standdown off for it.
+  let armedAt = Number.NEGATIVE_INFINITY
+  // The cursor has been sent to the top of the screen and nothing has been written there
+  // since. An erase arriving in that state is a wipe rather than a repaint - see the note
+  // at the top of the file for the measurement that says so.
+  let homed = false
   // `CSI <rows> ; 1 H` then one newline per row: the newlines scroll, and a scroll is what
   // puts a line into the scrollback rather than deleting it. `\r` keeps the cursor at
   // column 1 on the way.
@@ -178,39 +275,172 @@ export function keepScrollback(
     if (!lines) return `\x1b[${height};1H`
     return `\x1b[${height};1H` + '\r\n'.repeat(lines)
   }
+  // Home, then erase everything from there down.
+  //
+  // The scroll above files the HISTORY rows and only those, which is right - but a scroll
+  // of N rows moves the whole screen up by N, so the rows it did not file (the composer,
+  // its hint line, whatever the CLI was drawing under it) are still on screen, now sitting
+  // at the top. The banner is then painted over the first few of them and the rest are
+  // left in place around it: `────|`, `❯ h 10%pass permissions on (shift+tab to cycle)`,
+  // half a rule - a composer cut in half by a banner drawn through it. That is the
+  // "it is still cut off after /clear" report, and it is on the LIVE screen rather than in
+  // the scrollback, which is why the kept turn above it reads fine.
+  //
+  // `ESC[J` (erase from the cursor to the end of the display) touches no scrollback - only
+  // `3J` does - so what has just been filed is safe, and what is wiped is live UI the CLI
+  // redraws on its next keystroke.
+  const blank = '\x1b[1;1H\x1b[J'
+
+  /**
+   * File the screen, or nothing at all when one clear is already being handled.
+   *
+   * The standdown is what keeps ONE clear from being filed twice: an armed `/clear` has
+   * already scrolled the screen away before the CLI emitted a byte, and the wipe that
+   * follows would otherwise file a screenful of blanks in front of the turn being kept.
+   * The same window covers the 29 row-erases the wipe itself is made of.
+   */
+  const fileScreen = (): string => {
+    if (clock() - armedAt < ARM_MS) return ''
+    armedAt = clock()
+    return scrollAway() + blank
+  }
+
+  /**
+   * Say that a wipe has started - once per wipe, and never for one the pane armed itself.
+   *
+   * A wipe is thirty-odd row erases and the pane needs to hear about the first only. The
+   * standdown does both jobs: it collapses the run, and it stays quiet for a clear that
+   * was armed off the keystrokes, whose screen is already in the scrollback.
+   */
+  const wiped = (): void => {
+    if (clock() - armedAt < ARM_MS) return
+    armedAt = clock()
+    onWipe()
+  }
+
+  /** A whole CSI sequence starting at `i`, or null when the chunk ends inside one. */
+  const csiAt = (s: string, i: number): { seq: string; params: string; final: string } | null => {
+    let j = i + 2
+    while (j < s.length && s.charCodeAt(j) >= 0x20 && s.charCodeAt(j) <= 0x3f) j++
+    while (j < s.length && s.charCodeAt(j) >= 0x20 && s.charCodeAt(j) <= 0x2f) j++
+    if (j >= s.length) return null
+    return { seq: s.slice(i, j + 1), params: s.slice(i + 2, j), final: s[j] }
+  }
+
+  /** How far past an ESC this waits for the rest of a sequence before giving up on it. */
+  const MAX_SEQ = 64
+  /** The same, for an OSC - a window title can be a whole path. */
+  const MAX_OSC = 1024
+
   const keeper = (chunk: string): string => {
     const s = carry + chunk
     carry = ''
-    // Hold back only a genuine partial: anything else that ends in ESC is passed through,
-    // because a lone ESC is a real key and waiting for a second byte that never comes
-    // would stall the pane.
-    let body = s
-    for (let n = Math.min(MAX_PARTIAL, s.length); n > 0; n--) {
-      if (partial(s.slice(s.length - n))) {
-        carry = s.slice(s.length - n)
-        body = s.slice(0, s.length - n)
+    // The alternate screen has no scrollback to protect: vim, less and a CLI's own menu
+    // clear constantly, and rewriting those would push a frame of redraw into the real
+    // scrollback several times a second.
+    if (alternate()) return s
+    let out = ''
+    let i = 0
+    while (i < s.length) {
+      const ch = s[i]
+      if (ch !== '\x1b') {
+        // Anything written lands where the cursor is, so the screen is no longer waiting
+        // untouched at its top.
+        if (ch !== '\r' && ch !== '\n') homed = false
+        out += ch
+        i++
+        continue
+      }
+      const next = s[i + 1]
+      if (next === undefined) {
+        carry = s.slice(i)
         break
       }
+      if (next === ']') {
+        // OSC: a title, a colour query, a hyperlink. It writes nothing to the screen.
+        const bel = s.indexOf('\x07', i)
+        const st = s.indexOf('\x1b\\', i + 2)
+        const endAt = bel >= 0 && (st < 0 || bel < st) ? bel + 1 : st >= 0 ? st + 2 : -1
+        if (endAt < 0) {
+          if (s.length - i < MAX_OSC) {
+            carry = s.slice(i)
+            break
+          }
+          out += ch
+          i++
+          continue
+        }
+        out += s.slice(i, endAt)
+        i = endAt
+        continue
+      }
+      if (next !== '[') {
+        // `ESC M`, `ESC 7`, `ESC =` and friends: two bytes, and every one of them either
+        // moves the cursor or changes a mode, so the top of the screen is no longer
+        // untouched.
+        homed = false
+        out += s.slice(i, i + 2)
+        i += 2
+        continue
+      }
+      const csi = csiAt(s, i)
+      if (!csi) {
+        if (s.length - i < MAX_SEQ) {
+          carry = s.slice(i)
+          break
+        }
+        out += ch
+        i++
+        continue
+      }
+      const { seq, params, final } = csi
+      const n = params.replace(/^[?<>!]/, '')
+      if (final === 'H' || final === 'f') {
+        // A home is the only cursor move that arms this: `ESC[H`, `ESC[1;1H`, `ESC[1H`.
+        homed = n === '' || n === '1' || n === '1;1'
+        out += seq
+      } else if (final === 'J' && n === '3') {
+        // The one sequence that destroys the scrollback itself. Nothing in a session wants
+        // it, asked for or not.
+      } else if (final === 'J' && (n === '' || n === '0' || n === '2')) {
+        if (n === '2') {
+          // A `2J` does NOT move the cursor - it blanks the screen around it - so the
+          // scroll is wrapped in a save/restore and lands back where it started.
+          // The scroll ends with a blank screen and the cursor put back where the `2J`
+          // found it, which is everything the sequence promised - so it is dropped rather
+          // than replayed over the blank it would land on.
+          const away = fileScreen()
+          out += away ? '\x1b7' + away + '\x1b8' : seq
+        } else {
+          // Erase from the cursor down, from the top of the screen: a wipe. Reported to
+          // the pane rather than rewritten - see `wiped`.
+          if (homed) wiped()
+          out += seq
+        }
+        homed = false
+      } else if (final === 'K') {
+        // Erase in line. One of these at the top of an untouched screen is the first row
+        // of an erase-per-row wipe - which is how Claude Code 2.1.235 clears.
+        if (homed) wiped()
+        out += seq
+      } else if ('ABCDEFGIdSTLM@P'.includes(final)) {
+        // Every other cursor move, scroll or insert: the top of the screen is no longer
+        // where the next byte lands.
+        homed = false
+        out += seq
+      } else {
+        // Colours, modes, cursor shape, scroll regions: they write nothing, so a home
+        // followed by one of them is still a home.
+        out += seq
+      }
+      i += seq.length
     }
-    if (!body.includes('\x1b[2J') && !body.includes('\x1b[3J')) return body
-    if (alternate()) return body
-    // `3J` is the one that destroys the scrollback, and nothing in a session wants that.
-    // It goes whether or not this clear was asked for.
-    const out = body.split('\x1b[3J').join('')
-    // Just after an armed clear the screen is blank already, so a `2J` is left to blank it
-    // again: rewriting it would file a screenful of blank rows in front of the turn being
-    // kept.
-    if (armedAt > 0 && clock() - armedAt < ARM_MS) return out
-    armedAt = 0
-    // Wrapped in save/restore because a real `2J` does NOT move the cursor - it blanks the
-    // screen around it. Restoring lands on the same row and column, which is now blank,
-    // which is exactly what the sequence promised.
-    return out.split('\x1b[2J').join('\x1b7' + scrollAway() + '\x1b8')
+    return out
   }
   keeper.arm = (now = clock()): string => {
     if (alternate()) return ''
     armedAt = now
-    return scrollAway() + '\x1b[1;1H'
+    return scrollAway() + blank
   }
   return keeper
 }

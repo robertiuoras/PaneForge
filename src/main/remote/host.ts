@@ -13,6 +13,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
 import type { AttachIn, AttachResult } from '../../shared/attach'
+import type { BackJob } from '../../shared/backJobs'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
@@ -39,6 +40,14 @@ export interface HostBackend {
   receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
+  /**
+   * What this machine is running that no pane owns - see `shared/backJobs.ts`.
+   *
+   * Read here, on this device, because it is a question about THIS process table. Asked
+   * only when a guest asks: it is a whole `ps -Ao command=`, so it is never on a timer and
+   * never rides the `remote:changed` message the pane list travels on.
+   */
+  jobs(): Promise<BackJob[]>
   /** files a guest wants put in front of one of THIS device’s panes */
   attachFiles(files: AttachIn[]): AttachResult
   /** subscribe to pty output; returns an unsubscribe */
@@ -215,6 +224,21 @@ export class RemoteHost extends EventEmitter {
     this.emit('changed')
   }
 
+  /**
+   * Answer a request whose work is a promise, and answer it EVEN WHEN IT REJECTS.
+   *
+   * The `try`/`catch` around the switch below is synchronous, so it never sees a rejected
+   * promise: `void this.backend.jobs().then(send)` on its own leaves the guest waiting the
+   * full 20s of its own timeout and then failing with "did not answer", about a machine
+   * that answered instantly and said no. `runHandoff` already had the `.catch`; the four
+   * other request/response cases did not, so they share this instead of repeating it.
+   */
+  private answer(conn: Conn, m: Msg, work: Promise<unknown> | unknown, key: string, value: (v: unknown) => Msg): void {
+    void Promise.resolve(work)
+      .then((v) => conn.send({ ...value(v), rid: m.rid }))
+      .catch((err: Error) => conn.send({ t: 'failed', rid: m.rid, error: err.message || `${key} failed` }))
+  }
+
   private handle(guest: GuestConn, m: Msg): void {
     const conn = guest.conn
     const id = typeof m.id === 'string' ? m.id : ''
@@ -276,9 +300,7 @@ export class RemoteHost extends EventEmitter {
           return
         case 'start': {
           const req = m.req as StartSessionRequest
-          void Promise.resolve(this.backend.startSession(req)).then((started) =>
-            conn.send({ t: 'started', rid: m.rid, session: started })
-          )
+          this.answer(conn, m, this.backend.startSession(req), 'start', (session) => ({ t: 'started', session }))
           return
         }
         case 'handoff': {
@@ -319,10 +341,17 @@ export class RemoteHost extends EventEmitter {
           return
         }
         case 'projects':
-          void this.backend.projects().then((list) => conn.send({ t: 'projects', rid: m.rid, list }))
+          this.answer(conn, m, this.backend.projects(), 'projects', (list) => ({ t: 'projects', list }))
           return
         case 'agents':
-          void this.backend.agents().then((list) => conn.send({ t: 'agents', rid: m.rid, list }))
+          this.answer(conn, m, this.backend.agents(), 'agents', (list) => ({ t: 'agents', list }))
+          return
+        case 'jobs':
+          // A read that could not happen comes back as a `failed` frame, which the guest
+          // turns into a sentence. It may never arrive as an empty list: `[]` means this
+          // machine is running nothing, which is the answer being checked - see the note
+          // in `Remote.jobsOn`.
+          this.answer(conn, m, this.backend.jobs(), 'jobs', (list) => ({ t: 'jobslist', list }))
           return
         case 'files': {
           // The bytes are written here because here is where the pty is. A refusal is a

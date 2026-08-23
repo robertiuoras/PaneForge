@@ -141,21 +141,15 @@ const GATED_INVOKE = new Set([
   // stolen cookie flip the setting Robert reads on screen to decide whether he is elevated.
   'admin:enable',
   'admin:disable',
+  // Stopping a dev server is killing a process on this desk - the same class as
+  // `sessions:kill`, and worse in one way: what it kills is not on screen anywhere, so a
+  // stolen cookie taking down whatever this machine is serving leaves nothing to notice.
+  'devs:stop',
 
   // --- runs a process on this desk ------------------------------------------------------
-  // Each of these ends in something spawned here: a supervisor driving panes, an agent CLI
-  // invoked with a prompt, a package manager, an editor, an installer. `improve:run` and
-  // `research:run` read as text tools from the phone, but both shell out to an agent CLI
-  // with tool access in a real working directory, which is the same class of thing as
-  // `sessions:start`. `pty:attach*` inserts a path into a live pane, which is typing.
-  'drive:start',
-  'drive:stopAll',
-  'goal:add',
-  'goal:retry',
-  'sessions:planSplit',
-  'improve:run',
-  'improve:apply',
-  'research:run',
+  // Each of these ends in something spawned here: an agent CLI invoked with a prompt, a
+  // package manager, an editor, an installer. `pty:attach*` inserts a path into a live
+  // pane, which is typing.
   'shell:editor',
   'pty:attach',
   'pty:attachClipboard',
@@ -204,7 +198,12 @@ const GATED_INVOKE = new Set([
   // DESK's clipboard, which is where a password manager's paste lives for thirty seconds: a
   // phone reading it is the feature, a cookie polling it is exfiltration.
   'history:delete',
-  'clipboard:read'
+  'clipboard:read',
+  // The write side of the same clipboard. A phone dropping an image already has a path
+  // that works (`pty:attach` sends the bytes and the desk saves them), so nothing over
+  // the wire needs this - and a cookie that can REPLACE the desk's clipboard can swap a
+  // wallet address under a paste the person at the desk is about to make.
+  'clipboard:writeImage'
 ])
 
 const TYPES: Record<string, string> = {

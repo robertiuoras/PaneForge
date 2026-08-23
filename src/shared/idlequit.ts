@@ -8,7 +8,16 @@
 // wrongly closed pane is reopened from History; a wrongly quit app takes every pane with
 // it, mid-turn, and whatever was being generated is gone. So:
 //
-//   - Never while the window is focused. Somebody is at it, whatever the keyboard says.
+//   - A focused window means somebody is probably at it, so it doubles the wait rather
+//     than vetoing outright. An outright veto is what killed this feature on the one desk
+//     it was built for: on a machine nobody is sitting at, PaneForge is simply the last
+//     window the OS ever focused, so `document.hasFocus()` is true for ever and the app
+//     never quits, never installs its staged update and never gets any later fix. Measured
+//     on this desk's PC 2026-08-22: `idleQuitMinutes` 60, quiet since morning, 0.8.143
+//     downloaded and waiting on a quit that could not come, five days and 41 versions
+//     behind. Doubling keeps the honest half of the refusal - reading a pane's output for
+//     an hour without touching anything must not close the app - while making it a wait
+//     rather than a wall.
 //   - Never while ANY pane is working, starting or stalled. A running turn is not idle
 //     just because nobody is typing at it, and stalled means a turn is still open.
 //   - Never while a pane is remote. Another device is driving this machine through it,
@@ -49,7 +58,7 @@ export interface IdleQuitInput {
   panes: IdleQuitPane[]
   /** Minutes of no input before the app quits itself. 0 (the default) is off. */
   minutes: number
-  /** The window has keyboard focus right now. */
+  /** The window has keyboard focus right now. Doubles the wait; never vetoes for ever. */
   focused: boolean
   /**
    * Epoch ms of the last input anywhere in the app that was NOT typed into a pane -
@@ -77,7 +86,6 @@ export interface IdleQuitVerdict {
 export function idleQuitVerdict(input: IdleQuitInput): IdleQuitVerdict {
   const minutes = Math.max(0, input.minutes ?? 0)
   if (!minutes) return { quit: false, reason: 'off', idleMs: 0 }
-  if (input.focused) return { quit: false, reason: 'window focused', idleMs: 0 }
   if (!input.panes.length) return { quit: false, reason: 'no panes', idleMs: 0 }
 
   const busy = input.panes.find((p) => BUSY.has(p.state))
@@ -93,8 +101,16 @@ export function idleQuitVerdict(input: IdleQuitInput): IdleQuitVerdict {
   // the point - the question is whether the PERSON is here, not whether a given pane is.
   const lastTouch = Math.max(input.lastAppInput, ...input.panes.map((p) => p.lastKeyboard))
   const idleMs = input.now - lastTouch
-  if (idleMs < minutes * 60_000) {
-    return { quit: false, reason: 'not idle long enough', idleMs: Math.max(0, idleMs) }
+  // A focused window is evidence somebody is here, and the evidence gets weaker the
+  // longer nothing is touched. Doubling is the whole of it: on a desk with a person the
+  // wait is twice as long, on a desk with nobody it is still finite.
+  const need = minutes * 60_000 * (input.focused ? 2 : 1)
+  if (idleMs < need) {
+    return {
+      quit: false,
+      reason: input.focused ? 'window focused and not idle long enough' : 'not idle long enough',
+      idleMs: Math.max(0, idleMs)
+    }
   }
   return { quit: true, reason: `no input for ${Math.round(idleMs / 60_000)} min`, idleMs }
 }

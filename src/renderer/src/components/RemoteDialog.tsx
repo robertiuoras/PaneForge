@@ -9,6 +9,7 @@ import type {
   RemoteState
 } from '@shared/types'
 import { reachWords } from '@shared/net'
+import { ageWords, jobsSummary, type BackJob } from '@shared/backJobs'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import AgentPicker from './AgentPicker'
@@ -51,13 +52,85 @@ function Fold({ label, children }: { label: string; children: ReactNode }): JSX.
   )
 }
 
+/**
+ * What a paired machine is running that has no pane.
+ *
+ * The sessions list already carries every pane the other device has, which answered "what
+ * is open over there". It could not answer the question actually being asked of a machine
+ * that runs work unattended: the `claude -p` a scheduled task fires, the loop that has been
+ * wedged since Tuesday, the dev server on a port nobody can reach. None of that is a pane,
+ * so none of it was anywhere in this app - you went and looked over SSH.
+ *
+ * Asked on demand, never on a tick: answering it is a whole process table read on the
+ * other machine (`shared/backJobs.ts`), and this panel is opened rarely and read slowly.
+ * A refusal is printed as a sentence rather than as an empty list - "nothing is running"
+ * is the answer somebody came here to check, and a read that could not happen must never
+ * be able to look like it.
+ */
+function PeerJobs({ id, name }: { id: string | null; name: string }): JSX.Element {
+  const [jobs, setJobs] = useState<BackJob[] | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = (): void => {
+    setBusy(true)
+    setErr('')
+    // `id === null` is THIS machine. The reading is the same one (`shared/backJobs.ts`
+    // over one process table), and it was answerable from the window all along -
+    // `listJobs` shipped in the surface, was handled in main, and nothing ever called
+    // it. So the panel could tell you what the PC was running unattended and not what
+    // the machine you are sitting at was, which is the half you can actually act on.
+    void (id === null ? api.listJobs() : api.listRemoteJobs(id))
+      .then((list) => setJobs(list))
+      .catch((e: Error) => setErr(e.message || `${name} did not answer`))
+      .finally(() => setBusy(false))
+  }
+
+  // Once when the device card appears, and by hand after that. A machine's background work
+  // changes on the scale of minutes, and a poll would be a process table per tick.
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  const who = id === null ? 'this machine' : name
+
+  return (
+    <div className="dev-jobs">
+      <div className="dev-jobs-head">
+        <span className="hint">
+          {err
+            ? `Could not ask ${who}: ${err}`
+            : jobs === null
+              ? `Asking ${who} what else it is running…`
+              : jobs.length === 0
+                ? `Nothing running on ${who} outside its panes.`
+                : `Outside its panes, ${who} is running ${jobsSummary(jobs)}.`}
+        </span>
+        <button className="ghost small" disabled={busy} onClick={load} title={`Ask ${who} again`}>
+          {busy ? 'Asking…' : 'Refresh'}
+        </button>
+      </div>
+      {jobs?.map((j) => (
+        <div key={j.pid} className={'dev-job ' + j.kind} title={j.cmd}>
+          <span className={'dev-job-kind ' + j.kind}>
+            {j.kind === 'agent' ? (j.headless ? 'agent run' : 'agent') : j.kind === 'dev' ? 'dev' : 'script'}
+          </span>
+          <span className="dev-job-nm">{j.label}</span>
+          {j.port ? <code className="dev-job-port">:{j.port}</code> : null}
+          {j.where ? <span className="dev-job-where">{j.where}</span> : null}
+          <span className="dev-job-age">{ageWords(j.elapsed)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 interface Props {
   state: RemoteState | null
   onState: (s: RemoteState) => void
   onClose: () => void
   flash: (message: string) => void
-  /** A local pane or lane selected from the desk, rather than the deliberate bulk path. */
-  handoff?: { ids: string[]; title: string } | null
 }
 
 /**
@@ -511,7 +584,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
  * the link is encrypted with, which is why regenerating it cuts every paired device
  * off rather than just changing what to type next time.
  */
-export default function RemoteDialog({ state, onState, onClose, flash, handoff = null }: Props): JSX.Element {
+export default function RemoteDialog({ state, onState, onClose, flash }: Props): JSX.Element {
   const [address, setAddress] = useState('')
   const [port, setPort] = useState('7311')
   const [code, setCode] = useState('')
@@ -547,7 +620,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
     setHanding(null)
     setHandBusy(true)
     try {
-      const items = await api.handoffToDevice(id, handoff?.ids, Boolean(handoff))
+      const items = await api.handoffToDevice(id)
       const ok = items.filter((i) => i.ok).length
       // Queued is neither moved nor refused, and saying "moved" about a pane still running
       // here is the shape of lie this app keeps having to un-tell. It gets its own sentence.
@@ -561,11 +634,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
             : `${held.length === 1 ? 'That pane is' : `${held.length} panes are`} mid-turn - ${held.length === 1 ? 'it moves' : 'they move'} to ${name} as soon as the turn ends. Nothing was interrupted.`
         )
       else if (bad.length === 0)
-        flash(
-          handoff
-            ? `Moved ${handoff.title} to ${name}. It closes PaneForge there only after it exits and no other local pane is running.`
-            : `Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`
-        )
+        flash(`Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`)
       else flash(`Moved ${ok} of ${items.length}. ${bad[0].title}: ${bad[0].error}`)
     } catch (err) {
       flash((err as Error).message)
@@ -694,7 +763,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
         setCode('')
         setAddress('')
         flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
-        if (!handoff) onClose()
+        onClose()
         return
       }
       // A bare code is not a failure, it is half of what is needed: fill it in and open
@@ -727,7 +796,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
       onState(res.state)
       if (res.ok) {
         flash(`Paired with ${res.name || 'that device'}. Its panes are in your list.`)
-        if (!handoff) onClose()
+        onClose()
         return
       }
       setError(res.error ?? 'Could not pair from that invite.')
@@ -768,15 +837,26 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
           <strong>Devices</strong>
           <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
         </div>
-        {handoff && (
-          <p className="dev-empty">
-            <strong>Hand off {handoff.title}.</strong> Choose your online PC below. If it is not listed, open Devices on
-            the PC, press Copy invite, then paste that one line here. The PC will close PaneForge only after this work
-            exits and it has no other local pane.
-          </p>
-        )}
         <Blurb id="devices" />
 
+        {/* Two columns, and the reason is arithmetic rather than taste: measured in a real
+            window at 1500x912 with NOTHING paired, this panel was 1057px of content in an
+            812px box - so it scrolled on an empty desk, and every section below the fold
+            was found by dragging. Stacked, it can only get worse: a paired machine adds a
+            row per pane it has.
+
+            It is also the ONE growing child this dialog never had. Without one the whole
+            dialog scrolls and the footer is pinned over it with `position: sticky`, which
+            is why the Close button had content sliding under its top edge. With the
+            columns as the scroll body, the head and the footer are outside it and nothing
+            can reach them.
+
+            Left is the phone, which is the one thing here that finishes in a single action
+            and is the tallest section by far - measured at 801px against the other three
+            put together at 145. Right is this machine, what it is already paired with, and
+            how to add another. One column again under 1000px. */}
+        <div className="dev-cols">
+          <div className="dev-col">
         {/* ------------------------------------------------------------------- phone
             First, above the desktop card, because it is the one people arrive here for
             and because it is the one that finishes in a single action - point a camera at
@@ -784,6 +864,9 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
             but it is not a peer: there is no app at the far end to pair with, only a
             browser, and what it loads is this window's own UI. See main/phone.ts. */}
         <PhonePanel flash={flash} />
+          </div>
+
+          <div className="dev-col">
 
         {/* ------------------------------------------------------------- this device
             The hero card. It is the only thing on this screen that is about the
@@ -832,6 +915,12 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
           )}
 
           {self.error && <div className="dev-error">{self.error}</div>}
+
+          {/* What this desk is running with no pane on it. Same reading as a peer's,
+              and it belongs on the hero rather than behind hosting: a scheduled
+              `claude -p` and a dev server on a port nobody can reach are facts about
+              this machine whether or not anything is paired with it. */}
+          <PeerJobs id={null} name={self.name} />
 
           {self.hosting && (
             <div className="dev-self">
@@ -951,9 +1040,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
           </div>
           {state.peers.length === 0 && (
             <p className="dev-empty">
-              {handoff
-                ? 'No PC is paired yet. On the PC open Devices and press Copy invite, then paste it here below.'
-                : 'None yet. Turn the switch above on over there, then pair with it below.'}
+              None yet. Turn the switch above on over there, then pair with it below.
             </p>
           )}
           <div className="dev-list">
@@ -993,23 +1080,11 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
                     {p.status === 'online' && (
                       <button
                         className="ghost small"
-                        title={
-                          handoff
-                            ? `Move ${handoff.title} to ${p.name}. Code is pushed, the conversation and screen travel, and this PC closes PaneForge only when the transferred work exits with no other local pane.`
-                            : `Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors.`
-                        }
+                        title={`Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors. One pane at a time is the Hand off on its own card, which asks which machine in a box of its own.`}
                         disabled={handBusy}
                         onClick={() => void handOff(p.id, p.name)}
                       >
-                        {handBusy
-                          ? 'Handing off…'
-                          : handing === p.id
-                            ? handoff
-                              ? `Move ${handoff.title}?`
-                              : 'Move all panes?'
-                            : handoff
-                              ? 'Hand off here'
-                              : 'Hand off'}
+                        {handBusy ? 'Handing off…' : handing === p.id ? 'Move all panes?' : 'Hand off all'}
                       </button>
                     )}
                     <button
@@ -1081,6 +1156,7 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
                     ))}
                   </div>
                 )}
+                {p.status === 'online' && <PeerJobs id={p.id} name={p.name} />}
                 {opening === p.id && (
                   <div className="dev-launch">
                     {!far && <span className="hint">Asking {p.name} what it has...</span>}
@@ -1250,6 +1326,8 @@ export default function RemoteDialog({ state, onState, onClose, flash, handoff =
           </div>
           </Fold>
           {error && <div className="dev-error">{error}</div>}
+        </div>
+          </div>
         </div>
 
         <div className="dialog-row">

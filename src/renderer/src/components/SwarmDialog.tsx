@@ -1,12 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
-import { modelLabel, modelValue, supportsModel } from '@shared/agents'
-import type { Project, SplitPlan, SwarmRole } from '@shared/types'
-import type { Goal } from '@shared/goals'
-import { driveRefusal, unattendedLine } from '@shared/agentic'
+import { modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
+import type { Project, SwarmRole } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
-import { Segmented } from './Controls'
 import Select from './Select'
 
 const api = window.api
@@ -14,16 +11,13 @@ const api = window.api
 /**
  * What the dialog was opened WITH, when something other than the toolbar opened it.
  *
- * The split offer chip in a pane knows all three answers already - the folder that pane is
- * in and the words in its prompt box - and re-typing them into a dialog is the reason a
- * feature that exists goes unused. `plan` starts the planner on open, which is still a
- * deliberate action: it is the click on the chip.
+ * A caller that already knows the folder and the words - a pane's own offer - hands both
+ * over rather than making them be typed twice, which is the reason a feature that exists
+ * goes unused.
  */
 export interface SwarmStart {
-  mode?: 'roles' | 'split'
   cwd?: string
   mission?: string
-  plan?: boolean
 }
 
 interface Props {
@@ -35,24 +29,15 @@ interface Props {
   onSaveRoles: (roles: SwarmRole[]) => void
   onClose: () => void
   onLaunched: (count: number) => void
-  /** The same plan handed to the app's queue instead of to panes. See `docs/agentic.md`. */
-  onDriven: (goal: Goal) => void
 }
 
 /**
- * Two ways to put several agents on one job, and the difference between them is the
- * only thing this dialog really has to explain.
+ * One mission, several agents, ONE folder.
  *
- * **Roles** is one mission, several agents, ONE folder. Right when the agents interleave
- * - a builder and a reviewer want the same files, and the shared memory file is the
- * handover between them. What keeps them apart is their briefs.
- *
- * **Split** is one task cut into workstreams, each in its OWN git worktree. Right when
- * the parts are independent, and the reason to prefer it there is that "do not edit
- * another agent's files" stops being a sentence in a prompt and becomes a fact about the
- * checkout: they are not looking at the same files. The plan comes from the local coding
- * CLI, and it is a proposal - every lane here is editable, and unticking one leaves its
- * files to nobody.
+ * Right when the agents interleave - a builder and a reviewer want the same files, and
+ * the shared memory file is the handover between them. What keeps them apart is their
+ * briefs, not the checkout: a job whose parts are genuinely independent wants separate
+ * lanes, which is `scripts/lane.mjs` and a pane each, not this dialog.
  */
 export default function SwarmDialog({
   projects,
@@ -62,8 +47,7 @@ export default function SwarmDialog({
   initial,
   onSaveRoles,
   onClose,
-  onLaunched,
-  onDriven
+  onLaunched
 }: Props): JSX.Element {
   const [cwd, setCwd] = useState(initial?.cwd ?? projects[0]?.path ?? '')
   const [mission, setMission] = useState(initial?.mission ?? '')
@@ -71,121 +55,8 @@ export default function SwarmDialog({
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const [mode, setMode] = useState<'roles' | 'split'>(initial?.mode ?? 'roles')
-  const [plan, setPlan] = useState<SplitPlan | null>(null)
-  const [planning, setPlanning] = useState(false)
-  // Planning is a whole CLI start-up plus a real answer - measured at 22-33s for the
-  // improver on this machine. A button that looks stuck for half a minute reads as a
-  // broken feature, so the seconds are on screen while it thinks.
-  const [waited, setWaited] = useState(0)
-  const [worker, setWorker] = useState('')
-  const [openLane, setOpenLane] = useState<number | null>(null)
-
   const usable = agents.filter((a) => a.available)
   const chosen = local.filter((r) => r.enabled)
-  const lanes = plan?.lanes.filter((l) => l.enabled !== false) ?? []
-
-  // K4. Drive starts a CLI with its permission prompt turned off, and this dialog is the
-  // last place a person sees before that happens - so it says which flag, by name, rather
-  // than leaving the fact in a source comment. Read from config once: it changes in
-  // Settings, not while this is open.
-  const [allowUnattended, setAllowUnattended] = useState(true)
-  const [refused, setRefused] = useState('')
-  useEffect(() => {
-    void api.getConfig().then((c) => setAllowUnattended(c.driveUnattended !== false))
-  }, [])
-  const driveAgent = worker || usable[0]?.id || ''
-  const permLine = unattendedLine(driveAgent)
-  const permRefusal = driveRefusal(driveAgent, allowUnattended)
-
-  useEffect(() => {
-    if (!planning) return
-    const started = Date.now()
-    const t = setInterval(() => setWaited(Math.round((Date.now() - started) / 1000)), 500)
-    return () => clearInterval(t)
-  }, [planning])
-
-  const patchLane = (i: number, p: Partial<SplitPlan['lanes'][number]>): void =>
-    setPlan((prev) =>
-      prev ? { ...prev, lanes: prev.lanes.map((l, j) => (j === i ? { ...l, ...p } : l)) } : prev
-    )
-
-  const makePlan = async (): Promise<void> => {
-    if (!cwd || !mission.trim() || planning) return
-    setPlanning(true)
-    setWaited(0)
-    setPlan(null)
-    try {
-      setPlan(await api.planSplit({ cwd, mission, agent: worker || undefined }))
-    } catch {
-      setPlan({ lanes: [], contracts: '', refused: 'The planner could not be run.' })
-    } finally {
-      setPlanning(false)
-    }
-  }
-
-  // Opened from a pane's own offer: the folder and the words are already here, so the
-  // planner starts without a second click. Once only - re-planning is the button.
-  const autoPlanned = useRef(false)
-  useEffect(() => {
-    if (autoPlanned.current || !initial?.plan || !cwd || !mission.trim()) return
-    autoPlanned.current = true
-    void makePlan()
-  }, [initial, cwd, mission])
-
-  const launchSplit = async (): Promise<void> => {
-    if (!plan || !lanes.length || busy) return
-    setBusy(true)
-    try {
-      const started = await api.startSplit({
-        cwd,
-        mission,
-        plan,
-        agent: (worker || usable[0]?.id) as never,
-        model: defaultModels[worker || usable[0]?.id || ''] || undefined
-      })
-      onLaunched(started.length)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  /**
-   * The same plan, run by the app.
-   *
-   * Deliberately the second button rather than a mode of its own: the plan, the lanes,
-   * the briefs and the contracts are identical, and the only thing being chosen here is
-   * whether a person watches four terminals or the app does. It returns the moment the
-   * run exists - the work is measured in tens of minutes and the progress is on the
-   * Fleet board, not in a dialog somebody has to keep open.
-   */
-  const driveSplit = async (): Promise<void> => {
-    if (!plan || !lanes.length || busy) return
-    setBusy(true)
-    setRefused('')
-    try {
-      // The QUEUE, not `startDrive`. Same plan and same loop; what the queue adds is that
-      // this survives a restart, that pressing it twice lines the second one up rather
-      // than letting two runs fight over one worktree pool, and that when it ends it
-      // records what it turned into. There is no reason left to start one un-queued.
-      onDriven(
-        await api.addGoal({
-          cwd,
-          mission,
-          plan,
-          agent: (worker || usable[0]?.id) as never,
-          model: defaultModels[worker || usable[0]?.id || ''] || undefined
-        })
-      )
-    } catch (e) {
-      // Main refuses an unattended drive when Settings says so, and the refusal names the
-      // flag. A disabled button already covers the ordinary case; this covers the config
-      // changing while the dialog is open, and it says why rather than doing nothing.
-      setRefused(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']*':\s*Error:\s*/, '') : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const patch = (id: string, p: Partial<SwarmRole>): void =>
     setLocal((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)))
@@ -212,19 +83,7 @@ export default function SwarmDialog({
       <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>Swarm</strong>
-          <Segmented
-            value={mode}
-            onChange={(v) => setMode(v as 'roles' | 'split')}
-            options={[
-              { value: 'roles', label: 'Roles' },
-              { value: 'split', label: 'Split' }
-            ]}
-          />
-          <span className="hint">
-            {mode === 'roles'
-              ? 'one mission, one pane per role, all in the same folder'
-              : 'one task cut into workstreams, each in its own worktree'}
-          </span>
+          <span className="hint">one mission, one pane per role, all in the same folder</span>
         </div>
         <Blurb id="swarm" />
 
@@ -251,7 +110,6 @@ export default function SwarmDialog({
           />
         </div>
 
-        {mode === 'roles' && (
         <div className="setting">
           <div className="setting-row">
             <label>Roles ({chosen.length} panes)</label>
@@ -311,7 +169,9 @@ export default function SwarmDialog({
                         { value: '', label: 'Default model' },
                         ...(spec?.models ?? []).map((m) => ({
                           value: modelValue(m),
-                          label: modelLabel(m)
+                          label: modelLabel(m),
+                          hint: modelHint(m),
+                          group: modelGroup(m)
                         }))
                       ]}
                     />
@@ -323,7 +183,11 @@ export default function SwarmDialog({
                   >
                     Brief
                   </button>
-                  <button className="x" title="Remove role" onClick={() => setLocal((rs) => rs.filter((x) => x.id !== r.id))}>
+                  <button
+                    className="x"
+                    title="Remove role"
+                    onClick={() => setLocal((rs) => rs.filter((x) => x.id !== r.id))}
+                  >
                     x
                   </button>
                   {editing === r.id && (
@@ -339,142 +203,22 @@ export default function SwarmDialog({
             })}
           </div>
         </div>
-        )}
-
-        {mode === 'split' && (
-          <div className="setting">
-            <div className="setting-row">
-              <label>Lanes{plan && lanes.length ? ` (${lanes.length} panes)` : ''}</label>
-              <Select
-                size="sm"
-                menuWidth={240}
-                value={worker}
-                placeholder="Agent"
-                onChange={setWorker}
-                options={usable.map((a) => ({
-                  value: a.id,
-                  label: a.label,
-                  icon: <AgentLogo id={a.id} spec={a} size={13} />
-                }))}
-              />
-              <button
-                className="ghost small"
-                disabled={!cwd || !mission.trim() || planning}
-                onClick={makePlan}
-              >
-                {planning ? `Planning... ${waited}s` : plan ? 'Plan again' : 'Plan the split'}
-              </button>
-            </div>
-
-            {plan?.refused && (
-              <p className="hint refused">
-                {plan.refused} Build it in one pane, or reword the task and plan again.
-              </p>
-            )}
-
-            {!plan && !planning && (
-              <p className="hint">
-                The agent above reads this project and proposes who builds what. Nothing
-                starts until you launch.
-              </p>
-            )}
-
-            {plan && lanes.length > 0 && (
-              <>
-                <div className="roles">
-                  {plan.lanes.map((l, i) => (
-                    <div key={i} className={'role' + (l.enabled === false ? ' off' : '')}>
-                      <input
-                        type="checkbox"
-                        checked={l.enabled !== false}
-                        onChange={(e) => patchLane(i, { enabled: e.target.checked })}
-                      />
-                      <input
-                        className="role-name"
-                        value={l.name}
-                        onChange={(e) => patchLane(i, { name: e.target.value })}
-                      />
-                      <span className="hint owns" title={l.owns.join('\n')}>
-                        {l.owns.join(', ')}
-                      </span>
-                      <button
-                        className="ghost small"
-                        title="What this lane is told to build"
-                        onClick={() => setOpenLane(openLane === i ? null : i)}
-                      >
-                        Brief
-                      </button>
-                      {openLane === i && (
-                        <textarea
-                          className="brief"
-                          rows={4}
-                          value={l.brief}
-                          onChange={(e) => patchLane(i, { brief: e.target.value })}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <label className="sub">Every lane is told this</label>
-                <textarea
-                  className="brief"
-                  rows={2}
-                  placeholder="Shared types, config keys, script names - what they must all implement the same."
-                  value={plan.contracts}
-                  onChange={(e) =>
-                    setPlan((prev) => (prev ? { ...prev, contracts: e.target.value } : prev))
-                  }
-                />
-              </>
-            )}
-          </div>
-        )}
-
-        {/* K4: what Drive is about to allow, said once, before the press rather than in a
-            source comment. Absent for Launch - a pane is a person watching. */}
-        {mode === 'split' && (permLine || permRefusal) && (
-          <div className={'perm-note' + (permRefusal ? ' refused' : '')}>
-            {permRefusal || `Drive: ${permLine} Launch opens panes instead, and those ask.`}
-          </div>
-        )}
-        {refused && <div className="perm-note refused">{refused}</div>}
 
         <div className="dialog-row">
           <span className="hint">
-            {mode === 'roles' ? (
-              <>
-                Each pane is told its role, the mission, and to read{' '}
-                <code>.paneforge/MEMORY.md</code> first.
-              </>
-            ) : (
-              'Launch opens a pane per lane. Drive runs them with no panes - each lane verified before it is called done. Neither ever merges.'
-            )}
+            Each pane is told its role, the mission, and to read{' '}
+            <code>.paneforge/MEMORY.md</code> first.
           </span>
           <button className="ghost" onClick={onClose}>
             Cancel
           </button>
-          {mode === 'roles' ? (
-            <button className="primary" disabled={!cwd || !mission.trim() || !chosen.length || busy} onClick={launch}>
-              {busy ? 'Starting...' : `Launch ${chosen.length} agents`}
-            </button>
-          ) : (
-            <>
-              <button
-                className="ghost"
-                disabled={!lanes.length || busy || Boolean(permRefusal)}
-                title={
-                  permRefusal ||
-                  `No panes. The app runs each lane, verifies it, and leaves you a branch to review.${permLine ? `\n${permLine}` : ''}`
-                }
-                onClick={driveSplit}
-              >
-                {busy ? 'Starting...' : 'Drive it'}
-              </button>
-              <button className="primary" disabled={!lanes.length || busy} onClick={launchSplit}>
-                {busy ? 'Starting...' : `Launch ${lanes.length} lanes`}
-              </button>
-            </>
-          )}
+          <button
+            className="primary"
+            disabled={!cwd || !mission.trim() || !chosen.length || busy}
+            onClick={launch}
+          >
+            {busy ? 'Starting...' : `Launch ${chosen.length} agents`}
+          </button>
         </div>
       </div>
     </div>

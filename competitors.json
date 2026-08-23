@@ -57,5 +57,15 @@
       "repo": "hluk/CopyQ",
       "why": "The most featured clipboard manager there is - tabs, editing a clip, scripting on a copy. TODO J5/J6/J9. GPL-3.0: read it, never paste from it."
     }
+  ],
+  "sites": [
+    {
+      "url": "https://www.bridgemind.ai/products/bridgespace",
+      "why": "The closest thing to this app that is not open source: a grid of up to 16 agent panes, a Kanban that dispatches them, swarm orchestration and shared agent memory, on all three platforms. No repo, so the product page is the feature list."
+    },
+    {
+      "url": "https://www.bridgemind.ai/products/bridgevoice",
+      "why": "Their dictation layer - on-device Whisper and Parakeet across mac/win/linux. Watched against our own voice pick (whisper CLI -> wasm -> browser)."
+    }
   ]
 }

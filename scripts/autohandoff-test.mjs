@@ -34,6 +34,7 @@ const {
   idleOffloadPlan,
   hostFor,
   movable,
+  queueable,
   queueVerdict,
   queuedNote,
   offloadMinutes,
@@ -287,6 +288,132 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       0
     )
   }
+}
+
+// --------------------------------------------------------------- the local-pane budget
+//
+// The rule that does not wait for anything to go wrong. It is allowed to move a pane that
+// is on screen and a pane that is mid-turn, so the refusals below are the ones actually
+// holding it up - and the control that the OTHER two rules did not quietly inherit any of
+// this is the last block.
+{
+  const budget = { ...ok, over: 3 }
+  const three = (o = {}) => [pane({ id: 'a', ...o }), pane({ id: 'b' }), pane({ id: 'c' }), pane({ id: 'd' })]
+
+  eq('past the budget it moves exactly the overshoot', ids(autoHandoffPlan(three(), budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)).split(',').length, 3)
+  eq(
+    'and maxPerSweep does not cap it - the number is the overshoot, not a guess',
+    autoHandoffPlan(three(), budget, peers, { ...DEFAULT_AUTO_HANDOFF, maxPerSweep: 1 }, {}, NOW).length,
+    3
+  )
+  eq('at the budget it moves nothing', autoHandoffPlan(three(), { ...ok, over: 0 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+  // On screen and mid-turn are the two gates it drops, and they are dropped in an ORDER:
+  // the quiet off-screen pane goes first, then the quiet visible one, and a pane with a
+  // turn in flight is picked last of all.
+  {
+    const panes = [
+      pane({ id: 'busy', busy: true, state: 'working' }),
+      pane({ id: 'seen', visible: true }),
+      pane({ id: 'quiet' }),
+      // The pane being typed in, so it is refused rather than competing for a slot: three
+      // eligible panes and an overshoot of three is what makes the ORDER the assertion.
+      pane({ id: 'me', focused: true })
+    ]
+    eq('quiet and off-screen first, then on-screen, then mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen,busy')
+  }
+
+  // ...and a pane that has only just been typed into is still eligible. The budget is not
+  // a statement about idleness, which is the whole difference from the two clocks.
+  {
+    const panes = [pane({ id: 'fresh', lastKeyboard: NOW - 5_000 }), pane({ id: 'me', focused: true })]
+    eq('a pane quiet for five seconds still counts', ids(autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
+  }
+
+  // Everything that could lose work is still refused, one at a time.
+  const refusals = [
+    ['the pane you are typing in', { focused: true }],
+    ["another device's mirrored pty", { remote: true }],
+    ['a pane already on its way', { handingOff: true }],
+    ['a pane holding a live question', { state: 'needsYou', asking: true }],
+    ['a pane that has not printed yet', { state: 'starting' }],
+    ['a pane whose process has ended', { state: 'exited' }]
+  ]
+  for (const [label, extra] of refusals) {
+    const panes = [pane({ id: 'x', ...extra }), pane({ id: 'keep' })]
+    eq(`the budget never moves ${label}`, ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+  }
+
+  {
+    const panes = [pane({ id: 'x' }), pane({ id: 'keep' })]
+    eq('a pane on cooldown after a failed move is left alone', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, { x: NOW + MIN }, NOW)), 'keep')
+  }
+
+  {
+    const panes = [pane({ id: 'only' })]
+    eq('the window is never emptied, however far past the budget', autoHandoffPlan(panes, { ...ok, over: 5 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+  }
+
+  {
+    // ...and it does not take a slot with it: the other pane still moves, and the window
+    // is still not emptied.
+    const panes = [pane({ id: 'a', projectName: 'elsewhere' }), pane({ id: 'keep' })]
+    eq('a project the peer does not have stays here', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+    const alone = [pane({ id: 'a', projectName: 'elsewhere' })]
+    eq('and with nowhere for any of them, nothing moves', autoHandoffPlan(alone, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+  }
+
+  eq('the budget respects the off switch like everything else', autoHandoffPlan(three(), budget, peers, { ...DEFAULT_AUTO_HANDOFF, enabled: false }, {}, NOW).length, 0)
+
+  // The control, and the one that would catch this leaking into the pressure sweep: with
+  // no overshoot the old rules are exactly as they were, and a mid-turn pane is refused.
+  {
+    // Quiet for longer than the clock sweep's own threshold, so the only thing that can
+    // keep `busy` out of either answer is the refusal being tested.
+    const panes = [
+      pane({ id: 'busy', busy: true, state: 'working', lastKeyboard: NOW - 40 * MIN }),
+      pane({ id: 'keep', lastKeyboard: NOW - 40 * MIN })
+    ]
+    eq('a mid-turn pane is still refused when the budget is not the trigger', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+    eq('...and by the clock sweep too', ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }, {}, NOW)), 'keep')
+  }
+
+  // The one failure mode a POLICY has that a pressure reading does not. Two desks each
+  // keeping two agents are each right about their own budget, and between them they would
+  // pass one pane back and forth for ever - so a pane never goes back where it came from.
+  {
+    const panes = [pane({ id: 'came', arrivedFrom: 'pc' }), pane({ id: 'me', focused: true })]
+    eq('a pane handed here is never handed straight back', autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+    // ...and the control: it is refused because of WHERE it came from, not because it
+    // arrived. A second machine that did not send it can still take it.
+    const two = [...peers, { device: 'mini', deviceName: 'Mini', online: true, projects: [{ name: 'proj', path: '/mini/proj' }] }]
+    const plan = autoHandoffPlan(panes, { ...ok, over: 1 }, two, DEFAULT_AUTO_HANDOFF, {}, NOW)
+    eq('but another machine may still take it', plan.map((p) => p.device).join(','), 'mini')
+    eq('and hostFor is where that is decided', hostFor(peers, 'proj', 'pc'), null)
+  }
+
+  // A plan that cannot converge. The cap has to be on how many are MOVED, not on how many
+  // are looked at: a pane whose project no peer holds is skipped, and if it has already
+  // spent a slot the desk moves one instead of three and is over budget again next sweep,
+  // for ever. The quietest panes sort first, so "the ones that cannot move are first" is
+  // the ordinary case, not a contrived one.
+  {
+    const panes = [
+      pane({ id: 'orphan1', projectName: 'nowhere', lastKeyboard: NOW - 90 * MIN }),
+      pane({ id: 'orphan2', projectName: 'nowhere', lastKeyboard: NOW - 80 * MIN }),
+      pane({ id: 'a', lastKeyboard: NOW - 70 * MIN }),
+      pane({ id: 'b', lastKeyboard: NOW - 60 * MIN }),
+      pane({ id: 'c', lastKeyboard: NOW - 50 * MIN }),
+      pane({ id: 'me', focused: true })
+    ]
+    eq('panes no peer can host do not eat the moves', ids(autoHandoffPlan(panes, { ...ok, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b,c')
+    eq('...and the pressure sweep counts the same way', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b')
+  }
+
+  check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
+  check('and a question is neither', !queueable({ state: 'needsYou', asking: true }) && !movable({ state: 'needsYou', asking: true }))
+  check('the default keeps a couple here', DEFAULT_AUTO_HANDOFF.keepLocal === 2)
 }
 
 console.log(`autohandoff: ${checks} checks passed`)

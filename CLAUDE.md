@@ -127,83 +127,62 @@ node scripts/lane.mjs ready --repo <dir> --session <id>   # this lane is done an
 ```
 
 `ready` merges master into your lane first, refuses to mark anything while that merge is
-dirty, then releases once **no chat is mid-work** — one version bump for everyone, whoever
-finishes last. If another chat is still editing it says so and does nothing; wait rather
-than shipping again. Edit or commit after marking and the mark is dropped, by name.
+dirty, then releases once **no chat is mid-work** - one version bump for everyone, whoever
+finishes last. Edit or commit after marking and the mark is dropped, by name. The
+measurements behind every number here are in `docs/design-notes.md`.
 
-- **Below 1.0 an automatic release only ever moves the patch.** It still reads its own bump
-  off the commit subjects since the last tag (`bumpFor` in `scripts/release-notes.mjs`, the
-  same source the notes come from), but `nextVersion` in that file demotes it: a `feat:` is
-  a patch like everything else, `feat!:` is the one bump a commit may still ask for and it
-  gets a minor, and a minor or a major otherwise has to be typed — `node scripts/lane.mjs
-  ship minor` / `ship major`. Reading `feat:` as a minor is right for a released product and
-  wrong here: below 1.0 nearly every commit adds something, so the minor stopped meaning "a
-  batch of work landed" and started meaning "a session happened" (v0.4.62 → v0.8.0 in one
-  day over six releases carrying seven commits). At 1.0 the ordinary semver reading comes
-  back on its own. A bump named on the command line is always obeyed as given.
-- Releases batch: one per 30 minutes (`COOLDOWN_MS`). Inside that window the work sits on
-  master for the next `ready`. Do not "fix" that with `npm run ship`.
-- `npm version`, `git tag vX` and pushing a version tag by hand are **blocked**.
-  `npm run ship` exists for a build Robert needs in his hands now — say why.
-- Two things stop a release, both reported by name: master not typechecking, and a lane
-  conflicting with master. A conflicting lane is left out; the rest still goes out.
-  `rerere` is on, and the retry timer re-tries recorded conflicts every minute.
-- Release notes come from Conventional Commit subjects between version tags
-  (`scripts/release-notes.mjs`, template `.github/release-notes.md`). `npm run test:notes`.
-  **Only `feat:`, `fix:` and `perf:` reach the page** — the release body is public and is
-  read by somebody deciding whether to take the update, while a `docs:` subject here is
-  written for the next session in this repo. Everything else, and every subject with no
-  conventional prefix, is dropped; a release carrying only those falls back to the
-  commit-history link rather than heading an empty section. There is no catch-all
-  heading, and adding one back is what made the pages read like a diary.
-  **The drop used to be silent, and that is how a real fix vanished**: v0.8.92 carried
-  `Fix browser image drags by fetching URIs instead of pasting URL strings`, a change to
-  `src/` worded as a sentence, so the page said "see the commit history" and nothing
-  anywhere said otherwise. `unpublished` in that file names a commit that touched `src/`
-  and carries NO conventional prefix, and `doctor` prints it while the subject can still
-  be reworded. It reports and never rewrites - a heading inferred from a sentence is a
-  guess on a public page. A `docs:`/`test:` subject over `src/` is dropped ON PURPOSE and
-  is never named; the first version of the report flagged one and that is the shape that
-  makes a warning unread.
-- Actions and this machine can BOTH publish a release. The duplicate installers are
-  harmless; `latest.yml` is not, because the loser's feed names the winner's file.
-  `reconcileFeed` on the retry timer compares the feed to the asset it names and puts ours
-  back. Never hand-fix a feed without checking the asset's real size — v0.4.27 shipped
-  33 bytes out and looked perfect. Until v0.4.32 it happened on EVERY release and the
-  stated cause — "the 45s poll missed a run that was merely slow" — was wrong: the poll
-  never worked at all. Its `?event=push&per_page=10` went through `shell: true`, where cmd
-  reads the `&` as a command separator, so it ran as two commands and reported the second
-  one's failure. `runSafe` quotes its arguments now (`cmdQuote`); `npm run test:laneargs`
-  round-trips them through a real cmd.exe. Assume nothing about an argument.
+- **Below 1.0 an automatic release only ever moves the patch.** `bumpFor` still reads the
+  commit subjects, and `nextVersion` demotes it: `feat:` is a patch, `feat!:` is the one bump
+  a commit may ask for (a minor), anything larger is typed (`lane.mjs ship minor|major`).
+  Reading `feat:` as a minor took this repo v0.4.62 to v0.8.0 in one day.
+- **Releases batch: one per 2 hours** (`COOLDOWN_MS`). Half an hour batched nothing - 130
+  releases in 14 days - because it is shorter than one build-and-verify cycle. On the dev
+  channel each release is a build to install and a restart to take it. 130 patches on a 0.x
+  is honest: the fix is the rate, never a renumbering.
+- `npm version`, `git tag vX` and pushing a version tag by hand are **blocked**. `npm run
+  ship` is for a build Robert needs now - say why - and is the one path that skips the two
+  checks below, deliberately: a person is watching it.
+- **Three things stop an automatic release, all reported by name**: master not typechecking,
+  master failing **its own `npm test`** (`suiteFailure` - a typecheck proves the types agree
+  and never that the app works), and a lane conflicting with master. The conflicting lane is
+  left out; the rest still goes. `rerere` is on and the retry timer re-tries every minute -
+  which is why the suite answer is **cached on the COMMIT** in the shared ledger, invalidated
+  only by a new commit. **A red answer is therefore asked TWICE before it is written down**:
+  a cache the retry timer never re-asks turns one flaky run into a commit that can only be
+  released by hand-editing `.git/paneforge-lanes.json`, which nobody would guess to do. This
+  repo's own gate did exactly that on 2026-08-22 - two refusals, two different reasons, over
+  a suite that passed standalone twice. A genuinely red suite costs one extra run. A suite that could not START is named as this checkout's tooling, is
+  not cached, and that sentence decides where the next person looks. `npm run test:gate`.
+- Release notes come from Conventional Commit subjects between tags
+  (`scripts/release-notes.mjs`, `.github/release-notes.md`, `npm run test:notes`). **Only
+  `feat:`, `fix:` and `perf:` reach the page** - the body is public, a `docs:` subject here is
+  written for the next session. A release carrying only those falls back to the commit-history
+  link; there is no catch-all heading, and adding one back is what made the pages read like a
+  diary. The drop used to be SILENT, which is how a real fix vanished from v0.8.92, so
+  `unpublished` names a commit that touched `src/` and carries no conventional prefix and
+  `doctor` prints it. It reports and never rewrites; a `docs:`/`test:` subject over `src/` is
+  dropped on purpose and never named.
+- **Actions and this machine can both publish.** Duplicate installers are harmless;
+  `latest.yml` is not. `reconcileFeed` on the retry timer compares the feed to the asset it
+  names and puts ours back. Never hand-fix a feed without checking the asset's real size -
+  v0.4.27 shipped 33 bytes out and looked perfect. `runSafe` quotes its arguments
+  (`cmdQuote`, `npm run test:laneargs`): the old poll ran through `shell: true`, where cmd
+  read its `&` as a command separator, so it had never worked at all.
+- **Every automatic release is a DEV release**, cut as a GitHub prerelease. Stable installs
+  resolve `/releases/latest`, which points at the newest PROMOTED release, and promotion
+  happens by itself on the big-company shape: the newest dev build that has been on the
+  channel `PF_PROMOTE_SOAK_MS` (3 days) auto-promotes from the same minute timer. **The soak
+  is that build's own age, not a quiet period across the channel** - requiring the newest
+  build to sit untouched froze stable 20 versions back while a Mac could not update out of a
+  broken build. Both paths refuse a one-legged release and a feed whose declared size
+  disagrees with the asset, then verify `/releases/latest` really moved. Tags stay plain; the
+  prerelease FLAG is the channel. `lane.mjs promote [version]` by hand is for "stable needs
+  this now", never on a green diff alone. `lane.mjs doctor` lists what waits.
+  `npm run test:promote`.
 
-- **Every automatic release is a DEV release.** It is cut as a GitHub prerelease:
-  installs opted into the dev channel (Settings → Updates → "Dev channel", config
-  `devUpdates`) take it within the half hour, while every stable install resolves
-  `/releases/latest`, which GitHub keeps pointed at the newest PROMOTED release.
-  Nothing reaches a stable app until a build is promoted — and promotion happens **by
-  itself**, on the big-company channel shape (Chrome, VS Code): the newest dev build
-  that has been on the channel `PF_PROMOTE_SOAK_MS` (3 days) auto-promotes, from the
-  same minute timer as everything else (`autoPromote` in `lane.mjs retry`). The soak IS
-  the proof: dev-channel installs ran that build three days and nothing needed a fix,
-  and it carries every skipped version with it in one update. **The soak is that
-  build's own age, not a quiet period across the channel.** Requiring the NEWEST build
-  to sit untouched sounds stricter and really promises that stable never moves: this
-  repo ships most days, every release reset the clock, and on 2026-08-14 that had
-  produced 20 unpromoted dev builds with stable still on v0.8.32 — a Mac on stable
-  could not update out of a broken build no matter how often it restarted, because
-  there was never a newer stable one to find. `npm run test:promote` covers a soaked
-  build promoting with a younger one sitting on top of it. `node scripts/lane.mjs promote
-  [version]` by hand is for "stable needs this now" (a bad build already reached
-  stable) — never promote a build by hand on a green diff alone. Both paths refuse
-  a one-legged release (either platform's feed missing) and a feed whose declared size
-  disagrees with the asset being served, then verify `/releases/latest` really moved.
-  `lane.mjs doctor` lists what waits and when it auto-promotes. Tags stay plain
-  (`v0.8.29`) — the prerelease FLAG is the channel, so stable gets exactly the tested
-  bytes. `npm run test:promote`.
-
-**A release claims the thing is finished.** Never cut one while any next step for that
-issue is still open — and **promotion claims it is proved**: the dev channel buys the
-room to iterate, and the soak is what turns iteration into proof.
+**A release claims the thing is finished.** Never cut one while any next step for that issue
+is still open - and **promotion claims it is proved**: the dev channel buys the room to
+iterate, and the soak is what turns iteration into proof.
 
 ## An update may never need a person
 
@@ -303,8 +282,49 @@ older build does not recognise `askpair` and refuses, which is correct — it ha
 show. `npm run test:pairask`, whose load-bearing case is a real relay proving the two
 numbers differ.
 
-**A handoff moves the WORK, still never the pty.** `Hand off` on a paired device's card
-(two presses — the first arms it) pushes each pane's repo as an `auto-sync:` commit,
+**...and a paired machine says what it is running OUTSIDE its panes.** The sessions list
+carries every pane the other device has, which answers "what is open over there". It could
+not answer the question actually asked of the machine doing the unattended work: the
+`claude -p` a scheduled task fires, the loop wedged since Tuesday, the dev server on a port
+nobody can reach. None of that is a pane, so none of it was anywhere in this app - you went
+and looked over SSH. `shared/backJobs.ts` is the reading, `main/backJobs.ts` the one process
+table it needs, `jobs`/`jobslist` the frame, and `PeerJobs` in `RemoteDialog.tsx` the rows
+under a device's pane picker.
+
+- **Three narrow classes, and the narrowness is the feature**: an agent CLI outside a pane
+  (`agent`, marked as a *run* when it carries a print/exec flag - the shape a scheduler
+  makes, and the one that can fail silently for a week because there is no screen to print
+  onto), a dev server (`dev`, borrowed from `devList.ts`), and a script under the projects
+  root that has been alive longer than `LOOP_MIN_SECONDS` (`loop`). A process table is ~700
+  rows here and a list of 700 answers nothing.
+- **Anything under a pane's own tree is left out.** That work already has a card, and
+  listing it twice is the duplicate-row bug `shared/desk.ts` documents at length.
+- **The age floor belongs to the loop class alone.** Without it the list is mostly Claude
+  Code's own hooks, several per prompt, each alive under a second - a list that flickers is
+  one nobody trusts. An agent or a dev server two seconds old is exactly what somebody
+  opened this to see.
+- **The fold is kind-aware, unlike `devList.ts`'s.** `npm run dev` and the `next dev` it
+  spawned are one server; a dev server an AGENT started is two different facts, and folding
+  it in leaves a card saying an agent is listening on port 5173.
+- **A refusal may never share a shape with an empty answer.** `Remote.jobsOn` rejects when
+  the device is not connected, because `[]` means "that machine is running nothing" - which
+  is the answer being checked - and a failed read wearing it says the PC is idle every time
+  the link is down.
+- **On demand, never on a tick**: it is a whole `ps -Ao command=` on the other machine.
+  `npm run test:backjobs` (the last block reads THIS machine's real table), and the frame
+  itself is proved crossing a real socket in `npm run test:remote`.
+
+**A handoff moves the WORK, still never the pty.** `Hand off` on a pane's own card asks
+one question — which machine — in a box of its own (`HandoffDialog.tsx`), because the
+answer used to be a ghost button on the third row of a card inside Devices, a screen
+carrying pairing codes, a QR, a tunnel switch and a per-pane mirror list. It lists the
+paired machines, says in words what travels (the repo as an `auto-sync:` commit, the
+conversation, the screen, the dev servers) and what a mid-turn pane does — **queued, never
+killed**, so pressing it during a turn is the ordinary case rather than a refusal. The
+bulk path is unchanged and still lives in Devices as `Hand off all`. `npm run
+test:handofffit` measures the box in a real Chrome over the shipped stylesheet: the
+answers stay reachable and a machine's NAME is never the string that gets cut. `Hand off`
+on a paired device's card in Devices (two presses — the first arms it) pushes each pane's repo as an `auto-sync:` commit,
 streams its transcript and screen tail over the link, and the far end pulls the branch,
 writes the transcript where its own CLI looks, and starts a fresh pane with `--resume` —
 through the same lane split a local launch gets. The sender's pane closes only on the far
@@ -316,313 +336,171 @@ pane's root-relative path onto the receiver's projects root (`shared/handoff.ts`
 
 ## The phone is this window, served
 
-There is no second app. The renderer imports nothing from Electron and nothing from Node -
-it is pure UI over `window.api` - so a phone client is that object over HTTP:
-`src/main/phone.ts` serves the built renderer, `renderer/src/browserApi.ts` supplies the
-object, and **`src/shared/surface.ts` is the ONE list** both transports are built from,
-typed `{ [K in keyof Api]: SurfaceEntry }` so a method with no channel does not compile.
-Never add a channel to a transport; add it there. The preload is 38 lines and names no
-channel of its own.
+There is no second app. The renderer imports nothing from Electron or Node - it is pure UI
+over `window.api` - so a phone client is that object over HTTP: `src/main/phone.ts` serves
+the built renderer, `renderer/src/browserApi.ts` supplies the object, and
+**`src/shared/surface.ts` is the ONE list** both transports are built from, typed
+`{ [K in keyof Api]: SurfaceEntry }` so a method with no channel does not compile. Never add
+a channel to a transport; add it there. Detail for every line below: `docs/design-notes.md`.
 
-- Calls land in the app's own `ipcMain` body via `src/main/ipcTap.ts`, so `tapIpc()` MUST
-  stay at the top of `index.ts`, above every registration.
-- Events go down one SSE stream; `phone.broadcast` sits **ahead** of the window check in
-  `send()` so a minimized window does not starve a phone. `send`s are queued client-side
-  because they are ordered.
-- **Off until the Devices panel is opened — and opening it is the switch.** Serving
-  grants a browser a pane, which is commands on this machine, so the app never listens
-  on its own; but opening Devices IS the intent to pair, so the panel starts serving on
-  mount and the QR is on screen the moment the panel is. There is no separate toggle any
-  more (v0.8.36: the toggle was where the QR hid, and the QR is the whole setup). `Stop
-  serving` lives in the fold and holds until the panel is next opened. Unpaired gets the
-  pairing page and not one asset; five wrong codes locks that address for a minute. The
-  cookie is `hmac(deviceId, code)` - derived, never stored - so rotating the code signs
-  every phone out.
-- **Watching a pane and typing into one are different permissions** (`src/main/passkey.ts`).
-  With `phone.typeGate` on, a browser may watch freely but the first keystroke of each
-  15-minute window costs a passkey touch — Face ID, Windows Hello — so a stolen cookie is a
-  viewer rather than a shell. Three things about it are load-bearing and easy to undo by
-  accident:
-  - **The gate is on `/pf/send` and `/pf/call`, NEVER on `pty:write`.** The app types into
-    panes itself — `recover`'s queued "continue", the prompt `sessions:start` hands a new
-    pane — and those are raised in the main process, so a gate at the HTTP boundary exempts
-    them by construction. Move it nearer the pty and both break, silently. If it ever has to
-    move, the seam is one `from: 'user' | 'app'` parameter on `SessionManager.write`.
-  - **It arms only over TLS** (`x-forwarded-proto: https`, same loopback-only trust rule as
-    `addressOf`). WebAuthn does not exist outside a secure context, so arming on the
-    plain-http LAN path would lock out the phones that cannot satisfy it. `test:passkey`
-    pins this in both directions because it is the check most likely to silently invert.
-  - **A 423 refuses the whole batch before anything runs**, and the client re-queues it at
-    the front. Keystrokes are ordered: running the ungated half of a batch delivers a word
-    with letters missing.
-  `DESK_ONLY` in phone.ts refuses `phone:typeGate` and `phone:forgetKey` over HTTP with the
-  same answer as a channel that does not exist — a lock whose switch is reachable from the
-  thing it locks is not a lock. Note that **every other invoke channel in `surface.ts` is
-  phone-reachable**; desk-only is a property of the transport, not of the surface.
-- **The QR leads with an address a plain phone can reach.** `phoneUrls()` puts the LAN
-  address first and the tailnet one after it: 100.64/10 answers only for a phone running
-  Tailscale, and leading with it made the QR a dead link on every ordinary phone the
-  moment this desk had a tailscale interface up. `reachWords` says "needs Tailscale on
-  the phone" for it, never "works anywhere" — only the tunnel earns that. Pinned by
-  `test:phone`, which feeds `phoneUrls` a mixed interface set.
-- **The tunnel never asks the system resolver for a name public DNS does not carry yet.**
-  `waitUntilServing` gates the probe on a DNS-over-HTTPS answer (cloudflare-dns.com,
-  which bypasses the local cache) and only then touches the hostname — probing straight
-  after `Registered` was the cached-NXDOMAIN trap in slow motion, 40s of ENOTFOUND
-  against a serving tunnel. The gate falls through after `PF_TUNNEL_RESOLVE_MS` (30s) so
-  a blocked DoH endpoint delays the probe, never defeats it. And the 20 MB binary is
-  prefetched when serving starts, so the switch costs seconds, not a download.
-- **Scanning asks; a press on the desk answers.** The QR carries the bare address, not the
-  code: the phone opens it, `POST /pf/ask` raises a card here with four digits that are on
-  both screens, and Approve mints THAT browser a 32-byte token of its own. So there is no
-  secret on screen to photograph, and — the part the code could never do — a device can be
-  signed out **by name**, because `who()` looks its token up on every request. `New code`
-  still exists and still signs out everything that typed one. One request at a time, five
-  per address per ten minutes, two minutes to answer, and the whole thing is a switch
-  (`phone.ask`) that falls back to the fragment-code QR. Nothing is granted by the asking.
-  `npm run test:phone` covers approve, the cookie arriving on the POLL (the only door back
-  to that browser), and that a signed-out cookie stops working on the next request.
-- **"One request at a time, five per address" needs the address to be real, and behind the
-  tunnel it is not.** cloudflared holds the phone's TLS connection and re-issues the request
-  locally, so every device on earth arrives as 127.0.0.1. That string is the ask slot, the
-  lockout key and the words the card prints, so believing the socket meant a second phone was
-  handed the first one's request and its four digits, five scans from anywhere shut the door
-  for ten minutes, and a phone on a train was labelled "this machine", which is exactly the
-  label that turns the card's internet warning off. `addressOf` believes `cf-connecting-ip`
-  (then `x-forwarded-for`) and does so ONLY from loopback, which is the one hop we put there
-  ourselves; a local process could spoof it and gains nothing, being already able to read the
-  pairing code out of config.json. Shape-checked before it is printed.
-- **The approve card belongs to the desk, and this UI also runs on the phone.** Drawn there
-  it is a full-screen veil over whatever that phone was doing, thrown up by any device
-  asking to get in, offering Approve to the one screen that cannot compare the digits with
-  the desk. `isPhoneClient()` (`renderer/src/client.ts`, set by `browserApi.ts`) is the only
-  thing that may gate on which copy is running, and it is for authority, never for layout:
-  a narrow window is `handheld.ts`'s question.
-- **Pairing is a camera, not a keyboard.** With asking off, Settings draws `<address>/#<code>` as a QR
-  (`shared/qr.ts`, no dependency, byte mode / level M / versions 1-6) and the pairing page
-  posts a code it finds in the fragment. A **fragment** because a browser never sends one
-  to the server: the code stays out of the access log and out of every `Referer`. The
-  typed field is still there for a phone with no camera. OAuth and email were considered
-  and refused - both move the secret through a third party and off this network to save
-  six keystrokes on a link that is otherwise entirely local.
-- **So the picture is the panel, and everything it is made of is folded.** Devices leads
-  with the phone, above the desktop card, and the phone panel shows a 168px QR and one
-  line of words; the address list, the code, the port and `New code` live under
-  `Other ways in`, and the desktop card's own code, addresses and port under
-  `Pair by hand`. Measured with both folds closed: **zero** codes, addresses and New code
-  buttons on screen, against 2 codes / 4 addresses / 2 New code buttons before. None of
-  that is wrong — it is what you reach for when the camera did not work — but all of it
-  at once, twice over, is what buried the one step that finishes the job.
-- **The panel says who is watching, never who is paired.** The cookie is derived, so every
-  phone that ever typed the code holds the same one and there is no per-device identity to
-  keep — which means there can be no per-device sign-out, and a `Disconnect` button beside
-  a row would be a lie (the stream returns at once, the cookie is still good). `New code`
-  is the only revoke and it takes all of them. Each row leads with **where the browser came
-  from** (`originOf` in `shared/net.ts`), because "somebody is watching" reads one way for
-  a phone in this room and another for an address off the internet. The same function
-  labels each offered address with what it reaches, so the panel can never promise
-  "works anywhere" for an address the server would then mark "this network".
-- **A phone signs in ONCE, and what makes that true is the address, not the auth.** The
-  cookie is ten years, HttpOnly and revocable by name — and every one of those was already
-  true while phones were being re-approved on the desk every launch, because a cloudflared
-  quick tunnel mints a NEW hostname per run and a cookie belongs to an origin. So
-  `main/funnel.ts` is tried before cloudflared whenever the machine can: Tailscale Funnel
-  serves public HTTPS on `<machine>.<tailnet>.ts.net`, which is this machine's own name and
-  is the same string after a reboot, an update and a network change. Nothing is installed
-  on the phone (Funnel is the public internet, not the tailnet) and nothing is downloaded
-  on the desk. Measured: up in under a second against cloudflared's ~20s. Every refusal —
-  no Tailscale, `tailscaled` stopped, a tailnet without the funnel attribute, no HTTPS
-  certs — falls silently through to cloudflared, because the person flipping the switch
-  asked for a way in and not for a provider. `TunnelState.stable` is the one word the panel
-  needs; `funnel --bg` is a setting tailscaled keeps, not a child process, so `stop()` has
-  to say so or a public address outlives the app. `npm run test:funnel`.
-- **`SameSite=Lax`, never `Strict`.** Strict withholds the cookie on a cross-site
-  navigation, and every real way this address is opened is one: a QR scanned in the Camera
-  app, a link tapped in Messages, a bookmark from another app's browser. The desk then sees
-  no cookie, calls a signed-in phone a stranger and serves the pairing page. `Secure` is
-  added only when the request really arrived over TLS (`x-forwarded-proto`), since on plain
-  http over the LAN it is a cookie the browser stores and never sends back.
-- **The cookie lasts ten years, so a copy of it has to be VISIBLE.** Expiring it is the
-  wrong answer twice over: a phone that loses its cookie needs somebody standing at the
-  desk to approve it again, which is the manual step this whole path exists to delete. So
-  `shared/deviceWatch.ts` watches instead, and it never refuses a request — a watcher that
-  revokes on suspicion locks Robert out from a train, which is the failure that makes the
-  feature not worth having. It marks the row; `Sign out` is still a press.
-  - **A signal that fires on ordinary life is not a signal.** A phone leaving the house
-    changes its address and its origin every day, so a changed PLACE is recorded and never
-    alarmed on. What is left is the two things a phone does not do by itself: turn into a
-    different browser (compared on a version-stripped `uaShape`, because an iOS upgrade
-    rewrites the numbers and marking every device the morning after a release is how a
-    warning stops being read), and hold a live stream from two origins at once — one
-    sign-in is one browser, so that is a copied cookie even when the user-agent matches.
-  - **An existing mark is never overwritten and never cleared by an ordinary arrival.**
-    The browser holding the stolen cookie is making requests too, so a later innocent one
-    wiping the mark means nobody ever sees it. `phone:clearMark` is the only eraser and it
-    is in `DESK_ONLY`: a warning a stolen cookie can dismiss about ITSELF is not a warning.
-  - `npm run test:devicewatch`, whose load-bearing half is the negative cases.
-- **One row per device, not one per approval.** A phone re-asks whenever its cookie is
-  gone, and appending each time is what made this desk's list nine rows for three phones —
-  at which point `Sign out`, which is per row, stops meaning anything. Approval replaces the
-  row with the same user-agent (the only thing about a browser that survives losing the
-  cookie) and keeps its original "signed in since"; a list written before that is collapsed
-  once on the way up, conservatively, by kind and place.
-- **A way in from anywhere is `cloudflared`, and the URL is not the claim.** `main/tunnel.ts`
-  runs a Cloudflare quick tunnel so a phone on any network reaches this desk with no
-  account, no VPN and nothing installed on the phone. Tailscale is the wrong answer to
-  ship: it needs an account, an app on the phone and an install on the desk.
-  - **Never look the hostname up before the tunnel has registered.** `*.trycloudflare.com`
-    is not a wildcard, so an early query gets NXDOMAIN and the resolver **caches it** —
-    measured 40 unbroken seconds of `getaddrinfo ENOTFOUND` while 1.1.1.1 had been
-    answering since t=8s, against an instant resolve on the next run that waited. The
-    tunnel was healthy both times. Hence the `Registered tunnel connection` gate.
-  - `up` is set by a real HTTPS request coming back with this desk's own bytes, never by
-    the URL line appearing. Measured: hostname 3–6s, public DNS 8–13s, first 200 ~1s later.
-  - Everything cloudflared says is on **stderr**; its stdout was 0 bytes on every run.
-  - Turning it on **lengthens the pairing code to 14** and signs every phone out. Six
-    characters is a LAN number: 387M combinations, and on a public address the per-address
-    lockout stops mattering because attempts come from as many addresses as the attacker
-    likes. Nobody types it — the QR carries it — so the longer one costs nothing.
-  - The binary is downloaded once (19–54 MB), never bundled, through a `.part` name and a
-    rename. Quitting kills it — it is not a pty, so `strays.ts` has never heard of it.
-  - `npm run test:tunnel` drives all of it against a stub that prints what the real program
-    prints, with every budget overridable by env.
-- **A copy made on the phone is the PHONE's clipboard.** `copyText` is an ordinary channel,
-  so over HTTP it ran `clipboard.writeText` in the main process - on the desk. Every copy
-  from a phone (a pane's "Copy output", a selection, a prompt) landed on the Mac and the
-  phone's clipboard never moved, which reads as "I can't copy text from the output on
-  mobile": the button worked, the bytes went to the wrong machine. `buildApi` now lets a
-  transport answer a method ITSELF, and `browserApi.ts` answers this one and
-  `readClipboard` locally - `navigator.clipboard`, falling back to the `execCommand`
-  textarea on the plain-http LAN path, where there is no secure context. Still one list:
-  the channel is still declared in `surface.ts` and the desk still uses it.
-- **A finger cannot select a canvas, so the output is also served as TEXT.** xterm draws to
-  a canvas and implements selection on MOUSE events; a finger dragged across it is a
-  scroll, so no gesture on a phone could pick out a line of an answer. `TextSheet.tsx` is
-  the pane's output as a `<pre>` - native selection, native loupe, one Copy all - and it is
-  where the DEPTH problem is answered too: the live replay is capped at 400 KB
-  (`BUFFER_LIMIT`), which for an agent whose "thinking" line repaints many times a second
-  is minutes rather than turns, so a phone could not reach what the desk still had in its
-  terminal. `paneLog` (`sessions:log`) reads the transcript off disk instead, up to 8 MB.
-  **Rendered, never stripped**: `strip()` would put every repaint frame on its own line -
-  the "it spams the thinking info" complaint written down as a document - so the bytes go
-  through a real xterm off-screen at the pane's own width and its BUFFER is what is shown.
-  Measured at 414x896: 400,000 bytes live against 529,160 characters / 20,008 lines in the
-  sheet, all of it selectable.
-- **A text field is the one place selection must survive `body { user-select: none }`.**
-  That rule inherits, and WebKit takes it literally: on iOS a field under an inherited
-  `-webkit-user-select: none` still types but will not raise the caret loupe, place the
-  caret mid-word, or select a word on a double tap. That is "let me select in the prompt
-  and change it - I can't even edit it on mobile". Both spellings, on every input and
-  textarea.
-- **...and the keys a phone keyboard does not have are drawn.** Once words are in the CLI's
-  own input box they belong to the pty, and every way of changing them - caret left, rub
-  out, escape - is a key that keyboard has no room for, so the bar could add to a prompt
-  and never edit one. `HandheldType` draws ⌫ ← → ↑ ↓ esc at 44px, as bytes (`DEL` 0x7f for
-  backspace, which is what a terminal sends). Tapping the terminal already moves the CLI's
-  cursor; these are the rest.
-- **A desk resize may not snap the pty out from under a phone.** The desk OWNS the size and
-  a phone BORROWS it - but "the desk takes it back on the spot" was written for a borrow
-  that had outlived the phone, and the desk does not only resize when a window is dragged:
-  showing a pane, toggling the grid and the window's own layout all refit and land in
-  `resize`. Each one pulled the pty back to 157 columns underneath a phone drawing 50, and
-  a CLI repaints by counting rows in the width it believes it has - so every "thinking"
-  frame landed under the last one instead of over it. That is "the output is very buggy on
-  mobile, it spams the Claude thinking info". A desk resize during a borrow is now
-  REMEMBERED (`deskCols/deskRows`) and applied when the phone lets go; the desk draws the
-  borrowed grid meanwhile (`grid` on `TerminalPane`, the same fit a mirror uses, without a
-  mirror's other refusals). `npm run test:panesize`.
-- **A phone's `100vh` is not its screen.** It is the LARGE viewport - the one you get with
-  the toolbars scrolled away - so `.app` at `100vh` laid the app out taller than the glass
-  and its last ~60px sat under Safari's bottom bar, taking the typing bar with it. That is
-  "it shows type to this pane, it needs to be moved up so you can tap on it".
-  `html.handheld .app` is `100dvh`, and the bar clears the home indicator by 8px on top of
-  the inset. Measured at 414x896: the input is 44px tall, ends 12px above the viewport,
-  and `elementFromPoint` at its centre returns the input.
-- **A phone re-wrapping a pane SCROLLS the old frame away; it may never clear it.**
-  `t.clear()` was in that path and it is why a pane opened on a phone was blank: the
-  buffer it dropped was the one `getBuffer` had replayed into that browser a beat earlier,
-  so every pane seeded its history and then deleted it 400ms later. A screenful of
-  newlines puts the mis-wrapped frame into the scrollback instead - where it can be read -
-  and the redraw paints the live frame under it. `test:phoneview` proves the history
-  survives AND that the re-wrap really happened (`__pf[id].rewraps()`): without the second
-  half the check passes by never having run.
-- **The desk owns a pane's shape; a phone borrows it.** One pty cannot be 50 columns and
-  157 at once, and both windows fit their own screen and say so - so whoever spoke last
-  won, and a phone that looked at a pane left the DESK drawing a full-width pane whose
-  every line wrapped a third of the way across, for as long as it took somebody to resize
-  the window by hand. Measured minutes after the phone was closed: desk terminal 157x57,
-  pty 50x50. `resize` takes a `borrowed` flag; `returnSizes` puts every borrowed pty back
-  and runs when the phone leaves the pane (`pty:return`, from `showList`) and when the
-  last phone stream closes (`onIdle`). A desk resize takes ownership back on the spot, so
-  a phone that borrowed hours ago can never snap a window the user has since resized.
-  `npm run test:panesize`.
-- **What was on screen was drawn at the other width, so the phone drops it.** The CLI
-  hard-wrapped those lines itself; re-wrapping 157-column box drawing at 50 is not history,
-  it is soup - which is what "I open a pane and it is all messed up, I have to clear it"
-  was. On a phone, a COLUMN change clears the buffer and asks for a repaint. `clear`, never
-  `reset`: it keeps the line the cursor is on, so a plain shell is left holding its prompt
-  rather than a blank pane. Only columns, because the keyboard opening takes rows and
-  nothing re-wraps.
-- **A phone is not a small desktop.** Under 720px the list and the panes take turns
-  (`handheld.ts` + one `@media` block); the list is the home screen and a tapped pane gets
-  the display. `display: none`, never a 0px xterm. The pane's own header is made to FIT
-  rather than to scroll: measured at 414px it wanted 458px of the 404 it had, so Close was
-  off the edge entirely and Clear and Fix were 27x23 and 30x19 against a 44px finger. The
-  path goes (the list said it), the folder and editor buttons go (`desk-only` - they open a
-  window on the machine you are not holding), and what is left is 36px.
-- **...and that was not enough, so the header stopped carrying actions at all.** With those
-  hidden it still measured 486px of content in a 404px box: restart, Fix and Close drawn from
-  x=417 to x=491, past the right edge with nothing to scroll them back, and `.pt-name` squeezed
-  to **0px** paying for them - "can't drag menu where the clear button is and can't see on the
-  right side all options". Five 36px targets, a ~150px agent picker and an 86px branch badge do
-  not go into 404 however they are trimmed. The row now keeps only what says WHICH pane this is
-  and every action moves behind one ⋯ into `PaneMenu.tsx`, the ordinary phone action sheet:
-  full-width rows with a WORD on them, >=52px, destructive ones last. After: scrollWidth 404
-  against clientWidth 404, and the name is back. `probe.mjs --touch` is what makes any of this
-  checkable - half of what this app does on a phone is decided by `pointer: coarse`, which a
-  device-metrics override does not supply.
-- **A phone turned sideways is still a phone.** The handheld rule was width-only, so an iPhone
-  in landscape (932x430) got the 282px sidebar beside a pane - a layout holding neither the Back
-  chip nor the swipe, which is why "swipe left doesn't always work" was true in one orientation
-  and not the other. `HANDHELD_QUERY` also matches a coarse pointer under 520px tall: a handset
-  in landscape and nothing else, since a tablet held sideways is 820px tall. Same string in
-  `styles.css`, and a copy that drifts is a layout with no rules.
-- **The phone's own Back goes back to the list**, not out of the page: opening a pane pushes one
-  history entry, `popstate` returns, and the chip unwinds that same entry so the stack cannot
-  grow a step per pane opened.
-- **The swipe back arms anywhere in the pane, never at the left edge.** That edge is the one
-  strip a phone browser has already taken for its OWN back gesture, so the app was listening for
-  the swipe it was least likely to be handed. It fires on clearly sideways and clearly more
-  sideways than up (`dx > 60, dy < 70, dx > dy * 1.6`); a terminal's own scrolling is vertical,
-  so there is nothing to take from it.
-- **One composer, not two.** xterm's helper textarea is a text field to a phone, so tapping the
-  terminal raised the keyboard with its own caret beside the app's typing bar. On a coarse
-  pointer that textarea keeps its keydown handling (a paired hardware keyboard still types) and
-  gives up being a field: `readOnly`, `inputMode: none`, out of the tab order. Gated on
-  `pointer: coarse` and NOT on the handheld width - a narrow desktop window's terminal must stay
-  typeable.
-- **The typing bar autocorrects.** It was written as a stand-in for that textarea and inherited
-  its `autoCorrect="off"`, which is right for bytes going straight to a pty and wrong here:
-  nothing leaves the bar until Send, so the substitution has already happened before any byte
-  moves, and what is typed there is a sentence to an agent, not a shell command.
-- **A tap opens a pane on the first press.** A finger is never still, and a mobile browser
-  throws the `click` away the moment it decides the gesture was a scroll - so the first tap
-  was spent proving it was a tap. A touch that did not become a drag opens the row from
-  `pointerup` instead, which no scroll heuristic gets to veto; a `pointercancel` and a
-  finger that travelled more than `TAP_SLOP` still open nothing.
-- **Automation opens a pane through `scripts/pf-ctl.mjs`, never through `open --args`.**
-  On a Mac `open -na PaneForge --args --open <dir> --prompt <text>` drops the WHOLE
-  argument list when any argument holds an em dash, exits 0 with empty stderr, and the
-  app quits having found no request - five #momin bundles reported "session spawned" with
-  no pane. pf-ctl posts JSON to the phone server and `sessions:start` answers with the
-  pane's id, so the caller checks `sessions:list` instead of trusting a launcher.
-  `--open` on the command line is for a person typing it.
-- The pty never moves, same as Devices.
-- `npm run test:phone` (server + surface parity, no browser). `npm run test:phoneview`
-  needs a running copy: `npm run build && npm run try -- --keep --show`, then
-  `node scripts/phone-view-test.mjs --port <port> --code <code>`. A pane's text is in
-  `window.__pf[id].term.buffer`, never in the DOM - xterm draws to a canvas.
-- Not built: headless host (B1 - the app must be running), phone-first diff (H2).
+- `tapIpc()` MUST stay at the top of `index.ts`, above every registration - calls land in
+  the app's own `ipcMain` body via `src/main/ipcTap.ts`. Events go down one SSE stream, and
+  `phone.broadcast` sits **ahead** of the window check in `send()` so a minimized window
+  cannot starve a phone. Sends are queued client-side because they are ordered.
+- **Off until Devices is opened, and opening it IS the switch** (there is no separate
+  toggle; the QR was what the toggle hid). Unpaired gets the pairing page and not one asset;
+  five wrong codes locks that address for a minute. The cookie is `hmac(deviceId, code)` -
+  derived, never stored - so rotating the code signs every phone out.
+- **Watching and typing are different permissions** (`src/main/passkey.ts`). With
+  `phone.typeGate` on, the first keystroke of each 15-minute window costs a passkey touch.
+  Three load-bearing details: the gate is on `/pf/send` and `/pf/call` and **never on
+  `pty:write`** (the app types into panes itself, from the main process); it arms only over
+  TLS, since WebAuthn needs a secure context and arming on plain http would lock out the LAN
+  phones; and a 423 refuses the WHOLE batch before anything runs, re-queued at the front,
+  because running the ungated half of a batch delivers a word with letters missing.
+  `DESK_ONLY` in phone.ts refuses `phone:typeGate` and `phone:forgetKey` over HTTP - a lock
+  whose switch is reachable from the thing it locks is not a lock. Every OTHER invoke channel
+  in `surface.ts` is phone-reachable; desk-only is a property of the transport, not the surface.
+- **Scanning asks; a press on the desk answers.** The QR carries the bare address, `POST
+  /pf/ask` raises a card here with four digits on both screens, and Approve mints THAT
+  browser a 32-byte token - so nothing on screen can be photographed, and a device can be
+  signed out **by name**. One request at a time, five per address per ten minutes, two
+  minutes to answer, and it falls back to the fragment-code QR (`phone.ask`). With asking
+  off, the code rides in the URL **fragment**, which a browser never sends to a server.
+- **Behind a tunnel every client is 127.0.0.1**, so `addressOf` believes `cf-connecting-ip`
+  (then `x-forwarded-for`) and does so ONLY from loopback. That string is the ask slot, the
+  lockout key and the words the card prints.
+- **One row per device, not one per approval** - approval replaces the row with the same
+  user-agent and keeps its "signed in since". The panel says who is WATCHING, never who is
+  paired: the cookie is derived, so there is no per-device identity and `New code` is the
+  only revoke. Each row leads with where the browser came from (`originOf`).
+- **The ten-year cookie is watched, never revoked on suspicion** (`shared/deviceWatch.ts`):
+  a changed place is recorded and never alarmed on; a changed browser shape and one live
+  stream from two origins at once are the marks. A mark is never overwritten or cleared by
+  an ordinary arrival, and `phone:clearMark` is `DESK_ONLY`.
+- **`SameSite=Lax`, never `Strict`** - every real way this address is opened (a QR, a link
+  in Messages, a bookmark) is a cross-site navigation. `Secure` only when the request really
+  arrived over TLS.
+- **A way in from anywhere**: `main/funnel.ts` (Tailscale Funnel - the hostname never
+  changes, so a phone signs in ONCE) is tried first, falling silently through to
+  `main/tunnel.ts` (a cloudflared quick tunnel: no account, nothing on the phone, a new
+  hostname per run). Never look the hostname up before `Registered tunnel connection` - an
+  early query caches NXDOMAIN for 40s. `up` is set by a real HTTPS request returning our own
+  bytes. Everything cloudflared says is on **stderr**. Turning it on lengthens the code to 14
+  and signs every phone out. The binary is downloaded once through a `.part` name and a rename.
+- **The QR leads with the LAN address**, tailnet after it (100.64/10 answers only for a phone
+  running Tailscale), and `reachWords` never promises "works anywhere" for an address the
+  server marks "this network". The panel folds the codes, addresses, port and `New code` away
+  under `Other ways in` / `Pair by hand`: zero of them on screen with the folds closed.
+- **A copy made on the phone is the PHONE's clipboard** - `buildApi` lets a transport answer
+  a method itself, and `browserApi.ts` answers `copyText`/`readClipboard` locally.
+- **The output is also served as TEXT** (`TextSheet.tsx`): a finger cannot select a canvas.
+  It reads the transcript off disk (`sessions:log`, up to 8 MB) rather than the 400 KB live
+  replay, and it is RENDERED through an off-screen xterm, never stripped - stripping puts
+  every repaint frame of a thinking line on its own row.
+- **A text field must opt back IN to selection**: `body { user-select: none }` inherits, and
+  iOS then refuses the caret loupe. Both spellings, on every input and textarea. And the keys
+  a phone keyboard lacks are drawn (`HandheldType`: ⌫ ← → ↑ ↓ esc at 44px, as bytes).
+- **The desk OWNS a pane's shape; a phone BORROWS it** (`resize(borrowed)`, `returnSizes`).
+  A desk resize during a borrow is REMEMBERED and applied when the phone lets go, because
+  showing a pane, toggling the grid and the window's own layout all land in `resize` - each
+  one used to snap the pty back under a phone mid-repaint. A phone re-wrapping a pane scrolls
+  the old frame away and may never `clear()` it. A COLUMN change clears the buffer and asks
+  for a repaint; `clear`, never `reset`.
+- **A phone is not a small desktop.** `handheld.ts` + one `@media` block: under 720px, or a
+  coarse pointer under 520px tall (a handset in landscape), the list and the panes take turns
+  with `display: none`. `100dvh`, never `100vh`. The pane header keeps only what says WHICH
+  pane this is; every action moves behind one ⋯ into `PaneMenu.tsx` (52px rows, words,
+  destructive last). Back goes to the list via one history entry; the swipe arms anywhere in
+  the pane, never at the left edge the browser has already taken. A tap opens from `pointerup`
+  so no scroll heuristic can veto the first press. One composer: xterm's helper textarea gives
+  up being a field on a coarse pointer, and the typing bar autocorrects (nothing leaves it
+  until Send). `isPhoneClient()` gates AUTHORITY only, never layout - the approve card is not
+  offered on the screen that cannot compare the digits.
+- **Automation opens a pane through `scripts/pf-ctl.mjs`**, never `open --args`: one em dash
+  in the argument list makes macOS drop the whole list and exit 0.
+- `npm run test:phone` (server + surface parity). `npm run test:phoneview` needs a running
+  copy. A pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
+- Not built: headless host (B1), phone-first diff (H2).
+
+## A pane can run on somebody else's model
+
+Most of `shared/agents.ts` is one binary pointed somewhere else: Claude Code reads
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` and nothing else, so "Claude Code on
+GLM" is a catalogue entry with two variables set, and every feature in this app that
+reads a Claude pane keeps working. Separate ids rather than a switch on `claude`,
+because the two have different histories, costs and failure modes and a pane must say
+which it is on its card.
+
+- **A provider is an entry in `KEY_PROVIDERS` plus an agent whose `env` names
+  `keyVar(id)`.** Settings draws its key field off that list, so a provider added to
+  the catalogue reaches the screen by itself; it used to be one hardcoded OpenRouter
+  field, which meant a new entry shipped with nowhere to authenticate from.
+- **"Anthropic-compatible" is probed, never read.** DeepSeek (`https://api.deepseek.com/
+  anthropic`) and Z.ai (`https://api.z.ai/api/anthropic`) both answer a junk-key POST
+  with a 401 in Anthropic's own error shape, which is how a real implementation is told
+  from a rewrite of chat-completions. **xAI does not have one** — every claim that it
+  does traces to a non-xAI page — so Grok is its own CLI entry (`grok`, installed by
+  x.ai's script into `~/.grok/bin`, which `which.ts` now hydrates because the script only
+  *tries* to symlink onto PATH). Neither base URL carries `/v1`: the CLI appends it.
+- **A key pasted in Settings reaches the menu somebody is actually looking at.** The model
+  list is per agent for a good reason - `z-ai/glm-5.2` under plain Claude Code is a 401 in a
+  healthy-looking pane - but that made the key do nothing VISIBLE: the runner still says
+  "Claude Code", so 51 models sat one menu away with nothing on screen saying which menu.
+  `siblingModels` borrows another runner's models into this one's dropdown under the
+  PROVIDER's heading (`OpenRouter · Free`, never `Claude Code on OpenRouter` - a runner
+  name over a model list reads as a second product to choose between, which is the
+  confusion the borrowing exists to remove), each row carrying `agent`, so the press
+  switches the runner and the model together. Two refusals hold it honest: only a provider whose key is actually SAVED,
+  and only a sibling on the same `bin`. `config:set` invalidates the 20s agent cache, or the
+  first dialog after pasting the key still shows nothing.
+- **A blank key drops the token and KEEPS the base URL.** Dropping both would run plain
+  Claude Code inside a pane whose card says GLM — worse than an error, because nothing
+  says so. The Settings card names the missing key instead (`missingKeyFor`), which is
+  the first use `keyProviderFor` has ever had.
+- **`HEADLESS` is keyed by agent id**, so these were silently undrivable while running the
+  identical binary. They share `claude`'s entry now. Grok is deliberately absent: its
+  headless flags are unverified, and `drivable()` refusing is better than a guess.
+- `npm run test:agentenv`.
+
+## ...and the model list is not this build's opinion of what exists
+
+`OPENROUTER_MODELS` was measured on one day in August and a model published after it was
+reachable only by typing its id into "Other..." - which is how `stealth/ox-alpha` (free,
+1M context, tool calling, published 2026-08-20) was invisible in an app whose whole point
+is running a pane on somebody else's model. `main/orModels.ts` keeps a copy of
+OpenRouter's own public list on disk and `shared/orCatalogue.ts` turns it into the menu.
+`npm run test:orcatalogue`.
+
+- **It may never be in anybody's way.** `listAgents` is synchronous and runs on every
+  dialog open, so it reads the catalogue from MEMORY and kicks the fetch with `void`; a
+  list that arrives late reaches the next open. Missing, stale, empty, offline, a 502, an
+  error page: every one of them leaves the app exactly as it was, a hand-written shortcut
+  list plus "Other...". An empty answer is a FAILED answer and is never written over a
+  good one - writing it would blank the menu for twelve hours.
+- **Only models that can call tools.** A model without them answers the first turn in a
+  Claude Code pane and then cannot read a file: a pane that looks perfectly healthy and can
+  do nothing. A row that does not declare its parameters is dropped rather than guessed
+  at - this is a shortcut list, and everything left out is still one "Other..." away.
+- **Nothing is capped, and every row carries BOTH prices.** Free models lead under their
+  own heading because that answer is small and is why anybody opens the list; every paid
+  tool-capable model follows under one heading. The 25-row cap that used to sit there was
+  answering a question `Select` had already solved - it becomes a filter box past eight
+  options - and a cap inside a filter box is invisible: you type the model you want, get
+  nothing, and cannot tell "OpenRouter does not have it" from "this build chose not to
+  show it". `Select` searches the VALUE as well as the label, because `labelFor` strips
+  the vendor (`Z.ai: GLM 5.2` -> `GLM 5.2`) and the vendor is what people type. The hint
+  is `$in in · $out out /M`: input alone is the cheap-looking half, and an agent pane is
+  mostly output. Newest first, in both groups.
+- **A stealth model says so in the hint, where the choice is made.** OpenRouter's own
+  words: developed and operated by a provider who has chosen to remain anonymous, and
+  "prompts and completions are retained by the provider and are not used for training".
+  Retained by somebody unnamed is a fact a person needs at the moment they pick it, not in
+  a document nobody opens.
+- **How a CLI addresses the model is read off its own `env`**, never off a list of ids: an
+  agent that authenticates with the OpenRouter key names it bare (`z-ai/glm-5.2`), one that
+  passes the key to a provider of its own reaches it through `openrouter/`. So an agent
+  added to the catalogue is covered with no edit here.
 
 ## Every colour is derived, and every pane says which project it is in
 
@@ -662,6 +540,96 @@ to turn a folder, a branch, a worktree suffix and a lane id into words.
   checkout": an absent fact and a known-negative fact are not the same thing.
 - `npm run test:place` is 56 assertions on the strings themselves.
 
+## The sessions list is the whole desk, both machines
+
+There is no Fleet screen any more. It answered "which pane needs me first", which is the
+question the sidebar is looked at for, and it answered it somewhere you had to remember to
+open - so the sidebar answers it instead: grouped **Your move / Running / Ready / Ended**,
+`shared/fleet.ts` still deciding, Ctrl+Shift+F toggling back to the order the cards were
+dragged into (kept in `localStorage`, not config - it is a view, and two machines have no
+reason to agree about it). While grouped a press is only a press: a drag reorders `order`,
+`order` decides nothing in that view, and a row that followed the pointer and then snapped
+back to wherever its state puts it reads as a broken list.
+
+**And every pane on a paired machine is in it, without being mirrored.** A pane on the PC
+used to be invisible here until somebody picked it in Devices, so "is anything running over
+there" was a question you went and asked - no way to watch the machine that is meant to be
+doing the work. Nothing new crosses the link for this: `client.panes()` has always held
+every pane the far end has, as whole `Session` objects, and `remote/index.ts` was throwing
+all but six fields away on the way to the renderer. `RemotePaneInfo` now carries everything
+`FleetPane` reads, so a PC pane sorts into `Your move` beside a local one.
+
+- **Listing is not mirroring, and that split is the whole design.** LISTING a remote pane
+  costs a few fields on the `remote:changed` message that is already sent whenever anything
+  over there moves. MIRRORING one costs a live byte stream and an xterm buffer **on this
+  machine, per pane** - which is the one cost a laptop acting as the screen for another
+  machine's work cannot pay at scale. So every pane is listed, none is mirrored until it is
+  pressed, and `openListed` is what turns one into the other. The agent's own speed is not
+  in this trade at all: it runs over there either way.
+- **A listed row has no pane NUMBER.** There is nothing on this machine for Ctrl+N to reach
+  until it has been opened. The number of a real row still comes off the FULL ordered list,
+  never off this screen's order - the device filter is visual, and a number that moved with
+  the filter would move the Ctrl key under somebody's finger.
+- **A mirrored pane is never listed twice.** Both halves are true for a beat while a mirror
+  attaches, and a pane drawn once live and once as an invitation to open it reads as a
+  duplicate rather than as a bug.
+- **A device that is off, connecting or in error lists nothing.** Its pane list is from
+  before it went, and drawing that as live work is worse than drawing nothing.
+- **The badge counts both machines.** `fleetWaiting` over the whole list, not over this
+  desk's panes - the number sat at zero all day on a laptop whose agents all run on the PC.
+- **The device filter offers a machine that is merely CONNECTED**, not only one with a pane
+  mirrored: built from mirrored sessions alone it could not name the one machine somebody
+  opens the list to look at.
+- A question over there cannot be ANSWERED from a row (the buttons need the frame the
+  chooser was read off, which needs a mirror), but it is the loudest reason to open one, so
+  it ranks the row exactly as a local question does.
+- `shared/desk.ts` is the arithmetic, out of the component for the same reason `fleet.ts`
+  and `place.ts` are. `npm run test:desk`, whose load-bearing half is the negatives and
+  whose last block is a SOURCE assertion: a field added to `FleetPane` and not forwarded
+  through the peer map still typechecks, still renders, and sorts every remote pane wrong
+  for ever.
+
+## Finding a setting
+
+The search box above the rail used to filter the RAIL, so it could only ever say which
+PAGE a thing was on - and "close a pane" then meant reading a page of thirty switches. It
+now finds the SETTING: the matching rows are tinted on the right, the best one is scrolled
+to and edged in the accent, and the rail follows it to that tab. Nothing is hidden, which
+is the original rule and still right - a switch read out of the group that explains it is a
+switch nobody can judge.
+
+- **The index is GENERATED from the dialog's own source** (`scripts/settings-index.mjs` ->
+  `src/shared/settingsIndex.ts`, `npm run gen:settings`). A hand-written one is the obvious
+  answer and the wrong one: a setting added later is simply missing from search, silently,
+  and the way anybody finds out is by searching for it and being told nothing matches.
+  `npm run test:settingsearch` regenerates it in memory and fails on any disagreement.
+- **A setting is found by its hint as well as its name.** "Close a pane nobody has touched
+  for a while" is not a phrase anybody types; "idle" and "memory" are, and both are in the
+  sentence under it. A hit on the LABEL still outranks a hint-only one.
+- **The marking is done to the DOM**, not by threading a `highlight` prop through nine tab
+  bodies: the thing being marked is a row that already draws its own name, and that name is
+  what the index took out of this same file. A live reading in brackets is why the match is
+  a prefix test rather than equality.
+- `scrollIntoView` is `nearest`, never `center` - a match already on screen must not scroll
+  the page out from under somebody reading it. No animation: `test:anim`'s rule.
+
+## A card answers a right-click, and can say what it is
+
+Everything you might do to a pane lived somewhere that was not the card: rename behind a
+double-click nobody discovers, hand off / clear / close inside the pane's own header, and
+"what IS this, how long has it been open" nowhere at all. `SessionMenu.tsx` is the desktop
+context menu on the card - opened at the pointer, clamped on screen after it is measured
+(the height depends on which actions that pane offers, so a fixed number is wrong for half
+of them), arrow keys and Escape. It is deliberately NOT `PaneMenu.tsx`: that is the phone's
+bottom sheet with 52px rows, same actions, other hand.
+
+`SessionInfo.tsx` is the "see info" the card has no room for. **Its clocks are live** -
+`Open for` counts from `createdAt` through `useNow` (the app's one shared second timer), so
+"can I close this" gets a ticking answer rather than a frozen one. The header's clock is the
+TURN and stays that way; the two numbers are different questions. Everything else on it is a
+reading the app already holds - last spoke, last typed into, the place, and the pane's real
+cost out of `main/usage.ts` - so opening it polls nothing.
+
 ## Copying a prompt, or the answer it got
 
 Two copy icons beside every prompt that is on screen: the prompt, and the reply that
@@ -696,6 +664,14 @@ followed it. They are drawn for every VISIBLE turn, never for the hovered one.
 - The reply is the rows after the prompt up to the row before the next one. Off by one in
   either direction and the paste is perfect and wrong.
 
+**Every copy a person asked for says so.** The clipboard gives no feedback, so a copy that
+went nowhere and one that worked look identical - "I press copy and nothing tells me it
+copied". Ctrl/Cmd+C, the right-click copy, copy mode's `y` and the selection chip all report
+in the window's toast with the line count as the receipt (`sayCopied`, one counter in one
+place - the right-click path had `sel.split('n')`, counting the letter n). Copy ON SELECT is
+the one silent path and deliberately so: nobody pressed anything, and the highlight is its
+own feedback.
+
 ## A click puts the cursor where you clicked
 
 A CLI's prompt is drawn text and a pty takes keystrokes, so a click cannot place a caret —
@@ -712,6 +688,21 @@ modifier and why this one did too.
   (104, row 10) → (10, row 9) across a wrap in a 157-column pane, exact both times.
 - **On mouseup, and only when the pointer did not travel.** Swallowing the mousedown would
   take drag-selection with it, and copy-on-select is the more important of the two.
+- **The composer a CLI draws is ONE text field, and it is found by its rules, not by its
+  frame.** Claude Code 2.1.x draws no frame at all - a rule, `❯ text` with each further row
+  indented two spaces, another rule - so `isWrapped` said the rows were unrelated, `sameBox`
+  found no box, and every selection spanning two rows deleted a single character: "it
+  doesn't delete all the highlighted text". `composerAt` (`shared/promptBox.ts`) walks to
+  the rule above and to a rule of the SAME width below and requires a prompt marker on the
+  first row; `inputRows` in the pane turns that into spans, and `offsetIn`/`keysForRows`
+  (`shared/cursorMove.ts`) count over them. **Crossing a row boundary costs exactly one
+  character** - the space the wrapper ate, or a hard newline - and **nothing** when the row
+  is drawn out to the full width, because only a word too long for the line is split.
+  Measured live at 157 columns: a 244-character prompt draws 242 and is emptied by 244; 300
+  unbroken `x` are emptied by 300. A row within a column of the width counts as full on
+  purpose - over-counting deletes a character nobody highlighted, under-counting only leaves
+  one behind. **The marker is followed by U+00A0, not a space**, which is what made every one
+  of these refuse in silence while every test passed: `BLANKS` in `promptBox.ts`.
 - **A drawn input box is the one place a bare click may go up and down.** Every agent CLI
   draws a multi-line box, and a second line of a draft is a hard newline rather than a
   wrap - so the `isWrapped` chain called the rows unrelated and a click on line two did
@@ -786,95 +777,147 @@ person who walked away mid-sentence. Two #momin bundles sat like that for hours.
 
 ## An agent's question is a row of buttons
 
-A CLI that asks "which of these?" stops until somebody arrows to a row and presses
-return. At the desk that is two seconds; away from it, it is the rest of the run - the
-pane goes idle and green and looks exactly like one that finished. `shared/choices.ts`
-reads the chooser off the pane's own frame, so it covers every CLI here rather than
-whichever one has a hook.
+A CLI that asks "which of these?" stops until somebody presses return; away from the desk
+that is the rest of the run, and the pane goes idle and green looking exactly like one that
+finished. `shared/choices.ts` reads the chooser off the pane's own frame, so it covers every
+CLI here rather than whichever one has a hook. Why each rule: `docs/design-notes.md`.
 
-- **The reading is narrow because the expensive failure is a FALSE question**, not a
-  missed one: buttons drawn over a numbered list in an answer would type arrow keys into
-  a composer holding somebody's draft. Three things must all be true - the CLI's own
-  `Enter to select` / `Enter to confirm` footer, options numbered 1..N with no gaps, and
-  exactly one row carrying the arrow. Both positive fixtures in `npm run test:choices`
-  are real frames off this machine's pane logs, because the AskUserQuestion widget puts a
-  paragraph under each option and the built-in resume prompt does not - a parser written
-  against either alone reads the other as no question at all.
-- **Arrows and a return, never the digit.** A chooser that only reads the arrows ignores
-  a digit silently, and the two are indistinguishable from the frame. Spaced
-  `CHOOSE_GAP_MS` apart for the same reason `queuePrompt` sends its return separately: a
-  burst in one write reaches a widget that has not redrawn between the keys.
-- **It counts from where the arrow is NOW**, so the frame is re-reported when the
-  selection moves (`askSignature` includes it). Without that, somebody arrowing at the
-  desk leaves a phone's button picking a row the distance they moved it away. A press
-  against a question the pane has left is REFUSED, never walked from a stale position.
-- **The reading is on the SESSION, not in the pane**, because the surfaces that are not
-  the desk are the point: the phone client draws the same buttons and `pty:choose` is
-  reachable over the phone server. A mirrored pane is answered by writes over the link,
-  keyed off the frame that came with the session list.
-- `scripts/pf-telegram.mjs` posts a question to Telegram with one button per option.
-  **It is post-only by default and that is load-bearing**: a bot token has exactly one
-  long-poller, and a second does not share the updates, it STEALS them and breaks the
-  first with `409 Conflict` - measured against the live bot on the first run. Taps arrive
-  by being handed to a loopback endpoint; `--poll` is opt-in and only correct for a token
-  nothing else reads.
-- **A question is also RED, and it also leaves the machine.** Every idle reading in the app
-  says yes about a pane that is only quiet because it is owed an answer, so the card and the
-  pane itself glow red while `Session.ask` is set (`.row.asking` / `.xterm-wrap.asking`) and
-  the card's title line carries the word `asks you` with the question on its hover - the blue
-  lane glow that was removed from that card was removed for being a colour with nothing to
-  read, not for being a colour. The same moment posts the question to Telegram
-  (`main/askNotify.ts`, from the new `ask` event on SessionManager, Settings → "Send a pane's
-  question to Telegram"): `scripts/pf-telegram.mjs` is the half that turns a TAP into
-  `pty:choose` and nothing on this machine ever started it, so the message had never once
-  arrived. It posts and stops - no `getUpdates`, because a bot token has exactly one
-  long-poller and a second one steals the updates rather than sharing them. Silent with no
-  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (environment or `~/.claude/usage-notify.env`), one
-  message per question (`sameAsk`, so arrowing through the options sends nothing), and never
-  for a mirror - that pane's own machine is raising it too. `npm run test:asknotify`.
-- `npm run test:choices`. The load-bearing assertion is on the BYTE
-  (`charCodeAt(0) === 27`): the first version of that test lost its escape in the same
-  edit the source did, so `'[B' === '[B'` passed while the app would have typed the
-  letters into a chooser.
+**The card is docked to the RIGHT of the question, and does not repeat it.** It used to lie
+across the bottom of the pane, which is exactly where a CLI draws its chooser - so the thing
+being answered was underneath the thing answering it, and the card carried a second copy of
+the question, clamped to two lines, to make up for covering it. Two questions out of one,
+and the worse of the two was on top. Docked right (260px, `max-width: calc(100% - 16px)`,
+full-width again on a coarse pointer), the CLI's own question stays readable beside it -
+measured live at 260 of 1198 with 930px clear. The answers are one per line and all the
+same width, so arrowing repaints one border colour instead of reflowing a wrapping row of
+pills across the pane: that reflow was the "laggy when I arrow up and down" report, on top
+of the render cost the memo below already fixed. `npm run test:askrender` pins the dock,
+the absent copy, and the equal button widths.
+
+- **The reading is narrow because the expensive failure is a FALSE question**, not a missed
+  one: buttons over a numbered list in an answer would type arrows into somebody's draft.
+  Three things must all be true - the CLI's own `Enter to select` footer, options numbered
+  1..N with no gaps, and exactly one row carrying the arrow. Both positive fixtures in
+  `npm run test:choices` are real frames off this machine.
+- **A RULE in the list is read exactly like a blank line.** Claude Code 2.1.235 draws a
+  full-width rule before the options it always appends, and treating it as prose stopped the
+  walk one option in - so a live 159-column pane with a question plainly on screen read as NO
+  question: no buttons, no red card, no Telegram, nothing for `autoAnswer` to press. The box
+  gutter down the left is stripped too. The FOOTER is still the load-bearing guard, so this
+  cannot admit a false question.
+- **Arrows and a return, never the digit** (a chooser that only reads arrows ignores a digit
+  silently), spaced `CHOOSE_GAP_MS` apart. It counts from where the arrow is NOW
+  (`askSignature` includes it), and a press against a question the pane has left is REFUSED
+  rather than walked from a stale position.
+- **The reading is on the SESSION, not in the pane** - the phone draws the same buttons and
+  `pty:choose` is reachable over the phone server; a mirror is answered over the link.
+- **A question is RED, makes its own NOISE, and leaves the machine.** Every idle reading in
+  the app says yes about a pane that is only quiet because it is owed an answer, so the card
+  glows red down its left edge while `Session.ask` is set (`.row.asking`, 15% and a 3px
+  pulsing bar - 7% was a tint you find once you know it exists) and carries the words
+  `asks you` with the question on its hover. There is no ring on the pane itself: the same
+  fact drawn twice over the agent's live output read as something the agent had printed.
+  `sounds.ask` (default `knock`) plays on `sessions:ask`, and `done` is deliberately NOT
+  played over it - a finished turn and a stopped one are the two most different outcomes
+  there are. `main/askNotify.ts` posts it to Telegram (Settings → "Send a pane's question to
+  Telegram"): silent with no `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, one message per
+  question (`sameAsk`), never for a mirror, and it posts and stops - a bot token has exactly
+  one long-poller and a second STEALS the updates. `scripts/pf-telegram.mjs` is the half that
+  turns a TAP back into `pty:choose`, post-only by default. `npm run test:asknotify`.
+- **A click on a pane holding a question types NOTHING into it.** Clicking a pane here is not
+  passive - a bare click becomes arrows, an Alt-click up and down, a selection delete a run of
+  backspaces - and a chooser is the one moment every one of those is an ACTION: measured
+  against a real `claude`, 15 right arrows at its `/model` chooser moved it to `max effort`,
+  and Claude Code enables no mouse reporting at all, so nothing was being swallowed and the
+  pane's own handlers were the only thing typing. `askRef` in `TerminalPane.tsx` refuses all
+  three while `Session.ask` is set; the answer is the buttons. `npm run test:askclick` is a
+  real mouse through CDP, with the control that the same click with no question must still
+  send its arrows. **`window.api` is frozen by the context bridge**, so a test cannot wrap
+  `write`: the pane keeps its own list (`window.__pf[id].clickKeys()`).
+- `npm run test:choices`. Its load-bearing assertion is on the BYTE
+  (`charCodeAt(0) === 27`): the first version lost its escape in the same edit the source
+  did, so `'[B' === '[B'` passed while the app would have typed the letters into a chooser.
+
+## Arrowing through a question may not cost the whole desk
+
+The sessions list is ONE array for every pane, rebuilt in main whenever anything about any
+pane changes - and a question being arrowed through rebuilds it on every frame. A pane's
+render is not cheap either: it re-measures the turn-copy pairs and the prompt rail against
+the live xterm buffer. Measured on 2026-08-20 against a real chooser in a dev copy, five
+arrow moves cost **34 renders of EVERY pane on the desk**, four of which had no question on
+them at all - which is what "the overlay is laggy when I switch my answers" was.
+`TerminalPane` is `memo`'d with `samePaneProps`, which compares `ask`, `termTheme`,
+`mirror` and `grid` BY VALUE because main sends a fresh object for each of them every time.
+After: 5 renders on the pane holding the question and **0** on every other pane.
+
+- **The load-bearing assertion is the bystander's count**, not the question pane's: a memo
+  that also skipped the pane holding the question would pass a "renders went down" check
+  and break the feature outright. `npm run test:askrender` checks both, and
+  `window.__pfRenders` is the per-pane counter it reads.
+- A prop added to `Props` without a line in `samePaneProps` is a pane that stops updating
+  for it, which is why that function lists them out instead of looping over keys.
 
 ## ...and a question with an obvious answer is answered
 
-Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those
-questions are the CLI asking whether it may do the thing it was just told to do, and the
-person presses return. `shared/autoAnswer.ts` presses it instead — off by default
-(Settings → "Answer an agent's question for me when the answer is obvious"), because every
-question it goes through is one a CLI chose to ask and arriving switched on with an update
-would answer a permission prompt on a desk that never asked for that.
+Buttons fixed "nobody was at the desk". The next cost is at the desk: most of those questions
+are the CLI asking whether it may do the thing it was just told to do.
+`shared/autoAnswer.ts` presses return instead - **on by default** (Settings → "Answer an
+agent's question for me when the answer is obvious"), with the wait beside it and a **five
+second** default. It was off for one reason - arriving switched on with an update would
+answer a permission prompt on a desk that never asked - and the answer to that is the
+countdown, not silence. Detail: `docs/design-notes.md`.
 
+- **It takes the BEST option, not the first one.** Every CLI here marks its own preference
+  in the label when it has one - `(recommended)`, `[default]`, `- suggested` - and that is
+  the tool STATING the answer rather than this app guessing, so exactly one marked option
+  outranks a yes-shaped word and outranks the row the arrow happens to be on, in both
+  modes. Two marked options are a tool recommending two things, which is a choice again.
+  The marker raises rank and can never lift an option past a refusal.
 - **The refusals are the feature.** Exactly ONE option leading with a yes-shaped word is
-  answered. Two are a choice between them; none is a decision somebody is being asked to
-  make. An option that WIDENS permission (`don't ask again`, the bare word `always`) is
-  never reachable in either mode — it is the one press that cannot be undone by noticing a
-  second later — and neither is one that stops or answers with a question of its own
-  (`No, tell Claude what to do differently` leaves the CLI holding an empty composer, so a
-  pane that was merely waiting is now waiting AND has lost its question).
-- `anyQuestion` is the wider setting and it takes **the CLI's own default**, the row its
-  arrow is already on, rather than inventing a preference. The two refusals above still
-  hold over it.
-- **The timing is `dueForAuto`, and it takes TWO signatures of the same question on
-  purpose.** A press waits until the frame has sat unchanged for `waitMs` (1.2s — the
-  window in which somebody who disagrees can reach the pane) and that signature includes
-  where the arrow is, so moving it at the desk restarts the wait. But "have I already
-  pressed this one" may NOT be asked of that signature: our own keys move the arrow, so a
-  press restarts its own settle clock and a second sequence interleaves with the first,
-  arrows landing between each other and the wrong row committed. `askKeyOf` is the
-  question's identity with the arrow left out, one press per identity, plus a
-  `PRESS_COOLDOWN_MS` floor of 4s so nothing can be pressed while its own keys are still
-  landing.
+  answered; two are a choice, none is a decision somebody is being asked to make. And the
+  arrow sitting on a REFUSED option is not a licence to take a different one: the CLI's
+  preference has been refused and there is no second signal, so the question is a person's
+  again (`Keep the current plan` now stops too - the guard read `keep current` and every
+  CLI writes `keep the current`). An option
+  that WIDENS permission (`don't ask again`, the bare word `always`) is never reachable in
+  either mode, and neither is one that stops or answers with a question of its own (`No, tell
+  Claude what to do differently` leaves the CLI holding an empty composer). `anyQuestion` is
+  the wider setting and takes **the CLI's own default** rather than inventing a preference;
+  both refusals still hold over it.
+- **The timing is `dueForAuto`, and it takes TWO signatures.** A press waits until the frame
+  has sat unchanged for `waitMs`, and that signature includes where the arrow is, so arrowing
+  at the desk restarts the wait. But "have I already pressed this one" may NOT ask that
+  signature - our own keys move the arrow - so `askKeyOf` is the identity with the arrow left
+  out, one press per identity, plus a `PRESS_COOLDOWN_MS` floor of 4s.
 - **`maxRun` is given back by the pane going BUSY, and by nothing else.** A chooser
-  mid-repaint reads as no question for one frame, so returning the budget on "no question
-  on screen" hands it back several times during a single question and the cap bounds
-  nothing. A busy pane is the only evidence that an answer went in and work resumed.
-- The keys go through `choose`, which re-checks the question before every one of them.
-- `npm run test:autoanswer` — 21 checks, weight in the negatives: every wording of "and
-  stop asking me" (not the two strings this desk has captured), the timing behaviourally
-  over a fake clock, and source assertions on the STATE the guards read, because a test
-  that only matches the comparison lets the assignment making it true be deleted.
+  mid-repaint reads as no question for one frame, so returning the budget on "no question on
+  screen" hands it back several times during one question.
+- **It says when, and what, before it does it.** `autoAnswerAt` puts the press's own clock on
+  the session (`Session.autoAnswerAt` / `autoAnswerN`) under the same guards the presser runs
+  under, so a question this will never answer shows no clock at all. It is refreshed from the
+  TIMER as well as from a frame: a frame only arrives when the screen changes, so computing it
+  there alone meant switching the setting on over a live question showed nothing and then
+  pressed out of nowhere.
+- **The countdown is a banded row in the pane, a chip on the CARD, and a TICK.** In the pane
+  (`AskCountdown`) it is a pill with tabular seconds beside `Answering for you with <option>`,
+  and that option's button carries `.auto` - dashed, because `.on` is a different fact (where
+  the CLI's arrow is) and the two are often different rows. But the pane holding the question
+  is very often not the pane on screen - the grid off, another desktop, a minimised window -
+  which is why "I cannot even see the timer counting down" is a true report about a working
+  feature. So the card carries the seconds beside its `asks you` chip (`AskClock` in
+  `App.tsx`), and `playTick` sounds once a second through the last minute of whichever
+  countdown is soonest (one clock, not one per pane, or two panes beat against each other).
+  The tick is its own catalogue entry with its own Settings row, a third of an alert's level
+  because it fires once a second, and it deliberately bypasses the 900ms alert throttle -
+  which would suppress the ticks AND swallow the chime that follows the answer.
+  `window.__pfTicks` is what makes it checkable; a probe cannot hear a sound.
+- **A changed default cannot reach an existing desk on its own.** `defaults()` is WRITTEN to
+  config.json at first launch, so every install carries `enabled: false` explicitly.
+  `defaultsV2` separates the two and `migrateAutoAnswer` applies the new defaults once - read
+  off the **saved** config, never off the merge, or it answers yes for every config in
+  existence and does nothing.
+- `npm run test:autoanswer` (25 checks, weight in the negatives) and `npm run test:askrender`,
+  which measures the row, the card chip and the ticks in a live window.
 
 ## A pane that is still starting says so
 
@@ -899,6 +942,12 @@ at the prompt. The bytes are therefore written as a real file **on the machine t
 the pty**, and the path of that file is what is typed (`shared/attach.ts` for the naming,
 `main/attach.ts` for the disk, `pty:attach` / `pty:attachClipboard`).
 
+- **A paste is the one place the ^V is right.** Cmd+V used to write the bytes to disk and
+  type the path even for Claude Code, so pasting a screenshot and dropping one gave two
+  different things - the drop gave the picture, the paste gave a filename the agent had to
+  be asked to open. A clipboard image now goes to an agent that reads the clipboard itself
+  as a plain ^V (`[Image #1]`, verified live); every other CLI and every MIRRORED pane still
+  gets the file and the path, for the reasons below.
 - **Forwarding a raw ^V was the old answer and it only ever worked twice over.** It needs
   an agent that reads the OS clipboard itself - Claude Code does, Codex and the other
   eleven do not - AND it needs that agent to be on the same machine as the clipboard. A
@@ -952,99 +1001,91 @@ machine", and those are readings — `src/shared/usage.ts` (arithmetic) and
 
 ## A reopened pane comes back with what was on its screen
 
-The terminal's own scrollback is renderer memory, so before this every pane reopened blank —
-most often right after the app updated itself, which is the restart nobody asked for.
-`test:restore` is a different promise: it hands the agent its `--resume`, which brings back
-the conversation and not one line of the screen.
+The terminal's own scrollback is renderer memory, so before this every pane reopened blank -
+most often right after the app updated itself. `test:restore` is a different promise: it
+hands the agent its `--resume`, which brings back the conversation and not one line of the
+screen. Why each rule below: `docs/design-notes.md`.
 
 - **Nothing new is stored.** `history.ts` has appended every pane's raw output to
-  `userData/history/<id>.log` all along; `tail()` reads the last `BUFFER_LIMIT` of it, and
-  the cap and the pruning are that file's, already pinned by `test:history`.
-- The missing part was the **id**. A restored pane is a new session, so the desk carries
-  `scrollbackId` (`snapshot()` in `sessions.ts`) and `start()` seeds the pane's buffer from
-  it. Save the new id there and it restores nothing, silently, forever.
-- `tail` must not strip ANSI (`read` does, for search) and must cut on a line boundary — a
-  cut inside an escape sequence prints its tail as literal text across the first line.
-- One dim line says where the old output ends, and it resets attributes first: the tail is
-  cut mid-run, so whatever was in force at the cut would otherwise bleed into everything
-  after it. `npm run test:scrollback`.
+  `userData/history/<id>.log` all along; `tail()` reads the last `BUFFER_LIMIT` of it. The
+  missing part was the **id**: a restored pane is a new session, so the desk carries
+  `scrollbackId` (`snapshot()`) and `start()` seeds the buffer from it. Save the new id
+  there and it restores nothing, silently, for ever.
+- `tail` must not strip ANSI (`read` does, for search) and must cut on a line boundary. One
+  dim line says where the old output ends, and it resets attributes first. `test:scrollback`.
+- **It comes back with its own clock, and finishes the turn it was cut off in.** `snapshot()`
+  wrote no fact a PERSON knows, so nine panes restored after an update read `engaged: false`,
+  `runSince: null` - which the sidebar draws as no clock at all and a grey "ready" dot, both
+  false about a live conversation. `shared/restoreTurn.ts` decides. The display clock is
+  `openedAt`, its own field and deliberately NOT `createdAt`: three timers read that as the
+  age of THIS PROCESS. A pane the restart caught mid-turn is continued through `queuePrompt`,
+  off `runSince`, under the SAME switch as a turn the transport cut in half - and a pane that
+  was not mid-turn, or was launched with its own prompt, is left alone. `test:restoreturn`.
+- **Which restarts ask is one rule with one switch.** `askAfterUpdate` (Settings → Updates)
+  makes an update restart obey the same offer as a quit or a crash. Off by default - asking
+  several times a day costs more than the inconsistency - and inert while `restoreAfterUpdate`
+  is off.
+- **It is replayed at the width it was PAINTED at, and Fix cannot do this job.** Every agent
+  CLI here draws in absolute column moves - one real line off this machine's log is
+  `Cause:\x1b[10G...` out to `\x1b[143G`, because that pane was 159 columns - and a terminal
+  CLAMPS a move past its own last column. Replayed into an 85-column pane the old screen
+  therefore piles onto the right-hand edge, one word over the last, which is "the text at the
+  top is broken and pressing Fix does not fix it": Fix asks the CLI to repaint the SCREEN, and
+  the wreckage is in the scrollback where the agent has nothing to say. So `restoredTail`
+  carries the old session's width out with the bytes (`colsOf`, off its history metadata),
+  `Session.replayCols` takes it to the pane, and the pane writes that part of the buffer at
+  that width and hands the terminal back afterwards - xterm re-wraps what is already in its
+  buffer. **Only the part before the restore mark**, and only when the mark is still there: a
+  pane that has printed past it holds nothing old, and staging then paints its own output at
+  somebody else's width. The resize goes in the write CALLBACK, never after the call - xterm
+  parses on its own schedule. Measured with a real headless xterm over the real bytes: at 85
+  the sentence is destroyed, at 159-then-85 it reads back whole; and in a live pane 80 columns
+  wide, intact. `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- **It presses Fix for itself**, which is the OTHER half - a frame drawn at 80x24 before the
+  fit landed, not a scrollback painted at another pane's width. The tail was hard-wrapped at the old pty's width and is
+  replayed into a terminal xterm opens at 80x24, so the frame that lands is regularly drawn
+  at the wrong width. A pane that came back with history runs `repair()` once,
+  `RESTORE_FIX_MS` (1.2s) after its output stops. It is `autoFixUi`'s; a mirror is refused; a
+  hidden pane is FLAGGED rather than repaired against a 0x0 host. `test:restorefix`, whose
+  control half is a brand new pane recording ZERO repairs.
+- **The prompt tags come back with it.** The rail is built from KEYSTROKES, so a replay
+  registers none. `seedMarks` scans the replayed buffer for the CLI's own `❯ <text>` echo,
+  once, and only while the rail is empty. **`❯` only** - `>` starts a quote, a diff line, a
+  shell prompt and a blockquote. A rebuilt tag carries no time (`at: 0`). `test:promptecho`.
 
-**And the prompt tags come back with it.** The rail is built from KEYSTROKES on their way
-to the pty, which is what makes it work for every agent - and it is why a reopened pane had
-none: a restore replays bytes, nobody typed anything, `feedDraft` never fires. The app
-restarts itself for every update, so most panes on a desk carried no tags at all, and "the
-tag to scroll to my prompt does nothing" is usually "there is no tag". What can be recovered
-is the CLI's own echo: measured in a live Claude Code pane, a submitted prompt is drawn on
-its own line as `❯ <text>`, on the same buffer line the marker had anchored to (26 and 26).
-`seedMarks` scans the replayed buffer for those and registers a marker on each, once, and
-only while the rail is empty. **`❯` only, deliberately not `>`** - that starts a quoted line,
-a diff line, a shell prompt and a markdown blockquote in an ANSWER, and burying six real
-tags under thirty quoted ones is how a rail stops being read; an agent whose echo this does
-not recognise is left exactly as it was. A rebuilt tag carries no time (`at: 0`), so
-`markLabel` prints the text alone rather than inventing a clock reading.
-`npm run test:promptecho`.
+**And `/clear` no longer takes the previous turn with it.** Three releases of Claude Code
+have wiped the screen three different ways (`CSI 2J`+`3J`; an erase-per-row; a bare
+cursor-up overdraw that erases nothing at all), so the answer stopped being a list of vendor
+bytes:
 
-**And `/clear` no longer takes the previous turn with it.** A CLI clearing its screen sends
-`CSI 2 J` *and* `CSI 3 J`, and the second deletes this window's scrollback — measured across
-the 128 pane logs on this machine: 73 of each, always paired, and no other erase-in-display
-in the set. So `shared/keepScrollback.ts` sits in front of every write: the wipe is dropped,
-and the erase becomes a scroll (cursor to the bottom row, one newline per row, saved and
-restored around it) — a newline at the bottom row scrolls, and a scroll puts a line into the
-scrollback instead of deleting it. The alternate screen is left alone; vim clears constantly
-and has no scrollback to protect. It is stateful because a four-byte sequence is routinely
-torn across two chunks from the pty, so there is one per pane and every write site uses it.
-`npm run test:scrollclear` drives a real headless xterm and its control case proves a plain
-terminal loses the lines.
+- **The pane keeps the screen itself, before the CLI has emitted a byte.** `keep.arm()`
+  (`shared/keepScrollback.ts`) is called when a submitted line matches `mayClearScreen` and
+  RETURNS the scroll - the screen pushed into the scrollback, the cursor homed - which the
+  pane writes on the spot. Whatever the CLI does next it does to a blank screen.
+- **What was TYPED is not what was SENT**: `/cle` picked from the CLI's completion menu runs
+  `/clear`, so a bare slash TOKEN that is a PREFIX of one of those commands arms too. A miss
+  destroys the turn somebody is reading; a false arm only scrolls a screen about to be
+  repainted, and only the rows holding something are filed (`used()`).
+- **The composer is not history.** `keptRows` stops at the composer's top edge, and the
+  composer is only believed when the CARET is between its two rules - otherwise a markdown
+  separator in an answer swallows every row under it.
+- **`arm()` is fed by keystrokes, and a keystroke is one of several ways a clear arrives.**
+  The Clear button, the session menu, a phone and every path in main that types for you go
+  through `paneArmClear` (TerminalPane) instead.
+- **The unarmed case is caught by SHAPE, then by OUTCOME.** The cursor sent to the top of the
+  screen with an erase as the first thing there is REPORTED, not acted on - one 8.4 MB pane
+  log holds 152 ordinary repaints of that shape. The pane snapshots the screen and
+  `shared/screenLoss.ts` decides once the redraw settles: filed only when **80%+ of the screen
+  is gone** (a scrolling diff loses 35-44% and is left alone). The `2J`/`3J` rewrite stays for
+  a CLI that clears unasked, and stands down for 10s after an armed scroll.
+- `npm run test:scrollclear` drives a real headless xterm with a control per shape.
 
-- **Then Claude Code stopped sending either of them, twice, and the answer stopped being a
-  rewrite at all.** Measured 2026-08-13: v2.1.229 emits ZERO `2J` and ZERO `3J` in 4 MB and
-  erases a row at a time instead (`ESC[H ESC[2K` then `(ESC[1B ESC[2K)` per row), which
-  blanks the screen in place — a blanked line is never pushed into the scrollback the way a
-  scrolled one is. Measured 2026-08-15 at the banner v2.1.233 draws for `/clear`, the whole
-  clear is `ESC[53D ESC[4B \r ESC[6A` and then the banner: **a cursor-up and an overdraw,
-  with no erase of any kind to catch** (the nearest erase-per-row was 12,590 bytes earlier
-  and belonged to an ordinary repaint). That is "the claude avatar hides the previous
-  output" — the last turn is painted over where it sat and nothing reaches the scrollback.
-- **So the pane keeps the screen itself, before the CLI has emitted a byte.** `keep.arm()`
-  is called when a submitted line matches `mayClearScreen` (`/clear`, `/compact`, `/new`,
-  `/reset`) and RETURNS the scroll — the screen pushed into the scrollback and the cursor
-  homed — which the pane writes on the spot. Whatever the CLI does next it does to a blank
-  screen, so this needs to know nothing about any CLI and cannot go dead the next release;
-  homing the cursor is what puts the banner back at the top rather than under forty blank
-  rows. The intent still comes from keystrokes the app is relaying anyway, never from
-  guessing which repaint is a clear — that guess is what the erase-per-row detection was,
-  and it was silently a no-op the release after it shipped.
-- **What was TYPED is not what was SENT, and reading the line literally missed half the
-  clears.** Typing `/cle` opens the CLI's own command menu with `/clear` highlighted and
-  Enter runs the highlighted row, so the pane saw four characters matching nothing, never
-  armed, and the banner was drawn over the last turn exactly as before. Measured in a real
-  pane: `/clear` typed whole keeps the previous answer (2 marker rows before, 2 after), the
-  same clear picked from the menu after `/cle` destroys it (2 before, 0 after). So
-  `mayClearScreen` arms on a bare slash TOKEN that is a prefix of one of those commands as
-  well - the two mistakes are not the same size, since a miss destroys the turn somebody is
-  reading and a false arm only scrolls a screen the CLI is about to repaint. `/co` arms as
-  `/compact`'s prefix even when the menu was showing `/code-review`; a command typed whole
-  (`/doctor`) and one carrying an argument (`/model opus`) are read literally and do not.
-  What makes a false arm cheap is that only the rows holding something are filed: the pane
-  passes `used()` and the scroll is that many newlines, not a screenful.
-- The `2J`/`3J` rewrite stays for
-  a CLI that clears unasked, and stands down for 10s after an armed scroll so a `2J` that
-  follows one cannot file a screenful of blanks in front of the turn being kept.
-
-**And a prompt tag survives the CLI repainting over it.** The rail's tags are xterm markers,
-and xterm disposes every marker on a row that `CSI J` blanks (`eraseInDisplay` →
-`_resetBufferLine` → `Buffer.clearMarkers`, read off a stack trace taken from inside the
-disposal). Claude Code repaints with erase-in-LINE, which touches no marker; Codex repaints
-with erase-in-DISPLAY. Measured by replaying this machine's own pane logs into a real xterm
-and registering a marker every 20 KB: **Claude Code lost 0 of 278, Codex lost 25%, 33% and
-50% across three panes** — which is the "Codex shows no prompt tags so I cannot jump to my
-prompts" report, and the prompt had not scrolled anywhere. `shared/markAnchor.ts` reads a
-disposal for what it is: the line still being in the buffer means another marker goes on it
-(on a deferred callback — the disposal fires from inside xterm's own walk over its marker
-list), and only a line the buffer has genuinely forgotten ends the tag. Line 0 is the one
-that goes: a trimmed marker was on line 0 an instant earlier, and that is indistinguishable
-from a tag still sitting on the oldest line. `npm run test:markanchor`, whose control proves
-a bare marker really does die.
+**And a prompt tag survives the CLI repainting over it.** xterm disposes every marker on a
+row that `CSI J` blanks - measured by replaying this machine's own logs: Claude Code lost 0
+of 278, Codex lost 25-50%. `shared/markAnchor.ts` re-anchors on a deferred callback when the
+line is still in the buffer, and ends the tag only when the buffer has genuinely forgotten
+it. Line 0 is the one that goes. `npm run test:markanchor`, whose control proves a bare
+marker really does die.
 
 ## History says what each session was working on
 
@@ -1066,6 +1107,30 @@ followed.
   best-effort one from the prompt archive (same project, inside its own window) and
   otherwise **no line at all**: a confident wrong sentence about which session to bring
   back is worse than none.
+- **A session is several jobs, and `/clear` is where one ends.** The first ask describes a
+  session that asked one thing, and is the first sentence of a long document for every
+  session actually worth finding again: the context is thrown away at a clear and what
+  follows is a new subject in the same window. So the ask that opens each CHAPTER is kept -
+  the first one, and the first one after each clear (`noteAskInto` in `shared/gist.ts`,
+  which reads a clear exactly as `keepScrollback` does, menu completions and all). The row
+  shows three and counts the rest; the hover and the opened session print them numbered.
+  A clear is a boundary and never a chapter heading, every other slash command (`/model`,
+  `/doctor`) heads nothing, and `asks` counts only the ones that were WORK - a count made
+  mostly of slash commands says the opposite of what it looks like. Twelve chapters are
+  kept and anything past that is counted rather than dropped in silence.
+- **What was asked survives a restart.** `recordStart` runs again on the same id when a
+  pane comes back, and it used to write a fresh record - so the one kind of session most
+  worth finding, a long one the app restarted itself for an update, went back to a folder
+  name and a clock.
+- **The transcript is RENDERED, not stripped.** A pane's log is a stream of REPAINTS, so
+  `stripAnsi` puts every frame of an agent's thinking line on its own line: measured on a
+  seeded 4 KB log, the old view was **205 lines of which 200 said `Thinking…`**, against
+  **3 lines and none** through a terminal. The bytes go through an off-screen xterm and its
+  buffer is what is shown - `renderer/src/termRender.ts`, ONE copy, shared with the phone's
+  `TextSheet`, because two surfaces disagreeing about what a session said is the drift
+  nobody notices. It is replayed at the width it was WRITTEN at (`cols` on the entry, kept
+  in memory per resize and written when the session ends); stripping stays as the fallback,
+  since a transcript that will not render is still worth reading.
 - It is written outside the prompt-recall gate — that switch is about "you have asked this
   before", and turning it off is not a reason for History to go back to a folder and a
   clock. `npm run test:gist`.
@@ -1120,170 +1185,255 @@ download, and the only one that sends audio off the device).
   hearing shows it by not moving. It also appears while the model downloads.
 - `npm run test:voice`.
 
-## The app can run a lane itself
+## ...and it knows what is serving, and can stop one
 
-`docs/agentic.md` is the plan; I1–I4 of it are built. A lane the app drives is a **headless
-CLI whose `stream-json` we parse** (`shared/agentic.ts`), never a pty scraped by
-`readsBusy()`. Panes stay ptys. It produces a branch and a diff and **merges nothing** —
-`lane.mjs ready` is still a person's word.
+"What dev servers are running" had no answer anywhere in this app, and the app already had
+most of it: `devServers.ts` reads the process table for a handoff, but its answer is a
+package.json SCRIPT - deliberately, because that is what the OTHER machine needs. A person
+asking has the two things that throws away in their head: the PORT they cannot reach and
+the pane it came out of. `shared/devList.ts` is that answer, `npm run test:devlist`.
 
-- **A run that changed nothing is a failure**, not a pass. The gate's first step is the
-  diffstat and `noOp` calls two lines or fewer nothing. Same rule for a CLI that exits 0
-  having printed nothing: that is `silent`, not `done`.
-- **`diffSince` runs `git add -A --intent-to-add` first.** Without it `git diff` cannot see
-  a file the agent created and never added, and a lane whose deliverable is one new file
-  reports itself as idle.
-- **The gate is diffstat → typecheck → suite → reviewer**, cheapest first. A missing step
-  says *skipped*; it never reads as a pass. `parseVerdict` fails closed — a reviewer that
-  crashed or answered prose has not passed the lane.
-- **The reviewer runs in an empty directory**, not the lane: it is started with the same
-  permissions as the agent it judges and would otherwise be able to edit the branch to
-  agree with itself.
-- **The retry prompt is a local, never the lane's `note`** — `note` is the board's line and
-  every tool call overwrites it.
-- The budget timer is armed before the first await, not in a `finally`. Two retries then
-  stop. Three lanes at a time, 900ms apart.
-- **The app says what a driven lane may do, and the words are derived from the arguments
-  it passes.** Every entry in `HEADLESS` starts its CLI with the permission prompt off, and
-  that is deliberate — an agent that stops to ask is one that hangs until its budget kills
-  it. `unattended()` finds the flag in the args we really send, so the chip on the board,
-  the line above Drive and the refusal all name the same string the process carries; make a
-  posture stricter and every one of them falls silent rather than claiming otherwise.
-  `driveUnattended` in config may refuse the whole thing, by name, at both doors
-  (`drive:start` and `goal:add`). `npm run test:unattended`.
-- **Quitting kills the driven agents** (`stopAllDrives`, on `before-quit` AND `hardExit`).
-  They are detached, in their own process group, and are not ptys — `strays.ts` has never
-  heard of them, so without that line the app leaves an agent editing a worktree with
-  nothing left to stop it.
-- **A goal outlives the window** (I4, `main/goals.ts` + `shared/goals.ts`). Drive it queues
-  one rather than starting it on the spot: it is in `goals.json` under userData, written
-  through a temp file and a rename, and **one runs at a time** — a second press lines up
-  behind the first instead of handing two runs the same worktree pool.
-  - **A goal caught running by a restart is `interrupted`, never `done` and never re-run
-    by itself.** Its agents died with the process, so the branch holds whatever had been
-    written by then; calling that a pass puts unread work on a board saying "ready to
-    review", and re-queueing it starts a second agent over a worktree nobody has looked at.
-    Retry is a press.
-  - **The queue is what finally fills `promptArchive`'s `outcome`.** `recordOutcome` stamps
-    the row an ask already has — `<repo> <branch@sha> verified, N files` — and never
-    creates one, because that archive is fed from bytes on their way to a pty and a mission
-    typed into a dialog is not one of those.
-  - One lane throwing may not take the run with it: `driveLane` is wrapped, and before that
-    a malformed plan reached `void drive(...)` as an unhandled rejection that killed every
-    other lane and left them reading `working` for ever.
-- `npm run test:agentic` spawns real stubs into real repositories, including one that hangs
-  and must be killed and one that fails its own gate and then fixes it. No CLI needed.
-  `npm run test:goals` does the same for the queue: a goal read back after a simulated
-  kill, and a second goal that starts because the first one ended.
+- **One server, not one process.** Measured here 2026-08-21: `npm run dev -p 3100` and the
+  `node .../next dev -p 3100` it spawned are both real, both recognised and are the SAME
+  server - so a bare list said two, and "close the second one" would have killed a child of
+  the first. A candidate whose ancestor chain reaches another candidate is folded into that
+  ancestor (the thing a person typed, and the one whose kill takes the tree), and what the
+  child knew - the port, the path - is folded upward, since npm's own title carries neither.
+- **A number is not a port because it is a number.** `--max-old-space-size=4096` is full of
+  them and a wrong port is worse than none: it is the one thing somebody acts on. Only
+  `-p`/`--port`/`--port=`/`PORT=` count.
+- **Attribution is two-legged**, same as the handoff path and for the same measured reason:
+  the server on this desk had been reparented onto pid 1 with its npm parent gone, so a
+  tree walk from the pane finds nothing. Tree first, then a path test against the pane's
+  folder. **A server no pane claims is still listed** - the question is what is running on
+  this machine, not what PaneForge owns, and an unclaimed one is the likeliest to be lost.
+- **An ambiguous stop prints the list and asks.** "close the dev" with three running names
+  none of them, so it picks NONE. Named by port, by pid, by pane, by project, by tool, by
+  "the first one", or by "both". A generic label (`dev`, `start`, `serve`) never matches on
+  its own - that word is in the question as often as the answer, so matching it made "close
+  the dev in pane 2" name every `dev` on the machine.
+- **The pid is re-validated in main before anything is signalled.** It came off a list a
+  person then read and confirmed, and a pid is reused: one whose command line is no longer a
+  dev server is refused out loud. SIGTERM, then SIGKILL for anything still up - a server
+  killed outright leaves its port held, which is the failure somebody reboots over.
+- The renderer supplies only the ORDER and the words (which pane is 3, what that project is
+  called); every fact - the folder, the pty pid - is read in main off the pane's own record,
+  so a caller cannot point this at a folder it does not own. Read on demand when the ask box
+  opens, never on a timer: it is a whole `ps -Ao command=`.
+
+## The resource ladder has a face
+
+`capacity.ts`, `autoHandoff.ts` and `reclaim.ts` trim, move and close panes on their own, and
+their entire output used to be a `console.info` nobody had a window open for.
+`shared/mascot.ts` is the mouth, `components/Mascot.tsx` draws it, `npm run test:mascot`.
+Full reasoning: `docs/design-notes.md`.
+
+- **It is not a model.** Every sentence is arithmetic over readings the app already holds,
+  and every typed command is a small parser over the same list. Nothing leaves the machine,
+  so it costs nothing to leave on.
+- **What it says names the pane, what that pane was in the middle of, and when.** `Closed a
+  pane, about 190 MB back` answers none of the three questions somebody has when a pane they
+  were using is gone. `paneWord` is now `taskdriver pane 1` (the project first - the number
+  is the Ctrl key, the project is what is in your head), the subject comes off
+  `Session.gist` - History's own line, pushed onto the LIVE session because by the time a
+  disk read came back the pane it names is closed - and the time is `agoWords`, rebuilt as
+  the bubble draws rather than written once, so a report that has sat in the corner for ten
+  minutes stops reading as something that just happened. A pane nobody has typed a real ask
+  into says nothing about one: a confident wrong subject is worse than none.
+- **A bubble takes itself away** (`mascot.hideSeconds`, 60s, 0 = until pressed). Everything
+  it says is a READING and a reading left on screen stops being one. The clock restarts on
+  every keystroke in the ask box, and a COUNTDOWN is exempt - that bubble has a deadline of
+  its own and the press that stops the close is on it, which is the load-bearing case in
+  `test:mascot`.
+- **A guess is never an action.** "close pane 9" with five panes closes nothing and says how
+  many there are; names match longest-first with a contained name dropped (`service` inside
+  `service-a`); every destructive intent is OFFERED as a press. `closeable()` is `reclaim.ts`'s
+  own refusal set, so it can never suggest something the sweep itself would refuse.
+- **A finished turn is the pane this ladder exists for, and for weeks nothing could see one.**
+  `fleetState` says `needsYou` both for a live question and for a finished turn, so
+  `closeable()` and `CLOSEABLE` - both written as `ready | exited` - refused every pane anybody
+  would want closed. The refusal that was meant is the pane's own live question (`asking`, off
+  `Session.ask`), never the word for its state.
+- **Nothing decides and then reports: it counts down first.** Both sweeps hand their plan to
+  `armCloseRef` and the mascot draws `CLOSE_COUNTDOWN_MS` (15s) with the pane named, `Keep it
+  open` and `Close now`. Doing nothing still closes it - a sentence with a clock in it, not a
+  dialog. `Keep it open` holds those panes for `KEEP_MINUTES` (60). With the mascot hidden
+  there is nowhere to draw a count, so it closes on the spot.
+- **It speaks unasked once per situation**, and only where the app is otherwise silent: two or
+  more finished panes, quiet over an hour, over 1.2 GB, with the idle-close clock OFF. What
+  the ladder DID always gets a sentence.
+- **There are TEN of them and they cost the same** (`src/shared/pets.ts`). The animation is
+  keyed on the SLOT rather than on the animal - `m-arm-*` is a settle on three frames whether
+  the pet means a tail, a wing, a claw or a drip, `m-treads-*` is the slow tick - so a new pet
+  is ART and nothing else: no keyframes, no timers, no cost. Only the picked one is ever
+  mounted, each layer is walked into runs once per app run and cached by identity, and the
+  whole rig is `animation-play-state: paused` behind a minimised window. Every pet is on the
+  SAME 24x24 grid, which is a decision about PIXELS: drawn at 48 CSS px that is exactly 2
+  device pixels a cell and `crispEdges` never has a half pixel to resolve - a "more detailed"
+  32x32 pet would be 1.5 and is the blur the grid replaced. Detail comes from layers and
+  shades, never from more cells. A pet may leave a slot out and be stiller; what it may not do
+  is float, and `test:mascot` fails on a `translateY` anywhere in that stylesheet.
+- **It arrives OFF.** A pet is decoration before it is a reading, so it is asked for rather
+  than arrived with (Settings -> the ten, under the ladder's own switches). `defaults()` is
+  written at first launch, so a desk that already had the robot keeps it: only a new install
+  gets the off.
+- **It runs about, rarely, and every condition is a refusal** (`dueDash`, `DASH_EVERY_MS` 9
+  min): nothing to say, where the app put it, `roam` on, and somebody looking at this window.
+  The run is placed at the start line with the transition OFF for one frame (`dash-port`) and
+  is then a single `left` transition with a ball ahead of it; without that frame the browser
+  coalesces both writes and the pet slides gently to the start instead of appearing there.
+- **It can be picked up.** Pointer events, captured, storing the GRAB offset (writing the raw
+  pointer teleports it under the cursor); a drop writes `mascot.spot` as a fraction of the
+  window and **beats every automatic move**. The pin icon gives it back. Under `DRAG_SLOP` the
+  gesture is still the press that opens the bubble, and the click after a real drag is refused
+  from a REF.
+- **The bubble is placed in the LAYER, in pixels** (`bubbleSpot`), clamped inside the window
+  on both axes, above the sprite when there is room and above ANYWAY when there is room for
+  neither. As a flex child of the sprite's own centred box it shoved the sprite ~155px
+  sideways and hung off the edge. Unmeasured counts as full width.
+- **The layer never takes a click**: `z-index: 40`, over the panes and under every dialog,
+  `pointer-events: none` except the sprite and its bubble. Never focuses, never raises.
+- **Mute by default** - nothing the app decided by itself may make a noise into a room.
+- **It never picks which machine**: `hand off pane 2` opens the box with the panes chosen.
+- A press closes whichever half is up.
+
+## ...and one card says what this app can even do
+
+Most of what is in this file is invisible from the window: a highlight in a pane can be
+DELETED, a phone is this window, a pane can be handed to another machine mid-turn. None of
+it is discoverable and none of it is worth a dialog, so it is one quiet card in the
+bottom-right - `shared/tips.ts` for the catalogue and every judgement, `components/Tips.tsx`
+for the card, `npm run test:tips`.
+
+- **It costs nothing**: a fixed sentence, chosen by arithmetic over what has been seen. No
+  model, no request, one minute tick that almost always does nothing.
+- **It never interrupts**: silent while any dialog is open, while an update card is up, while
+  ANY pane is holding a question, behind a minimised window, and for the first four minutes
+  of a session. `FIRST_MS` 4 min, `EVERY_MS` 40 min, and the load-bearing half of the test is
+  those negatives.
+- **It says how to stop it before anybody has to go looking**: the first card and every fourth
+  after it carry the sentence and the button (`offersOff`). Settings is the way back on.
+- **It cycles rather than repeating**: every tip is shown once before any is shown twice, and
+  `seen` resets rather than going quiet - a tip added in a later version has to be able to
+  reach somebody who has already been round.
 
 ## Checks
 
-`npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything
-below that needs no window, no network and no real agent CLI (`scripts/test-all.mjs`).
-It is also the gate's third step: `agentGate.ts` looks for a script called exactly
+`npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything in
+that list needing no window, no network and no real agent CLI (`scripts/test-all.mjs`). It
+is also the release gate's third step: `agentGate.ts` looks for a script called exactly
 `test`, and while there wasn't one every lane the app drove reported its suite step as
-*skipped*. A new cheap test goes in that list or it never runs by itself.
+*skipped*. **A new cheap test goes in that list or it never runs by itself.**
+
+Each row below says what its test PINS. The reasoning - which case is load-bearing, which
+control proves the test would fail, what the numbers were - is in `docs/design-notes.md`.
 
 | Command | Covers |
 |---|---|
 | `npm run smoke` | the pty layer |
 | `npm run test:restore` | which conversation a reopened pane goes back into |
 | `npm run test:scrollback` | and what is on its screen when it gets there |
+| `npm run test:replaywidth` | ...drawn at the width it was drawn at: a real 159-column frame off this machine's log, with the shipped behaviour (write it at 85) kept as the control that must FAIL, and the refusals that stop a pane painting its OWN output at somebody else's width |
+| `npm run test:restoreturn` | what else it inherits: the display clock, the engaged flag, and continuing a turn a restart cut in half (with the refusals, and source assertions so a green test over a function nothing calls cannot pass) |
+| `npm run test:promptecho` | rebuilding a restored pane's prompt tags from the CLI's own `❯` echo, and the four things that must NOT become tags (a `>` quote, a diff, a shell prompt, the live composer) |
 | `npm run test:consoles` | sweeping console hosts left behind |
 | `npm run test:strays` | what a PANE left running (real orphans, ~25s) |
 | `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |
 | `npm run test:install` | quitting takes the install pty's whole process tree |
-| `npm run test:lanes` | lane engine, worktree sweep, ownership, any-repo release contract |
+| `npm run test:lanes` | lane engine, worktree sweep, ownership, the any-repo release contract |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
-| `npm run test:laneforeign` | a folder at a lane's path that is a checkout of a DIFFERENT repository: it is named and refused rather than adopted, and its commits are left alone. The load-bearing half is the control that the clone really does pass the old `--is-inside-work-tree` test, without which the case is never reproduced |
-| `npm run test:lanepeers` | the arithmetic of a claim on the other desk: what a ref name may carry, and the negatives that decide whether the check is worth having — a desk never blocks itself, a claim nobody refreshed stops counting, and a letter lane is never anybody else's business |
-| `npm run test:lanedevice` | the same thing with the plumbing attached: a real bare repo, two real clones, one told it is another machine. The second desk is sent to a letter rather than onto the shared branch, the trunk comes back the instant a chat ends, and the release lock is refused at the SERVER — with the two mechanisms that looked right and were not (the shared branch tip, and `--force-with-lease`) kept as controls |
+| `npm run test:laneforeign` | a DIFFERENT repository's clone sitting at a lane's path: named and refused, its commits untouched. The control is that it passes the old `--is-inside-work-tree` test |
+| `npm run test:lanepeers` | the arithmetic of the other desk's claim, and the negatives: a desk never blocks itself, an unrefreshed claim stops counting, a letter lane is nobody else's business |
+| `npm run test:lanedevice` | the same with real plumbing (a bare repo, two clones, one told it is another machine) - and the two locks that looked right and were not, kept as controls |
+| `npm run test:gate` | what stops an automatic release: a chat that said done and kept typing, a red `npm test`, and that the refusal is CACHED on the commit |
 | `npm run test:notes` | release-note ranges and both template shapes |
-| `npm run test:pickrelease` | which release an install may take: the newest one carrying an asset THIS platform can install, so a win-only release is skipped rather than 404'd at for ever |
+| `npm run test:pickrelease` | the newest release carrying an asset THIS platform can install, so a win-only build is skipped rather than 404'd at for ever |
+| `npm run test:promote` | a soaked dev build promoting to stable with a younger one on top of it |
 | `npm run test:remote` | the device link end to end over a real loopback socket |
-| `npm run test:pairask` | pairing with no code typed: the six digits agree between the two ends, and — the case the whole design exists for — a real relay in the middle makes them DISAGREE |
-| `npm run test:handoff` | a pane handed to the other machine whole, over a real link and real git: WIP pushed as `auto-sync:`, a 5 MB transcript chunked and reassembled byte-for-byte, `--resume` on the far end — and the refusals: a dirty far checkout, unpushed far commits, a folder outside the root |
+| `npm run test:pairask` | six digits that agree between two ends, and DISAGREE through a real relay |
+| `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals (dirty far checkout, unpushed far commits, a folder outside the root) |
+| `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it, measured with a Range over the text |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
-| `npm run test:stashtheme` | that the floating Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
+| `npm run test:stashtheme` | that the Stash picks no colour of its own, and asks the theme rather than the OS which way round it is |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
-| `npm run test:agentenv` | the environment a pane's agent is started with — a provider is a catalogue entry with two variables set, not a branch in the spawn path, and a key placeholder with no key behind it is DROPPED rather than passed through: a CLI handed the literal `${OPENROUTER_KEY}` fails as a 401 several seconds into a pane that looks perfectly healthy |
-| `npm run test:devicewatch` | noticing that a ten-year cookie has been copied — and, the half that decides whether anybody ever reads a mark, that a phone leaving the house, an iOS version bump, a reloaded tab and a row with no stored user-agent all say NOTHING |
-| `npm run test:projects` | which folders under the root are projects and which are copies of one: a lane worktree folds under its project (by git's own `gitdir:` pointer, and by a pruned lane's leftovers), while a repository called `service-a` next to a `service` stays a project — hiding somebody's repo is the worse bug |
-| `npm run test:cardfit` | that a session card can still be READ once a lane loads it up: the shipped stylesheet in a real headless Chrome at the real 190px sub-line, asserting the agent's name, the clock, the pane's name and the place chip are all whole. Skips out loud with no Chrome |
-| `npm run test:confirmfit` | that the app's yes/no box can still be answered once a real question is in it — measured on the offload one ("Start this pane on `<device>`?"), whose three faults all came from the dialog SHELL rather than the confirm rules: a `position: sticky` footer pinning to the scrollport's bottom EDGE and so sitting 2px ON the tick box of a dialog that was not scrolling, `.dialog-row .primary { margin-left: auto }` silently beating the confirm's own `flex-end` for a 99px hole between the two answers, and `.ghost`/`.primary` padding making them 34.8px and 38.8px tall. The load-bearing case is the LONG body: making the row static fixes all three and quietly removes the pinning the sticky was added for |
+| `npm run test:surfacereach` | that every method the window exposes has a way IN: for each key of `SURFACE`, a call site under `src/renderer/src`. A handler with no caller passes typecheck, the suite and surface parity - `remote:handoffCancel` and `listJobs` both shipped that way. Four are desk-side on purpose and each names who calls it instead |
+| `npm run test:mirrorfit` | how small a mirrored pane draws somebody else's grid, and every way that walk fails to converge: the shipped `Math.round` stalls a column short, flooring only the shrink cycles 11/12/11/12 for ever, and the bare font floor leaves a wide grid simply cut off. All three kept as controls |
+| `npm run test:desk` | the sessions list with both machines in it: a device that is offline lists nothing, a mirrored pane is not offered twice, a listed pane carries no Ctrl+N number, and a source assertion that every field `FleetPane` ranks by is actually forwarded from the peer |
+| `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
+| `npm run test:orcatalogue` | the live model list: a model with no tool calling never reaches the menu, an empty or broken answer leaves the built-in list exactly as it was, nothing is capped (a cap inside a filter box is a search that silently finds nothing), both prices are on every row, and a stealth model says in the picker that an anonymous provider keeps your prompts |
+| `npm run test:devicewatch` | noticing a copied cookie - and the negatives that decide whether the mark is ever read (a phone leaving the house, an iOS bump, a reloaded tab) |
+| `npm run test:projects` | which folders are projects and which are copies of one (`service-a` beside `service` stays a project) |
+| `npm run test:cardfit` | that a session card can still be read at 190px once a lane loads it up |
+| `npm run test:confirmfit` | that the yes/no box can still be answered - the three faults were all the dialog SHELL (a sticky footer, `margin-left: auto` beating the confirm's own `flex-end`, uneven button heights) |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
-| `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
+| `npm run test:railplace` | where a prompt tag is drawn (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
-| `npm run test:split` | task splitting; overlapping file claims are REFUSED, never repaired |
-| `npm run test:agentic` | the app driving a lane: a hung turn killed by its budget, a run that changed nothing refused, a failed gate retried |
-| `npm run test:goals` | the queue that outlives the window: a goal read back after a kill, the next one starting by itself, `outcome` stamped |
-| `npm run test:unattended` | that the app says what a driven lane may do: every agent in `HEADLESS` has a nameable permission flag, the words are DERIVED from the arguments the run carries, and a stricter posture silences the claim instead of keeping it |
-| `npm run test:dispatch` | the router that picks the agent, the model and the budget for an ask — and the four cases where the CHEAP tier must not be chosen: a repo that cannot check itself, an ask naming no file, repo-wide words, and a retry of something that already failed |
-| `npm run test:dispatchpane` | a dispatched run as a real pane, against a fake driver and real git: closes itself on success, STAYS on failure, a person's keystroke drops it ungated, an exited pty is a failure not a wait — and the report that leaves carries the gate's per-step verdicts, skipped included |
-| `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
-| `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
-| `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
-| `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
-| `npm run test:attach` | putting a picture in front of the agent: the bytes land on the machine that owns the pty, the extension comes off the magic bytes rather than off a name that lied, a batch too big for the device link is refused with a sentence and writes nothing on the way, and a file called `../../.ssh/authorized_keys` cannot leave the folder |
-| `npm run test:asknotify` | a pane's question on its way to a phone: the message names the pane and keeps the CLI's own numbering, a machine with no bot credentials sends nothing and says so rather than throwing inside a pty read, and the post never asks for updates - which would steal `pf-telegram.mjs`'s poller |
-| `npm run test:choices` | reading a live question off a pane's frame and the keys that answer it: two real captured chooser shapes, and the negatives that decide whether it is safe to draw buttons at all - a numbered list in an answer, one somebody quoted back at the agent, a gap in the numbering, and no selection arrow. Plus the byte-level check that the arrows really are escape sequences, because the first version of this file lost its escape in the same edit the source did and passed |
-| `npm run test:promptbox` | telling a CLI's drawn input box from everything that only looks like one — a zsh prompt, a diff, a markdown table — because a false positive there lets a bare click recall a command |
-| `npm run test:promptsubmit` | that a pane opened WITH a prompt actually sends it: nothing typed while the CLI is still booting, the return sent as its own keystroke rather than the last byte of the paste, sent again while the pane stays idle, and never once it is working |
-| `npm run test:onestash` | that there is one Stash: the overlay is a pill while the window is showing the list |
-| `npm run test:stashsummon` | that the Stash is not on screen until it is asked for: closing HIDES the window rather than parking a pill, and a summon opens at the pointer, on the pointer's own display, clamped on |
-| `npm run test:phone` | the phone client's server: nothing served before the code, calls landing in the app's own handlers, bytes surviving JSON — and PARITY, that one list feeds both transports and every line of it has a handler |
-| `npm run test:panesize` | who owns a pane's shape when the desk and a phone are both drawing it: a phone BORROWS the pty's size, gives it back when it looks away, and can never undo a size the desk chose afterwards |
-| `npm run test:tunnel` | the way in from anywhere: a URL that never resolves is never called up, a cloudflared that says nothing or hangs settles anyway, and the per-platform asset names a wrong guess would 404 on |
-| `npm run test:funnel` | the provider whose address never changes: which machine can be funnelled, which refusals mean "quietly use cloudflared" rather than "tell somebody something broke", that what tailscaled really published beats what was asked for, and that stopping SAYS so — nothing else ever will |
-| `npm run test:gist` | the one line History puts under a closed session: a pasted stack trace picks the sentence rather than the first frame, and nothing typed is nothing said rather than a guess |
-| `npm run test:qr` | the pairing QR, by DECODING it: format bits, zig-zag, de-interleave, every Reed-Solomon syndrome zero, payload back out — every version at every mask. Nothing less catches a symbol that is drawn perfectly and reads nowhere |
-| `npm run test:stash` | what the Stash may cost — no list leaving main carries a body; and what follows from that: search runs in main (a word past the preview is still found) and an edit keeps its row's place, its pin, and no second row saying the same thing |
-| `npm run test:conceal` | what the Stash may not remember: the copying app's concealed marker, and the user's own deny rules. Markers only — never a built-in guess at secret SHAPES, because copying an API key to paste it at an agent is an everyday move here |
+| `npm run test:turncopy` | where a turn's two copy icons go, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
+| `npm run test:cursorclick` | the keys a click sends, the clicks refused, and that a BARE click emits no vertical arrow at any input |
+| `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go, with the capture-phase `stopPropagation` kept as the control |
+| `npm run test:promptbox` | telling a CLI's drawn input box from a zsh prompt, a diff and a markdown table |
+| `npm run test:promptsubmit` | that a pane opened WITH a prompt sends it: nothing typed while booting, the return as its own keystroke, re-sent while still idle, never once working |
+| `npm run test:choices` | reading a live question off a frame, two real captured shapes, the negatives (a numbered list in an answer, a quoted one, a gap, no arrow) and that the arrows really are escape bytes |
+| `npm run test:askclick` | that a click on a pane holding a question types NOTHING - real mouse input through CDP, with the control that the same click with no question still sends its arrows. Needs a window |
+| `npm run test:askrender` | the countdown on a real question - drawn in the pane, on the card, and ticking once a second - and what arrowing costs every OTHER pane (the bystander's count is the load-bearing half). Needs a window |
+| `npm run test:autoanswer` | which questions may be answered for you: every wording of "and stop asking me", the timing over a fake clock, and source assertions on the state the guards read |
+| `npm run test:anim` | what a looping decoration may cost: `transform` and `opacity` only (a `box-shadow` ring measured 136% of a GPU core against 36%) |
+| `npm run test:attach` | a picture in front of the agent: bytes land on the machine owning the pty, the extension comes off the magic bytes, an oversized batch writes nothing, and `../../.ssh/authorized_keys` cannot leave the folder |
+| `npm run test:asknotify` | a question on its way to Telegram: names the pane, keeps the CLI's numbering, silent with no credentials, and never asks for updates |
+| `npm run test:settingsearch` | that a setting is findable by what it DOES - the index is generated from the dialog's source, so one added without regenerating turns this red |
+| `npm run test:onestash` | that there is one Stash |
+| `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |
+| `npm run test:panesize` | who owns a pane's shape when a desk and a phone both draw it |
+| `npm run test:tunnel` | a URL never called up before it resolves, a cloudflared that hangs settling anyway, and the per-platform asset names |
+| `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
+| `npm run test:gist` | the one line History puts under a closed session |
+| `npm run test:qr` | the pairing QR, by DECODING it - every version at every mask |
+| `npm run test:stash` | what the Stash may cost (no list carries a body), and what follows: search in main, an edit keeping its row |
+| `npm run test:conceal` | what the Stash may not remember: markers only, never a guess at secret SHAPES |
 | `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
 | `npm run test:copymode` | keyboard copy mode arithmetic |
 | `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
 | `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
-| `npm run test:improve` | prompt improvement, model-free (incl. the exact typed byte stream) |
 | `npm run test:voice` | dictation: which transcriber, and a spoken clip through it |
-| `npm run test:recall` | "you have asked this before" — and PARITY with the canonical fingerprint |
+| `npm run test:recall` | "you have asked this before", and PARITY with the canonical fingerprint |
 | `npm run test:rename` | the folder rename, on a throwaway repo |
-| `npm run test:dock` | the macOS Dock icon (no `visibleOnFullScreen` without the skip) |
-| `npm run test:macupdate` | the app replacing its own bundle |
-| `npm run test:macdownload` | every way a mac download can end — none of them a hang |
-| `npm run test:wedge` | that no hung promise can leave the updater needing a person |
-| `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
-| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — all three shapes it has had (`CSI 2 J`, the erase-per-row, and the bare `ESC[6A` overdraw v2.1.233 sends, which erases nothing at all), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm with a control per shape proving a plain terminal loses it |
-| `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
-| `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
-| `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
-| `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
-| `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
+| `npm run test:dock` | the macOS Dock icon |
+| `npm run test:macupdate` / `test:macdownload` / `test:wedge` | replacing our own bundle, every way a download can end, and that no hung promise leaves the updater needing a person |
+| `npm run test:history` | what transcripts may cost |
+| `npm run test:scrollclear` | that an agent's `/clear` stops destroying the scrollback - all three byte shapes it has had, a sequence torn across chunks, and a control per shape proving a plain terminal loses it |
+| `npm run test:markanchor` | that a prompt tag survives the CLI erasing its row, with a bare xterm marker as the control |
+| `npm run test:quitwords` | telling a Cmd-Q from an outside kill; the load-bearing case is the false positive |
+| `npm run test:recover` | finishing a turn the transport cut in half, and the refusals (a rate limit, an error somebody QUOTED) |
+| `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
+| `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
+| `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
+| `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting |
+| `npm run test:devlist` | what is serving now and which one a sentence names (a server and its child are ONE; "close the dev" with three running picks none) |
+| `npm run test:backjobs` | what a machine runs with no pane on it: a hook alive for 300ms is not a job, a pane's own build is never listed twice, `--max-old-space-size=4096` is not a port, a dev server an agent started is a second fact - and a last block that reads THIS machine's real process table, because the `etime` parsing is the half a fixture cannot check |
+| `npm run test:devservers` | turning a running server back into the package.json script that starts it, and the drops |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
-| `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back — and the three refusals, of which the load-bearing one is a `npm run try` copy out of `dist\win-unpacked`: a Desktop shortcut pointing at a folder the next build deletes looks fine until it is pressed |
-| `npm run test:winfeed` | which release the Windows dev channel may point its feed at: the mac-only build skipped, the walk stopping at the first hit, and NOTHING installable resolving to nothing rather than to the newest anyway |
-| `npm run test:promptecho` | reading a submitted prompt back out of a restored pane's own output, so a reopened pane gets its rail tags back — with the negatives that keep the rail readable: a `>` quote in an answer, a diff, a shell prompt, and the live composer drawing the same marker inside its box |
+| `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back, and the three refusals |
+| `npm run test:winfeed` | which release the Windows dev channel may pin its feed at |
 
-Needing a real window up (`npm run build && npm run try -- --keep --show
---remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:improveview`, `test:turncopyview` (which is happy minimized), and
-`test:phoneview` (a real headless Chrome at
-414x896 against that copy — it skips out loud with no Chrome and no server).
+Needing a real window (`npm run build && npm run try -- --keep --show
+--remote-debugging-port=9333`): `test:view`, `test:stashdrag`, `test:activate`,
+`test:turncopyview` (happy minimized), `test:restorefix` (two launches),
+`test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`.
 
-Out of the default suite on purpose because they need the network: `test:discordbrand`,
-which asks Discord what the shipped `DISCORD_APP_ID` is called AND whether it still has
-the art asset `PRESENCE_IMAGE` names — it passes now, and the two halves fail separately,
-because a correct name with no asset is a card with no logo on it; and
-`node scripts/mac-update-test.mjs --live <version>` (~120 MB).
+`test:devicesfit` measures the Devices panel in the running app: two columns on a window
+wide enough, the shell itself never scrolling, and nothing reaching the Close button. Both
+faults were real and both were measured at 1500x912 - **1057px of content in an 812px box
+with nothing paired**, and a sticky footer with a background but no cover strip above it,
+so 228px of content sat under the button. Red-proofed by putting the single column and the
+missing `padding-top` back: 4 of its 6 checks fail.
 
-The research pipeline's gate is `npm run test:research`, and
-`scripts/capability-ingest.mjs` is the ONLY door into the catalogue — see
-`RESEARCH-POLICY.md`. That pipeline researches *techniques*; the other agent-runners are
-watched separately by `npm run competitors` (`npm run test:competitors`), which diffs the
-repos in `competitors.json` against the checked-in `docs/competitors.state.json` and prints
-only what moved. It is deliberately quiet: sub-5% star drift says nothing, and a changed
-README is the one line that means go re-read a feature list into `TODO.md`.
+Out of the default suite because they need the network: `test:discordbrand` (asks Discord
+what `DISCORD_APP_ID` is called AND whether `PRESENCE_IMAGE`'s asset still exists - the two
+halves fail separately), and `node scripts/mac-update-test.mjs --live <version>` (~120 MB).
+
+Other agent-runners are watched by `npm run competitors` (`npm run test:competitors`), which prints only what moved.
 
 ## A turn the transport cut in half finishes itself
 
@@ -1332,7 +1482,10 @@ by closing the pane. `npm run test:reclaim`.
   pressure has removed the reason the window is open.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has
   typed into for that long whatever the memory says; 0 is the default, so the paragraph
-  above still describes every desk that has not asked otherwise. It exists for the second
+  above still describes every desk that has not asked otherwise. The switch sets
+  `IDLE_CLOSE_MINUTES`, which is **30 minutes** - it was 120, priced on "being early closes
+  a pane somebody was coming back to", which is a click that restores the conversation and
+  the screen against ~190 MB of agent doing nothing for two hours. It exists for the second
   machine — a desk driven over the device link, which fills with finished panes and has no
   person to close them. Every refusal above is shared verbatim except **visible**, which it
   cannot keep: on a machine nobody is at, every pane in the grid is "on screen", and
@@ -1366,13 +1519,67 @@ now four rungs, each firing only where the one above it did not solve it: trim s
 (~5%) → start the NEXT pane over there → **move a finished pane over there** → close it.
 `shared/autoHandoff.ts` is rung three; `npm run test:autohandoff`.
 
+**...and none of that fires until something has already gone wrong, which is the wrong
+moment.** Both triggers were readings about a machine in trouble - the kernel's memory
+verdict, or a pane quiet for half an hour - and a laptop that is meant to be the SCREEN for
+work running on a second machine is asking a different question: not "am I full" but "how
+many agents do I run at all". So `Machine.keepLocal` (`autoHandoff.keepLocal`, **2**) is a
+budget, `Verdict.over` is how many panes are past it, and `budgetPlan` moves exactly that
+many. Measured on this desk while writing it: pressure `normal`, load 0.53 per core, five
+`claude` panes -> `over: 3`, `why: 'budget'`, `offload: true` at `level: 'ok'`.
+
+- **The budget is a policy, so it holds at `ok`** - which is the one sentence in
+  `offloadTarget` that had to change. A desk that says it keeps two agents is not in
+  trouble with five open; it is three panes past what it asked for, and the launch sends
+  the next one over there for that reason alone.
+- **It is the only rule allowed to move a pane that is ON SCREEN or MID-TURN.** Those two
+  gates only ever meant "there is no emergency" - and with the grid on, `visible` is every
+  pane, which is why the pressure sweep could never fire on a one-window desk. Past the
+  budget there is no emergency and the move is still right. A busy pane is picked LAST
+  (`rank`: quiet-and-offscreen, then quiet, then mid-turn) and goes through the same queue,
+  so nothing is killed mid-answer; `queueable` is the wider set `movable` cannot be.
+  Everything that could lose work is refused unchanged: the focused pane, a live question,
+  a mirror, one already moving, one on a failure cooldown, the last pane on the desk.
+- **The number moved is the overshoot, not `maxPerSweep`.** That cap exists so a machine
+  under pressure re-reads its own recovery between moves; here the number is not a guess
+  about how much would help, and moving two of five per minute while somebody opens panes
+  faster than that never converges.
+- **Lag is read as well as memory, and the worse of the two decides** (`lagLevel`,
+  `worstPressure`). Memory pressure is the kernel admitting it has already lost: this desk
+  sat at `warn` for an afternoon with nine agent CLIs up while the load average ran at
+  **8.70 on 10 cores**, which is the number that had actually moved. One runnable thread
+  per core is `warn`, 1.8 is `critical`. NOT a CPU percentage - the desk that produced
+  these figures had 32.73% of its CPU idle at load 105. `os.loadavg()` is 0 on Windows, so
+  0 means "nobody measured" and never "idle": an absent signal may not move a pane.
+  `watchPressure` watches the lag BAND too, or a desk whose memory is steady while its load
+  climbs is never told.
+- **Nothing asks any more.** `offloadAsk` defaults off with a one-time `offloadDefaultsV2`
+  migration (the `migrateAutoAnswer` shape - read off the SAVED config, or the marker is
+  set for everybody and the migration runs on nothing). The dialog was right while the app
+  could see the memory and not the reason to keep the pane here; a budget IS that reason,
+  given once.
+- **A pane is never handed back where it came from**, which is the one failure mode a
+  policy has that a pressure reading does not: two desks each keeping two agents are each
+  correct about their own budget and would pass one pane between them for ever. The sender
+  puts its own id in the payload (`senderDevice`), the receiver stamps it on the pane
+  (`arrivedFrom`), and `hostFor` skips that device. A second machine that did not send it
+  may still take it - the refusal is about WHERE it came from, not that it arrived.
+- Both hardened like `offloadMinutes` and for the same reason - these come off config.json
+  and off `pf-ctl call config:set`, so `true` is not a budget of one (`keepLocalOf`).
+
 - **A pane mid-turn is queued, never killed.** A handoff ends in `kill()`, and a pty killed
   mid-answer loses that answer for good: the far end resumes from the transcript file, which
   holds only turns the CLI has already flushed. Refusing a busy pane would be honest and
   useless, since the pane worth moving is usually the one working - so `main/handoffQueue.ts`
   holds it and moves it the instant the turn ends. That is what "hand it off mid-turn" means
   here. A pane that never goes quiet **expires** after `waitMinutes` and stays, said out
-  loud; nothing is ever killed to make the queue progress.
+  loud; nothing is ever killed to make the queue progress. **And the chip that reports the
+  wait is the control that ends it**: `remote:handoffCancel` shipped with the queue and
+  nothing in the window ever called it, so the only way off the list was a script - two
+  panes sat under a `waiting` chip for 13 and 18 minutes on 2026-08-23 while their own
+  turns ran. Pressing the chip, or `Keep it here` in the card menu or the phone's sheet,
+  drops the entry; a move already IN FLIGHT has left the queue and says so rather than
+  claiming a success it cannot deliver.
 - **A pane holding a question is never moved, queued or otherwise.** The chooser is drawn on
   a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
   question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the
@@ -1484,6 +1691,19 @@ writes that name to `updater.log` with the pane count. A quit that leaves it emp
 answer that was missing: Chromium turns a SIGTERM into exactly this shape of graceful
 shutdown, so "nothing in the app asked" and "the window was closed" are different facts
 and the log now separates them.
+
+**That sentence named three possibilities and separated none of them**, which is what made
+2026-08-21's close unanswerable: nine panes gone, `quit nothing in the app asked ... 9
+pane(s) open`, and no way to tell a Cmd-Q from a `pkill` from a logout. A signal still
+cannot be caught - Chromium takes SIGTERM below the JS layer and `process.on('SIGTERM')`
+never runs, measured - but the three are told apart by **where the screen was**: a Cmd-Q or
+an app-menu Quit can only be typed at a frontmost window, while `pkill`, `osascript ...
+quit`, a launchd job and a logout all arrive while somebody is looking at something else.
+`shared/quitWords.ts` turns the last focus into that sentence. It is evidence and never a
+verdict - the useful half is the negative, "this did NOT come from this keyboard", and it
+names no culprit. `FROM_KEYBOARD_MS` is a generous 4s because Cmd-Q blurs the window a beat
+before `before-quit` runs and calling a real Cmd-Q an outside kill would send the next
+person hunting a script that does not exist. `npm run test:quitwords`.
 
 ## Gotchas that look like mistakes
 

@@ -22,6 +22,7 @@ import { randomBytes } from 'node:crypto'
 import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
+import type { BackJob } from '../../shared/backJobs'
 import {
   HANDOFF_ASK_MS,
   HANDOFF_CHUNK,
@@ -224,6 +225,18 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * What that machine is running outside its panes - see `shared/backJobs.ts`.
+   *
+   * A whole process table is read over there to answer this, so it is asked when somebody
+   * opens the panel and never on a tick. A device that does not answer rejects, and the
+   * caller says so: an empty list is "nothing is running", which is a completely different
+   * fact about a machine that is meant to be working.
+   */
+  jobs(): Promise<BackJob[]> {
+    return this.ask<BackJob[]>({ t: 'jobs' }, 20_000)
+  }
+
+  /**
    * Save files beside a mirrored pane, on the device that owns it.
    *
    * The bytes go over rather than the path, because the path is the thing that does not
@@ -400,6 +413,9 @@ export class RemoteClient extends EventEmitter {
         this.settle(m, m.list)
         return
       case 'agents':
+        this.settle(m, m.list)
+        return
+      case 'jobslist':
         this.settle(m, m.list)
         return
       case 'filesdone':

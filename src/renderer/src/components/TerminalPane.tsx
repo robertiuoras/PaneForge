@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
+import { mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { splitDropUris, type AttachIn } from '../../../shared/attach'
+import { pastesClipboardImage } from '../../../shared/agents'
+import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
@@ -16,18 +18,22 @@ import {
   type CopyState
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
-import { cellAt, keysAlongLine, keysForClick, keysForDelete } from '../../../shared/cursorMove'
-import { keepScrollback, mayClearScreen, writtenRows } from '../../../shared/keepScrollback'
+import type { InputRow } from '../../../shared/cursorMove'
+import { cellAt, keysAlongLine, keysForClick, keysForRows, keysToPoint } from '../../../shared/cursorMove'
+import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
+import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { inputEnd, inputStart, promptTop, sameBox } from '../../../shared/promptBox'
+import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
+import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { placeTurnCopies } from '../../../shared/turnCopy'
 import { HANDHELD_MAX } from '../handheld'
 import { CopyIcon, CopyReplyIcon } from './Icons'
+import { useNow } from './Elapsed'
 import './TerminalPane.css'
 
 const api = window.api
@@ -82,6 +88,16 @@ interface Props {
    */
   grid?: { cols: number; rows: number } | null
   /**
+   * The width the restored part of this pane's buffer was painted at.
+   *
+   * A CLI draws in absolute column moves, and a terminal clamps one past its own last
+   * column - so a 159-column screen replayed into an 85-column pane collapses onto the
+   * right-hand edge, one word over the last, and no repaint fixes it because the damage
+   * is in the scrollback. The replay is written at this width and the terminal is put
+   * back afterwards. See `shared/replayWidth.ts`.
+   */
+  replayCols?: number
+  /**
    * The four colours the terminal's own chrome is drawn in, from the app's theme.
    *
    * Handed over as strings because xterm renders to a canvas and cannot read a CSS
@@ -105,8 +121,60 @@ interface Props {
    * the renderer could only ever disagree with the first.
    */
   ask?: PaneAsk | null
+  /**
+   * When that question will be answered for you, epoch ms, and which option.
+   *
+   * Decided in the main process (`shared/autoAnswer.ts`), never here: the press and the
+   * countdown have to come from one clock, or the pane promises seconds the presser does
+   * not keep. Absent means nothing is going to happen and no clock is drawn.
+   */
+  autoAnswerAt?: number
+  autoAnswerN?: number
+  /**
+   * Which CLI is running in this pane.
+   *
+   * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
+   * clipboard when it gets a ^V, so it can be handed the picture itself; the other twelve
+   * read a path off the prompt and would see nothing at all from a paste.
+   */
+  agent?: string
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
+}
+
+/**
+ * "This will be answered for you in N seconds."
+ *
+ * Its own component so the second timer only runs while a countdown is on screen: `useNow`
+ * is one shared tick for the whole app, and subscribing the pane itself would re-render
+ * every pane once a second for a clock almost none of them are showing.
+ *
+ * It names the OPTION as well as the time. A countdown alone says something is about to
+ * happen; the point of showing it at all is that somebody who disagrees can reach the pane
+ * first, and they cannot disagree with a number.
+ */
+function AskCountdown({ at, n, ask }: { at: number; n?: number; ask: PaneAsk }): React.JSX.Element {
+  const now = useNow()
+  const left = Math.max(0, Math.ceil((at - now) / 1000))
+  const label = ask.options.find((o) => o.n === n)?.label
+  return (
+    <div className="pane-ask-auto" title="Settings -> Answer an agent's question for me">
+      {/* The seconds are their own element and are the biggest thing on the row: this is
+          the one part somebody has to read at a glance from across the desk, and the
+          11px line it used to be was a sentence nobody reported ever seeing. */}
+      <span className="pane-ask-auto-left">{left > 0 ? `${left}s` : 'now'}</span>
+      <span className="pane-ask-auto-word">
+        {/* The seconds are in the pill to the left, so the words say WHAT rather than
+            when: "Answering for you in Yes, run it" is what reading the two halves as one
+            sentence produced, and it parses as nonsense. */}
+        Answering for you with
+        {/* The option is named, not only numbered: a countdown alone says something is
+            about to happen, and the point of showing it is that somebody who disagrees
+            can reach the pane - which they cannot do against a number. */}
+        {label ? <b className="pane-ask-auto-pick"> {label}</b> : null}
+      </span>
+    </div>
+  )
 }
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
@@ -119,6 +187,25 @@ import { isPhoneClient } from '../client'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/** Per-pane render counter, exposed on the window for probes. See the component body. */
+export const renderCount = new Map<string, number>()
+;(window as unknown as { __pfRenders?: Map<string, number> }).__pfRenders = renderCount
+
+/**
+ * Tell a pane that a clear is about to be sent to it, from something other than its own
+ * keyboard.
+ *
+ * `arm()` is fed by keystrokes, and a keystroke is only one of the ways a `/clear` reaches
+ * a pty here: the Clear button on a card writes it straight at the pty, and so does the
+ * session menu and every path in main that types for you. Measured in the running app on
+ * 2026-08-19, a pane cleared by typing kept its screen and the same pane cleared through
+ * `api.write` lost it - the keeper never heard about the second one. This is that seam,
+ * and it is the cheap half of the answer: an armed clear files the screen whole, colours
+ * and all, before the CLI has emitted a byte. A clear that arrives with nothing armed is
+ * still caught, one step later and in plain text, by the wipe check in the pane.
+ */
+export const paneArmClear = new Map<string, () => void>()
 
 /**
  * What each pane's user has typed but not sent, reconstructed from the keystrokes this
@@ -269,6 +356,13 @@ const glLive = new Set<string>()
 const GL_BUDGET = 8
 
 /**
+ * How long a restored pane's output must be quiet before it repairs itself. Long enough
+ * that a CLI still printing its resume banner is not poked mid-paint, short enough that
+ * nobody reaches for the Fix button first.
+ */
+const RESTORE_FIX_MS = 1200
+
+/**
  * Refit, and land back on the newest line if this pane was following it. A resize changes
  * how many rows fit while xterm leaves the viewport offset alone, which is one of the ways
  * the view ends up a line short of the tail. Someone reading scrollback is left alone.
@@ -301,20 +395,77 @@ function mirrorFit(
   f: FitAddon,
   pinned: boolean,
   mirror: { cols: number; rows: number },
-  maxFont: number
+  maxFont: number,
+  host: HTMLElement | null
 ): boolean {
   const cols = t.cols
   const rows = t.rows
+  let stepped = false
+  let scaleWanted = 1
   const d = f.proposeDimensions()
   if (d && d.cols > 0 && d.rows > 0) {
-    const k = Math.min(d.cols / Math.max(1, mirror.cols), d.rows / Math.max(1, mirror.rows))
     const current = t.options.fontSize ?? maxFont
-    const next = Math.max(6, Math.min(maxFont, Math.round(current * k)))
-    if (next !== current) t.options.fontSize = next
+    const out = mirrorSize({
+      fitCols: d.cols,
+      fitRows: d.rows,
+      hostCols: mirror.cols,
+      hostRows: mirror.rows,
+      font: current,
+      maxFont
+    })
+    if (out.font !== current) {
+      t.options.fontSize = out.font
+      stepped = true
+    }
+    scaleWanted = out.scale
+    // Below the font floor the only lever left is the element itself. Without this
+    // the pane simply drew a grid wider than itself and the far end's screen was cut
+    // off at the edge - reported as "half way cut across the screen". xterm's hit
+    // testing reads getBoundingClientRect, which includes the transform, so a click
+    // in a scaled mirror still lands on the cell under the pointer.
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
+
+  // The scale is MEASURED, not walked.
+  //
+  // `mirrorSize` says whether the font alone can do it; how much is left over is a
+  // question about pixels that are already on the screen, and asking the DOM is exact
+  // where another ratio-of-a-ratio step is not. It also cannot stall: the walk stops
+  // as soon as the font settles, so a scale derived from it never got a pass with the
+  // font already at the floor - measured live at a forced 600x150 grid, 902px of the
+  // far end's screen stayed clipped with no transform at all.
+  if (host) {
+    const screen = host.querySelector('.xterm-screen') as HTMLElement | null
+    // `offsetWidth` and `clientWidth` are LAYOUT sizes: a transform on this element
+    // does not move them, so reading them back after applying one cannot feed on
+    // itself and walk the pane down to nothing.
+    const room = host.clientWidth
+    const drawn = screen ? screen.offsetWidth : 0
+    const tall = screen ? screen.offsetHeight : 0
+    const measured =
+      drawn > 0 && room > 0 ? Math.min(1, room / drawn, host.clientHeight / Math.max(1, tall)) : 1
+    // The arithmetic answer and the measured one, whichever is smaller. `mirrorSize`
+    // decides whether scaling is needed at all and is what the tests pin; the DOM
+    // decides by how much.
+    const fits = Math.min(scaleWanted, measured)
+    const want = fits < 0.999 ? `scale(${Math.max(0.05, fits).toFixed(3)})` : ''
+    if (host.style.transform !== want) {
+      host.style.transformOrigin = 'top left'
+      host.style.transform = want
+      stepped = true
+    }
+  }
   if (pinned) t.scrollToBottom()
-  return t.cols !== cols || t.rows !== rows
+  // The FONT and the SCALE count as a change, not just the grid.
+  //
+  // This walk converges over frames - each pass measures the layout the previous one
+  // produced - and the only thing that makes the next pass happen is this returning
+  // true. Reporting only `cols/rows` meant a mirror whose grid was already correct
+  // stopped after ONE step: measured live at a forced 600x150 grid, the scale settled
+  // at 0.807 where 0.565 was needed and 502px stayed off the right edge, stable and
+  // wrong. The grid is the one thing that does NOT change here - a mirror takes the
+  // host's cols and rows verbatim - so it was the wrong thing to key on.
+  return t.cols !== cols || t.rows !== rows || stepped
 }
 
 /**
@@ -419,6 +570,9 @@ function quote(p: string): string {
 /** Ctrl+V as a byte, for the agents that read the OS clipboard themselves. */
 const RAW_PASTE = String.fromCharCode(0x16)
 
+/** Between two pasted images: long enough for the CLI to have read the first one. */
+const PASTE_GAP_MS = 250
+
 /** The one refusal that means "nothing to attach" rather than "something went wrong". */
 const NO_IMAGE = 'No image on the clipboard'
 
@@ -441,7 +595,7 @@ function base64(bytes: Uint8Array): string {
  * One xterm bound to one pty. Output arrives as a global 'pty:data' event, so each
  * pane filters by id rather than opening a channel per session.
  */
-export default function TerminalPane({
+function TerminalPane({
   sessionId,
   cwd,
   visible,
@@ -453,10 +607,22 @@ export default function TerminalPane({
   autoFixUi,
   mirror = null,
   grid = null,
+  replayCols,
   termTheme,
   ask = null,
+  autoAnswerAt,
+  autoAnswerN,
+  agent,
   onToast
 }: Props): JSX.Element {
+  // How many times each pane has rendered, where a probe can read it.
+  //
+  // A pane's render is not cheap - it re-measures the turn-copy pairs and the rail against
+  // the live xterm buffer - and the sessions list arrives from main as a fresh array on
+  // every change, so before `memo` below EVERY pane re-rendered whenever ANY pane's
+  // question moved by one arrow. This counter is what makes that statement a measurement
+  // rather than a theory, and it is what `scripts/ask-render-test.mjs` reads.
+  renderCount.set(sessionId, (renderCount.get(sessionId) ?? 0) + 1)
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
@@ -477,8 +643,59 @@ export default function TerminalPane({
   // reaches them through here.
   const selectInputRef = useRef<() => boolean>(() => false)
   const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
+  const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  // The width this pane's replayed history was painted at, where the effect that owns the
+  // terminal can read it. See `Props.replayCols`.
+  const replayColsRef = useRef(replayCols)
+  replayColsRef.current = replayCols
+  /**
+   * The replay is mid-flight and the terminal is deliberately the WRONG shape for its box.
+   *
+   * `reshape` is called by the resize observer, by the visibility effect and by the grid -
+   * any one of them landing between the two halves of a staged replay would fit the
+   * terminal back to the window while the old screen is still being written into it, which
+   * is the bug this exists to fix, arriving from the other side.
+   */
+  const replaying = useRef(false)
+  /**
+   * The question this pane is sitting on, where the mouse handlers can see it.
+   *
+   * They are attached once per session and they TYPE INTO THE PTY - a bare click becomes
+   * left and right arrows, an Alt-click becomes up and down, a selection delete becomes a
+   * run of backspaces - and a live chooser is the one moment on a pane when every one of
+   * those is an action rather than a movement. Measured against a real `claude` in a pty
+   * on 2026-08-19: 15 right arrows sent while its `/model` chooser was up moved it from
+   * Medium to `max effort`, and 2 down arrows moved the selection and left a torn partial
+   * repaint behind. Claude Code does NOT turn mouse reporting on (no `?1000h` anywhere in
+   * its boot), so `mouseGrabbed()` is false, nothing is swallowed, and a click that merely
+   * tried to place the cursor was silently answering somebody else's question.
+   *
+   * So: while a question is up, a click does nothing to the pty at all. The answer is the
+   * buttons under the pane, which say what they will do before they do it.
+   */
+  const askRef = useRef<PaneAsk | null>(null)
+  askRef.current = ask ?? null
+  // The paste path lives inside a long-lived effect, so the prop itself would be the
+  // one this pane mounted with - and a pane switched to another CLI would keep pasting
+  // the way the old one wanted.
+  const agentRef = useRef(agent)
+  agentRef.current = agent
+  /**
+   * Every keystroke this pane's MOUSE handlers have sent, for a probe to read.
+   *
+   * `window.api` is frozen by the context bridge, so a test cannot wrap `write` to watch
+   * what a click did - it assigns, the assignment is dropped in silence, and the test then
+   * reports an empty list for every click it makes, including the ones that typed. That is
+   * how the first version of `test:askclick` passed without ever reaching the handler. The
+   * only honest reading is one the pane keeps itself.
+   */
+  const clickKeys = useRef<string[]>([])
+  const sendKeys = (keys: string): void => {
+    clickKeys.current.push(keys)
+    void api.write(sessionId, keys)
+  }
   // A session can be moved into a lane worktree without the pane being rebuilt, and the
   // link provider is attached once per session, so it reads the folder through a ref.
   const cwdRef = useRef(cwd)
@@ -516,14 +733,19 @@ export default function TerminalPane({
    * frame it is showing was drawn on the other machine to begin with.
    */
   const reshape = (t: Terminal, f: FitAddon): boolean => {
+    if (replaying.current) return false
     const m = mirrorRef.current
-    if (m && m.cols > 0 && m.rows > 0) return mirrorFit(t, f, pinned.current, m, fontRef.current)
+    if (m && m.cols > 0 && m.rows > 0)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
     const g = gridRef.current
     if (g && !isPhoneClient() && g.cols > 0 && g.rows > 0)
-      return mirrorFit(t, f, pinned.current, g, fontRef.current)
+      return mirrorFit(t, f, pinned.current, g, fontRef.current, host.current)
+    // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
+    // or the pane keeps drawing at two thirds size with nothing to explain it.
+    if (host.current && host.current.style.transform) host.current.style.transform = ''
     const changed = refit(t, f, pinned.current)
     // A phone BORROWS the pty's shape rather than owning it. One pty cannot be 50 columns
     // for a phone and 157 for the window it is also drawn in, and before this the phone
@@ -606,6 +828,40 @@ export default function TerminalPane({
   /** Phone re-wraps this pane has been through. Read by `npm run test:phoneview`. */
   const rewraps = useRef(0)
 
+  /** Self-repairs this pane has been given after a restore. Read by the probe. */
+  const restoreFixes = useRef(0)
+  /**
+   * This pane came back wearing a frame drawn at somebody else's width.
+   *
+   * A restored pane is seeded with the tail of what the OLD pty printed (`restoredTail`
+   * in `main/sessions.ts`), and the CLI hard-wrapped those lines itself at the width it
+   * had then - into a terminal that has not necessarily been fitted yet, since xterm
+   * opens at 80x24 and the fit lands a frame or two later. So the replay regularly
+   * arrives at the wrong width, the resuming agent then draws its own frame over it, and
+   * the pane reads as broken. That is "after the update restart it looks broken, Fix
+   * fixes it": the app restarts itself for every update, so this is the launch most panes
+   * on this desk get. The pane now presses Fix for itself, once.
+   */
+  const needRestoreFix = useRef(false)
+  /**
+   * Give a restored pane that repair, once. Deliberately not a plain timer from the
+   * replay: a hidden pane cannot be measured and its agent has nothing to redraw against,
+   * so it is left FLAGGED and the visibility effect asks again once it has a real grid.
+   */
+  const runRestoreFix = (): void => {
+    if (!needRestoreFix.current) return
+    // `autoFixUi` is "do not poke a CLI on my behalf", and this is a poke. A mirror is the
+    // other machine's pty, and that machine is repairing its own pane.
+    if (!autoFixRef.current || mirrorRef.current) {
+      needRestoreFix.current = false
+      return
+    }
+    if (!host.current?.offsetParent) return
+    needRestoreFix.current = false
+    restoreFixes.current++
+    paneRepair.get(sessionId)?.()
+  }
+
   /**
    * The two copy affordances, and why they are separate.
    *
@@ -669,6 +925,81 @@ export default function TerminalPane({
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
     typePaths(res.paths)
+  }
+
+  /** Is a paste the right answer for this drop? The rule itself is in shared/attach.ts. */
+  const pasteImagesInstead = (items: { name: string; type?: string }[]): boolean =>
+    pasteImageDrop({ agent, sessionId, items }, pastesClipboardImage)
+
+  /**
+   * Hand images to the agent through the clipboard, one ^V each.
+   *
+   * A `path` item is a Finder drag or a screenshot dragged off its own preview thumbnail:
+   * there is no File object behind it and the main process reads the file itself. A
+   * `file` item carries its bytes.
+   *
+   * ALL OR NOTHING. Every item is decoded first, and one the decoder refuses sends the
+   * WHOLE drop back to typing paths. Pasting the ones that worked and typing paths for
+   * the rest leaves the prompt holding two pastes and a path in an order nobody can
+   * predict - and a name is the least trustworthy thing about a file, so a PDF called
+   * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
+   * names and MIME types, and only a decode knows.
+   */
+  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+    /** What this drop does when anything at all goes wrong. Never silent, never partial. */
+    const fallBack = async (why?: string): Promise<void> => {
+      if (why) toast.current?.(why)
+      const files = items.map((i) => i.file).filter((f): f is File => !!f)
+      const paths = items.map((i) => i.path).filter((p): p is string => !!p)
+      if (files.length) await sendFiles(files)
+      if (paths.length) typePaths(paths)
+      term.current?.focus()
+    }
+
+    // 1. Read the bytes. A File handle can be revoked between the drop and this line - the
+    //    file was moved, or the browser refuses it - and that rejection would otherwise be
+    //    swallowed whole by the `void` at the call site.
+    const loaded: { data?: string; path?: string }[] = []
+    for (const item of items) {
+      if (item.file) {
+        try {
+          const bytes = new Uint8Array(await item.file.arrayBuffer())
+          if (!bytes.length) return fallBack()
+          loaded.push({ data: base64(bytes) })
+        } catch {
+          return fallBack()
+        }
+      } else if (item.path) loaded.push({ path: item.path })
+    }
+    if (loaded.length !== items.length) return fallBack()
+
+    // 2. Decode every one of them BEFORE a single ^V is sent. `probe` writes nothing, so a
+    //    batch that turns out not to be all images leaves the clipboard as it was.
+    for (const src of loaded) {
+      let readable = false
+      try {
+        readable = await api.putImageOnClipboard({ ...src, probe: true })
+      } catch {
+        readable = false
+      }
+      if (!readable) return fallBack()
+    }
+
+    // 3. Now paste. A failure here has already overwritten the clipboard, so it is said out
+    //    loud rather than left as a drop that appeared to do nothing at all.
+    for (let i = 0; i < loaded.length; i++) {
+      try {
+        if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
+        api.write(sessionId, RAW_PASTE)
+      } catch {
+        return fallBack('That image reached the clipboard but the pane could not paste it.')
+      }
+      // The CLI reads the clipboard when the ^V lands, so two images pasted in the same
+      // tick would both read whichever one was written last. One at a time, with a gap
+      // wide enough for the read - and no gap after the last one, which is only a wait.
+      if (i < loaded.length - 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
+    }
+    term.current?.focus()
   }
 
   const syncTotal = (): void => {
@@ -812,6 +1143,29 @@ export default function TerminalPane({
   }
 
   /**
+   * The receipt for a copy that has already happened.
+   *
+   * Same words as `putOnClipboard`, without the write: the keyboard and right-click paths
+   * hand the text to the clipboard themselves (they have their own "did anything get
+   * copied" rules and their own highlight handling), and all they were missing was the
+   * sentence saying it worked.
+   */
+  const sayCopied = (text: string, what = 'Selection'): void => {
+    const body = text.trim()
+    // Nothing readable in it - a drag that caught only spaces, or a blank row. It still
+    // reached the clipboard (these callers write before they announce), and saying
+    // nothing here is the exact silence this whole change exists to remove: the press
+    // worked, nothing happened on screen, and there is no way to tell that from a copy
+    // that failed. Same sentence `putOnClipboard` uses, so the two paths agree.
+    if (!body) {
+      say('Nothing to copy there')
+      return
+    }
+    const lines = body.split('\n').length
+    say(`${what} copied - ${lines} line${lines === 1 ? '' : 's'}`)
+  }
+
+  /**
    * Jump the view to where a prompt was submitted. Going back into history is exactly the
    * gesture that means "stop following the tail" - if the pane kept snapping to the newest
    * line the click would undo itself on the agent's next write.
@@ -853,6 +1207,56 @@ export default function TerminalPane({
      * chunks from the pty), so there is exactly one of it per pane and every write site
      * uses it, and `arm()` below is what tells it a wipe is a clear, not a repaint.
      */
+    /** The screen as it stands, one string per row. */
+    const screenNow = (): string[] => {
+      const b = t.buffer.active
+      const out: string[] = []
+      for (let y = b.baseY; y < b.baseY + t.rows; y++) {
+        out.push(b.getLine(y)?.translateToString(true) ?? '')
+      }
+      return out
+    }
+    // The screen as it was when a wipe started, held until the redraw that follows has
+    // settled and can be compared with it. See `wipeSettled`.
+    let wipeSnap: string[] | null = null
+    let wipeTimer: number | undefined
+    /**
+     * The redraw after a wipe has gone quiet: decide whether it was a repaint or a clear.
+     *
+     * A repaint puts the same rows back and there is nothing to keep. A clear does not, and
+     * the rows it took are still in `wipeSnap` - so they are printed onto a blank screen
+     * and scrolled off it, which is the only way to put anything into a terminal's
+     * scrollback, and the agent is then asked to redraw the frame that was wiped out from
+     * under it. What is kept is the TEXT of those rows: the colours are gone, which is the
+     * price of finding out after the fact rather than being told in advance. A clear the
+     * pane armed itself never gets here - `arm()` files the screen whole, colours and all,
+     * before the CLI has said a word.
+     */
+    const wipeSettled = (): void => {
+      const snap = wipeSnap
+      wipeSnap = null
+      wipeTimer = undefined
+      if (!snap || dead) return
+      // What is filed is what the redraw did NOT put back. A repaint hands every row back
+      // and this is empty; a clear hands none back and this is the whole screen; a CLI
+      // re-rendering its view a line or two further on hands back everything except the
+      // lines that fell off the top - which are the ones nothing else would have kept.
+      const lost = lostRows(snap, screenNow())
+      if (!screenLost(snap, screenNow())) return
+      // The bytes are built in the shared file so the test drives the shipped ones against
+      // a real terminal rather than a copy of them.
+      const bytes = fileRows(lost, t.rows)
+      if (!bytes) return
+      t.write(bytes)
+      paneRepair.get(sessionId)?.()
+    }
+    /** How long the redraw after a wipe is given to stop before it is judged. */
+    const WIPE_SETTLE_MS = 400
+    const armWipeCheck = (): void => {
+      if (!wipeSnap) return
+      window.clearTimeout(wipeTimer)
+      wipeTimer = window.setTimeout(wipeSettled, WIPE_SETTLE_MS)
+    }
     const keep = keepScrollback(
       () => t.rows,
       () => t.buffer.active.type === 'alternate',
@@ -861,7 +1265,15 @@ export default function TerminalPane({
       // blank, and scrolling those rows only puts a screenful of nothing into the
       // scrollback in front of the turn being kept. The walk itself is in the shared file
       // so the test can drive the shipped one against a real xterm rather than a copy.
-      () => writtenRows(t)
+      () => keptRows(t),
+      // A wipe has started, and nothing in the bytes says whether it is a clear or one of
+      // the full repaints this CLI does dozens of times a session. Remember the screen and
+      // find out - see `wipeSettled`.
+      () => {
+        if (wipeSnap) return
+        wipeSnap = screenNow()
+        armWipeCheck()
+      }
     )
     const f = new FitAddon()
     t.loadAddon(f)
@@ -1009,7 +1421,18 @@ export default function TerminalPane({
         // "the history survived" from "the path never ran", and the second one is how a
         // regression here would pass unnoticed: the re-wrap only happens when the COLUMNS
         // move, which depends on the desk's window size on the day.
-        rewraps: () => rewraps.current
+        rewraps: () => rewraps.current,
+        // How many times this pane has repaired itself after being restored. A probe that
+        // only reads the buffer cannot tell "the frame came back clean" from "the path
+        // never ran", and the second is how a regression here would pass unnoticed.
+        restoreFixes: () => restoreFixes.current,
+        // What the mouse handlers have typed into the pty, newest last. See `clickKeys`.
+        clickKeys: () => [...clickKeys.current],
+        // What this pane believes is being TYPED right now - the rows of the CLI's own
+        // composer, or of a wrapped shell line. On the handle because every symptom of
+        // this being wrong looks like something else: a selection that deletes one
+        // character reads as a dead key, not as "the pane could not find the composer".
+        inputRows: () => inputRowsRef.current?.() ?? null
       },
       // The draft is reconstructed from keystrokes rather than read off the screen, so it
       // is the one thing about a pane that no amount of DOM or buffer inspection can
@@ -1333,12 +1756,24 @@ export default function TerminalPane({
     // a phantom selection twice would mean Ctrl+C never interrupts, so it happens once.
     const copied = { current: '' }
 
-    const copySelection = (keepHighlight = false): boolean => {
+    /**
+     * Copy what is highlighted, and SAY SO.
+     *
+     * The clipboard gives no feedback of its own, so a copy that went nowhere and a copy
+     * that worked look identical - which is "I press copy and nothing tells me it copied".
+     * Every copy a PERSON asked for therefore reports in the window's toast, with the line
+     * count as the receipt (the same rule `putOnClipboard` already followed for the turn
+     * icons and the selection chip). `announce` is false for exactly one caller: copy on
+     * select, which nobody pressed - toasting on every drag of the mouse is noise, and the
+     * highlight is its own feedback there.
+     */
+    const copySelection = (keepHighlight = false, announce = true): boolean => {
       // A visible highlight always wins: Ctrl+C copies it and drops it, so the very next
       // Ctrl+C is an interrupt again. One extra keypress, never a lost prompt.
       const live = t.getSelection()
       if (live) {
         api.copyText(live)
+        if (announce) sayCopied(live)
         if (!keepHighlight) t.clearSelection()
         lastSelection.current = ''
         copied.current = live
@@ -1347,6 +1782,7 @@ export default function TerminalPane({
       const sel = lastSelection.current
       if (!sel || sel === copied.current) return false
       api.copyText(sel)
+      if (announce) sayCopied(sel)
       copied.current = sel
       lastSelection.current = ''
       return true
@@ -1358,11 +1794,17 @@ export default function TerminalPane({
           t.paste(text)
           return
         }
-        // No text usually means an image. It is saved as a file on the machine that owns
-        // this pty and the PATH is what gets typed, because forwarding a raw ^V only
-        // works for an agent that reads the OS clipboard itself - Claude Code does, Codex
-        // and the other eleven do not - and only when the agent is on the same machine as
-        // the clipboard, which a mirrored pane's agent is not.
+        // No text usually means an image, and an agent that reads the clipboard itself
+        // should be handed the PICTURE - the same thing a drop gives it, which is what
+        // makes Cmd+V and a drag land identically. Typing the path of a file it then has
+        // to be asked to open is the answer for every OTHER CLI, which sees nothing at all
+        // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
+        // and not this one.
+        if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
+          api.write(sessionId, RAW_PASTE)
+          return
+        }
+        // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
           if (res.paths.length) {
             typePaths(res.paths)
@@ -1497,6 +1939,8 @@ export default function TerminalPane({
      */
     const placeCursor = (e: MouseEvent): void => {
       if (!clickCursorRef.current) return
+      // An arrow is a menu step while a chooser is up - see `askRef`.
+      if (askRef.current) return
       if (e.button !== 0 || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
       // The alternate screen is vim, less, a menu - things where an arrow is navigation
       // and there is no line being edited to move along.
@@ -1517,7 +1961,7 @@ export default function TerminalPane({
       e.stopPropagation()
       // preventDefault on mousedown costs the focus the click would have given it.
       t.focus()
-      if (keys) api.write(sessionId, keys)
+      if (keys) sendKeys(keys)
     }
 
     /**
@@ -1592,18 +2036,76 @@ export default function TerminalPane({
      * plus every row the same input wrapped onto, from past the prompt marker to the last
      * character written.
      */
-    const inputSpan = (): { row: number; col: number; end: number; length: number } | null => {
-      if (t.buffer.active.type === 'alternate') return null
+    /**
+     * Where a row's own text begins.
+     *
+     * `inputStart` hunts for a prompt marker, which is right on the row a CLI drew its
+     * prompt on and wrong on every row after it: ordinary prose holds `$ ` and `# ` and
+     * `> ` all the time, and moving the start forward there selects fewer characters than
+     * were highlighted. Under-selecting is the failure that leaves text behind, which is
+     * the bug this is all for. A framed row keeps the hunt - the frame bounds it.
+     */
+    const contentStart = (text: string, first: boolean): number => {
+      if (first || frameAt(text) >= 0) return inputStart(text)
+      return leadingBlanks(text)
+    }
+
+    /**
+     * What is being typed, row by row: the composer the CLI draws when there is one, and
+     * otherwise the cursor's row plus whatever xterm wrapped it onto.
+     *
+     * Both are the same shape to everything downstream - a list of screen spans plus
+     * whether each one fills its width - so one piece of arithmetic (`offsetIn`) answers
+     * for a shell, for a framed box, and for Claude Code's frameless composer alike.
+     */
+    const inputRows = (): { top: number; rows: InputRow[] } | null => {
       const b = t.buffer.active
+      if (b.type === 'alternate') return null
       const cursorRow = b.baseY + b.cursorY
+      const comp = composerAt(rowText, cursorRow)
+      if (comp) {
+        const rows: InputRow[] = []
+        for (let r = comp.top; r <= comp.bottom; r++) {
+          const text = rowText(r)
+          const start = contentStart(text, r === comp.top)
+          const end = Math.max(start, inputEnd(text))
+          // Within a column of the far edge counts as FULL, deliberately: a boundary
+          // counted as a separator that was not one deletes a character nobody
+          // highlighted, and one counted the other way only leaves a character behind.
+          rows.push({ start, end, full: end >= comp.width - start - 1 })
+        }
+        return { top: comp.top, rows }
+      }
       let top = cursorRow
       while (top > 0 && b.getLine(top)?.isWrapped) top--
       let bottom = cursorRow
       while (b.getLine(bottom + 1)?.isWrapped) bottom++
-      const col = inputStart(rowText(top))
-      const end = inputEnd(rowText(bottom))
-      const length = (bottom - top) * t.cols + (end - col)
-      return length > 0 ? { row: top, col, end, length } : null
+      const rows: InputRow[] = []
+      for (let r = top; r <= bottom; r++) {
+        const text = rowText(r)
+        // An xterm wrap is a row that ran out of columns, so it holds no character of its
+        // own and every row of one is full by definition.
+        rows.push({
+          start: r === top ? inputStart(text) : 0,
+          end: r === bottom ? inputEnd(text) : t.cols,
+          full: true
+        })
+      }
+      return { top, rows }
+    }
+
+    /** The last row of what `inputRows` returned, in absolute buffer rows. */
+    const spanBottom = (span: { top: number; rows: InputRow[] }): number =>
+      span.top + span.rows.length - 1
+
+    const inputSpan = (): { row: number; col: number; end: number; length: number } | null => {
+      const span = inputRows()
+      if (!span) return null
+      const first = span.rows[0]
+      const last = span.rows[span.rows.length - 1]
+      // Cells, not characters: `t.select` counts across the screen by columns.
+      const length = (spanBottom(span) - span.top) * t.cols + (last.end - first.start)
+      return length > 0 ? { row: span.top, col: first.start, end: last.end, length } : null
     }
 
     /**
@@ -1622,64 +2124,49 @@ export default function TerminalPane({
     }
 
     /**
-     * The delete path's version of `clampCol`.
-     *
-     * Same job - never past what is written, never into the box's own frame - minus the
-     * prompt-marker half on any row that is a CONTINUATION of a wrapped input. `inputStart`
-     * hunts for the first marker character followed by a space and moves the start past it,
-     * which is right on the row a shell drew its prompt on and wrong on every row after it:
-     * ordinary wrapped prose contains `> ` and `- ` and `$ ` all the time, and moving the
-     * start forward there deletes fewer characters than were highlighted. Under-selecting is
-     * the one failure mode that leaves text behind, which is the bug being fixed.
-     */
-    const clampDeleteCol = (row: number, col: number): number => {
-      const text = rowText(row)
-      const end = Math.min(col, inputEnd(text))
-      // A row that says it is wrapped is a continuation, so nothing precedes the input on it.
-      const continuation = t.buffer.active.getLine(row)?.isWrapped === true
-      return continuation ? Math.max(end, 0) : Math.max(end, inputStart(text))
-    }
-
-    /**
      * Delete the highlighted text by walking to it and backspacing over it.
      *
      * A selection lives in this window and the far end has never heard of it, which is why
      * no terminal lets you delete one. The arithmetic and every refusal are in
-     * `cursorMove.ts`; this half is only about which selections are eligible - all of it on
-     * the line the far end is still editing, which is the cursor's own row and whatever
-     * that input wrapped onto.
+     * `cursorMove.ts`; this half is only about which selections are eligible - all of it
+     * inside the one input the far end is editing, which `inputRows` names.
      *
      * Three answers, not two, and the third is the whole point. `no` means the selection is
      * somewhere this cannot act on - scrollback, an alternate screen, another line - and the
-     * key must go to the pty untouched. `refused` means the selection IS on the line being
+     * key must go to the pty untouched. `refused` means the selection IS in the input being
      * edited and the keys still could not be built; there the key must be SWALLOWED, because
      * handing a bare Backspace to the pty in that state removes exactly one character out of
      * a highlighted block and leaves the highlight up. That is what "it doesn't delete fully"
-     * was: a refusal reported as ineligibility.
+     * was: a refusal reported as ineligibility - and, for two releases, a whole CLI whose
+     * composer rows are neither framed nor wrapped, so every multi-row selection took that
+     * path.
      */
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
       if (!pos || t.buffer.active.type === 'alternate') return 'no'
+      // A run of backspaces into a chooser is the same mistake as a run of arrows, and
+      // there is no line being edited to delete from anyway - see `askRef`.
+      if (askRef.current) return 'no'
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
-      if (!sameLine(cursorRow, pos.start.y) || !sameLine(cursorRow, pos.end.y)) return 'no'
-      const keys = keysForDelete({
-        cursorRow,
-        cursorCol: b.cursorX,
-        startRow: pos.start.y,
-        startCol: clampDeleteCol(pos.start.y, pos.start.x),
-        endRow: pos.end.y,
-        endCol: clampDeleteCol(pos.end.y, pos.end.x),
-        cols: t.cols,
-        // Every row here is part of one wrapped input - `sameLine` walked the chain.
-        wrapped: true
+      const span = inputRows()
+      if (!span) return 'no'
+      const bottom = spanBottom(span)
+      const inside = (r: number): boolean => r >= span.top && r <= bottom
+      if (!inside(cursorRow) || !inside(pos.start.y) || !inside(pos.end.y)) return 'no'
+      const keys = keysForRows({
+        rows: span.rows,
+        cursor: { row: cursorRow - span.top, col: b.cursorX },
+        start: { row: pos.start.y - span.top, col: pos.start.x },
+        end: { row: pos.end.y - span.top, col: pos.end.x }
       })
       if (!keys) return 'refused'
-      api.write(sessionId, keys)
+      sendKeys(keys)
       t.clearSelection()
       lastSelection.current = ''
       return 'done'
     }
+    inputRowsRef.current = inputRows
     selectInputRef.current = selectInput
     deleteSelectionRef.current = deleteSelection
 
@@ -1687,6 +2174,9 @@ export default function TerminalPane({
       const from = downAt
       downAt = null
       if (!clickCursorRef.current || !from) return
+      // An arrow is a menu step while a chooser is up - see `askRef`. Proven by
+      // `test:askclick`, whose red case types six right arrows into a live question.
+      if (askRef.current) return
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
       if (t.getSelection()) return
       if (t.buffer.active.type === 'alternate') return
@@ -1698,28 +2188,30 @@ export default function TerminalPane({
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
       const clickRow = b.viewportY + at.row
-      if (!sameLine(cursorRow, clickRow)) {
-        // A second LINE of a draft is a hard newline, not a wrap, so the chain above says
-        // the two rows are unrelated and a click on it used to do nothing at all - which is
-        // "the cursor can't select exactly where I want, it's very limited". Inside a drawn
-        // input box it is safe to send the vertical arrows a bare click may otherwise never
-        // send: the box is a text field the CLI is handling itself, so an up-arrow there is
-        // a movement and not the previous command. A plain shell draws no box, so this
-        // cannot fire in one - see shared/promptBox.ts.
-        if (!sameBox(rowText(cursorRow), rowText(clickRow))) return
-        const boxKeys = keysForClick({
-          cursorRow,
-          cursorCol: b.cursorX,
-          clickRow,
-          clickCol: clampCol(clickRow, at.col),
-          rowLimit: 8
-        })
-        if (!boxKeys) return
-        e.preventDefault()
-        stopForAgent(e)
-        api.write(sessionId, boxKeys)
-        return
+      // A composer the CLI draws itself is ONE text field spread over several rows, and the
+      // two numbers that matter are offsets into that field: where the far end's cursor is
+      // in it, and where the click landed. That covers a framed box and Claude Code's
+      // frameless one alike, and it replaces the vertical arrows the box branch used to
+      // send - a second line of a draft is a hard newline, worth exactly one left arrow,
+      // which is safer than an up arrow the CLI may read as its own history.
+      const span = inputRows()
+      if (span) {
+        const bottom = spanBottom(span)
+        const held = (r: number): boolean => r >= span.top && r <= bottom
+        if (held(cursorRow) && held(clickRow)) {
+          const keys = keysToPoint(
+            span.rows,
+            { row: cursorRow - span.top, col: b.cursorX },
+            { row: clickRow - span.top, col: at.col }
+          )
+          if (!keys) return
+          e.preventDefault()
+          stopForAgent(e)
+          sendKeys(keys)
+          return
+        }
       }
+      if (!sameLine(cursorRow, clickRow)) return
       // Past the end of what is written is the end of what is written. Without this, a
       // click in the empty half of the row sends a burst of rights that the editor eats one
       // by one for nothing - and on a CLI that reads an arrow as a menu step, does worse.
@@ -1733,7 +2225,7 @@ export default function TerminalPane({
       if (!keys) return
       e.preventDefault()
       stopForAgent(e)
-      api.write(sessionId, keys)
+      sendKeys(keys)
     }
 
     const forceSelectable = (e: MouseEvent): void => {
@@ -1808,8 +2300,9 @@ export default function TerminalPane({
       const sel = t.getSelection()
       if (sel.trim().length < 2) return
       // Keep the highlight: it is the only feedback that the copy happened, and a
-      // following Ctrl+C should still copy rather than interrupt.
-      copySelection(true)
+      // following Ctrl+C should still copy rather than interrupt. Silent on purpose -
+      // nobody pressed anything, so a toast per mouse drag would be noise.
+      copySelection(true, false)
     }
     // Right-click: copy when something is selected, paste when nothing is.
     const onContextMenu = (e: MouseEvent): void => {
@@ -1817,8 +2310,9 @@ export default function TerminalPane({
       const sel = t.getSelection()
       if (sel) {
         api.copyText(sel)
-        const lines = sel.split('n').length
-        say(`Selection copied - ${lines} line${lines === 1 ? '' : 's'}`)
+        // `sel.split('n')` here counted the letter n, so a one-line copy of a word
+        // containing an n reported several lines. One counter, one place.
+        sayCopied(sel)
         return
       }
       if (!copySelection()) pasteClipboard()
@@ -1879,20 +2373,61 @@ export default function TerminalPane({
     // main-thread cost with a guaranteed answer.
     let sawOutput = false
 
+    // Settle rather than fire: the agent is resuming and painting its own banner over the
+    // replay, and a repair made mid-paint is undone by the next frame.
+    let fixTimer: number | undefined
+    const armRestoreFix = (): void => {
+      if (!needRestoreFix.current) return
+      window.clearTimeout(fixTimer)
+      fixTimer = window.setTimeout(runRestoreFix, RESTORE_FIX_MS)
+    }
+
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
     api.getBuffer(sessionId).then((b) => {
-      // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
-      if (b) {
-        sawOutput = true
+      if (!b) return
+      sawOutput = true
+      // There is history on this pane, so it was drawn somewhere else first. See
+      // `needRestoreFix`.
+      needRestoreFix.current = true
+      armRestoreFix()
+      const done = (): void => {
+        // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
+        t.scrollToBottom()
+        // Held until here rather than dropped before the write: a staged replay resizes
+        // the terminal twice, and the dim "Starting…" line is what covers that.
         setBlank(false)
-        t.write(keep(b), () => {
-          t.scrollToBottom()
-          // The replay IS the conversation this pane is being reopened into, so its
-          // prompts get their tags back. See seedMarks.
-          seedMarks()
-        })
+        // The replay IS the conversation this pane is being reopened into, so its
+        // prompts get their tags back. See seedMarks.
+        seedMarks()
       }
+      // Its real shape before a byte lands. xterm opens at 80x24 and the fit otherwise
+      // arrives a frame or two later, which is the first half of "after the update
+      // restart it looks broken".
+      reshape(t, f)
+      // The second half, and the one no repaint can undo: the restored part of this
+      // buffer was painted in absolute column moves at the OLD pane's width, and a
+      // terminal clamps a column it cannot reach. See `shared/replayWidth.ts`.
+      const split = splitReplay(b, replayColsRef.current, t.cols)
+      if (!split) {
+        t.write(keep(b), done)
+        return
+      }
+      const back = t.cols
+      replaying.current = true
+      t.resize(Math.max(20, split.cols), t.rows)
+      // In the write CALLBACK, never after the call: xterm parses what it is given on its
+      // own schedule, so a resize issued straight after `write` can land before the bytes
+      // it is meant to be wider than.
+      t.write(keep(split.before), () => {
+        t.resize(back, t.rows)
+        replaying.current = false
+        // ...and a fit, because a resize that arrived while `replaying` was set was
+        // refused, and because a pane put back by hand is only right until the next one.
+        reshape(t, f)
+        if (split.after) t.write(keep(split.after), done)
+        else done()
+      })
     })
 
     /**
@@ -2013,6 +2548,8 @@ export default function TerminalPane({
       if (id !== sessionId) return
       if (!sawOutput) setBlank(false)
       sawOutput = true
+      // The resume prints for a second or two after the replay. Repair once it stops.
+      armRestoreFix()
       // Once per burst while output is flowing, and once more after it stops: the frame
       // that decides "finished or still working" is the last one drawn.
       if (Date.now() - lastBusyCheck > 600) checkBusy()
@@ -2025,6 +2562,9 @@ export default function TerminalPane({
       // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
       // write should have). Intent cannot drift, so this recovers by itself.
       t.write(keep(data), () => {
+        // A wipe is judged once its redraw stops, not on a fixed delay: a banner drawn in
+        // three bursts must not be compared with the screen half way through it.
+        armWipeCheck()
         if (pinned.current) t.scrollToBottom()
         // Same callback so the rail is measured against a buffer that has already grown,
         // rather than one write behind it.
@@ -2052,6 +2592,10 @@ export default function TerminalPane({
       }
     }
     paneRepair.set(sessionId, repair)
+    paneArmClear.set(sessionId, () => {
+      const away = keep.arm()
+      if (away) t.write(away)
+    })
     paneFeed.set(sessionId, feedInput)
     paneTerms.set(sessionId, t)
     paneFocus.set(sessionId, () => {
@@ -2150,7 +2694,10 @@ export default function TerminalPane({
       copy.current = state
       if (action === 'yank') {
         const text = t.getSelection()
-        if (text) api.copyText(text)
+        if (text) {
+          api.copyText(text)
+          sayCopied(text)
+        }
         leaveCopy()
         return true
       }
@@ -2279,8 +2826,10 @@ export default function TerminalPane({
       ro.disconnect()
       window.clearTimeout(settle)
       window.clearTimeout(settle2)
+      window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)
       paneCopyMode.delete(sessionId)
@@ -2443,6 +2992,9 @@ export default function TerminalPane({
               reshape(t, f)
               // The buffer kept growing while this pane was hidden, so the rail is stale.
               syncTotal()
+              // A restored pane that was hidden until now could not be measured, so its
+              // repair was left pending rather than spent on a 0x0 host.
+              runRestoreFix()
             }
           }
         } catch {
@@ -2527,6 +3079,16 @@ export default function TerminalPane({
     setDropping(false)
     const files = Array.from(e.dataTransfer.files)
     if (files.length) {
+      // An image dropped on an agent that reads the clipboard goes in as the PICTURE, not
+      // as a filename it has to go and open. That is the whole point of dropping a
+      // screenshot on Claude Code, and typing `/Users/.../Screenshot 2026-08-18.png` at
+      // the prompt was a path the agent had to be asked to read before it could see
+      // anything. Falls through to the path for every other CLI, which sees nothing at
+      // all from a ^V.
+      if (pasteImagesInstead(files.map((f) => ({ name: f.name, type: f.type })))) {
+        void pasteImages(files.map((file) => ({ file }))).catch(() => void sendFiles(files))
+        return
+      }
       const paths = files.map((file) => api.pathForFile(file)).filter(Boolean)
       // A path is only true on one machine. This pane's is this one when the id is a plain
       // one, so the file is already where the agent can open it and nothing needs copying.
@@ -2563,7 +3125,14 @@ export default function TerminalPane({
       // opened; a mirrored pane's runs on the other desk and this path means nothing there,
       // and there is no File object to send its bytes instead - so it is said out loud
       // rather than typed as a link that reads as a missing file.
-      if (!sessionId.startsWith('@')) typePaths(dropped)
+      if (!sessionId.startsWith('@')) {
+        // Same rule as the File branch: an image goes to a clipboard-reading agent as the
+        // image. These paths have no File object behind them, so the bytes are read in the
+        // main process instead of here.
+        if (pasteImagesInstead(dropped.map((p) => ({ name: p }))))
+          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typePaths(dropped))
+        else typePaths(dropped)
+      }
       else
         toast.current?.(
           "That file is on this machine and this pane's agent runs on the other device. " +
@@ -2743,7 +3312,12 @@ export default function TerminalPane({
   return (
     <div
       ref={wrap}
-      className={'xterm-wrap' + (dropping ? ' dropping' : '') + (ask ? ' asking' : '')}
+      // No ring for a live question. The card in the sidebar carries the red bar down its
+      // left edge and the "asks you" chip, which is where a person looks to see WHICH pane
+      // is owed an answer; drawing it a second time as a border over the agent's own output
+      // was the same fact twice, over live text, in the one place it could be mistaken for
+      // part of what the agent printed.
+      className={'xterm-wrap' + (dropping ? ' dropping' : '')}
       onDragOver={(e) => {
         // `Files` is one of two shapes a dropped file arrives in, and the other one was
         // never claimed. A macOS screenshot dragged off its own preview thumbnail, and a
@@ -2979,13 +3553,33 @@ export default function TerminalPane({
           this only draws it. */}
       {ask && (
         <div className="pane-ask">
-          {ask.question && <div className="pane-ask-q">{ask.question}</div>}
+          {/* The question is NOT repeated here. The CLI has it on screen a few rows to the
+              left, in full, with its own wording and its own numbers - drawing it again in
+              a card that also carries the answers made two questions out of one, and the
+              copy was clamped to two lines so it was the worse of the two. What this holds
+              is the part the terminal cannot say: what this app is about to press, when,
+              and a target for a pointer or a thumb. */}
+          {autoAnswerAt ? <AskCountdown at={autoAnswerAt} n={autoAnswerN} ask={ask} /> : null}
           <div className="pane-ask-row">
             {ask.options.map((o) => (
               <button
                 key={o.n}
-                className={'pane-ask-btn' + (o.n === ask.selected ? ' on' : '')}
-                title={`${o.n}. ${o.label}`}
+                // Three states, not two: where the CLI's own arrow is (`on`), and which
+                // one this app is about to press for you (`auto`). They are usually the
+                // same row and are not always - the pick is `pickAnswer`'s, which reads
+                // the labels rather than the arrow - so a countdown that named an option
+                // the eye could not then find on the row was the half of the promise that
+                // was missing.
+                className={
+                  'pane-ask-btn' +
+                  (o.n === ask.selected ? ' on' : '') +
+                  (autoAnswerAt && o.n === autoAnswerN ? ' auto' : '')
+                }
+                title={
+                  autoAnswerAt && o.n === autoAnswerN
+                    ? `${o.n}. ${o.label} - this is the one that will be pressed for you`
+                    : `${o.n}. ${o.label}`
+                }
                 onClick={() => {
                   void api.chooseOption(sessionId, o.n).then((ok) => {
                     // A refusal is the pane having moved on - answered at the desk while
@@ -3005,3 +3599,78 @@ export default function TerminalPane({
     </div>
   )
 }
+
+/**
+ * Is this the same question, drawn the same way?
+ *
+ * `ask` arrives from the main process inside a fresh sessions array on every change, so
+ * its identity is never stable and comparing it by reference would defeat the memo below
+ * outright. What matters to the pane is what it DRAWS: the question, which row the CLI's
+ * arrow is on, and the options themselves.
+ */
+function sameAsk(a?: PaneAsk | null, b?: PaneAsk | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.question !== b.question || a.selected !== b.selected) return false
+  if (a.options.length !== b.options.length) return false
+  return a.options.every((o, i) => o.n === b.options[i].n && o.label === b.options[i].label)
+}
+
+function sameGrid(a?: { cols: number; rows: number } | null, b?: { cols: number; rows: number } | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.cols === b.cols && a.rows === b.rows
+}
+
+/**
+ * Whether this pane can skip a render.
+ *
+ * The sessions list is one array for the whole desk, rebuilt in main whenever ANYTHING
+ * about ANY pane changes - and a question being arrowed through rebuilds it on every
+ * frame. Without this, a pane's render is work every other pane pays for: measured on
+ * 2026-08-20 against a real chooser in a dev copy, five arrow moves cost **34 renders of
+ * every pane on the desk**, four of which had no question on them at all. A render is not
+ * free either - it re-measures the turn-copy pairs and the prompt rail against the live
+ * xterm buffer - which is what made arrowing through an agent's answers feel heavy.
+ *
+ * Every prop is compared, and the three that are objects are compared by VALUE, because
+ * main sends new ones each time and by reference this comparator would always say "no".
+ * A prop added to `Props` without a line here is a pane that STOPS UPDATING for it, and
+ * nothing catches that: TypeScript has no exhaustiveness check over an object's keys, so
+ * the missing comparison compiles, the comparator answers "same", and the pane quietly
+ * never re-renders for that prop. It is listed out rather than looped over so the omission
+ * is at least visible when reading the function - it is not a compile error. Add the line
+ * in the same edit as the prop.
+ */
+function samePaneProps(a: Props, b: Props): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.cwd === b.cwd &&
+    a.visible === b.visible &&
+    a.active === b.active &&
+    a.fontSize === b.fontSize &&
+    a.copyOnSelect === b.copyOnSelect &&
+    a.mouseSelect === b.mouseSelect &&
+    a.clickMovesCursor === b.clickMovesCursor &&
+    a.autoFixUi === b.autoFixUi &&
+    a.agent === b.agent &&
+    a.onToast === b.onToast &&
+    a.autoAnswerAt === b.autoAnswerAt &&
+    a.autoAnswerN === b.autoAnswerN &&
+    a.replayCols === b.replayCols &&
+    sameAsk(a.ask, b.ask) &&
+    sameGrid(a.mirror, b.mirror) &&
+    sameGrid(a.grid, b.grid) &&
+    sameTheme(a.termTheme, b.termTheme)
+  )
+}
+
+/** The xterm palette, by value: it is derived in App and is a new object every render. */
+function sameTheme(a: Props['termTheme'], b: Props['termTheme']): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const ka = Object.keys(a) as (keyof NonNullable<Props['termTheme']>)[]
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k])
+}
+
+export default memo(TerminalPane, samePaneProps)

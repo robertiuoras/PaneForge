@@ -44,7 +44,9 @@
 // Pure. `npm run test:autohandoff`.
 
 import type { OffloadCandidate, Verdict } from './capacity'
+export { keepLocalOf } from './capacity'
 import type { FleetState } from './fleet'
+import { quietSince } from './reclaim'
 
 export interface AutoHandoffConfig {
   /** Move finished panes to a paired device when this machine runs out of memory. */
@@ -78,6 +80,25 @@ export interface AutoHandoffConfig {
    * move somebody's work while there is room, so the evidence has to be stronger.
    */
   offloadIdleMinutes: number
+  /**
+   * How many panes with a live agent this machine keeps for itself. 0 = no budget.
+   *
+   * The two clocks above are both reactive: one waits for the kernel to complain, the other
+   * waits for a pane to go quiet for half an hour. Both are answers to "this desk is full
+   * NOW", and neither can express the thing a laptop driving a second machine actually
+   * wants - that it is the SCREEN, and past a couple of agents the work belongs on the
+   * machine that is plugged in.
+   *
+   * So this is the budget, and it is the one rule allowed to move a pane that is on screen
+   * and a pane that is mid-turn (queued, then moved the moment the turn ends). That is not
+   * a relaxation of the refusals: everything that could lose work is still refused - the
+   * pane you are typing in, one holding a question, one already moving, a mirror, the last
+   * pane on the desk. What it drops is the two gates that only ever meant "there is no
+   * emergency", because past the budget there is no emergency and the move is still right.
+   *
+   * `keepLocalOf` in capacity.ts hardens it, for the same reason `offloadMinutes` exists.
+   */
+  keepLocal: number
 }
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
@@ -89,7 +110,13 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   maxPerSweep: 2,
   cooldownMinutes: 30,
   waitMinutes: 30,
-  offloadIdleMinutes: 0
+  offloadIdleMinutes: 0,
+  // Two. It cannot fire without a paired device that is online and holds the same project,
+  // so on a laptop with nothing paired this is the behaviour it always had; on a desk with
+  // the other machine up it is the answer to opening a third pane. Everything moved comes
+  // straight back as a mirror, so the number is about where agents RUN, never about how
+  // many sessions can be watched from here.
+  keepLocal: 2
 }
 
 /**
@@ -120,6 +147,15 @@ export interface AutoPane {
   state: FleetState
   /** epoch ms of the last thing a person typed into it */
   lastKeyboard: number
+  /**
+   * epoch ms the pty last printed anything, when the caller knows it.
+   *
+   * Same reading, and the same reason, as `ReclaimPane.lastOutput`: a person types one
+   * prompt and the agent works for two hours, so keystrokes alone call a pane that has
+   * never stopped working "quiet for two hours". Quiet means nobody has typed AND the
+   * pane has printed nothing.
+   */
+  lastOutput?: number
   focused: boolean
   visible: boolean
   /** another device's pty, mirrored here - moving it frees nothing on this machine */
@@ -135,6 +171,25 @@ export interface AutoPane {
    * that must not be.
    */
   asking: boolean
+  /**
+   * A turn is in flight right now.
+   *
+   * Only the budget rule reads it, and it reads it to ORDER rather than to refuse: a busy
+   * pane is the last one picked, and when it is picked the move is queued and happens the
+   * moment the turn ends. The other two rules never see a busy pane at all, because
+   * `movable` refuses it outright.
+   */
+  busy?: boolean
+  /**
+   * The device that handed this pane here, when one did.
+   *
+   * The budget rule refuses to send it back there, and that refusal is what stops the one
+   * failure mode a policy has that a pressure reading does not: two desks each keeping two
+   * agents are each correct about their own budget, and between them they would pass one
+   * pane back and forth for ever. A pressure sweep cannot do this - the other machine has
+   * to be genuinely out of memory for its half of the loop, and the move fixes that.
+   */
+  arrivedFrom?: string
   /** what this pane's folder is called as a project - the only portable name for it */
   projectName: string
 }
@@ -155,14 +210,35 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
   return p.state === 'ready' || p.state === 'needsYou'
 }
 
+/**
+ * States a pane may be QUEUED out of, which is a wider set than `movable`.
+ *
+ * The difference is what happens next. `movable` is asked by the two rules that move a
+ * pane on the spot, so a turn in flight has to be refused: the kill that ends a handoff
+ * would throw the unfinished answer away. The budget rule hands the pane to the queue
+ * instead, and the queue's whole job is to wait for that turn to end - so `working` and
+ * `stalled` are eligible here and the answer is never at risk.
+ *
+ * Still refused: a live question (drawn on a screen, in no transcript, so it arrives over
+ * there with nobody asked), a pane that has exited (nothing to move), and one that has
+ * not printed yet - `starting` has no transcript to resume from and no screen to carry.
+ */
+export function queueable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
+  if (p.asking) return false
+  return p.state === 'ready' || p.state === 'needsYou' || p.state === 'working' || p.state === 'stalled'
+}
+
 /** The peer that can take this project, or null. Same rules as `offloadTarget`. */
 export function hostFor(
   peers: OffloadCandidate[],
-  projectName: string
+  projectName: string,
+  /** a device this pane may not go to - the one it was handed here from */
+  avoid?: string
 ): { device: string; deviceName: string; cwd: string } | null {
   if (!projectName) return null
   for (const c of peers) {
     if (!c.online) continue
+    if (avoid && c.device === avoid) continue
     const hit = c.projects.find((p) => p.name === projectName)
     if (hit) return { device: c.device, deviceName: c.deviceName, cwd: hit.path }
   }
@@ -184,12 +260,78 @@ export function autoHandoffPlan(
   now = 0
 ): AutoHandoff[] {
   if (!cfg.enabled) return []
-  // The same trigger as every other rung: `ok` means the kernel is content, and moving
-  // somebody's pane to another machine while there is room here is not a tidy-up, it is
-  // the app deciding where they work.
+  // The budget first, and it does not consult the level at all: `Verdict.over` is this
+  // desk's own statement about where agents run, and it is true at `ok`. When it is set,
+  // the reading that follows is about a machine that is ALREADY past what it agreed to
+  // hold, so waiting ten quiet minutes and skipping every pane on screen would be waiting
+  // for permission that has already been given.
+  const over = Math.max(0, v.over ?? 0)
+  if (over > 0) return budgetPlan(panes, peers, cfg, blocked, now, over)
+  // Otherwise the same trigger as every other rung: `ok` means the kernel is content, and
+  // moving somebody's pane to another machine while there is room here is not a tidy-up,
+  // it is the app deciding where they work.
   if (v.level === 'ok') return []
   if (!(cfg.maxPerSweep > 0)) return []
   return pick(panes, peers, cfg, blocked, now, Math.max(0, cfg.minIdleMinutes), true)
+}
+
+/**
+ * The panes that are past the budget, moved now.
+ *
+ * `over` comes from `Verdict.over` - `localPanes - keepLocal` - and is exactly how many
+ * this returns, rather than `maxPerSweep`. That cap is there so a machine under pressure
+ * re-reads its own recovery between moves instead of emptying itself on one reading; here
+ * the number is not a guess about how much would help, it IS the overshoot, and moving two
+ * of five per minute while a build session opens panes faster than that never converges.
+ * The moves are carried out one at a time by the caller either way.
+ *
+ * Two gates are dropped and only two. `visible`, because with the grid on every pane is on
+ * screen and keeping it means the rule can never fire on the one-window desk it exists for
+ * - and because a moved pane comes straight back as a mirror, so what is on screen stays
+ * on screen. And the idle wait, because a budget is not a statement about idleness.
+ *
+ * Busy panes are eligible and are picked LAST: the sort walks quiet-and-offscreen first,
+ * then quiet-and-visible, then whatever is mid-turn. A busy one that does get picked is
+ * queued by main and moves when its turn ends - nothing is ever killed mid-answer.
+ */
+export function budgetPlan(
+  panes: AutoPane[],
+  peers: OffloadCandidate[],
+  cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
+  blocked: Record<string, number> = {},
+  now = 0,
+  over = 0
+): AutoHandoff[] {
+  if (!cfg.enabled || over <= 0) return []
+  const eligible = panes
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => !((blocked[p.id] ?? 0) > now))
+    .sort((a, b) => rank(a) - rank(b) || quietSince(a) - quietSince(b))
+
+  // Never the last pane, exactly as above: a desk with nothing on it has not been helped.
+  const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
+  const room = Math.max(0, eligible.length - keepAtLeastOne)
+
+  // The cap is on how many are MOVED, never on how many are looked at. `slice(0, room)`
+  // reads the same and is not: a pane whose project no peer has fails `hostFor` and is
+  // skipped, but it has already spent one of the slots, so a desk whose quietest panes
+  // belong to a project the other machine does not hold moves one pane instead of three
+  // and is still over budget on the next sweep, for ever - a plan that cannot converge.
+  const cap = Math.min(over, room)
+  const out: AutoHandoff[] = []
+  for (const p of eligible) {
+    if (out.length >= cap) break
+    // Never back where it came from. The desk over there runs this same rule.
+    const host = hostFor(peers, p.projectName, p.arrivedFrom)
+    if (!host) continue
+    out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
+  }
+  return out
+}
+
+/** Cheapest to move first: quiet and off-screen, then quiet, then mid-turn. */
+function rank(p: AutoPane): number {
+  return (p.busy ? 2 : 0) + (p.visible ? 1 : 0)
 }
 
 /**
@@ -239,20 +381,24 @@ function pick(
   const eligible = panes
     .filter((p) => !p.focused && !p.remote && !p.handingOff && movable(p))
     .filter((p) => !(screen && p.visible))
-    .filter((p) => now - p.lastKeyboard >= minIdle)
+    .filter((p) => now - quietSince(p) >= minIdle)
     .filter((p) => !((blocked[p.id] ?? 0) > now))
-    .sort((a, b) => a.lastKeyboard - b.lastKeyboard)
+    .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Never the last pane, for the same reason reclaim never empties the window: a desk with
   // nothing on it has not been helped.
   const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
   const room = Math.max(0, eligible.length - keepAtLeastOne)
 
-  for (const p of eligible.slice(0, room)) {
+  // Same shape as `budgetPlan`: the cap is on moves, not on candidates examined. A pane
+  // no peer can host is skipped rather than spending a slot, or a desk whose quietest pane
+  // belongs to a project the other machine does not have moves nothing at all.
+  const cap = Math.min(Math.max(0, cfg.maxPerSweep), room)
+  for (const p of eligible) {
+    if (out.length >= cap) break
     const host = hostFor(peers, p.projectName)
     if (!host) continue
-    out.push({ id: p.id, ...host, idleMs: now - p.lastKeyboard })
-    if (out.length >= cfg.maxPerSweep) break
+    out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
   }
   return out
 }

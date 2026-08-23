@@ -89,6 +89,8 @@ export interface SendDeps {
   transcriptFileFor(cwd: string, resumeId: string): string | null
   deliver(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   deviceName(device: string): string
+  /** This device's own id, stamped on the pane over there so it is never sent back here. */
+  selfDevice?(): string
   /**
    * Whether this pane is mid-turn, or sitting on a question it drew on screen.
    *
@@ -167,6 +169,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   const payload: HandoffPayload = {
     spec,
     senderRoot: deps.root(),
+    senderDevice: deps.selfDevice?.() || undefined,
     repo: repo ?? undefined,
     tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
     closeReceiverWhenDone: closeReceiverWhenDone || undefined,
@@ -219,16 +222,40 @@ async function pushRepo(cwd: string, root: string, deviceName: string): Promise<
   } catch {
     return 'Repo has no origin remote - the other machine has no way to fetch it'
   }
+  let dirty = false
   if (await git(cwd, ['status', '--porcelain'])) {
+    dirty = true
     await git(cwd, ['add', '-A'])
     await git(cwd, ['commit', '-m', `auto-sync: handoff to ${deviceName}`])
   }
-  try {
-    await git(cwd, ['push', 'origin', branch], 120_000)
-  } catch (err) {
-    return `Push failed, so the code cannot follow: ${(err as Error).message}`
+  // A push of a branch the remote already has is still a full round trip - 944 ms measured
+  // against this repo's real origin, with nothing to transfer - and it is a third of the
+  // whole handoff. Skipped only on the reading that means it genuinely has nothing to say:
+  // nothing was committed just now, and no commit here is missing from every remote branch.
+  // That is `git-risk`'s definition of unbacked and not `@{u}..HEAD`, which counts commits
+  // origin already holds under another name.
+  let unpushed = true
+  if (!dirty) {
+    try {
+      unpushed = (await git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])) !== '0'
+    } catch {
+      /* a repo with no remote refs yet: push, the way this always did */
+    }
   }
-  return { url, branch, dirRel }
+  if (dirty || unpushed) {
+    try {
+      await git(cwd, ['push', 'origin', branch], 120_000)
+    } catch (err) {
+      return `Push failed, so the code cannot follow: ${(err as Error).message}`
+    }
+  }
+  let sha = ''
+  try {
+    sha = await git(cwd, ['rev-parse', 'HEAD'])
+  } catch {
+    /* an empty repo has no HEAD; the receiver then falls back to fetching */
+  }
+  return { url, branch, dirRel, sha: sha || undefined }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +313,10 @@ export async function receiveHandoff(
     role: spec.role,
     laneEnv: spec.laneEnv
   })
+
+  // Where it came from, kept on the pane. The budget rule over here is the same rule that
+  // sent it, so without this the two desks pass one pane between them for ever.
+  if (payload.senderDevice) req.arrivedFrom = payload.senderDevice
 
   // After placement, never before: a lane split moves the cwd, and the CLI reads
   // transcripts from a folder named after the cwd it actually starts in.
@@ -346,6 +377,18 @@ async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): 
   try {
     if (await git(target, ['status', '--porcelain'])) {
       return `${target} has uncommitted work on this machine - not touching it`
+    }
+    // Already standing on the commit being handed over, on the branch it was handed over
+    // on: there is nothing to fetch and nothing to check out. Asked before the network
+    // because the answer is 33 ms of local git against a 1042 ms fetch, and on two desks
+    // that autosync it is the ordinary answer. The refusals above and below are untouched -
+    // this only skips work that would end where the checkout already is.
+    if (repo.sha) {
+      const [head, branch] = await Promise.all([
+        git(target, ['rev-parse', 'HEAD']),
+        git(target, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      ])
+      if (head === repo.sha && branch === repo.branch) return ''
     }
     await git(target, ['fetch', 'origin', repo.branch], 120_000)
     let has = true

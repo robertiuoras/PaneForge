@@ -2,30 +2,28 @@
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { AttachIn, AttachResult } from './attach'
+import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
+import type { MascotConfig } from './mascot'
+import type { TipsConfig } from './tips'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
+import type { RunningDev } from './devList'
 
-import type { DriveRun } from './agentic'
-// Type-only, and therefore erased: `goals.ts` reads `SplitPlan` from here and this reads
-// `Goal` from there, which is a cycle at the type level only and no import at runtime.
-import type { Goal } from './goals'
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
 // Same type-level-only cycle as goals: handoff.ts imports Session from here.
 import type { HandoffItem } from './handoff'
 import type { DeviceMark } from './deviceWatch'
-import type { Improvement } from './promptSchema'
-import type { ImproveMetrics } from './promptBudget'
 import type { RevealTarget } from './pathToken'
 import type { RouteMatch, RouteResult } from './projectRoute'
 import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 
-export type { CustomSound, DiscordStyle, DriveRun, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
+export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -83,6 +81,13 @@ export interface Session {
   /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
   lastKeyboard: number
   createdAt: number
+  /**
+   * When this PANE first appeared on the desk, across every restart since - which is not
+   * `createdAt`, the age of this process. Three timers read `createdAt` as process age
+   * (the starting->idle flip, the attention rule, the stall rule), so the display clock
+   * gets a field of its own rather than back-dating theirs.
+   */
+  openedAt?: number
   exitCode?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */
   attention?: boolean
@@ -101,6 +106,16 @@ export interface Session {
    * a phone draws the same buttons, and a bot over the phone server can answer one.
    */
   ask?: PaneAsk
+  /**
+   * When `autoAnswer` will press that question, epoch ms, and which option it will press.
+   *
+   * Absent whenever nothing is going to happen - the setting is off, the question has no
+   * obviously-good answer, or the pane has used up its run of automatic presses. The pane
+   * counts down against it (`shared/autoAnswer.ts`, `autoAnswerAt`), so a press is never
+   * the first anybody hears of it.
+   */
+  autoAnswerAt?: number
+  autoAnswerN?: number
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -111,6 +126,18 @@ export interface Session {
   runSince?: number
   /** How long the last finished turn took (ms), shown frozen once it ends. */
   lastRunMs?: number
+  /**
+   * What this pane was asked to do, in one line - the same reading History puts under a
+   * closed session (`shared/gist.ts`), for the surfaces that talk about a LIVE pane.
+   *
+   * On the session rather than fetched when wanted because the thing that needs it is a
+   * sentence about a pane that is being closed: by the time anything could read it off
+   * disk, the pane it is about is gone. Free by construction - it is keystrokes the app
+   * already relays on their way to the pty, never a summary anything was paid for - and
+   * absent for a pane nobody has typed a real ask into yet, which is said as nothing
+   * rather than as a guess.
+   */
+  gist?: string
   /** worktree lane suffix ("w2") when this session runs in an auto-created lane */
   lane?: string
   /**
@@ -132,6 +159,16 @@ export interface Session {
    */
   borrowed?: boolean
   /**
+   * The width the RESTORED part of this pane's buffer was painted at, when it has one.
+   *
+   * A reopened pane replays the log of the pane it is coming back from, and those bytes
+   * are absolute cursor moves made in that pane's width - so the terminal has to be that
+   * width while they are written, or the old screen piles up on its right-hand edge and
+   * no repaint can ever repair it. Set once at start and never moved: the restore mark in
+   * the buffer is where it stops applying. See `shared/replayWidth.ts`.
+   */
+  replayCols?: number
+  /**
    * This pane is on its way to another device, or waiting for its turn to end so it can be.
    *
    * On the session rather than in the sender, because two other things have to see it: the
@@ -140,6 +177,22 @@ export interface Session {
    * handoff that reports success about a pane that is no longer there.
    */
   handingOff?: boolean
+  /**
+   * When this pane was QUEUED for a move, if it is queued rather than in transit.
+   *
+   * The two states looked identical on the card - one chip reading `moving` - and they are
+   * not the same fact at all. A transfer is measured in seconds (2.3 s between this Mac and
+   * the PC, and most of that has since been taken out); a queued pane is waiting for its
+   * own turn to end, which is however long the agent takes - a ten-minute build is ten
+   * minutes of a chip saying `moving`. Three panes sat like that on 2026-08-23 and read as
+   * a broken handoff. Absent while a real transfer is in flight.
+   */
+  handoffQueuedAt?: number
+  /**
+   * The device that handed this pane here, when one did - see `StartSessionRequest`.
+   * Read by the local-pane budget, which may not send it straight back where it came from.
+   */
+  arrivedFrom?: string
   /**
    * This pane's agent runs on another machine and is mirrored here. The id is
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
@@ -202,6 +255,15 @@ export interface StartSessionRequest {
    * restored pane is issued a new one. Only the desk sets it.
    */
   scrollbackId?: string
+  /**
+   * The device this pane was handed over FROM. Set only by `receiveHandoff`.
+   *
+   * It exists for one refusal: the local-pane budget may not hand a pane straight back to
+   * the machine that just handed it here. Two desks that each keep two agents are each
+   * right about their own budget, and between them they would pass one pane back and
+   * forth for ever - the one failure mode of a policy that fires while nothing is wrong.
+   */
+  arrivedFrom?: string
   /** filled in by the main process when the launch was moved into a worktree lane */
   lane?: string
   /** one-line explanation of the lane decision, shown as a toast after launch */
@@ -211,6 +273,17 @@ export interface StartSessionRequest {
    * fight the original folder's for a port. Set by the main process only.
    */
   laneEnv?: Record<string, string>
+  /**
+   * What the pane the desk is replacing knew about itself: when it first opened, how long
+   * its last turn took, whether it had been asked anything, and whether it was mid-turn.
+   * A restored pane is a NEW session, so without these it comes back with no clock and a
+   * grey "ready - type to start" dot on a live conversation. See `shared/restoreTurn.ts`.
+   * Only the desk sets them.
+   */
+  openedAt?: number
+  lastRunMs?: number
+  engaged?: boolean
+  wasWorking?: boolean
 }
 
 /** One saved project inside a workspace. */
@@ -404,6 +477,17 @@ export interface LaneBoard {
   /** epoch ms a release started, when one is running */
   releasing: number | null
   lastShip: { version: string; at: number; lanes: string[] } | null
+  /**
+   * Why the finished work has not gone out yet, as the release gate itself last answered
+   * it (`noteHold` in scripts/lane.mjs), and when that answer STARTED being true.
+   *
+   * The strip used to draw a finished lane as "done - ships with the next update" and
+   * leave it at that, which is a promise rather than a state: the same words are on
+   * screen whether the release is ten minutes away, waiting on another chat, or refusing
+   * because master fails its own tests. Nothing here is computed a second time - the gate
+   * is the only thing allowed to decide, and this is its answer repeated.
+   */
+  hold: { reason: string; at: number } | null
 }
 
 export interface WindowBounds {
@@ -540,45 +624,6 @@ export interface SwarmRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Split
-//
-// The other shape: not several roles sharing one checkout, but one task cut into
-// workstreams that each get their OWN worktree lane. See main/split.ts for why the
-// file ownership below is the load-bearing part rather than a hint.
-
-/** One workstream of a split: what to build, and the files it alone may write. */
-export interface SplitLane {
-  name: string
-  brief: string
-  /** repo-relative paths or directories. Never overlapping another lane's. */
-  owns: string[]
-  /** unticked lanes are left out of the launch and their files stay unclaimed */
-  enabled?: boolean
-}
-
-export interface SplitPlan {
-  lanes: SplitLane[]
-  /** what every lane must implement identically - written into all of their briefs */
-  contracts: string
-  /** set when there is no usable split; `lanes` is empty and this says why */
-  refused?: string
-}
-
-export interface SplitRequest {
-  cwd: string
-  mission: string
-  plan: SplitPlan
-  agent?: Agent
-  model?: string
-}
-
-/** The same plan, driven by the app. See `docs/agentic.md` and `main/supervisor.ts`. */
-export interface DriveRequest extends SplitRequest {
-  /** Skip the reviewer agent. The diff and command steps of the gate still run. */
-  skipReview?: boolean
-}
-
-// ---------------------------------------------------------------------------
 // History
 
 /** A finished or running session's transcript on disk. */
@@ -599,8 +644,41 @@ export interface HistoryEntry {
    * it is keystrokes the app already relays, never a summary anything had to be paid for.
    */
   gist?: string
-  /** how many asks were submitted in it; 40 and 1 are different sessions to return to */
+  /**
+   * The ask that opened each chapter of the session, oldest first.
+   *
+   * `gist` answers "what was this" for a session that asked one thing, and is wrong for
+   * every session worth coming back to: a long one is several jobs in a row, and `/clear`
+   * is where one ends and the next begins. See `shared/gist.ts` - still keystrokes the app
+   * already relays, never a summary anything was paid for.
+   */
+  chapters?: string[]
+  /** chapters past the cap: the count is kept when the text is not */
+  dropped?: number
+  /** internal: a clear happened, so the next real ask opens a chapter */
+  fresh?: boolean
+  /**
+   * The pty's width while this session ran.
+   *
+   * The transcript is raw terminal bytes hard-wrapped by the CLI at that width, so
+   * replaying it at any other one re-flows box drawing into soup. Best effort: the last
+   * width the pane was resized to.
+   */
+  cols?: number
+  /** asks that were work (never a slash command); 40 and 1 are different sessions */
   asks?: number
+  /**
+   * The folder this session ran in is not there any more.
+   *
+   * Computed on every read rather than stored, because it is a fact about the disk and not
+   * about the session. It exists because "Open again" on such a row did NOTHING visible:
+   * main's start loop catches a missing folder per request so one bad entry cannot abort a
+   * whole workspace launch, and the row is then simply not started. On this desk most of
+   * History is temp folders from tests and swept lane worktrees, so that is the common
+   * case rather than the rare one - and a button that reads as working and is not is worse
+   * than a row that says why.
+   */
+  gone?: boolean
 }
 
 export interface HistoryHit {
@@ -709,119 +787,6 @@ export interface PriorPrompt {
   outcome: string | null
 }
 
-export interface PromptImproveConfig {
-  mode: 'off' | 'suggest' | 'auto'
-  /** Which CLI runs the improver. '' = the same agent as the pane. */
-  engine: string
-  /** Model for the improver; '' = that CLI's default. A cheap tier is the right choice. */
-  model: string
-  /** How readily it may ask. `minimal` allows one question, `balanced` allows three. */
-  clarify: 'minimal' | 'balanced'
-  /** What the budget is spent on. `tokens` drops retrieved knowledge first. */
-  optimise: 'quality' | 'balanced' | 'tokens'
-  /** Consult the capability catalogue at all. */
-  capabilities: boolean
-  /** ms of quiet before the pane's footer offers the chip. Generation never starts here. */
-  idleMs: number
-  /** Obsidian vault root. '' disables the Markdown knowledge provider. */
-  vaultPath: string
-  /** Absolute path to `vaultindex.py`. '' disables the indexed knowledge provider. */
-  indexScript: string
-  /** Write improvement events to prompt-audit.log. Hashes and counts only. */
-  telemetry: boolean
-  /** Also keep the text of improved prompts, so a golden case can be contributed. */
-  telemetryText: boolean
-}
-
-export type ImproveOutcomeKind = 'accepted' | 'rejected' | 'cancelled' | 'failed'
-
-/** What Settings and the sheet need to know without running anything. */
-export interface ImproveStatus {
-  /** A CLI that can run the improver was found on PATH. */
-  available: boolean
-  /** Which one would be used for a pane with no agent of its own. */
-  engine: string
-  /** Command that installs one, for the one-click button - the Voice tab's shape. */
-  install: string
-  /** Knowledge sources that answered when asked. Empty is a normal state. */
-  providers: string[]
-  /** A vault path that exists on this machine, offered as a starting point. */
-  vaultCandidate: string
-}
-
-export interface ImproveOptions {
-  /**
-   * Include `draft`/`inbox` knowledge, labelled unverified everywhere it appears.
-   *
-   * The same escape hatch `vaultindex.py --include-untrusted` has. Not reachable from the
-   * UI: it exists for the tests and the demonstration, where the bundled fixture
-   * catalogue is the only knowledge there is and all of it is honestly `draft`.
-   */
-  includeUntrusted?: boolean
-  /**
-   * Capability ids the user removed from a previous answer.
-   *
-   * Removal is a re-run rather than a redraw: the improved prompt was written with that
-   * capability in it, so hiding the chip would leave the text still recommending it.
-   */
-  exclude?: string[]
-  /**
-   * A note on the rewrite, typed after reading one: "shorter", "keep the file names",
-   * "ask me about the auth part".
-   *
-   * A re-run rather than an edit of the text in the box, so what comes back is a whole
-   * suggestion written to that instruction - and the word diff against the original still
-   * means what it says.
-   */
-  tweak?: string
-}
-
-/** One retrieved reference as the sheet shows it. */
-export interface ImproveSource {
-  id: string
-  title: string
-  provider: string
-  source: string
-  trusted: boolean
-  /** The derived lifecycle word: discovered, evaluated, tested, verified, recommended... */
-  stage: string
-  /** Past its review window. Usable, but it has to say so. */
-  stale: boolean
-  /** Can the user remove this one and re-run? Only catalogue entries. */
-  removable: boolean
-}
-
-/** One improvement, as it crosses the bridge. The original is always carried back. */
-export interface ImproveResult {
-  ok: boolean
-  error?: string
-  original: string
-  improvement?: Improvement
-  /** Where the brief's references came from, shown separately from the prompt. */
-  sources: ImproveSource[]
-  /** "held back: 1 secret, 2 code blocks", or empty. */
-  held: string
-  metrics: ImproveMetrics
-}
-
-/** What one on-demand research pass returns to the sheet. */
-export interface ResearchReport {
-  ok: boolean
-  /** completed | no-finding | skipped | deferred | failed | needs-human */
-  outcome: string
-  /** One line, safe to show. */
-  detail: string
-  /** New, and untested. Never presented as a recommendation. */
-  kept: Array<{ id: string; name: string; category: string; description: string; stage: string; source: string }>
-  /** Dropped, with the reason - so a run that kept nothing is not a run that found nothing. */
-  rejected: Array<{ id: string; why: string }>
-  /** What it says it opened, shown so the user can judge the sources themselves. */
-  sources: Array<{ url: string; sourceClass: string; opened: boolean; checkedAt: string }>
-  /** Already known. The number that proves research was avoided. */
-  duplicates: number
-  ms: number
-}
-
 export interface VoiceStatus {
   /** a local transcriber was found on PATH */
   available: boolean
@@ -862,7 +827,25 @@ export interface RemotePeer {
   mirrorAll?: boolean
 }
 
-/** One pane on a paired device, as the Devices panel offers it. */
+/**
+ * One pane on a paired device, whether or not this one is mirroring it.
+ *
+ * This used to carry six fields, because its only reader was the Devices panel's pick
+ * list - a name and a folder is enough to decide what to mirror. The sidebar reads it
+ * now, and the sidebar is answering a different question: not "what could I watch" but
+ * "what is that machine DOING". So it carries everything `shared/fleet.ts` reads, and
+ * a PC pane can be sorted into `Your move` beside a local one without a byte of its
+ * output crossing the link.
+ *
+ * That distinction is the whole design. LISTING a remote pane costs one field in a
+ * message that is already sent whenever anything over there changes; MIRRORING one
+ * costs a live byte stream and an xterm buffer on this machine, per pane. So every
+ * pane is listed and none is mirrored until it is opened.
+ *
+ * The question itself (`Session.ask`) is deliberately NOT here - answering a chooser
+ * needs the frame it was read off, which is a mirror's job. `asking` is the fact the
+ * sidebar draws, and pressing the row is what gets you the buttons.
+ */
 export interface RemotePaneInfo {
   /** its id ON that device - what `watch` holds and `remote:watch` is given */
   id: string
@@ -872,6 +855,20 @@ export interface RemotePaneInfo {
   status: SessionStatus
   /** this device is mirroring it right now */
   watched: boolean
+  /** worktree lane suffix, so `describePlace` says the same thing it says here */
+  lane?: string
+  // Everything below is what `fleetState`/`fleetRow` read. Same names as `Session`, so
+  // one function serves a local pane and a listed one.
+  engaged?: boolean
+  bell?: boolean
+  /** the CLI over there is sitting on a question - it cannot be answered without opening it */
+  asking?: boolean
+  attention?: boolean
+  exitCode?: number
+  lastOutput?: number
+  runSince?: number
+  stalledSince?: number
+  createdAt?: number
 }
 
 /** Live state of one paired device. */
@@ -1214,11 +1211,18 @@ export interface Config {
   /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
   customAgents: AgentSpec[]
   /**
-   * OpenRouter key, handed to every agent whose `env` asks for it. '' = none, and an
-   * agent that authenticates with it is then started with the variable absent rather
-   * than empty - see `resolveEnv`.
+   * @deprecated The OpenRouter slot of `providerKeys`, mirrored here by `setConfig` so
+   * a build rolled back to before that record existed still finds the key. Read
+   * `providerKeys.openrouter`; never write this.
    */
   openrouterKey: string
+  /**
+   * One key per provider, by the id in `KEY_PROVIDERS`, handed to every agent whose
+   * `env` asks for it. A missing or blank one means the agent is started with the
+   * variable ABSENT rather than empty - see `resolveEnv`, and the 401-inside-a-healthy
+   * -pane failure that shape exists to stop.
+   */
+  providerKeys: Record<string, string>
   /** terminal font size, shared by every pane */
   fontSize: number
   /** a mouse selection in a pane goes straight to the clipboard */
@@ -1393,6 +1397,13 @@ export interface Config {
    */
   restoreAfterUpdate: boolean
   /**
+   * Ask before reopening them, so an update restart obeys the same rule as every other
+   * restart. Off by default and deliberately so: the app updates itself several times a
+   * day, and a dialog that often is worse than the inconsistency it removes. On, the
+   * update restart stops being the one restart that never asks.
+   */
+  askAfterUpdate: boolean
+  /**
    * What a cold launch does with the panes the last run left behind (a normal quit,
    * a PC restart, a crash). `ask` offers them, `always` reopens them silently,
    * `never` starts clean. An update restart is not this setting - see
@@ -1404,8 +1415,6 @@ export interface Config {
   /** delete stored transcripts older than this; 0 keeps everything */
   historyDays: number
   voice: VoiceConfig
-  /** improve a draft prompt before it is sent - see PromptImproveConfig. Off by default. */
-  promptImprove: PromptImproveConfig
   /** say so when a draft repeats an ask already made - see PromptRecallConfig. On. */
   promptRecall: PromptRecallConfig
   /** stay out of the way while a game is running - see GameModeConfig */
@@ -1432,23 +1441,16 @@ export interface Config {
    * restores the silent move.
    */
   offloadAsk: boolean
+  /**
+   * The marker that says this config has been through the move onto `offloadAsk: false`.
+   *
+   * It is a separate key rather than an absent `offloadAsk`, because every config ever
+   * written by this app has that key set - see the migration in `getConfig`. Optional so a
+   * config from before it existed is recognised as one that has NOT been migrated.
+   */
+  offloadDefaultsV2?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
-  /**
-   * May the app drive a lane with an agent whose only headless posture is "no prompts"?
-   *
-   * On, because that is every agent the app can drive (see `HEADLESS` in shared/agentic.ts)
-   * and the blast radius is one unmerged branch in a worktree the app made. Off refuses to
-   * start a drive or queue a goal at all, and says which flag it refused - K4.
-   */
-  driveUnattended: boolean
-  /**
-   * D3 of `docs/agentic-dispatch.md`: where a finished dispatched goal reports to.
-   * Empty `reportUrl` turns the POST off entirely; `reportKey` rides as `x-dispatch-key`
-   * when the endpoint demands one. The desk never holds the Discord token - the endpoint
-   * does the posting and the 24h delete.
-   */
-  dispatch: { reportUrl: string; reportKey: string }
   /** pairing, hosting and the devices whose panes show up in this window */
   remote: RemoteConfig
   /**
@@ -1465,6 +1467,17 @@ export interface Config {
    * Close idle panes when this machine runs out of memory - see shared/reclaim.ts.
    * Optional so a config written by an older build still loads.
    */
+  /**
+   * The face on the resource ladder - src/shared/mascot.ts. Optional so a config written
+   * by an older build still loads.
+   */
+  mascot?: MascotConfig
+  /**
+   * The occasional "did you know" card - src/shared/tips.ts. Optional so a config written
+   * before it existed still loads, and defaulted ON: the features it names are ones
+   * nothing else in the window would ever mention.
+   */
+  tips?: TipsConfig
   reclaim?: ReclaimConfig
   /**
    * Move finished panes to a paired device when this machine runs out of memory, rather
@@ -1799,6 +1812,20 @@ export interface Api {
    * agent and for a mirrored pane.
    */
   attachClipboardImage(sessionId: string): Promise<AttachResult>
+  /**
+   * Put image bytes on the clipboard of the device this window is on, so a raw ^V can
+   * hand them to an agent that reads images off the clipboard itself.
+   *
+   * The one thing that turns a dropped screenshot into an attached IMAGE rather than a
+   * path typed at the prompt. Answers false when the bytes are not an image any decoder
+   * here can read, which is the caller's cue to fall back to the path.
+   */
+  putImageOnClipboard(src: {
+    data?: string
+    path?: string
+    /** decode only - answer whether this IS an image, and leave the clipboard alone */
+    probe?: boolean
+  }): Promise<boolean>
   /** True only for the private clipboard fixture used by the disposable Electron probe. */
   clipboardFixtureActive(): Promise<boolean>
   /** branch + dirty count for a folder; null when it is not a repo */
@@ -1871,42 +1898,6 @@ export interface Api {
 
   startSwarm(req: SwarmRequest): Promise<Session[]>
 
-  /** Ask the local coding CLI how this task divides. Never throws - see `refused`. */
-  planSplit(req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan>
-  /** One pane per lane, each moved into its own git worktree before it starts. */
-  startSplit(req: SplitRequest): Promise<Session[]>
-
-  /**
-   * The same plan, driven by the app instead of by a person: no panes, one headless
-   * agent per lane, each verified before it is called finished. Never merges - see
-   * `docs/agentic.md`. Returns as soon as the run exists, not when it finishes.
-   */
-  startDrive(req: DriveRequest): Promise<DriveRun>
-  /** Stop one run now, mid-command if need be. */
-  stopDrive(id: string): Promise<boolean>
-  /** Stop every live run. The one switch. */
-  stopAllDrives(): Promise<number>
-  listDrives(): Promise<DriveRun[]>
-  /** Forget the finished ones. Memory only. */
-  clearDrives(): Promise<number>
-
-  /**
-   * The queue a driven plan goes into rather than starting on the spot (I4).
-   *
-   * The difference from `startDrive` is everything that happens when nobody is watching:
-   * a goal is on disk, so it survives a restart; a second one waits rather than fighting
-   * the first for worktrees; and when it ends it says what it turned into. Prefer this to
-   * `startDrive` for anything a person is not about to sit and watch.
-   */
-  addGoal(req: DriveRequest): Promise<Goal>
-  listGoals(): Promise<Goal[]>
-  /** Stop it, whether it is running or still in the line. */
-  cancelGoal(id: string): Promise<boolean>
-  /** Put a finished, cancelled or interrupted goal back in the line, keeping its attempts. */
-  retryGoal(id: string): Promise<boolean>
-  /** Drop one finished goal from the file. */
-  removeGoal(id: string): Promise<boolean>
-  clearGoals(): Promise<number>
 
   listHistory(): Promise<HistoryEntry[]>
   searchHistory(query: string): Promise<HistoryHit[]>
@@ -2097,43 +2088,10 @@ export interface Api {
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
 
-  /** is there a CLI on PATH that can run the improver, and where would knowledge come from */
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
   /** Record that a draft was actually sent. Fire-and-forget. */
   promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
-  improveStatus(): Promise<ImproveStatus>
-  /**
-   * Improve a draft. Never submits anything and never writes to the pane: the result is
-   * shown first and only `applyImproved` touches the terminal.
-   */
-  improvePrompt(id: string, draft: string, options?: ImproveOptions): Promise<ImproveResult>
-  /** One second pass, with the answers to the questions the first pass asked. Never a third. */
-  answerImprove(
-    id: string,
-    draft: string,
-    answers: Array<{ question: string; answer: string }>,
-    options?: ImproveOptions
-  ): Promise<ImproveResult>
-  /** Abort whatever is in flight for this pane. Silent, and safe to call when nothing is. */
-  cancelImprove(id: string): void
-  /**
-   * Research this request: one bounded pass over public sources, on demand.
-   *
-   * Never automatic. It installs nothing, it does not rewrite the draft, and what it finds
-   * comes back labelled Discovered - the prompt is only rebuilt afterwards, by asking for
-   * an improvement again.
-   */
-  researchRequest(id: string, draft: string): Promise<ResearchReport>
-  /** Stop a research pass. Does not touch an improvement running for the same pane. */
-  cancelResearch(id: string): void
-  /**
-   * Accept: empty the prompt box and paste the improved text into it. There is no `\r` in
-   * what this writes and no option that adds one - the user presses Enter.
-   */
-  applyImproved(id: string, text: string): Promise<{ ok: boolean; error?: string }>
-  /** What happened to a suggestion, for the development metrics. Off unless telemetry is on. */
-  recordImprove(outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number): void
 
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
@@ -2142,9 +2100,6 @@ export interface Api {
 
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
-  /** A driven run moved: a lane changed state, or its progress line changed. */
-  onDrive(cb: (run: DriveRun) => void): () => void
-  onGoals(cb: (goals: Goal[]) => void): () => void
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void
@@ -2168,6 +2123,8 @@ export interface Api {
   onStalled(cb: (s: Session) => void): () => void
   /** a pane's terminal rang its bell - a CLI asking for a human directly */
   onBell(cb: (s: Session) => void): () => void
+  /** A pane has just put a NEW question on screen (the arrow moving is not one). */
+  onAsk(cb: (s: Session) => void): () => void
   /** the pane's terminal rang its bell; reported from the renderer, which parses it */
   paneBell(id: string): void
   /** hosting, pairing or discovery changed */
@@ -2181,6 +2138,31 @@ export interface Api {
   onUsage(cb: (r: UsageReport) => void): () => void
   /** The last reading, for a window that opened between samples. Null before the first. */
   usage(): Promise<UsageReport | null>
+  /**
+   * The dev servers running on this machine right now, attributed to panes.
+   *
+   * The caller passes the sidebar's own ordering and words - which pane is number 3 and
+   * what that project is called - and nothing else: the folder and the pty pid are read
+   * in main off the pane's own record, so this cannot be pointed at a folder the caller
+   * does not own. One process-table read per call, on demand.
+   */
+  listDevServers(panes: Array<{ id: string; pane: number; name: string }>): Promise<RunningDev[]>
+  /** Stop one of them, and the tree under it. Re-validated in main - a pid is reused. */
+  stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }>
+  /**
+   * What THIS machine is running that no pane owns: scheduled agent turns, cron loops,
+   * dev servers. See `shared/backJobs.ts`. Read on demand - it is a whole process table.
+   */
+  listJobs(): Promise<BackJob[]>
+  /**
+   * The same question asked of a paired machine, which is the point of it: a PC running
+   * unattended work had no surface in this app at all.
+   *
+   * REJECTS when that device is not connected. An empty array means "it is running
+   * nothing", which is the answer somebody opens this to check, so a read that could not
+   * happen must never share its shape.
+   */
+  listRemoteJobs(device: string): Promise<BackJob[]>
   /**
    * A remote pane's scrollback was replaced wholesale - the link came back and the
    * other device re-sent everything. The pane clears and redraws instead of appending

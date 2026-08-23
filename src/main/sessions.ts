@@ -14,16 +14,25 @@ import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { endAll, recordData, recordEnd, recordStart, tail } from './history'
+import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
+import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
+
+/**
+ * Extra patience for the "continue" a restore sends. `queuePrompt` waits for an idle
+ * composer either way; this only widens its deadline, because a CLI replaying a long
+ * transcript can be quiet-then-busy several times before it really settles.
+ */
+const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
 import { killPaneStrays, trackStrays } from './strays'
 import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
-import { askKeyOf, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
@@ -96,7 +105,7 @@ const RESET = '\x1bc'
  * `\x1b[0m` first because the tail is cut mid-run: whatever attribute was in force at the
  * cut would otherwise bleed into the caption and into everything the new process writes.
  */
-const RESTORE_MARK = '\x1b[0m\r\n\x1b[2m—— above: this pane before the restart ——\x1b[0m\r\n'
+const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -112,10 +121,15 @@ const RESTORE_MARK = '\x1b[0m\r\n\x1b[2m—— above: this pane before the resta
  * not try to be the live terminal's own scrollback: the cap is the buffer's, so what
  * comes back is the same amount a pane already keeps in memory, not the whole day.
  */
-function restoredTail(scrollbackId: string | undefined): string {
-  if (!scrollbackId) return ''
+function restoredTail(scrollbackId: string | undefined): { text: string; cols: number } {
+  if (!scrollbackId) return { text: '', cols: 0 }
   const back = tail(scrollbackId, BUFFER_LIMIT)
-  return back ? back + RESTORE_MARK : ''
+  if (!back) return { text: '', cols: 0 }
+  // The width those bytes were PAINTED at, carried out to the pane with them. A CLI draws
+  // in absolute column moves, and a terminal clamps one it cannot reach - so replayed into
+  // a narrower pane the old screen collapses onto its right-hand edge and the reopened
+  // pane's history is unreadable. See `shared/replayWidth.ts`.
+  return { text: back + RESTORE_MARK, cols: colsOf(scrollbackId) }
 }
 /**
  * A slash command that is still running after this long is real work, not
@@ -332,6 +346,11 @@ export class SessionManager extends EventEmitter {
         agent: s.meta.agent,
         model: s.meta.model,
         role: s.meta.role,
+        // Where it was handed here from, or the restart is what breaks the loop guard: the
+        // pane comes back with no `arrivedFrom`, and this desk's budget is then free to
+        // hand it straight back to the machine that sent it - which is the exact ping-pong
+        // that field exists to stop, arriving one restart later.
+        arrivedFrom: s.meta.arrivedFrom,
         // Already the lane's own folder: reopening must land back in it, not be
         // treated as a fresh clash and pushed one lane further along.
         lane: s.meta.lane,
@@ -344,7 +363,17 @@ export class SessionManager extends EventEmitter {
         scrollbackId: s.meta.id,
         // The port the pane's dev server was told to use, kept across the restart
         // so a server started before an update comes back on the same one.
-        laneEnv: s.req.laneEnv
+        laneEnv: s.req.laneEnv,
+        // ...and what the PERSON knows about this pane, which a new session cannot work
+        // out for itself: how long it has been open, its last turn's length, whether it
+        // has been asked anything, and whether it was mid-turn when we went down. Without
+        // these a restored row draws no clock and a grey dot. See shared/restoreTurn.ts.
+        openedAt: s.meta.openedAt ?? s.meta.createdAt,
+        lastRunMs: s.meta.lastRunMs,
+        engaged: s.meta.engaged,
+        // `runSince` is the turn clock: it is set exactly while the agent is producing an
+        // answer, so it is the one honest reading of "mid-turn" at the moment we die.
+        wasWorking: Boolean(s.meta.runSince)
       }))
   }
 
@@ -359,6 +388,7 @@ export class SessionManager extends EventEmitter {
     // already be sitting on the trust prompt by the time anything here could help.
     if (agent === 'claude') ensureTrusted(req.cwd)
     const id = `s${++this.seq}-${Date.now().toString(36)}`
+    const clock = restoredClock(req, Date.now())
 
     const meta: Session = {
       id,
@@ -370,10 +400,19 @@ export class SessionManager extends EventEmitter {
       lastOutput: Date.now(),
       lastKeyboard: Date.now(),
       createdAt: Date.now(),
+      // The display clock, and deliberately NOT createdAt - see shared/restoreTurn.ts.
+      openedAt: clock.openedAt,
+      // Its last finished turn, so a reopened row still has a number rather than a blank.
+      lastRunMs: clock.lastRunMs,
       // A launch with a prompt is engaged from the start; a bare CLI is not doing
-      // anything for you yet, so its first quiet moment is not "finished".
-      engaged: Boolean(req.prompt),
+      // anything for you yet, so its first quiet moment is not "finished". A RESTORED
+      // pane inherits it: the conversation is live even though nobody has typed since.
+      engaged: clock.engaged,
       role: req.role,
+      // Which device handed this pane over, when one did. Kept because the budget rule
+      // must never send it straight back: two desks each keeping two agents would
+      // otherwise pass one pane between them for ever, each one correct on its own.
+      arrivedFrom: req.arrivedFrom,
       lane: req.lane,
       laneNote: req.laneNote,
       cols: 120,
@@ -411,15 +450,35 @@ export class SessionManager extends EventEmitter {
     // What this pane had on screen last time, put back before the new process says
     // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
     const back = restoredTail(req.scrollbackId)
-    if (back) live.buffer.set(back)
+    if (back.text) {
+      live.buffer.set(back.text)
+      if (back.cols > 0) meta.replayCols = back.cols
+    }
     this.sessions.set(id, live)
     this.attach(live)
     recordStart(meta)
+    // A reopened pane keeps its id, so History already knows what it was asked to do -
+    // and a restored row that cannot say which conversation it is is the whole reason
+    // this reading is on the session at all.
+    meta.gist = gistFor(id)
     // Started ON a conversation (a reopened desk) rather than into a fresh one: say so,
     // or the pane spends its life holding a file older than itself and looking for a
     // newer one to belong to.
     noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
     this.queuePrompt(id, req.prompt, req.promptDelay)
+    // The pane was mid-turn when the app went down. `--resume` brings the conversation
+    // back and not the answer that was being written, so the CLI comes back at an empty
+    // composer - idle, green, and indistinguishable from a pane that finished. Same
+    // machinery and same switch as a turn the transport cut in half: `queuePrompt` waits
+    // for an idle composer and confirms the return took, so a CLI still replaying its
+    // transcript is never typed over. Cleared from `req` so a later manual restart of
+    // this pane does not continue a turn that ended hours ago.
+    if (continueAfterRestore(req, (getConfig().recover ?? DEFAULT_RECOVER).enabled)) {
+      const text = (getConfig().recover ?? DEFAULT_RECOVER).text || DEFAULT_RECOVER.text
+      console.info(`restore: ${id} was mid-turn when the app went down - continuing it`)
+      this.queuePrompt(id, text, RESTORE_CONTINUE_MS)
+    }
+    req.wasWorking = false
 
     this.emitSessions()
     return meta
@@ -598,6 +657,22 @@ export class SessionManager extends EventEmitter {
     for (let i = 0; i < after.length; i++) if (before[i] !== after[i]) same = false
     if (same) return
     this.sessions = next
+    this.emitSessions()
+  }
+
+  /**
+   * A prompt was submitted in this pane, and History worked out what it says about it.
+   *
+   * Pushed rather than pulled: everything that talks about a live pane (the mascot's
+   * sentence about a close, the countdown before one) is holding a session and has no
+   * way to reach a file on disk in the moment that matters.
+   */
+  noteGist(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    const line = gistFor(id)
+    if (!line || s.meta.gist === line) return
+    s.meta.gist = line
     this.emitSessions()
   }
 
@@ -792,6 +867,9 @@ export class SessionManager extends EventEmitter {
     }
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
+    // History replays this pane's raw bytes at whatever width they were written for, so
+    // the last one wins. In memory only - a dragged window resizes many times a second.
+    noteCols(id, s.cols)
     if (borrowed) {
       s.borrowed = true
     } else {
@@ -941,6 +1019,7 @@ export class SessionManager extends EventEmitter {
       s.askSince = sig ? now : 0
     }
     s.askKey = askKeyOf(ask)
+    this.refreshAutoPlan(s)
     // The run counter is given back by the pane going BUSY, and by nothing else.
     //
     // "No question on screen" is the wrong signal for it: a chooser mid-repaint reads as
@@ -1077,12 +1156,19 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
-  setHandingOff(id: string, on: boolean): void {
+  setHandingOff(id: string, on: boolean, queuedAt?: number): void {
     const s = this.sessions.get(id)
     if (!s) return
-    if (!!s.meta.handingOff === on) return
+    const was = !!s.meta.handingOff
+    const wasAt = s.meta.handoffQueuedAt
     if (on) s.meta.handingOff = true
     else delete s.meta.handingOff
+    // A queued pane and one actually in transit are the same paint to `reclaim.ts` and two
+    // different sentences to a person, so the moment it stops waiting and starts moving is
+    // a change the card has to see.
+    if (on && queuedAt) s.meta.handoffQueuedAt = queuedAt
+    else delete s.meta.handoffQueuedAt
+    if (was === on && wasAt === s.meta.handoffQueuedAt) return
     this.emitSessions()
   }
 
@@ -1369,15 +1455,45 @@ export class SessionManager extends EventEmitter {
    * only once per signature: a press that does not take leaves the same question on screen,
    * and pressing again every second is the app arguing with a widget.
    */
+  /**
+   * What autoAnswer is going to do about this pane's question, and when.
+   *
+   * Written onto the session so the pane can say so BEFORE it happens, and carrying the
+   * same guards `sweepAutoAnswer` presses under - a question this will never answer shows
+   * no clock at all.
+   *
+   * Called from BOTH the frame path and the timer, which is not belt and braces: a frame
+   * only arrives when the screen changes, so computing it there alone meant turning the
+   * setting on while a question was already up produced no countdown at all and then a
+   * press out of nowhere. Measured that way on 2026-08-19 against a live trust prompt -
+   * the answer went in, the clock never appeared. Returns whether anything moved, so the
+   * timer can emit only when it did.
+   */
+  private refreshAutoPlan(live: Live): boolean {
+    const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
+    const ask = live.meta.ask
+    const at = ask ? autoAnswerAt(live, cfg, ask) : 0
+    const n = at && ask ? pickAnswer(ask, cfg)?.n : undefined
+    if (live.meta.autoAnswerAt === (at || undefined) && live.meta.autoAnswerN === n) return false
+    live.meta.autoAnswerAt = at || undefined
+    live.meta.autoAnswerN = n
+    return true
+  }
+
   private sweepAutoAnswer(live: Live): void {
     const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
     const ask = live.meta.ask
     if (!ask) return
+    if (this.refreshAutoPlan(live)) this.emitSessions()
     if (!dueForAuto(live, cfg, Date.now())) return
     const pick = pickAnswer(ask, cfg)
     if (!pick) return
     live.autoKey = live.askKey
     live.autoAt = Date.now()
+    // The clock has run out; nothing is pending any more. The next frame recomputes it,
+    // but a countdown left sitting at 0 while the keys land reads as a stuck timer.
+    live.meta.autoAnswerAt = undefined
+    live.meta.autoAnswerN = undefined
     live.autoRun++
     console.info(
       `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`
@@ -1565,8 +1681,8 @@ function isTyping(data: string): boolean {
 }
 
 /** The provider keys Settings holds, read fresh so pasting one reaches the next pane. */
-function agentKeys(): { openrouter: string } {
-  return { openrouter: getConfig().openrouterKey ?? '' }
+function agentKeys(): Record<string, string> {
+  return { ...(getConfig().providerKeys ?? {}) }
 }
 
 function agentEnv(): Record<string, string> {

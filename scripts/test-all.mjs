@@ -12,9 +12,9 @@
 // somebody looking at a pane. Measured on this Mac, the lot runs in ~35s.
 //
 // What stays out, and where to run it instead:
-//   test:strays (~25s of real orphan processes), test:lanes, test:agentic, test:goals,
+//   test:strays (~25s of real orphan processes), test:lanes,
 //   test:remote, test:updater   - slow, or they spawn real processes and repositories
-//   test:view, test:stashdrag, test:activate, test:improveview  - need a real window
+//   test:view, test:stashdrag, test:activate                   - need a real window
 //   test:discordbrand, mac-update-test --live                   - need the network
 //
 //   node scripts/test-all.mjs             every test below
@@ -36,17 +36,28 @@ const TESTS = [
   ['cursorclick', 'cursor-click-test.mjs'],
   ['stickyselect', 'sticky-select-test.mjs'],
   ['attach', 'attach-test.mjs'],
+  ['dropimage', 'drop-image-test.mjs'],
+  ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['choices', 'choices-test.mjs'],
+  ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
+  ['replaywidth', 'replay-width-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
+  ['restoreturn', 'restore-turn-test.mjs'],
+  ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
+  ['mascot', 'mascot-test.mjs'],
+  ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
+  ['devlist', 'devlist-test.mjs'],
+  ['backjobs', 'backjobs-test.mjs'],
+  ['orcatalogue', 'or-catalogue-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
@@ -70,8 +81,9 @@ const TESTS = [
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
+  ['handofffit', 'handoff-fit-test.mjs'],
+  ['versions', 'version-sync-test.mjs'],
   ['confirmfit', 'confirm-fit-test.mjs'],
-  ['split', 'split-test.mjs'],
   ['copymode', 'copymode-test.mjs'],
   ['silence', 'silence-test.mjs'],
   ['blurbs', 'blurb-test.mjs'],
@@ -79,10 +91,10 @@ const TESTS = [
   ['voice', 'voice-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
-  ['unattended', 'unattended-test.mjs'],
+  ['desk', 'desk-test.mjs'],
+  ['surfacereach', 'surface-reach-test.mjs'],
+  ['mirrorfit', 'mirrorfit-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
-  ['dispatch', 'dispatch-test.mjs'],
-  ['dispatchpane', 'dispatch-pane-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
   // Cheap, and the pair covers the two halves that fail differently: the arithmetic of a
@@ -99,8 +111,6 @@ const TESTS = [
   ['recall', 'prompt-recall-test.mjs'],
   ['draft', 'prompt-draft-test.mjs'],
   ['redact', 'prompt-redact-test.mjs'],
-  ['insert', 'prompt-insert-test.mjs'],
-  ['improve', 'prompt-improve-test.mjs'],
   ['pump', 'pump-test.mjs'],
   ['pipe', 'pipe-test.mjs'],
   ['diff', 'diff-test.mjs'],

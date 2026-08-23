@@ -45,6 +45,48 @@ export interface AttachResult {
   error?: string
 }
 
+/**
+ * What the browser calls an image when the drag carries no MIME type.
+ *
+ * A Finder drag of a .png usually arrives typed, but a macOS screenshot dragged off its
+ * own preview thumbnail arrives as a `file://` URI with no File object and no type at
+ * all - and that is the commonest way Robert drops one.
+ */
+export const IMAGE_NAME = /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i
+
+/** One dropped thing, as much as the decision below needs to know about it. */
+export interface DroppedItem {
+  name: string
+  /** the drag's MIME type, '' when it carried none */
+  type?: string
+}
+
+/**
+ * Should this drop be PASTED as an image instead of typed as a path?
+ *
+ * A path makes the agent open a file; a paste puts the picture itself in the turn, which
+ * is what dropping a screenshot on Claude Code is for. Three things have to hold, and each
+ * one is a case where pasting would be worse than the path it replaces:
+ *
+ *  - the agent reads images off the OS clipboard (only Claude Code does - see
+ *    `pastesClipboardImage`); every other CLI takes a literal control byte and does
+ *    nothing at all with it, which is a drop that silently vanishes;
+ *  - the pty is on THIS machine. A mirrored pane's agent reads the far desk's clipboard,
+ *    and this is not that clipboard;
+ *  - everything in the drop is an image. A PDF pasted as an image is nothing; its path
+ *    works. A mixed drop takes the path for all of it rather than splitting the batch
+ *    into two mechanisms whose order at the prompt nobody can predict.
+ */
+export function pasteImageDrop(
+  args: { agent?: string; sessionId: string; items: DroppedItem[] },
+  readsClipboard: (agent: string | undefined) => boolean
+): boolean {
+  if (!readsClipboard(args.agent)) return false
+  if (args.sessionId.startsWith('@')) return false
+  if (!args.items.length) return false
+  return args.items.every((i) => i.type?.startsWith('image/') || IMAGE_NAME.test(i.name))
+}
+
 /** Magic bytes, in the order they are tested. Long signatures first. */
 const MAGIC: [string, number[]][] = [
   ['png', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],

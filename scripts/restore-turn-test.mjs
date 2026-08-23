@@ -1,0 +1,118 @@
+// What a reopened pane inherits, and the turn a restart cut in half.
+//
+// Two bugs measured on this desk 2026-08-21, both from the same hole: `snapshot()` wrote
+// the pane's FOLDER, agent and transcript ids and none of what the person knows about the
+// pane. Straight after the app installed an update and reopened nine panes, every restored
+// row read `engaged: false`, `runSince: null`, `lastRunMs: undefined` - which the sidebar
+// draws as no clock at all and the grey "ready - type to start" dot on a live conversation.
+// And a pane the restart caught mid-turn came back at an empty composer, because `--resume`
+// restores the conversation and not the answer that was being written.
+//
+// The weight here is in the negatives. Continuing a turn TYPES INTO somebody's agent
+// unasked, and the source assertions exist because a test that only exercises the pure
+// function stays green while the line that calls it is deleted.
+//
+//   node scripts/restore-turn-test.mjs
+
+import { buildSync } from 'esbuild'
+import { strict as assert } from 'node:assert'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const work = join(tmpdir(), 'pf-restore-turn-test')
+rmSync(work, { recursive: true, force: true })
+mkdirSync(work, { recursive: true })
+
+const outfile = join(work, 'restoreTurn.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/restoreTurn.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile
+})
+const { restoredClock, continueAfterRestore } = createRequire(import.meta.url)(outfile)
+
+let n = 0
+const ok = (what, cond) => {
+  assert.ok(cond, what)
+  n++
+}
+
+const NOW = 1_760_000_000_000
+const HOUR = 3600_000
+
+// ---------------------------------------------------------------- the clock
+{
+  const c = restoredClock({}, NOW)
+  ok('a brand new pane opens now', c.openedAt === NOW)
+  ok('...with no previous turn to report', c.lastRunMs === undefined)
+  ok('...and is not engaged - nobody has asked it anything', c.engaged === false)
+}
+{
+  // The bug: this is the shape every one of the nine restored panes had.
+  const c = restoredClock({ openedAt: NOW - 9 * HOUR, lastRunMs: 61_377, engaged: true }, NOW)
+  ok('a restored pane keeps the hour it really opened', c.openedAt === NOW - 9 * HOUR)
+  ok('...keeps its last turn, so the row has a number', c.lastRunMs === 61_377)
+  ok('...and stays engaged, which is the green dot', c.engaged === true)
+}
+{
+  const c = restoredClock({ prompt: 'do the thing' }, NOW)
+  ok('a launch prompt engages a pane, as it always did', c.engaged === true)
+}
+{
+  const c = restoredClock({ wasWorking: true }, NOW)
+  ok('a pane caught mid-turn is engaged even if the flag was not written', c.engaged === true)
+}
+
+// ------------------------------------------------- continuing the cut turn
+ok('mid-turn is continued', continueAfterRestore({ wasWorking: true }, true) === true)
+
+// The negatives. Each of these types into a live agent if it goes wrong.
+ok(
+  'a pane that was NOT mid-turn is left alone - typing at it starts a turn nobody asked for',
+  continueAfterRestore({ wasWorking: false }, true) === false
+)
+ok('a pane with no recorded state (an older desk.json) is left alone', continueAfterRestore({}, true) === false)
+ok(
+  'a pane launched WITH a prompt is left alone - two things in one composer is one inside the other',
+  continueAfterRestore({ wasWorking: true, prompt: 'build X' }, true) === false
+)
+ok(
+  'with "finish a turn that was cut off" switched off, the app types nothing here either',
+  continueAfterRestore({ wasWorking: true }, false) === false
+)
+
+// ------------------------------------------------------- the wiring itself
+// A green pure test over a function nothing calls is the exact shape of false confidence
+// this repo keeps getting bitten by, so the call sites are asserted as source.
+const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+
+ok('snapshot() writes when the pane really opened', /openedAt: s\.meta\.openedAt \?\? s\.meta\.createdAt/.test(sessions))
+ok('snapshot() writes the last turn length', /lastRunMs: s\.meta\.lastRunMs/.test(sessions))
+ok('snapshot() writes whether the pane was engaged', /engaged: s\.meta\.engaged/.test(sessions))
+ok(
+  'snapshot() reads mid-turn off runSince, the only honest reading of it',
+  /wasWorking: Boolean\(s\.meta\.runSince\)/.test(sessions)
+)
+ok('start() takes its clock from restoredClock', /restoredClock\(req, Date\.now\(\)\)/.test(sessions))
+ok('start() uses that openedAt', /openedAt: clock\.openedAt/.test(sessions))
+ok('start() uses that lastRunMs', /lastRunMs: clock\.lastRunMs/.test(sessions))
+ok('start() uses that engaged', /engaged: clock\.engaged/.test(sessions))
+ok('start() asks continueAfterRestore', /continueAfterRestore\(req, /.test(sessions))
+ok(
+  'the continue goes through queuePrompt, which waits for an idle composer',
+  /this\.queuePrompt\(id, text, RESTORE_CONTINUE_MS\)/.test(sessions)
+)
+ok('and the flag is cleared, so a manual restart later does not continue an old turn', /req\.wasWorking = false/.test(sessions))
+
+const info = readFileSync(join(root, 'src/renderer/src/components/SessionInfo.tsx'), 'utf8')
+ok('"Open for" counts from when the pane opened, not from this process', /s\.openedAt \?\? s\.createdAt/.test(info))
+
+rmSync(work, { recursive: true, force: true })
+console.log(`restore-turn: ${n} checks passed`)

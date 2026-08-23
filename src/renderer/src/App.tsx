@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { stripAnsi } from '@shared/ansi'
 import type {
@@ -10,6 +10,7 @@ import type {
   Project,
   RecentItem,
   PhoneState,
+  RemotePaneInfo,
   RemoteState,
   RestoreOffer,
   Session,
@@ -25,13 +26,17 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import SessionMenu from './components/SessionMenu'
+import SessionInfo from './components/SessionInfo'
+import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
+import Mascot, { type CloseSoon } from './components/Mascot'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
-import Elapsed, { formatElapsed, kb } from './components/Elapsed'
+import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
-import FleetDialog from './components/FleetDialog'
-import { fleetWaiting } from '@shared/fleet'
+import { fleetRow, fleetWaiting } from '@shared/fleet'
+import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   BoardIcon,
   FleetIcon,
@@ -53,6 +58,7 @@ import TerminalPane, {
   paneFind,
   paneFocus,
   paneTerms,
+  paneArmClear,
   paneInsert,
   paneRepair,
   syncedPanes
@@ -70,12 +76,30 @@ import {
   type OffloadStick,
   type Verdict
 } from '../../shared/capacity'
-import { DEFAULT_RECLAIM, idleClosePlan, reclaimPlan, reclaimedMb } from '../../shared/reclaim'
+import {
+  CLOSE_COUNTDOWN_MS,
+  DEFAULT_MASCOT,
+  KEEP_MINUTES,
+  paneWord,
+  type ActedPane,
+  type MascotConfig,
+  type MascotPane
+} from '../../shared/mascot'
+import type { RunningDev } from '../../shared/devList'
+import {
+  DEFAULT_RECLAIM,
+  idleClosePlan,
+  quietSince,
+  reclaimPlan,
+  reclaimedMb,
+  type Reclaim
+} from '../../shared/reclaim'
 import {
   autoHandoffPlan,
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
+  queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
   type AutoHandoff,
   type AutoPane
@@ -83,12 +107,9 @@ import {
 import { fleetState } from '../../shared/fleet'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
-import ImproveSheet, { type SheetState } from './components/ImproveSheet'
-import { looksFinished, looksSplittable } from '../../shared/draft'
 import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
-import './components/ImproveSheet.css'
 import { keyLabel, modKey, isMac } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
@@ -107,8 +128,18 @@ import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import UpdateToast from './components/UpdateToast'
+import Tips from './components/Tips'
+import { DEFAULT_TIPS } from '../../shared/tips'
+
+/**
+ * When this window opened.
+ *
+ * Module level rather than state: it is the age of the WINDOW, and a state initialiser
+ * would be re-read on a remount and hand the tips clock a fresh start it has not had.
+ */
+const OPENED_AT = Date.now()
 import VersionBadge from './components/VersionBadge'
-import { playEvent } from './useChime'
+import { playEvent, playTick } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
 import { useHandheld } from './handheld'
@@ -130,6 +161,35 @@ import {
   usable,
   type LayoutKind
 } from './gridLayout'
+
+/**
+ * "3s" on the card of a pane whose question is about to be answered for you.
+ *
+ * The countdown itself is drawn in the PANE (`AskCountdown` in TerminalPane.tsx), which is
+ * the right place for it and is very often not the place being looked at: with the grid
+ * off, or the window on another desktop, the one pane holding a question is the one pane
+ * not on screen. The sidebar is where somebody looks to find WHICH pane is owed an answer,
+ * so the seconds belong here too - beside the "asks you" chip the same glow already earned.
+ *
+ * Its own component so the second timer runs only while a countdown is live: `useNow` is
+ * one shared tick, and subscribing the list itself would re-render every card once a
+ * second for a clock almost no desk is showing.
+ */
+function AskClock({ at }: { at: number }): React.JSX.Element | null {
+  const now = useNow()
+  const left = Math.ceil((at - now) / 1000)
+  // Nothing is drawn once the clock has run out: the keys are landing, and a chip stuck at
+  // 0s reads as a timer that jammed.
+  if (left < 0) return null
+  return (
+    <span
+      className="chip asks-in"
+      title="This question is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent's question for me."
+    >
+      {left > 0 ? `${left}s` : 'now'}
+    </span>
+  )
+}
 
 const api = window.api
 
@@ -227,13 +287,6 @@ export default function App(): JSX.Element {
       (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
     )
   }, [rawSessions, order])
-  const deviceChoices = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const session of sessions) {
-      if (session.remote) seen.set(session.remote.device, session.remote.name)
-    }
-    return [...seen].map(([id, name]) => ({ id, name }))
-  }, [sessions])
   const shownSessions = useMemo(
     () =>
       sessions.filter(
@@ -243,10 +296,6 @@ export default function App(): JSX.Element {
       ),
     [sessions, deviceFilter]
   )
-  useEffect(() => {
-    if (deviceFilter !== 'all' && deviceFilter !== 'local' && !deviceChoices.some((d) => d.id === deviceFilter))
-      setDeviceFilter('all')
-  }, [deviceFilter, deviceChoices])
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
@@ -267,12 +316,35 @@ export default function App(): JSX.Element {
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
-  const [handoff, setHandoff] = useState<{ ids: string[]; title: string } | null>(null)
+  const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
+  /** The card a right-click landed on, and where the pointer was when it did. */
+  const [cardMenu, setCardMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  /** The pane whose details are open - "how long has this been sitting here" and the rest. */
+  const [info, setInfo] = useState<string | null>(null)
   /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
+
+  /**
+   * Take a pane off the move queue, from the card, the context menu or the phone's sheet.
+   *
+   * `remote:handoffCancel` has existed for as long as the queue has and nothing in this
+   * window ever called it: a pane could be put on that list from three places and taken
+   * off it only by a script. A queued pane waits for its own agent, which runs for as long
+   * as it runs - 13 and 18 minutes for the two that produced this - so "waiting" is a
+   * state somebody watches for minutes with no way to change their mind.
+   *
+   * It reports the one case it cannot serve rather than claiming it: a move already in
+   * flight is past the queue and cannot be called back.
+   */
+  const stopMove = (s: { id: string; title: string }): void => {
+    void api
+      .cancelHandoff(s.id)
+      .then((stopped) =>
+        flash(stopped ? `${s.title} stays here - the move is off` : `${s.title} is already moving - too late to stop it`)
+      )
+  }
   /** the pane whose output is being read as text (and therefore selected with a finger) */
   const [textPane, setTextPane] = useState<string | null>(null)
-  const [fleet, setFleet] = useState(false)
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
    * sharing the width - see handheld.ts. Nothing else in here has to know: the classes go
@@ -286,6 +358,23 @@ export default function App(): JSX.Element {
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
+  const deviceChoices = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const session of sessions) {
+      if (session.remote) seen.set(session.remote.device, session.remote.name)
+    }
+    // ...and every device that is merely CONNECTED, whether or not a pane of its is being
+    // mirrored. Built from mirrored sessions alone, the filter could not name the one
+    // machine somebody opens this list to look at: a PC running everything and mirroring
+    // nothing was absent from its own dropdown.
+    for (const peer of remote?.peers ?? [])
+      if (peer.status === 'online') seen.set(peer.id, peer.name)
+    return [...seen].map(([id, name]) => ({ id, name }))
+  }, [sessions, remote])
+  useEffect(() => {
+    if (deviceFilter !== 'all' && deviceFilter !== 'local' && !deviceChoices.some((d) => d.id === deviceFilter))
+      setDeviceFilter('all')
+  }, [deviceFilter, deviceChoices])
   const [phone, setPhone] = useState<PhoneState | null>(null)
   // The panes the last run left behind, when the launch decided to ask about them.
   const [restore, setRestore] = useState<RestoreOffer | null>(null)
@@ -326,6 +415,32 @@ export default function App(): JSX.Element {
   // Read from inside listeners that outlive a render - the draft watcher below fires on
   // every keystroke and must not re-subscribe each time the session list changes.
   const sessionsRef = useRef<Session[]>([])
+  /**
+   * "pane 3" for a session id, numbered off the same list the sidebar numbers and
+   * Ctrl+3 reaches. A ref because the sweeps that use it run from timers holding no
+   * render's closure, and a stale name here would point at the wrong card.
+   */
+  const paneWordRef = useRef((id: string) => {
+    const i = sessionsRef.current.findIndex((x) => x.id === id)
+    if (i < 0) return 'a pane'
+    const s = sessionsRef.current[i]
+    // The project as well as the number: "closed pane 3" names a keystroke, and the thing
+    // somebody wants back is a conversation. Same words the mascot uses everywhere else.
+    return paneWord({ name: projectNameOf(s.cwd) || s.title, pane: i + 1 } as MascotPane)
+  })
+  /**
+   * ...and the same pane with what it was in the middle of.
+   *
+   * `Session.gist` is History's own line, pushed onto the live session so a sentence about
+   * a pane can be written while the pane still exists. Absent is said as nothing: a
+   * confident wrong subject on a pane that has just been closed is worse than none.
+   */
+  const paneActedRef = useRef(
+    (id: string): ActedPane => ({
+      word: paneWordRef.current(id),
+      doing: sessionsRef.current.find((x) => x.id === id)?.gist
+    })
+  )
   sessionsRef.current = sessions
   /**
    * Last input anywhere in the app that did NOT go into a pane's pty - a click, a drag,
@@ -411,7 +526,6 @@ export default function App(): JSX.Element {
     swarm ||
     history ||
     devices ||
-    fleet ||
     board !== null ||
     diff !== null ||
     ask !== null ||
@@ -534,6 +648,43 @@ export default function App(): JSX.Element {
   // resubscribing to every session event.
   const soundSet = useRef<Config['sounds'] | undefined>(undefined)
   soundSet.current = config?.sounds
+  // ...and the countdown is also a SOUND.
+  //
+  // A question answered for you is the one thing this app does on its own that somebody
+  // may want to stop, and the window in which they can is the countdown - which is drawn
+  // inside a pane. A pane that is not on screen (the grid off, another desktop, the window
+  // minimised) had no way of saying so at all, which is why "I cannot even see the timer
+  // counting down" is a real report about a feature that works. One tick a second says it
+  // without needing a screen.
+  //
+  // The SOONEST countdown on the desk, not one per pane: two panes counting down together
+  // would beat against each other twice a second, which reads as a fault rather than as a
+  // clock.
+  const soonestAuto = sessions.reduce(
+    (min, s) => (s.autoAnswerAt && (!min || s.autoAnswerAt < min) ? s.autoAnswerAt : min),
+    0
+  )
+  const tickNow = useNow()
+  // The second last ticked FOR THIS countdown. Keyed by the deadline as well as by the
+  // number, so a new question that happens to start at the same reading is still heard.
+  const lastTick = useRef('')
+  useEffect(() => {
+    if (!soonestAuto) {
+      lastTick.current = ''
+      return
+    }
+    const left = Math.ceil((soonestAuto - Date.now()) / 1000)
+    // Nothing before the last minute: a wait somebody lengthened to five minutes in
+    // Settings is a clock, not an alarm, and ticking through all of it is a metronome.
+    if (left <= 0 || left > 60) return
+    const key = `${soonestAuto}:${left}`
+    if (lastTick.current === key) return
+    lastTick.current = key
+    // Same switch as every other sound the app makes about a pane. The volume slider, and
+    // a picker pointed at a file of your own, are honoured by `playTick` itself.
+    if (soundOn.current) playTick(soundSet.current)
+  }, [soonestAuto, tickNow])
+
   // The pane already on screen is acknowledged the moment it raises its hand
   // (the effect above clears it), so chiming for it is noise about something you
   // are already watching.
@@ -553,6 +704,11 @@ export default function App(): JSX.Element {
         // window in the background there is no such pane, so the selected one is as
         // worth announcing as any other.
         const watching = s.id === activeIdRef.current && !document.hidden && document.hasFocus()
+        // A pane holding a question reaches this the same way a finished pane does - every
+        // idle reading in the app says yes about it - and it has its own alert with its own
+        // sound and its own red card. Chiming "finished" over it is the wrong word for a
+        // run that has stopped and will not move again until it is answered.
+        if (s.ask) return
         if (soundOn.current && !watching) playEvent('done', soundSet.current)
         if (watching) return
         setJustDone((cur) => (cur.includes(s.id) ? cur : [...cur, s.id]))
@@ -596,6 +752,12 @@ export default function App(): JSX.Element {
       if (soundOn.current && !watching(s)) playEvent('stall', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
+    // A question is its own alert, and the loudest thing the app can say: the run is not
+    // finished, it is stopped, and only a person restarts it.
+    const offAsk = api.onAsk((s) => {
+      if (soundOn.current && !watching(s)) playEvent('ask', soundSet.current)
+      if (!watching(s)) glow(s.id)
+    })
     const offBell = api.onBell((s) => {
       if (!bellOn.current) return
       if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
@@ -603,6 +765,7 @@ export default function App(): JSX.Element {
     })
     return () => {
       offStalled()
+      offAsk()
       offBell()
     }
   }, [])
@@ -1126,7 +1289,20 @@ export default function App(): JSX.Element {
       }
       const started = await api.startSessions(reqs)
       if (started.length) setActiveId(started[started.length - 1].id)
-      if (started.length < reqs.length) flash('Some folders could not be opened.')
+      if (started.length < reqs.length) {
+        // Name it. "Some folders could not be opened" was true and unusable: the one thing
+        // somebody needs is WHICH, and on this desk the answer is nearly always a folder
+        // that has been deleted since - a temp folder from a test, or a swept lane.
+        // Counted, not matched: a launch that lands in a lane comes back with a DIFFERENT
+        // cwd (the worktree), so pairing requests to results by folder would report a pane
+        // that opened perfectly as a failure. With one request there is nothing to pair.
+        const missed = reqs.length - started.length
+        flash(
+          reqs.length === 1
+            ? `Could not open ${reqs[0].cwd} - it may not be on this machine any more.`
+            : `${missed} of ${reqs.length} folders could not be opened.`
+        )
+      }
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
       const noted = started.filter((s) => s.laneNote)
@@ -1270,83 +1446,6 @@ export default function App(): JSX.Element {
    * before the key that accepts it arrives. A plain shell has no slash commands.
    */
   /**
-   * Prompt improvement.
-   *
-   * Three pieces of state and one rule between them: **generation only ever starts on a
-   * deliberate action.** `offered` is a heuristic on the draft and costs nothing; the chip
-   * it puts in the pane is the whole of what happens by itself.
-   */
-  const [improveOffer, setImproveOffer] = useState<string | null>(null)
-  const [sheet, setSheet] = useState<{ id: string; state: SheetState } | null>(null)
-  const [asked, setAsked] = useState(false)
-  const improveMode = config?.promptImprove.mode ?? 'off'
-  const improveIdleMs = config?.promptImprove.idleMs ?? 1200
-  const sheetRef = useRef<{ id: string; state: SheetState } | null>(null)
-  sheetRef.current = sheet
-
-  useEffect(() => {
-    if (improveMode === 'off') {
-      setImproveOffer(null)
-      setSheet(null)
-      return
-    }
-    let timer: number | undefined
-    const stop = onPaneDraft((id, state) => {
-      // Typing while a suggestion is being generated aborts it, silently. This is the
-      // rule the whole interaction rests on: the moment the person goes back to writing,
-      // whatever was being computed about the older words is wrong and is thrown away.
-      //
-      // "Typing" means the DRAFT CHANGED, not that a key arrived. The improvement takes
-      // twenty-odd seconds of real time (measured: 22.5 s for a small one), and over that
-      // long a person moves the cursor, hits a modifier, or clicks back into the pane -
-      // none of which makes the older words any less current, and all of which used to
-      // silently kill the run and put the offer chip back as if nothing had happened.
-      const open = sheetRef.current
-      if (
-        open?.id === id &&
-        open.state.phase === 'working' &&
-        state.text.trim() !== open.state.original
-      ) {
-        api.cancelImprove(id)
-        setSheet(null)
-      }
-      // The offer is withdrawn the instant a key lands and re-earned by going quiet.
-      setImproveOffer(null)
-      window.clearTimeout(timer)
-
-      // Re-armed rather than dropped while the pane is busy.
-      //
-      // Measured in a real window: typing into a pane leaves it at `status: 'working'`
-      // for about 3.5 seconds afterwards, because the CLI echoing and redrawing its own
-      // prompt box IS output. A single timer at 1200 ms therefore always fired while the
-      // pane was still busy, gave up, and - since no further keystroke was coming - never
-      // ran again. The chip could not appear at all. So the check repeats until the pane
-      // settles, bounded so a genuinely long turn does not leave a timer spinning.
-      //
-      // `status`, not `engaged`: `engaged` means "something has been asked of this
-      // session", which typing is, and it never goes back down.
-      let tries = 0
-      const arm = (): void => {
-        timer = window.setTimeout(() => {
-          const s = sessionsRef.current.find((x) => x.id === id)
-          if (!s || s.status === 'exited') return
-          if (s.status === 'working') {
-            if (++tries < 12) arm()
-            return
-          }
-          if (!state.certain) return
-          if (looksFinished(state.text)) setImproveOffer(id)
-        }, improveIdleMs)
-      }
-      arm()
-    })
-    return () => {
-      stop()
-      window.clearTimeout(timer)
-    }
-  }, [improveMode, improveIdleMs])
-
-  /**
    * "You have asked this before."
    *
    * Same contract as the two chips beside it — a heuristic on the draft, a chip in the
@@ -1391,110 +1490,6 @@ export default function App(): JSX.Element {
       window.clearTimeout(timer)
     }
   }, [priorEnabled])
-
-  /**
-   * Offering to cut one ask into several panes.
-   *
-   * Same contract as the improve chip, and the same reason for it: a plan costs a whole
-   * CLI start-up (measured at 61.5 s for this repo, 35 s from inside the app), so nothing
-   * is planned and no pane is opened until somebody clicks. The chip is the whole of what
-   * happens by itself.
-   *
-   * No `status === 'working'` gate, unlike the improve chip. Typing into a pane leaves it
-   * reading `working` for about 3.5 s - the CLI echoing its own prompt box is output like
-   * any other - which is what kept that chip from ever appearing until the check was made
-   * to re-arm. This one has nothing to re-arm for: whether the agent is mid-turn says
-   * nothing about whether the words in the box are three jobs.
-   */
-  const [splitOffer, setSplitOffer] = useState<string | null>(null)
-  const [swarmStart, setSwarmStart] = useState<SwarmStart | null>(null)
-  useEffect(() => {
-    let timer: number | undefined
-    const stop = onPaneDraft((id, state) => {
-      setSplitOffer(null)
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        const s = sessionsRef.current.find((x) => x.id === id)
-        if (!s || s.status === 'exited') return
-        // `certain` means the draft was reconstructed rather than guessed at; offering to
-        // split words we are not sure we have is offering to split the wrong prompt.
-        if (state.certain && looksSplittable(state.text)) setSplitOffer(id)
-      }, 1500)
-    })
-    return () => {
-      stop()
-      window.clearTimeout(timer)
-    }
-  }, [])
-
-  const runImprove = useCallback(
-    async (id: string, again?: { exclude?: string[]; tweak?: string }) => {
-      const draft = paneDraft.get(id)
-      // On a re-run the pane's draft has already been replaced by nothing the user typed,
-      // so the original carried on the open sheet is the honest source of the text.
-      const carried =
-        again && sheetRef.current?.state.phase === 'review'
-          ? sheetRef.current.state.result.original
-          : ''
-      const text = carried || draft?.text.trim() || ''
-      if (!text) return flash('Nothing typed in that pane yet.')
-      setImproveOffer(null)
-      setAsked(false)
-      setSheet({ id, state: { phase: 'working', original: text } })
-      const options =
-        again?.exclude?.length || again?.tweak
-          ? { exclude: again.exclude, tweak: again.tweak }
-          : undefined
-      // Caught, because the alternative is the sheet sitting on "Improving…" for ever: a
-      // rejected bridge call leaves the state exactly where it was set, and there is no
-      // second chance to move it.
-      let result: Awaited<ReturnType<typeof api.improvePrompt>> | null = null
-      let threw = ''
-      try {
-        result = await api.improvePrompt(id, text, options)
-      } catch (e) {
-        threw = e instanceof Error ? e.message : String(e)
-      }
-      // A cancel that landed while this was in flight has already cleared the sheet, and
-      // the late answer must not reopen it.
-      if (sheetRef.current?.id !== id) return
-      setSheet({
-        id,
-        state: result?.ok
-          ? { phase: 'review', result }
-          : { phase: 'failed', original: text, error: result?.error || threw || 'no answer' }
-      })
-    },
-    [flash]
-  )
-
-  const answerImprove = useCallback(
-    async (answers: Array<{ question: string; answer: string }>) => {
-      const open = sheetRef.current
-      if (!open || open.state.phase !== 'review') return
-      const result = open.state.result
-      // Exactly one second pass, ever. A dialogue that goes three rounds is a prompt that
-      // should have been typed.
-      if (asked || !answers.length) {
-        if (!answers.length && !asked) {
-          setSheet({ id: open.id, state: { phase: 'asking', result } })
-          return
-        }
-        return
-      }
-      setAsked(true)
-      setSheet({ id: open.id, state: { phase: 'working', original: result.original } })
-      const next = await api.answerImprove(open.id, result.original, answers)
-      if (sheetRef.current?.id !== open.id) return
-      setSheet({
-        id: open.id,
-        state: next.ok
-          ? { phase: 'review', result: next }
-          : { phase: 'failed', original: result.original, error: next.error ?? 'no answer' }
-      })
-    },
-    [asked]
-  )
 
   /**
    * Type a command into a pane's TUI and press Enter once it has actually arrived.
@@ -1574,6 +1569,11 @@ export default function App(): JSX.Element {
       const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
       const rounds = Math.min(24, Math.max(4, lines + 2))
       const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
+      // The pane keeps its screen off the keystrokes it relays, and these are not
+      // keystrokes - so it is told directly, before a byte goes out. Without this the
+      // button cleared the pane and took the conversation off the screen with it, which is
+      // the half of the /clear report that survived every fix to the byte stream.
+      paneArmClear.get(s.id)?.()
       api.write(s.id, wipe)
       void typeAndSubmit(s, cmd, flash)
     },
@@ -1705,6 +1705,27 @@ export default function App(): JSX.Element {
    * is running" rather than "not measured yet".
    */
   const [usage, setUsage] = useState<UsageReport | null>(null)
+  /**
+   * What the ladder did on its own, for the mascot to say. It is a fact with a timestamp
+   * rather than a message queue: the mascot keys off `at`, so the same sweep is announced
+   * once however often this component re-renders.
+   */
+  const [acted, setActed] = useState<
+    { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number } | undefined
+  >(undefined)
+  /**
+   * How a sweep asks for panes to be closed.
+   *
+   * It is a ref rather than a callback because the machinery behind it (the countdown, the
+   * "keep it open" holds, the mascot's own switch) is declared further down beside the rest
+   * of the mascot's props, and a sweep is an effect whose dependency list is evaluated at
+   * render. Through a ref there is no ordering to get wrong and no dependency to forget.
+   *
+   * Neither sweep kills a pane itself any more. They used to, into a `console.info` in a
+   * devtools window nobody has open, which is why "I have never seen an idle pane close"
+   * was true even on a desk where the clock was doing its job.
+   */
+  const armCloseRef = useRef<(plan: Reclaim[], why: 'idle' | 'pressure', log: string) => void>(() => {})
   useEffect(() => {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
@@ -1784,6 +1805,7 @@ export default function App(): JSX.Element {
         id: s.id,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
+        lastOutput: s.lastOutput,
         focused: s.id === activeRef.current,
         visible: visibleRef.current.has(s.id),
         remote: !!s.remote,
@@ -1791,6 +1813,11 @@ export default function App(): JSX.Element {
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
         asking: !!s.ask || !!s.bell,
+        // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
+        // picked, main queues it and moves it the moment the turn ends.
+        busy: s.runSince !== undefined,
+        // The device that handed it here, so the budget never hands it straight back.
+        arrivedFrom: s.arrivedFrom,
         projectName: projectNameOf(s.cwd)
       })),
     []
@@ -1866,24 +1893,32 @@ export default function App(): JSX.Element {
 
   const sweepHandoff = useCallback(() => {
     const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
-    if (!capacity || capacity.level === 'ok' || !cfg.enabled) return
+    if (!capacity || !cfg.enabled) return
+    // Past the budget the desk has already said where these panes belong, so this runs at
+    // `ok` too - and it is then the only sweep that will, since both of the others are
+    // readings about a machine in trouble.
+    const over = Math.max(0, capacity.over ?? 0)
+    if (!over && capacity.level === 'ok') return
     const now = Date.now()
     const panes = handoffPanes()
-    const worthAsking = panes.some(
-      (p) =>
-        !p.focused &&
+    // The same eligibility the plan applies, asked here first so the peers are not called
+    // over the link to find out there was nothing to move. Two shapes, because the budget
+    // rule drops the idle wait and the on-screen refusal and takes busy panes as well.
+    const worthAsking = panes.some((p) => {
+      if (p.focused || p.remote || p.handingOff) return false
+      if ((handoffBlocked.current[p.id] ?? 0) > now) return false
+      if (over) return handoffQueueable(p)
+      return (
         !p.visible &&
-        !p.remote &&
-        !p.handingOff &&
         handoffMovable(p) &&
-        now - p.lastKeyboard >= Math.max(0, cfg.minIdleMinutes) * 60_000 &&
-        !((handoffBlocked.current[p.id] ?? 0) > now)
-    )
+        now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000
+      )
+    })
     if (!worthAsking) return
     runHandoffs(
       panes,
       (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
-      `capacity: ${capacity.level}`,
+      over ? `budget: ${over} pane(s) past ${cfg.keepLocal}` : `capacity: ${capacity.level}`,
       cfg.cooldownMinutes
     )
   }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])
@@ -1930,7 +1965,7 @@ export default function App(): JSX.Element {
           !p.remote &&
           !p.handingOff &&
           handoffMovable(p) &&
-          now - p.lastKeyboard >= minutes * 60_000 &&
+          now - quietSince(p) >= minutes * 60_000 &&
           !((handoffBlocked.current[p.id] ?? 0) > now)
       )
       if (!worthAsking) return
@@ -1953,9 +1988,17 @@ export default function App(): JSX.Element {
         id: s.id,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
+        // Quiet means quiet. `lastKeyboard` alone called a pane whose agent had been
+        // printing for two hours "idle for two hours" - see ReclaimPane.lastOutput.
+        lastOutput: s.lastOutput,
+        busy: s.runSince !== undefined,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
+        // The real refusal, and not the pane's STATE: `fleetState` says `needsYou` for a
+        // finished turn and for a live question alike, so reading it alone refused every
+        // finished pane and this sweep had never closed anything on this desk.
+        asking: !!s.ask,
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff
@@ -1965,14 +2008,7 @@ export default function App(): JSX.Element {
       Date.now()
     )
     if (!plan.length) return
-    for (const p of plan) {
-      console.info(
-        `capacity: ${capacity.level}, closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
-          `${p.hadAgent ? '' : ' (already exited)'}`
-      )
-      void api.killSession(p.id)
-    }
-    console.info(`capacity: reclaimed ~${reclaimedMb(plan)} MB; reopen from History`)
+    armCloseRef.current(plan, 'pressure', `capacity: ${capacity.level}`)
   }, [capacity, sessions, activeId, visibleIds, config?.reclaim])
 
   /**
@@ -1993,21 +2029,21 @@ export default function App(): JSX.Element {
           id: s.id,
           state: fleetState(s),
           lastKeyboard: s.lastKeyboard,
+          lastOutput: s.lastOutput,
+          busy: s.runSince !== undefined,
           focused: s.id === activeRef.current,
           visible: false,
           remote: !!s.remote,
+          asking: !!s.ask,
           handingOff: !!s.handingOff
         })),
         cfg,
         Date.now()
       )
-      for (const p of plan) {
-        console.info(
-          `idle-close: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
-            `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
-        )
-        void api.killSession(p.id)
-      }
+      // ...and out loud, and not yet. This sweep has closed panes into a console nobody
+      // has open since it shipped; now it counts down on the mascot first, and a press
+      // stops it.
+      if (plan.length) armCloseRef.current(plan, 'idle', 'idle-close')
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -2213,7 +2249,6 @@ export default function App(): JSX.Element {
         setBoard(null)
         setHistory(false)
         setDevices(false)
-        setFleet(false)
         setRenaming(null)
         return
       }
@@ -2258,13 +2293,7 @@ export default function App(): JSX.Element {
       if (!modKey(e) || e.altKey) return
       const k = e.key.toLowerCase()
 
-      if (k === 'i' && e.shiftKey) {
-        e.preventDefault()
-        const id = activeRef.current
-        if (improveMode === 'off') flash('Prompt improvement is off - turn it on in Settings.')
-        else if (!id) flash('Open a pane first.')
-        else void runImprove(id)
-      } else if (k === 't') {
+      if (k === 't') {
         e.preventDefault()
         setPicking(true)
       } else if ((k === 'k' && !e.shiftKey) || (k === 'p' && e.shiftKey)) {
@@ -2351,7 +2380,7 @@ export default function App(): JSX.Element {
         // Shift for the whole Fleet, plain for find inside one pane: same letter, and the
         // difference between them is the difference between one pane and all of them.
         e.preventDefault()
-        setFleet((f) => !f)
+        setByState((v) => !v)
       } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
@@ -2468,10 +2497,10 @@ export default function App(): JSX.Element {
       {
         id: 'fleet',
         group: 'Actions',
-        title: 'Fleet: every pane on one screen',
-        hint: 'sorted by who needs a person first',
+        title: 'Sort the sessions list by who needs you',
+        hint: 'or leave it in the order you dragged it into',
         keys: 'Ctrl Shift F',
-        run: () => setFleet(true)
+        run: () => setByState((v) => !v)
       },
       {
         id: 'changes',
@@ -2936,7 +2965,6 @@ export default function App(): JSX.Element {
   // a PERSON. `working` is the app being busy, which nobody has to do anything about, and
   // `waiting` above is narrower than this - it clears the moment you LOOK at the pane,
   // where this keeps counting until the pane is actually answered.
-  const needsYou = fleetWaiting(sessions)
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
@@ -2966,220 +2994,319 @@ export default function App(): JSX.Element {
     [config?.hiddenBlurbs, patchConfig]
   )
 
-  return (
-    <BlurbContext.Provider value={blurbs}>
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-name">
-            <AppLogo size={17} />
-            PaneForge
-          </span>
-          <span className="icons">
-            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
-              ⚙
-            </button>
-            <button
-              className="icon help"
-              title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
-              onClick={() => setHelp(true)}
-            >
-              ?
-            </button>
-          </span>
-        </div>
+  /**
+   * What the mascot is allowed to know: the sidebar's own numbering, the words `place.ts`
+   * already worked out, the state `fleet.ts` already decided, and the memory the sampler
+   * already read. Nothing here is computed for it, which is why it costs no request and
+   * cannot disagree with the rest of the window.
+   */
+  /**
+   * The countdown between the ladder deciding and the pane closing.
+   *
+   * Everything below this app's memory line - trim, move, close - used to happen and then
+   * be reported, at best. A count is the smallest thing that turns a report into a
+   * decision somebody is part of: the mascot names the pane, says when, and takes one
+   * press either way. It is not a confirmation dialog, because a dialog would take the
+   * screen and this app never does that on its own initiative; it is a sentence with a
+   * clock in it, and doing nothing still closes the pane.
+   */
+  const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
+  const closeSoonRef = useRef<CloseSoon | undefined>(undefined)
+  closeSoonRef.current = closeSoon
+  /** What the pending close is expected to give back, for the sentence afterwards. */
+  const pendingMb = useRef(0)
+  /**
+   * Panes somebody said "keep it open" about, and until when.
+   *
+   * Without this, "keep it" is the same question sixty seconds later for ever, because the
+   * sweeps run on a minute timer and nothing about the pane has changed. That is the exact
+   * shape that gets a feature switched off.
+   */
+  const keptUntil = useRef<Record<string, number>>({})
+  const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
+  mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
 
-        <button className="primary" onClick={() => setPicking(true)}>
-          <span className="plus">+</span> New session <span className="kbd">{keyLabel('Ctrl T')}</span>
-        </button>
-        <button className="ghost search-btn" onClick={() => setPalette(true)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
-        </button>
+  /**
+   * Is this pane STILL one this app may close - asked at the moment of the kill, not when
+   * the plan was made.
+   *
+   * A plan is a snapshot and the countdown is fifteen seconds long, so between the two the
+   * pane can start a turn, be asked a question, or be handed off. Killing off the snapshot
+   * closes a pane that is working, which is exactly the report this exists for: "the
+   * countdown started before the session even ended". Every refusal here is `reclaim.ts`'s
+   * own, read live: a live question, a run clock that is going, a move in flight, and any
+   * state that is not one of the three the sweeps may reach.
+   */
+  const stillCloseable = useCallback((id: string): boolean => {
+    const s = sessionsRef.current.find((x) => x.id === id)
+    if (!s) return false
+    if (s.ask || s.bell) return false
+    if (s.runSince !== undefined) return false
+    if (s.handingOff) return false
+    const st = fleetState(s)
+    return st === 'ready' || st === 'exited' || st === 'needsYou'
+  }, [])
 
-        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
-            fourth would not have fitted at all; a fixed-width row has room to grow and
-            reads faster once you know it. Every one keeps its full sentence on hover. */}
-        <div className="quick">
-          {/* First in the row because it is the one that can be UNREAD: the others open
-              something you went looking for, this one tells you something arrived. */}
-          <button
-            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
-            title={
-              needsYou
-                ? keyLabel(
-                    `Fleet: ${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you (Ctrl Shift F)`
-                  )
-                : keyLabel('Fleet: every pane on one screen, whoever needs you first (Ctrl Shift F)')
-            }
-            onClick={() => setFleet(true)}
-          >
-            <FleetIcon />
-            {needsYou > 0 && <span className="quick-dot" />}
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
-            onClick={() => setSwarm(true)}
-          >
-            <SwarmIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
-            disabled={!activeId}
-            onClick={() => {
-              const s = sessions.find((x) => x.id === activeId)
-              if (s) setBoard(s.cwd)
-            }}
-          >
-            <BoardIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
-            title={keyLabel('History: search past sessions (Ctrl H)')}
-            onClick={() => setHistory(true)}
-          >
-            <HistoryIcon />
-          </button>
-          <button
-            className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
-            title={
-              remoteLive
-                ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
-                : keyLabel('Devices: work on another machine’s panes from here (Ctrl Shift D)')
-            }
-            onClick={() => setDevices(true)}
-          >
-            <RemoteIcon />
-            {remoteLive > 0 && <span className="quick-dot" />}
-          </button>
-        </div>
+  const doClose = useCallback(
+    (ids: string[], mb: number) => {
+      setCloseSoon(undefined)
+      const live = ids.filter((id) => stillCloseable(id))
+      if (!live.length) {
+        console.info(`reclaim: nothing left to close - ${ids.join(', ')} woke up during the countdown`)
+        return
+      }
+      if (live.length !== ids.length) {
+        console.info(
+          `reclaim: sparing ${ids.filter((id) => !live.includes(id)).join(', ')} - woke up during the countdown`
+        )
+        mb = Math.round((mb * live.length) / ids.length)
+      }
+      for (const id of live) void api.killSession(id)
+      setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
+    },
+    [stillCloseable]
+  )
 
-        {config && config.presets.length > 0 && (
-          <>
-            <div className="section">Workspaces</div>
-            <div className="presets">
-              {config.presets.map((p) => (
-                <div key={p.id} className="row preset" onClick={() => launchPreset(p)}>
-                  <div className="row-text">
-                    <div className="row-title">{p.name}</div>
-                    <div className="row-sub">{p.items.length} projects</div>
-                  </div>
-                  <button
-                    className="x"
-                    title="Delete workspace"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      patchConfig({ presets: config.presets.filter((x) => x.id !== p.id) })
-                    }}
-                  >
-                    x
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+  armCloseRef.current = (plan, why, log) => {
+    const now = Date.now()
+    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
+    if (!keep.length) return
+    // One countdown at a time. Two would be two bubbles for one bubble's worth of space,
+    // and the second would silently replace the first mid-count.
+    if (closeSoonRef.current) return
+    const mb = reclaimedMb(keep)
+    for (const p of keep)
+      console.info(
+        `${log}: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+          `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
+      )
+    const ids = keep.map((p) => p.id)
+    pendingMb.current = mb
+    // With the mascot hidden there is nowhere to draw a count and nowhere to press, so the
+    // old behaviour is the only honest one: do it, and say so in the log.
+    if (!mascotOnRef.current) return doClose(ids, mb)
+    setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline: now + CLOSE_COUNTDOWN_MS, why })
+  }
 
-        {/* Only the lanes no open pane accounts for, across every open repo; the rest are
-            chips on the session cards below. Renders nothing without a lane-using repo. */}
-        <LaneStrip
-          boards={laneBoards}
-          sessions={sessions}
-          onFocus={setActiveId}
-          onHelp={() => setLaneHelp(true)}
-        />
+  useEffect(() => {
+    if (!closeSoon) return
+    const t = window.setTimeout(
+      () => doClose(closeSoon.ids, pendingMb.current),
+      Math.max(0, closeSoon.deadline - Date.now())
+    )
+    return () => window.clearTimeout(t)
+  }, [closeSoon, doClose])
 
-        {/* What the machine can still hold, in the one place a person is already looking
-            when they are about to open another pane. Only when it is NOT ok: a line that
-            is always there is a line nobody reads, and on a healthy desk there is nothing
-            to say. The wording carries the numbers (see capacity.ts) because "low memory"
-            with no figure is the message that got the app blamed for the browsers. */}
-        {capacity && capacity.level !== 'ok' && (
-          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
-            {capacity.advice}
-          </div>
-        )}
+  /**
+   * A pane that wakes up mid-countdown takes the countdown down with it.
+   *
+   * The kill re-checks too, but only at the deadline: without this the app draws "closing
+   * pane 1 in 9s" over a pane that has just started answering, which is a sentence saying
+   * it is about to do something it will not do. `sessions` is the dependency because that
+   * is what changes when a pane goes busy or is asked something.
+   */
+  useEffect(() => {
+    if (!closeSoon) return
+    if (closeSoon.ids.every((id) => stillCloseable(id))) return
+    console.info('reclaim: countdown dropped - a pane it named went back to work')
+    setCloseSoon(undefined)
+  }, [closeSoon, sessions, stillCloseable])
 
-        <div className="section">
-          {/* "Running" read as "these are all busy" on a list of idle panes. */}
-          <span className="section-title">
-            Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
-          </span>
-          {/* Badges and the empty-everything button travel together, hard right. One
-              wrapper rather than three margin rules: whichever of them are showing, the
-              rest keep their place. */}
-          <span className="section-tail">
-            {/* The desk's total, beside the pane count it belongs to: panes plus the app
-                itself, which is the figure that answers "what would quitting give me
-                back". The per-pane chips say which one to close; this says whether to
-                bother. Only once something is running - a total of "250 MB" over an
-                empty desk is a number about nothing. */}
-            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+  const keepOpen = useCallback((ids: string[]) => {
+    const until = Date.now() + KEEP_MINUTES * 60_000
+    for (const id of ids) keptUntil.current[id] = until
+    setCloseSoon(undefined)
+  }, [])
+
+  // What is serving on this machine, for the mascot's "what dev servers are running" and
+  // for stopping one by name. Held rather than polled: the reading costs a whole process
+  // table with full command lines, so it is refreshed when the ask box opens and after
+  // anything is stopped, and never on a timer.
+  const [devs, setDevs] = useState<RunningDev[]>([])
+
+  const mascotPanes: MascotPane[] = useMemo(
+    () =>
+      sessions.map((s, i) => ({
+        id: s.id,
+        pane: i + 1,
+        name: projectNameOf(s.cwd) || s.title,
+        state: fleetState(s),
+        memMb: usage?.panes[s.id]?.rssMb ?? null,
+        idleMs: Math.max(0, Date.now() - (Math.max(s.lastKeyboard, s.lastOutput ?? 0) || s.createdAt || Date.now())),
+        remote: !!s.remote,
+        asking: !!s.ask,
+        // What this pane was asked to do, so every sentence about it can say which
+        // conversation it is rather than only which key reaches it.
+        doing: s.gist
+      })),
+    [sessions, usage]
+  )
+
+  const refreshDevs = useCallback(() => {
+    void api
+      .listDevServers(mascotPanes.map((p) => ({ id: p.id, pane: p.pane, name: p.name })))
+      .then((list) => setDevs(list ?? []))
+      .catch(() => setDevs([]))
+  }, [mascotPanes])
+
+  /**
+   * Whether the list is grouped by who needs a person, or left in the order it was
+   * dragged into.
+   *
+   * Grouped is the default, and is what replaced the Fleet dialog: the whole point of
+   * that screen was "sorted by whoever needs you first", and it was a screen you had to
+   * remember to open. The arranged order is still one press away (Ctrl Shift F) for a
+   * desk somebody has deliberately laid out. Kept in this window rather than in
+   * config.json - it is a view, not a setting, and two machines have no reason to agree
+   * about it.
+   */
+  const [byState, setByState] = useState(() => {
+    try {
+      return window.localStorage.getItem('pf.listByState') !== 'off'
+    } catch {
+      return true
+    }
+  })
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('pf.listByState', byState ? 'on' : 'off')
+    } catch {
+      /* a window with site data blocked still sorts; it just forgets between launches */
+    }
+  }, [byState])
+
+  /**
+   * Every pane on the desk, this machine's and every paired machine's, as one list.
+   *
+   * A pane on the PC used to be invisible here until somebody picked it for mirroring in
+   * Devices, so "is anything running over there" was a question you had to go and ask -
+   * which is no way to watch a machine that is meant to be doing the work. Everything
+   * needed to answer it already crosses the link (`RemotePaneInfo` rides the
+   * `remote:changed` message), so the sidebar draws them all and mirrors none of them.
+   *
+   * That split is the whole design. LISTING a remote pane costs a few fields in a message
+   * that is already sent whenever anything over there moves; MIRRORING one costs a live
+   * byte stream and an xterm buffer on this laptop, per pane. Pressing the row is what
+   * turns one into the other, so a desk showing fifty PC panes costs what showing none
+   * used to.
+   *
+   * A listed row has no pane NUMBER: there is nothing on this machine for Ctrl+N to
+   * switch to until it has been opened.
+   */
+  const deskRows = useMemo(
+    () => buildDeskRows(sessions, shownSessions, remote?.peers ?? [], deviceFilter),
+    [sessions, shownSessions, remote, deviceFilter]
+  )
+
+  const groups = useMemo(() => deskGroups(deskRows, byState), [deskRows, byState])
+
+  /**
+   * How many panes want a person - on EITHER machine.
+   *
+   * It counted this desk's own panes, which is backwards for a laptop whose agents run
+   * on the other box: the number would sit at zero all day while the PC piled up
+   * finished turns. A listed pane is ranked by the same `fleet.ts` rules as a local one,
+   * so counting it is the same call over a longer list.
+   */
+  const needsYou = fleetWaiting(deskRows)
+
+  /**
+   * Open a pane that is running on another machine: mirror it, then switch to it.
+   *
+   * `remote:watch` takes the whole list rather than a delta, so the ones already being
+   * mirrored are re-sent with this one added. The row leaves the listed half the instant
+   * the mirror arrives, because it is a session from then on - which is why the focus is
+   * deferred to an effect rather than done here: the session it wants does not exist yet.
+   */
+  const pendingOpen = useRef<{ device: string; remoteId: string } | null>(null)
+  const openListed = useCallback(
+    (deviceId: string, remoteId: string) => {
+      const peer = remote?.peers.find((p) => p.id === deviceId)
+      const watched = (peer?.panes ?? []).filter((p) => p.watched).map((p) => p.id)
+      if (!watched.includes(remoteId)) watched.push(remoteId)
+      pendingOpen.current = { device: deviceId, remoteId }
+      void api.watchRemote(deviceId, watched, false)
+    },
+    [remote]
+  )
+  useEffect(() => {
+    const want = pendingOpen.current
+    if (!want) return
+    const arrived = rawSessions.find(
+      (s) => s.remote?.device === want.device && s.id.endsWith(want.remoteId)
+    )
+    if (!arrived) return
+    pendingOpen.current = null
+    setActiveId(arrived.id)
+    handheld.showPane()
+  }, [rawSessions])
+
+  /**
+   * A pane running on another machine, drawn without being mirrored.
+   *
+   * Deliberately thinner than a local row: there is no git badge (the repo is on that
+   * disk), no resource chip (the agent is that machine's process), no close button (it
+   * is not ours to end from a list) and no rename. What it keeps is the four things that
+   * make it worth pressing - which machine, what it is, what it is doing, and for how
+   * long.
+   */
+  const listedRow = (row: DeskRow): JSX.Element => {
+    const { pane, device } = row.listed!
+    const place = describePlace({ cwd: pane.cwd, lane: pane.lane })
+    const state = fleetRow(row)
+    const agent = agents.find((a) => a.id === pane.agent)
+    return (
+      <div
+        key={row.key}
+        className={'row listed' + (pane.asking ? ' asking' : '')}
+        title={
+          `${pane.title} - running on ${device.name}.\n\n` +
+          'Nothing of it is on this machine yet. Click to watch it here; the agent, the ' +
+          'folder and the transcript stay over there.'
+        }
+        onClick={() => openListed(device.id, pane.id)}
+      >
+        <StatusDot status={pane.status} engaged={pane.engaged} />
+        <div className="row-text">
+          <div className="row-title has-key">
+            <span className="row-remote">
+              <RemoteIcon size={13} />
+            </span>
+            <span className="row-name">{pane.title}</span>
+            {pane.asking ? (
               <span
-                className="badge res"
-                title={
-                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
-                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
-                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
-                }
+                className="chip asks"
+                title="The CLI over there is sitting on a question. Open the pane to see it and press an answer."
               >
-                {formatMb(usage.totalMb)}
-                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
+                asks you
+              </span>
+            ) : state.since !== undefined ? (
+              <Elapsed since={state.since} title={state.label} />
+            ) : null}
+          </div>
+          <div className="row-sub">
+            <AgentLogo id={pane.agent} spec={agent} size={12} />
+            <span className="row-agent">{agent?.label ?? pane.agent}</span>
+            <span className="chip" title={`Running on ${device.name}`}>
+              {device.name}
+            </span>
+            {place.short.trim() === pane.title.trim() ? null : (
+              <span className="chip place" title={place.full}>
+                {place.short}
               </span>
             )}
-            {working > 0 && (
-              <span className="badge run" title="Agents whose own footer says they are still running">
-                {working} working
-              </span>
-            )}
-            {waiting > 0 && (
-              <span className="badge" title="Turns that finished while you were looking elsewhere">
-                {waiting} waiting
-              </span>
-            )}
-            {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
-                ending. Only there when there is something to empty. */}
-            {sessions.length > 0 && (
-              <button
-                className="icon danger section-btn"
-                title={
-                  sessions.length === 1
-                    ? 'Close the last pane - the transcript stays in history'
-                    : `Close all ${sessions.length} panes - every run ends, the transcripts stay in history`
-                }
-                aria-label="Close every session"
-                onClick={closeAll}
-              >
-                <TrashIcon size={13} />
-              </button>
-            )}
-          </span>
+          </div>
         </div>
-        {deviceChoices.length > 0 && (
-          <label className="device-filter">
-            <span>Show</span>
-            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
-              <option value="all">All devices</option>
-              <option value="local">This device</option>
-              {deviceChoices.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="list" ref={listRef}>
-          {shownSessions.map((s) => {
-            // Device filtering is visual only. The badge must retain the full-list
-            // number because Ctrl+1..9 always address that full ordered session list.
-            const paneNumber = sessions.indexOf(s) + 1
-            return (
+        {/* Not an icon: this is the one row in the list whose click does something other
+            than switch to a pane, and a word is the cheapest way to say so. */}
+        <span className="row-open" aria-hidden="true">
+          watch
+        </span>
+      </div>
+    )
+  }
+
+  const sessionRow = (s: Session, paneNumber: number): JSX.Element => (
             <div
               key={s.id}
               data-id={s.id}
@@ -3204,12 +3331,17 @@ export default function App(): JSX.Element {
                 // meant nothing the card was not already saying twice. The chip keeps the
                 // colour, because the chip can be hovered and can say why.
               }
-              onPointerDown={(e) =>
-                beginDrag(e, s.id, () => {
+              onPointerDown={(e) => {
+                const pick = (): void => {
                   setActiveId(s.id)
                   handheld.showPane()
-                })
-              }
+                }
+                // Dragging reorders `order`, and `order` decides nothing while the list is
+                // grouped by state - the row would follow the pointer and snap back to
+                // wherever its state puts it, which reads as a list that is broken.
+                if (byState) pick()
+                else beginDrag(e, s.id, pick)
+              }}
               onClick={() => {
                 if (draggedRef.current) return
                 setActiveId(s.id)
@@ -3219,6 +3351,14 @@ export default function App(): JSX.Element {
                 handheld.showPane()
               }}
               onDoubleClick={() => setRenaming(s.id)}
+              // A list row's actions belong on its right-click, which is where every
+              // desktop hand looks for them first. The pane is made active on the way in,
+              // so the menu is never acting on a card other than the one being pointed at.
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
+              }}
             >
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
@@ -3325,18 +3465,43 @@ export default function App(): JSX.Element {
                         asks you
                       </span>
                     )}
+                    {/* ...and, when it is about to be answered for you, how long is left.
+                        Beside the word rather than instead of it: "asks you" is what the
+                        pane needs, and the seconds are what is about to happen to it. */}
+                    {s.ask && s.autoAnswerAt ? <AskClock at={s.autoAnswerAt} /> : null}
                     {/* A pane on its way out says so, and says it here for the same reason
                         the chip above is here: the sub-line has no room and this is
                         transient - it takes the clock's place for the few seconds a move
                         lasts, or for as long as a queued pane's turn runs. It cannot appear
                         beside "asks you": a pane holding a question is never moved. */}
                     {s.handingOff ? (
-                      <span
-                        className="chip"
-                        title="Moving to a paired device. A pane mid-turn goes as soon as its turn ends; nothing is killed to make it happen."
-                      >
-                        moving
-                      </span>
+                      s.handoffQueuedAt ? (
+                        // Waiting for its own turn to end, which is as long as the agent
+                        // takes. Drawn as a clock rather than as the word `moving`: a
+                        // ten-minute build under a chip that says moving reads as a broken
+                        // handoff, which is exactly how three of these were reported.
+                        // ...and it is the control that undoes it. The wait is minutes
+                        // long by construction, so the chip that reports it is the one
+                        // place somebody is already looking when they change their mind.
+                        <button
+                          type="button"
+                          className="chip"
+                          title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting. Press to keep it here."
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            stopMove(s)
+                          }}
+                        >
+                          waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                        </button>
+                      ) : (
+                        <span
+                          className="chip"
+                          title="Moving to a paired device now."
+                        >
+                          moving
+                        </span>
+                      )
                     ) : s.status === 'exited' ? (
                       <span className="chip dead">exited {s.exitCode ?? ''}</span>
                     ) : s.runSince ? (
@@ -3490,9 +3655,234 @@ export default function App(): JSX.Element {
                 x
               </button>
             </div>
-            )
-          })}
-          {sessions.length === 0 && (
+  )
+
+  return (
+    <BlurbContext.Provider value={blurbs}>
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-name">
+            <AppLogo size={17} />
+            PaneForge
+          </span>
+          <span className="icons">
+            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
+              ⚙
+            </button>
+            <button
+              className="icon help"
+              title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
+              onClick={() => setHelp(true)}
+            >
+              ?
+            </button>
+          </span>
+        </div>
+
+        <button className="primary" onClick={() => setPicking(true)}>
+          <span className="plus">+</span> New session <span className="kbd">{keyLabel('Ctrl T')}</span>
+        </button>
+        <button className="ghost search-btn" onClick={() => setPalette(true)}>
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
+        </button>
+
+        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
+            fourth would not have fitted at all; a fixed-width row has room to grow and
+            reads faster once you know it. Every one keeps its full sentence on hover. */}
+        <div className="quick">
+          {/* First in the row because it is the one that can be UNREAD: the others open
+              something you went looking for, this one tells you something arrived. */}
+          <button
+            className={'ghost quick-btn' + (needsYou ? ' live' : '') + (byState ? ' on' : '')}
+            title={
+              (needsYou
+                ? `${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you. `
+                : '') +
+              keyLabel(
+                byState
+                  ? 'The list is sorted by who needs you first. Press to put it back in the order you arranged (Ctrl Shift F)'
+                  : 'The list is in the order you arranged. Press to sort it by who needs you first (Ctrl Shift F)'
+              )
+            }
+            onClick={() => setByState((v) => !v)}
+          >
+            <FleetIcon />
+            {needsYou > 0 && <span className="quick-dot" />}
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
+            onClick={() => setSwarm(true)}
+          >
+            <SwarmIcon />
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
+            disabled={!activeId}
+            onClick={() => {
+              const s = sessions.find((x) => x.id === activeId)
+              if (s) setBoard(s.cwd)
+            }}
+          >
+            <BoardIcon />
+          </button>
+          <button
+            className="ghost quick-btn"
+            title={keyLabel('History: search past sessions (Ctrl H)')}
+            onClick={() => setHistory(true)}
+          >
+            <HistoryIcon />
+          </button>
+          <button
+            className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
+            title={
+              remoteLive
+                ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
+                : keyLabel('Devices: work on another machine’s panes from here (Ctrl Shift D)')
+            }
+            onClick={() => setDevices(true)}
+          >
+            <RemoteIcon />
+            {remoteLive > 0 && <span className="quick-dot" />}
+          </button>
+        </div>
+
+        {config && config.presets.length > 0 && (
+          <>
+            <div className="section">Workspaces</div>
+            <div className="presets">
+              {config.presets.map((p) => (
+                <div key={p.id} className="row preset" onClick={() => launchPreset(p)}>
+                  <div className="row-text">
+                    <div className="row-title">{p.name}</div>
+                    <div className="row-sub">{p.items.length} projects</div>
+                  </div>
+                  <button
+                    className="x"
+                    title="Delete workspace"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      patchConfig({ presets: config.presets.filter((x) => x.id !== p.id) })
+                    }}
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Only the lanes no open pane accounts for, across every open repo; the rest are
+            chips on the session cards below. Renders nothing without a lane-using repo. */}
+        <LaneStrip
+          boards={laneBoards}
+          sessions={sessions}
+          onFocus={setActiveId}
+          onHelp={() => setLaneHelp(true)}
+        />
+
+        {/* What the machine can still hold, in the one place a person is already looking
+            when they are about to open another pane. Only when it is NOT ok: a line that
+            is always there is a line nobody reads, and on a healthy desk there is nothing
+            to say. And only when the app is not already DOING something about it
+            (`Verdict.say`) - a reading whose whole advice is a job the ladder is about to
+            perform is narration, and it is what got this strip complained about. The wording carries the numbers (see capacity.ts) because "low memory"
+            with no figure is the message that got the app blamed for the browsers. */}
+        {capacity && capacity.level !== 'ok' && capacity.say && (
+          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
+            {capacity.advice}
+          </div>
+        )}
+
+        <div className="section">
+          {/* "Running" read as "these are all busy" on a list of idle panes. */}
+          <span className="section-title">
+            Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
+          </span>
+          {/* Badges and the empty-everything button travel together, hard right. One
+              wrapper rather than three margin rules: whichever of them are showing, the
+              rest keep their place. */}
+          <span className="section-tail">
+            {/* The desk's total, beside the pane count it belongs to: panes plus the app
+                itself, which is the figure that answers "what would quitting give me
+                back". The per-pane chips say which one to close; this says whether to
+                bother. Only once something is running - a total of "250 MB" over an
+                empty desk is a number about nothing. */}
+            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+              <span
+                className="badge res"
+                title={
+                  `${formatMb(usage.panesMb)} in ${sessions.length} pane${sessions.length === 1 ? '' : 's'}, ` +
+                  `${formatMb(usage.appMb)} in PaneForge itself, of ${formatMb(usage.machineMb)} on this machine` +
+                  (usage.cpuPct === null ? '' : `. ${usage.cpuPct}% of one CPU core in total.`)
+                }
+              >
+                {formatMb(usage.totalMb)}
+                {formatCpu(usage.cpuPct) && <span className="res-cpu">{formatCpu(usage.cpuPct)}</span>}
+              </span>
+            )}
+            {working > 0 && (
+              <span className="badge run" title="Agents whose own footer says they are still running">
+                {working} working
+              </span>
+            )}
+            {waiting > 0 && (
+              <span className="badge" title="Turns that finished while you were looking elsewhere">
+                {waiting} waiting
+              </span>
+            )}
+            {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
+                ending. Only there when there is something to empty. */}
+            {sessions.length > 0 && (
+              <button
+                className="icon danger section-btn"
+                title={
+                  sessions.length === 1
+                    ? 'Close the last pane - the transcript stays in history'
+                    : `Close all ${sessions.length} panes - every run ends, the transcripts stay in history`
+                }
+                aria-label="Close every session"
+                onClick={closeAll}
+              >
+                <TrashIcon size={13} />
+              </button>
+            )}
+          </span>
+        </div>
+        {deviceChoices.length > 0 && (
+          <label className="device-filter">
+            <span>Show</span>
+            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
+              <option value="all">All devices</option>
+              <option value="local">This device</option>
+              {deviceChoices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="list" ref={listRef}>
+          {groups.map((g) => (
+            <Fragment key={g.key}>
+              {g.title && (
+                <div className={`list-sec sec-${g.key}`}>
+                  {g.title}
+                  <span className="n">{g.rows.length}</span>
+                </div>
+              )}
+              {g.rows.map((row) => (row.session ? sessionRow(row.session, row.number) : listedRow(row)))}
+            </Fragment>
+          ))}
+          {deskRows.length === 0 && (
             <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
           )}
         </div>
@@ -3801,8 +4191,12 @@ export default function App(): JSX.Element {
                       const ids = s.lane
                         ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
                         : [s.id]
-                      setHandoff({ ids, title: s.lane ? `lane ${s.lane}` : s.title })
-                      setDevices(true)
+                      setHandoff({
+                        ids,
+                        title: s.lane ? `lane ${s.lane}` : s.title,
+                        busy: s.status === 'working' || s.status === 'starting',
+                        asking: Boolean(s.ask)
+                      })
                     }}
                   >
                     Hand off
@@ -3907,6 +4301,11 @@ export default function App(): JSX.Element {
               // The question this pane is sitting on, read in the main process so the
               // desk, a phone and a bot are all answering the same reading of it.
               ask={s.ask}
+              autoAnswerAt={s.autoAnswerAt}
+              autoAnswerN={s.autoAnswerN}
+              // Which CLI is in here, so a dropped image can be handed to the ones that
+              // read an image off the clipboard and typed as a path to the ones that do not.
+              agent={s.agent}
               // A copy out of a pane is silent by construction - the clipboard gives no
               // feedback - so the pane says so in the window's own toast rather than
               // growing a second one of its own.
@@ -3921,6 +4320,9 @@ export default function App(): JSX.Element {
               // Not `mirror`: this pane's pty is still ours, and everything else a mirror
               // implies (no busy reading, no local clipboard) is wrong for it.
               grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // A restored pane replays the screen of the pane it came back from, painted
+              // in absolute column moves at THAT pane's width. See shared/replayWidth.ts.
+              replayCols={s.replayCols}
             />
             {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
@@ -3959,8 +4361,7 @@ export default function App(): JSX.Element {
                 about - not a popup, not a toast, nothing that moves and nothing that
                 takes the keyboard. It appears only when the draft has gone quiet, reads
                 as finished, and the agent is not mid-turn. */}
-            {(improveOffer === s.id || splitOffer === s.id || priorOffer?.id === s.id) &&
-              !sheet && (
+            {priorOffer?.id === s.id && (
               <div className="pane-offers">
                 {priorOffer?.id === s.id && (
                   <button
@@ -3974,64 +4375,7 @@ export default function App(): JSX.Element {
                     {priorOffer.prior.score >= STRONG_MATCH ? 'Asked before' : 'Asked something like this'}
                   </button>
                 )}
-                {splitOffer === s.id && (
-                  <button
-                    className="split-chip-offer"
-                    title={
-                      'This reads as several separate jobs. Cut it into workstreams and give ' +
-                      'each one its own pane and its own checkout, so they cannot edit the same ' +
-                      'file.\nNothing is planned or opened until you click.'
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSwarmStart({ mode: 'split', cwd: s.cwd, mission: paneDraft.get(s.id)?.text ?? '', plan: true })
-                      setSwarm(true)
-                    }}
-                  >
-                    Split across panes
-                  </button>
-                )}
-                {improveOffer === s.id && (
-                  <button
-                    className="improve-chip-offer"
-                    title={keyLabel('Improve this prompt before sending it (Ctrl Shift I)')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void runImprove(s.id)
-                    }}
-                  >
-                    Improve prompt
-                  </button>
-                )}
               </div>
-            )}
-            {sheet?.id === s.id && (
-              <ImproveSheet
-                sessionId={s.id}
-                state={sheet.state}
-                onAccepted={(text, editedChars) => {
-                  const open = sheet.state
-                  void api.applyImproved(s.id, text).then((r) => {
-                    if (!r.ok) return flash(r.error ?? 'Could not insert that.')
-                    flash('Improved prompt is in the box - press Enter to send it.')
-                  })
-                  if (open.phase === 'review') {
-                    api.recordImprove('accepted', open.result.metrics, editedChars)
-                  }
-                  setSheet(null)
-                }}
-                onRejected={() => {
-                  const open = sheet.state
-                  // Reject writes nothing at all. The pane is exactly as it was.
-                  if (open.phase === 'working') api.cancelImprove(s.id)
-                  if (open.phase === 'review') api.recordImprove('rejected', open.result.metrics)
-                  setSheet(null)
-                  paneFocus.get(s.id)?.()
-                }}
-                onAnswered={(answers) => void answerImprove(answers)}
-                onRerun={(exclude) => void runImprove(s.id, { exclude })}
-                onTweak={(tweak, exclude) => void runImprove(s.id, { tweak, exclude })}
-              />
             )}
           </div>
         ))}
@@ -4107,33 +4451,14 @@ export default function App(): JSX.Element {
           agents={agents}
           roles={config.swarmRoles}
           defaultModels={config.defaultModels}
-          initial={swarmStart ?? undefined}
           onSaveRoles={(swarmRoles: SwarmRole[]) => patchConfig({ swarmRoles })}
           onClose={() => {
             setSwarm(false)
-            setSwarmStart(null)
           }}
           onLaunched={(n) => {
-            setSwarmStart(null)
             setSwarm(false)
             patchConfig({ grid: true })
             flash(`${n} agents started on the mission.`)
-          }}
-          onDriven={(goal) => {
-            setSwarmStart(null)
-            setSwarm(false)
-            // Straight to Fleet: a driven run has no panes, so closing the dialog with
-            // only a toast would leave the work with nowhere on screen to be.
-            setFleet(true)
-            const lanes = goal.plan.lanes.filter((l) => l.enabled !== false).length
-            // Two different sentences on purpose. "Queued" that reads like "started" is
-            // how somebody comes back in an hour to a goal that has not moved and thinks
-            // the feature is broken, when it was politely waiting its turn.
-            flash(
-              goal.state === 'running'
-                ? `Driving ${lanes} lanes. Nothing merges by itself.`
-                : `Queued ${lanes} lanes. It starts when the goal in front of it finishes.`
-            )
           }}
         />
       )}
@@ -4152,11 +4477,7 @@ export default function App(): JSX.Element {
           state={remote}
           onState={setRemote}
           flash={flash}
-          handoff={handoff}
-          onClose={() => {
-            setDevices(false)
-            setHandoff(null)
-          }}
+          onClose={() => setDevices(false)}
         />
       )}
       {history && (
@@ -4192,16 +4513,6 @@ export default function App(): JSX.Element {
       {/* Drawn BEFORE the diff on purpose: both are `.overlay`, so the later one in the
           tree is the one on top, and reading a pane's changes has to open OVER the list
           you picked it from rather than under it. */}
-      {fleet && (
-        <FleetDialog
-          sessions={sessions}
-          agents={agents}
-          activeId={activeId}
-          onFocus={setActiveId}
-          onDiff={(cwd, lane, pane, scope) => setDiff({ cwd, lane, pane, scope })}
-          onClose={() => setFleet(false)}
-        />
-      )}
       {diff && (
         <DiffDialog
           cwd={diff.cwd}
@@ -4263,6 +4574,17 @@ export default function App(): JSX.Element {
                 icon: '≡',
                 run: () => setTextPane(s.id)
               },
+              ...(s.handoffQueuedAt
+                ? [
+                    {
+                      key: 'stop-move',
+                      label: 'Keep it here',
+                      hint: 'stop the move it is queued for',
+                      icon: '⤴',
+                      run: () => stopMove(s)
+                    }
+                  ]
+                : []),
               ...(grid
                 ? [
                     {
@@ -4302,6 +4624,91 @@ export default function App(): JSX.Element {
                 run: () => close(s.id)
               }
             ]}
+          />
+        )
+      })()}
+      {/* Hand off asks one question - which machine - so it gets one box rather than the
+          whole Devices screen with a banner over it. */}
+      {handoff && (
+        <HandoffDialog
+          target={handoff}
+          peers={remote?.peers ?? []}
+          flash={flash}
+          onPair={() => {
+            setHandoff(null)
+            setDevices(true)
+          }}
+          onClose={() => setHandoff(null)}
+        />
+      )}
+      {/* Right-click on a session card. Same actions as the pane header and the phone's
+          sheet, at the place a desktop hand looks for them. */}
+      {(() => {
+        const s = cardMenu ? sessions.find((x) => x.id === cardMenu.id) : null
+        if (!s || !cardMenu) return null
+        const paneNumber = sessions.indexOf(s) + 1
+        const shut = (): void => setCardMenu(null)
+        const local = !s.remote
+        return (
+          <SessionMenu
+            title={s.title}
+            x={cardMenu.x}
+            y={cardMenu.y}
+            onClose={shut}
+            items={[
+              { key: 'open', label: 'Open this pane', run: () => { setActiveId(s.id); handheld.showPane() } },
+              { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
+              { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
+              ...(s.handoffQueuedAt
+                ? [{ key: 'stop-move', label: 'Keep it here', hint: 'stop the move it is queued for', run: () => stopMove(s) }]
+                : []),
+              ...(local && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'handoff',
+                      label: 'Hand off…',
+                      hint: 'move it to another machine',
+                      run: () =>
+                        setHandoff({
+                          ids: s.lane
+                            ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
+                            : [s.id],
+                          title: s.lane ? `lane ${s.lane}` : s.title,
+                          busy: s.status === 'working' || s.status === 'starting',
+                          asking: Boolean(s.ask)
+                        })
+                    }
+                  ]
+                : []),
+              { key: 'copy', label: 'Copy output', hint: 'the whole terminal', run: () => copyPaneOutput(s) },
+              { key: 'text', label: 'Select text', run: () => setTextPane(s.id) },
+              { key: 'fix', label: 'Fix the display', hint: 'refit and repaint, keeping the run', run: () => fixUi(s.id) },
+              ...(local
+                ? [
+                    { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },
+                    { key: 'restart', label: 'Restart agent', run: () => void api.restartSession(s.id) }
+                  ]
+                : []),
+              { key: 'clear', label: 'Clear', hint: 'runs /clear; the run keeps going, its memory does not', danger: true, run: () => clearPane(s) },
+              { key: 'close', label: 'Close pane', hint: 'the transcript stays in history', danger: true, run: () => close(s.id) }
+            ]}
+          />
+        )
+      })()}
+      {(() => {
+        const s = info ? sessions.find((x) => x.id === info) : null
+        if (!s) return null
+        return (
+          <SessionInfo
+            session={s}
+            paneNumber={sessions.indexOf(s) + 1}
+            agents={agents}
+            usage={usage?.panes[s.id]}
+            onRename={() => {
+              setInfo(null)
+              setRenaming(s.id)
+            }}
+            onClose={() => setInfo(null)}
           />
         )
       })()}
@@ -4384,7 +4791,74 @@ export default function App(): JSX.Element {
           and offered Approve to the one screen that cannot check the digits against the
           desk. The desk decides. */}
       {phone?.ask && !isPhoneClient() && <PhoneAsk ask={phone.ask} />}
+      {/* The face on the resource ladder. Everything it may do is in shared/mascot.ts;
+          this passes it the readings and the two actions, and nothing else. */}
+      <Mascot
+        panes={mascotPanes}
+        config={config?.mascot ?? DEFAULT_MASCOT}
+        idleCloseOn={(config?.reclaim?.idleCloseMinutes ?? 0) > 0}
+        willMove={(config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true && capacity?.offload === true}
+        acted={acted}
+        closeSoon={closeSoon}
+        devs={devs}
+        onRefreshDevs={refreshDevs}
+        onStopDev={(pids) => {
+          // Stopped one at a time and re-read afterwards, because the answer that matters
+          // is what is running NOW - a stop that silently failed (a pid already gone, a
+          // pid that is no longer a dev server) must not leave a list saying otherwise.
+          void Promise.all(pids.map((pid) => api.stopDevServer(pid))).then(() => refreshDevs())
+        }}
+        onKeep={keepOpen}
+        onCloseNow={(ids) => doClose(ids, pendingMb.current)}
+        onReveal={(id) => setActiveId(id)}
+        onClose={(ids) => {
+          for (const id of ids) void api.killSession(id)
+        }}
+        onHandoff={(ids) => {
+          // It never picks WHICH machine - that is the one question the hand-off box
+          // exists to ask, and a mascot guessing it would move a pane to a desk nobody
+          // is at. It opens the box with the panes already chosen.
+          const going = sessions.filter((x) => ids.includes(x.id))
+          const first = going[0]
+          if (!first) return
+          // Every pane going, not just the first: the box's own words change on `busy` and
+          // `asking`, and reading them off ids[0] alone promised "Hand off" over a set
+          // whose second pane was mid-turn or holding a question. It is the answer that
+          // would be wrong, not the move - `sendHandoff` still checks each pane - which is
+          // the shape of wrong that is only found afterwards.
+          setHandoff({
+            ids,
+            title: first.lane ? `lane ${first.lane}` : first.title,
+            busy: going.some((x) => x.status === 'working' || x.status === 'starting'),
+            asking: going.some((x) => Boolean(x.ask))
+          })
+        }}
+        onConfig={(patch: Partial<MascotConfig>) =>
+          void api.setConfig({ mascot: { ...DEFAULT_MASCOT, ...config?.mascot, ...patch } })
+        }
+      />
       <UpdateToast />
+      {/* One quiet card in the corner, saying one thing this app can do. It is the only
+          thing here that talks about the app rather than about the work, so every other
+          card in this corner - and every dialog, and any pane holding a question - stands
+          it down. shared/tips.ts owns every judgement in it. */}
+      <Tips
+        cfg={config?.tips ?? DEFAULT_TIPS}
+        busy={
+          !!ask ||
+          settings ||
+          help ||
+          palette ||
+          !!restore ||
+          !!info ||
+          !!handoff ||
+          !!remote?.asking ||
+          !!phone?.ask
+        }
+        asking={sessions.some((s) => Boolean(s.ask))}
+        since={OPENED_AT}
+        onConfig={(patch) => void api.setConfig({ tips: { ...DEFAULT_TIPS, ...config?.tips, ...patch } })}
+      />
     </div>
     </BlurbContext.Provider>
   )

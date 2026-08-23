@@ -50,6 +50,27 @@ const FOOTER = /^\s*(?:.*·\s*)?Enter to (?:select|confirm|choose)\b/im
 /** `❯ 1. Label`, `  2. Label`. The arrow is optional; exactly one line carries it. */
 const OPTION = /^(\s*)(❯\s*|>\s*)?(\d{1,2})\.\s*(\S.*)$/
 
+/**
+ * A side-by-side PREVIEW column, cut off the end of a row.
+ *
+ * Claude Code's AskUserQuestion draws previews (an ASCII mockup, a code snippet) in a
+ * panel to the RIGHT of the option list, so one terminal row carries the option AND a
+ * slice of somebody else's box: `1. Pane sprite (Recommended)    | ## |`. That slice is
+ * not part of the label - it reached the buttons and the Telegram message as a row of
+ * box characters that means nothing without the other rows around it.
+ *
+ * Cut at the first run of blanks followed by a box or block character: a real label is
+ * one phrase and never contains those, and the gutter between the two columns is always
+ * at least two spaces wide.
+ */
+const PREVIEW = /\s{2,}[│|┌┐└┘├┤┬┴┼─━═╭╮╰╯█▀▄▌▐░▒▓▏▕].*$/
+
+/** A row with its preview column removed, or the row unchanged when the cut empties it. */
+function stripPreview(line: string): string {
+  const cut = line.replace(PREVIEW, '').trim()
+  return cut || line.trim()
+}
+
 /** Box drawing, rules and the like: never a question, whatever else is on the line. */
 const RULE = /^[\s─━═\-_·|┌┐└┘├┤┬┴┼]*$/
 
@@ -104,13 +125,27 @@ export function readAsk(text: string): PaneAsk | null {
       const n = Number(m[3])
       // First sighting wins going up, so a row repainted higher in the frame cannot
       // replace the one nearest the footer.
-      if (!found.has(n)) found.set(n, { label: m[4].trim(), arrow: Boolean(m[2]), line: i })
+      if (!found.has(n))
+        found.set(n, { label: stripPreview(m[4]), arrow: Boolean(m[2]), line: i })
       top = i
       continue
     }
-    if (!line.trim()) {
+    if (!line.trim() || RULE.test(line)) {
       // A blank line above the list ends it; a blank line INSIDE it (between an option
       // and its description) is only allowed while more options are still to come.
+      //
+      // A RULE is read exactly the same way, and that is not cosmetic: Claude Code 2.1.235
+      // draws a full-width `-` between the real answers and the trailing ones it always
+      // offers ("Type something.", "Chat about this"), wrapped over two rows in a wide
+      // pane. Reading that as prose ended the walk one option in, so `found` held only
+      // {4}, the 1..N check failed, and EVERY AskUserQuestion on this desk read as no
+      // question at all - no buttons, no red card, no Telegram message and nothing for
+      // `autoAnswer` to press. Measured off a real 157-column pane frame on 2026-08-19
+      // and kept as a fixture in `npm run test:choices`.
+      //
+      // It cannot open the door to a false question: a numbered list in an ANSWER is
+      // refused by the footer, which is the load-bearing signal and is drawn by the
+      // chooser widget alone.
       if (found.has(1)) break
       continue
     }
@@ -146,7 +181,10 @@ export function readAsk(text: string): PaneAsk | null {
       continue
     }
     if (RULE.test(line)) break
-    q.unshift(line.trim())
+    // A CLI that draws its question inside a box leaves the frame's own gutter on every
+    // row, and that gutter is not the question: it reached the buttons, the card's hover
+    // and the Telegram message as a literal `|` at the start of each line.
+    q.unshift(stripPreview(line.replace(/^\s*[│|]\s?/, '')))
   }
 
   return { question: q.join(' ').trim(), options, selected: arrows[0] }

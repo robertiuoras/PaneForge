@@ -87,7 +87,7 @@ export interface CustomSound {
 }
 
 /** Which alert is being played. Each one picks its own sound. */
-export type SoundEvent = 'done' | 'stall' | 'bell'
+export type SoundEvent = 'done' | 'stall' | 'bell' | 'ask' | 'tick'
 
 export interface SoundConfig {
   /** a session finished its turn or asked you something */
@@ -96,6 +96,26 @@ export interface SoundConfig {
   stall: string
   /** the terminal rang its bell */
   bell: string
+  /**
+   * the agent put a question on screen.
+   *
+   * Its own event and not `done` on purpose: a question and a finished turn are the same
+   * thing to every idle reading in the app, and they are the two most different outcomes
+   * there are - one is work you can go and read, the other is a run that has STOPPED and
+   * will not move again until somebody answers. Hearing them as one sound is why a
+   * question can sit for an hour.
+   */
+  ask: string
+  /**
+   * one second of an auto-answer countdown.
+   *
+   * Its own event because it is the only sound here that is not an ALERT: it fires once a
+   * second while the app is counting down to pressing an answer for you, and the whole
+   * reason it exists is that the countdown is drawn inside a pane that is very often not
+   * the pane being looked at. A person who cannot see the clock can still hear it, and
+   * still has the seconds it is counting to disagree.
+   */
+  tick: string
   /** 0..1, applied on top of every sound's own level */
   volume: number
   custom: CustomSound[]
@@ -455,6 +475,28 @@ export const SOUNDS: SoundDef[] = [
 
   // --- Objects: the ones that read as a real thing happening, not a notification
   {
+    // A clock's tick, and the only entry here written to be heard once a SECOND rather
+    // than once an hour: everything else in this catalogue is levelled toward the glass
+    // bell's 0.164, which at one a second is a metronome nobody can work beside. This is
+    // deliberately a third of that and 12ms long - a click with no tail, so it cannot
+    // stack with the next one or with the alert that follows it.
+    id: 'tick',
+    label: 'Clock tick',
+    group: 'Objects',
+    gain: 0.055,
+    voices: [
+      {
+        wave: 'noise',
+        at: 0,
+        dur: 0.012,
+        gain: 1,
+        attack: 0.001,
+        decay: 'lin',
+        filter: { type: 'bandpass', freq: 2600, to: 1600, q: 2.2 }
+      }
+    ]
+  },
+  {
     id: 'knock',
     label: 'Wood knock',
     group: 'Objects',
@@ -567,6 +609,8 @@ export const DEFAULT_SOUNDS: SoundConfig = {
   done: 'chime',
   stall: 'fall',
   bell: 'ping',
+  ask: 'knock',
+  tick: 'tick',
   volume: 1,
   custom: []
 }
@@ -696,6 +740,8 @@ export function pruneSounds(sounds: SoundConfig, exists: (file: string) => boole
     done: keep(sounds.done, DEFAULT_SOUNDS.done),
     stall: keep(sounds.stall, DEFAULT_SOUNDS.stall),
     bell: keep(sounds.bell, DEFAULT_SOUNDS.bell),
+    ask: keep(sounds.ask, DEFAULT_SOUNDS.ask),
+    tick: keep(sounds.tick, DEFAULT_SOUNDS.tick),
     volume: clampVolume(sounds.volume)
   }
 }

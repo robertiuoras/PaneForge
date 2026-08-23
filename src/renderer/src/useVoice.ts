@@ -350,12 +350,19 @@ export function useVoice(
         recorder.current = rec
         startMeter(stream)
         setPhase('recording')
+        // Load the in-window model WHILE the clip is being spoken, not after it.
+        // `runInApp` used to be the first thing that ever called `ensureWorker`,
+        // so the ORT init (and, once, the model download) was serialised behind
+        // the recording instead of overlapping it - every clip paid it, not just
+        // the first. Failures are ignored here on purpose: `transcribe` walks the
+        // same ladder afterwards and reports properly.
+        if (choiceRef.current.engine === 'inapp') void ensureWorker().catch(() => {})
       } catch (e) {
         setError(`Microphone unavailable: ${String(e)}`)
         done()
       }
     },
-    [done, startBrowser, startMeter, stopMeter, transcribe]
+    [done, ensureWorker, startBrowser, startMeter, stopMeter, transcribe]
   )
 
   const stop = useCallback(() => {

@@ -92,6 +92,42 @@ export interface Machine {
   remotePanes?: number
   /** Is there a paired device that could host the next pane? Enables the offload advice. */
   peerAvailable?: boolean
+  /**
+   * The 1-minute load average divided by the core count, when the platform reports one.
+   *
+   * Memory pressure is the kernel admitting it has already lost, and it arrives LATE: the
+   * desk this was measured on sat at pressure 2 for a whole afternoon while nine agent CLIs
+   * and their dev servers held 1.4 GB and the load average ran at 8.7 on 10 cores. What a
+   * person calls "my laptop is lagging" is that second number, not the first, and it moves
+   * a long time before the memory verdict does - so it is read here and the WORSE of the
+   * two decides. `os.loadavg()` is 0 on Windows, which is why 0 means "no reading" rather
+   * than "idle": an absent signal must never be the thing that triggers a move.
+   */
+  load?: number
+  /**
+   * How many panes with a live agent this desk is willing to run itself. 0 = no budget.
+   *
+   * The readings above answer "is this machine in trouble NOW". This answers the question
+   * before it: a laptop that is meant to be the SCREEN for work running elsewhere should
+   * stop collecting agents long before the kernel objects, because each one is ~190 MB
+   * doing nothing and the build it starts is worse. Everything past the budget belongs on
+   * a paired device, mirrored back here to watch - which is what makes a hundred sessions
+   * a question about sockets rather than about RAM.
+   */
+  keepLocal?: number
+  /**
+   * Is the ladder going to act on this by itself - the automatic handoff switched on, with
+   * somewhere to move a pane to?
+   *
+   * It changes nothing about the verdict and only decides whether the verdict is SAID. A
+   * strip that reports "memory is tight, each pane costs ~190 MB" on a desk whose next
+   * move is already being made is narrating rather than helping: the reading is true, the
+   * advice in it ("start the next one on the paired device") is a job the app is about to
+   * do, and the person reading it has nothing to do about either. What the ladder DID
+   * still gets a sentence - that one is not a reading, it is an action somebody's panes
+   * were subject to.
+   */
+  willMove?: boolean
 }
 
 export type Level = 'ok' | 'tight' | 'over'
@@ -114,6 +150,27 @@ export interface Verdict {
   trim: boolean
   /** Should the next pane be offered on the paired device instead? */
   offload: boolean
+  /**
+   * How many local panes are beyond `Machine.keepLocal`, or 0.
+   *
+   * This is the number the automatic handoff moves, and it is deliberately separate from
+   * `level`: being over budget is not a claim that the machine is in trouble, it is the
+   * desk's own policy about where work runs. A budget of two with five panes open says
+   * "three of these belong on the other machine" whatever the kernel thinks.
+   */
+  over: number
+  /** Which reading is the binding one, for the sentence and for the log line. */
+  why: 'ok' | 'memory' | 'lag' | 'budget'
+  /**
+   * Should `advice` be put in front of a person, or only logged?
+   *
+   * False exactly when the ladder is about to act on this reading anyway (`Machine.willMove`
+   * with a peer online) AND the machine is not yet out of memory. Out of memory keeps its
+   * sentence whatever else is happening: that one is not advice, it is the state the desk
+   * is in, and finding out afterwards from a pane that is no longer there is the failure
+   * the strip exists to prevent.
+   */
+  say: boolean
 }
 
 /** Cost in MB of one pane holding this many scrollback lines, agent included. */
@@ -137,14 +194,82 @@ export function paneCostMb(scrollback: number, hasAgent = true): number {
  */
 const PLANNABLE = 0.25
 
+/**
+ * Load per core that reads as "this desk is lagging", and as "it is on its knees".
+ *
+ * Measured on the machine this was written for (M4, 10 cores, 16 GB) while nine agent CLIs
+ * and their dev servers were up: load 8.70 with memory pressure still only at warn. One
+ * runnable thread per core is the point where every new pane is waiting for a core rather
+ * than getting one, which is exactly what typing into a terminal feels like going treacly;
+ * nearly two per core is a machine that will not accept a keystroke promptly whatever the
+ * memory says.
+ *
+ * Deliberately NOT a percentage of CPU: a busy machine and a THRASHING one both read near
+ * 100%, and the desk that produced this had 32.73% of its CPU idle while the load average
+ * was over a hundred. Load counts threads that are ready and cannot run, which is the thing
+ * being complained about.
+ */
+export const LAG_WARN = 1.0
+export const LAG_HARD = 1.8
+
+/** The lag reading as a pressure level. 0, absent, or a nonsense value is `normal`. */
+export function lagLevel(loadPerCore: number | undefined): Pressure {
+  const n = typeof loadPerCore === 'number' && Number.isFinite(loadPerCore) ? loadPerCore : 0
+  if (n >= LAG_HARD) return 'critical'
+  if (n >= LAG_WARN) return 'warn'
+  return 'normal'
+}
+
+const PRESSURE_RANK = { normal: 0, warn: 1, critical: 2 }
+
+/** Whichever of two readings is the worse news. */
+export function worstPressure(a: Pressure, b: Pressure): Pressure {
+  return PRESSURE_RANK[b] > PRESSURE_RANK[a] ? b : a
+}
+
+/**
+ * The local-pane budget, hardened the same way `offloadMinutes` is and for the same reason:
+ * this value comes off config.json and, since `pf-ctl call config:set` exists, off a
+ * script. `true` is not a budget of one, it is somebody writing a switch where a number
+ * goes, and reading it as a number would move every pane on the desk.
+ */
+export function keepLocalOf(keepLocal: number | undefined): number {
+  return typeof keepLocal === 'number' && Number.isFinite(keepLocal) && keepLocal > 0
+    ? Math.floor(keepLocal)
+    : 0
+}
+
 export function assess(m: Machine): Verdict {
   const localCost = m.localPanes * paneCostMb(FULL_SCROLLBACK)
   const remoteCost = (m.remotePanes ?? 0) * paneCostMb(FULL_SCROLLBACK, false)
   const usedMb = Math.round(APP_BASE_MB + localCost + remoteCost)
   const nextPaneMb = paneCostMb(FULL_SCROLLBACK)
   const peer = m.peerAvailable === true
+  // The ladder can only act where there is somewhere to act TO, so a switched-on handoff
+  // with no peer online is silence that fixes nothing - which is why this is both halves.
+  const ladder = m.willMove === true && peer
 
-  if (m.pressure === 'critical') {
+  // The lag reading and the memory reading answer the same question a few minutes apart,
+  // so the worse of the two decides. A machine at load 2 per core with memory to spare is
+  // in trouble now; a machine the kernel is reclaiming from is in trouble now as well.
+  const lag = lagLevel(m.load)
+  const pressure = worstPressure(m.pressure, lag)
+  const budget = keepLocalOf(m.keepLocal)
+  const over = budget ? Math.max(0, m.localPanes - budget) : 0
+  // Which reading is doing the work, for the sentence and for the log. Memory outranks lag
+  // when both are objecting, because it is the one with a kernel behind it.
+  const why: Verdict['why'] =
+    pressure !== 'normal'
+      ? m.pressure !== 'normal'
+        ? 'memory'
+        : 'lag'
+      : over > 0
+        ? 'budget'
+        : 'ok'
+  const lagWords = `load is ${(m.load ?? 0).toFixed(1)} per core`
+
+  if (pressure === 'critical') {
+    const head = why === 'lag' ? `This machine is struggling - ${lagWords}.` : 'This machine is out of memory.'
     return {
       level: 'over',
       usedMb,
@@ -152,9 +277,13 @@ export function assess(m: Machine): Verdict {
       roomFor: null,
       trim: true,
       offload: peer,
+      over,
+      why,
+      // Out of memory always says so, ladder or not.
+      say: true,
       advice: peer
-        ? `This machine is out of memory. Panes here hold ~${usedMb} MB; start the next one on the paired device.`
-        : `This machine is out of memory. Panes here hold ~${usedMb} MB and background scrollback is being trimmed.`,
+        ? `${head} Panes here hold ~${usedMb} MB; start the next one on the paired device.`
+        : `${head} Panes here hold ~${usedMb} MB and background scrollback is being trimmed.`,
     }
   }
 
@@ -164,7 +293,8 @@ export function assess(m: Machine): Verdict {
   const budgetMb = m.totalMb * PLANNABLE
   const roomFor = Math.max(0, Math.floor((budgetMb - usedMb) / nextPaneMb))
 
-  if (m.pressure === 'warn') {
+  if (pressure === 'warn') {
+    const head = why === 'lag' ? `This machine is lagging - ${lagWords}.` : 'Memory is tight.'
     return {
       level: 'tight',
       usedMb,
@@ -172,9 +302,12 @@ export function assess(m: Machine): Verdict {
       roomFor: Math.min(roomFor, 1),
       trim: true,
       offload: peer,
+      over,
+      why,
+      say: !ladder,
       advice: peer
-        ? `Memory is tight. Each pane here costs ~${nextPaneMb} MB - the paired device can take the next one.`
-        : `Memory is tight. Each pane here costs ~${nextPaneMb} MB; background panes are trimmed to keep this responsive.`,
+        ? `${head} Each pane here costs ~${nextPaneMb} MB - the paired device can take the next one.`
+        : `${head} Each pane here costs ~${nextPaneMb} MB; background panes are trimmed to keep this responsive.`,
     }
   }
 
@@ -186,7 +319,30 @@ export function assess(m: Machine): Verdict {
       roomFor: 0,
       trim: false,
       offload: peer,
+      over,
+      why: why === 'ok' ? 'memory' : why,
+      say: !ladder,
       advice: `${m.localPanes} panes here hold ~${usedMb} MB of ${Math.round(m.totalMb / 1024)} GB. Another one will start swapping.`,
+    }
+  }
+
+  // Nothing is objecting yet, and the budget still decides where the next pane goes: this
+  // desk asked to run `budget` agents and is running more. Said as a policy rather than as
+  // a warning, because the machine is genuinely fine.
+  if (over > 0) {
+    return {
+      level: 'ok',
+      usedMb,
+      nextPaneMb,
+      roomFor,
+      trim: false,
+      offload: peer,
+      over,
+      why: 'budget',
+      say: !ladder,
+      advice: peer
+        ? `${m.localPanes} panes here, ${over} past the ${budget} this machine keeps - moving ${over === 1 ? 'it' : 'them'} to the paired device.`
+        : `${m.localPanes} panes here, ${over} past the ${budget} this machine keeps. No paired device is online to take ${over === 1 ? 'it' : 'them'}.`,
     }
   }
 
@@ -197,6 +353,9 @@ export function assess(m: Machine): Verdict {
     roomFor,
     trim: false,
     offload: false,
+    over: 0,
+    why: 'ok',
+    say: true,
     advice: `${m.localPanes} panes, ~${usedMb} MB. Room for about ${roomFor} more here.`,
   }
 }
@@ -283,9 +442,11 @@ export interface OffloadCandidate {
  *     started on the peer's own path; no name match, no offload. This is why the match is
  *     on `Project.name` rather than on the path or a basename parsed out of it.
  *   - **Only an online peer.** A paired-but-off device would swallow the launch.
- *   - **Only when the policy says so.** At `level: 'ok'` this returns null however many
- *     peers are up: a machine with room should keep its own panes, where the agent can
- *     see the files being edited.
+ *   - **Only when the policy says so**, which is `Verdict.offload` and not the level. That
+ *     used to be the same sentence - a machine at `ok` kept its own panes - and it is no
+ *     longer, because the budget is a policy about where work runs rather than a reading
+ *     of how bad things are. A desk that says it keeps two agents is at `ok` with five
+ *     open and still wants three of them elsewhere.
  */
 export function offloadTarget(
   v: Verdict,

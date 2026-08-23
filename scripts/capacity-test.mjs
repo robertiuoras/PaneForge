@@ -13,26 +13,32 @@
 //
 //   node scripts/capacity-test.mjs
 
-import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import { buildSync } from 'esbuild'
+import { readFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-// Same approach as grid-layout-test: the only TypeScript in the module is its type
-// annotations, so they are stripped and it runs as plain ESM against the real source.
-const src = readFileSync(join(here, '..', 'src', 'shared', 'capacity.ts'), 'utf8')
-const js = src
-  .replace(/^export type .*$/gm, '')
-  .replace(/^export interface [\s\S]*?^}$/gm, '')
-  .replace(/: (Machine|Verdict|Level|Pressure|PaneRef|OffloadCandidate|OffloadAnswer|OffloadStick|OffloadPlan|Offload|RestorePlan|Trim|Trim\[\]|number|string|boolean)(\[\])?( \| null)?/g, '')
-  .replace(/<[A-Za-z]+(\[\])?>/g, '')
+// esbuild, not a regex over the source. This used to strip type annotations with a list of
+// every type name in the file, which is a test that goes red on the SYNTAX of a change
+// rather than on its behaviour: a return type the list did not know about (`Verdict['why']`,
+// `number | undefined`) left half an annotation behind and the module failed to parse, so
+// the failure named a line number and said nothing about capacity at all. Same approach as
+// autohandoff-test, against the same real source.
 const dir = join(tmpdir(), 'paneforge-capacity-test')
 rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 const mod = join(dir, 'capacity.mjs')
-writeFileSync(mod, js, 'utf8')
+buildSync({
+  absWorkingDir: join(here, '..'),
+  entryPoints: ['src/shared/capacity.ts'],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: mod
+})
 const {
   assess,
   trimPlan,
@@ -44,6 +50,11 @@ const {
   TRIMMED_SCROLLBACK,
   offloadTarget,
   offloadPlan,
+  lagLevel,
+  keepLocalOf,
+  worstPressure,
+  LAG_WARN,
+  LAG_HARD,
   restorePlan,
   stickFor,
   OFFLOAD_STICK_MS,
@@ -305,6 +316,79 @@ ok(
     /History/.test(restorePlan(6, COLD('critical')).note)
 )
 
+// ------------------------------------------------------- lagging, and the local budget
+
+// The reading a person actually complains about. Memory pressure is the kernel admitting
+// it has already lost; this desk sat at `warn` for an afternoon with nine agent CLIs up
+// while the load average ran at 8.70 on 10 cores, which is the number that had moved.
+ok('an idle machine is not lagging', lagLevel(0.3) === 'normal')
+ok('a core apiece is lagging', lagLevel(LAG_WARN) === 'warn' && lagLevel(1.2) === 'warn')
+ok('nearly two apiece is on its knees', lagLevel(LAG_HARD) === 'critical' && lagLevel(4) === 'critical')
+
+// A missing reading must never be the reason a pane is moved. Windows has no load average
+// at all - Node answers [0, 0, 0] there - so 0 is "nobody measured", not "idle".
+for (const bad of [undefined, null, 0, -1, NaN, Infinity, '2', true, {}]) {
+  ok(`no reading (${JSON.stringify(bad) ?? String(bad)}) is never lag`, lagLevel(bad) === 'normal')
+}
+
+ok('the worse of the two readings decides', worstPressure('normal', 'warn') === 'warn' && worstPressure('critical', 'warn') === 'critical' && worstPressure('normal', 'normal') === 'normal')
+
+{
+  // Lag alone is enough, with memory perfectly happy - which is the whole point: the two
+  // readings answer the same question minutes apart.
+  const laggy = assess(machine({ localPanes: 3, load: 1.3, peerAvailable: true }))
+  ok('lag alone makes the verdict tight', laggy.level === 'tight', laggy)
+  ok('...and says lag is what it read', laggy.why === 'lag', laggy.why)
+  ok('...and names the number in words a person recognises', /load is 1\.3 per core/.test(laggy.advice), laggy.advice)
+  ok('...and offers the paired device', laggy.offload === true)
+
+  const hard = assess(machine({ localPanes: 3, load: 2.5, peerAvailable: true }))
+  ok('load past the hard mark is over, not tight', hard.level === 'over' && hard.why === 'lag')
+
+  // The control. Without this every assertion above would also pass on a build that had
+  // simply started calling three panes "tight".
+  const calm = assess(machine({ localPanes: 3, load: 0.4, peerAvailable: true }))
+  ok('the same desk with the load down is ok', calm.level === 'ok' && calm.why === 'ok', calm)
+  ok('and a machine with no load reading at all is unchanged', JSON.stringify(assess(machine({ localPanes: 3, peerAvailable: true }))) === JSON.stringify(calm))
+
+  // Memory outranks lag when both are objecting: it is the one with a kernel behind it.
+  const both = assess(machine({ localPanes: 3, pressure: 'warn', load: 1.5, peerAvailable: true }))
+  ok('memory is named when both readings object', both.why === 'memory', both.why)
+}
+
+{
+  // The budget: a policy about where agents run, not a reading of how bad things are. The
+  // load-bearing half is that it holds at `ok` - a desk that said it keeps two agents is
+  // not in trouble with five open, it is three panes past what it asked for.
+  const v = assess(machine({ localPanes: 5, keepLocal: 2, peerAvailable: true }))
+  ok('a healthy desk past its budget is still ok', v.level === 'ok', v)
+  ok('...and says how many panes are past it', v.over === 3, v.over)
+  ok('...and says the budget is what it read', v.why === 'budget')
+  ok('...and offers the paired device anyway', v.offload === true)
+  ok('...and the launch really does resolve a host at level ok', offloadTarget(v, [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name: 'proj', path: '/pc/proj' }] }], 'proj')?.device === 'pc')
+  ok('...and says so in the sentence', /past the 2 this machine keeps/.test(v.advice), v.advice)
+
+  const alone = assess(machine({ localPanes: 5, keepLocal: 2 }))
+  ok('with nothing paired there is nowhere to send them', alone.offload === false && alone.over === 3)
+  ok('...and it says that rather than promising a move', /No paired device/.test(alone.advice), alone.advice)
+
+  const under = assess(machine({ localPanes: 2, keepLocal: 2, peerAvailable: true }))
+  ok('at the budget nothing is over', under.over === 0 && under.why === 'ok' && under.offload === false, under)
+
+  // The control for the whole feature: a desk that never set a budget behaves exactly as
+  // it did before this existed.
+  const none = assess(machine({ localPanes: 9, peerAvailable: true }))
+  ok('no budget, no overshoot', none.over === 0 && none.why !== 'budget', none)
+}
+
+// Hardened the same way `offloadMinutes` is, and for the same reason: this comes off
+// config.json and off `pf-ctl call config:set`. `true` is not a budget of one.
+for (const bad of [true, '2', '', null, undefined, NaN, Infinity, -5, 0, {}]) {
+  ok(`keepLocal ${JSON.stringify(bad) ?? String(bad)} is no budget, not a threshold`, keepLocalOf(bad) === 0)
+}
+ok('a real number is taken as given', keepLocalOf(4) === 4 && keepLocalOf(2.7) === 2)
+ok('a boolean budget moves nothing', assess(machine({ localPanes: 9, keepLocal: true, peerAvailable: true })).over === 0)
+
 // The half this file cannot reach by importing the module: WHICH pressure reading the
 // offer is built from. `lastPressure` is a module variable the 15s sampler fills in, and
 // on a cold launch it has not necessarily ticked - so reading it would report `normal` on
@@ -319,6 +403,38 @@ const offerBody = mainSrc
   .replace(/^\s*\/\/.*$/gm, '')
 ok('the restore offer asks the kernel now', /restorePlan\(/.test(offerBody) && /readPressure\(\)/.test(offerBody))
 ok('and never off the sampler variable', !/lastPressure/.test(offerBody))
+
+// ------------------------------------------- what the strip says while the ladder acts
+
+// The complaint this closes: "memory is tight / each pane costs ..." on a desk whose next
+// move the app was already making. The reading stays true and stays in the verdict; what
+// changes is whether it is put in front of somebody who has nothing to do about it.
+{
+  const tight = { localPanes: 6, pressure: 'warn', peerAvailable: true }
+  const nagging = assess(machine(tight))
+  ok('a tight desk with nobody acting still says so', nagging.say === true, nagging.advice)
+  const acting = assess(machine({ ...tight, willMove: true }))
+  ok('...and goes quiet once the ladder is going to move the pane', acting.say === false)
+  ok('but the reading itself is unchanged', acting.level === 'tight' && acting.advice === nagging.advice)
+
+  // The control that stops this being a switch that silences the strip outright.
+  ok(
+    'a switched-on handoff with no device online is not silence',
+    assess(machine({ localPanes: 6, pressure: 'warn', willMove: true })).say === true
+  )
+  ok(
+    'and out of memory says so whatever the ladder is doing',
+    assess(machine({ localPanes: 6, pressure: 'critical', peerAvailable: true, willMove: true })).say === true
+  )
+  ok(
+    'a healthy desk is never silenced by this',
+    assess(machine({ localPanes: 1, peerAvailable: true, willMove: true })).say === true
+  )
+  // The other tight branch: room ran out by arithmetic rather than by the kernel.
+  const cramped = { totalMb: 512, pressure: 'normal', localPanes: 4, peerAvailable: true }
+  ok('the no-room branch nags when nothing will act', assess(cramped).say === true)
+  ok('...and not when something will', assess({ ...cramped, willMove: true }).say === false)
+}
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

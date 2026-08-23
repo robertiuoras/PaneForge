@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { findSettings } from '@shared/settingsIndex'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
+import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
+import { DEFAULT_TIPS } from '@shared/tips'
+import PetPicker from './PetPicker'
+import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
 import {
+  KEY_PROVIDERS,
   installCommand,
+  keyProviderFor,
+  modelGroup,
   modelHint,
   modelLabel,
   modelValue,
@@ -17,7 +25,6 @@ import type {
   AdminStatus,
   Config,
   DiscordStyle,
-  ImproveStatus,
   RestoreMode,
   UpdateState,
   VoiceStatus,
@@ -59,7 +66,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'stash' | 'voice' | 'prompts' | 'discord' | 'system'
+type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'stash' | 'voice' | 'discord' | 'system'
 
 /**
  * The rail down the left of the dialog.
@@ -81,7 +88,6 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex gemini copilot cursor install uninstall model custom cli path' },
   { id: 'stash', label: 'Stash', note: 'Clipboard history', find: 'clipboard copy paste history overlay pin float peek images files' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
-  { id: 'prompts', label: 'Prompts', note: 'Improving what you type', find: 'improve prompt rewrite clarify optimise vault knowledge capability telemetry engine' },
   { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },
   { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
 ]
@@ -107,6 +113,19 @@ function matches(query: string): typeof TABS {
  * a full editor would be more UI than the feature is worth. The stored shape is the
  * same AgentSpec the built-ins use, so a custom entry is a first-class agent.
  */
+/**
+ * The sentence to print instead of the path when this agent authenticates with a key
+ * Settings does not hold, or '' when it is fine. Only the agents whose AUTH is the key:
+ * one that merely passes a key along runs on its own login without it and is not blocked.
+ */
+function missingKeyFor(spec: AgentSpec, config: Config): string {
+  const id = keyProviderFor(spec)
+  if (!id || config.providerKeys?.[id]?.trim()) return ''
+  const label = KEY_PROVIDERS.find((p) => p.id === id)?.label ?? id
+  // No article in front of the name: "a OpenRouter key" is what writing one produces.
+  return `No ${label} key yet - paste one below, or this pane's first turn comes back 401`
+}
+
 function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): void {
   const label = window.prompt('Name (shown in the picker)')?.trim()
   if (!label) return
@@ -139,6 +158,7 @@ function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): 
 export default function SettingsDialog({ config, agents, initial, onChange, onClose }: Props): JSX.Element {
   const [tab, setTab] = useState<Tab>(initial ?? 'general')
   const [find, setFind] = useState('')
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const [admin, setAdmin] = useState<AdminStatus | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
   const [voiceStatus, setVoice] = useState<VoiceStatus | null>(null)
@@ -153,7 +173,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
     touch: matchMedia('(pointer: coarse)').matches,
     prefer: config?.voice.engine ?? 'auto'
   })
-  const [improve, setImprove] = useState<ImproveStatus | null>(null)
   // Which agent the console below is for, and whether it is being put on or taken off.
   const [installing, setInstalling] = useState('')
   const [mode, setMode] = useState<'install' | 'uninstall'>('install')
@@ -171,7 +190,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
     api.adminStatus().then(setAdmin)
     api.updateState().then(setUpdate)
     api.voiceStatus().then(setVoice)
-    api.improveStatus().then(setImprove)
     return api.onUpdate(setUpdate)
   }, [rescan])
 
@@ -207,12 +225,63 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
   const setDiscord = (patch: Partial<DiscordStyle>): void =>
     onChange({ discordStyle: { ...config.discordStyle, ...patch } })
 
+  // The settings themselves that the query hits, best first, and the tabs they are on.
+  // The rail alone could only ever say WHICH PAGE a thing is on, so finding a switch still
+  // meant reading a page of switches; these are what get highlighted on the right.
+  const settingHits = findSettings(find)
+  const settingTabs = new Set(settingHits.map((s) => s.tab))
+  const here = settingHits.filter((s) => s.tab === tab).length
+  const elsewhere = settingHits.length - here
+
   // The current tab is never filtered away, however badly it matches: a rail that removes
   // the entry you are reading leaves a panel on screen with nothing selected beside it.
-  const hits = matches(find)
+  const keyword = matches(find)
+  const hits = find.trim()
+    ? TABS.filter((t) => keyword.includes(t) || settingTabs.has(t.id))
+    : TABS
   const shown = hits.length && !hits.some((t) => t.id === tab)
     ? TABS.filter((t) => t.id === tab || hits.includes(t))
     : hits
+
+  /**
+   * Put the accent on every setting the query hit, and bring the best one into view.
+   *
+   * It is done to the DOM rather than by passing a `highlight` prop down through nine
+   * tab bodies and two child components: the thing being marked is a row somebody is
+   * looking at, and every one of them already draws its own name. Matching is by that
+   * name - a label the index took verbatim out of this same file - and a reading in
+   * brackets ("Terminal font size (14px)") is why it is a prefix test and not equality.
+   *
+   * Nothing is HIDDEN. Filtering the settings would strip controls out of the groups that
+   * explain them, which is how a search turns a settings page into orphaned switches.
+   */
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    for (const el of body.querySelectorAll('.found')) el.classList.remove('found', 'found-top')
+    if (!settingHits.length) return
+
+    const wanted = settingHits.filter((s) => s.tab === tab)
+    if (!wanted.length) return
+    const rows = [...body.querySelectorAll<HTMLElement>('.sw-label, .setting > label')]
+    let top: HTMLElement | null = null
+    for (const hit of wanted) {
+      const row = rows.find((r) => {
+        const text = (r.textContent ?? '').replace(/\s+/g, ' ').trim()
+        return text === hit.label || text.startsWith(hit.label)
+      })
+      if (!row) continue
+      const mark = row.closest<HTMLElement>('.sw-row, .setting') ?? row
+      mark.classList.add('found')
+      if (!top) top = mark
+    }
+    // `nearest` rather than `center`: a match already on screen must not scroll the page
+    // out from under somebody who is reading it.
+    if (top) {
+      top.classList.add('found-top')
+      top.scrollIntoView({ block: 'nearest' })
+    }
+  }, [tab, find, config])
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -233,9 +302,14 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                 const q = e.target.value
                 setFind(q)
                 // Jump as you type: with the rail filtered to one entry, having to then
-                // click it is a second action for a decision already made.
+                // click it is a second action for a decision already made. A hit on a
+                // SETTING wins over one on a tab's keyword list - the query named a
+                // control, so the page holding that control is the one to open.
+                if (!q.trim()) return
+                const best = findSettings(q)[0]
                 const hit = matches(q)
-                if (q.trim() && hit.length && !hit.some((t) => t.id === tab)) setTab(hit[0].id)
+                const page = best ? (best.tab as Tab) : hit.length ? hit[0].id : null
+                if (page && page !== tab) setTab(page)
               }}
             />
             {shown.map((t) => (
@@ -249,9 +323,22 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
               </button>
             ))}
             {!shown.length && <div className="hint nav-empty">Nothing matches "{find}".</div>}
+            {!!settingHits.length && (
+              // Only the settings on THIS page are marked, so only those may be counted as
+              // marked: saying "5 marked on the right" over two visible rings reads as
+              // three results having gone missing. The rest are named as being elsewhere,
+              // and the rail beside this line is where they are.
+              <div className="hint nav-count">
+                {here === 0
+                  ? `${elsewhere} on the other pages.`
+                  : `${here === 1 ? '1 setting' : `${here} settings`} marked on the right${
+                      elsewhere ? `, ${elsewhere} more on the other pages` : ''
+                    }.`}
+              </div>
+            )}
           </div>
 
-        <div className="tab-body">
+        <div className="tab-body" ref={bodyRef}>
           {tab === 'appearance' && (
             <AppearanceTab
               theme={config.theme ?? DEFAULT_THEME}
@@ -418,10 +505,10 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   hint="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
                 />
                 <Switch
-                  checked={config.offloadAsk !== false}
-                  onChange={(v) => onChange({ offloadAsk: v })}
+                  checked={config.offloadAsk === true}
+                  onChange={(v) => onChange({ offloadAsk: v, offloadDefaultsV2: true })}
                   label="Ask first, rather than moving it"
-                  hint="A pane is moved for a reason this machine can see - it is out of memory - and kept here for one it cannot: the checkout you are editing, the dev server your browser is pointed at, the fact that you are sitting in front of this screen. So the launch asks, recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off moves it silently and tells you afterwards."
+                  hint="Off, and off is the default: where a pane runs is answered by the budget below rather than by a dialog per launch. On puts the question back - it recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once."
                 />
                 <Switch
                   checked={config.autoHandoff?.enabled !== false}
@@ -431,8 +518,42 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     })
                   }
                   label="Move a finished pane to a paired device when this machine is full"
-                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. Only once the machine is genuinely out of memory, only a pane nobody is looking at that has been quiet for ten minutes, and only to a device that is online and has the same project. A pane mid-turn is never moved - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
+                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. It fires on the budget below, and on either sign of a machine in trouble - the kernel saying it is out of memory, or the load average saying this desk is lagging, whichever comes first (memory says so late: nine agents here once read as merely tight while the load ran at 8.7 on 10 cores). Only to a device that is online and has the same project. A pane mid-turn is never killed - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
                 />
+                {config.autoHandoff?.enabled !== false && (
+                  <div className="setting">
+                    <label>Panes this machine runs itself</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={0}
+                      max={64}
+                      step={1}
+                      value={config.autoHandoff?.keepLocal ?? DEFAULT_AUTO_HANDOFF.keepLocal}
+                      onChange={(e) =>
+                        onChange({
+                          autoHandoff: {
+                            ...DEFAULT_AUTO_HANDOFF,
+                            ...config.autoHandoff,
+                            keepLocal: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                    <p className="hint">
+                      The budget, and the only rule here that does not wait for something to
+                      go wrong. Past this many agents running on this machine, the rest move
+                      to a paired device and come straight back as mirrors - so they are all
+                      still on this screen, still typed into from here, and the memory and
+                      the CPU are over there. It is the one rule allowed to move a pane that
+                      is on screen and a pane that is mid-turn (that one is queued and goes
+                      the moment the turn ends, never killed); the pane you are typing in,
+                      one holding a question, and the last pane on the desk are refused as
+                      always. 0 turns the budget off and leaves the two readings below. With
+                      nothing paired and online it does nothing at all.
+                    </p>
+                  </div>
+                )}
                 {config.autoHandoff?.enabled !== false && (
                   <Switch
                     checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}
@@ -450,10 +571,91 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   />
                 )}
                 <Switch
-                  checked={config.driveUnattended !== false}
-                  onChange={(v) => onChange({ driveUnattended: v })}
-                  label="Let a driven lane run unattended"
-                  hint="Drive starts a coding CLI with its permission prompt turned off - Claude with --permission-mode bypassPermissions, Codex with --full-auto, Gemini and Qwen with --yolo - because an agent that stops to ask nobody is an agent that hangs until its budget kills it. What it may touch is a worktree the app made, on a branch nothing merges by itself. Off refuses to start or queue a driven run at all, and says which flag it refused; panes you launch yourself are unaffected and still ask."
+                  checked={(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled)}
+                  onChange={(v) =>
+                    onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, enabled: v } })
+                  }
+                  label="Let the little one keep an eye on this machine"
+                  hint="Everything above happens silently - panes are trimmed, moved and closed by three timers whose only output is a line in a console nobody has open. This is the face on them: it walks to the pane it is talking about, says what was done in a bubble, and offers a press before anything is closed. It answers typed questions about this window too - 'what are the two biggest', 'close the idle ones', 'what is pane 3' - out of readings the app already holds, with no model and no request to anywhere. It never takes focus, never opens a dialog, and it is silent until you press the speaker on its bubble."
+                />
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+                  <Switch
+                    checked={config.mascot?.roam !== false}
+                    onChange={(v) =>
+                      onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, roam: v } })
+                    }
+                    label="...and let it wander over to the pane it means, and run about now and then"
+                    hint="Walking to the card is how it says WHICH pane without you reading an id, and every nine minutes or so it chases a ball along the bottom of the window - only ever while it has nothing to say, is where the app put it, and somebody is looking at this window. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
+                  />
+                )}
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+                  <div className="setting">
+                    <label>Which pet</label>
+                    <PetPicker
+                      value={config.mascot?.pet ?? DEFAULT_MASCOT.pet ?? 'bot'}
+                      onChange={(pet) =>
+                        onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, pet } })
+                      }
+                    />
+                    <p className="hint">
+                      Ten of them, and they cost the same: one drawing, in layers, where the
+                      movement is which layer is showing rather than anything being redrawn.
+                      Only the one you pick is ever on screen, and all of it stops while the
+                      window is minimised.
+                    </p>
+                  </div>
+                )}
+                {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+                  <div className="setting">
+                    <label>Take what it says away after</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={5}
+                      value={config.mascot?.hideSeconds ?? HIDE_SECONDS}
+                      onChange={(e) =>
+                        onChange({
+                          mascot: {
+                            ...DEFAULT_MASCOT,
+                            ...config.mascot,
+                            hideSeconds: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                    <p className="hint">
+                      Seconds. Everything it says is a reading - which pane closed, what it
+                      was working on, how long ago - and a reading left on screen stops being
+                      one: it becomes a box over the corner of the window saying something
+                      that was true a while ago. The clock restarts while you are typing at
+                      it, and a countdown before a pane is closed is never taken away early,
+                      because the press that stops the close is on it. 0 leaves everything up
+                      until you press it away.
+                    </p>
+                  </div>
+                )}
+                <Switch
+                  checked={config.tips?.enabled ?? DEFAULT_TIPS.enabled}
+                  onChange={(v) => onChange({ tips: { ...DEFAULT_TIPS, ...config.tips, enabled: v } })}
+                  label="Show the occasional tip about what this app can do"
+                  hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
+                />
+                <Switch
+                  checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleCloseMinutes: v ? IDLE_CLOSE_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Close a pane nobody has touched for a while"
+                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
                 />
                 <Switch
                   checked={config.autoAnswer?.enabled === true}
@@ -480,6 +682,36 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     label="...and take the CLI's own default for the rest"
                     hint="A question with several real answers ('which of these three shapes?') is a decision you are being asked to make, so by default it waits for you. On, the app takes the row the CLI's own arrow is already on - its preference, not one invented here - and keeps the run moving. The two refusals above still hold."
                   />
+                )}
+                {config.autoAnswer?.enabled === true && (
+                  <div className="setting">
+                    <label>Wait before answering</label>
+                    <Select
+                      value={String(config.autoAnswer?.waitMs ?? DEFAULT_AUTO_ANSWER.waitMs)}
+                      onChange={(v) =>
+                        onChange({
+                          autoAnswer: {
+                            ...DEFAULT_AUTO_ANSWER,
+                            ...config.autoAnswer,
+                            waitMs: Number(v)
+                          }
+                        })
+                      }
+                      menuWidth={260}
+                      options={[
+                        { value: '1200', label: '1.2 seconds', hint: 'barely a pause' },
+                        { value: '3000', label: '3 seconds' },
+                        { value: '5000', label: '5 seconds' },
+                        { value: '10000', label: '10 seconds' },
+                        { value: '30000', label: '30 seconds', hint: 'plenty of time to disagree' }
+                      ]}
+                    />
+                    <span className="hint">
+                      The pane counts this down on the question itself and names the option it is
+                      about to press, so an answer never arrives out of nowhere. Pressing any
+                      button, or arrowing at the desk, cancels it.
+                    </span>
+                  </div>
                 )}
                 <Switch
                   checked={config.confirmClose}
@@ -743,7 +975,18 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                         {a.free && <span className="tag free">free</span>}
                         {a.custom && <span className="tag">custom</span>}
                       </span>
-                      <span className="hint">{a.available ? a.path : a.note || `${a.bin} not on PATH`}</span>
+                      {/*
+                        An agent whose AUTH is a key nobody has pasted starts perfectly:
+                        the binary is there, the base URL is set, and the first turn comes
+                        back 401 with the pane looking healthy. The key is dropped rather
+                        than sent (resolveEnv), but the base URL cannot be - dropping that
+                        too would run plain Claude Code inside a pane whose card says GLM,
+                        which is worse than an error. So the card says it here instead.
+                      */}
+                      <span className="hint">
+                        {missingKeyFor(a, config) ||
+                          (a.available ? a.path : a.note || `${a.bin} not on PATH`)}
+                      </span>
                       <div className="agent-actions">
                         {!a.available && installCommand(a) && (
                           <button
@@ -802,28 +1045,37 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </div>
                   ))}
                 </div>
-                <div className="setting">
-                  <label>OpenRouter key</label>
-                  {/*
-                    A password field because this is read over somebody's shoulder in a
-                    room, not because it is secret from the machine - it is in config.json
-                    beside the pairing code, same as every other credential here.
-                  */}
-                  <input
-                    type="password"
-                    className="search"
-                    placeholder="sk-or-..."
-                    value={config.openrouterKey}
-                    onChange={(e) => onChange({ openrouterKey: e.target.value })}
-                  />
-                  <span className="hint">
-                    Runs Claude Code, opencode, Crush and Aider on GLM, DeepSeek, Qwen or Kimi. Left
-                    blank, those agents start on whatever login this machine already has.{' '}
-                    <button className="ghost small" onClick={() => api.openExternal('https://openrouter.ai/keys')}>
-                      Get a key
-                    </button>
-                  </span>
-                </div>
+                {/*
+                  One field per provider, drawn off KEY_PROVIDERS rather than written out
+                  here: a provider added to the catalogue has to reach this screen by
+                  itself, or an agent ships with nowhere to authenticate from and fails as
+                  a 401 inside a pane that looks healthy.
+
+                  Password fields because these are read over somebody's shoulder in a
+                  room, not because they are secret from the machine - they are in
+                  config.json beside the pairing code, same as every other credential here.
+                */}
+                {KEY_PROVIDERS.map((p) => (
+                  <div className="setting" key={p.id}>
+                    <label>{p.label} key</label>
+                    <input
+                      type="password"
+                      className="search"
+                      placeholder={p.hint}
+                      value={config.providerKeys?.[p.id] ?? ''}
+                      onChange={(e) =>
+                        onChange({ providerKeys: { ...(config.providerKeys ?? {}), [p.id]: e.target.value } })
+                      }
+                    />
+                    <span className="hint">
+                      {p.note} Left blank, the agents that ask for it start on whatever login this
+                      machine already has.{' '}
+                      <button className="ghost small" onClick={() => api.openExternal(p.url)}>
+                        Get a key
+                      </button>
+                    </span>
+                  </div>
+                ))}
                 <div className="setting-row">
                   <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>
@@ -867,7 +1119,8 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                             ...(a.models ?? []).map((m) => ({
                               value: modelValue(m),
                               label: modelLabel(m),
-                              hint: modelHint(m)
+                              hint: modelHint(m),
+                              group: modelGroup(m)
                             }))
                           ]}
                         />
@@ -992,174 +1245,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
             </>
           )}
 
-          {tab === 'prompts' && (
-            <>
-              <div className="setting">
-                <label>Prompt improvement</label>
-                <span className="hint">
-                  Before a prompt is sent, PaneForge can rewrite it into a shorter, more specific
-                  brief - carrying this project's own context, asking at most one question, and
-                  naming only what materially helps. It never sends anything: you read the
-                  suggestion, edit it if you like, and press Enter yourself.
-                </span>
-                <Select
-                  value={config.promptImprove.mode === 'off' ? 'off' : 'suggest'}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        mode: v as 'off' | 'suggest'
-                      }
-                    })
-                  }
-                  menuWidth={340}
-                  options={[
-                    { value: 'off', label: 'Off', hint: 'nothing runs, nothing is spent' },
-                    {
-                      value: 'suggest',
-                      label: 'Suggest',
-                      hint: 'offer a chip when a draft goes quiet'
-                    }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <div className="setting-row">
-                  <span className="hint">
-                    {improve?.available
-                      ? `The improver runs through ${improve.engine}, headlessly, in an empty folder with no access to this repo. It counts against that CLI's plan.`
-                      : 'No agent CLI on PATH to run the improver. Install one from the Agents tab.'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="setting">
-                <label>Questions</label>
-                <span className="hint">
-                  Only ever for what you alone know - your audience, the feeling you want, a
-                  business requirement, an irreversible choice. Never which library to use.
-                </span>
-                <Select
-                  value={config.promptImprove.clarify}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        clarify: v as 'minimal' | 'balanced'
-                      }
-                    })
-                  }
-                  menuWidth={300}
-                  options={[
-                    { value: 'minimal', label: 'Minimal', hint: 'at most one, and only if it matters' },
-                    { value: 'balanced', label: 'Balanced', hint: 'up to three' }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <label>Spend</label>
-                <Select
-                  value={config.promptImprove.optimise}
-                  onChange={(v) =>
-                    onChange({
-                      promptImprove: {
-                        ...config.promptImprove,
-                        optimise: v as 'quality' | 'balanced' | 'tokens'
-                      }
-                    })
-                  }
-                  menuWidth={340}
-                  options={[
-                    { value: 'quality', label: 'Quality', hint: 'more context and references' },
-                    { value: 'balanced', label: 'Balanced', hint: '~2500 tokens in, 700 out' },
-                    { value: 'tokens', label: 'Fewest tokens', hint: 'drops references first' }
-                  ]}
-                />
-              </div>
-
-              <div className="setting">
-                <label>Knowledge</label>
-                <span className="hint">
-                  Where researched capability knowledge is read from. Both are optional and both
-                  are read-only. Only notes a human marked reviewed or verified are ever offered
-                  as something to use; drafts, archives and restricted notes never leave the
-                  vault. {improve?.providers.length
-                    ? `Active: ${improve.providers.join(', ')}.`
-                    : 'None configured - improvements still work, with no references.'}
-                </span>
-              </div>
-
-              <div className="setting">
-                <label>Obsidian vault folder</label>
-                <input
-                  className="text"
-                  spellCheck={false}
-                  placeholder={improve?.vaultCandidate || 'leave empty to use no vault'}
-                  value={config.promptImprove.vaultPath}
-                  onChange={(e) =>
-                    onChange({
-                      promptImprove: { ...config.promptImprove, vaultPath: e.target.value }
-                    })
-                  }
-                />
-                {improve?.vaultCandidate && !config.promptImprove.vaultPath && (
-                  <button
-                    className="ghost"
-                    onClick={() =>
-                      onChange({
-                        promptImprove: {
-                          ...config.promptImprove,
-                          vaultPath: improve.vaultCandidate
-                        }
-                      })
-                    }
-                  >
-                    Use {improve.vaultCandidate}
-                  </button>
-                )}
-              </div>
-
-              <div className="setting">
-                <label>vaultindex.py (optional, preferred)</label>
-                <span className="hint">
-                  If you have the vault-index CLI, point at its `vaultindex.py` and it is used
-                  instead of reading the folder directly - it enforces the sensitivity rules when
-                  the index is built rather than when a query runs, which is the stronger
-                  guarantee.
-                </span>
-                <input
-                  className="text"
-                  spellCheck={false}
-                  placeholder="…/vault-index/vaultindex.py"
-                  value={config.promptImprove.indexScript}
-                  onChange={(e) =>
-                    onChange({
-                      promptImprove: { ...config.promptImprove, indexScript: e.target.value }
-                    })
-                  }
-                />
-              </div>
-
-              <div className="switches">
-                <Switch
-                  checked={config.promptImprove.capabilities}
-                  onChange={(v) =>
-                    onChange({ promptImprove: { ...config.promptImprove, capabilities: v } })
-                  }
-                  label="Consult the capability catalogue (libraries, patterns and their trade-offs)"
-                />
-                <Switch
-                  checked={config.promptImprove.telemetry}
-                  onChange={(v) =>
-                    onChange({ promptImprove: { ...config.promptImprove, telemetry: v } })
-                  }
-                  label="Record what improvements cost and whether they were accepted (counts and hashes, never the text)"
-                />
-              </div>
-            </>
-          )}
 
           {tab === 'discord' && (
             <>
@@ -1409,6 +1494,13 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     onChange={(v) => onChange({ restoreAfterUpdate: v })}
                     label="Reopen my panes after an update restart"
                     hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
+                  />
+                  <Switch
+                    checked={!!config.askAfterUpdate}
+                    onChange={(v) => onChange({ askAfterUpdate: v })}
+                    disabled={!config.restoreAfterUpdate}
+                    label="…and ask first, like every other restart"
+                    hint="Off, an update restart is the one restart that never asks - it was the app's own idea, so it hands the desk straight back. On, it offers the panes exactly as a quit or a crash does."
                   />
                 </div>
               </div>

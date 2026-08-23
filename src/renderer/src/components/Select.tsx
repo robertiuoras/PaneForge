@@ -64,7 +64,12 @@ export default function Select({
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
     if (!needle) return options
-    return options.filter((o) => (o.label + ' ' + (o.hint ?? '')).toLowerCase().includes(needle))
+    // The VALUE is searched as well as the label: a model's label is its friendly name
+    // with the vendor stripped ("GLM 5.2"), so without this, typing the vendor you know
+    // it by - `z-ai`, `qwen`, `moonshotai` - finds nothing in a list of hundreds.
+    return options.filter((o) =>
+      (o.label + ' ' + (o.hint ?? '') + ' ' + o.value).toLowerCase().includes(needle)
+    )
   }, [options, q])
 
   // Opening lands the highlight on the current value so Enter is a no-op, not a jump.

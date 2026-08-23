@@ -7,7 +7,7 @@
 // decodes audio in-process, so it does not need an ffmpeg binary the way the
 // reference `whisper` CLI does.
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,14 +34,22 @@ export function voiceStatus(): VoiceStatus {
 }
 
 /**
- * WAV bytes in, text out. Runs synchronously in a worker-free way because a
- * dictation clip is seconds long and the alternative (streaming) would need a
- * server; the renderer shows a spinner while this blocks.
+ * WAV bytes in, text out.
+ *
+ * ASYNC, and that is the whole point of this function's shape. It used to be
+ * `execFileSync` inside `ipcMain.handle('voice:transcribe')`, which blocks the
+ * MAIN process for the length of the run - every pane's pty routing, every
+ * other window message, the menu, the tray, all of it. Measured on this Mac
+ * 2026-08-23: `whisper-ctranslate2 --model base` takes **2.65s wall for a 2.9s
+ * clip** with the weights already cached, and the very first dictation also
+ * downloads the model under a 120s ceiling. So pressing the mic froze the app
+ * for seconds every single time, which is what "the mic lags out" was. The
+ * spinner in the renderer was drawn by a window that could not repaint.
  */
-export function transcribe(
+export async function transcribe(
   wav: Buffer,
   opts: { model: string; language: string }
-): { text: string; error?: string } {
+): Promise<{ text: string; error?: string }> {
   const status = voiceStatus()
   if (!status.available) {
     return { text: '', error: 'No local Whisper found. Install one from Settings > Voice.' }
@@ -65,12 +73,26 @@ export function transcribe(
     ]
     if (opts.language && opts.language !== 'auto') args.push('--language', opts.language)
 
-    execFileSync(status.path, args, {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 120_000,
-      // Model weights download on first use; give that its own generous buffer.
-      maxBuffer: 8 * 1024 * 1024
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        status.path,
+        args,
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 120_000,
+          // Model weights download on first use; give that its own generous buffer.
+          maxBuffer: 8 * 1024 * 1024
+        },
+        // execFile hands stderr to the callback, NOT on the error, so a rejection
+        // built from `err` alone loses the one line worth reporting.
+        (err, _stdout, stderr) => {
+          if (!err) return resolve()
+          const e = err as Error & { stderr?: string }
+          if (stderr) e.stderr = String(stderr)
+          reject(e)
+        }
+      )
     })
 
     const txt = readdirSync(dir).find((f) => f.endsWith('.txt'))

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -22,15 +22,16 @@ import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
+import { quitWhere } from '../shared/quitWords'
 import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
-import { driveRefusal } from '../shared/agentic'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
-import { askMessage, postAsk, telegramCreds } from './askNotify'
+import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { askKeyOf } from '../shared/autoAnswer'
 import type { AttachIn, AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
@@ -50,45 +51,7 @@ import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
 import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
-import { cancelImprove, improve, resolveEngine, runCli } from './improve'
-import { laneBrief, parsePlan, splitPayload, SPLIT_DEADLINE_MS } from './split'
-import { cancelResearch, research } from './researchRun'
-import type { ClaimLane, PaneDriver } from './supervisor'
-import {
-  clearFinishedDrives,
-  driveCwds,
-  listDrives,
-  notePaneInput,
-  onDriveChange,
-  startDrive,
-  stopAllDrives,
-  stopDrive
-} from './supervisor'
-import {
-  addGoal,
-  cancelGoal,
-  clearFinishedGoals,
-  configureGoals,
-  listGoals,
-  noteDriveChange,
-  onGoalReport,
-  onGoalsChange,
-  priorDispatch,
-  removeGoal,
-  retryGoal
-} from './goals'
-import { route } from '../shared/dispatch'
-import { buildAsk } from './dispatchAsk'
-import { buildReport, postReport } from './dispatchReport'
-import { currentBranch } from './agentRun'
-import type { Goal } from '../shared/goals'
-import type { DriveRequest, DriveRun } from '../shared/types'
-import { buildContextPack } from './contextPack'
-import { stage } from '../shared/capability'
-import { firstExistingVault, loadCapabilities } from './knowledge'
 import { priorPrompt, recordPrompt } from './promptArchive'
-import { recordImprovement } from './promptAudit'
-import { insertSequence } from '../shared/promptSchema'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
   cancelDeferred,
@@ -124,7 +87,8 @@ import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from '
 import { receiveHandoff, sendHandoff } from './handoff'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
-import { devServersOf, localDevCommand } from './devServers'
+import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
+import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
   clearDesk,
@@ -208,27 +172,20 @@ import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
-import { readPressure, totalMb, watchPressure } from './memory'
+import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { trackUsage } from './usage'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   GameModeStatus,
-  ImproveOptions,
-  ImproveOutcomeKind,
-  ImproveResult,
-  ImproveStatus,
   InstallOutcome,
   PipeInfo,
   RemoteState,
-  ResearchReport,
   RestoreAnswer,
   RestoreOffer,
   RestorePane,
   Session,
-  SplitPlan,
-  SplitRequest,
   StartSessionRequest,
   StashConfig,
   SwarmRequest,
@@ -237,7 +194,6 @@ import type {
   UpdateState
 } from '../shared/types'
 import type { AgentSpec } from '../shared/agents'
-import type { ImproveMetrics } from '../shared/promptBudget'
 
 // Before a single handler registers: the phone client calls the same ipcMain bodies the
 // window does, and the tap can only record registrations it was in place for.
@@ -299,6 +255,21 @@ const launchRequest = parseOpenArgs(process.argv)
 let quitCause = ''
 let quitLogged = false
 let panesAtQuit = -1
+/*
+ * ...and when the app itself did not ask, WHICH of the three it was.
+ *
+ * 2026-08-21 the sentence below was read for real - nine panes closed with no cause - and
+ * it named three possibilities and separated none of them, so the answer was still a
+ * guess. A signal cannot be caught (Chromium takes SIGTERM below the JS layer; measured,
+ * see `quitReason`), but the three are trivially told apart by WHERE THE SCREEN WAS. A
+ * Cmd-Q or an app-menu Quit can only be typed at a frontmost window; a `pkill`, an
+ * `osascript ... quit`, a launchd job or a logout all arrive while somebody is looking at
+ * something else. So the last time a window of ours had focus is recorded, and the quit
+ * line carries it. It is evidence, not a verdict - it says "not from this keyboard",
+ * which is exactly the half that was missing.
+ */
+let lastFocusAt = 0
+let focused = false
 /**
  * How many panes were open when leaving started.
  *
@@ -340,7 +311,9 @@ function quitReason(): string {
   // runs - measured by SIGTERMing a test copy, which wrote this exact line with the
   // handler installed. `pkill`, a launchd job and Cmd-Q are one case from in here, and
   // saying so is better than a sentence that only names the fingers.
-  return quitCause || 'nothing in the app asked - Cmd-Q, the app menu, or a signal from the OS'
+  if (quitCause) return quitCause
+  // Where the screen was, so the three are no longer one case. Words: shared/quitWords.ts.
+  return `nothing in the app asked - ${quitWhere(focused, lastFocusAt, Date.now())}`
 }
 
 if (!app.requestSingleInstanceLock(launchRequest)) {
@@ -775,6 +748,18 @@ manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
 
 /**
+ * One phone message per question. The pane raises `ask` once per FRAME of a question and
+ * a chooser arrives over several frames, so the notifier waits for the frames to stop.
+ */
+const askNotifier = new AskNotifier({
+  post: (text: string) =>
+    postAsk(text).then((sent) => {
+      if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
+      return sent
+    })
+})
+
+/**
  * A running turn that has said nothing for minutes, and a terminal bell.
  *
  * Both go out on their own channel and neither reuses `raiseAttention`, because that
@@ -816,10 +801,20 @@ function raiseStalled(s: Session): void {
  * two messages for one question is how a notification stops being read.
  */
 function raiseAsk(s: Session): void {
+  // The renderer first and unconditionally: it owns the sound, and a question is the one
+  // alert that must not be gated on the notification settings below - a run that has
+  // stopped dead is not a notification preference.
+  send('sessions:ask', s)
   if (!s.remote && getConfig().telegramAsk) {
-    void postAsk(askMessage(s.title, s.ask!, undefined)).then((sent) => {
-      if (!sent && telegramCreds())
-        console.log(`telegram: could not post the question from ${s.title}`)
+    // Debounced, and resolved at the END of the wait rather than now: the option labels
+    // stream in, so this same event fires several times for ONE question with a longer
+    // label each time. Sending on the frame would put three messages on the phone for one
+    // chooser, which is exactly what happened. See ASK_SETTLE_MS in askNotify.ts.
+    askNotifier.schedule(s.id, () => {
+      const live = allSessions().find((x) => x.id === s.id)
+      // Answered at the desk while this was waiting: there is nothing left to ask about.
+      if (!live?.ask) return null
+      return { key: askKeyOf(live.ask), text: askMessage(live.title, live.ask, undefined) }
     })
   }
   if (!getConfig().notifyOnIdle || isGameActive()) return
@@ -920,6 +915,7 @@ const remote = new Remote({
     }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
+  jobs: () => ownJobs(),
   attachFiles: (files) => writeAttachments(files),
   onData: (cb) => {
     manager.on('data', cb)
@@ -986,9 +982,17 @@ function publishCapacity(): void {
     assess({
       totalMb: totalMb(),
       pressure: lastPressure,
+      // What a person calls lagging, and it moves minutes before the memory verdict does.
+      load: loadPerCore(),
       localPanes: manager.list().length,
       remotePanes: mirrored,
-      peerAvailable: peers > 0
+      peerAvailable: peers > 0,
+      // How many agents this desk agreed to run itself. Read live rather than captured:
+      // changing it in Settings has to reach the next reading, which is this one.
+      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
+      // Whether the ladder is going to answer this reading itself. Only decides whether the
+      // strip SAYS it - see `Verdict.say`.
+      willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
     })
   )
 }
@@ -1016,6 +1020,53 @@ const stopUsage = trackUsage(
 // A window opened after the last sample (a reload, a quiet restart) would otherwise draw
 // no figures until the next tick.
 ipcMain.handle('usage:get', () => lastUsage)
+
+// The dev servers running on this machine, for the mascot's "what dev servers are
+// running". The renderer supplies only the ORDER and the words - which pane is number 3,
+// and what that project is called - because that is the sidebar's own arithmetic and main
+// has never had it. Every FACT is read here: the folder off the pane's own record and the
+// pty's pid off the manager, so a caller cannot point this at a folder it does not own.
+ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
+  const roots = manager.roots()
+  const live = manager.list()
+  const asked = Array.isArray(panes) ? panes : []
+  const known = asked
+    .map((p) => {
+      const s = live.find((x) => x.id === p.id)
+      if (!s) return null
+      return {
+        id: s.id,
+        pane: Number(p.pane) || 0,
+        name: String(p.name || s.title || ''),
+        cwd: s.cwd,
+        pid: roots.find((r) => r.id === s.id)?.pid ?? 0
+      }
+    })
+    .filter(Boolean) as Array<{ id: string; pane: number; name: string; cwd: string; pid: number }>
+  return listRunningDevs(known)
+})
+
+ipcMain.handle('devs:stop', (_e, pid: number) => stopDevServer(Number(pid)))
+
+/**
+ * What this machine is running that no pane owns - see `shared/backJobs.ts`.
+ *
+ * Every fact is read here: the pane ptys off the manager and the projects root off the
+ * config, so neither a renderer nor a guest on the device link can point this at pids or
+ * folders it does not own. It is one whole `ps -Ao command=`, so it is asked when a person
+ * opens the panel and never on a timer.
+ */
+function ownJobs(): Promise<BackJob[]> {
+  return listBackJobs(
+    manager.roots().map((r) => r.pid),
+    [projectsRoot()]
+  )
+}
+ipcMain.handle('jobs:list', () => ownJobs())
+// The same question asked of a paired machine, which is the whole reason this exists: a
+// PC running scheduled agent turns and cron loops had no surface here at all. A device
+// that is not connected REJECTS rather than answering an empty list - see `Remote.jobsOn`.
+ipcMain.handle('jobs:remote', (_e, device: string) => remote.jobsOn(String(device)))
 
 let lastPressure: Pressure = 'normal'
 // Only fires on a CHANGE of level, so this is a handful of messages in a session rather
@@ -1192,10 +1243,6 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 )
 ipcMain.on('pty:write', (_e, id: string, data: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
-  // A person typing into a dispatched pane takes it over: the run is dropped, never
-  // fought over. Only this channel carries a person's bytes - the dispatcher's own
-  // prompt and retry brief go through `manager.write` directly.
-  notePaneInput(id)
   watchForClear(id, data)
   manager.write(id, data)
 })
@@ -1324,223 +1371,16 @@ ipcMain.on(
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 
-// --- split one task across lanes -------------------------------------------
-//
-// A swarm shares a checkout because its roles interleave. A split does the opposite:
-// every workstream is moved into its own git worktree, through the same `laneFor` the
-// session list uses, so two agents cannot reach the same file rather than being asked
-// not to. main/split.ts explains why that is the difference worth having.
-ipcMain.handle(
-  'sessions:planSplit',
-  async (_e, req: { cwd: string; mission: string; agent?: string }): Promise<SplitPlan> => {
-    const nothing = (refused: string): SplitPlan => ({ lanes: [], contracts: '', refused })
-    if (!req.mission.trim()) return nothing('Describe the task first.')
-
-    const cfg = getConfig().promptImprove
-    const specs = listAgents(false).map((a) => a as AgentSpec)
-    const engine = resolveEngine(cfg.engine, req.agent ?? '', specs, cfg.model)
-    if (!engine) return nothing('No coding CLI on PATH to plan the split with.')
-
-    // The top level of the repository, so the plan claims paths that exist. Only the
-    // top level: a full tree is most of a context window and the planner is choosing
-    // owners, not writing the code.
-    let tree: string[] = []
-    try {
-      tree = readdirSync(req.cwd, { withFileTypes: true })
-        .filter((d) => !d.name.startsWith('.') && d.name !== 'node_modules')
-        .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
-    } catch {
-      /* a folder we cannot list still gets a plan, just a blinder one */
-    }
-
-    const out = await runCli(engine, splitPayload(req.mission, tree), {
-      key: `split:${req.cwd}`,
-      // Its own deadline, not improvement's: a plan is a much longer answer than a
-      // rewritten prompt, and 90s was measured to be under what it costs. See
-      // SPLIT_DEADLINE_MS for the number that was measured.
-      deadlineMs: SPLIT_DEADLINE_MS
-    })
-    return out ? parsePlan(out) : nothing('The planner produced no answer.')
-  }
-)
-
-ipcMain.handle('sessions:split', async (_e, req: SplitRequest): Promise<Session[]> => {
-  const lanes = req.plan.lanes.filter((l) => l.enabled !== false)
-  if (!lanes.length) return []
-  const plan: SplitPlan = { ...req.plan, lanes }
-  const out: Session[] = []
-  // Same claim list as a workspace launch: the session list has not caught up mid-loop,
-  // so without this every lane would be handed the same free worktree.
-  const claimed: string[] = []
-  for (const [i, lane] of lanes.entries()) {
-    try {
-      const started = await laneFor(
-        {
-          cwd: req.cwd,
-          title: lane.name,
-          role: lane.name,
-          agent: req.agent as StartSessionRequest['agent'],
-          model: req.model,
-          prompt: laneBrief(plan, i, req.mission),
-          // Staggered like a swarm, and for a second reason here: each launch may have
-          // to create a worktree, and N `git worktree add` on one repository at once
-          // is a fight over one index lock.
-          promptDelay: i * 900
-        },
-        claimed
-      )
-      claimed.push(started.cwd)
-      out.push(manager.start(started))
-    } catch {
-      // One lane that could not be made must not cost the others their launch.
-    }
-  }
-  return out
-})
-
-// --- the app drives the plan itself ----------------------------------------
-//
-// Split spawns panes and never looks again. This runs the same plan with no panes: one
-// headless agent per lane, verified before it is called finished, and never merged.
-// `docs/agentic.md` is the reasoning; `main/supervisor.ts` is the loop.
-//
-// The claim is passed IN rather than imported by the supervisor, because the list of
-// worktrees already in use is the session list, which lives here. A driven lane is taken
-// out of the same pool a pane would have used - two agents cannot both hold `-a`,
-// whether or not either of them has a window.
-// Built per run rather than once, so two drives in two repositories cannot end up
-// claiming out of each other's pool - the repo is captured, never a module-level latch.
-const claimForDrive =
-  (repo: string): ClaimLane =>
-  async (_name, taken) => {
-    const busy = [
-      ...manager
-        .list()
-        .filter((s) => s.status !== 'exited')
-        .map((s) => s.cwd),
-      // Lanes other DRIVEN runs are holding. They have no pane, so the list above cannot
-      // see them - see driveCwds().
-      ...driveCwds(),
-      ...taken
-    ]
-    const lane = await resolveLane(repo, busy)
-    // `resolveLane` hands back the folder it was given when the pool is full. A driven
-    // lane sharing the main checkout with whoever is sitting in it is the one thing
-    // lanes exist to prevent, so that is a refusal, not a fallback.
-    return lane.cwd === repo ? null : { cwd: lane.cwd, branch: lane.branch ?? '' }
-  }
-
-// One listener, and it feeds two readers: the board, which wants every change, and the
-// goal queue, which only cares that a run it started has ended. The supervisor takes a
-// single listener on purpose, so the fan-out is here rather than a second registration.
-onDriveChange((run) => {
-  send('drive:changed', run)
-  noteDriveChange(run)
-})
-
-// D2: how a dispatched run gets its pane. The same `laneFor` a person's launch goes
-// through, so the worktree comes out of the same pool, and `manager.start` types the
-// prompt through the same queue a Split launch uses. `alive` answers from the session
-// list rather than an exit event, because the watcher polls anyway - a session that is
-// gone entirely counts as exited, which it is.
-const dispatchPanes: PaneDriver = {
-  open: async (req) => {
-    const started = await laneFor(
-      {
-        cwd: req.cwd,
-        title: req.title,
-        role: 'dispatched',
-        agent: req.agent as StartSessionRequest['agent'],
-        model: req.model,
-        prompt: req.prompt
-      },
-      driveCwds()
-    )
-    const s = manager.start(started)
-    return { id: s.id, cwd: started.cwd, branch: await currentBranch(started.cwd) }
-  },
-  // The supervisor's retry brief goes into a pane that is already running, unattended, so
-  // it needs the same submit discipline as a launch prompt: `write(text + '\r')` leaves the
-  // brief in the composer with nobody to press Enter (measured 2026-08-11 for launch
-  // prompts, found again in the lane hand-over on 2026-08-17).
-  type: (id, text) => manager.sendPrompt(id, text),
-  close: (id) => manager.kill(id),
-  alive: (id) => {
-    const s = manager.list().find((x) => x.id === id)
-    return Boolean(s && s.status !== 'exited')
-  }
-}
-
-// Both doors into a driven run ask the same question first (K4). A refusal throws, so the
-// renderer's invoke rejects with the sentence naming the flag - a button that silently
-// does nothing is the failure mode this is meant to avoid, not a second one to add.
-function refuseUnattended(agent: string): void {
-  const why = driveRefusal(agent, getConfig().driveUnattended !== false)
-  if (why) throw new Error(why)
-}
-
-ipcMain.handle('drive:start', (_e, req: DriveRequest): DriveRun => {
-  refuseUnattended(req.agent ?? 'claude')
-  return startDrive(
-    {
-      cwd: req.cwd,
-      mission: req.mission,
-      plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
-      agent: req.agent ?? 'claude',
-      model: req.model,
-      skipReview: req.skipReview
-    },
-    claimForDrive(req.cwd)
-  )
-})
-ipcMain.handle('drive:stop', (_e, id: string) => stopDrive(id))
-ipcMain.handle('drive:stopAll', () => stopAllDrives())
-ipcMain.handle('drive:list', () => listDrives())
-ipcMain.handle('drive:clear', () => clearFinishedDrives())
-
-// --- the goal queue (I4) ----------------------------------------------------------------
-// A goal outlives this window: it is on disk, it starts by itself when the one in front of
-// it finishes, and it says what it turned into. `configureGoals` also does the startup
-// recovery - anything left `running` by a kill becomes `interrupted` - so it runs at wiring
-// time and not on the first press.
-onGoalsChange((list) => send('goals:changed', list))
-configureGoals(claimForDrive, { paneDriver: dispatchPanes })
-// D3: a finished dispatched goal reports back where the ask came from. TaskDriver owns
-// the Discord token and the channel row; this desk only ever POSTs.
-onGoalReport((g) => {
-  const d = getConfig().dispatch
-  const body = buildReport(g)
-  if (body && d.reportUrl) postReport(d.reportUrl, body, d.reportKey)
-})
-
-ipcMain.handle('goal:add', (_e, req: DriveRequest): Goal => {
-  // D5.2: the router prices the ask - tier, model, budget, gate - and the board shows
-  // its reasoning. The dialog's own picks still win where they were made deliberately.
-  const plan = route(buildAsk(req.cwd, req.mission, priorDispatch(req.mission)))
-  const agent = req.agent ?? plan.agent
-  refuseUnattended(agent)
-  return addGoal({
-    cwd: req.cwd,
-    mission: req.mission,
-    plan: { ...req.plan, lanes: req.plan.lanes.filter((l) => l.enabled !== false) },
-    agent,
-    model: req.model || (agent === plan.agent ? plan.model : ''),
-    skipReview: req.skipReview ?? !plan.gate.includes('review'),
-    dispatch: plan
-  })
-})
-ipcMain.handle('goal:list', () => listGoals())
-ipcMain.handle('goal:cancel', (_e, id: string) => cancelGoal(id))
-ipcMain.handle('goal:retry', (_e, id: string) => retryGoal(id))
-ipcMain.handle('goal:remove', (_e, id: string) => removeGoal(id))
-ipcMain.handle('goal:clear', () => clearFinishedGoals())
-
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   const next = setConfig(patch)
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
+  // A key pasted into Settings changes which models the picker may offer, and the
+  // availability cache is 20s long - long enough that "I pasted the key and the models
+  // are still not there" is the first thing anybody sees.
+  if (patch.providerKeys || patch.openrouterKey !== undefined) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.discordPresence !== undefined || patch.discordStyle !== undefined) {
     presence.configure(next.discordPresence, next.discordStyle)
@@ -2048,6 +1888,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
+      selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
       queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
       devServersOf: (id, cwd) => {
@@ -2075,7 +1916,7 @@ const handoffQueue = new HandoffQueue({
   busy: paneBusy,
   send: (id, device, closeAfter) =>
     runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false }),
-  mark: (id, on) => manager.setHandingOff(id, on),
+  mark: (id, on, queuedAt) => manager.setHandingOff(id, on, queuedAt),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
   log: (line) => console.info(line),
@@ -2097,10 +1938,8 @@ ipcMain.handle(
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
-ipcMain.handle('remote:handoffCancel', (_e, id: string) => {
-  handoffQueue.drop(String(id))
-  return true
-})
+// False means nothing was waiting: the pane is already on its way, or was never queued.
+ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the
@@ -2201,14 +2040,94 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
  * itself.
  */
 ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> => {
-  const img = clipboard.readImage()
-  if (img.isEmpty()) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
+  const img = readClipboardImage()
+  if (!img || img.isEmpty())
+    return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const png = img.toPNG()
   if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
   if (remote.owns(id)) return remote.attachOn(id, files)
   return Promise.resolve(writeAttachments(files))
 })
+
+/**
+ * Image bytes onto this device's clipboard, for the ^V that follows.
+ *
+ * The reverse of `pty:attachClipboard`, and it exists for the same reason that one does:
+ * an agent that reads the clipboard sees a real image, and one that does not sees nothing
+ * at all. So the renderer only calls this for the agents that do, and falls back to typing
+ * a path when it answers false.
+ *
+ * This DOES overwrite what was on the clipboard - there is no way to hand an image to a
+ * CLI through the clipboard without using the clipboard. Dropping a file is a deliberate
+ * act, so the trade is made where the user made it.
+ */
+/**
+ * The probe's private clipboard, for IMAGES.
+ *
+ * The text fixture beside it exists so a disposable dev copy can prove its clipboard path
+ * without replacing the real user's clipboard, and an image write needs the same door for
+ * the same reason - a test that hands a picture to an agent would otherwise throw away
+ * whatever the person at the desk had copied, and land its own test image on their Stash.
+ * A PNG beside the text file: same directory, same permission checks.
+ */
+function testClipboardImageFile(): string | null {
+  return testClipboardFile ? testClipboardFile + '.png' : null
+}
+
+/** Whatever image the clipboard - real or fixture - is holding. Null when there is none. */
+function readClipboardImage(): Electron.NativeImage | null {
+  if (!testClipboardFile && !testClipboardDir) return clipboard.readImage()
+  const file = testClipboardImageFile()
+  if (!clipboardFixtureActive() || !file || !existsSync(file)) return null
+  try {
+    return nativeImage.createFromBuffer(readFileSync(file))
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle(
+  'clipboard:writeImage',
+  (_e, src: { data?: string; path?: string; probe?: boolean }): boolean => {
+    // EVERYTHING in here is inside the try. `createFromBuffer` throws on some corrupt
+    // images rather than answering an empty one, and a throw here crosses the IPC as a
+    // rejected promise in the renderer, where the drop path would swallow it and the drop
+    // would appear to have done nothing. False is the answer that has a fallback behind
+    // it; an exception is the answer that has none.
+    try {
+      // Two shapes because a drop arrives as two shapes: a browser drag and a mirrored
+      // pane carry BYTES, while a Finder drag (and a macOS screenshot dragged off its own
+      // preview thumbnail) carries only a path on this disk, with no File object behind it.
+      let img: Electron.NativeImage
+      if (src.data) img = nativeImage.createFromBuffer(Buffer.from(src.data, 'base64'))
+      else if (src.path) {
+        if (!statSync(src.path).isFile()) return false
+        img = nativeImage.createFromPath(src.path)
+      } else return false
+  // An empty image is a format Chromium's decoder does not read (a PDF, an HEIC on some
+  // builds, a .webp on old ones). Saying so is what keeps the pane from sending a ^V that
+  // would paste whatever was on the clipboard BEFORE the drop.
+      if (img.isEmpty()) return false
+      // `probe` asks only whether this decodes. The pane checks a whole batch that way
+      // before it sends any ^V, so a drop that turns out not to be all images leaves the
+      // clipboard exactly as it was.
+      if (src.probe) return true
+      // A test launch fails CLOSED, exactly as the text path does: a probe must never
+      // reach the real clipboard, and a half-configured fixture is a bug, not a fallback.
+      if (testClipboardFile || testClipboardDir) {
+        const file = testClipboardImageFile()
+        if (!clipboardFixtureActive() || !file) return false
+        writeFileSync(file, img.toPNG(), { mode: 0o600 })
+        return true
+      }
+      clipboard.writeImage(img)
+      return true
+    } catch {
+      return false
+    }
+  }
+)
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {
@@ -2908,108 +2827,6 @@ ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
 ipcMain.handle('history:delete', (_e, id: string) => history.remove(id))
 
-// --- prompt improvement ----------------------------------------------------
-//
-// A mirrored pane improves ON THE HOST and never on the mirror - the same rule the busy
-// footer follows. The mirror has neither the repository nor the project's memory, so an
-// improvement computed here would be a brief about a folder this machine does not have.
-// Rather than route the request over the link (stage 2 work), it is declined by name.
-
-ipcMain.handle('improve:status', (): ImproveStatus => {
-  const cfg = getConfig().promptImprove
-  const specs = listAgents(false).map((a) => a as AgentSpec)
-  const engine = resolveEngine(cfg.engine, '', specs, cfg.model)
-  const providers: string[] = []
-  if (cfg.indexScript) providers.push('vault-index')
-  if (cfg.vaultPath) providers.push('markdown')
-  if (cfg.capabilities) providers.push('catalogue')
-  return {
-    available: Boolean(engine),
-    engine: engine?.id ?? '',
-    install: 'npm i -g @anthropic-ai/claude-code',
-    providers,
-    vaultCandidate: firstExistingVault()
-  }
-})
-
-async function runImprove(
-  id: string,
-  draft: string,
-  answers: Array<{ question: string; answer: string }> | undefined,
-  options: ImproveOptions | undefined
-): Promise<ImproveResult> {
-  const decline = (error: string): ImproveResult => ({
-    ok: false,
-    error,
-    original: draft,
-    sources: [],
-    held: '',
-    metrics: {
-      originalTokens: 0,
-      improvedTokens: 0,
-      contextTokens: 0,
-      knowledgeTokens: 0,
-      knowledgeNotes: 0,
-      ms: 0,
-      questions: 0,
-      taskType: 'other',
-      engine: '',
-      outcome: 'failed',
-      secretsHeld: 0
-    }
-  })
-
-  const cfg = getConfig().promptImprove
-  if (cfg.mode === 'off') return decline('prompt improvement is off')
-  if (remote.owns(id)) return decline('that pane runs on another device - improve it there')
-
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return decline('no such pane')
-
-  const outcome = await improve({
-    sessionId: id,
-    cwd: session.cwd,
-    agent: session.agent,
-    draft,
-    git: await gitInfo(session.cwd).catch(() => null),
-    config: cfg,
-    specs: listAgents(false).map((a) => a as AgentSpec),
-    answers,
-    includeUntrusted: options?.includeUntrusted,
-    exclude: options?.exclude,
-    tweak: options?.tweak
-  })
-
-  // The derived stage, for catalogue entries only. A vault note has a status but no
-  // lifecycle - it was never a candidate that could be sandboxed - so it reports its
-  // status and is not offered a Remove control it has nothing to re-run without.
-  const byId = new Map(loadCapabilities().map((c) => [c.id, c]))
-
-  return {
-    ok: outcome.ok,
-    error: outcome.error,
-    original: outcome.original,
-    improvement: outcome.improvement,
-    // Provenance crosses the bridge as ids and titles, never as the note bodies: the
-    // sheet cites, it does not re-display somebody's vault.
-    sources: outcome.sources.map((n) => {
-      const cap = byId.get(n.id)
-      return {
-        id: n.id,
-        title: n.title,
-        provider: n.provider,
-        source: n.source,
-        trusted: n.trusted,
-        stage: cap ? stage(cap) : n.status,
-        stale: n.stale,
-        removable: Boolean(cap)
-      }
-    }),
-    held: outcome.held,
-    metrics: outcome.metrics
-  }
-}
-
 /**
  * "Has this been asked before?" — see main/promptArchive.ts.
  *
@@ -3040,6 +2857,9 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   if (meta.id) {
     try {
       history.noteAsk(meta.id, draft)
+      // ...and onto the live session, so the app can say WHICH conversation a pane is in
+      // while the pane still exists. See Session.gist.
+      manager.noteGist(meta.id)
     } catch {
       /* a note is a nicety, never the reason a pane stops working */
     }
@@ -3055,97 +2875,6 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   }
 })
 
-ipcMain.handle('improve:run', (_e, id: string, draft: string, options?: ImproveOptions) =>
-  runImprove(id, draft, undefined, options)
-)
-ipcMain.handle(
-  'improve:answer',
-  (
-    _e,
-    id: string,
-    draft: string,
-    answers: Array<{ question: string; answer: string }>,
-    options?: ImproveOptions
-  ) => runImprove(id, draft, answers, options)
-)
-ipcMain.on('improve:cancel', (_e, id: string) => cancelImprove(id))
-
-// --- research this request -------------------------------------------------
-//
-// Never automatic, and never on a mirrored pane for the same reason improvement is not:
-// the research is about the project in front of the person, and this device does not have
-// that folder.
-ipcMain.handle('research:run', async (_e, id: string, draft: string): Promise<ResearchReport> => {
-  const nothing = (detail: string): ResearchReport => ({
-    ok: false,
-    outcome: 'failed',
-    detail,
-    kept: [],
-    rejected: [],
-    sources: [],
-    duplicates: 0,
-    ms: 0
-  })
-
-  const cfg = getConfig().promptImprove
-  if (cfg.mode === 'off') return nothing('prompt improvement is off')
-  if (remote.owns(id)) return nothing('that pane runs on another device - research it there')
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return nothing('no such pane')
-
-  const engine = resolveEngine(
-    cfg.engine,
-    session.agent,
-    listAgents(false).map((a) => a as AgentSpec),
-    cfg.model
-  )
-  if (!engine) return nothing('no CLI on PATH that could run the research')
-
-  const git = await gitInfo(session.cwd).catch(() => null)
-  // The stack, so a finding that cannot work here is never fetched. Only the framework
-  // ids leave this machine - not the context pack, not a path, not a dependency list.
-  const context = buildContextPack(session.cwd, git, 200)
-  return research({
-    sessionId: id,
-    // A sentence about the task, capped - never the draft verbatim, which is the thing
-    // that may hold a secret and which the envelope exists to keep out of a request.
-    task: draft.replace(/\s+/g, ' ').trim().slice(0, 300),
-    stack: context.stack,
-    engine
-  })
-})
-ipcMain.on('research:cancel', (_e, id: string) => cancelResearch(id))
-
-ipcMain.handle('improve:apply', async (_e, id: string, text: string) => {
-  if (remote.owns(id)) return { ok: false, error: 'that pane runs on another device' }
-  const session = allSessions().find((s) => s.id === id)
-  if (!session) return { ok: false, error: 'no such pane' }
-
-  const { wipe, payload, error } = insertSequence(text, session.agent)
-  if (!payload) return { ok: false, error: error ?? 'nothing safe to insert' }
-
-  // The same measured shape `clearPane()` uses: empty the box, wait for the CLI to settle,
-  // then paste. 320ms is the measured settle - at 40ms the key arrived before the TUI had
-  // redrawn. Bracketed paste so newlines land in the box instead of submitting it.
-  manager.write(id, wipe)
-  await new Promise((r) => setTimeout(r, 320))
-  manager.write(id, payload)
-  return { ok: true }
-})
-
-ipcMain.on(
-  'improve:record',
-  (_e, outcome: ImproveOutcomeKind, metrics: ImproveMetrics, editedChars?: number) => {
-    const cfg = getConfig().promptImprove
-    // Hashes and counts. The text is only kept when the user has ticked for it, and even
-    // then a draft that still looks like it carries a credential is refused.
-    recordImprovement({ ...metrics, outcome }, '', '', {
-      enabled: cfg.telemetry,
-      keepText: false,
-      editedChars
-    })
-  }
-)
 
 // --- voice -----------------------------------------------------------------
 
@@ -3351,9 +3080,18 @@ function offerRestore(): void {
     return
   }
   if (desk.reason === 'update') {
-    if (cfg.restoreAfterUpdate) restorePanes(desk.specs)
-    else clearDesk()
-    return
+    if (!cfg.restoreAfterUpdate) {
+      clearDesk()
+      return
+    }
+    // `askAfterUpdate` is the one rule for every restart, for a desk that would rather be
+    // asked than handed its panes back. Off by default: the app updates itself several
+    // times a day, so asking every time costs more than the inconsistency it removes.
+    // On, this falls through to the same offer a quit or a crash gets.
+    if (!cfg.askAfterUpdate) {
+      restorePanes(desk.specs)
+      return
+    }
   }
   // Nobody is sitting in front of a test copy. An agent runs `npm run try` to measure
   // something and gets "restore your last session?" across the window instead - every
@@ -3661,9 +3399,6 @@ function hardExit(): void {
   logQuit()
   updateLog('exit', installStarted ? 'handing over to the installer' : 'window closed')
   installStagedMacUpdateOnQuit()
-  // The exit that does NOT go through before-quit, so it needs its own line: a driven
-  // agent is detached and in its own process group, and nothing below reaches it.
-  stopAllDrives()
   // The one thing shutdown() cannot reach: the ConPTY console hosts are OUR children,
   // not the agents', so no taskkill of an agent tree names them. This runs after we are
   // gone and only touches consoles whose parent is gone with us. See consoles.ts.
@@ -3674,6 +3409,14 @@ function hardExit(): void {
   process.exit(0)
 }
 
+app.on('browser-window-focus', () => {
+  focused = true
+  lastFocusAt = Date.now()
+})
+app.on('browser-window-blur', () => {
+  focused = false
+  lastFocusAt = Date.now()
+})
 app.on('before-quit', () => {
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported
@@ -3696,11 +3439,6 @@ app.on('before-quit', () => {
   manager.shutdown()
   stopInstalls()
   // A driven lane's agent is a detached process in its own group - nothing joins it to
-  // this one once we are gone, and `strays.ts` has never heard of it because it is not a
-  // pty. Leaving one behind means an agent editing a worktree with nobody watching it and
-  // no way left to stop it. `stopAllDrives` kills the tree, and it is cheap when there is
-  // nothing to kill.
-  stopAllDrives()
   installStagedMacUpdateOnQuit()
 })
 app.on('will-quit', () => {
