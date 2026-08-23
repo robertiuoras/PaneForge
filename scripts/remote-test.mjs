@@ -101,6 +101,7 @@ function backend() {
       buffer: (id) => buffers[id] ?? '',
       write: (id, data) => typed.push([id, data]),
       resize: () => {},
+      returnSize: () => {},
       redraw: () => {},
       setBusy: () => {},
       clearAttention: () => {},
