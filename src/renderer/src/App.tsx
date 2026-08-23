@@ -323,6 +323,26 @@ export default function App(): JSX.Element {
   const [info, setInfo] = useState<string | null>(null)
   /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
+
+  /**
+   * Take a pane off the move queue, from the card, the context menu or the phone's sheet.
+   *
+   * `remote:handoffCancel` has existed for as long as the queue has and nothing in this
+   * window ever called it: a pane could be put on that list from three places and taken
+   * off it only by a script. A queued pane waits for its own agent, which runs for as long
+   * as it runs - 13 and 18 minutes for the two that produced this - so "waiting" is a
+   * state somebody watches for minutes with no way to change their mind.
+   *
+   * It reports the one case it cannot serve rather than claiming it: a move already in
+   * flight is past the queue and cannot be called back.
+   */
+  const stopMove = (s: { id: string; title: string }): void => {
+    void api
+      .cancelHandoff(s.id)
+      .then((stopped) =>
+        flash(stopped ? `${s.title} stays here - the move is off` : `${s.title} is already moving - too late to stop it`)
+      )
+  }
   /** the pane whose output is being read as text (and therefore selected with a finger) */
   const [textPane, setTextPane] = useState<string | null>(null)
   /**
@@ -3460,12 +3480,20 @@ export default function App(): JSX.Element {
                         // takes. Drawn as a clock rather than as the word `moving`: a
                         // ten-minute build under a chip that says moving reads as a broken
                         // handoff, which is exactly how three of these were reported.
-                        <span
+                        // ...and it is the control that undoes it. The wait is minutes
+                        // long by construction, so the chip that reports it is the one
+                        // place somebody is already looking when they change their mind.
+                        <button
+                          type="button"
                           className="chip"
-                          title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting."
+                          title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting. Press to keep it here."
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            stopMove(s)
+                          }}
                         >
                           waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
-                        </span>
+                        </button>
                       ) : (
                         <span
                           className="chip"
@@ -4546,6 +4574,17 @@ export default function App(): JSX.Element {
                 icon: '≡',
                 run: () => setTextPane(s.id)
               },
+              ...(s.handoffQueuedAt
+                ? [
+                    {
+                      key: 'stop-move',
+                      label: 'Keep it here',
+                      hint: 'stop the move it is queued for',
+                      icon: '⤴',
+                      run: () => stopMove(s)
+                    }
+                  ]
+                : []),
               ...(grid
                 ? [
                     {
@@ -4620,6 +4659,9 @@ export default function App(): JSX.Element {
               { key: 'open', label: 'Open this pane', run: () => { setActiveId(s.id); handheld.showPane() } },
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
+              ...(s.handoffQueuedAt
+                ? [{ key: 'stop-move', label: 'Keep it here', hint: 'stop the move it is queued for', run: () => stopMove(s) }]
+                : []),
               ...(local && s.status !== 'exited'
                 ? [
                     {

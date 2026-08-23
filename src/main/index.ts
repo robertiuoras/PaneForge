@@ -1938,10 +1938,8 @@ ipcMain.handle(
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
-ipcMain.handle('remote:handoffCancel', (_e, id: string) => {
-  handoffQueue.drop(String(id))
-  return true
-})
+// False means nothing was waiting: the pane is already on its way, or was never queued.
+ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the

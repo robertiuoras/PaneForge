@@ -83,10 +83,19 @@ export class HandoffQueue {
     this.arm()
   }
 
-  /** A person changed their mind, or the pane was closed by hand. */
-  drop(id: string): void {
-    if (!this.entries.delete(id)) return
+  /**
+   * A person changed their mind, or the pane was closed by hand.
+   *
+   * The answer is whether anything was actually waiting, and it is load-bearing: a move
+   * already in flight is past this point - `run()` took the entry out of the map and the
+   * far end is already being written to - so answering `true` there would tell somebody
+   * their pane was staying while it left. A refusal may not share a shape with a success.
+   */
+  drop(id: string): boolean {
+    if (!this.entries.delete(id)) return false
     this.deps.mark(id, false)
+    this.deps.log(`handoff: ${id} taken off the queue - it stays here`)
+    return true
   }
 
   stop(): void {

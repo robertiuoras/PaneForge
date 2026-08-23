@@ -3414,3 +3414,15 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pet-swatch.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
 .pet-name { font-size: 10.5px; color: var(--muted); }
 .pet-swatch.on .pet-name { color: var(--text); }
+
+/* A chip that is also a control - the queued-move chip cancels the move. It has to look
+   exactly like the chip beside it, so this undoes the button element's own defaults and
+   nothing else. */
+button.chip {
+  font: inherit;
+  border: 0;
+  cursor: pointer;
+}
+button.chip:hover {
+  opacity: 0.85;
+}
