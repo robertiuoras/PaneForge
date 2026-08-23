@@ -2456,6 +2456,76 @@ whichever one has a hook.
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
   letters into a chooser.
 
+### The screen that ENDS a multi-question ask prints no footer (2026-08-23)
+
+Reported as "when it asks questions it doesn't finish and submit answers". Every question
+in the set WAS answered - the tab strip shows each one ticked, several of them by
+`autoAnswer` itself off a `(Recommended)` marker - and then the widget draws a review:
+the answers listed back, and `1. Submit answers / 2. Cancel`. Nothing is sent until that
+list is answered, and the app could not see it.
+
+Two separate faults, and the first one hides the second:
+
+- **`readAsk` returned the WRONG question, not none.** The review screen prints no `Enter
+  to select` footer at all, measured off two real frames in this machine's own pane logs
+  (`history/s10-mt5pfcld.log`, `history/s11-mt2ptrhm.log`). The footer is the load-bearing
+  signal in `choices.ts` and `readAsk` takes the LAST one in the tail - which on that
+  frame belongs to the question asked immediately before the review. So the pane drew
+  buttons for a question the CLI had already moved past, `askKey` never changed, and
+  `dueForAuto` correctly refused to press a question it had already answered. A missing
+  footer read as a stale question rather than as no question, which is why nothing in the
+  app said anything was wrong.
+
+  `REVIEW` is a second anchor, and it sits ABOVE its list rather than below it, so
+  `readReview` walks DOWN. It wins only when it is NEWER than the last footer. The two
+  refusals that keep it as narrow as the footer: the list must still be 1..N with exactly
+  one `❯` (a numbered list quoted in an answer never carries one), and **nothing but
+  blank rows and rules may follow it** - once the answers are sent the CLI prints
+  `⏺ User answered Claude's questions:` and the whole echo under those same rows, and they
+  stay in the painted tail. A return pressed at that would land in a composer somebody may
+  be holding a draft in.
+
+- **`GOES` did not read `Submit` as a go-ahead.** With the review readable, `pickAnswer`
+  still returned null: `Submit answers` leads with none of the yes-shaped words, and
+  `Cancel` is refused by `STOPS`, so a question with exactly one usable option had no
+  answer. `submit|done|finish` are the narrowest sense of "go on with what you were
+  doing" there is - every decision was made on the screens before this one, and the only
+  alternative discards them all. A `Submit answers and don't ask again` is still refused
+  by `WIDENS`, and the arrow sitting on `Cancel` still does not make Cancel takeable.
+
+### ...and the countdown it draws was red on red
+
+`--surface-1` is defined **nowhere** - the palette is `--bg`, `--surface`, `--surface-2`,
+`--surface-3` - and `.pane-ask-auto-left` asked for `color: var(--surface-1)` over
+`background: var(--danger)`. An invalid `var()` in a `color` falls back to `unset`, which
+for an inherited property means inherit, and the parent `.pane-ask-auto` is `var(--danger)`
+itself. Measured in a real window: **1.00:1**. The red box was there, with the seconds
+invisible inside it - which is exactly the report, "in the small card it should show the
+number counting down inside the red box".
+
+Seven sites had it, all silent, and the same edit had just added an eighth. Backgrounds
+became `var(--surface)` and the two text-on-danger cases `var(--bg)`; measured after,
+**7.47:1**. The same sweep found `var(--acc)` (three sites - the palette is `--accent`),
+`var(--fg)` (six - it is `--text`), and the whole `.autoclear-card` block written against
+`--panel` / `--border` / `--text-secondary` / `--text-muted` / `--hover`, none of which
+exist: that card shipped the same day with a transparent background and no border.
+
+The tell for the next one: an invalid `var()` never errors, never logs, and in a `color`
+it inherits something plausible. Only two things catch it - reading the computed value in
+a real window, and checking every `var(--x)` in the stylesheets against the keys
+`paletteFor` actually returns (`--agent`, `--level` and `--mono` are the legitimate
+exceptions: the first two are set inline per element, and every `--mono` use carries a
+font-family fallback).
+
+### The seconds are inside the red box, not beside it
+
+The sidebar card drew two chips - `asks you` in tinted red, then a separate solid-red
+`12s`. Two red boxes on a 190px title line read as two readings about two things, and the
+half that is actually moving looked like the unrelated one. They are one fact a step
+apart, so the clock is now a child of the chip. `min-width: 30px`, because measured at 22
+the pill was 22 / 27 / 28.6px for `9s` / `12s` / `now` and the row jogged sideways on
+every tick and again on the last one.
+
 ---
 
 ## ...and a question with an obvious answer is answered (full rules, moved out of CLAUDE.md 2026-08-21)
