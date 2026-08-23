@@ -16,7 +16,10 @@
 // src/main/usage.ts, and everything that decides anything is arithmetic that a test can
 // run without a real process tree. `npm run test:usage`.
 
-import { paneBackJobs, type PaneBackJob } from './paneBackJobs'
+// Type-only, and it must stay that way: `scripts/usage-test.mjs` imports this file into
+// node with type stripping, where a VALUE import of an extensionless sibling does not
+// resolve. The reading itself is attached in `main/usage.ts`, which is bundled.
+import type { PaneBackJob } from './paneBackJobs'
 
 /** One row of the process table, with the two figures strays.ts does not need. */
 export interface UsageRow {
@@ -75,7 +78,8 @@ export interface PaneUsage {
    *
    * Cosmetic, and deliberately no part of any "is this pane busy" reading - the head of
    * `shared/paneBackJobs.ts` says why a false job THERE is expensive and here costs a
-   * glance. Absent rather than empty when the table could not say.
+   * glance. Attached by `main/usage.ts` after this summary, so nothing in this file has to
+   * import the rule.
    */
   jobs?: PaneBackJob[]
 }
@@ -170,8 +174,7 @@ export function summarise(
       rssMb: Math.round(rssKb / 1024),
       cpuPct:
         previous.size === 0 || elapsedMs <= 0 ? null : Math.round((deltaMs / elapsedMs) * 100),
-      procs: tree.length,
-      jobs: paneBackJobs(tree, pid)
+      procs: tree.length
     }
   }
   return { panes, cpuNow }

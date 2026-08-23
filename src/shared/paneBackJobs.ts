@@ -81,6 +81,14 @@ export function isCommandShell(cmd: string | undefined): boolean {
 }
 
 /**
+ * What a CLI does to a shell before it runs anything in it, which is not the job.
+ *
+ * The measured prelude is `source <snapshot> 2>/dev/null || true && <command>`; without
+ * this list the answer is `source`.
+ */
+const HOUSEKEEPING = new Set(['source', '.', 'true', ':', 'export', 'cd', 'set', 'setopt', 'unset', 'shopt', 'alias', 'eval'])
+
+/**
  * Runtimes whose own name says nothing about the work.
  *
  * `node /Users/.../next dev -p 3009` printed as `node` is the same non-answer as printing
@@ -105,10 +113,12 @@ export function workName(cmd: string): string {
  *
  * The `-c` STRING first, because it is what somebody actually typed and the live leaf often
  * is not: `npm run dev` is three processes deep by the time it is serving and its leaf is
- * `node .../next dev`, which prints as `node` - a word that names nothing on a card. The
- * measured prefix has to come off first (`source ~/.claude/shell-snapshots/snapshot-zsh-<n>
- * .sh 2>/dev/null || true && <the command>`), so the LAST `&&`/`;` segment is the command
- * and everything before it is the CLI setting the shell up.
+ * `node .../next dev`, which prints as `node` - a word that names nothing on a card.
+ *
+ * The FIRST segment that is not shell housekeeping, never the last. The measured prelude is
+ * `source ~/.claude/shell-snapshots/snapshot-zsh-<n>.sh 2>/dev/null || true && <the
+ * command>`, so taking the last segment is right there and wrong the moment the command
+ * itself has more than one part: `sleep 400; true` measured live as a job called `true`.
  *
  * The oldest non-shell descendant is the fallback, for a `-c` string that is nothing but
  * that prelude. Its own children are somebody else's reading.
@@ -118,16 +128,17 @@ export function jobLabel(rows: JobRow[], shell: JobRow): string {
   const at = cmd.search(/(?:^|\s)(?:-c|\/c|\/k|-Command|-EncodedCommand)(?:\s|$)/i)
   if (at >= 0) {
     const script = cmd.slice(at).replace(/^\s*\S+\s*/, '')
-    const last = script.split(/&&|\|\||;/).pop() ?? ''
-    const word = last
-      .trim()
-      .split(/\s+/)
-      .find((w) => w && !w.startsWith('-') && !/^\d/.test(w) && /[A-Za-z]/.test(w))
-    // `env FOO=1 cmd` and a bare assignment are the two shapes that lead with something
-    // that is not the program.
-    if (word && !word.includes('=')) {
+    for (const seg of script.split(/&&|\|\||;/)) {
+      // `env FOO=1 cmd` and a bare assignment are the two shapes that lead with something
+      // that is not the program.
+      const word = seg
+        .trim()
+        .split(/\s+/)
+        .find((w) => w && !w.startsWith('-') && !/^\d/.test(w) && /[A-Za-z]/.test(w) && !w.includes('='))
+      if (!word) continue
       const name = programName(word)
-      if (name && !SHELLS.has(name.toLowerCase())) return name
+      if (!name || SHELLS.has(name.toLowerCase()) || HOUSEKEEPING.has(name.toLowerCase())) continue
+      return name
     }
   }
   const byParent = new Map<number, JobRow[]>()

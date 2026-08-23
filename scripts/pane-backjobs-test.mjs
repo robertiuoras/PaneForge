@@ -119,6 +119,20 @@ is(paneBackJobs(NESTED, 10).length, 1, 'a shell inside a shell is one thing some
 is(paneBackJobs(NESTED, 10)[0].label, 'npm', 'named by what was TYPED - its leaf is `node .../next`, which names nothing')
 is(paneBackJobs([NESTED[0], { ...NESTED[1], cmd: shellCmd('') }, NESTED[2], NESTED[3]], 10)[0].label, 'next', 'and by the oldest live command when the -c string is only the prelude')
 
+// Measured live 2026-08-24: a background `zsh -c 'sleep 400; true'` was named `true`,
+// because the prelude rule took the LAST segment. The command is the FIRST segment that is
+// not the CLI setting the shell up.
+const TWO_PART = [
+  { pid: 20, ppid: 1, elapsed: 900, cmd: '/usr/local/bin/claude' },
+  { pid: 21, ppid: 20, elapsed: 44, cmd: shellCmd('sleep 400; true') }
+]
+is(paneBackJobs(TWO_PART, 20)[0].label, 'sleep', 'a job with two parts is named by the first, not the last')
+is(
+  paneBackJobs([TWO_PART[0], { ...TWO_PART[1], cmd: shellCmd('source ~/.zshrc && npm run build') }], 20)[0].label,
+  'npm',
+  'and shell housekeeping is never the name'
+)
+
 is(paneBackJobs(REAL, 0), [], 'no pty pid, no answer')
 is(paneBackJobs([], 22457), [], 'an empty table is a failed read, never a busy pane')
 

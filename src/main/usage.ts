@@ -17,7 +17,8 @@
 import { execFile } from 'node:child_process'
 import { totalmem } from 'node:os'
 import { app, BrowserWindow } from 'electron'
-import { report, summarise, type UsageReport, type UsageRow } from '../shared/usage'
+import { paneBackJobs } from '../shared/paneBackJobs'
+import { report, summarise, treeOf, type UsageReport, type UsageRow } from '../shared/usage'
 
 /**
  * How often the panes are re-measured.
@@ -298,6 +299,13 @@ export function trackUsage(
       if (!rows.length) return
       const elapsed = lastAt ? at - lastAt : 0
       const { panes, cpuNow } = summarise(rows, live, previous, elapsed)
+      // What each pane is still RUNNING, off the same sample. Attached here rather than
+      // inside `summarise` so that shared/usage.ts imports nothing (see the note on
+      // `PaneUsage.jobs`), and only where the table carried the command lines it needs.
+      for (const { id, pid } of live) {
+        const pane = panes[id]
+        if (pane) pane.jobs = paneBackJobs(treeOf(rows, pid), pid)
+      }
       previous = cpuNow
       lastAt = at
       const own = appCost(mem)
