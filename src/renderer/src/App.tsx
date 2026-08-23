@@ -1716,7 +1716,8 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number } | undefined
+    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | undefined
   >(undefined)
   /**
    * How a sweep asks for panes to be closed.
@@ -1731,6 +1732,18 @@ export default function App(): JSX.Element {
    * was true even on a desk where the clock was doing its job.
    */
   const armCloseRef = useRef<(plan: Reclaim[], why: 'idle' | 'pressure', log: string) => void>(() => {})
+  /**
+   * The same, for the rung above closing: moving a pane to another machine.
+   *
+   * Both handoff sweeps used to move panes into a `console.info`, so a pane could leave
+   * this desk with nothing on screen saying so - while a CLOSE, the more recoverable of
+   * the two, counted down and could be stopped. A ref for the same reason `armCloseRef`
+   * is one: the sweeps are effects, and the countdown state lives further down beside the
+   * mascot's own props.
+   */
+  const armMoveRef = useRef<(plan: AutoHandoff[], why: string, cooldownMinutes: number) => void>(
+    () => {}
+  )
   useEffect(() => {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
@@ -1853,6 +1866,9 @@ export default function App(): JSX.Element {
       for (const [id, until] of Object.entries(handoffBlocked.current)) {
         if (until <= Date.now()) delete handoffBlocked.current[id]
       }
+      // Set once a countdown is armed: from there the sweep lock belongs to the countdown,
+      // and is given back when the move runs, is refused, or is called off.
+      let armed = false
       void (async () => {
         try {
           const state = await api.remoteState()
@@ -1869,27 +1885,16 @@ export default function App(): JSX.Element {
             }))
           )
           const plan = make(candidates, Date.now())
-          for (const move of plan) {
-            console.info(
-              `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
-            )
-            const items = await api.handoffToDevice(move.device, [move.id], false, true)
-            const item = items[0]
-            if (item?.ok) {
-              console.info(`handoff: ${move.id} is now running on ${move.deviceName}`)
-            } else {
-              // A repo that cannot be pushed will not become pushable in fifteen seconds,
-              // and retrying it every reading is how an automatic thing becomes noise.
-              handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
-              console.info(
-                `handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`
-              )
-            }
-          }
+          if (!plan.length) return
+          // Nothing moves silently. The loop that used to run the moves here is `doMove`
+          // now, behind the same countdown a close gets: named pane, named machine, and
+          // `Keep it here` on it.
+          armed = true
+          armMoveRef.current(plan, why, cooldownMinutes)
         } catch {
           /* a peer that cannot be asked is a peer that cannot be used - the sweeps below still run */
         } finally {
-          handoffSweeping.current = false
+          if (!armed) handoffSweeping.current = false
         }
       })()
     },
