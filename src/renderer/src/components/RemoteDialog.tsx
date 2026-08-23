@@ -67,7 +67,7 @@ function Fold({ label, children }: { label: string; children: ReactNode }): JSX.
  * is the answer somebody came here to check, and a read that could not happen must never
  * be able to look like it.
  */
-function PeerJobs({ id, name }: { id: string; name: string }): JSX.Element {
+function PeerJobs({ id, name }: { id: string | null; name: string }): JSX.Element {
   const [jobs, setJobs] = useState<BackJob[] | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -75,8 +75,12 @@ function PeerJobs({ id, name }: { id: string; name: string }): JSX.Element {
   const load = (): void => {
     setBusy(true)
     setErr('')
-    void api
-      .listRemoteJobs(id)
+    // `id === null` is THIS machine. The reading is the same one (`shared/backJobs.ts`
+    // over one process table), and it was answerable from the window all along -
+    // `listJobs` shipped in the surface, was handled in main, and nothing ever called
+    // it. So the panel could tell you what the PC was running unattended and not what
+    // the machine you are sitting at was, which is the half you can actually act on.
+    void (id === null ? api.listJobs() : api.listRemoteJobs(id))
       .then((list) => setJobs(list))
       .catch((e: Error) => setErr(e.message || `${name} did not answer`))
       .finally(() => setBusy(false))
@@ -89,19 +93,21 @@ function PeerJobs({ id, name }: { id: string; name: string }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
+  const who = id === null ? 'this machine' : name
+
   return (
     <div className="dev-jobs">
       <div className="dev-jobs-head">
         <span className="hint">
           {err
-            ? `Could not ask ${name}: ${err}`
+            ? `Could not ask ${who}: ${err}`
             : jobs === null
-              ? `Asking ${name} what else it is running…`
+              ? `Asking ${who} what else it is running…`
               : jobs.length === 0
-                ? `Nothing running on ${name} outside its panes.`
-                : `Outside its panes, ${name} is running ${jobsSummary(jobs)}.`}
+                ? `Nothing running on ${who} outside its panes.`
+                : `Outside its panes, ${who} is running ${jobsSummary(jobs)}.`}
         </span>
-        <button className="ghost small" disabled={busy} onClick={load} title={`Ask ${name} again`}>
+        <button className="ghost small" disabled={busy} onClick={load} title={`Ask ${who} again`}>
           {busy ? 'Asking…' : 'Refresh'}
         </button>
       </div>
@@ -909,6 +915,12 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
           )}
 
           {self.error && <div className="dev-error">{self.error}</div>}
+
+          {/* What this desk is running with no pane on it. Same reading as a peer's,
+              and it belongs on the hero rather than behind hosting: a scheduled
+              `claude -p` and a dev server on a port nobody can reach are facts about
+              this machine whether or not anything is paired with it. */}
+          <PeerJobs id={null} name={self.name} />
 
           {self.hosting && (
             <div className="dev-self">
