@@ -267,6 +267,51 @@ rmSync(join(clone, 'local-edit.txt'))
   git(repo, 'reset', '--hard', 'HEAD')
 }
 
+// -------------------------------------------- a lane worktree handed to the other desk
+// The question this answers: a letter lane is local scratch on BOTH desks, and both call
+// it `lane-a`, so what happens when one is handed over. The contract is that the receiver
+// never destroys local work - so the far desk's own lane, which has commits origin has
+// never seen, must refuse by name rather than be fast-forwarded over. A lane the far desk
+// does NOT have is a different question and still lands.
+{
+  const lane = (branch, dir) => {
+    git(repo, 'worktree', 'add', '-b', branch, dir)
+    writeFileSync(join(dir, `${branch}-work.txt`), 'mac lane work\n')
+    git(dir, 'add', '-A')
+    git(dir, 'commit', '-m', `feat: ${branch} on the mac`)
+    return {
+      ...sender,
+      list: () => [{ id: 'l1', title: branch, cwd: dir, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }],
+      snapshot: () => [{ cwd: dir, title: branch, agent: 'claude', scrollbackId: 'l1' }]
+    }
+  }
+
+  // The far desk is already using a lane of the same name, with work of its own.
+  const farLane = join(receiverRoot, 'proj-a')
+  git(clone, 'worktree', 'add', '-b', 'lane-a', farLane)
+  writeFileSync(join(farLane, 'pc-lane.txt'), 'work someone did on the PC lane\n')
+  git(farLane, 'add', '-A')
+  git(farLane, 'commit', '-m', 'feat: pc lane work')
+
+  const clash = await sendHandoff(lane('lane-a', join(senderRoot, 'proj-a')), 'pc', { ids: ['l1'] })
+  ok(
+    'a lane handed to a desk already holding its own lane of that name refuses by name',
+    clash[0]?.ok === false && /unpushed commit/.test(clash[0]?.error ?? ''),
+    clash[0]?.error
+  )
+  ok('...and the other desk keeps its own lane commit', existsSync(join(farLane, 'pc-lane.txt')))
+  ok('...and stays on its own lane branch', git(farLane, 'rev-parse', '--abbrev-ref', 'HEAD') === 'lane-a')
+
+  // The control: a lane that desk has never had is not a collision, and still arrives.
+  const fresh = await sendHandoff(lane('lane-b', join(senderRoot, 'proj-b')), 'pc', { ids: ['l1'] })
+  ok('a lane the far desk does not have still lands', fresh[0]?.ok === true, fresh[0]?.error)
+  ok(
+    '...in a folder of its own, never over the trunk checkout',
+    existsSync(join(receiverRoot, 'proj-b', 'lane-b-work.txt')) &&
+      !existsSync(join(clone, 'lane-b-work.txt'))
+  )
+}
+
 const outside = await sendHandoff(
   { ...sender, list: () => [{ id: 's9', title: 'sys', cwd: '/etc', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }], snapshot: () => [{ cwd: '/etc', agent: 'claude', scrollbackId: 's9' }] },
   'pc'
