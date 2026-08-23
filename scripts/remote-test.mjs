@@ -81,9 +81,14 @@ function backend() {
   ]
   const buffers = { s1: 'SECRET-SCROLLBACK-s1', s2: '' }
   const typed = []
+  // What a mirror asked this desk to do to the SIZE of its own panes.
+  const resized = []
+  const returned = []
   const started = []
   return {
     typed,
+    resized,
+    returned,
     started,
     sessions,
     emitData(id, data) {
@@ -100,8 +105,8 @@ function backend() {
       list: () => sessions,
       buffer: (id) => buffers[id] ?? '',
       write: (id, data) => typed.push([id, data]),
-      resize: () => {},
-      returnSize: () => {},
+      resize: (id, cols, rows, borrowed) => resized.push([id, cols, rows, borrowed === true]),
+      returnSize: (id) => returned.push(id),
       redraw: () => {},
       setBusy: () => {},
       clearAttention: () => {},
@@ -274,6 +279,37 @@ async function main() {
   be.emitData('s2', 'hello from the other machine')
   ok('live output streams through', await until(() => seen.some(([id, d]) => id === '@HOSTID/s2' && d.includes('hello from the other machine'))))
   ok('the mirror keeps its own copy', client.buffer('s2').includes('hello from the other machine'))
+
+  // A mirror BORROWS the size. Fitting the font is unwinnable when the two windows
+  // are different sizes (the PC's pane was 69x35 against room for 152x58 here), so a
+  // mirrored pane asks the host to draw its pty at the viewer's grid - and the host
+  // must be told it is a borrow, or it overwrites the desk's own size with no way back.
+  client.resizeOn('s1', 150, 50)
+  ok(
+    'a mirror can lend its grid to the far pty',
+    await until(() => be.resized.some(([id, c, r]) => id === 's1' && c === 150 && r === 50)),
+    JSON.stringify(be.resized)
+  )
+  ok(
+    'and it arrives as a BORROW, never as an owned resize',
+    be.resized.at(-1)?.[3] === true,
+    JSON.stringify(be.resized.at(-1))
+  )
+  // The refusal that keeps this honest: a resize changes what is on somebody else's
+  // screen, so it may only be sent about a pane this device is actually drawing.
+  client.resizeOn('s2-not-watched', 10, 10)
+  ok(
+    'a pane this device does not watch is never resized',
+    !be.resized.some(([id]) => id === 's2-not-watched'),
+    JSON.stringify(be.resized)
+  )
+  // ...and looking away gives it straight back, per pane. Returning ALL of them would
+  // snap the other panes this device is still watching.
+  client.setWatch(['s2'])
+  ok('detaching returns the borrowed size', await until(() => be.returned.includes('s1')), JSON.stringify(be.returned))
+  ok('and only that pane', !be.returned.includes('s2'), JSON.stringify(be.returned))
+  client.setWatch(['s1', 's2'])
+  ok('both are watched again', await until(() => client.list().length === 2))
 
   // Keystrokes back.
   client.send({ t: 'write', id: 's1', data: 'npm test\r' })
