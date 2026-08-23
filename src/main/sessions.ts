@@ -51,6 +51,17 @@ import type {
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
+
+const WIN = process.platform === 'win32'
+
+/**
+ * How often Windows re-reads the process table for what its shell panes are running.
+ *
+ * 4s rather than the 1s sweep, because this one is a CIM query rather than a syscall - the
+ * same figure `usage.ts` settled on, and for the same reason: the answer is read by a
+ * person glancing at a row, not by a control loop. POSIX needs none of it.
+ */
+const WIN_JOB_MS = 4000
 /**
  * How long it must stay quiet before the pane is treated as *waiting for you*.
  * A single turn goes quiet many times - the model thinking, a long tool call, a
@@ -299,6 +310,12 @@ interface Live {
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
+  /**
+   * Windows only: what each shell pane's pty had running at the last table read.
+   * Empty on POSIX, where the tty answers the same question for free.
+   */
+  private winJobs = new Map<string, { name: string; elapsed?: number }>()
+  private winJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false

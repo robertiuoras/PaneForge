@@ -11,7 +11,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -32,11 +32,15 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { paneJob, programName } = require(out)
+const { commandName, jobFromTable, paneJob, programName } = require(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
   assert.deepEqual(actual, expected, what)
+  checks++
+}
+const ok = (cond, what) => {
+  assert.ok(cond, what)
   checks++
 }
 
@@ -73,6 +77,55 @@ is(paneJob('sleep', ''), null, 'a pane whose runner is unknown is left alone')
 is(paneJob('node', 'claude'), null, 'an agent CLI reporting its own runtime is not a job')
 is(paneJob('rg', 'claude'), null, 'and neither is a tool it started for itself')
 is(paneJob('npm', 'codex'), null, 'the refusal is about the RUNNER, not about the command')
+
+// ---------------------------------------------------------------------------
+// Windows, which has no foreground reading at all and answers off the process table.
+// Both fixtures are the real rows measured on the PC 2026-08-23.
+
+const winIdle = [{ pid: 67536, ppid: 14168, cmd: 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo' }]
+const winBusy = [
+  ...winIdle,
+  { pid: 52388, ppid: 67536, cmd: '"C:\\Program Files\\nodejs\\node.exe" -e setTimeout(()=>{},25000)', elapsed: 7 }
+]
+
+is(commandName('"C:\\Program Files\\nodejs\\node.exe" -e setTimeout(()=>{},25000)'), 'node', 'a quoted path with a space is one program, not two')
+is(commandName('/usr/bin/npm run dev'), 'npm', 'and an unquoted one stops at the first space')
+is(commandName('   '), '', 'a blank command line names nothing')
+
+is(jobFromTable(winIdle, 67536, 'powershell'), null, 'a shell with no children is running nothing')
+is(jobFromTable(winBusy, 67536, 'powershell'), { name: 'node', elapsed: 7 }, "a child of the pty pid is the pane's job, with its age")
+is(jobFromTable(winBusy, 14168, 'powershell'), null, 'and only of THAT pane - the parent pid is somebody else')
+is(jobFromTable(winBusy, 67536, 'claude'), null, 'the runner refusal holds here too')
+is(jobFromTable([], 67536, 'powershell'), null, 'a table that did not answer is not a machine running nothing')
+is(
+  jobFromTable(
+    [
+      { pid: 2, ppid: 1, cmd: 'npm run dev', elapsed: 90 },
+      { pid: 3, ppid: 1, cmd: 'node ./x', elapsed: 4 }
+    ],
+    1,
+    'bash'
+  ),
+  { name: 'npm', elapsed: 90 },
+  'the OLDEST child is the command somebody ran; the young one is what it started'
+)
+is(
+  jobFromTable([{ pid: 2, ppid: 1, cmd: 'conhost.exe 0x4', elapsed: 90 }], 1, 'cmd'),
+  null,
+  "the console host Windows hangs off a shell is not that pane's work"
+)
+
+// The load-bearing guard, and it is a SOURCE assertion because nothing else can catch it:
+// `IPty.process` on Windows answers with the TERMINAL NAME whatever is running (measured:
+// "xterm-256color" idle AND with a command up). A `jobOf` that still asked the tty there
+// would mark every shell pane on that machine working for ever, and every test above would
+// still pass.
+{
+  const src = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const body = src.slice(src.indexOf('private jobOf('), src.indexOf('private sweepWinJobs('))
+  ok(/if \(WIN\)/.test(body), 'jobOf answers Windows from the table before it ever asks the tty')
+  ok(body.indexOf('if (WIN)') < body.indexOf('proc.process'), 'and the refusal comes FIRST')
+}
 
 // ---------------------------------------------------------------------------
 // A real pty. Everything above is arithmetic over two strings; this is the question of

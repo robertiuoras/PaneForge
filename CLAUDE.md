@@ -745,10 +745,19 @@ minutes while the card read `ready - type to start` and sat in **Ready** with no
 the desk calling a busy machine idle. `shared/paneJob.ts` is the reading and
 `npm run test:panejob`.
 
-- **It is the pty's own foreground process**, which the tty already knows (`tcgetpgrp`, the
-  console process list on Windows, both behind node-pty's `IPty.process`). One syscall, no
-  process table, asked on the same 1s sweep everything else here runs on. Measured against
-  a real pty: `zsh` at the prompt, `sleep` a beat after `sleep 20` was typed.
+- **On POSIX it is the pty's own foreground process**, which the tty already knows
+  (`tcgetpgrp`, behind node-pty's `IPty.process`). One syscall, no process table, asked on
+  the same 1s sweep everything else here runs on. Measured against a real pty: `zsh` at the
+  prompt, `sleep` a beat after `sleep 20` was typed.
+- **Windows has no such reading, and the failure is a LIE rather than an absence.**
+  Measured on the PC: `IPty.process` there returns the TERMINAL NAME - `"xterm-256color"`
+  idle and `"xterm-256color"` with a command up - so believing it marks every shell pane on
+  that machine working for ever. There the answer comes off the process table instead
+  (`jobFromTable`, `WIN_JOB_MS` 4s, only while a shell pane is open, never twice at once):
+  the pty pid IS the shell, measured, and the command is its child. That path also knows
+  how long the command has been alive, so the pane's clock is its real age rather than the
+  moment the app noticed it. An empty table leaves every pane as it was - "the table did
+  not answer" may not wear the shape of "nothing is running".
 - **It feeds `busyOnScreen`, rather than being a state of its own.** A live command means
   exactly what that flag means everywhere else in `sweepIdle` - the pane is working, do not
   call the turn over - so the pane sorts into **Running** and the backstop that ends a
