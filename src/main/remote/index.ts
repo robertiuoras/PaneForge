@@ -298,7 +298,8 @@ export class Remote extends EventEmitter {
             runSince: s.runSince,
             stalledSince: s.stalledSince,
             createdAt: s.createdAt,
-            job: s.job
+            job: s.job,
+            closingAt: s.closingAt
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,

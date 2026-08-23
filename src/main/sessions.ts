@@ -1142,6 +1142,30 @@ export class SessionManager extends EventEmitter {
    * repeat it every second or so, so the deadline it sets expires by itself if the pane
    * goes away.
    */
+  /**
+   * When the idle clock is going to close this pane, as decided by the window.
+   *
+   * The decision lives in the renderer because that is where the two facts it needs live -
+   * which pane has focus, and the config the sweep is already reading - so this is the
+   * PUBLISHING half: it puts the deadline on the session, where the sidebar reads it and
+   * where a paired device gets it for free with everything else about that pane.
+   *
+   * A viewer may not compute this for itself. The deadline is a fact about THIS machine's
+   * settings and its own refusals, and a mirror drawing its own guess would count down on
+   * a pane nobody is going to close. `sessions:closing` is refused for a mirrored id in
+   * `index.ts` for exactly the reason `sessions:busy` is.
+   */
+  setClosingAt(id: string, at: number | null): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    const next = at && at > 0 ? at : undefined
+    // Only when it MOVED: this arrives on every session change, and emitting a fresh list
+    // in response to one would be a loop that never settles.
+    if (s.meta.closingAt === next) return
+    s.meta.closingAt = next
+    this.emitSessions()
+  }
+
   setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock): void {
     const s = this.sessions.get(id)
     if (!s) return
