@@ -1,24 +1,42 @@
 // Which copy of PaneForge a script means, and where that copy keeps its state.
 //
-// Every checkout launches under its own profile so two agents in two worktrees never land
-// on the same one - see the comment in try.mjs for why sharing looks exactly like "my
-// change did not apply". That naming lived in three files (try.mjs, dev.mjs, and the
-// activation probe), and the probe's copy was the stale one: it hardcoded `dev`, so run
-// from the lane checkout `PaneForge-a` it wrote its settings into the `dev` profile's
-// folder and launched `dev-a`, which then had no saved position and cornered itself on
-// top of the LIVE app's Stash. The probe refuses to post at a point inside the live
-// overlay, so every run aborted before it measured anything, blaming a missing
-// Accessibility grant that was only half the story.
+// THERE IS ONE DEV COPY PER MACHINE, not one per checkout. Robert's words, 2026-08-23:
+// "whats the point of 2 dev windows can you use just 1 at all times?" - and he is right,
+// because the thing being looked at is one window on one screen. Two of them is two
+// taskbar buttons, two sets of panes, two remote links to the same PC, and no way to tell
+// from the screen which checkout you are looking at.
 //
-// One definition, imported by all three.
+// It used to be one profile per checkout (`PaneForge-a` -> `dev-a`), so two lanes could
+// each hold their own copy. The cost that bought - a second lane's launch raising the
+// first lane's window and exiting on the single-instance lock, which reads exactly like
+// "my change did not apply" - is paid instead by `closeTestApps`, which now closes the
+// dev copy whatever checkout started it, so a launch always ends with THIS checkout's
+// build in the one window. Last launcher wins, out loud.
+//
+// One definition, imported by try.mjs, dev.mjs and the activation probe, so the probes
+// that have to FIND this copy's settings folder cannot drift from the script that
+// launches it.
 
 import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 
-/** The profile a checkout launches as. `PaneForge` -> `dev`, `PaneForge-a` -> `dev-a`. */
-export function devProfile(root) {
-  const suffix = basename(root).replace(/^(claude-orchestrator|paneforge)-?/i, '')
-  return suffix ? `dev-${suffix}` : 'dev'
+/** The profile every checkout launches as. One dev window per machine. */
+export function devProfile(_root) {
+  return 'dev'
+}
+
+/**
+ * Every sibling checkout of this one - `PaneForge`, `PaneForge-a`, `PaneForge-b`... - as a
+ * folder prefix. `closeTestApps` matches Electron under any of them, because the copy
+ * holding the shared `dev` lock is regularly one another lane started.
+ *
+ * The family name is the checkout's own, minus the lane suffix, and it keeps the folder's
+ * real case: the repo is renamed by scripts/rename-repo.mjs and this must follow it.
+ */
+export function checkoutFamily(root) {
+  const name = basename(root)
+  const m = name.match(/^(claude-orchestrator|paneforge)/i)
+  return join(dirname(root), m ? m[1] : name)
 }
 
 /**
