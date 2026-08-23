@@ -440,7 +440,13 @@ export class SessionManager extends EventEmitter {
 
   start(req: StartSessionRequest): Session {
     if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
-    const agent: Agent = req.agent ?? 'claude'
+    // Coerce, because this request crosses IPC, the phone server, the device link and
+    // `pf-ctl call`: a caller handing over the whole AgentInfo instead of its id typechecks
+    // nowhere and arrives anyway, and the object then reaches history and the renderer.
+    const asked = req.agent as unknown
+    const agent: Agent = (typeof asked === 'string'
+      ? asked
+      : ((asked as { id?: string } | null)?.id ?? 'claude')) as Agent
     // Before anything reads the folder: a lane the sweep reclaimed while this pane was
     // closed is still the pane's remembered cwd, and a CLI spawned into a folder that is
     // not there loses every hook to `posix_spawn '/bin/sh'` ENOENT. See ensureLaneFolder.

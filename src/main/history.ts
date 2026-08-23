@@ -243,6 +243,12 @@ export function list(): HistoryEntry[] {
           // Not stored - a folder can come back, and a stale `gone` in a metadata file
           // would outlive the truth. One stat per row, next to the one already being made.
           e.gone = !e.cwd || !existsSync(e.cwd)
+          // A row written with the whole agent SPEC where its id belongs. Two are on this
+          // machine; every later reader (the logo, the `a.id === e.agent` lookup) expects a
+          // string. Repaired on the way out rather than migrated - the file is a nicety and
+          // a rewrite of 280 of them is not worth a launch.
+          if (e.agent && typeof e.agent !== 'string')
+            e.agent = ((e.agent as unknown as { id?: string }).id ?? '') as typeof e.agent
           return e
         } catch {
           return null
