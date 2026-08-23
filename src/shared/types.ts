@@ -178,6 +178,17 @@ export interface Session {
    */
   handingOff?: boolean
   /**
+   * When this pane was QUEUED for a move, if it is queued rather than in transit.
+   *
+   * The two states looked identical on the card - one chip reading `moving` - and they are
+   * not the same fact at all. A transfer is measured in seconds (2.3 s between this Mac and
+   * the PC, and most of that has since been taken out); a queued pane is waiting for its
+   * own turn to end, which is however long the agent takes - a ten-minute build is ten
+   * minutes of a chip saying `moving`. Three panes sat like that on 2026-08-23 and read as
+   * a broken handoff. Absent while a real transfer is in flight.
+   */
+  handoffQueuedAt?: number
+  /**
    * The device that handed this pane here, when one did - see `StartSessionRequest`.
    * Read by the local-pane budget, which may not send it straight back where it came from.
    */

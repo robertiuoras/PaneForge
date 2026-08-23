@@ -31,8 +31,13 @@ export interface QueueDeps {
   busy(s: Session): boolean
   /** move it now - the same path the button takes, with the wait already spent */
   send(id: string, device: string, closeReceiverWhenDone: boolean): Promise<HandoffItem[]>
-  /** paint the pane as on its way, so nothing else closes or moves it */
-  mark(id: string, on: boolean): void
+  /**
+   * Paint the pane as on its way, so nothing else closes or moves it.
+   *
+   * `queuedAt` says it is WAITING rather than moving, which is a different sentence on the
+   * card - and it is dropped the moment the move really starts.
+   */
+  mark(id: string, on: boolean, queuedAt?: number): void
   deviceName(device: string): string
   config(): AutoHandoffConfig
   log(line: string): void
@@ -71,8 +76,9 @@ export class HandoffQueue {
     // Re-queueing an id keeps its ORIGINAL wait: pressing the button again while a pane is
     // still working must not push its deadline out for ever.
     const had = this.entries.get(id)
-    this.entries.set(id, { id, device, since: had?.since ?? this.now(), closeReceiverWhenDone })
-    this.deps.mark(id, true)
+    const since = had?.since ?? this.now()
+    this.entries.set(id, { id, device, since, closeReceiverWhenDone })
+    this.deps.mark(id, true, since)
     if (!had) this.deps.log(`handoff: ${id} queued for ${this.deps.deviceName(device)} - waiting for the turn to end`)
     this.arm()
   }

@@ -1155,12 +1155,19 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
-  setHandingOff(id: string, on: boolean): void {
+  setHandingOff(id: string, on: boolean, queuedAt?: number): void {
     const s = this.sessions.get(id)
     if (!s) return
-    if (!!s.meta.handingOff === on) return
+    const was = !!s.meta.handingOff
+    const wasAt = s.meta.handoffQueuedAt
     if (on) s.meta.handingOff = true
     else delete s.meta.handingOff
+    // A queued pane and one actually in transit are the same paint to `reclaim.ts` and two
+    // different sentences to a person, so the moment it stops waiting and starts moving is
+    // a change the card has to see.
+    if (on && queuedAt) s.meta.handoffQueuedAt = queuedAt
+    else delete s.meta.handoffQueuedAt
+    if (was === on && wasAt === s.meta.handoffQueuedAt) return
     this.emitSessions()
   }
 
