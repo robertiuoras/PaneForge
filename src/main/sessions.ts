@@ -29,7 +29,7 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
 import { killPaneStrays, trackStrays } from './strays'
-import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
+import { clearsConversation, isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
@@ -755,9 +755,20 @@ export class SessionManager extends EventEmitter {
     // moment later, but a turn that is still drawing its first frame is already
     // running, and starting here is what makes the readout mean "since I asked".
     const submitted = data.includes('\r') || data.includes('\n')
+    // Did this keystroke throw the conversation away? `/clear` is the one command that
+    // puts a pane back to the state a brand new one is in - nothing has been asked of it
+    // and there is nothing waiting to be read - which is the ONLY thing "Ready" is meant
+    // to mean. Without this, `engaged` is sticky for the life of the session, so a pane
+    // stayed in "Your move" for ever after its first turn and the Ready group only ever
+    // held panes that happened never to have been typed into: "ready should only be
+    // sessions after a /clear, not just randomly there". Read here rather than off the
+    // screen for the reason the whole of `slashTurn.ts` is: the keystrokes look the same
+    // for every CLI and the drawn composer does not.
+    let cleared = false
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
       const slash = isSlashCommand(live.typed)
+      cleared = slash && clearsConversation(live.typed)
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a
       // second pane on the same repo must not be able to drift onto it), so this is
@@ -785,6 +796,15 @@ export class SessionManager extends EventEmitter {
       live.meta.attention = false
       this.emitSessions()
     } else if (submitted) {
+      this.emitSessions()
+    }
+    // ...and a `/clear` un-asks it, AFTER the rule above has treated the keystroke as
+    // engagement: the two are both true of the same keypress and this is the one that
+    // survives it. The run clock still counts the clear itself (the pane reads Running
+    // while its hooks flap), and the pane falls into Ready the moment that ends.
+    if (cleared && live.meta.engaged) {
+      live.meta.engaged = false
+      live.meta.attention = false
       this.emitSessions()
     }
   }
@@ -1350,12 +1370,19 @@ export class SessionManager extends EventEmitter {
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
-      // still only booting its CLI. A pane counts as working when it has been ASKED
-      // something (`engaged`: a prompt at launch, or a keystroke since) or when its own
-      // footer says the agent is running (`busyUntil`, set by setBusyOnScreen). Anything
-      // else keeps the status it had, so a fresh pane stays amber 'starting' and settles
-      // into 'idle' on its own timer.
-      if (meta.engaged || live.busyUntil > now) meta.status = 'working'
+      // still only booting its CLI.
+      //
+      // `engaged` used to be the gate here and it is the WRONG fact: it is sticky for the
+      // life of the session (see its note), so once a pane had been asked anything, every
+      // byte it printed afterwards read as work - including the CLI echoing the prompt
+      // being typed into its own composer. Reported as "it shows Running while I am typing
+      // the prompt". A pane is working while a TURN is running, which is exactly
+      // `runSince`: set by the submit keystroke (`beginRun`), by the agent's own busy
+      // footer, and by a shell pane's live command - and cleared by `endRun` the moment
+      // the footer stops. Typing at an idle composer sets none of those. Anything else
+      // keeps the status it had, so a fresh pane stays amber 'starting' and settles into
+      // 'idle' on its own timer.
+      if (meta.runSince || live.busyUntil > now) meta.status = 'working'
       this.emit('data', id, data)
       if (wasIdle && meta.status === 'working') this.emitSessions()
     })
@@ -1627,6 +1654,28 @@ export class SessionManager extends EventEmitter {
         changed = true
       }
       const busyOnScreen = live.busyUntil > now || jobName !== null
+      // A SHELL pane's turn is its foreground command and nothing else, so it ends the
+      // moment that command does - no quiet clock in front of it.
+      //
+      // The backstop below waits for the pane to go QUIET, and a shell echoes every
+      // keystroke, so `lastOutput` moves on every character typed. A shell pane that had
+      // ever submitted anything therefore kept `runSince` for as long as somebody was
+      // typing into it - which is the pane reading "Running" while a prompt is being
+      // written. Measured in a dev copy before this: `true\r`, then 38 characters typed
+      // with no return, still reported `status: working, runSince: true` two seconds later.
+      //
+      // POSIX only, because there the reading is exact and asked every sweep (`paneJob`
+      // is the tty's own foreground process). Windows has no such reading: the table is
+      // sampled every WIN_JOB_MS and asynchronously, so a command would read as finished
+      // for the seconds before the table first sees it. There, the quiet backstop stays.
+      const shellDone =
+        !WIN &&
+        !jobName &&
+        live.busyUntil <= now &&
+        SHELLS.has(programName(live.runner).toLowerCase())
+      if (shellDone && meta.runSince) {
+        if (this.endRun(live)) changed = true
+      }
       // Backstop for the run clock: an agent whose footer this app cannot read (or
       // a pane that was torn down mid-turn) would otherwise count forever. Quiet,
       // and nothing on screen claiming to be busy, is the end of the turn.
@@ -1636,7 +1685,14 @@ export class SessionManager extends EventEmitter {
       if (busyOnScreen && meta.status !== 'working' && meta.status !== 'exited') {
         meta.status = 'working'
         changed = true
-      } else if (meta.status === 'working' && !busyOnScreen && quiet > IDLE_AFTER_MS) {
+      } else if (
+        meta.status === 'working' &&
+        !busyOnScreen &&
+        // Same reading, same reason: for a shell pane the foreground process IS the
+        // answer, so it does not have to go quiet first - and it never will while
+        // somebody is typing at its prompt.
+        (quiet > IDLE_AFTER_MS || shellDone)
+      ) {
         meta.status = 'idle'
         changed = true
       } else if (meta.status === 'starting' && now - meta.createdAt > IDLE_AFTER_MS * 3) {
