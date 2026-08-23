@@ -154,10 +154,17 @@ function readReview(lines: string[], lead: number): PaneAsk | null {
   const arrows = ns.filter((n) => found.get(n)!.arrow)
   if (arrows.length !== 1) return null
 
-  // Nothing but blanks and rules below the list. See the note above: this is what tells a
-  // live review from one the CLI answered and then printed its transcript under.
+  // Nothing but BLANK rows below the list, and a rule is not blank.
+  //
+  // A live chooser owns the screen: the CLI draws no composer under it and no frame after
+  // the last option, so the rows beneath are empty. Once the answers are sent it prints
+  // `⏺ User answered Claude's questions:` and the whole echo over those same rows, and its
+  // composer's own rules land there too - which is why this cannot be as generous as the
+  // main walk and let a `─` through. A stale review whose transcript has scrolled away but
+  // whose composer rule has not would otherwise read as live, and the return pressed at it
+  // lands in a draft somebody is holding.
   for (let i = last + 1; i < lines.length; i++) {
-    if (lines[i].trim() && !RULE.test(lines[i])) return null
+    if (lines[i].trim()) return null
   }
 
   return {

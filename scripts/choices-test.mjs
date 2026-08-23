@@ -400,6 +400,13 @@ ok('a review the CLI has already answered is NOT live', () => {
   assert.equal(readAsk(sent), null)
 })
 
+ok('...and a rule under the list is not a blank row', () => {
+  // The transcript scrolls away; the composer's own rule does not. With no newer footer
+  // anywhere in the tail, a stale review under a rule would read as live and the return
+  // would land in whatever draft is in that composer.
+  assert.equal(readAsk(REVIEW + '\n' + '─'.repeat(60) + '\n'), null)
+})
+
 ok('a review with no arrow on any row is refused', () => {
   assert.equal(readAsk(REVIEW.replace('❯ 1.', '  1.')), null)
 })

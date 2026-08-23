@@ -592,7 +592,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .chip.asks .asks-in {
   flex: none; min-width: 30px; text-align: center;
   padding: 0 4px; border-radius: 4px;
-  color: var(--bg); background: var(--danger);
+  color: var(--danger-on); background: var(--danger);
   font-variant-numeric: tabular-nums; font-weight: 600;
 }
 /* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
@@ -3215,7 +3215,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pane-ask-auto-left {
   flex: none; min-width: 34px; text-align: center;
   padding: 2px 6px; border-radius: 6px;
-  background: var(--danger); color: var(--bg);
+  background: var(--danger); color: var(--danger-on);
   font-size: 13px; font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -3236,7 +3236,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pane-ask-btn.auto::after {
   content: 'auto';
   margin-left: 2px; padding: 0 5px; border-radius: 999px;
-  background: var(--danger); color: var(--bg);
+  background: var(--danger); color: var(--danger-on);
   font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
 }
 
