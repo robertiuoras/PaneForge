@@ -44,6 +44,7 @@ import {
 import type { DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
+import { scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
@@ -1553,7 +1554,7 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: { ...agentEnv(), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
+      env: { ...scrubForeignKeys(agentEnv(), spec), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
     })
   }
 
