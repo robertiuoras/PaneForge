@@ -61,6 +61,7 @@ import TerminalPane, {
   paneArmClear,
   paneInsert,
   paneRepair,
+  paneRedraw,
   syncedPanes
 } from './components/TerminalPane'
 import {
@@ -1595,7 +1596,12 @@ export default function App(): JSX.Element {
       const repair = paneRepair.get(target)
       if (!repair) return flash('That pane is not ready yet.')
       repair()
-      flash('Display repaired.')
+      // ...and the scrollback, which no repaint can reach. Fix is the one thing anybody
+      // presses when a pane looks wrong, and until this it could only fix the live frame -
+      // mis-widthed history stayed broken however many times it was pressed.
+      const redraw = paneRedraw.get(target)
+      if (!redraw) return flash('Display repaired.')
+      void redraw().then((did) => flash(did ? 'Display and history repaired.' : 'Display repaired.'))
     },
     [flash]
   )
@@ -1815,6 +1821,11 @@ export default function App(): JSX.Element {
   // reset by something it has no opinion about.
   const visibleRef = useRef(visibleIds)
   visibleRef.current = visibleIds
+  // The sampler's own figures, through a ref for the same reason as `visibleRef`: the
+  // sweeps live inside intervals, and a callback that changes identity every four seconds
+  // would re-arm the 60s timer built on it and it would never fire.
+  const usageRef = useRef<UsageReport | null>(null)
+  usageRef.current = usage
   const handoffPanes = useCallback(
     (): AutoPane[] =>
       sessionsRef.current.map((s) => ({
@@ -1834,7 +1845,15 @@ export default function App(): JSX.Element {
         busy: s.runSince !== undefined,
         // The device that handed it here, so the budget never hands it straight back.
         arrivedFrom: s.arrivedFrom,
-        projectName: projectNameOf(s.cwd)
+        projectName: projectNameOf(s.cwd),
+        // What it is actually costing. `undefined` when the sampler has no answer - it
+        // does not read the process table behind a hidden window - and `expensive` reads
+        // that as small, so an unmeasured pane is never moved for a number nobody took.
+        memMb: usageRef.current?.panes[s.id]?.rssMb,
+        cpuPct: usageRef.current?.panes[s.id]?.cpuPct ?? undefined,
+        // A shell pane's live command (`shared/paneJob.ts`): a dev server that has just
+        // started holds nothing yet and is still the pane worth moving.
+        job: s.job
       })),
     []
   )
@@ -3209,6 +3228,31 @@ export default function App(): JSX.Element {
     if (!mascotOnRef.current) return doClose(ids, mb)
     setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline: now + CLOSE_COUNTDOWN_MS, why })
   }
+
+  /**
+   * A countdown that nobody can see is a countdown nobody can stop.
+   *
+   * The bubble is drawn beside the mascot in a corner, takes itself away after a minute,
+   * and is behind whatever window is on top - so on 2026-08-23 two panes went to the PC
+   * with nothing on screen at the moment it mattered, and the report was "randomly 2
+   * sessions moved". The alert plays once when the countdown arms, and the last five
+   * seconds tick, which is exactly the shape `AskCountdown` already uses for the other
+   * thing this app decides on somebody's behalf.
+   *
+   * `playTick` deliberately bypasses the 900ms alert throttle - see `useChime` - or the
+   * ticks would swallow each other and the alert above them.
+   */
+  useEffect(() => {
+    if (!closeSoon) return
+    if (!soundOn.current) return
+    playEvent('move', soundSet.current)
+    const ticks: number[] = []
+    for (let left = 5; left >= 1; left--) {
+      const at = closeSoon.deadline - left * 1000 - Date.now()
+      if (at > 0) ticks.push(window.setTimeout(() => playTick(soundSet.current), at))
+    }
+    return () => ticks.forEach((t) => window.clearTimeout(t))
+  }, [closeSoon])
 
   useEffect(() => {
     if (!closeSoon) return

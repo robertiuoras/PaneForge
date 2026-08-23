@@ -27,6 +27,7 @@ import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
+import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -187,6 +188,13 @@ import { isPhoneClient } from '../client'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/**
+ * Re-render a pane from its own bytes. Separate from `paneRepair` on purpose: that one is
+ * cheap and runs on its own (a restore, a font change), this one rewrites the whole buffer
+ * and only ever runs because somebody pressed Fix. See `redrawHistory`.
+ */
+export const paneRedraw = new Map<string, () => Promise<boolean>>()
 
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
 export const renderCount = new Map<string, number>()
@@ -1261,6 +1269,12 @@ function TerminalPane({
   useEffect(() => {
     if (!host.current) return
     const t = new Terminal({
+      // The pty is already this wide (see shared/paneGrid.ts). xterm's own default is
+      // 80, and every byte a resumed CLI prints before the first fit is drawn at the
+      // PTY's width - into whatever grid this terminal happens to be. Clamped, and no
+      // repaint can undo it.
+      cols: START_COLS,
+      rows: START_ROWS,
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
       // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the
@@ -1486,6 +1500,10 @@ function TerminalPane({
         term: t,
         fit: f,
         host: host.current,
+        // The full re-render Fix runs (see `redrawHistory`). On the handle because a
+        // probe cannot press a button, and repairing torn scrollback is only checkable by
+        // reading the buffer back afterwards.
+        redraw: () => paneRedraw.get(sessionId)?.(),
         dropWebgl: () => {
           glRef.current?.dispose()
           glRef.current = null
@@ -2670,6 +2688,49 @@ function TerminalPane({
         /* hidden or detached - the visibility effect refits it */
       }
     }
+    /**
+     * Draw this pane's whole byte stream again, at a width no narrower than any width it
+     * was painted at.
+     *
+     * `repair` above asks the CLI to repaint, which redraws the SCREEN. It cannot touch
+     * the scrollback, and the scrollback is where mis-widthed drawing ends up: bytes made
+     * at one width and clamped into a narrower grid are word-on-word for good, whatever
+     * the pane is resized to afterwards. The bytes themselves are still correct - the
+     * buffer in main is the raw stream, not this rendering of it - so writing them into a
+     * terminal that is wide enough repairs it. See shared/paneGrid.ts for how a pane got
+     * into that state at all, which is now fixed at the source; this is the way back for
+     * a pane that is already in it.
+     *
+     * Widest of what we know, never a guess: the pane now, the width a restored tail was
+     * painted at, and the grid every pty starts on. A byte drawn at column N is safe in
+     * any terminal at least N wide, and the terminal is put back afterwards - xterm
+     * re-wraps what is in its buffer, so nothing is lost to the second resize.
+     *
+     * User-initiated only. It reads the capped buffer, so scrollback older than that cap
+     * does not come back, and paying that to un-break a pane is a person's call.
+     */
+    const redrawHistory = async (): Promise<boolean> => {
+      if (mirrorRef.current) return false
+      const b = await api.getBuffer(sessionId)
+      if (!b) return false
+      const back = t.cols
+      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      try {
+        replaying.current = true
+        t.reset()
+        if (wide !== back) t.resize(wide, t.rows)
+        await new Promise<void>((res) => t.write(keep(b), () => res()))
+        if (wide !== back) t.resize(back, t.rows)
+      } finally {
+        replaying.current = false
+      }
+      reshape(t, f)
+      t.scrollToBottom()
+      setScrolledUp(false)
+      seedMarks()
+      return true
+    }
+    paneRedraw.set(sessionId, redrawHistory)
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
       const away = keep.arm()
@@ -2908,6 +2969,7 @@ function TerminalPane({
       window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneRedraw.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)

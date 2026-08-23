@@ -99,6 +99,26 @@ export interface AutoHandoffConfig {
    * `keepLocalOf` in capacity.ts hardens it, for the same reason `offloadMinutes` exists.
    */
   keepLocal: number
+  /**
+   * The memory a pane must actually be holding before the BUDGET rung will move it.
+   *
+   * The budget on its own counts panes, and a count is not a cost: five idle Claude Code
+   * panes at ~190 MB apiece are three panes over a budget of two and are costing this
+   * machine nothing anybody can feel. Moving one of those is the app rearranging somebody's
+   * desk for a number - which is exactly what was reported on 2026-08-23, two panes gone to
+   * the PC while the machine was fine.
+   *
+   * So past the budget the question stops being "how many" and becomes "which of these is
+   * EXPENSIVE": a dev server, a build, a shell mid-command, an agent that has grown. A pane
+   * under every threshold here is left alone however far over the budget the desk is, and
+   * the desk simply stays over - there is nothing to save by moving it.
+   *
+   * 500 MB, because a fresh agent pane measures ~190 MB here and a Codex one 16-17 MB: the
+   * floor has to sit above an ordinary pane doing nothing and below a pane running a build.
+   */
+  budgetMinMb: number
+  /** ...or this much of one core, which is what a build or a dev server looks like. */
+  budgetMinCpu: number
 }
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
@@ -116,7 +136,9 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   // the other machine up it is the answer to opening a third pane. Everything moved comes
   // straight back as a mirror, so the number is about where agents RUN, never about how
   // many sessions can be watched from here.
-  keepLocal: 2
+  keepLocal: 2,
+  budgetMinMb: 500,
+  budgetMinCpu: 50
 }
 
 /**
@@ -192,6 +214,28 @@ export interface AutoPane {
   arrivedFrom?: string
   /** what this pane's folder is called as a project - the only portable name for it */
   projectName: string
+  /**
+   * What this pane is really holding, in MB, when the sampler has an answer for it.
+   *
+   * `undefined` is "not measured", never "cheap": the sampler does not read the process
+   * table while the window is hidden, so a desk that has been minimised for an hour has no
+   * figures at all. An absent reading may not make a pane movable - the same rule
+   * `os.loadavg()` returning 0 on Windows already has - so `expensive` treats it as small
+   * and the pane stays. Being wrong the other way moves somebody's work for a number
+   * nobody took.
+   */
+  memMb?: number
+  /** the same reading for CPU, as a percentage of ONE core, or undefined for unmeasured */
+  cpuPct?: number
+  /**
+   * A command this pane is running right now that is not the agent itself: `npm run dev`,
+   * a build, anything `shared/paneJob.ts` found in a shell pane's foreground.
+   *
+   * It outranks both numbers. A dev server that has just started is holding little and
+   * doing nothing measurable, and is still the pane worth moving - it is about to be the
+   * expensive one, and it is the case Robert named.
+   */
+  job?: string
 }
 
 export interface AutoHandoff {
@@ -294,6 +338,33 @@ export function autoHandoffPlan(
  * then quiet-and-visible, then whatever is mid-turn. A busy one that does get picked is
  * queued by main and moves when its turn ends - nothing is ever killed mid-answer.
  */
+/**
+ * What this pane costs, as one number, for ordering only.
+ *
+ * MB and % of a core are not the same unit and this does not pretend they are: it is a
+ * sort key, and the only claim it makes is "more of either is more expensive". A pane with
+ * a job of its own is lifted above every measured pane, for the reason on `AutoPane.job`.
+ */
+export function paneCost(p: Pick<AutoPane, 'memMb' | 'cpuPct' | 'job'>): number {
+  return (p.job ? 1_000_000 : 0) + (p.memMb ?? 0) + (p.cpuPct ?? 0) * 20
+}
+
+/**
+ * Whether moving this pane would actually give the machine something back.
+ *
+ * The whole point of the budget rung after 2026-08-23: past the budget a pane is moved
+ * because of what it COSTS, never because of where it sits in a count. An unmeasured pane
+ * is not expensive - see `AutoPane.memMb`.
+ */
+export function expensive(
+  p: Pick<AutoPane, 'memMb' | 'cpuPct' | 'job'>,
+  cfg: Pick<AutoHandoffConfig, 'budgetMinMb' | 'budgetMinCpu'> = DEFAULT_AUTO_HANDOFF
+): boolean {
+  if (p.job) return true
+  if ((p.memMb ?? 0) >= Math.max(0, cfg.budgetMinMb)) return true
+  return (p.cpuPct ?? 0) >= Math.max(0, cfg.budgetMinCpu)
+}
+
 export function budgetPlan(
   panes: AutoPane[],
   peers: OffloadCandidate[],
@@ -306,7 +377,16 @@ export function budgetPlan(
   const eligible = panes
     .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
-    .sort((a, b) => rank(a) - rank(b) || quietSince(a) - quietSince(b))
+    // The cost gate. A desk five panes over its budget with nothing expensive on it moves
+    // NOTHING and stays over - which is the honest answer, because there is nothing here
+    // to give back. See `AutoHandoffConfig.budgetMinMb`.
+    .filter((p) => expensive(p, cfg))
+    // Dearest first, and only then the old ordering. Cost is why this rung exists now, so
+    // it decides; `rank` still keeps a mid-turn pane behind a quiet one of the same size,
+    // and `quietSince` still breaks the tie after that.
+    .sort(
+      (a, b) => paneCost(b) - paneCost(a) || rank(a) - rank(b) || quietSince(a) - quietSince(b)
+    )
 
   // Never the last pane, exactly as above: a desk with nothing on it has not been helped.
   const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0

@@ -17,6 +17,8 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
+import { smallestBorrow, type Borrow } from '../shared/paneSize'
+import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { CHUNK_GAP_MS, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
@@ -198,6 +200,16 @@ interface Live {
   jobName: string | null
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
+  /**
+   * Every screen currently borrowing this pane, keyed by who it is, and the grid each one
+   * asked for. `borrowed` above is now "this map is not empty".
+   *
+   * A map rather than one set of numbers because a pane is routinely drawn by more than
+   * one viewer at once - a phone and a mirror, or two paired devices - and last-writer-wins
+   * makes those viewers fight over the pty for as long as they are both open. See
+   * `shared/paneSize.ts`.
+   */
+  borrows?: Map<string, Borrow>
   /**
    * What the pane can see and this process cannot: the agent's own footer still
    * says it is running ("esc to interrupt"). A long tool call is silent for
@@ -445,18 +457,18 @@ export class SessionManager extends EventEmitter {
       arrivedFrom: req.arrivedFrom,
       lane: req.lane,
       laneNote: req.laneNote,
-      cols: 120,
-      rows: 30
+      cols: START_COLS,
+      rows: START_ROWS
     }
     const live: Live = {
       meta,
-      proc: this.spawn(req, agent, 120, 30),
+      proc: this.spawn(req, agent, START_COLS, START_ROWS),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
-      cols: 120,
-      rows: 30,
-      deskCols: 120,
-      deskRows: 30,
+      cols: START_COLS,
+      rows: START_ROWS,
+      deskCols: START_COLS,
+      deskRows: START_ROWS,
       runner: specFor(agent).bin,
       jobName: null,
       busyUntil: 0,
@@ -902,9 +914,25 @@ export class SessionManager extends EventEmitter {
    * phone stream closes. A desk resize takes ownership back on the spot: a window the user
    * is dragging is a person at the desk, and they win.
    */
-  resize(id: string, cols: number, rows: number, borrowed = false): void {
+  resize(id: string, cols: number, rows: number, borrowed = false, viewer = 'guest'): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
+    // Several screens may be borrowing this pane at once, so a borrow is RECORDED against
+    // whoever asked and the pty is then set to the one grid they can all draw - never to
+    // the last number that arrived. Without this two viewers flip the pty between their
+    // two windows for as long as both are open. See `shared/paneSize.ts`.
+    if (borrowed) {
+      const borrows = s.borrows ?? (s.borrows = new Map())
+      borrows.set(viewer, { cols: Math.max(cols, 20), rows: Math.max(rows, 5) })
+      const all = smallestBorrow(borrows.values())
+      if (all) {
+        cols = all.cols
+        rows = all.rows
+      }
+      // Nothing to do when the pty is already at that grid: a mirror re-states its size on
+      // every repaint, and obeying each one costs the CLI a full redraw for no change.
+      if (s.cols === cols && s.rows === rows && s.borrowed) return
+    }
     // A DESK resize arriving while a phone is holding this pane is remembered, not
     // obeyed. "The desk wins on the spot" was written for a borrow that had OUTLIVED the
     // phone, and the desk does not only resize when somebody drags the window: showing a
@@ -928,7 +956,10 @@ export class SessionManager extends EventEmitter {
     if (borrowed) {
       s.borrowed = true
     } else {
+      // A desk resize takes ownership back from EVERY borrower, or the next repaint from
+      // a viewer that is still attached re-applies the old minimum on top of it.
       s.borrowed = false
+      s.borrows?.clear()
       s.deskCols = s.cols
       s.deskRows = s.rows
     }
@@ -971,9 +1002,21 @@ export class SessionManager extends EventEmitter {
    * three of this desk's panes and stop watching one, and returning the other two with
    * it would snap two panes somebody is still looking at.
    */
-  returnSize(id: string): void {
+  returnSize(id: string, viewer?: string): void {
     const s = this.sessions.get(id)
     if (!s || !s.borrowed) return
+    // One viewer looking away is not every viewer looking away. Drop that one's borrow and,
+    // if anybody is still watching, re-apply the smallest of what is left - the pane goes
+    // back to the desk only when the last screen has let go.
+    if (viewer !== undefined && s.borrows?.size) {
+      s.borrows.delete(viewer)
+      const rest = smallestBorrow(s.borrows.values())
+      if (rest) {
+        this.resize(id, rest.cols, rest.rows, true, [...s.borrows.keys()][0])
+        return
+      }
+    }
+    s.borrows?.clear()
     s.borrowed = false
     if (s.cols === s.deskCols && s.rows === s.deskRows) {
       if (s.meta.borrowed) {
@@ -986,9 +1029,18 @@ export class SessionManager extends EventEmitter {
     this.redraw(id)
   }
 
-  returnSizes(): void {
+  returnSizes(viewer?: string): void {
+    // With a viewer named this is just `returnSize` over every pane it is holding - the
+    // phone's "I have looked away" now has to leave a mirror's borrow alone.
+    if (viewer !== undefined) {
+      for (const [id, s] of this.sessions) {
+        if (s.borrows?.has(viewer)) this.returnSize(id, viewer)
+      }
+      return
+    }
     for (const [id, s] of this.sessions) {
       if (!s.borrowed) continue
+      s.borrows?.clear()
       s.borrowed = false
       if (s.cols === s.deskCols && s.rows === s.deskRows) {
         // Same numbers, but the desk is drawing this pane as a borrowed one until it is

@@ -289,6 +289,20 @@ can host and each can connect out. Three decisions not to re-litigate:
   host that has not applied the borrow yet or is an older build, and the leftover slack it
   centres is only split when it is bigger than two cells - inside that, the pane is full
   and belongs flush against the edge the scrollbar hugs.
+- **Several screens may borrow ONE pty, and the smallest grid wins.** The borrow was a
+  boolean and one pair of numbers, written for a single phone - so a second viewer simply
+  overwrote the first and the two traded the pty between their windows for as long as both
+  were open, with a full-screen CLI redrawing every round. That is "the remote window keeps
+  changing sizes". `shared/paneSize.ts` holds a borrow PER VIEWER and lends them all the
+  smallest grid asked for (each axis separately): everybody can draw it, the losers get
+  slack, and the number does not depend on who spoke last. A viewer looking away drops only
+  its own borrow (`returnSize(id, viewer)`), and the pane goes back to the desk when the
+  last one lets go. **The name must be forwarded, never invented at the boundary**: the api
+  object in `main/index.ts` is the phone's surface AND the remote host's backend, so
+  hardcoding `'phone'` there filed every paired device under the phone's slot and rebuilt
+  the same last-writer-wins one layer down - measured with a real guest, `guest:1` arrived
+  at the manager as `viewer=phone`. A guest is keyed per CONNECTION (`GuestConn.key`), since
+  two windows on one machine are two viewers. `npm run test:panesize`.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
@@ -489,6 +503,19 @@ which it is on its card.
   identical binary. They share `claude`'s entry now. Grok is deliberately absent: its
   headless flags are unverified, and `drivable()` refusing is better than a guess.
 - `npm run test:agentenv`.
+
+**Gemini CLI no longer has a login of its own.** Google ended the free "sign in with
+Google" tier for that client on 2026-08-23: every launch dies `IneligibleTierError ...
+UNSUPPORTED_CLIENT ... migrate to the Antigravity suite`, inside a pane that otherwise
+looks perfectly healthy. Probed here against 0.56.0 - an api-key auth type with a junk key
+reaches `generativelanguage.googleapis.com` and comes back `400 API key not valid`, which
+is what tells a live path from a dead one. So `google` (AI Studio) is a `KEY_PROVIDERS`
+entry, the agent's `env` names `keyVar('google')`, and `keyProviderFor` reads
+`GEMINI_API_KEY` as an authenticating token - so Settings says the key is missing rather
+than leaving somebody to find out when the first turn fails. `GEMINI_DEFAULT_AUTH_TYPE` is
+set beside it and is NOT enough on its own: it is a default, and a machine whose
+`~/.gemini/settings.json` already says `oauth-personal` keeps going to the dead endpoint
+until that file is changed. Nothing in the environment can overrule it.
 
 ## ...and the model list is not this build's opinion of what exists
 
@@ -1372,6 +1399,13 @@ Full reasoning: `docs/design-notes.md`.
   `closeable()` and `CLOSEABLE` - both written as `ready | exited` - refused every pane anybody
   would want closed. The refusal that was meant is the pane's own live question (`asking`, off
   `Session.ask`), never the word for its state.
+- **The countdown is HEARD, not only drawn.** It lives beside the mascot in a corner, takes
+  itself away after a minute and is behind whatever window is on top, so a pane can leave
+  the machine with nothing on screen at the moment it mattered. `sounds.move` (default
+  `bowl`, its own Settings row) plays once when a countdown arms and the last five seconds
+  tick, exactly as `AskCountdown` does for the other thing this app decides on somebody's
+  behalf - and it is the only alert here that is not about an agent, because it is the app
+  announcing itself.
 - **Nothing decides and then reports: it counts down first.** Both sweeps hand their plan to
   `armCloseRef` and the mascot draws `CLOSE_COUNTDOWN_MS` (15s) with the pane named, `Keep it
   open` and `Close now`. Doing nothing still closes it - a sentence with a clock in it, not a
@@ -1464,6 +1498,33 @@ The cap is the load-bearing part: it is on the BUSY STRETCH, not on the hold, so
 pane (which keeps `runSince` for as long as the app is open) cannot keep a laptop lit all
 night, and cannot re-arm the hold by ticking. `config.keepDisplayAwake` turns it off.
 `npm run test:awake`.
+## A pane's two ends open at the same width
+
+Everything an agent CLI prints is absolute column moves, and a terminal CLAMPS a column it
+cannot reach. So a pane has exactly one rule: the grid it is drawn into may never be
+narrower than the width its bytes were painted for. `src/shared/paneGrid.ts` is that one
+number, read by BOTH ends.
+
+- **The pty spawned at 120 and xterm opens at its library default of 80**, and a
+  `claude --resume` dumps the whole conversation the moment it starts - so every answer
+  drawn out to column 119 landed in an 80-column grid and was torn apart, permanently:
+  xterm can unwrap a row it wrapped itself and can never undo a clamp. The pane then
+  fitted to 157 and the wreckage froze there. Measured 2026-08-23 by replaying the pane's
+  own log: written at 80 and widened to 157 reproduces the reported screen exactly, and
+  written at 120 does not. This is NOT `shared/replayWidth.ts`'s bug - that one is a
+  RESTORED pane's old bytes, was already fixed, and stages correctly (proved in a live
+  window at 80 and at 97). This one is the pane's own live output, on every launch.
+- **Fix now repairs the scrollback, not only the live frame.** `repair` asks the CLI to
+  repaint, which redraws the SCREEN - and torn drawing is in the history, where the agent
+  has nothing to say, which is why pressing Fix never did anything for it. `redrawHistory`
+  re-renders the pane from the raw byte stream main is holding (that stream is correct; it
+  was only ever this rendering of it that was wrong) at `max(pane now, replayCols,
+  START_COLS)`, then hands the width back. User-initiated only: it reads the capped buffer,
+  so scrollback older than the cap does not come back, and paying that to un-break a pane
+  is a person's call. `window.__pf[id].redraw()` is the same thing for a probe.
+- `npm run test:panegrid`. Its load-bearing half is the CONTROL - one line painted into a
+  narrower grid MUST still tear across several rows - because a clamp does not delete a
+  word, it wraps it, so the damage is in the layout and a presence test would pass over it.
 
 ## Checks
 
@@ -1482,6 +1543,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:restore` | which conversation a reopened pane goes back into |
 | `npm run test:scrollback` | and what is on its screen when it gets there |
 | `npm run test:replaywidth` | ...drawn at the width it was drawn at: a real 159-column frame off this machine's log, with the shipped behaviour (write it at 85) kept as the control that must FAIL, and the refusals that stop a pane painting its OWN output at somebody else's width |
+| `npm run test:panegrid` | that the pty and the terminal open on the SAME width, so a CLI's first output is never clamped into a narrower grid - with the old 80-column default kept as the control that must still tear - and that Fix re-renders a pane from its raw bytes instead of only repainting the live frame |
 | `npm run test:restoreturn` | what else it inherits: the display clock, the engaged flag, and continuing a turn a restart cut in half (with the refusals, and source assertions so a green test over a function nothing calls cannot pass) |
 | `npm run test:promptecho` | rebuilding a restored pane's prompt tags from the CLI's own `❯` echo, and the four things that must NOT become tags (a `>` quote, a diff, a shell prompt, the live composer) |
 | `npm run test:consoles` | sweeping console hosts left behind |
@@ -1536,7 +1598,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:settingsearch` | that a setting is findable by what it DOES - the index is generated from the dialog's source, so one added without regenerating turns this red |
 | `npm run test:onestash` | that there is one Stash |
 | `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |
-| `npm run test:panesize` | who owns a pane's shape when a desk and a phone both draw it |
+| `npm run test:panesize` | who owns a pane's shape when a desk and a phone both draw it - and what happens when SEVERAL screens borrow one pty at once: they are lent the smallest grid asked for, one letting go leaves the others holding it, and a phone's "I have looked away" no longer ends a mirror's borrow |
 | `npm run test:tunnel` | a URL never called up before it resolves, a cloudflared that hangs settling anyway, and the per-platform asset names |
 | `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
 | `npm run test:gist` | the one line History puts under a closed session |
@@ -1560,7 +1622,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
-| `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting |
+| `npm run test:autohandoff` | moving a finished pane instead of closing it: mid-turn is QUEUED, a live question is not moved, a queue expires rather than interrupting - and what the BUDGET rung may move at all, whose load-bearing case is that a desk three panes over budget with nothing expensive on it moves nothing (red-proofed: without the gate it moves two), with the pressure sweep still taking a cheap pane as the control |
 | `npm run test:devlist` | what is serving now and which one a sentence names (a server and its child are ONE; "close the dev" with three running picks none) |
 | `npm run test:backjobs` | what a machine runs with no pane on it: a hook alive for 300ms is not a job, a pane's own build is never listed twice, `--max-old-space-size=4096` is not a port, a dev server an agent started is a second fact - and a last block that reads THIS machine's real process table, because the `etime` parsing is the half a fixture cannot check |
 | `npm run test:devservers` | turning a running server back into the package.json script that starts it, and the drops |
@@ -1679,6 +1741,20 @@ budget, `Verdict.over` is how many panes are past it, and `budgetPlan` moves exa
 many. Measured on this desk while writing it: pressure `normal`, load 0.53 per core, five
 `claude` panes -> `over: 3`, `why: 'budget'`, `offload: true` at `level: 'ok'`.
 
+- **Past the budget the question is what a pane COSTS, never how many there are.** A count
+  is not a cost: five idle agent panes at ~190 MB apiece are three over a budget of two and
+  are costing this machine nothing anybody can feel, and moving one is the app rearranging
+  somebody's desk for a number - reported 2026-08-23 as "randomly 2 sessions moved". So the
+  budget rung filters by `expensive()`: a live shell/dev-server job (`AutoPane.job`, which
+  outranks both numbers - a server that just started holds nothing and is exactly the pane
+  to move), or `budgetMinMb` (500, above an ordinary agent pane and below a build), or
+  `budgetMinCpu` (50% of one core). Dearest first, then the old quiet-and-off-screen order.
+  **An unmeasured pane is not expensive**: the sampler does not read the process table
+  behind a hidden window, and an absent reading may not move somebody's work - the same
+  rule `os.loadavg()` returning 0 on Windows already has. A desk far over budget with
+  nothing expensive on it therefore moves NOTHING and stays over, which is the honest
+  answer. The pressure sweep and the idle clock are untouched: when the kernel is objecting
+  a cheap pane is still memory back, and `test:autohandoff` keeps that as its control.
 - **The budget is a policy, so it holds at `ok`** - which is the one sentence in
   `offloadTarget` that had to change. A desk that says it keeps two agents is not in
   trouble with five open; it is three panes past what it asked for, and the launch sends
