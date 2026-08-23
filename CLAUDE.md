@@ -1412,6 +1412,34 @@ for the card, `npm run test:tips`.
   `seen` resets rather than going quiet - a tip added in a later version has to be able to
   reach somebody who has already been round.
 
+## A pane's two ends open at the same width
+
+Everything an agent CLI prints is absolute column moves, and a terminal CLAMPS a column it
+cannot reach. So a pane has exactly one rule: the grid it is drawn into may never be
+narrower than the width its bytes were painted for. `src/shared/paneGrid.ts` is that one
+number, read by BOTH ends.
+
+- **The pty spawned at 120 and xterm opens at its library default of 80**, and a
+  `claude --resume` dumps the whole conversation the moment it starts - so every answer
+  drawn out to column 119 landed in an 80-column grid and was torn apart, permanently:
+  xterm can unwrap a row it wrapped itself and can never undo a clamp. The pane then
+  fitted to 157 and the wreckage froze there. Measured 2026-08-23 by replaying the pane's
+  own log: written at 80 and widened to 157 reproduces the reported screen exactly, and
+  written at 120 does not. This is NOT `shared/replayWidth.ts`'s bug - that one is a
+  RESTORED pane's old bytes, was already fixed, and stages correctly (proved in a live
+  window at 80 and at 97). This one is the pane's own live output, on every launch.
+- **Fix now repairs the scrollback, not only the live frame.** `repair` asks the CLI to
+  repaint, which redraws the SCREEN - and torn drawing is in the history, where the agent
+  has nothing to say, which is why pressing Fix never did anything for it. `redrawHistory`
+  re-renders the pane from the raw byte stream main is holding (that stream is correct; it
+  was only ever this rendering of it that was wrong) at `max(pane now, replayCols,
+  START_COLS)`, then hands the width back. User-initiated only: it reads the capped buffer,
+  so scrollback older than the cap does not come back, and paying that to un-break a pane
+  is a person's call. `window.__pf[id].redraw()` is the same thing for a probe.
+- `npm run test:panegrid`. Its load-bearing half is the CONTROL - one line painted into a
+  narrower grid MUST still tear across several rows - because a clamp does not delete a
+  word, it wraps it, so the damage is in the layout and a presence test would pass over it.
+
 ## Checks
 
 `npm run typecheck` before committing, and `npm test` — 81 checks in ~145s, everything in
@@ -1429,6 +1457,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:restore` | which conversation a reopened pane goes back into |
 | `npm run test:scrollback` | and what is on its screen when it gets there |
 | `npm run test:replaywidth` | ...drawn at the width it was drawn at: a real 159-column frame off this machine's log, with the shipped behaviour (write it at 85) kept as the control that must FAIL, and the refusals that stop a pane painting its OWN output at somebody else's width |
+| `npm run test:panegrid` | that the pty and the terminal open on the SAME width, so a CLI's first output is never clamped into a narrower grid - with the old 80-column default kept as the control that must still tear - and that Fix re-renders a pane from its raw bytes instead of only repainting the live frame |
 | `npm run test:restoreturn` | what else it inherits: the display clock, the engaged flag, and continuing a turn a restart cut in half (with the refusals, and source assertions so a green test over a function nothing calls cannot pass) |
 | `npm run test:promptecho` | rebuilding a restored pane's prompt tags from the CLI's own `❯` echo, and the four things that must NOT become tags (a `>` quote, a diff, a shell prompt, the live composer) |
 | `npm run test:consoles` | sweeping console hosts left behind |
