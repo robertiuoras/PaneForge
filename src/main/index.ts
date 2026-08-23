@@ -884,7 +884,14 @@ const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
   write: (id, data) => manager.write(id, data),
-  resize: (id, cols, rows, borrowed) => manager.resize(id, cols, rows, borrowed === true, 'phone'),
+  // `viewer` is who is asking, and it MUST be forwarded rather than named here: this one
+  // object is the phone's surface AND the remote host's backend, so hardcoding a name
+  // filed every paired device's borrow under the phone's own slot - two viewers writing
+  // one entry, which is exactly the last-writer-wins the borrow map replaced. Measured
+  // 2026-08-23 with a real guest: `host-resize ... guest:1` arrived at the manager as
+  // `viewer=phone`. The default stays 'phone' because only the host passes a name.
+  resize: (id, cols, rows, borrowed, viewer) =>
+    manager.resize(id, cols, rows, borrowed === true, typeof viewer === 'string' ? viewer : 'phone'),
   returnSize: (id, viewer) => manager.returnSize(id, viewer),
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
