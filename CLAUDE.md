@@ -607,6 +607,46 @@ reading; `npm run test:panejob`.
 - **Narrow on purpose, because the expensive failure is a FALSE job**: only a pane whose RUNNER
   is a shell is spoken about, and a foreground that is itself a shell is a subshell, not work.
 
+## ...and an agent pane says what it left running
+
+`shared/paneJob.ts` refuses to speak about an agent pane and that refusal is load-bearing -
+it feeds `busyOnScreen`, so a false job there is a pane the idle sweep never closes, the
+budget never moves and whose clock is a lie that ticks. But an agent that starts work in the
+BACKGROUND (a `run_in_background` shell, a Monitor loop, a build) goes quiet the moment the
+turn ends: the footer stops, `engaged` drops, the card reads finished, and the work is still
+going. `shared/paneBackJobs.ts` is the cosmetic half - a chip on the card's clock line and a
+sentence on its hover - and feeds NOTHING. `npm run test:panebackjobs`.
+
+- **A count of the pty's descendants is not the reading, and the measurement is why.**
+  Every `claude` pane here holds, permanently and from launch: `safaridriver --mcp`,
+  `chrome-devtools-mcp` (plus a node child), `codegraph serve --mcp` (plus three) and
+  `caffeinate -i -t 300`. Measured 2026-08-24 over four live panes: trees of 5, 7, 9 and 9
+  with nothing whatever running, so "descendants minus the CLI" is 3-8 on an idle pane and
+  the chip is on for ever.
+- **What separates them is HOW a process was started, never what it is.** Every command an
+  agent CLI runs goes through a shell it spawns with `-c`; an MCP server and `caffeinate`
+  are spawned directly. So a job is a SHELL SUBTREE under the pty and the machinery is
+  everything else - no vendor names anywhere in the rule. Against the same four panes the
+  only shell subtrees in the set were the two real background tasks.
+- **The age floor is `backJobs.LOOP_MIN_SECONDS`' 30s and for its reason**: a foreground
+  Bash call is a shell subtree too, and this repo fires several per prompt - measured at
+  00:00 and 00:02 against the real one's 39:10. A shell subtree is never walked INTO, so a
+  `npm run dev` that spawned its own sub-shell is one job and not two.
+- **The name comes off the `-c` string, first segment that is not housekeeping.** The leaf
+  is regularly a runtime: `npm run dev` is `node .../next dev` three processes down, which
+  prints as `node`. Taking the LAST segment reads correctly against the measured prelude
+  (`source <snapshot> ... || true && <command>`) and names a live `sleep 400; true` job
+  `true`, which is what a probe caught. The oldest live descendant is the fallback, and
+  `workName` prefers the script over the interpreter.
+- **It rides on the sampler that already runs.** `main/usage.ts` reads the process table
+  every 4s for the memory chip, so `ps` gained `etime=` and `command=` rather than the app
+  gaining a second ~380ms read for a chip. `shared/usage.ts` imports the rule as a TYPE
+  only - `scripts/usage-test.mjs` loads that file into node with type stripping, where a
+  value import of an extensionless sibling does not resolve - and `main/usage.ts` attaches
+  the answer after `summarise`.
+- Proved in a live window: a background shell under a pane is absent at 14s and reads
+  `sleep` at 42s, with the pane's own `procs` at 3.
+
 ## What a pane leaves running
 
 Quitting kills each pty with `taskkill /F /T <pid>`. Two things sit outside it and
@@ -1097,6 +1137,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:surfacereach` | that every method the window exposes has a call site under `src/renderer/src`; four are desk-side on purpose and each names who calls it |
 | `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, with all three failed walks kept as controls, and growth past the user's font up to `MAX_FILL_FONT` (28) |
+| `npm run test:panebackjobs` | what an AGENT pane left running: real trees off this machine as fixtures, every permanent MCP server and `caffeinate` refused, the naive descendant count kept as the control, and a last block over this machine's own live table |
 | `npm run test:panejob` | what a shell pane is running, its refusals, and a last block asking a REAL pty |
 | `npm run test:desk` | the sessions list with both machines in it, plus a source assertion that every ranked field is forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with, and that one provider's key cannot fill another's variable |

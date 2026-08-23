@@ -97,6 +97,7 @@ const TESTS = [
   ['fleet', 'fleet-test.mjs'],
   ['desk', 'desk-test.mjs'],
   ['panejob', 'panejob-test.mjs'],
+  ['panebackjobs', 'pane-backjobs-test.mjs'],
   ['surfacereach', 'surface-reach-test.mjs'],
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['handoff', 'handoff-test.mjs'],

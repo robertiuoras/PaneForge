@@ -110,6 +110,7 @@ import {
 import { fleetState } from '../../shared/fleet'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
+import { jobWords } from '../../shared/paneBackJobs'
 import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
@@ -719,10 +720,48 @@ export default function App(): JSX.Element {
     api.listAgents().then(setAgents)
   }, [config?.customAgents, picking, settings])
 
-  // Keep a sane selection as sessions come and go.
+  /**
+   * Keep a sane selection as sessions come and go.
+   *
+   * `sessions[0]` was the fallback and it is the wrong pane in the one case anybody
+   * notices: a HANDOFF. The local pane is killed the moment the far end acks and comes
+   * straight back as a mirror under a different id (`@device/<their id>`), so the pane
+   * being watched vanishes for a beat - and this effect ran first and threw the focus to
+   * the top of the list. "I pressed hand off and it opens a different session." The same
+   * jump happens on any close: the neighbour you were next to is the pane you meant, not
+   * whatever happens to sort first.
+   *
+   * So two rules, in order. A mirror that ARRIVED in this same update wins, because the
+   * only thing that makes a pane appear at the instant another disappears is that one
+   * becoming the other. Otherwise the selection falls to the pane that took the old
+   * one's PLACE - its index, clamped - which is where the eye already is.
+   *
+   * `openListed` (bringing a listed pane back) is untouched: it names the pane it wants
+   * through `pendingOpen` and that is a stronger signal than either rule here.
+   */
+  const lastSessionIds = useRef<string[]>([])
   useEffect(() => {
-    if (sessions.length === 0) setActiveId(null)
-    else if (!sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id)
+    const ids = sessions.map((s) => s.id)
+    const before = lastSessionIds.current
+    lastSessionIds.current = ids
+    if (sessions.length === 0) {
+      if (activeId !== null) setActiveId(null)
+      return
+    }
+    if (sessions.some((s) => s.id === activeId)) return
+    const arrived = sessions.filter((s) => !before.includes(s.id))
+    const mirror = arrived.find((s) => s.remote)
+    if (mirror) {
+      setActiveId(mirror.id)
+      return
+    }
+    if (arrived.length === 1) {
+      setActiveId(arrived[0].id)
+      return
+    }
+    const was = activeId ? before.indexOf(activeId) : -1
+    const at = was < 0 ? 0 : Math.min(was, sessions.length - 1)
+    setActiveId(sessions[at].id)
   }, [sessions, activeId])
 
   // Looking at a pane counts as acknowledging it - but only while you are actually
@@ -3870,6 +3909,35 @@ export default function App(): JSX.Element {
                         {formatElapsed(s.lastRunMs)}
                       </span>
                     ) : null}
+                    {/* What the pane is still RUNNING with its turn over. This is the one
+                        card state Robert reported as a lie: an agent that started work in
+                        the background goes quiet, the clock stops, and the card reads
+                        finished while a build or a tail is going. It sits on the clock's
+                        own line rather than in `.row-sub`, which is already three chips
+                        deep at 190px (see the notes there) - and it is drawn only when
+                        there IS something, which on an ordinary card is never.
+                        Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
+                    {(() => {
+                      const jobs = usage?.panes[s.id]?.jobs
+                      if (!jobs?.length) return null
+                      return (
+                        <span
+                          className="chip jobs"
+                          title={
+                            'Still running with the turn over:\n' +
+                            jobs
+                              .map(
+                                (j) =>
+                                  `  ${j.label}` +
+                                  (j.elapsed ? `, ${formatElapsed(j.elapsed * 1000)}` : '')
+                              )
+                              .join('\n')
+                          }
+                        >
+                          {jobWords(jobs)}
+                        </span>
+                      )
+                    })()}
                   </div>
                 )}
                 <div className="row-sub">
