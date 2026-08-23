@@ -591,6 +591,31 @@ all but six fields away on the way to the renderer. `RemotePaneInfo` now carries
 - A question over there cannot be ANSWERED from a row (the buttons need the frame the
   chooser was read off, which needs a mirror), but it is the loudest reason to open one, so
   it ranks the row exactly as a local question does.
+- **A group is only worth a heading while its name is TRUE, and two of the three were
+  not.** `Running` was `status === 'working'`, and status was set by any output arriving
+  at a pane that had ever been asked anything (`engaged`, which is sticky for the life of
+  the session) - so the CLI echoing the prompt being TYPED into it moved that pane to
+  Running. "It says Running while I am typing this prompt." The honest reading is
+  `runSince`: a turn started by the submit keystroke, by the agent's own busy footer, or
+  by a shell pane's live command, and ended by `endRun`. And `Ready` was `!engaged`, which
+  no pane could ever get back to, so the group held whatever happened never to have been
+  typed into: `/clear` now drops `engaged` (`clearsConversation` in `shared/slashTurn.ts`,
+  partial forms included - a completion menu turns `/cle` into `/clear`), which is the one
+  thing that genuinely puts a pane back where a new one starts. `/compact` and `/resume`
+  do not: both leave a conversation somebody may want to read.
+- **A shell pane's turn ends with its COMMAND, with no quiet clock in front of it.** The
+  backstop that ends a run waits for the pane to go quiet, and a shell echoes every
+  keystroke - so a shell pane that had ever submitted anything kept its clock for as long
+  as somebody typed at its prompt. POSIX only: there `paneJob` is the tty's own foreground
+  process, asked every sweep, and Windows samples a table every 4s where a command would
+  read as finished before it is first seen.
+- **Your move is STILL once you have arrived at it.** The card's flash on arrival runs
+  ONCE (`doneGlow`, 1.9s, and `DONE_GLOW_MS` must stay in step with it) instead of three
+  times over 5.2s, and the standing amber marks - the 2px bar and the halo behind the
+  Ctrl-N key - no longer breathe at all. Motion is for news; a pane that finished ten
+  minutes ago is not news, and four of them pulsing out of step is the "annoying shimmer".
+  A red `asking` bar keeps its pulse, because that one is a live question and it stops
+  when it is answered.
 - `shared/desk.ts` is the arithmetic, out of the component for the same reason `fleet.ts`
   and `place.ts` are. `npm run test:desk`, whose load-bearing half is the negatives and
   whose last block is a SOURCE assertion: a field added to `FleetPane` and not forwarded
