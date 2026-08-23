@@ -513,9 +513,15 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 @media (prefers-reduced-motion: reduce) {
   .row.just-done { animation: none; background: #f0b4291a; box-shadow: 0 0 0 1px #f0b42933; }
 }
+/* It catches the eye when the card ARRIVES here and then holds still. A bar that breathes
+   for as long as the pane waits is motion carrying no news: the pane became your move once,
+   and after that the standing amber mark is the whole message. Three breaths is long enough
+   to be seen from across the desk and short enough that a desk full of finished turns is a
+   still screen. The animation is on the CLASS, so it plays again the next time a pane
+   enters this state and never replays on an ordinary re-render. */
 .row.attn::before {
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
-  border-radius: 2px; background: var(--warn); animation: pulse 1.8s ease-in-out infinite;
+  border-radius: 2px; background: var(--warn); animation: pulse 1.8s ease-in-out 3;
 }
 /* A pane sitting on a question, in the one colour nothing else in this list uses.
    Amber (`attn`) means "it went quiet while you were looking elsewhere" and is a nudge;
@@ -664,9 +670,12 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   animation: glowBreath 2.4s ease-in-out infinite;
   will-change: opacity;
 }
+/* Waiting is a STATE, not an event, so the halo breathes three times as the pane enters it
+   and then stays lit. `live` above keeps breathing because a running turn genuinely is
+   still happening; this one is not. */
 .num-wrap:has(> .num.attn)::before {
   box-shadow: 0 0 9px color-mix(in srgb, #f0b429 55%, transparent);
-  animation: glowBreath 2s ease-in-out infinite;
+  animation: glowBreath 2s ease-in-out 3;
   will-change: opacity;
 }
 /* The floor is not 0: at rest the key still carries its own static 6px glow, so the
@@ -791,10 +800,14 @@ html.hi-refresh .num.live::after { animation: none; }
   box-shadow: 0 0 0 3px var(--accent-dim);
   position: relative;
 }
+/* Three rings and then still, same reasoning as the bar above: the ring is announcing that
+   the pane's turn ENDED, which is a moment. Ten panes each ringing for ever is the screen
+   asking for attention it has already been given. The dot itself stays accent-coloured, so
+   nothing about the reading is lost when the motion stops. */
 .dot.idle::after {
   content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
   box-shadow: 0 0 0 2px var(--accent-dim);
-  animation: callRing 2.4s ease-out infinite;
+  animation: callRing 2.4s ease-out 3 forwards;
   will-change: transform, opacity;
 }
 /* Quiet but never asked anything: "ready", not "waiting on you". Still, therefore. */

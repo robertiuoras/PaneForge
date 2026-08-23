@@ -76,6 +76,34 @@ const RANK: Record<FleetState, number> = {
   exited: 5
 }
 
+/**
+ * Does a byte arriving on the pty mean the agent is WORKING?
+ *
+ * This used to read `engaged || busyUntil > now`, and `engaged` is sticky for the life
+ * of the session - it is set by the first keystroke and never cleared. So the echo of
+ * somebody TYPING flipped the pane to `working`, four seconds of quiet dropped it back
+ * to `idle`, and `engaged` then read as `needsYou`: a card that moved between "Running"
+ * and "Your move" on every pause in a sentence, which is what was reported. Nothing had
+ * been submitted and no turn had begun.
+ *
+ * The honest question is whether a TURN is running, and the app already records that in
+ * two places, both set by `beginRun` and neither set by a bare keystroke: `runSince`
+ * (the turn's clock) and `turnPending` (there is something worth telling you about when
+ * it next goes quiet). `busyUntil` is the third and strongest - the CLI's own footer
+ * saying it is running - and covers a turn this app never saw typed.
+ *
+ * Anything else keeps the status it had, so a pane being typed into stays exactly where
+ * it is in the list until the return is pressed.
+ */
+export function outputIsWork(t: {
+  runSince?: number
+  turnPending: boolean
+  busyUntil: number
+  now: number
+}): boolean {
+  return Boolean(t.runSince) || t.turnPending || t.busyUntil > t.now
+}
+
 export function fleetState(s: Session): FleetState {
   if (s.status === 'exited') return 'exited'
   // A rung bell outranks everything a live process could be doing: the CLI is asking a

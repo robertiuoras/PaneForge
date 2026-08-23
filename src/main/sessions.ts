@@ -22,6 +22,7 @@ import { isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { anchoredStart, readsBusy } from '../shared/busy'
+import { outputIsWork } from '../shared/fleet'
 import { askKeyOf, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
@@ -1222,12 +1223,13 @@ export class SessionManager extends EventEmitter {
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
-      // still only booting its CLI. A pane counts as working when it has been ASKED
-      // something (`engaged`: a prompt at launch, or a keystroke since) or when its own
-      // footer says the agent is running (`busyUntil`, set by setBusyOnScreen). Anything
-      // else keeps the status it had, so a fresh pane stays amber 'starting' and settles
-      // into 'idle' on its own timer.
-      if (meta.engaged || live.busyUntil > now) meta.status = 'working'
+      // still only booting its CLI. A pane counts as working when a TURN is running, which
+      // `outputIsWork` decides and `npm run test:fleet` pins - never merely because the session
+      // has been typed into before (`engaged` is set by the first keystroke and never cleared,
+      // so the echo of typing moved the card between Running and Your move). Anything else keeps
+      // the status it had, so a fresh pane stays amber 'starting' and settles into 'idle'.
+      if (outputIsWork({ ...meta, turnPending: live.turnPending, busyUntil: live.busyUntil, now }))
+        meta.status = 'working'
       this.emit('data', id, data)
       if (wasIdle && meta.status === 'working') this.emitSessions()
     })

@@ -29,7 +29,17 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { density, fleetOrder, fleetRow, fleetSections, fleetState, fleetWaiting, gitLine, previewFrom } = createRequire(
+const {
+  density,
+  fleetOrder,
+  fleetRow,
+  fleetSections,
+  fleetState,
+  fleetWaiting,
+  gitLine,
+  outputIsWork,
+  previewFrom
+} = createRequire(
   import.meta.url
 )(out)
 
@@ -279,5 +289,40 @@ is(previewFrom(['   spaced   out   words  ']), 'spaced out words', 'runs of spac
   ok(p.length <= 160 && p.endsWith('…'), 'a huge line is cut, with the cut said out loud')
 }
 is(previewFrom(['✻ Thinking…', '⠋ ⠙ ⠹']), '✻ Thinking…', 'a spinner row is furniture but a labelled one is words')
+
+// ---------------------------------------------------------------------------
+// Typing is not running.
+//
+// The report: a card moved between "Running" and "Your move" while a sentence was being
+// typed into it. Every keystroke echoes, the echo is output, and the old rule read
+// "output + engaged = working" - where `engaged` is set by the first keystroke of the
+// session and never cleared. So the pane went green on each burst of typing, amber-idle
+// four seconds later, and back. Nothing had been submitted.
+//
+// The negatives are the load-bearing half: a rule that answered `true` to everything
+// would pass the positives below and put the bug straight back.
+
+const typing = { engaged: true, turnPending: false, busyUntil: 0, now: 1_000_000 }
+
+is(outputIsWork(typing), false, 'a pane being typed into is not working')
+is(
+  outputIsWork({ ...typing, runSince: undefined }),
+  false,
+  'no turn clock is no turn, however long the session has been open'
+)
+is(
+  outputIsWork({ ...typing, busyUntil: 999_999 }),
+  false,
+  'a busy deadline that has already lapsed is not a running turn'
+)
+
+// ...and the three things that DO mean work, each on its own.
+is(outputIsWork({ ...typing, runSince: 999_000 }), true, 'a running turn clock is work')
+is(outputIsWork({ ...typing, turnPending: true }), true, 'a submitted prompt is work')
+is(
+  outputIsWork({ ...typing, busyUntil: 1_000_001 }),
+  true,
+  "the CLI's own busy footer is work, even for a turn this app never saw typed"
+)
 
 console.log(`\n${checks} checks - all good`)
