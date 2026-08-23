@@ -32,7 +32,8 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { typeLine, isSlashCommand, isQuietSlash } = createRequire(import.meta.url)(out)
+const { typeLine, isSlashCommand, isQuietSlash, clearsConversation } =
+  createRequire(import.meta.url)(out)
 
 /** Feed a sequence of write() chunks and say whether Enter would read as a command. */
 function submits(chunks) {
@@ -108,6 +109,42 @@ for (const c of quiet) {
   }
 }
 
+// Which submitted line puts the pane back to Ready.
+//
+// The narrow half of `isQuietSlash`: /compact rewrites the conversation the pane is
+// still in and /resume swaps another one in, and neither leaves a pane with nothing
+// to read. Only /clear does, and only /clear un-asks the pane in sessions.ts - which
+// is what stops "Ready" from being a bag of panes that merely happened never to be
+// typed into.
+const clears = [
+  { line: '/clear', want: true },
+  { line: ' /clear ', want: true, name: 'padded' },
+  { line: '/CLEAR', want: true, name: 'shouted' },
+  // Picked out of the CLI's own completion menu: what was typed is not what was sent.
+  { line: '/cl', want: true },
+  { line: '/cle', want: true },
+  { line: '/clea', want: true },
+  // Ambiguous prefixes are left alone - /c is also /compact, /config, /cost.
+  { line: '/c', want: false },
+  { line: '/co', want: false },
+  // The other two quiet commands keep their conversation, so they keep the pane's state.
+  { line: '/compact', want: false },
+  { line: '/resume', want: false },
+  // A longer word that merely starts with it is a different command.
+  { line: '/clearance', want: false },
+  { line: '/clean-up-the-tests', want: false },
+  // Not a command at all.
+  { line: 'clear the failing test', want: false },
+  { line: '', want: false }
+]
+for (const c of clears) {
+  const got = clearsConversation(c.line)
+  if (got !== c.want) {
+    failed++
+    console.error(`FAIL clears ${c.name ?? c.line}: expected ${c.want}, got ${got}`)
+  }
+}
+
 // The cap: a pasted-then-typed monster line cannot grow without bound.
 {
   let typed = ''
@@ -123,4 +160,4 @@ if (failed) {
   console.error(`${failed} case(s) failed`)
   process.exit(1)
 }
-console.log(`slash-test: all ${cases.length + quiet.length + 1} cases pass`)
+console.log(`slash-test: all ${cases.length + quiet.length + clears.length + 1} cases pass`)

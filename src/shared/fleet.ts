@@ -44,7 +44,11 @@ export type FleetState =
   | 'stalled'   // a turn is still running and the pane has gone quiet mid-run
   | 'working'   // printing
   | 'starting'  // spawned, nothing on screen yet
-  | 'ready'     // a CLI that has been asked nothing - quiet, but it has finished nothing
+  // A CLI with nothing pending: never asked anything, or asked and then CLEARED. Quiet,
+  // but it has finished nothing for anybody to read. `engaged` is what says so, and it is
+  // dropped again by a `/clear` in `sessions.ts` - which is the only way a pane comes back
+  // here once it has been used, and the reason this group is not a bag of leftovers.
+  | 'ready'
   | 'exited'    // the process ended
 
 /**
