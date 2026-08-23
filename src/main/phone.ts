@@ -120,6 +120,7 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  'autoclear:ask',
   'sessions:start',
   'sessions:startMany',
   'sessions:restart',

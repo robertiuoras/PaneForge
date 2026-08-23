@@ -617,7 +617,15 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // start anything and cannot delete a transcript. `voice:transcribe` spawns whisper on an
   // uploaded blob: a process, but one that burns this desk's CPU and returns text, with
   // nothing on the far side to steal. Everything else here is a read.
+  // `autoclear:ask` ends in `/clear` and a prompt being TYPED into a pane, so it is gated
+  // with everything else that types: it reaches the app through the phone server, where
+  // `pane-clear.mjs` pairs exactly as a browser does. A 423 there is the gate working -
+  // the hook logs the refusal and asks again on the next Stop rather than clearing.
+  //
+  // `autoclear:cancel` only ever stands a countdown DOWN. Gating it would be a lock that
+  // can stop somebody keeping their own session, which is the wrong way round.
   const REVIEWED_SAFE = new Set([
+    'autoclear:cancel',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
