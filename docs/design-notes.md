@@ -2660,3 +2660,38 @@ with no cap means a laptop lit until somebody notices. `nextBusySince` only move
 0 -> n edge, so a capped stretch cannot re-arm itself by ticking; a real quiet moment does
 re-arm it. Verified live against `pmset -g assertions`: nothing before,
 `NoDisplaySleepAssertion named: "Electron"` while a pane was busy, nothing after.
+
+
+## Two autoclears, and why master's is the one that shipped
+
+2026-08-23, resolving lane-a's merge with master. Both sides built the countdown in front
+of an automatic `/clear` on the same day - master as `cf163df`, lane-a as its own
+`ClearCountdown` in `src/main/autoclear.ts` - so the merge produced two complete
+implementations wired into one app. Git marked five files conflicted and left the worse
+damage in files it merged cleanly:
+
+- `src/main/index.ts` registered `ipcMain.handle('autoclear:ask')` TWICE. Electron throws
+  on a second handler for one channel, so the merged app would not have started. Nothing
+  flagged this; typecheck passes on it.
+- `App.tsx` imported `AutoClearToast` twice and rendered it twice, once with `panes`/
+  `onKeep` and once with no props.
+- `src/shared/surface.ts` and `scripts/surface-reach-test.mjs` each declared
+  `askAutoClear` twice in one object literal. Only the first of those is a type error.
+
+Master's implementation won because the already-merged consumers use it end to end:
+`sessions.ts` owns `armAutoClear`/`cancelAutoClear` and sets `Session.autoClearAt`,
+`index.ts` re-reads the payload through `readAsk` because the phone server reaches that
+channel, and the card renders from the pane list with no subscription of its own. Lane-a's
+path went with it: `src/main/autoclear.ts`, the `autoclear:answer` / `:pending` /
+`:changed` channels, their `Surface` and `PaneApi` members, and the lane-a half of
+`src/shared/autoclear.ts`.
+
+The guard that caught the leftovers was `npm run test:surfacereach`, which failed with
+three UNREACHABLE channels - the exact signature of a half-removed feature. Its rule (every
+Surface method needs either a control in the window or a named non-window caller in
+DESK_SIDE) is the reason a dead IPC channel cannot sit quietly in this repo.
+
+The lesson for the next merge like this: when two lanes answer the same ask, resolving the
+conflicted files is the small half. Grep the whole merged tree for duplicate registrations
+- `ipcMain.handle`, object-literal keys, component renders - because a clean auto-merge of
+two additions is exactly how you get two of something that must be one.
