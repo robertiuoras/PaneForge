@@ -1500,6 +1500,10 @@ function TerminalPane({
         term: t,
         fit: f,
         host: host.current,
+        // The full re-render Fix runs (see `redrawHistory`). On the handle because a
+        // probe cannot press a button, and repairing torn scrollback is only checkable by
+        // reading the buffer back afterwards.
+        redraw: () => paneRedraw.get(sessionId)?.(),
         dropWebgl: () => {
           glRef.current?.dispose()
           glRef.current = null
