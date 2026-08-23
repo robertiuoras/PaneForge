@@ -3450,3 +3450,14 @@ button.chip {
 button.chip:hover {
   opacity: 0.85;
 }
+
+/* --------------------------------------------------------------------------
+   The automatic-/clear countdown. Same card as the update toast, plus the two
+   things that card never needed: what is about to be continued, and how long
+   is left to stop it. It sits ABOVE the update card when both are up - one is
+   a new version waiting, the other is a session about to end. */
+.update-toast.autoclear { z-index: 62; }
+.ac-steps { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+.ac-steps li { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.ac-bar { height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.ac-bar > i { display: block; height: 100%; background: var(--accent); transition: width 0.25s linear; }

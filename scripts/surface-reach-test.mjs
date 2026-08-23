@@ -47,6 +47,8 @@ const DESK_SIDE = {
   // How a stuck queue is inspected from outside the window; the card reads
   // `Session.handingOff` for the chip, which is the same fact with no poll.
   handoffPending: 'inspection from a script - the chip reads Session.handingOff',
+  // The `autoclear` Stop hook asks; the window only ever answers the card it draws.
+  askAutoClear: 'the autoclear Stop hook - claude-config/autoclear.mjs, over the phone server',
 }
 
 function walk(dir, out = []) {

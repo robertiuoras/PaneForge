@@ -133,6 +133,11 @@ const GATED_INVOKE = new Set([
   // set was a door straight past the gate: a stolen cookie could pick "1. Yes, run it"
   // on any permission prompt on screen without a passkey touch.
   'pty:choose',
+  // Typing, on a delay. `autoclear:ask` ends in `/clear` plus a prompt typed into a pane
+  // unless somebody at the desk stops it, and `autoclear:answer` with 'now' skips even
+  // that wait - so both are the same class as `pty:write`, not a lesser one.
+  'autoclear:ask',
+  'autoclear:answer',
   // Elevation. `admin:enable` registers the scheduled task that relaunches this app
   // ELEVATED with no UAC prompt (index.ts, enableAdminMode) - the single biggest thing a
   // cookie could buy on this desk, and it sat outside the gate because the rule was read

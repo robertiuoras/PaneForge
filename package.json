@@ -188,7 +188,9 @@
     "test:askrender": "node scripts/ask-render-test.mjs",
     "test:tips": "node scripts/tips-test.mjs",
     "test:improve": "node scripts/prompt-draft-test.mjs && node scripts/prompt-redact-test.mjs",
-    "test:orcatalogue": "node scripts/or-catalogue-test.mjs"
+    "test:orcatalogue": "node scripts/or-catalogue-test.mjs",
+    "test:awake": "node scripts/awake-test.mjs",
+    "test:autoclear": "node scripts/autoclear-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
