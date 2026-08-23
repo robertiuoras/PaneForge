@@ -127,6 +127,7 @@ import LaneStrip, {
 import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
+import AutoClearToast from './components/AutoClearToast'
 import UpdateToast from './components/UpdateToast'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
@@ -4841,6 +4842,10 @@ export default function App(): JSX.Element {
           void api.setConfig({ mascot: { ...DEFAULT_MASCOT, ...config?.mascot, ...patch } })
         }
       />
+      {/* A session about to clear itself. Drawn for the window rather than per pane: the
+          countdown is about a CONVERSATION, and the pane it belongs to is very often not
+          the one on screen - which is the whole reason the silent version was a bug. */}
+      <AutoClearToast panes={sessions} onKeep={(id) => void api.cancelAutoClear(id)} />
       <UpdateToast />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
           thing here that talks about the app rather than about the work, so every other
