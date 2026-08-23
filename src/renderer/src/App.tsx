@@ -716,10 +716,48 @@ export default function App(): JSX.Element {
     api.listAgents().then(setAgents)
   }, [config?.customAgents, picking, settings])
 
-  // Keep a sane selection as sessions come and go.
+  /**
+   * Keep a sane selection as sessions come and go.
+   *
+   * `sessions[0]` was the fallback and it is the wrong pane in the one case anybody
+   * notices: a HANDOFF. The local pane is killed the moment the far end acks and comes
+   * straight back as a mirror under a different id (`@device/<their id>`), so the pane
+   * being watched vanishes for a beat - and this effect ran first and threw the focus to
+   * the top of the list. "I pressed hand off and it opens a different session." The same
+   * jump happens on any close: the neighbour you were next to is the pane you meant, not
+   * whatever happens to sort first.
+   *
+   * So two rules, in order. A mirror that ARRIVED in this same update wins, because the
+   * only thing that makes a pane appear at the instant another disappears is that one
+   * becoming the other. Otherwise the selection falls to the pane that took the old
+   * one's PLACE - its index, clamped - which is where the eye already is.
+   *
+   * `openListed` (bringing a listed pane back) is untouched: it names the pane it wants
+   * through `pendingOpen` and that is a stronger signal than either rule here.
+   */
+  const lastSessionIds = useRef<string[]>([])
   useEffect(() => {
-    if (sessions.length === 0) setActiveId(null)
-    else if (!sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id)
+    const ids = sessions.map((s) => s.id)
+    const before = lastSessionIds.current
+    lastSessionIds.current = ids
+    if (sessions.length === 0) {
+      if (activeId !== null) setActiveId(null)
+      return
+    }
+    if (sessions.some((s) => s.id === activeId)) return
+    const arrived = sessions.filter((s) => !before.includes(s.id))
+    const mirror = arrived.find((s) => s.remote)
+    if (mirror) {
+      setActiveId(mirror.id)
+      return
+    }
+    if (arrived.length === 1) {
+      setActiveId(arrived[0].id)
+      return
+    }
+    const was = activeId ? before.indexOf(activeId) : -1
+    const at = was < 0 ? 0 : Math.min(was, sessions.length - 1)
+    setActiveId(sessions[at].id)
   }, [sessions, activeId])
 
   // Looking at a pane counts as acknowledging it - but only while you are actually
