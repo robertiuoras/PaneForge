@@ -203,7 +203,11 @@ const api = window.api
  */
 const VISIBILITY_REFRESH_MS = 30_000
 
-const DONE_GLOW_MS = 5200
+/* One pass of `doneGlow` (1.9s in styles.css) plus a beat, and nothing more: the class has
+   to come off when the flash ends or the card keeps the last frame's tint for another
+   three seconds. Was 5200, which was three passes - a card that flickers while you read
+   it. Keep this and the CSS duration in step. */
+const DONE_GLOW_MS = 2100
 
 /** How far a press has to travel before it is a drag rather than a click. Measured on
  *  the real window: a press that drifted 6px selected nothing, because 5px was inside
