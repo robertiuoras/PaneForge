@@ -44,7 +44,8 @@ import {
 import type { DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
-import { scrubForeignKeys } from '../shared/paneTrust'
+import { homedir } from 'node:os'
+import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
@@ -447,6 +448,11 @@ export class SessionManager extends EventEmitter {
     // Before the CLI is spawned, not after: it reads .claude.json at startup and would
     // already be sitting on the trust prompt by the time anything here could help.
     if (agent === 'claude') ensureTrusted(req.cwd)
+    // Before the pty exists, because there is no taking it back afterwards: an agent
+    // pointed at another provider posts every file it opens to that provider, and this
+    // is the only moment the folder can still be refused.
+    const trust = allowsCwd(specFor(agent), req.cwd, getConfig().paneTrust, homedir())
+    if (!trust.ok) throw new Error(trust.reason)
     const id = `s${++this.seq}-${Date.now().toString(36)}`
     const clock = restoredClock(req, Date.now())
 

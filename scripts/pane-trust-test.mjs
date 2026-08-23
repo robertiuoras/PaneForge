@@ -24,7 +24,8 @@ const build = (entry, name) => {
   buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, format: 'cjs', platform: 'node', outfile: out })
   return createRequire(import.meta.url)(out)
 }
-const { PROVIDER_ENV, isThirdParty, foreignKeyVars, scrubForeignKeys } = build('src/shared/paneTrust.ts', 'trust.cjs')
+const { PROVIDER_ENV, isThirdParty, foreignKeyVars, scrubForeignKeys, allowsCwd, withinRoot, expandRoot } =
+  build('src/shared/paneTrust.ts', 'trust.cjs')
 const { BUILTIN_AGENTS, findAgent, keyProviderFor, KEY_PROVIDERS } = build('src/shared/agents.ts', 'agents.cjs')
 
 let checks = 0
@@ -39,7 +40,8 @@ const is = (a, b, what) => {
 
 const claude = findAgent(BUILTIN_AGENTS, 'claude')
 const or = findAgent(BUILTIN_AGENTS, 'openrouter')
-const zai = findAgent(BUILTIN_AGENTS, 'zai')
+const zai = findAgent(BUILTIN_AGENTS, 'glm')
+const aider = findAgent(BUILTIN_AGENTS, 'aider')
 
 // The environment a real desk hands a pane, with every credential this guard knows about.
 const desk = () => ({
@@ -95,6 +97,50 @@ ok(/scrubForeignKeys\(agentEnv\(\), spec\)/.test(spawnSrc), 'the pty spawn actua
 ok(
   spawnSrc.indexOf('scrubForeignKeys(agentEnv(), spec)') < spawnSrc.indexOf('...resolveEnv(spec, agentKeys())'),
   "...before resolveEnv, so the pane's own key is put back after"
+)
+
+// --- which folders a third-party pane may be opened in --------------------------------
+const HOME = '/Users/r'
+const conf = { restrictThirdParty: true, allowedRoots: ['/Users/r/Projects/PaneForge', '~/Projects/toolstash'] }
+
+ok(allowsCwd(or, '/Users/r/Projects/PaneForge', conf, HOME).ok, 'an allowed root itself is allowed')
+ok(allowsCwd(or, '/Users/r/Projects/PaneForge/src/main', conf, HOME).ok, '...and everything under it')
+ok(allowsCwd(or, '/Users/r/Projects/toolstash/lib', conf, HOME).ok, 'a ~ root is expanded against the real home')
+
+// The boundary, which a startsWith would get wrong in the direction that leaks.
+const sibling = allowsCwd(or, '/Users/r/Projects/PaneForge-secrets', conf, HOME)
+ok(!sibling.ok, 'a SIBLING whose name starts with an allowed root is refused')
+ok(/PaneForge-secrets/.test(sibling.reason), '...and the refusal names the folder')
+ok(!withinRoot('/a/b', '/a/bc'), 'withinRoot needs a path boundary, not a prefix')
+ok(withinRoot('/a/b/', '/a/b/c'), 'a trailing slash on the root changes nothing')
+
+const denied = allowsCwd(or, '/Users/r/Projects/assistant', conf, HOME)
+ok(!denied.ok, 'a folder that is on no list is refused')
+ok(/Settings/.test(denied.reason), '...and the refusal names where the list is')
+
+const empty = allowsCwd(or, '/Users/r/Projects/PaneForge', { restrictThirdParty: true, allowedRoots: [] }, HOME)
+ok(!empty.ok, 'an empty list confines the pane to nowhere')
+ok(/no folder is on the allowed list/.test(empty.reason), '...and says THAT, not that this folder is wrong')
+
+// The negatives again: this may not touch a desk that did not ask for it.
+ok(allowsCwd(or, '/anywhere', undefined, HOME).ok, 'no config at all means no confinement')
+ok(allowsCwd(or, '/anywhere', { restrictThirdParty: false, allowedRoots: [] }, HOME).ok, 'switched off means off')
+ok(allowsCwd(claude, '/Users/r/Projects/assistant', conf, HOME).ok, 'a FIRST-PARTY pane is never confined')
+ok(!allowsCwd(zai, '/Users/r/Projects/assistant', conf, HOME).ok, 'every third-party runner is confined, not just OpenRouter')
+// keyProviderFor is blind to these four - they name a provider in a variable of their
+// own rather than in the Anthropic pair - and a guard that believed it called them
+// first-party. That is a repo posted to OpenRouter with nothing refusing it.
+ok(isThirdParty(aider), 'a runner that names OPENROUTER_API_KEY is third-party too')
+ok(!allowsCwd(aider, '/Users/r/Projects/assistant', conf, HOME).ok, '...and is confined')
+ok(!('ANTHROPIC_API_KEY' in scrubForeignKeys(desk(), aider)), '...and does not inherit the Anthropic key')
+is(expandRoot('~', HOME), HOME, 'a bare ~ is the home folder')
+is(expandRoot('/abs', HOME), '/abs', 'an absolute root is left alone')
+
+// The wiring, again: a decision nothing calls is the shape that ships dead.
+ok(/allowsCwd\(specFor\(agent\), req\.cwd/.test(spawnSrc), 'sessions.start() asks before the pty exists')
+ok(
+  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('proc: this.spawn(req'),
+  '...and refuses BEFORE the spawn, which cannot be taken back'
 )
 
 rmSync(work, { recursive: true, force: true })
