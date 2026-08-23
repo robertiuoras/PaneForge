@@ -157,11 +157,13 @@ manager.resize(id, 60, 20, true, 'phone')
 manager.returnSizes('phone')
 ok(shape() === '100x30', "the phone leaving does not end the mirror's borrow", shape())
 ok(live.borrowed === true, 'which is still on record')
-// ...and a desk resize still takes ownership back from everybody at once.
+// ...and case 4's rule is untouched by any of it: a desk resize arriving while somebody is
+// still holding the pane is REMEMBERED, never obeyed, and is what they get back.
 manager.resize(id, 157, 57)
-ok(shape() === '157x57', 'a desk resize with nobody holding it wins as it always did', shape())
+ok(shape() === '100x30', 'a desk resize under a live borrow still does not snap the pty', shape())
 manager.returnSizes()
-ok(shape() === '157x57', 'and there is nothing left to give back', shape())
+ok(shape() === '157x57', 'and the last thing the desk chose is what it gets back', shape())
+ok(live.borrowed !== true, 'with every borrow cleared')
 
 // ---- 6. an exited pane is not resized ---------------------------------------------
 const before = sizes.length
