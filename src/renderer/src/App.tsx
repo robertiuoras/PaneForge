@@ -61,6 +61,7 @@ import TerminalPane, {
   paneArmClear,
   paneInsert,
   paneRepair,
+  paneRedraw,
   syncedPanes
 } from './components/TerminalPane'
 import {
@@ -1597,7 +1598,12 @@ export default function App(): JSX.Element {
       const repair = paneRepair.get(target)
       if (!repair) return flash('That pane is not ready yet.')
       repair()
-      flash('Display repaired.')
+      // ...and the scrollback, which no repaint can reach. Fix is the one thing anybody
+      // presses when a pane looks wrong, and until this it could only fix the live frame -
+      // mis-widthed history stayed broken however many times it was pressed.
+      const redraw = paneRedraw.get(target)
+      if (!redraw) return flash('Display repaired.')
+      void redraw().then((did) => flash(did ? 'Display and history repaired.' : 'Display repaired.'))
     },
     [flash]
   )

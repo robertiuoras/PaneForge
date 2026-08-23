@@ -189,6 +189,13 @@ import { isPhoneClient } from '../client'
  */
 export const paneRepair = new Map<string, () => void>()
 
+/**
+ * Re-render a pane from its own bytes. Separate from `paneRepair` on purpose: that one is
+ * cheap and runs on its own (a restore, a font change), this one rewrites the whole buffer
+ * and only ever runs because somebody pressed Fix. See `redrawHistory`.
+ */
+export const paneRedraw = new Map<string, () => Promise<boolean>>()
+
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
 export const renderCount = new Map<string, number>()
 ;(window as unknown as { __pfRenders?: Map<string, number> }).__pfRenders = renderCount
@@ -2677,6 +2684,49 @@ function TerminalPane({
         /* hidden or detached - the visibility effect refits it */
       }
     }
+    /**
+     * Draw this pane's whole byte stream again, at a width no narrower than any width it
+     * was painted at.
+     *
+     * `repair` above asks the CLI to repaint, which redraws the SCREEN. It cannot touch
+     * the scrollback, and the scrollback is where mis-widthed drawing ends up: bytes made
+     * at one width and clamped into a narrower grid are word-on-word for good, whatever
+     * the pane is resized to afterwards. The bytes themselves are still correct - the
+     * buffer in main is the raw stream, not this rendering of it - so writing them into a
+     * terminal that is wide enough repairs it. See shared/paneGrid.ts for how a pane got
+     * into that state at all, which is now fixed at the source; this is the way back for
+     * a pane that is already in it.
+     *
+     * Widest of what we know, never a guess: the pane now, the width a restored tail was
+     * painted at, and the grid every pty starts on. A byte drawn at column N is safe in
+     * any terminal at least N wide, and the terminal is put back afterwards - xterm
+     * re-wraps what is in its buffer, so nothing is lost to the second resize.
+     *
+     * User-initiated only. It reads the capped buffer, so scrollback older than that cap
+     * does not come back, and paying that to un-break a pane is a person's call.
+     */
+    const redrawHistory = async (): Promise<boolean> => {
+      if (mirrorRef.current) return false
+      const b = await api.getBuffer(sessionId)
+      if (!b) return false
+      const back = t.cols
+      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      try {
+        replaying.current = true
+        t.reset()
+        if (wide !== back) t.resize(wide, t.rows)
+        await new Promise<void>((res) => t.write(keep(b), () => res()))
+        if (wide !== back) t.resize(back, t.rows)
+      } finally {
+        replaying.current = false
+      }
+      reshape(t, f)
+      t.scrollToBottom()
+      setScrolledUp(false)
+      seedMarks()
+      return true
+    }
+    paneRedraw.set(sessionId, redrawHistory)
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
       const away = keep.arm()
@@ -2915,6 +2965,7 @@ function TerminalPane({
       window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneRedraw.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)
