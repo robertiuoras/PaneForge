@@ -259,9 +259,21 @@ can host and each can connect out. Three decisions not to re-litigate:
   on the device it was opened on. Remote control, not migration. Session ids are the seam:
   a mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in `main/index.ts` routes every
   pane message to the link instead of the pty manager.
-- **The host owns the terminal's size.** A mirror draws at the far end's cols/rows
-  (`Session.cols/rows`) and shrinks its own font. Two windows sizing one pty trade
-  SIGWINCHes forever.
+- **A mirror BORROWS the terminal's size; it never owns it.** Fitting the font was the
+  only lever a mirror had and it cannot win: measured 2026-08-23 the PC's pane was 69x35
+  (its window is small - a disconnected RDP session) against room for 152x58 here, so the
+  far end's screen was either a block of text in the corner or, once it was allowed to
+  grow, enormous. Neither is the screen the agent draws on. So `pty:resize` on a mirrored
+  id is sent over the link with `borrowed` - the same contract a phone has with a desk
+  pane (`resize(borrowed)` in `main/sessions.ts`): the host bends the pty to the viewer,
+  keeps `deskCols/deskRows`, and `returnSize(id)` gives them back on detach, on the guest
+  vanishing, or when this desk resizes the pane itself. Per-pane, never `returnSizes()` -
+  another device may be watching three panes and stop watching one. The old SIGWINCH
+  worry does not apply: a mirror fits itself to its OWN window and asks for that, so it
+  never chases the number it was sent. `shared/mirrorFit.ts` is now the FALLBACK for a
+  host that has not applied the borrow yet or is an older build, and the leftover slack it
+  centres is only split when it is bigger than two cells - inside that, the pane is full
+  and belongs flush against the edge the scrollbar hugs.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
