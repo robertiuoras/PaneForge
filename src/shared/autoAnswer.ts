@@ -57,8 +57,16 @@ const STOPS = /^(?:no|n|cancel|skip|quit|exit|abort|stop|reject|deny|don'?t)\b|t
  * Anchored at the start on purpose. A label is a sentence and the word "yes" appears in
  * the middle of plenty of them ("No - I already said yes to that"), so what is read is
  * the word the option LEADS with, which is how every one of these CLIs writes them.
+ *
+ * `submit` / `done` / `finish` are here for the screen that ENDS a multi-question ask:
+ * Claude Code collects each answer and then draws `1. Submit answers / 2. Cancel`, and
+ * with none of those words read as a go-ahead a set of questions somebody had already
+ * answered - by hand or through this very file - sat on the last screen for ever. It is
+ * the narrowest sense of "go on with what you were doing" there is: the decisions were
+ * all made on the screens before it, and the only other option is `Cancel`, which throws
+ * them away.
  */
-const GOES = /^(?:yes|y|ok(?:ay)?|sure|allow|approve|accept|proceed|continue|confirm|apply|run|do it|go ahead|keep going|use)\b/i
+const GOES = /^(?:yes|y|ok(?:ay)?|sure|allow|approve|accept|proceed|continue|confirm|apply|run|do it|go ahead|keep going|use|submit|done|finish)\b/i
 
 /**
  * An option the CLI itself points at.

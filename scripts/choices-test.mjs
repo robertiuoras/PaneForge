@@ -343,5 +343,84 @@ ok('a label that is only box characters is kept rather than emptied', () => {
   assert.ok(ask.options[0].label.length, 'an empty label is worse than a noisy one')
 })
 
+// ---------------------------------------------------------------------------
+// Real frame: the LAST screen of a multi-question AskUserQuestion, off
+// history/s11-mt2ptrhm.log (2026-08-23). Every question answered, the answers
+// listed back, and one list that commits them - with NO `Enter to select`
+// footer anywhere on it. The footer that IS in the tail belongs to the question
+// asked just before, which is what the app drew instead: buttons for a question
+// the CLI had already moved past, while the set sat unsent.
+// ---------------------------------------------------------------------------
+const REVIEW = [
+  'Enter to select · Tab/Arrow keys to navigate · Esc to cancel',
+  '',
+  '─'.repeat(60),
+  '← ☒ Scope ☒ Placement ☒ Data  ✔ Submit  →',
+  '',
+  'Review your answers',
+  '',
+  '● "Ads tab" - what should it show?',
+  '  → everything whatever account is linked as admin',
+  '● Where does it live in the sidebar?',
+  '  → Content OS space',
+  '',
+  'Ready to submit your answers?',
+  '❯ 1. Submit answers',
+  '  2. Cancel',
+  '',
+  ''
+].join('\n')
+
+ok('the review screen is a question, footer or no footer', () => {
+  const ask = readAsk(REVIEW)
+  assert.ok(ask, 'a set of answered questions must not read as no question at all')
+  assert.equal(ask.options.length, 2)
+  assert.equal(ask.options[0].label, 'Submit answers')
+  assert.equal(ask.options[1].label, 'Cancel')
+  assert.equal(ask.selected, 1)
+  assert.equal(ask.question, 'Ready to submit your answers?')
+})
+
+ok('...and it outranks the older footer still in the tail', () => {
+  // The control: with the review prompt gone, the same frame reads as the question the
+  // footer belongs to - which is precisely the stale reading this fixes.
+  const noLead = REVIEW.replace('Ready to submit your answers?', 'and so on')
+  assert.equal(readAsk(noLead), null, 'no list under that footer, so nothing to draw')
+})
+
+ok('a review the CLI has already answered is NOT live', () => {
+  // Once the answers are sent the transcript is printed under the very same rows and
+  // stays in the painted tail. Pressing return at that would put a stray newline into a
+  // composer somebody may be holding a draft in.
+  const sent = REVIEW + [
+    "⏺ User answered Claude's questions:",
+    '  ⎿ · Where does it live in the sidebar? → Content OS space',
+    ''
+  ].join('\n')
+  assert.equal(readAsk(sent), null)
+})
+
+ok('a review with no arrow on any row is refused', () => {
+  assert.equal(readAsk(REVIEW.replace('❯ 1.', '  1.')), null)
+})
+
+ok('the sentence alone is not a question - the list has to be under it', () => {
+  const prose = [
+    'I will now go through them one at a time.',
+    'Ready to submit your answers? Not yet - two are still open.',
+    '',
+    'Here is what is left:',
+    '1. The sudo scope',
+    '2. The Safari restart',
+    ''
+  ].join('\n')
+  assert.equal(readAsk(prose), null, 'a numbered list in an ANSWER carries no arrow')
+})
+
+ok('the keys that submit a review are a bare return', () => {
+  const ask = readAsk(REVIEW)
+  assert.deepEqual(keysForChoice(ask, 1), ['\r'])
+})
+
 rmSync(out, { recursive: true, force: true })
 console.log(`\nchoices: ${n} checks passed`)
