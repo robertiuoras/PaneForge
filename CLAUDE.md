@@ -1624,6 +1624,22 @@ many. Measured on this desk while writing it: pressure `normal`, load 0.53 per c
   turns ran. Pressing the chip, or `Keep it here` in the card menu or the phone's sheet,
   drops the entry; a move already IN FLIGHT has left the queue and says so rather than
   claiming a success it cannot deliver.
+- **`undefined` means keep the stamp; only `null` clears it.** `handoffQueuedAt` is what
+  makes the chip say `waiting 12m` instead of `moving`, and EVERY entry into a handoff
+  paints the pane before it knows which of the two this is - the button, a second press,
+  the budget sweep asking again. While `setHandingOff(id, on, queuedAt?)` cleared on an
+  absent third argument, any of those silently turned a queued pane into one that reads as
+  in transit and never arrives. Measured live 2026-08-23: `handingOff: true`, no
+  `handoffQueuedAt`, and `remote:handoffPending` listing that same pane - "I pressed hand
+  off, it says moving, and it is not moving". `run()` is the one caller that passes `null`.
+- **The turn ending is an EVENT, not something to poll for.** `handoffQueue.poke()` on
+  every `sessions` change is what makes "as soon as the turn ends" mean it, instead of up
+  to `TICK_MS` (5s) of a finished pane sitting under a `waiting` chip. Free when nothing is
+  queued; the tick stays as the backstop, since an expiry has no event to hang off.
+- The local half of a move is not where the time goes: measured on this Mac, the whole
+  preparation is ~100ms (git `status` and `rev-list` 23-25ms each, the process table 43ms,
+  a 2.7 MB transcript read in 3ms), and the push is SKIPPED outright when nothing is
+  unpushed - the 1015ms it costs is the one leg worth avoiding, and already is.
 - **A pane holding a question is never moved, queued or otherwise.** The chooser is drawn on
   a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
   question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the

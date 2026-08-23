@@ -152,7 +152,13 @@ function harness(overrides = {}) {
   g.queue.add('p1', 'dev-pc')
   g.queue.tick()
   await new Promise((r) => setTimeout(r, 20))
-  ok('the move itself re-marks the pane with no wait time', going.some((m) => m.on === true && m.queuedAt === undefined), JSON.stringify(going))
+  // `null`, and never `undefined` - that is the whole of the "it says moving and it is not
+  // moving" bug. Every OTHER entry into a handoff paints the pane before it knows whether
+  // this one will be sent or queued, so `undefined` has to mean "leave the stamp alone".
+  // Measured live 2026-08-23: a pane reading `handingOff: true` with no `handoffQueuedAt`,
+  // listed at that same moment by `remote:handoffPending`.
+  ok('the move itself takes the wait time OFF, explicitly', going.some((m) => m.on === true && m.queuedAt === null), JSON.stringify(going))
+  ok('...and never by passing undefined, which now means keep it', !going.some((m) => m.on === true && m.queuedAt === undefined), JSON.stringify(going))
   ok('...and the mark comes off at the end', going.at(-1)?.on === false, JSON.stringify(going.at(-1)))
 }
 
@@ -186,5 +192,22 @@ function harness(overrides = {}) {
 }
 
 rmSync(out, { recursive: true, force: true })
+{
+  // The other two halves of the same rule, and neither is reachable from this bundle: the
+  // stamp is written in `sessions.ts` and the button path paints the pane in `index.ts`.
+  // A green test over a queue that marks correctly, in front of a setter that clears on
+  // `undefined`, is exactly what shipped.
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const setter = sessions.slice(sessions.indexOf('setHandingOff(id: string'), sessions.indexOf('  kill(id: string)'))
+  ok('setHandingOff clears the wait time only on an explicit null', /queuedAt === null/.test(setter), setter.slice(0, 80))
+  ok('...and never on undefined', !/if \(on && queuedAt\)[\s\S]{0,40}else delete s\.meta\.handoffQueuedAt/.test(setter))
+
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  ok(
+    'the button path paints the pane without touching the stamp',
+    /for \(const id of wanted\) manager\.setHandingOff\(id, true\)/.test(index)
+  )
+}
+
 console.log(`handoff-notify: ${checks} checks, ${failures} failed`)
 process.exit(failures ? 1 : 0)
