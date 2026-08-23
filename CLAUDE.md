@@ -1571,7 +1571,13 @@ many. Measured on this desk while writing it: pressure `normal`, load 0.53 per c
   useless, since the pane worth moving is usually the one working - so `main/handoffQueue.ts`
   holds it and moves it the instant the turn ends. That is what "hand it off mid-turn" means
   here. A pane that never goes quiet **expires** after `waitMinutes` and stays, said out
-  loud; nothing is ever killed to make the queue progress.
+  loud; nothing is ever killed to make the queue progress. **And the chip that reports the
+  wait is the control that ends it**: `remote:handoffCancel` shipped with the queue and
+  nothing in the window ever called it, so the only way off the list was a script - two
+  panes sat under a `waiting` chip for 13 and 18 minutes on 2026-08-23 while their own
+  turns ran. Pressing the chip, or `Keep it here` in the card menu or the phone's sheet,
+  drops the entry; a move already IN FLIGHT has left the queue and says so rather than
+  claiming a success it cannot deliver.
 - **A pane holding a question is never moved, queued or otherwise.** The chooser is drawn on
   a screen and lives in no transcript. `fleetState` calls both a finished turn and a live
   question `needsYou`, which is why `AutoPane.asking` is separate: a finished turn is the
