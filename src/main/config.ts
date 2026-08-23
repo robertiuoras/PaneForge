@@ -423,9 +423,15 @@ function migrateReclaim(
 ): ReclaimConfig {
   const merged: ReclaimConfig = { ...DEFAULT_RECLAIM, ...(base ?? {}), ...(raw ?? {}) }
   if (raw?.defaultsV2) return merged
-  // Only a zero is moved. A desk that has a number in there chose one, and this is not the
-  // place to overrule it.
-  if (!(merged.idleCloseMinutes > 0)) merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
+  // A zero, and the one number the app itself could have written. The Settings control is
+  // a SWITCH, not a field, so the only values that ever reached this key are 0 and the old
+  // `IDLE_CLOSE_MINUTES` of 30 - both of them the app's own, and neither of them anybody's
+  // choice of duration. Anything else was typed through `pf-ctl call config:set` and is
+  // left exactly as it is.
+  const OLD_SWITCH_MINUTES = 30
+  if (!(merged.idleCloseMinutes > 0) || merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
+    merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
+  }
   merged.defaultsV2 = true
   return merged
 }

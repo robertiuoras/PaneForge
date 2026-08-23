@@ -626,6 +626,11 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 button.chip.closing { cursor: pointer; font: inherit; font-size: 11px; }
 button.chip.closing:hover { filter: brightness(1.3); }
+/* ...and red in the last minute, matching the card's own glow: past that point this is
+   not a clock, it is the app about to close somebody's pane. */
+.row-title .chip.closing.soon {
+  color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c;
+}
 /* It WRAPS. Everything below this rule is about which of five true facts gets destroyed
    when they do not fit in 190px, and the answer kept being a different one - the clock,
    then the agent's name, then the place - because with one line there is no answer that

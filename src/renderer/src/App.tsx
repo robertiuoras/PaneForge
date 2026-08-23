@@ -143,7 +143,7 @@ import { DEFAULT_TIPS } from '../../shared/tips'
  */
 const OPENED_AT = Date.now()
 import VersionBadge from './components/VersionBadge'
-import { playEvent, playTick } from './useChime'
+import { playAction, playEvent, playTick } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
 import { useHandheld } from './handheld'
@@ -243,15 +243,27 @@ function CloseClock({ at, onKeep }: { at: number; onKeep?: () => void }): React.
   const now = useNow()
   const left = Math.max(0, Math.ceil((at - now) / 1000))
   const mins = Math.floor(left / 60)
-  const words = `${mins}:${String(left % 60).padStart(2, '0')}`
+  // Minutes and seconds only where the seconds are worth reading. A pane somebody has just
+  // pressed "keep it open" on is an hour away, and `60:01` ticking down on a card for an
+  // hour is a clock demanding attention it does not need.
+  // `now`, not `0:00`. The sweep that does the closing runs on a MINUTE timer, so a pane
+  // that is due sits at its deadline for up to a minute before anything happens - measured
+  // live at 10+ seconds of `closes 0:00`, which reads as a clock that has jammed. Due is
+  // the honest word for it.
+  const words =
+    left === 0 ? 'now' : mins >= 10 ? `${mins}m` : `${mins}:${String(left % 60).padStart(2, '0')}`
   const why = onKeep
     ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
     : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
-  if (!onKeep) return <span className="chip closing" title={why}>{`closes ${words}`}</span>
+  // The last minute is RED, on the same argument the card's own glow is: this is the app
+  // about to do something to somebody's pane, and the moment it stops being a clock and
+  // starts being an alert is the moment it is nearly out of time.
+  const cls = 'chip closing' + (left <= 60 ? ' soon' : '')
+  if (!onKeep) return <span className={cls} title={why}>{`closes ${words}`}</span>
   return (
     <button
       type="button"
-      className="chip closing"
+      className={cls}
       title={why}
       onClick={(e) => {
         // The card underneath is a switch-to-this-pane button, and keeping a pane open is
@@ -415,10 +427,24 @@ export default function App(): JSX.Element {
    * flight is past the queue and cannot be called back.
    */
   const stopMove = (s: { id: string; title: string }): void => {
+    // ...and it HOLDS the pane, which taking it off the queue does not.
+    //
+    // `cancelHandoff` empties the queue entry and nothing else, so the sweep that put it
+    // there was free to pick the same pane on its very next pass - the budget rung runs on
+    // every session change and the idle one every minute. Reported 2026-08-23: "i press
+    // keep it here but it still comes up again later to move it not even a minute later".
+    // The mascot's own "Keep it here" always did this (`keepOpen`); the chip, the card menu
+    // and the phone's sheet reached the cancel without it, which made the visible control
+    // the one that did not work.
+    keepHere([s.id])
     void api
       .cancelHandoff(s.id)
       .then((stopped) =>
-        flash(stopped ? `${s.title} stays here - the move is off` : `${s.title} is already moving - too late to stop it`)
+        flash(
+          stopped
+            ? `${s.title} stays here for ${KEEP_MINUTES} minutes`
+            : `${s.title} is already moving - too late to stop it`
+        )
       )
   }
   /** the pane whose output is being read as text (and therefore selected with a finger) */
@@ -3142,6 +3168,11 @@ export default function App(): JSX.Element {
   const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
   const closeSoonRef = useRef<CloseSoon | undefined>(undefined)
   closeSoonRef.current = closeSoon
+  /**
+   * The panes a live countdown names. A Set because the sidebar asks this per row, and the
+   * list is redrawn on every session broadcast.
+   */
+  const alarmIds = useMemo(() => new Set(closeSoon?.ids ?? []), [closeSoon])
   /** What the pending close is expected to give back, for the sentence afterwards. */
   const pendingMb = useRef(0)
   /**
@@ -3308,7 +3339,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!closeSoon) return
     if (!soundOn.current) return
-    playEvent('move', soundSet.current)
+    // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that just
+    // finished, so the `done` chime lands a moment before this and the 900ms guard ate it.
+    playAction('move', soundSet.current)
     const ticks: number[] = []
     for (let left = 5; left >= 1; left--) {
       const at = closeSoon.deadline - left * 1000 - Date.now()
@@ -3385,6 +3418,23 @@ export default function App(): JSX.Element {
     publishClosingRef.current = run
     run()
   }, [sessions, config?.reclaim, activeId])
+
+  /**
+   * Hold these panes where they are, for an hour.
+   *
+   * Both holds, always together: `keptUntil` is what the two arming functions filter on,
+   * and `handoffBlocked` is what the handoff PLANS filter on. Setting one and not the
+   * other leaves a control that appears to work and is undone by the next sweep, which is
+   * exactly what `stopMove` shipped as.
+   */
+  const keepHere = useCallback((ids: string[]) => {
+    const until = Date.now() + KEEP_MINUTES * 60_000
+    for (const id of ids) {
+      keptUntil.current[id] = until
+      handoffBlocked.current[id] = until
+    }
+    publishClosingRef.current()
+  }, [])
 
   const keepOpen = useCallback((ids: string[]) => {
     const until = Date.now() + KEEP_MINUTES * 60_000
@@ -3606,6 +3656,15 @@ export default function App(): JSX.Element {
                 // chip on the title line - see the note there for why a ring never travels
                 // without a word.
                 (s.ask ? ' asking' : '') +
+                // ...and the same red for the OTHER thing this app does on somebody's
+                // behalf: a pane about to be closed or moved. The countdown was drawn
+                // beside the mascot in a corner, which is behind whatever window is on top
+                // and takes itself away after a minute - so the card, the one place
+                // somebody is already looking, said nothing at all. Reported 2026-08-23:
+                // "no red glow just like a question asked on the left side of session
+                // card ... for any alert it should turn red glow". Same class, because it
+                // is the same fact: this pane needs you NOW or something happens to it.
+                (alarmIds.has(s.id) ? ' asking' : '') +
                 (justDone.includes(s.id) ? ' just-done' : '') +
                 (dragId === s.id ? ' dragging' : '')
                 // There WAS a blue ring around the whole card here, for a pane that held a
