@@ -180,7 +180,13 @@ function project(name, { lanes, version } = {}) {
   // The one that must not have changed: driving THIS repo by --repo has to look exactly
   // like driving it by living in it, or every PaneForge release story is now wrong.
   const s = JSON.parse(lane(repoRoot, 'status').out)
-  ok('the engine repo still cuts versions', s.mode === 'version', s.mode)
+  // It USED to be `version`, and this asserted that. Robert turned it off on 2026-08-23
+  // ("wasting time with releases"): finishing work merges and pushes, and a version is cut
+  // only when he asks, with `npm run ship`. The assertion is kept rather than deleted
+  // because the flip is one line in `.lanes.json` and a silent flip back - by an editor, a
+  // merge, or a script that thinks it knows better - would start publishing builds to his
+  // machines again with nothing on screen saying so.
+  ok('the engine repo does not cut a version by itself', s.mode === 'merge', s.mode)
   ok('...on its own branch', s.branch === 'master', s.branch)
   ok('...and is recognised as its own checkout', s.own === true)
 }
