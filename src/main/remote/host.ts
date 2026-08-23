@@ -302,7 +302,6 @@ export class RemoteHost extends EventEmitter {
           // Named, so two devices mirroring one pane are two borrowers rather than one
           // that keeps changing its mind - `shared/paneSize.ts` lends them the smallest
           // grid of the two instead of flipping the pty between their windows.
-          console.info('PFDBG host-resize', id, m.cols, m.rows, m.borrowed, guest.key)
           this.backend.resize(
             id,
             Number(m.cols ?? 80),
