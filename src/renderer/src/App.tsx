@@ -110,6 +110,7 @@ import {
 import { fleetState } from '../../shared/fleet'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
+import { jobWords } from '../../shared/paneBackJobs'
 import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
@@ -3905,6 +3906,35 @@ export default function App(): JSX.Element {
                         {formatElapsed(s.lastRunMs)}
                       </span>
                     ) : null}
+                    {/* What the pane is still RUNNING with its turn over. This is the one
+                        card state Robert reported as a lie: an agent that started work in
+                        the background goes quiet, the clock stops, and the card reads
+                        finished while a build or a tail is going. It sits on the clock's
+                        own line rather than in `.row-sub`, which is already three chips
+                        deep at 190px (see the notes there) - and it is drawn only when
+                        there IS something, which on an ordinary card is never.
+                        Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
+                    {(() => {
+                      const jobs = usage?.panes[s.id]?.jobs
+                      if (!jobs?.length) return null
+                      return (
+                        <span
+                          className="chip jobs"
+                          title={
+                            'Still running with the turn over:\n' +
+                            jobs
+                              .map(
+                                (j) =>
+                                  `  ${j.label}` +
+                                  (j.elapsed ? `, ${formatElapsed(j.elapsed * 1000)}` : '')
+                              )
+                              .join('\n')
+                          }
+                        >
+                          {jobWords(jobs)}
+                        </span>
+                      )
+                    })()}
                   </div>
                 )}
                 <div className="row-sub">

@@ -16,6 +16,8 @@
 // src/main/usage.ts, and everything that decides anything is arithmetic that a test can
 // run without a real process tree. `npm run test:usage`.
 
+import { paneBackJobs, type PaneBackJob } from './paneBackJobs'
+
 /** One row of the process table, with the two figures strays.ts does not need. */
 export interface UsageRow {
   pid: number
@@ -40,6 +42,17 @@ export interface UsageRow {
    * difference between two samples of a monotonic counter means the same thing everywhere.
    */
   cpuMs: number
+  /**
+   * The whole command line, when the table was asked for one.
+   *
+   * Not part of the cost - it is what `shared/paneBackJobs.ts` needs to tell a command an
+   * agent started from an MCP server it spawned. It rides on this row because this is the
+   * only process-table read in the app that already runs on a timer, and a second read for
+   * one column is ~380ms of `ps` every few seconds for a chip.
+   */
+  cmd?: string
+  /** Seconds alive, when the table gave one. Same reason as `cmd`. */
+  elapsed?: number
 }
 
 /** What one pane costs, as sent to the renderer. */
@@ -56,6 +69,15 @@ export interface PaneUsage {
   cpuPct: number | null
   /** How many live processes the pane is holding, pty included. Trees are the story. */
   procs: number
+  /**
+   * What this pane is still RUNNING that nothing else in the app can see: a
+   * `run_in_background` shell, a Monitor loop, a build started in the background.
+   *
+   * Cosmetic, and deliberately no part of any "is this pane busy" reading - the head of
+   * `shared/paneBackJobs.ts` says why a false job THERE is expensive and here costs a
+   * glance. Absent rather than empty when the table could not say.
+   */
+  jobs?: PaneBackJob[]
 }
 
 export interface UsageReport {
@@ -148,7 +170,8 @@ export function summarise(
       rssMb: Math.round(rssKb / 1024),
       cpuPct:
         previous.size === 0 || elapsedMs <= 0 ? null : Math.round((deltaMs / elapsedMs) * 100),
-      procs: tree.length
+      procs: tree.length,
+      jobs: paneBackJobs(tree, pid)
     }
   }
   return { panes, cpuNow }

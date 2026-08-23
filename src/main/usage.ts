@@ -37,21 +37,32 @@ const WIN = process.platform === 'win32'
  */
 const SNAPSHOT_PS = [
   '$ErrorActionPreference="SilentlyContinue"',
-  'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,UserModeTime,KernelModeTime |',
+  'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,UserModeTime,KernelModeTime,CreationDate,CommandLine |',
   '  ForEach-Object {',
+  '    $age = [long]((Get-Date) - $_.CreationDate).TotalSeconds',
   '    "$($_.ProcessId) $($_.ParentProcessId) $([long]($_.WorkingSetSize/1024)) ' +
-    '$([long](($_.UserModeTime + $_.KernelModeTime)/10000))" }'
+    '$([long](($_.UserModeTime + $_.KernelModeTime)/10000)) $age $($_.CommandLine)" }'
 ].join('\n')
 
-/** `pid ppid rssKb cpuMs` per line - what the Windows command is asked for directly. */
+/**
+ * `pid ppid rssKb cpuMs ageSeconds commandLine` per line - what the Windows command is
+ * asked for directly.
+ *
+ * The last two are optional in the match on purpose: a row whose `CommandLine` the OS
+ * refuses (a protected process) still has to be counted, or the pane it belongs to loses
+ * part of its cost over a column that only feeds a chip.
+ */
 export function parseWindows(text: string): UsageRow[] {
   const out: UsageRow[] = []
   for (const line of text.split(/\r?\n/)) {
-    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)$/)
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+))?(?:\s+(.*))?$/)
     if (!m) continue
     const pid = Number(m[1])
     if (!pid) continue
-    out.push({ pid, ppid: Number(m[2]), rssKb: Number(m[3]), cpuMs: Number(m[4]) })
+    const row: UsageRow = { pid, ppid: Number(m[2]), rssKb: Number(m[3]), cpuMs: Number(m[4]) }
+    if (m[5] !== undefined) row.elapsed = Number(m[5])
+    if (m[6]) row.cmd = m[6]
+    out.push(row)
   }
   return out
 }
@@ -72,17 +83,45 @@ export function parseCpuTime(text: string): number {
   return Math.round(((Number(days) * 24 + hours) * 3600 + minutes * 60 + seconds) * 1000)
 }
 
-/** `pid ppid rss time` from `ps -Ao pid=,ppid=,rss=,time=`. rss is already KB there. */
+/**
+ * `[[dd-]hh:]mm:ss` from `ps -o etime=`, in seconds.
+ *
+ * The same four shapes `parseCpuTime` covers, and read from the right for the same reason -
+ * which fields are present depends on how long the process has run.
+ */
+export function parseElapsed(text: string): number {
+  const [days, rest] = text.includes('-') ? text.split('-') : ['0', text]
+  const parts = rest.split(':').map((n) => Number(n))
+  if (!parts.length || parts.some((n) => !Number.isFinite(n))) return 0
+  const seconds = parts.pop() ?? 0
+  const minutes = parts.pop() ?? 0
+  const hours = parts.pop() ?? 0
+  return Math.round((Number(days) * 24 + hours) * 3600 + minutes * 60 + seconds)
+}
+
+/**
+ * `pid ppid rss time etime command` from
+ * `ps -Ao pid=,ppid=,rss=,time=,etime=,command=`. rss is already KB there.
+ *
+ * The command line is LAST because it is the only field with spaces in it, and the two
+ * fields after `time` are optional in the parse: the four-column form is what every
+ * previous version of this file asked for and a row is still a row without them.
+ */
 export function parsePosix(text: string): UsageRow[] {
   const out: UsageRow[] = []
   for (const line of text.split('\n')) {
-    const parts = line.trim().split(/\s+/)
-    if (parts.length < 4) continue
-    const pid = Number(parts[0])
-    const ppid = Number(parts[1])
-    const rssKb = Number(parts[2])
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const m = trimmed.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)(?:\s+(\S+))?(?:\s+(.*))?$/)
+    if (!m) continue
+    const pid = Number(m[1])
+    const ppid = Number(m[2])
+    const rssKb = Number(m[3])
     if (!pid || !Number.isFinite(ppid) || !Number.isFinite(rssKb)) continue
-    out.push({ pid, ppid, rssKb, cpuMs: parseCpuTime(parts[3]) })
+    const row: UsageRow = { pid, ppid, rssKb, cpuMs: parseCpuTime(m[4]) }
+    if (m[5] !== undefined) row.elapsed = parseElapsed(m[5])
+    if (m[6]) row.cmd = m[6]
+    out.push(row)
   }
   return out
 }
@@ -173,7 +212,7 @@ export function snapshot(
     } else {
       execFile(
         'ps',
-        ['-Ao', 'pid=,ppid=,rss=,time='],
+        ['-Ao', 'pid=,ppid=,rss=,time=,etime=,command='],
         { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 },
         (err, stdout) => finish(err, stdout)
       )
