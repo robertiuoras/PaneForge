@@ -1461,6 +1461,14 @@ export interface Config {
    * config from before it existed is recognised as one that has NOT been migrated.
    */
   offloadDefaultsV2?: boolean
+  /**
+   * The marker for the move BACK onto asking, which supersedes `offloadDefaultsV2`.
+   *
+   * A second key rather than clearing the first: V2 is on every config written since it
+   * shipped, so re-using it could not tell a desk that had already been through V2 from
+   * one that had not. Optional, for the same reason V2 is.
+   */
+  offloadDefaultsV3?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
