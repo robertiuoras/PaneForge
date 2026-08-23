@@ -3116,6 +3116,81 @@ export default function App(): JSX.Element {
     [stillCloseable]
   )
 
+  /**
+   * The plan a countdown is currently holding, and the cooldown it was armed with.
+   *
+   * A ref rather than state: the countdown that draws it is `closeSoon`, and holding the
+   * same fact twice in state is how the two get out of step - the bubble would say one
+   * pane and the timer move another.
+   */
+  const moveSoonRef = useRef<{ plan: AutoHandoff[]; cooldownMinutes: number }>({
+    plan: [],
+    cooldownMinutes: 15
+  })
+
+  /**
+   * Run an armed move. This is the loop that used to sit inside the sweep itself.
+   *
+   * A pane that went away or was mirrored from elsewhere during the count is skipped
+   * rather than chased. A refusal puts that pane on the sweeps' own cooldown, because a
+   * repo that cannot be pushed will not become pushable in fifteen seconds - and a pane
+   * the far end QUEUED is a success here: it is mid-turn, and it travels when the turn
+   * ends rather than being killed.
+   */
+  const doMove = useCallback((plan: AutoHandoff[], cooldownMinutes: number) => {
+    setCloseSoon(undefined)
+    void (async () => {
+      try {
+        for (const move of plan) {
+          const live = sessionsRef.current.find((x) => x.id === move.id)
+          if (!live || live.remote) continue
+          const items = await api.handoffToDevice(move.device, [move.id], false, true)
+          const item = items[0]
+          if (item?.ok || item?.pending) {
+            setActed({
+              what: 'moved',
+              panes: [paneActedRef.current(move.id)],
+              at: Date.now(),
+              where: move.deviceName
+            })
+          } else {
+            handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
+            console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
+          }
+        }
+      } finally {
+        handoffSweeping.current = false
+      }
+    })()
+  }, [])
+
+  armMoveRef.current = (plan, why, cooldownMinutes) => {
+    const now = Date.now()
+    const fresh = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
+    // One countdown at a time - a second would replace the first mid-count - and the sweep
+    // lock goes straight back whenever this decides not to run.
+    if (!fresh.length || closeSoonRef.current) {
+      handoffSweeping.current = false
+      return
+    }
+    for (const move of fresh)
+      console.info(
+        `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
+      )
+    moveSoonRef.current = { plan: fresh, cooldownMinutes }
+    // With the mascot hidden there is nowhere to draw a count and nothing to press, so the
+    // only honest behaviour is the old one: do it, and say so in the log.
+    if (!mascotOnRef.current) return doMove(fresh, cooldownMinutes)
+    setCloseSoon({
+      ids: fresh.map((p) => p.id),
+      names: fresh.map((p) => paneWordRef.current(p.id)),
+      deadline: now + CLOSE_COUNTDOWN_MS,
+      why: why.startsWith('idle') ? 'idle' : 'pressure',
+      // The machine, named. Every move in one plan goes to the device the plan picked.
+      move: { device: fresh[0].device, deviceName: fresh[0].deviceName }
+    })
+  }
+
   armCloseRef.current = (plan, why, log) => {
     const now = Date.now()
     const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
@@ -3140,11 +3215,14 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!closeSoon) return
     const t = window.setTimeout(
-      () => doClose(closeSoon.ids, pendingMb.current),
+      () =>
+        closeSoon.move
+          ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+          : doClose(closeSoon.ids, pendingMb.current),
       Math.max(0, closeSoon.deadline - Date.now())
     )
     return () => window.clearTimeout(t)
-  }, [closeSoon, doClose])
+  }, [closeSoon, doClose, doMove])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -3156,6 +3234,10 @@ export default function App(): JSX.Element {
    */
   useEffect(() => {
     if (!closeSoon) return
+    // Not for a move: a pane going back to work is exactly what a move is allowed to
+    // carry - the far end QUEUES a mid-turn pane rather than killing it - so dropping the
+    // countdown here would make the one pane worth moving the one that never moves.
+    if (closeSoon.move) return
     if (closeSoon.ids.every((id) => stillCloseable(id))) return
     console.info('reclaim: countdown dropped - a pane it named went back to work')
     setCloseSoon(undefined)
@@ -3164,6 +3246,13 @@ export default function App(): JSX.Element {
   const keepOpen = useCallback((ids: string[]) => {
     const until = Date.now() + KEEP_MINUTES * 60_000
     for (const id of ids) keptUntil.current[id] = until
+    // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
+    // tick arms the identical countdown again - which is the shape that gets a feature
+    // switched off. The sweep lock goes back with it.
+    if (closeSoonRef.current?.move) {
+      for (const id of ids) handoffBlocked.current[id] = until
+      handoffSweeping.current = false
+    }
     setCloseSoon(undefined)
   }, [])
 
@@ -4894,7 +4983,11 @@ export default function App(): JSX.Element {
           void Promise.all(pids.map((pid) => api.stopDevServer(pid))).then(() => refreshDevs())
         }}
         onKeep={keepOpen}
-        onCloseNow={(ids) => doClose(ids, pendingMb.current)}
+        onCloseNow={(ids) =>
+          closeSoon?.move
+            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+            : doClose(ids, pendingMb.current)
+        }
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
           for (const id of ids) void api.killSession(id)
