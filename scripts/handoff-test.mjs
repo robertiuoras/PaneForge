@@ -75,6 +75,7 @@ function inertBackend() {
     buffer: () => '',
     write: () => {},
     resize: () => {},
+    returnSize: () => {},
     redraw: () => {},
     setBusy: () => {},
     clearAttention: () => {},

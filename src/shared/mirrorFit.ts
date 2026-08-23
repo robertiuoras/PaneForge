@@ -1,5 +1,12 @@
 // How a mirrored pane is drawn at somebody else's grid.
 //
+// SECOND: this is now the FALLBACK, not the answer. A mirror asks the host to lend it
+// the pty at the grid this window has room for (`pty:resize` with `borrowed`, the same
+// path a phone uses), so in the ordinary case the host's grid IS this pane's grid and
+// everything below is a no-op. It still runs, because a host that has not applied the
+// borrow yet - or an older build that ignores it - must draw something sane rather than
+// a screen cut off at the edge.
+//
 // The host owns the terminal's size - a mirror that resized the pty would trade
 // SIGWINCHes with the far end forever - so this window has exactly one lever: how
 // SMALL it draws that grid. It shrinks its font until the host's cols x rows fit.
@@ -26,6 +33,8 @@
 
 /** Smallest font worth setting. Below this, scaling takes over. */
 export const MIN_FONT = 6
+
+
 
 export interface MirrorFitIn {
   /** cols x rows this window has room for at the CURRENT font */

@@ -960,6 +960,29 @@ export class SessionManager extends EventEmitter {
    * asks the CLI to repaint: the frame on the desk was drawn for a phone and would
    * otherwise sit there at a third of the width until the agent printed something.
    */
+  /**
+   * One pane's size back, for the borrower that can name it.
+   *
+   * `returnSizes()` is the phone's shape of this - a phone stops looking and every
+   * borrow ends at once. A mirrored pane is per-pane: another device may be watching
+   * three of this desk's panes and stop watching one, and returning the other two with
+   * it would snap two panes somebody is still looking at.
+   */
+  returnSize(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s || !s.borrowed) return
+    s.borrowed = false
+    if (s.cols === s.deskCols && s.rows === s.deskRows) {
+      if (s.meta.borrowed) {
+        s.meta.borrowed = false
+        this.emitSessions()
+      }
+      return
+    }
+    this.resize(id, s.deskCols, s.deskRows)
+    this.redraw(id)
+  }
+
   returnSizes(): void {
     for (const [id, s] of this.sessions) {
       if (!s.borrowed) continue

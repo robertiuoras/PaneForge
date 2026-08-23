@@ -193,6 +193,18 @@ export class RemoteClient extends EventEmitter {
     this.conn?.send(m)
   }
 
+  /**
+   * Ask the host to draw one of its panes at OUR grid, as a borrow it can undo.
+   *
+   * Only for a pane we are watching: a resize is the one message that changes something
+   * on the other machine's own screen, so it may not be sent about a pane this device
+   * is not even drawing.
+   */
+  resizeOn(localId: string, cols: number, rows: number): void {
+    if (!this.watching.has(localId)) return
+    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true })
+  }
+
   /** Request/response for the few calls that answer something (projects, agents, start). */
   ask<T>(m: Msg, ms = 15_000): Promise<T> {
     return new Promise<T>((resolve, reject) => {

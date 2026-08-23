@@ -239,12 +239,14 @@ function defaults(): Config {
     offloadWhenFull: true,
     // Ask rather than move. See the field's note in shared/types.ts: the machine knows it
     // is full, it does not know that this pane is the one being worked in.
-    // Off: the machine decides and says so afterwards. Asking was the right shape while
-    // this only fired on a desk that was already out of memory - the app could see the
-    // memory and not the reason to keep the pane here. With a local-pane budget it is a
-    // policy somebody set on purpose, and a dialog per pane in front of it is a question
-    // whose answer was given when the budget was.
-    offloadAsk: false,
+    // ON. It was moved to off on the reasoning that a local-pane budget IS the answer,
+    // given once - which is true about the budget and false about the launch somebody is
+    // making right now. Measured against the report that produced this: opening a session
+    // on the laptop started it on the PC every time, with no way to say no in the moment,
+    // and the only route back was a switch on a Settings page nobody knows to look at. A
+    // silent move of the pane a person is opening reads as the app being broken, and the
+    // cost of asking is one press remembered for ten minutes.
+    offloadAsk: true,
     // `small` and `en`, not `base` and `auto`, both measured 2026-08-17 on an 11.9 s clip
     // through `whisper-ctranslate2` (int8, warm weights): `small` returned the sentence
     // verbatim with correct punctuation in 5.2 s, `base` dropped a word ("it so
@@ -314,13 +316,17 @@ export function getConfig(): Config {
     cache = {
       ...base,
       ...raw,
-      // The one-time move off "ask before moving a pane", same shape as `migrateAutoAnswer`
-      // and for the same reason: `defaults()` is WRITTEN at first launch, so every config
-      // in existence carries `offloadAsk: true` explicitly and a flip in the default alone
-      // would be read as somebody's own choice and never applied. Read off the SAVED
-      // config, never off the merge, or the marker is set for everybody and this runs on
-      // nothing. After it, off stays off and on stays on.
-      ...(raw.offloadDefaultsV2 ? {} : { offloadAsk: false, offloadDefaultsV2: true }),
+      // The one-time move BACK onto "ask before moving a pane", same shape as
+      // `migrateAutoAnswer` and for the same reason: `defaults()` is WRITTEN at first
+      // launch, so every config in existence carries `offloadAsk` explicitly and a flip in
+      // the default alone would be read as somebody's own choice and never applied. Read
+      // off the SAVED config, never off the merge, or the marker is set for everybody and
+      // this runs on nothing. V2 - which forced it OFF - is superseded and must not also
+      // run on the way here, or a config that never saw it is turned off and on in one
+      // load. After V3, off stays off and on stays on.
+      ...(raw.offloadDefaultsV3
+        ? {}
+        : { offloadAsk: true, offloadDefaultsV2: true, offloadDefaultsV3: true }),
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },

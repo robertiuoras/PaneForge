@@ -85,6 +85,7 @@ function backend() {
     buffer: () => '',
     write: () => {},
     resize: () => {},
+    returnSize: () => {},
     redraw: () => {},
     setBusy: () => {},
     clearAttention: () => {},

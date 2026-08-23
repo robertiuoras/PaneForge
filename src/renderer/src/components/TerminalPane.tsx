@@ -380,6 +380,10 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
   return t.cols !== cols || t.rows !== rows
 }
 
+/** A mirror asks for its grid at most this often, and this many times per target. */
+const BORROW_EVERY_MS = 1200
+const BORROW_TRIES = 6
+
 /**
  * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
  * the largest font at or below the user's own at which that grid still fits here.
@@ -396,7 +400,21 @@ function mirrorFit(
   pinned: boolean,
   mirror: { cols: number; rows: number },
   maxFont: number,
-  host: HTMLElement | null
+  host: HTMLElement | null,
+  /**
+   * Ask the machine that owns this pty to draw it at the grid THIS window has room for.
+   *
+   * Fitting the font was the only lever a mirror had, and it cannot win: the PC's pane
+   * was 69x35 (its window is small - a disconnected RDP session) against room for 152x58
+   * here, so the far end's screen was either a block of text in the corner or, once it
+   * was allowed to grow, enormous. Neither is the screen the agent is drawing on.
+   *
+   * So a mirror BORROWS the size, exactly as a phone borrows a desk pane's (see `resize`
+   * in main/sessions.ts): the host bends the pty to the viewer, keeps its own desk size,
+   * and takes it back the moment the mirror detaches. Nothing here forces it - a host
+   * that ignores the request leaves this function fitting the font, as before.
+   */
+  ask?: (cols: number, rows: number) => void
 ): boolean {
   const cols = t.cols
   const rows = t.rows
@@ -424,6 +442,16 @@ function mirrorFit(
     // testing reads getBoundingClientRect, which includes the transform, so a click
     // in a scaled mirror still lands on the cell under the pointer.
   }
+  if (ask && d && d.cols > 0 && d.rows > 0) {
+    // `proposeDimensions()` answers at the font that is set right now, which may be a
+    // shrunken one; the grid to ask for is the one that fits at the USER's font, so the
+    // answer arrives and needs no shrinking at all.
+    const current = t.options.fontSize ?? maxFont
+    const k = current / Math.max(1, maxFont)
+    const cols = Math.max(20, Math.floor(d.cols * k))
+    const rows = Math.max(5, Math.floor(d.rows * k))
+    if (cols !== mirror.cols || rows !== mirror.rows) ask(cols, rows)
+  }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
 
   // The scale is MEASURED, not walked.
@@ -448,7 +476,33 @@ function mirrorFit(
     // decides whether scaling is needed at all and is what the tests pin; the DOM
     // decides by how much.
     const fits = Math.min(scaleWanted, measured)
-    const want = fits < 0.999 ? `scale(${Math.max(0.05, fits).toFixed(3)})` : ''
+    const s = fits < 0.999 ? Math.max(0.05, fits) : 1
+    // ...and whatever room is STILL left over is split, not left on one side.
+    //
+    // A grid is a whole number of cells, so a mirror almost never fills its pane
+    // exactly - and the leftover used to sit entirely at the right and the bottom,
+    // which is what makes a correctly-drawn remote screen read as a broken one: text
+    // jammed into the top-left corner with a black L around it. Centring is layout
+    // arithmetic only (`clientWidth`, `offsetWidth` - neither moves under a transform)
+    // so it cannot feed on itself the way a rect-based measurement would.
+    const pad = getComputedStyle(host)
+    const padX = parseFloat(pad.paddingLeft) || 0
+    const padY = (parseFloat(pad.paddingTop) || 0) + (parseFloat(pad.paddingBottom) || 0)
+    // ...and only when the leftover is worth splitting. A borrowed mirror fills its pane
+    // to within a cell, and nudging THAT by 7px only moves the pane off the left edge it
+    // is meant to sit flush against (the scrollbar hugs the right, see styles.css).
+    const cellW = drawn / Math.max(1, t.cols)
+    const cellH = tall / Math.max(1, t.rows)
+    const halfX = Math.max(0, Math.round((room - padX - drawn * s) / 2))
+    const halfY = Math.max(0, Math.round((host.clientHeight - padY - tall * s) / 2))
+    // Two cells, not one: a grid is whole cells, so a pane that took everything it
+    // could still leaves up to a cell over on each axis, and that is not slack - it is
+    // the pane being full.
+    const slackX = halfX * 2 >= cellW * 2 ? halfX : 0
+    const slackY = halfY * 2 >= cellH * 2 ? halfY : 0
+    const move = slackX || slackY ? `translate(${slackX}px, ${slackY}px)` : ''
+    const zoom = s < 0.999 ? `scale(${s.toFixed(3)})` : ''
+    const want = [move, zoom].filter(Boolean).join(' ')
     if (host.style.transform !== want) {
       host.style.transformOrigin = 'top left'
       host.style.transform = want
@@ -711,6 +765,26 @@ function TerminalPane({
   const wasDerived = useRef(false)
   const fontRef = useRef(fontSize)
   fontRef.current = fontSize
+
+  /**
+   * The last grid this mirror asked the host for.
+   *
+   * A request that is never applied - an older build over there, a pane whose size
+   * something else owns - must not become a request per animation frame for ever, so
+   * the same target is asked at most `BORROW_TRIES` times and never faster than
+   * `BORROW_EVERY_MS`. A DIFFERENT target (this window was resized) starts again.
+   */
+  const borrowRef = useRef<{ cols: number; rows: number; at: number; tries: number } | null>(null)
+  const askBorrow = (cols: number, rows: number): void => {
+    const now = Date.now()
+    const b = borrowRef.current
+    if (b && b.cols === cols && b.rows === rows) {
+      if (b.tries >= BORROW_TRIES || now - b.at < BORROW_EVERY_MS) return
+      b.tries += 1
+      b.at = now
+    } else borrowRef.current = { cols, rows, at: now, tries: 1 }
+    api.resize(sessionId, cols, rows, true)
+  }
   // Same reason as the font: the terminal is built once per session, and changing the
   // theme must not tear down a running agent's scrollback to recolour its background.
   const themeRef = useRef(termTheme)
@@ -736,7 +810,7 @@ function TerminalPane({
     if (replaying.current) return false
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0)
-      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, askBorrow)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
@@ -1189,7 +1263,12 @@ function TerminalPane({
     const t = new Terminal({
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
-      cursorBlink: true,
+      // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the
+      // pane is idle and nothing on it changed. Measured 2026-08-23 with 6 panes open
+      // and no output at all: renderer 42-46% CPU, GPU helper 30-34%, WindowServer 46%,
+      // GPU device utilisation 50% - enough to make every other app on the machine
+      // judder. A steady block cursor is just as visible and costs nothing.
+      cursorBlink: false,
       allowProposedApi: true,
       scrollback: FULL_SCROLLBACK,
       theme: themeRef.current ?? {

@@ -112,6 +112,7 @@ function backend() {
     buffer: () => 'SCROLLBACK',
     write: () => {},
     resize: () => {},
+    returnSize: () => {},
     redraw: () => {},
     setBusy: () => {},
     clearAttention: () => {},

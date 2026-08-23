@@ -130,6 +130,13 @@ export class Remote extends EventEmitter {
     return Boolean(cut && this.clients.has(cut.peer))
   }
 
+  /** Lend this window's grid to a mirrored pane's pty on the machine that owns it. */
+  resizeOn(id: string, cols: number, rows: number): void {
+    const cut = splitId(id)
+    if (!cut) return
+    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows)
+  }
+
   buffer(id: string): string {
     const cut = splitId(id)
     if (!cut) return ''

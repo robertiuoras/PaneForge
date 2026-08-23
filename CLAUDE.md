@@ -259,9 +259,21 @@ can host and each can connect out. Three decisions not to re-litigate:
   on the device it was opened on. Remote control, not migration. Session ids are the seam:
   a mirrored pane is `@<device>/<id>`, and `remote.owns(id)` in `main/index.ts` routes every
   pane message to the link instead of the pty manager.
-- **The host owns the terminal's size.** A mirror draws at the far end's cols/rows
-  (`Session.cols/rows`) and shrinks its own font. Two windows sizing one pty trade
-  SIGWINCHes forever.
+- **A mirror BORROWS the terminal's size; it never owns it.** Fitting the font was the
+  only lever a mirror had and it cannot win: measured 2026-08-23 the PC's pane was 69x35
+  (its window is small - a disconnected RDP session) against room for 152x58 here, so the
+  far end's screen was either a block of text in the corner or, once it was allowed to
+  grow, enormous. Neither is the screen the agent draws on. So `pty:resize` on a mirrored
+  id is sent over the link with `borrowed` - the same contract a phone has with a desk
+  pane (`resize(borrowed)` in `main/sessions.ts`): the host bends the pty to the viewer,
+  keeps `deskCols/deskRows`, and `returnSize(id)` gives them back on detach, on the guest
+  vanishing, or when this desk resizes the pane itself. Per-pane, never `returnSizes()` -
+  another device may be watching three panes and stop watching one. The old SIGWINCH
+  worry does not apply: a mirror fits itself to its OWN window and asks for that, so it
+  never chases the number it was sent. `shared/mirrorFit.ts` is now the FALLBACK for a
+  host that has not applied the borrow yet or is an older build, and the leftover slack it
+  centres is only split when it is bigger than two cells - inside that, the pane is full
+  and belongs flush against the edge the scrollbar hugs.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
@@ -1447,7 +1459,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:notes` | release-note ranges and both template shapes |
 | `npm run test:pickrelease` | the newest release carrying an asset THIS platform can install, so a win-only build is skipped rather than 404'd at for ever |
 | `npm run test:promote` | a soaked dev build promoting to stable with a younger one on top of it |
-| `npm run test:remote` | the device link end to end over a real loopback socket |
+| `npm run test:remote` | the device link end to end over a real loopback socket, including the size BORROW: a mirror lends its grid to the far pty, it arrives flagged as a borrow rather than as an owned resize, a pane this device does not watch is never resized, and looking away returns that pane's size and only that pane's |
 | `npm run test:pairask` | six digits that agree between two ends, and DISAGREE through a real relay |
 | `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals (dirty far checkout, unpushed far commits, a folder outside the root) |
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it, measured with a Range over the text |
@@ -1459,7 +1471,7 @@ control proves the test would fail, what the numbers were - is in `docs/design-n
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
 | `npm run test:surfacereach` | that every method the window exposes has a way IN: for each key of `SURFACE`, a call site under `src/renderer/src`. A handler with no caller passes typecheck, the suite and surface parity - `remote:handoffCancel` and `listJobs` both shipped that way. Four are desk-side on purpose and each names who calls it instead |
-| `npm run test:mirrorfit` | how small a mirrored pane draws somebody else's grid, and every way that walk fails to converge: the shipped `Math.round` stalls a column short, flooring only the shrink cycles 11/12/11/12 for ever, and the bare font floor leaves a wide grid simply cut off. All three kept as controls |
+| `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, and every way that walk fails to converge: the shipped `Math.round` stalls a column short, flooring only the shrink cycles 11/12/11/12 for ever, and the bare font floor leaves a wide grid simply cut off. All three kept as controls. It also pins the other direction - a host grid SMALLER than the room grows past the user's own font up to `MAX_FILL_FONT` (28) and the leftover is split evenly, because a mirror capped at the user's font drew the PC's 69x35 as 518x525 in a 1191x880 pane: a block of text in the top-left corner of a black pane, which reads as broken rather than as small. The no-`fillFont` case is kept as the control that the old behaviour is untouched |
 | `npm run test:panejob` | what a shell pane is running, and the refusals that are the feature: a shell at its own prompt, a subshell, an agent CLI reporting its own runtime. The last block asks a REAL pty, which is the half no fixture can check |
 | `npm run test:desk` | the sessions list with both machines in it: a device that is offline lists nothing, a mirrored pane is not offered twice, a listed pane carries no Ctrl+N number, and a source assertion that every field `FleetPane` ranks by is actually forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with: a provider is a catalogue entry with two variables set, an unanswered placeholder is DROPPED rather than handed over as a credential, and one provider's key cannot fill another's variable |
