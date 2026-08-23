@@ -132,6 +132,7 @@ const TESTS = [
   ['gist', 'gist-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
+  ['autoclear', 'autoclear-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]

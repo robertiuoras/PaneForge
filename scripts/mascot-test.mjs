@@ -448,6 +448,22 @@ const desk = [
   // sixty seconds later, for ever - which is what gets a feature switched off.
   check('the count is long enough to read and reach', CLOSE_COUNTDOWN_MS >= 10_000, CLOSE_COUNTDOWN_MS)
   check('and keeping a pane holds for an hour', KEEP_MINUTES >= 30, KEEP_MINUTES)
+
+  // The other thing the ladder does by itself, and the one that had no countdown at all:
+  // a pane MOVED to the other machine. `runHandoffs` reported into a console nobody has
+  // open, so a pane left the desk with nothing on screen saying so - while a close, the
+  // more recoverable of the two, counted down and could be stopped.
+  const moved = countdownWords(['taskdriver pane 1'], 12_000, 'pressure', 'Desk PC')
+  check('a move counts down like a close', /in 12s/.test(moved), moved)
+  check('and says it is a move, not a close', /^Moving /.test(moved) && !/Closing/.test(moved), moved)
+  // Where it went is the one fact that cannot be recovered from this screen afterwards.
+  check('and names the machine it is going to', /Desk PC/.test(moved), moved)
+  // A mid-turn pane is queued by the far end rather than killed, and the sentence has to
+  // say so or the press reads as "lose the answer being written".
+  check('and says a mid-turn pane travels when the turn ends', /turn ends/.test(moved), moved)
+  // The control: with no device named nothing about the old sentence may change.
+  const closing = countdownWords(['taskdriver pane 1'], 12_000, 'pressure')
+  check('a close still reads exactly as it did', /^Closing /.test(closing) && !/Moving/.test(closing), closing)
 }
 
 {
@@ -483,6 +499,14 @@ const desk = [
   check('...and named', /PaneForge pane 4/.test(many) && /taskdriver pane 1/.test(many), many)
 
   // A subject long enough to be a paragraph is cut rather than allowed to fill the window.
+  // The report afterwards names the machine too - `where` is optional, so a caller that
+  // does not know it still gets the sentence this had before.
+  const movedTo = actedWords('moved', [{ word: 'taskdriver pane 1' }], undefined, 0, 'Desk PC')
+  check('a move is reported with the machine named', /Moved/.test(movedTo) && /Desk PC/.test(movedTo), movedTo)
+  check('and says the pane is still on screen as a mirror', /mirror/.test(movedTo), movedTo)
+  const movedAnon = actedWords('moved', [{ word: 'taskdriver pane 1' }])
+  check('an unnamed machine still reports the move', /paired device/.test(movedAnon), movedAnon)
+
   const long = actedWords('closed', [{ word: 'x pane 1', doing: 'a'.repeat(400) }], 10, 0)
   check('a very long ask is cut', long.length < 260, long.length)
 }
@@ -524,7 +548,8 @@ const desk = [
   )
   check(
     'the acted sentence is rebuilt as it is drawn, not stored',
-    /actedWords\(bubble\.acted\.what/.test(drawn),
+    // `\s*`: the call wraps once it carries the machine the pane moved to.
+    /actedWords\(\s*bubble\.acted\.what/.test(drawn),
     'the bubble must re-render its "ago" rather than keeping the string it was said with'
   )
 }

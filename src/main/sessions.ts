@@ -18,6 +18,7 @@ import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, 
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
+import { CHUNK_GAP_MS, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -315,6 +316,8 @@ export class SessionManager extends EventEmitter {
    * Empty on POSIX, where the tty answers the same question for free.
    */
   private winJobs = new Map<string, { name: string; elapsed?: number }>()
+  /** One armed /clear per pane, cleared by every path that stands one down. */
+  private autoClearTimers = new Map<string, NodeJS.Timeout>()
   private winJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
@@ -1231,6 +1234,64 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
+  /**
+   * Arm this pane's own /clear, `seconds` from now, and report it on the session.
+   *
+   * The typing goes through `write` in the SPLIT `clearChunks` gives, spaced by
+   * `CHUNK_GAP_MS`: a long chunk arriving in one pty read is a paste to Claude Code and a
+   * CR inside a paste is a newline, which is how the resume prompt was left sitting unsent
+   * in the box after a clear that otherwise worked.
+   */
+  armAutoClear(id: string, ask: { steps: string[]; prompt: string; seconds: number }): { ok: boolean; reason?: string } {
+    const s = this.sessions.get(id)
+    if (!s) return { ok: false, reason: 'no such pane' }
+    const why = dropFor(s.meta)
+    // Refused rather than queued: the hook asks again on the next Stop, and a countdown
+    // that waits for a busy pane to go quiet is a clear nobody was watching for.
+    if (why) return { ok: false, reason: dropWords(why) }
+    this.cancelAutoClear(id, 'cancelled')
+    const at = Date.now() + ask.seconds * 1000
+    s.meta.autoClearAt = at
+    s.meta.autoClearPrompt = ask.prompt
+    s.meta.autoClearSteps = ask.steps
+    const timer = setTimeout(() => {
+      this.autoClearTimers.delete(id)
+      const live = this.sessions.get(id)
+      if (!live || live.meta.autoClearAt !== at) return
+      // Asked again at the last moment: the pane may have started a turn during the
+      // countdown, and a snapshot taken when it was armed is not a licence to clear now.
+      const stop = dropFor(live.meta)
+      if (stop) return this.cancelAutoClear(id, stop)
+      const chunks = clearChunks(live.meta.autoClearPrompt ?? '')
+      this.cancelAutoClear(id, 'cancelled')
+      chunks.forEach((c, i) => {
+        const t = setTimeout(() => this.write(id, c), i * CHUNK_GAP_MS)
+        t.unref?.()
+      })
+    }, ask.seconds * 1000)
+    timer.unref?.()
+    this.autoClearTimers.set(id, timer)
+    this.emitSessions()
+    return { ok: true }
+  }
+
+  /** Drop an armed countdown. Silent when there is none - every caller asks blind. */
+  cancelAutoClear(id: string, why: DropReason): boolean {
+    const s = this.sessions.get(id)
+    const timer = this.autoClearTimers.get(id)
+    if (timer) {
+      clearTimeout(timer)
+      this.autoClearTimers.delete(id)
+    }
+    if (!s?.meta.autoClearAt) return false
+    delete s.meta.autoClearAt
+    delete s.meta.autoClearPrompt
+    delete s.meta.autoClearSteps
+    console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
+    this.emitSessions()
+    return true
+  }
+
   setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return

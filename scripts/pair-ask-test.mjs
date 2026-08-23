@@ -41,7 +41,8 @@ function bundle() {
     entry,
     [
       `export { RemoteHost } from ${p('src/main/remote/host.ts')}`,
-      `export { Conn, deriveKey, newCode, ephemeralKeys, sharedSecret, sasDigits, sealCode, openCode } from ${p('src/main/remote/wire.ts')}`
+      `export { Conn, deriveKey, newCode, ephemeralKeys, sharedSecret, sasDigits, sealCode, openCode } from ${p('src/main/remote/wire.ts')}`,
+      `export { pairAskingOn } from ${p('src/main/remote/peers.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -104,7 +105,7 @@ function backend() {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
-  const { RemoteHost, Conn, newCode, ephemeralKeys, sharedSecret, sasDigits, sealCode, openCode } =
+  const { RemoteHost, Conn, newCode, ephemeralKeys, sharedSecret, sasDigits, sealCode, openCode, pairAskingOn } =
     mod
 
   const identity = (name) => ({ id: name.toLowerCase(), name, platform: 'test', version: '0.0.0' })
@@ -295,6 +296,27 @@ async function main() {
       tampered = err.message
     }
     ok('a flipped byte does not open', !!tampered, tampered)
+  }
+
+  // ---------------------------------------------------------------- the absent field
+  //
+  // `getConfig` is a SHALLOW merge, so a `remote` block written before this feature
+  // shipped carries no `pairByAsking` key at all. The switch drew itself from
+  // `pairByAsking !== false` while the guard that answers a request asked
+  // `!pairByAsking`, so on every such install the switch read ON and every ask was
+  // refused instantly with "Refused on that device" - measured between this desk's PC
+  // and Mac, 2026-08-23. Both callers ask `pairAskingOn` now and cannot disagree again.
+  {
+    ok('an absent field is on', pairAskingOn({}) === true)
+    ok('an explicit true is on', pairAskingOn({ pairByAsking: true }) === true)
+    ok('an explicit false is off', pairAskingOn({ pairByAsking: false }) === false)
+    // The control. If the old guard ever stops disagreeing with the switch, the bug
+    // this pins was never real and the test is passing over nothing.
+    const oldGuard = (c) => !c.pairByAsking
+    ok(
+      'the old guard refused a config the switch drew as on',
+      oldGuard({}) === true && pairAskingOn({}) === true
+    )
   }
 }
 

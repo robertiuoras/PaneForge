@@ -127,8 +127,8 @@ import LaneStrip, {
 import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
-import UpdateToast from './components/UpdateToast'
 import AutoClearToast from './components/AutoClearToast'
+import UpdateToast from './components/UpdateToast'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 
@@ -1716,7 +1716,8 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number } | undefined
+    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | undefined
   >(undefined)
   /**
    * How a sweep asks for panes to be closed.
@@ -1731,6 +1732,18 @@ export default function App(): JSX.Element {
    * was true even on a desk where the clock was doing its job.
    */
   const armCloseRef = useRef<(plan: Reclaim[], why: 'idle' | 'pressure', log: string) => void>(() => {})
+  /**
+   * The same, for the rung above closing: moving a pane to another machine.
+   *
+   * Both handoff sweeps used to move panes into a `console.info`, so a pane could leave
+   * this desk with nothing on screen saying so - while a CLOSE, the more recoverable of
+   * the two, counted down and could be stopped. A ref for the same reason `armCloseRef`
+   * is one: the sweeps are effects, and the countdown state lives further down beside the
+   * mascot's own props.
+   */
+  const armMoveRef = useRef<(plan: AutoHandoff[], why: string, cooldownMinutes: number) => void>(
+    () => {}
+  )
   useEffect(() => {
     void api.usage().then((u) => u && setUsage(u))
     return api.onUsage(setUsage)
@@ -1853,6 +1866,9 @@ export default function App(): JSX.Element {
       for (const [id, until] of Object.entries(handoffBlocked.current)) {
         if (until <= Date.now()) delete handoffBlocked.current[id]
       }
+      // Set once a countdown is armed: from there the sweep lock belongs to the countdown,
+      // and is given back when the move runs, is refused, or is called off.
+      let armed = false
       void (async () => {
         try {
           const state = await api.remoteState()
@@ -1869,27 +1885,16 @@ export default function App(): JSX.Element {
             }))
           )
           const plan = make(candidates, Date.now())
-          for (const move of plan) {
-            console.info(
-              `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
-            )
-            const items = await api.handoffToDevice(move.device, [move.id], false, true)
-            const item = items[0]
-            if (item?.ok) {
-              console.info(`handoff: ${move.id} is now running on ${move.deviceName}`)
-            } else {
-              // A repo that cannot be pushed will not become pushable in fifteen seconds,
-              // and retrying it every reading is how an automatic thing becomes noise.
-              handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
-              console.info(
-                `handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`
-              )
-            }
-          }
+          if (!plan.length) return
+          // Nothing moves silently. The loop that used to run the moves here is `doMove`
+          // now, behind the same countdown a close gets: named pane, named machine, and
+          // `Keep it here` on it.
+          armed = true
+          armMoveRef.current(plan, why, cooldownMinutes)
         } catch {
           /* a peer that cannot be asked is a peer that cannot be used - the sweeps below still run */
         } finally {
-          handoffSweeping.current = false
+          if (!armed) handoffSweeping.current = false
         }
       })()
     },
@@ -2985,6 +2990,45 @@ export default function App(): JSX.Element {
   // pane, which looks exactly like a session that froze.
   useEffect(() => api.onHandoffMoved((message) => flash(message)), [flash])
 
+  /**
+   * Bring a mirrored pane back to this machine, in one press.
+   *
+   * Handing a pane OUT has been one press for a long time and handing it back was not a
+   * press at all: the button is drawn only for a local pane, so the way back was to walk
+   * to the other machine. It cannot be a pull - the pty, the repo and the transcript are
+   * over there - so this asks that device to run its own handoff at us, and every answer
+   * below is its report rather than a guess made here. A pane mid-turn is QUEUED by the
+   * far end and comes back when the turn ends; nothing is killed to make it travel.
+   */
+  const bringHere = useCallback(
+    (s: Session) => {
+      const where = s.remote?.name ?? 'that machine'
+      flash(`Asking ${where} to send ${s.title} back…`)
+      void api
+        .bringPaneHere(s.id)
+        .then((items) => {
+          const item = items[0]
+          if (!item) {
+            flash(`${where} has no such pane any more`)
+            return
+          }
+          if (item.ok) {
+            flash(`${s.title} is back on this machine`)
+            return
+          }
+          // Not a failure: the pane is mid-turn and the far end is holding it. Saying so
+          // in the far end's own words keeps this from reading as "it refused".
+          if (item.pending) {
+            flash(item.error || `${s.title} comes back when its turn ends`)
+            return
+          }
+          flash(item.error || `${where} would not send it back`)
+        })
+        .catch((err: Error) => flash(err.message))
+    },
+    [flash]
+  )
+
   // The "what is this feature" notes, and the × that retires one. Held here rather than
   // passed down because eight dialogs would otherwise each grow a config prop to draw
   // one sentence - see components/Blurb.tsx.
@@ -3072,6 +3116,81 @@ export default function App(): JSX.Element {
     [stillCloseable]
   )
 
+  /**
+   * The plan a countdown is currently holding, and the cooldown it was armed with.
+   *
+   * A ref rather than state: the countdown that draws it is `closeSoon`, and holding the
+   * same fact twice in state is how the two get out of step - the bubble would say one
+   * pane and the timer move another.
+   */
+  const moveSoonRef = useRef<{ plan: AutoHandoff[]; cooldownMinutes: number }>({
+    plan: [],
+    cooldownMinutes: 15
+  })
+
+  /**
+   * Run an armed move. This is the loop that used to sit inside the sweep itself.
+   *
+   * A pane that went away or was mirrored from elsewhere during the count is skipped
+   * rather than chased. A refusal puts that pane on the sweeps' own cooldown, because a
+   * repo that cannot be pushed will not become pushable in fifteen seconds - and a pane
+   * the far end QUEUED is a success here: it is mid-turn, and it travels when the turn
+   * ends rather than being killed.
+   */
+  const doMove = useCallback((plan: AutoHandoff[], cooldownMinutes: number) => {
+    setCloseSoon(undefined)
+    void (async () => {
+      try {
+        for (const move of plan) {
+          const live = sessionsRef.current.find((x) => x.id === move.id)
+          if (!live || live.remote) continue
+          const items = await api.handoffToDevice(move.device, [move.id], false, true)
+          const item = items[0]
+          if (item?.ok || item?.pending) {
+            setActed({
+              what: 'moved',
+              panes: [paneActedRef.current(move.id)],
+              at: Date.now(),
+              where: move.deviceName
+            })
+          } else {
+            handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
+            console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
+          }
+        }
+      } finally {
+        handoffSweeping.current = false
+      }
+    })()
+  }, [])
+
+  armMoveRef.current = (plan, why, cooldownMinutes) => {
+    const now = Date.now()
+    const fresh = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
+    // One countdown at a time - a second would replace the first mid-count - and the sweep
+    // lock goes straight back whenever this decides not to run.
+    if (!fresh.length || closeSoonRef.current) {
+      handoffSweeping.current = false
+      return
+    }
+    for (const move of fresh)
+      console.info(
+        `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
+      )
+    moveSoonRef.current = { plan: fresh, cooldownMinutes }
+    // With the mascot hidden there is nowhere to draw a count and nothing to press, so the
+    // only honest behaviour is the old one: do it, and say so in the log.
+    if (!mascotOnRef.current) return doMove(fresh, cooldownMinutes)
+    setCloseSoon({
+      ids: fresh.map((p) => p.id),
+      names: fresh.map((p) => paneWordRef.current(p.id)),
+      deadline: now + CLOSE_COUNTDOWN_MS,
+      why: why.startsWith('idle') ? 'idle' : 'pressure',
+      // The machine, named. Every move in one plan goes to the device the plan picked.
+      move: { device: fresh[0].device, deviceName: fresh[0].deviceName }
+    })
+  }
+
   armCloseRef.current = (plan, why, log) => {
     const now = Date.now()
     const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
@@ -3096,11 +3215,14 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!closeSoon) return
     const t = window.setTimeout(
-      () => doClose(closeSoon.ids, pendingMb.current),
+      () =>
+        closeSoon.move
+          ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+          : doClose(closeSoon.ids, pendingMb.current),
       Math.max(0, closeSoon.deadline - Date.now())
     )
     return () => window.clearTimeout(t)
-  }, [closeSoon, doClose])
+  }, [closeSoon, doClose, doMove])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -3112,6 +3234,10 @@ export default function App(): JSX.Element {
    */
   useEffect(() => {
     if (!closeSoon) return
+    // Not for a move: a pane going back to work is exactly what a move is allowed to
+    // carry - the far end QUEUES a mid-turn pane rather than killing it - so dropping the
+    // countdown here would make the one pane worth moving the one that never moves.
+    if (closeSoon.move) return
     if (closeSoon.ids.every((id) => stillCloseable(id))) return
     console.info('reclaim: countdown dropped - a pane it named went back to work')
     setCloseSoon(undefined)
@@ -3120,6 +3246,13 @@ export default function App(): JSX.Element {
   const keepOpen = useCallback((ids: string[]) => {
     const until = Date.now() + KEEP_MINUTES * 60_000
     for (const id of ids) keptUntil.current[id] = until
+    // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
+    // tick arms the identical countdown again - which is the shape that gets a feature
+    // switched off. The sweep lock goes back with it.
+    if (closeSoonRef.current?.move) {
+      for (const id of ids) handoffBlocked.current[id] = until
+      handoffSweeping.current = false
+    }
     setCloseSoon(undefined)
   }, [])
 
@@ -4207,6 +4340,21 @@ export default function App(): JSX.Element {
                     Hand off
                   </button>
                 )}
+                {/* The same question from the other side of it. Drawn in the same slot as
+                    `Hand off` because it is the same decision - WHERE this agent runs -
+                    and a mirrored pane had no answer to it at all until now. */}
+                {s.remote && s.status !== 'exited' && (
+                  <button
+                    className="ghost small desk-only pt-handoff"
+                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      bringHere(s)
+                    }}
+                  >
+                    Bring here
+                  </button>
+                )}
                 <button
                   className="icon"
                   title="Copy this pane's complete terminal output"
@@ -4590,6 +4738,17 @@ export default function App(): JSX.Element {
                     }
                   ]
                 : []),
+              ...(s.remote && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'bring',
+                      label: 'Bring it here',
+                      hint: 'move it back from that machine',
+                      icon: '⤵',
+                      run: () => bringHere(s)
+                    }
+                  ]
+                : []),
               ...(grid
                 ? [
                     {
@@ -4682,6 +4841,16 @@ export default function App(): JSX.Element {
                           busy: s.status === 'working' || s.status === 'starting',
                           asking: Boolean(s.ask)
                         })
+                    }
+                  ]
+                : []),
+              ...(!local && s.status !== 'exited'
+                ? [
+                    {
+                      key: 'bring',
+                      label: 'Bring it here',
+                      hint: `move it back from ${s.remote?.name ?? 'that machine'}`,
+                      run: () => bringHere(s)
                     }
                   ]
                 : []),
@@ -4814,7 +4983,11 @@ export default function App(): JSX.Element {
           void Promise.all(pids.map((pid) => api.stopDevServer(pid))).then(() => refreshDevs())
         }}
         onKeep={keepOpen}
-        onCloseNow={(ids) => doClose(ids, pendingMb.current)}
+        onCloseNow={(ids) =>
+          closeSoon?.move
+            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+            : doClose(ids, pendingMb.current)
+        }
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
           for (const id of ids) void api.killSession(id)
@@ -4842,8 +5015,11 @@ export default function App(): JSX.Element {
           void api.setConfig({ mascot: { ...DEFAULT_MASCOT, ...config?.mascot, ...patch } })
         }
       />
+      {/* A session about to clear itself. Drawn for the window rather than per pane: the
+          countdown is about a CONVERSATION, and the pane it belongs to is very often not
+          the one on screen - which is the whole reason the silent version was a bug. */}
+      <AutoClearToast panes={sessions} onKeep={(id) => void api.cancelAutoClear(id)} />
       <UpdateToast />
-      <AutoClearToast />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
           thing here that talks about the app rather than about the work, so every other
           card in this corner - and every dialog, and any pane holding a question - stands

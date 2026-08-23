@@ -26,6 +26,7 @@ import type { BackJob } from '../../shared/backJobs'
 import {
   HANDOFF_ASK_MS,
   HANDOFF_CHUNK,
+  type HandoffItem,
   type HandoffPayload,
   type HandoffResult
 } from '../../shared/handoff'
@@ -282,6 +283,24 @@ export class RemoteClient extends EventEmitter {
    * comes once the far end's pane is actually running, so the timeout is the
    * long one: a clone on a cold repo is part of what it is waiting for.
    */
+  /**
+   * Ask that device to hand one of ITS panes back to this one.
+   *
+   * The direction is the whole design. A handoff is always PUSHED by the machine that
+   * owns the pty, because that is where the repo, the transcript and the process are - so
+   * bringing a pane back cannot be a pull. It is a request, and the far end then runs the
+   * ordinary handoff it would have run had somebody pressed the button over there: same
+   * repo push, same transcript, same mid-turn queue, same refusals, all reported by name.
+   * Nothing new travels over this link.
+   *
+   * An older build has no case for this frame and simply drops it, so the answer is a
+   * timeout rather than a refusal - which is why the sentence the caller shows says the
+   * machine did not answer rather than that it said no.
+   */
+  takeBack(localId: string): Promise<HandoffItem[]> {
+    return this.ask<HandoffItem[]>({ t: 'takeback', id: localId }, HANDOFF_ASK_MS)
+  }
+
   handoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
     const body: HandoffPayload = { ...payload }
     if (!file || file.length === 0) {
@@ -420,6 +439,11 @@ export class RemoteClient extends EventEmitter {
         return
       case 'handoffdone':
         this.settle(m, m.result)
+        return
+      // The far end ran the handoff we asked it for. `items` is one entry per pane, the
+      // same shape a local `Hand off` reports, so a queued pane reads as queued here too.
+      case 'takebackdone':
+        this.settle(m, m.items)
         return
       case 'projects':
         this.settle(m, m.list)

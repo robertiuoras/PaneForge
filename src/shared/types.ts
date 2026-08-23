@@ -1,4 +1,4 @@
-import type { ClearAsk, ClearRequest } from './autoclear'
+import type { AutoClearAsk } from './autoclear'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
@@ -117,6 +117,18 @@ export interface Session {
    */
   autoAnswerAt?: number
   autoAnswerN?: number
+  /**
+   * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
+   *
+   * Armed by the `autoclear` Stop hook once context is past its line and a handoff on disk
+   * lists steps a fresh session could start on. On the session rather than in a map of its
+   * own because every refusal that drops it - a keystroke, another turn, a live question -
+   * is already a fact about the session, and a countdown nobody can see is the bug this
+   * replaced. See `shared/autoclear.ts`.
+   */
+  autoClearAt?: number
+  autoClearPrompt?: string
+  autoClearSteps?: string[]
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -1900,11 +1912,9 @@ export interface Api {
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
    */
-  askAutoClear(req: ClearRequest): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
+  askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
   /** The two buttons on that card. */
-  answerAutoClear(paneId: string, action: 'cancel' | 'now'): Promise<boolean>
   /** Countdowns in flight, for a window that has just opened. */
-  autoClearPending(): Promise<ClearAsk[]>
   checkForUpdates(): Promise<UpdateState>
   /**
    * Start the restart-into-the-new-version. Resolves to what actually happened, because
@@ -2121,10 +2131,26 @@ export interface Api {
     /** false moves a pane mid-turn and loses the answer being written. Default true. */
     waitForTurn?: boolean
   ): Promise<HandoffItem[]>
+  /**
+   * Bring a MIRRORED pane back to this device - the other direction of the same move.
+   *
+   * The pty never travels, so this cannot pull: the device that owns the pane is asked to
+   * run its own handoff at us. Every refusal and the mid-turn queue are therefore the far
+   * end's, and the report is the same `HandoffItem[]` a local hand-off gives.
+   */
+  bringPaneHere(id: string): Promise<HandoffItem[]>
   /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
+  /**
+   * Arm a pane's own /clear, from the `autoclear` Stop hook. See `shared/autoclear.ts`.
+   *
+   * Answers `{ ok: false, reason }` rather than throwing, because the caller is a detached
+   * child process whose stderr nobody reads: a refusal has to be something it can log.
+   */
+  askAutoClear(ask: unknown): Promise<{ ok: boolean; reason?: string }>
+  cancelAutoClear(id: string): Promise<boolean>
 
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
@@ -2141,7 +2167,6 @@ export interface Api {
   onConfig(cb: (config: Config) => void): () => void
   onInstall(cb: (e: InstallEvent) => void): () => void
   onUpdate(cb: (s: UpdateState) => void): () => void
-  onAutoClear(cb: (pending: ClearAsk[]) => void): () => void
   /**
    * The window was minimised or restored. The only reliable source for it: this window
    * runs with backgroundThrottling off, which also pins document.visibilityState to

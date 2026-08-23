@@ -1,70 +1,56 @@
-import { useEffect, useState } from 'react'
-import type { ClearAsk } from '@shared/autoclear'
-
-const api = window.api
+import React from 'react'
+import type { Session } from '../../../shared/types'
+import { useNow } from './Elapsed'
 
 /**
- * The card in front of an automatic /clear.
+ * A session is about to clear ITSELF - say so, and let somebody stop it.
  *
- * A Stop hook decides this session is past the context line and its handoff lists work a
- * fresh session could pick up, and asks for the pane to be cleared. Until 2026-08-23 that
- * happened with no warning - Robert's words, "it shouldnt be auto clearing instantly or at
- * least put popup for a countdown when its about to auto clear just so i can stop it".
+ * Robert's words, 2026-08-23: "it shouldnt be auto clearing instantly ... put popup for a
+ * countdown when its about to auto clear just so i can stop it if needed". Everything else
+ * about this feature is decided in a hook that has already exited; this card is the only
+ * part of it a person can argue with, which is why the app refuses to clear at all when it
+ * cannot draw one - `pane-clear.mjs` fails rather than falling back to a silent clear.
  *
- * So: what would be continued, how long is left, and a button that stops it. Nobody at the
- * desk means it still happens by itself, which is the point of the feature.
+ * Not a dialog: nothing the app decided by itself may take the screen. A card in the
+ * corner, and doing nothing is consent.
  */
-export default function AutoClearToast(): JSX.Element | null {
-  const [pending, setPending] = useState<ClearAsk[]>([])
-  const [now, setNow] = useState<number>(() => Date.now())
-
-  useEffect(() => {
-    void Promise.resolve(api.autoClearPending())
-      .then((p) => setPending(p ?? []))
-      .catch(() => setPending([]))
-    return api.onAutoClear((p) => setPending(p ?? []))
-  }, [])
-
-  // Only while something is counting: an interval that runs on an empty desk is a repaint
-  // every quarter second for nothing.
-  useEffect(() => {
-    if (!pending.length) return
-    const t = setInterval(() => setNow(Date.now()), 250)
-    return () => clearInterval(t)
-  }, [pending.length])
-
-  const ask = pending[0]
-  if (!ask) return null
-  const leftMs = Math.max(0, ask.dueAt - now)
-  const left = Math.ceil(leftMs / 1000)
-  const total = Math.max(1, ask.dueAt - ask.askedAt)
-  const pct = Math.max(0, Math.min(100, (leftMs / total) * 100))
-
+export default function AutoClearToast({
+  panes,
+  onKeep
+}: {
+  panes: Session[]
+  onKeep: (id: string) => void
+}): React.JSX.Element | null {
+  const now = useNow()
+  // The SOONEST one, never a card per pane: two countdowns are two cards fighting for one
+  // corner, and the second is the one nobody reads.
+  const soon = panes
+    .filter((s) => s.autoClearAt)
+    .sort((a, b) => (a.autoClearAt ?? 0) - (b.autoClearAt ?? 0))[0]
+  if (!soon?.autoClearAt) return null
+  const left = Math.max(0, Math.ceil((soon.autoClearAt - now) / 1000))
+  const steps = soon.autoClearSteps ?? []
   return (
-    <div className="update-toast autoclear">
-      <div className="ut-text">
-        <strong>Clearing {ask.title || 'this pane'} in {left}s</strong>
-        <span className="hint">
-          Context is past the line and the handoff still lists work, so this session hands
-          over to a fresh one that continues:
+    <div className="autoclear-card" role="status">
+      <div className="autoclear-top">
+        {/* Seconds first and biggest: read from across the desk, or not at all. */}
+        <span className="autoclear-left">{left > 0 ? `${left}s` : 'now'}</span>
+        <span className="autoclear-word">
+          Clearing <b>{soon.title}</b> and carrying on from its handoff
         </span>
-        <ul className="ac-steps">
-          {ask.steps.slice(0, 3).map((s, i) => (
-            <li key={i}>{s}</li>
+      </div>
+      {/* What it will pick up. A countdown that only says something is about to happen
+          gives nobody a reason to allow it, and the reason IS the next steps. */}
+      {steps.length > 0 && (
+        <ul className="autoclear-steps">
+          {steps.slice(0, 3).map((step, i) => (
+            <li key={i}>{step}</li>
           ))}
         </ul>
-      </div>
-      <div className="ac-bar">
-        <i style={{ width: `${pct}%` }} />
-      </div>
-      <div className="ut-actions">
-        <button className="ghost small" onClick={() => void api.answerAutoClear(ask.paneId, 'cancel')}>
-          Keep this session
-        </button>
-        <button className="primary small" onClick={() => void api.answerAutoClear(ask.paneId, 'now')}>
-          Clear now
-        </button>
-      </div>
+      )}
+      <button className="autoclear-keep" onClick={() => onKeep(soon.id)}>
+        Keep this session
+      </button>
     </div>
   )
 }

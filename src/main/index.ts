@@ -40,9 +40,7 @@ import { PhoneServer, newPhoneCode } from './phone'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
-import { ClearCountdown } from './autoclear'
 import { startDisplayAwake } from './awake'
-import type { ClearRequest } from '../shared/autoclear'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
@@ -88,6 +86,7 @@ import {
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
+import { readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -918,6 +917,7 @@ const remote = new Remote({
         place: (req) => laneFor(req),
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
+        noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
         startDev: (dir, script) => startDevServer(dir, script)
       },
@@ -930,6 +930,10 @@ const remote = new Remote({
       }
       return result
     }),
+  // A device that mirrors one of our panes asking for it back. It is the ordinary
+  // outward handoff, aimed at the device that asked - so a mid-turn pane is queued and
+  // travels when its turn ends, exactly as it would had somebody pressed Hand off here.
+  handBack: (id, device) => runHandoff(device, { ids: [id], waitForTurn: true }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
@@ -1262,42 +1266,14 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 function writePane(id: string, data: string): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
+  // Somebody is using this pane, so the promise the countdown made is off. Only THIS path
+  // cancels - the clear itself types through `manager.write` inside the manager and never
+  // reaches this handler, so it cannot stand its own countdown down on the way out.
+  manager.cancelAutoClear(id, 'typed')
   manager.write(id, data)
 }
 
 ipcMain.on('pty:write', (_e, id: string, data: string) => writePane(id, data))
-
-// ---- the countdown in front of an automatic /clear -----------------------------------
-//
-// `claude-config/autoclear.mjs` (a Stop hook) decides a session is past the context line
-// and its handoff lists steps a fresh session could start on, and asks for this pane to be
-// cleared. It used to type `/clear` itself, so the first anybody knew was the session
-// already gone. Now it asks, the desk draws a card, and anybody here can stop it.
-const clearCountdown = new ClearCountdown({
-  panes: () =>
-    allSessions().map((s) => ({
-      id: s.id,
-      title: s.title,
-      status: s.status,
-      runSince: s.runSince,
-      lastKeyboard: s.lastKeyboard
-    })),
-  write: writePane,
-  changed: (pending) => send('autoclear:changed', pending),
-  now: () => Date.now(),
-  log: (line) => console.log(`[autoclear] ${line}`)
-})
-
-ipcMain.handle('autoclear:ask', (_e, req: ClearRequest) => {
-  const verdict = clearCountdown.request(req)
-  return verdict.ok
-    ? { ok: true, dueAt: verdict.ask.dueAt }
-    : { ok: false, reason: verdict.reason }
-})
-ipcMain.handle('autoclear:answer', (_e, paneId: string, action: 'cancel' | 'now') =>
-  clearCountdown.answer(paneId, action)
-)
-ipcMain.handle('autoclear:pending', () => clearCountdown.pending())
 
 // ---- and the screen staying on while a pane works ------------------------------------
 const displayAwake = startDisplayAwake({
@@ -1309,7 +1285,6 @@ const displayAwake = startDisplayAwake({
 
 onDeskChanged = (): void => {
   displayAwake.tick()
-  clearCountdown.tick()
 }
 
 // A job the APP hands a chat, not bytes a person typed: the text goes in and the return is
@@ -1957,6 +1932,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       snapshot: () => manager.snapshot(),
       kill: (id) => manager.kill(id),
       tailOf: (id, bytes) => history.tail(id, bytes),
+      tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
@@ -2007,11 +1983,25 @@ ipcMain.handle(
       waitForTurn: waitForTurn !== false
     })
 )
+// One press on a mirrored pane's own card. The answer is the far end's report, so a
+// refusal ("dirty checkout over there") arrives as a sentence naming the pane.
+ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(id)))
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
 // False means nothing was waiting: the pane is already on its way, or was never queued.
 ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
+// A session clearing ITSELF once it has grown too big and written its handoff. The decision
+// is the Stop hook's (`claude-config/autoclear.mjs`); this end owns the countdown, which is
+// the only part a person can stop. Payload is re-read here because the phone server reaches
+// this channel too - see `readAutoClearAsk`.
+ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
+  const ask = readAutoClearAsk(raw)
+  if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
+  if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  return manager.armAutoClear(ask.paneId, ask)
+})
+ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the

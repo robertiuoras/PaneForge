@@ -1,164 +1,87 @@
-// npm run test:autoclear
+// A session that clears ITSELF: the parts that must not drift.
 //
-// An automatic /clear ends a session. Every refusal in front of it is therefore worth a
-// test, and none of them can be exercised by hand: two of the four need a countdown to be
-// running while the desk changes underneath it.
+// The bug this was written after is not in any of the logic below - it is that the logic
+// did not EXIST. `claude-config/pane-clear.mjs` called `autoclear:ask`, PaneForge had never
+// implemented that channel, and the call failed inside a detached child with
+// `stdio: 'ignore'` while the hook had already written `cleared` to its state file. Five
+// clears were logged on 2026-08-23 (03:23, 03:33, 06:13, 07:13, 08:07); not one happened
+// and not one could retry. So the load-bearing check here is the PARITY one: the app's
+// keystrokes and the hook's are asserted equal, because two copies of one contract that
+// nobody compares is exactly how this got lost.
 
 import { buildSync } from 'esbuild'
-import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { mkdtempSync, rmSync, writeFileSync as write } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const work = join(tmpdir(), 'pf-autoclear-test')
-rmSync(work, { recursive: true, force: true })
-mkdirSync(work, { recursive: true })
-const req = createRequire(import.meta.url)
-function load(entry, name) {
-  const outfile = join(work, `${name}.cjs`)
-  buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, format: 'cjs', platform: 'node', outfile })
-  return req(outfile)
+const out = mkdtempSync(join(tmpdir(), 'pf-autoclear-'))
+let checks = 0
+let failures = 0
+const ok = (what, cond, detail = '') => {
+  checks++
+  if (cond) return console.log(`  ok   ${what}`)
+  failures++
+  console.log(`  FAIL ${what}${detail ? ' - ' + detail : ''}`)
 }
-const shared = load('src/shared/autoclear.ts', 'shared')
-const { ClearCountdown } = load('src/main/autoclear.ts', 'main')
-const { acceptClear, clearTick, clearChunks, cleanSteps, clampCountdown, MIN_COUNTDOWN_MS, MAX_COUNTDOWN_MS, CLEAR_COUNTDOWN_MS } = shared
 
-const NOW = 1_000_000_000
-const pane = (over = {}) => ({ id: 'p1', status: 'idle', lastKeyboard: NOW - 60_000, ...over })
-const REQ = { paneId: 'p1', steps: ['fix the thing', 'ship it'], prompt: 'continue the handoff' }
+const entry = join(out, 'entry.ts')
+write(
+  entry,
+  `export * from ${JSON.stringify(join(root, 'src/shared/autoclear.ts').replace(/\\\\/g, '/'))}`,
+  'utf8'
+)
+const file = join(out, 'ac.mjs')
+buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
+const { clearChunks, clampSeconds, readAsk, dropFor, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
 
-// --- accepting an ask --------------------------------------------------------------------
-assert.equal(acceptClear(REQ, undefined, NOW).ok, false)
-assert.equal(acceptClear(REQ, undefined, NOW).reason, 'no such pane')
-assert.equal(acceptClear(REQ, pane({ status: 'exited' }), NOW).reason, 'the pane has exited')
-// The whole point of the feature: a clear that continues nothing just costs a fresh cache.
-assert.equal(acceptClear({ ...REQ, steps: [] }, pane(), NOW).reason, 'nothing open to continue')
-assert.equal(acceptClear({ ...REQ, steps: ['  ', ''] }, pane(), NOW).reason, 'nothing open to continue')
-assert.equal(acceptClear({ ...REQ, prompt: '  ' }, pane(), NOW).reason, 'no resume prompt')
+console.log('keystrokes')
 {
-  const ok = acceptClear(REQ, pane(), NOW)
-  assert.equal(ok.ok, true)
-  assert.equal(ok.ask.dueAt, NOW + CLEAR_COUNTDOWN_MS)
-  assert.equal(ok.ask.keyboardAt, NOW - 60_000)
-  assert.deepEqual(ok.ask.steps, ['fix the thing', 'ship it'])
-}
-// Bullets and bold survive the handoff's markdown, not the card.
-assert.deepEqual(cleanSteps(['- **Correct** the memory', '1. ship', '', null]), ['Correct the memory', 'ship'])
-assert.equal(clampCountdown(0), MIN_COUNTDOWN_MS)
-assert.equal(clampCountdown(99_999), MAX_COUNTDOWN_MS)
-assert.equal(clampCountdown(undefined), CLEAR_COUNTDOWN_MS)
-assert.equal(clampCountdown(30), 30_000)
+  const chunks = clearChunks('carry on')
+  ok('the clear is its own chunk', chunks[0] === '/clear\r')
+  // The bug: a long chunk arriving in one pty read is a PASTE to Claude Code, and a CR
+  // inside a paste is a newline rather than a submit - so the resume prompt sat unsent in
+  // the box after a clear that had otherwise worked.
+  ok('the prompt carries no return of its own', chunks[1] === 'carry on' && !chunks[1].includes('\r'))
+  ok('the submit is the third chunk, alone', chunks[2] === '\r' && chunks.length === 3)
 
-// --- the tick, re-read every time ---------------------------------------------------------
-const ask = acceptClear(REQ, pane(), NOW).ask
-assert.deepEqual(clearTick(ask, pane(), NOW + 1_000), { act: 'wait', leftMs: CLEAR_COUNTDOWN_MS - 1_000 })
-assert.deepEqual(clearTick(ask, pane(), ask.dueAt), { act: 'fire' })
-assert.equal(clearTick(ask, undefined, NOW).reason, 'the pane closed')
-assert.equal(clearTick(ask, pane({ status: 'exited' }), NOW).reason, 'the pane exited')
-// He asked it something during the countdown - a queued /clear would land on that answer.
-assert.equal(clearTick(ask, pane({ runSince: NOW + 500 }), NOW + 1_000).reason, 'the pane started another turn')
-// Or he typed into it, which is the same fact one step earlier.
-assert.equal(clearTick(ask, pane({ lastKeyboard: NOW + 1 }), NOW + 1_000).reason, 'you typed into it')
-
-// --- the countdown in flight ----------------------------------------------------------------
-function harness(panes) {
-  const writes = []
-  const broadcasts = []
-  const timers = []
-  let now = NOW
-  const c = new ClearCountdown({
-    panes: () => panes,
-    write: (id, data) => writes.push([id, data]),
-    changed: (p) => broadcasts.push(p.map((a) => a.paneId)),
-    now: () => now,
-    after: (fn, ms) => timers.push([ms, fn]),
-    log: () => {}
-  })
-  return {
-    c,
-    writes,
-    broadcasts,
-    at: (ms) => (now = NOW + ms),
-    drain: () => timers.splice(0).sort((a, b) => a[0] - b[0]).forEach(([, fn]) => fn())
+  // PARITY. Two copies of one contract, in two repos, and nothing compared them.
+  const hook = await import(pathToFileURL('/Users/robertiuoras/Projects/claude-memory/claude-config/autoclear.mjs').href).catch(() => null)
+  if (!hook?.paneChunks) {
+    console.log('  SKIP the hook is not on this machine - parity unchecked')
+  } else {
+    ok(
+      'the app types exactly what the hook says it will',
+      JSON.stringify(hook.paneChunks('carry on')) === JSON.stringify(chunks),
+      JSON.stringify(hook.paneChunks('carry on'))
+    )
   }
 }
 
-// It fires, and it types the three chunks in order - the RETURN on its own, because a long
-// single write is read as a paste and the CR becomes a newline instead of a submit.
+console.log('the payload, which arrives over the phone server')
 {
-  const panes = [pane()]
-  const h = harness(panes)
-  assert.equal(h.c.request({ ...REQ, seconds: 30 }).ok, true)
-  assert.deepEqual(h.broadcasts.at(-1), ['p1'])
-  h.at(29_000)
-  h.c.tick()
-  assert.equal(h.writes.length, 0, 'not before the countdown runs out')
-  h.at(30_000)
-  h.c.tick()
-  h.drain()
-  assert.deepEqual(h.writes.map((w) => w[1]), clearChunks('continue the handoff'))
-  assert.deepEqual(h.broadcasts.at(-1), [], 'the card goes when it fires')
-  // ...and a tick after that does not type it a second time.
-  h.at(31_000)
-  h.c.tick()
-  assert.equal(h.writes.length, 3)
+  ok('a good ask reads', readAsk({ paneId: 's1', prompt: 'go', steps: ['a'], seconds: 45 })?.seconds === 45)
+  // Clearing a session and then typing NOTHING is the one outcome worse than not
+  // clearing: the context is gone and nothing says what it was doing.
+  ok('no prompt is refused', readAsk({ paneId: 's1', steps: ['a'], seconds: 45 }) === null)
+  ok('no pane is refused', readAsk({ prompt: 'go' }) === null)
+  ok('junk is refused', readAsk('/clear') === null && readAsk(null) === null)
+  ok('steps that are not strings are dropped', readAsk({ paneId: 's1', prompt: 'go', steps: [1, 'a', null] })?.steps.length === 1)
+  ok('seconds are clamped, not trusted', clampSeconds(99999) === MAX_SECONDS && clampSeconds(-4) === MIN_SECONDS)
+  ok('a missing seconds is a default, never zero', clampSeconds(undefined) >= MIN_SECONDS)
 }
 
-// Cancel means cancel: no keystrokes, ever.
+console.log('refusals - the whole point of the countdown')
 {
-  const h = harness([pane()])
-  h.c.request({ ...REQ, seconds: 30 })
-  assert.equal(h.c.answer('p1', 'cancel'), true)
-  assert.deepEqual(h.c.pending(), [])
-  h.at(60_000)
-  h.c.tick()
-  h.drain()
-  assert.equal(h.writes.length, 0)
-  assert.equal(h.c.answer('p1', 'cancel'), false, 'answering a card that is gone is not an error')
+  ok('a pane mid-turn is never cleared', dropFor({ runSince: Date.now() }) === 'working')
+  // The agent asked a PERSON something. Clearing throws away the question and the
+  // conversation that raised it, and every idle reading in the app says this pane is quiet.
+  ok('a pane holding a question is never cleared', dropFor({ ask: { options: [] } }) === 'asked')
+  ok('a pane that went away is not cleared', dropFor(null) === 'gone')
+  ok('an idle pane with nothing pending is fine', dropFor({}) === null)
 }
 
-// "Clear now" skips the rest of the wait.
-{
-  const h = harness([pane()])
-  h.c.request({ ...REQ, seconds: 300 })
-  h.c.answer('p1', 'now')
-  h.drain()
-  assert.deepEqual(h.writes.map((w) => w[1]), clearChunks('continue the handoff'))
-}
-
-// The desk changing underneath it drops the countdown, and says so on the broadcast.
-{
-  const panes = [pane()]
-  const h = harness(panes)
-  h.c.request({ ...REQ, seconds: 30 })
-  panes[0] = pane({ runSince: NOW + 1_000 })
-  h.at(2_000)
-  h.c.tick()
-  assert.deepEqual(h.c.pending(), [])
-  h.at(60_000)
-  h.c.tick()
-  h.drain()
-  assert.equal(h.writes.length, 0)
-}
-
-// A second ask for the same pane replaces the first: two cards would type two /clears.
-{
-  const h = harness([pane()])
-  h.c.request({ ...REQ, seconds: 30 })
-  h.c.request({ ...REQ, seconds: 60 })
-  assert.equal(h.c.pending().length, 1)
-  assert.equal(h.c.pending()[0].dueAt, NOW + 60_000)
-}
-
-// A refused ask never becomes a countdown.
-{
-  const h = harness([pane()])
-  const out = h.c.request({ ...REQ, steps: [] })
-  assert.equal(out.ok, false)
-  assert.deepEqual(h.c.pending(), [])
-}
-
-console.log('autoclear: ok')
+rmSync(out, { recursive: true, force: true })
+console.log(`\n${checks - failures}/${checks} checks passed`)
+process.exit(failures ? 1 : 0)

@@ -775,11 +775,10 @@ html.app-blurred .num-wrap:has(> .num.attn)::before { animation: none; opacity: 
    telling you about. */
 html.app-blurred .num.live::after { animation: none; }
 html.app-blurred .dot.working { animation: none; }
-/* The waiting ring is the one loop with no resting value of its own: the blanket below
-   would freeze it wherever it happened to be, leaving a half-grown halo at half opacity
-   sitting around the dot for as long as the window is unfocused. Dropping the layer
-   instead leaves the dot's own static ring, which is what the ring grows out of. */
-html.app-blurred .dot.idle::after { content: none; }
+/* The waiting ring needs no rule here any more. It used to be the one loop with no
+   resting value of its own, so the blanket below would have frozen it half-grown and this
+   dropped the layer instead - which also dropped the STATE it was drawing. It is a still
+   ring now, so an unfocused window keeps the mark and pays nothing for it. */
 /* Nothing at all loops behind an unfocused window. The five rules above are the ones
    that also need a resting VALUE (a glow held at full, a band parked off the edge); this
    catches everything else that loops - the badges, the connecting dot, the stuck lane -
@@ -825,13 +824,34 @@ html.hi-refresh .num.live::after { animation: none; }
 .empty.first-run code { color: var(--text); word-break: break-all; }
 .hint { color: var(--muted); font-size: 11px; }
 
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* `position: relative` is load-bearing, not tidiness: the waiting ring below is
+   `position: absolute; inset: 0`, so with a STATIC dot it resolved against the nearest
+   positioned ancestor, which is the whole `.row`. Measured 2026-08-23 in a real window -
+   `getComputedStyle(dot).position` static, the pseudo's offsetParent the card - the ring
+   was therefore drawn around the ENTIRE card and scaled it to 1.85, every 2.4s, for ever,
+   on every pane that was waiting for a person. That is what "the Your move shimmer goes
+   too many times" was: not the arrival flash (fixed, one pass) and not the amber bar
+   (still), but a card-sized halo nobody had ever intended - the comment on `callRing`
+   below has always described an 8px dot going to 12px. */
+.dot { position: relative; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.starting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
 .dot.working { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; animation: pulse 2s ease-in-out infinite; }
+/* The standing mark: a lit ring around the dot, and it does not move. Same law as the
+   amber bar and the arrival flash above - motion is for news, and a pane that has been
+   waiting for ten minutes is not news. A ring that grew out of the dot every 2.4s for as
+   long as the pane went unread was the third looping decoration on one card saying one
+   fact. `will-change` goes with it: a layer promoted for an animation it no longer has is
+   a compositor layer for nothing. */
 .dot.idle::after {
   content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
   box-shadow: 0 0 0 2px var(--accent-dim);
-  animation: callRing 2.4s ease-out infinite;
+}
+/* ONCE, on arrival, and only on the card that is also flashing - `just-done` is set by the
+   same event and comes off after DONE_GLOW_MS (2100), so the ring runs its single pass and
+   the class is gone before it could run a second. It says WHICH pane just raised its hand;
+   the static ring above is what says it is still raised. */
+.row.just-done .dot.idle::after {
+  animation: callRing 1.9s ease-out 1;
   will-change: transform, opacity;
 }
 /* Quiet but never asked anything: "ready", not "waiting on you". Still, therefore. */
@@ -3461,3 +3481,58 @@ button.chip:hover {
 .ac-steps li { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .ac-bar { height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
 .ac-bar > i { display: block; height: 100%; background: var(--accent); transition: width 0.25s linear; }
+/* A session about to clear itself. Corner card, never a dialog - nothing the app decided
+   by itself may take the screen. Under every dialog and over the panes. */
+.autoclear-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 45;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.autoclear-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.autoclear-left {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 590;
+  letter-spacing: -0.022em;
+  color: var(--acc);
+}
+.autoclear-word {
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+.autoclear-steps {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.autoclear-keep {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.autoclear-keep:hover {
+  background: var(--hover);
+}

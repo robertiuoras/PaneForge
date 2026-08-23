@@ -35,6 +35,10 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  * it real. Anything not on this list and not called from the window is a finding.
  */
 const DESK_SIDE = {
+  // Armed by the `autoclear` Stop hook through the phone server (`pane-clear.mjs`), never
+  // from this window: the decision needs the transcript's token count and the handoff on
+  // disk, neither of which the renderer has. Its CANCEL half is a real button on the card.
+  askAutoClear: 'claude-config/pane-clear.mjs, over the phone server',
   // The window batches every launch through `startSessions`; the singular is the
   // automation entry point (`pf-ctl call sessions:start`, the phone's launcher,
   // and every place main opens a pane for you).
@@ -47,8 +51,6 @@ const DESK_SIDE = {
   // How a stuck queue is inspected from outside the window; the card reads
   // `Session.handingOff` for the chip, which is the same fact with no poll.
   handoffPending: 'inspection from a script - the chip reads Session.handingOff',
-  // The `autoclear` Stop hook asks; the window only ever answers the card it draws.
-  askAutoClear: 'the autoclear Stop hook - claude-config/autoclear.mjs, over the phone server',
 }
 
 function walk(dir, out = []) {

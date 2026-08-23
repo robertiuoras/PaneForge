@@ -59,6 +59,14 @@ export interface CloseSoon {
   names: string[]
   deadline: number
   why: 'idle' | 'pressure'
+  /**
+   * Set when the countdown is a MOVE to another machine rather than a close.
+   *
+   * One countdown, two outcomes, because they are the same decision at different rungs of
+   * one ladder - and a move used to have no countdown at all: `runHandoffs` reported into
+   * a console nobody has open, so a pane left this desk with nothing on screen saying so.
+   */
+  move?: { device: string; deviceName: string }
 }
 
 export interface MascotProps {
@@ -86,7 +94,7 @@ export interface MascotProps {
   /** The automatic handoff is on and has somewhere to move a pane to. */
   willMove: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
   /** A close that is about to happen, counted down out loud. */
   closeSoon?: CloseSoon
   /** Stop that close and leave those panes alone for a while. */
@@ -108,7 +116,7 @@ interface Bubble {
    * the words are built at render time against the clock rather than once, when it was
    * said. Everything else the pet says is fixed the moment it is said.
    */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
 }
 
 /** Where it stands, as a fraction of the window, so a resize never strands it. */
@@ -271,7 +279,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     const key = `acted:${a.at}`
     if (said.current.has(key)) return
     said.current.add(key)
-    say({ say: actedWords(a.what, a.panes, a.mb, Date.now() - a.at), acted: a, key })
+    say({ say: actedWords(a.what, a.panes, a.mb, Date.now() - a.at, a.where), acted: a, key })
   }, [props.acted, cfg.enabled, say])
 
   // A report of something that HAPPENED carries how long ago, and that number is only true
@@ -520,14 +528,16 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             <>
               <div className="mascot-count">
                 <span className="mascot-secs">{secs}</span>
-                <span className="mascot-count-say">{countdownWords(soon.names, left, soon.why)}</span>
+                <span className="mascot-count-say">
+                  {countdownWords(soon.names, left, soon.why, soon.move?.deviceName)}
+                </span>
               </div>
               <div className="mascot-acts">
                 <button className="primary small" onClick={() => props.onKeep(soon.ids)}>
-                  Keep {soon.ids.length > 1 ? 'them' : 'it'} open
+                  Keep {soon.ids.length > 1 ? 'them' : 'it'} {soon.move ? 'here' : 'open'}
                 </button>
                 <button className="ghost small" onClick={() => props.onCloseNow(soon.ids)}>
-                  Close now
+                  {soon.move ? 'Move now' : 'Close now'}
                 </button>
               </div>
             </>
@@ -535,7 +545,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           {!counting && bubble && (
             <div className="mascot-say">
               {bubble.acted
-                ? actedWords(bubble.acted.what, bubble.acted.panes, bubble.acted.mb, Date.now() - bubble.acted.at)
+                ? actedWords(
+                    bubble.acted.what,
+                    bubble.acted.panes,
+                    bubble.acted.mb,
+                    Date.now() - bubble.acted.at,
+                    bubble.acted.where
+                  )
                 : bubble.say}
             </div>
           )}

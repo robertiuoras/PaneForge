@@ -120,6 +120,7 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  'autoclear:ask',
   'sessions:start',
   'sessions:startMany',
   'sessions:restart',
@@ -168,6 +169,9 @@ const GATED_INVOKE = new Set([
   // never asked.
   'remote:start',
   'remote:handoff',
+  // The same move asked for from the other side of it: it kills a pane on the paired
+  // machine and starts one here, so it is weighed exactly as handing one out.
+  'remote:bringHere',
   // Cancelling a queued move destroys nothing, but it decides where a pane runs, which is
   // the same authority as starting one. Same class as its opposite, for one touch.
   'remote:handoffCancel',
