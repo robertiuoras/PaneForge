@@ -73,7 +73,7 @@ const WIN = process.platform === 'win32'
  * same figure `usage.ts` settled on, and for the same reason: the answer is read by a
  * person glancing at a row, not by a control loop. POSIX needs none of it.
  */
-const WIN_JOB_MS = 4000
+const TABLE_JOB_MS = 4000
 /**
  * How long it must stay quiet before the pane is treated as *waiting for you*.
  * A single turn goes quiet many times - the model thinking, a long tool call, a
@@ -344,10 +344,10 @@ export class SessionManager extends EventEmitter {
    * Windows only: what each shell pane's pty had running at the last table read.
    * Empty on POSIX, where the tty answers the same question for free.
    */
-  private winJobs = new Map<string, { name: string; elapsed?: number }>()
+  private tableJobs = new Map<string, { name: string; elapsed?: number }>()
   /** One armed /clear per pane, cleared by every path that stands one down. */
   private autoClearTimers = new Map<string, NodeJS.Timeout>()
-  private winJobsBusy = false
+  private tableJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -358,7 +358,7 @@ export class SessionManager extends EventEmitter {
     // own timer would mean N timers doing the same 1s tick.
     setInterval(() => this.sweepIdle(), 1000).unref()
     // Windows only, and it stops itself when no shell pane is open. See `sweepWinJobs`.
-    if (WIN) setInterval(() => this.sweepWinJobs(), WIN_JOB_MS).unref()
+    setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
     trackStrays(() => this.roots())
@@ -1804,7 +1804,7 @@ export class SessionManager extends EventEmitter {
    */
   private jobOf(live: Live, now: number): { name: string; since: number } | null {
     if (WIN) {
-      const found = this.winJobs.get(live.meta.id)
+      const found = this.tableJobs.get(live.meta.id)
       // The table knows how long it has been alive, so the pane's clock is the command's
       // real age rather than the moment this app noticed it - which matters most for the
       // pane that was already running when the app restarted.
@@ -1812,41 +1812,70 @@ export class SessionManager extends EventEmitter {
     }
     try {
       const name = paneJob(live.proc.process, live.runner)
-      return name ? { name, since: now } : null
+      if (name) return { name, since: now }
     } catch {
-      return null
+      // A pane whose pty has just died throws from the tty read, inside a sweep that runs
+      // every second for every pane. Fall through: the table may still know.
     }
+    // Nothing in the FOREGROUND is not the same as nothing running. `cmd &` leaves the
+    // SHELL itself in front of the tty, so `paneJob` is silent about a background job that
+    // may run for hours - and silence there means no `runSince`, which means `busy` is
+    // false in `reclaim.ts` and the idle clock starts counting down on a working pane.
+    // Reported 2026-08-24: "1 shell 2 monitors running in session 2, why is it trying to
+    // close it". The table sees them, because on POSIX the pty pid IS the shell and every
+    // child of it is a job somebody started. It is sampled on the slower timer, so a
+    // background job is invisible for at most TABLE_JOB_MS - which costs a clock that
+    // starts a beat late, never a pane that is closed.
+    const found = this.tableJobs.get(live.meta.id)
+    return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
   }
 
   /**
-   * Windows only: one process table, folded into `winJobs`.
+   * One process table, folded into `tableJobs`.
    *
-   * On demand rather than always - a CIM query is expensive and most desks have no shell
-   * pane at all - and never twice at once. Silent about everything it cannot read: an
-   * empty table leaves every pane exactly as it was, because "the table did not answer"
-   * and "nothing is running" must not share a shape.
+   * Windows needs it for EVERY shell pane: `IPty.process` there returns the terminal name
+   * whether or not anything is running, so there is no foreground reading at all. POSIX
+   * needs it for one case the exact reading cannot see - a job the shell was told to run
+   * in the BACKGROUND, where the foreground is the shell itself.
+   *
+   * On demand rather than always - a table read is a whole `ps`/CIM query and most desks
+   * have no shell pane at all - and never twice at once. Silent about everything it cannot
+   * read: an empty table leaves every pane exactly as it was, because "the table did not
+   * answer" and "nothing is running" must not share a shape.
    */
-  private sweepWinJobs(): void {
-    if (!WIN || this.winJobsBusy) return
-    const shells = [...this.sessions.values()].filter(
-      (l) => l.meta.status !== 'exited' && SHELLS.has(programName(l.runner).toLowerCase())
-    )
+  private sweepTableJobs(): void {
+    if (this.tableJobsBusy) return
+    const shells = [...this.sessions.values()].filter((l) => {
+      if (l.meta.status === 'exited') return false
+      if (!SHELLS.has(programName(l.runner).toLowerCase())) return false
+      // POSIX: the tty already answered, exactly and for free, so do not pay for a table
+      // to repeat it. Only a pane whose foreground IS its own shell has anything left to
+      // find out about.
+      if (!WIN) {
+        try {
+          if (paneJob(l.proc.process, l.runner)) return false
+        } catch {
+          // A pty that has just died: let the table have the question.
+        }
+      }
+      return true
+    })
     if (!shells.length) {
-      if (this.winJobs.size) this.winJobs.clear()
+      if (this.tableJobs.size) this.tableJobs.clear()
       return
     }
-    this.winJobsBusy = true
+    this.tableJobsBusy = true
     void jobTable()
       .then((procs) => {
         if (!procs.length) return
-        this.winJobs.clear()
+        this.tableJobs.clear()
         for (const live of shells) {
           const found = jobFromTable(procs, live.proc.pid, live.runner)
-          if (found) this.winJobs.set(live.meta.id, found)
+          if (found) this.tableJobs.set(live.meta.id, found)
         }
       })
       .finally(() => {
-        this.winJobsBusy = false
+        this.tableJobsBusy = false
       })
   }
 
@@ -1887,10 +1916,13 @@ export class SessionManager extends EventEmitter {
       // written. Measured in a dev copy before this: `true\r`, then 38 characters typed
       // with no return, still reported `status: working, runSince: true` two seconds later.
       //
-      // POSIX only, because there the reading is exact and asked every sweep (`paneJob`
-      // is the tty's own foreground process). Windows has no such reading: the table is
-      // sampled every WIN_JOB_MS and asynchronously, so a command would read as finished
-      // for the seconds before the table first sees it. There, the quiet backstop stays.
+      // POSIX only, because there the FOREGROUND reading is exact and asked every sweep
+      // (`paneJob` is the tty's own foreground process). Windows has no such reading: the
+      // table is sampled every TABLE_JOB_MS and asynchronously, so a command would read as
+      // finished for the seconds before the table first sees it. There, the quiet backstop
+      // stays. A POSIX BACKGROUND job comes off that same table, so for up to TABLE_JOB_MS
+      // one may end the run clock early - a clock that restarts, never a pane that closes,
+      // because `reclaim.ts` refuses on `job` as well as on `busy`.
       const shellDone =
         !WIN &&
         !jobName &&
