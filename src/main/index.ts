@@ -884,8 +884,8 @@ const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
   write: (id, data) => manager.write(id, data),
-  resize: (id, cols, rows, borrowed) => manager.resize(id, cols, rows, borrowed === true),
-  returnSize: (id) => manager.returnSize(id),
+  resize: (id, cols, rows, borrowed) => manager.resize(id, cols, rows, borrowed === true, 'phone'),
+  returnSize: (id, viewer) => manager.returnSize(id, viewer),
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
   clearAttention: (id) => manager.clearAttention(id),
@@ -1348,14 +1348,17 @@ ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?:
   // owns the pty as a BORROW, so the far end draws at the grid this window has room for
   // and keeps its own desk size to go back to. See `mirrorFit` in TerminalPane.
   if (remote.owns(id)) remote.resizeOn(id, cols, rows)
-  else manager.resize(id, cols, rows, borrowed === true)
+  // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
+  // never borrows, it owns. Named so a mirror watching the same pane is a separate
+  // borrower rather than the same one changing its mind.
+  else manager.resize(id, cols, rows, borrowed === true, 'phone')
 })
 /**
  * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at
  * 50 columns is right for the phone and wrong for the 157-column window it is also drawn
  * in, and before this nothing ever undid it - see `resize` in sessions.ts.
  */
-ipcMain.on('pty:return', () => manager.returnSizes())
+ipcMain.on('pty:return', () => manager.returnSizes('phone'))
 /**
  * Which panes are on screen, so the pump can gather a background pane's output for
  * longer (dataPump.ts). Every screen watching this desk says for itself and carries

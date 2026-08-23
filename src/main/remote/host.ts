@@ -27,9 +27,9 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   write(id: string, data: string): void
-  resize(id: string, cols: number, rows: number, borrowed?: boolean): void
+  resize(id: string, cols: number, rows: number, borrowed?: boolean, viewer?: string): void
   /** Give a pane whose size a guest borrowed back to this desk. */
-  returnSize?(id: string): void
+  returnSize?(id: string, viewer?: string): void
   redraw(id: string): void
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   clearAttention(id: string): void
@@ -81,7 +81,17 @@ export interface Guest {
   watching: number
 }
 
+let guestSeq = 0
+
 class GuestConn {
+  /**
+   * Who this guest IS, for the pane-size bookkeeping.
+   *
+   * Per CONNECTION rather than per device on purpose: a device that reconnects is a new
+   * window with a new size, and the old connection's borrow is dropped when it goes. Two
+   * windows on one machine are two viewers, which is exactly what they are.
+   */
+  readonly key = `guest:${++guestSeq}`
   attached = new Set<string>()
   /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
   xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
@@ -210,7 +220,7 @@ export class RemoteHost extends EventEmitter {
       this.pending.delete(conn)
       if (this.guests.delete(guest)) {
         // A guest that vanished cannot detach, so its borrows are returned here too.
-        for (const id of guest.attached) this.backend.returnSize?.(id)
+        for (const id of guest.attached) this.backend.returnSize?.(id, guest.key)
         this.emit('changed')
       }
     })
@@ -277,7 +287,7 @@ export class RemoteHost extends EventEmitter {
           // Whatever that guest borrowed goes back to this desk the moment it looks
           // away - the same contract a phone has. Without this, one look from another
           // machine would leave this pane at somebody else's width for ever.
-          this.backend.returnSize?.(id)
+          this.backend.returnSize?.(id, guest.key)
           this.emit('changed')
           return
         case 'write':
@@ -289,7 +299,16 @@ export class RemoteHost extends EventEmitter {
           // `deskCols/deskRows` and gets them back on detach or when the guest goes.
           // The old ping-pong worry does not apply - a mirror fits itself to its own
           // window and asks for that, so it never chases the number it was sent.
-          this.backend.resize(id, Number(m.cols ?? 80), Number(m.rows ?? 24), m.borrowed === true)
+          // Named, so two devices mirroring one pane are two borrowers rather than one
+          // that keeps changing its mind - `shared/paneSize.ts` lends them the smallest
+          // grid of the two instead of flipping the pty between their windows.
+          this.backend.resize(
+            id,
+            Number(m.cols ?? 80),
+            Number(m.rows ?? 24),
+            m.borrowed === true,
+            guest.key
+          )
           return
         case 'redraw':
           this.backend.redraw(id)
