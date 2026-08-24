@@ -992,11 +992,29 @@ their entire output used to be a `console.info`. `shared/mascot.ts` is the mouth
 
 - **It is not a model.** Every sentence is arithmetic over readings the app already holds, and
   every typed command is a small parser over the same list. Nothing leaves the machine.
-- **What it says names the pane, what that pane was in the middle of, and when.** `paneWord` is
-  `taskdriver pane 1` (project first — the number is the Ctrl key, the project is what is in your
-  head), the subject comes off `Session.gist` pushed onto the LIVE session, and the time is
-  `agoWords`, rebuilt as the bubble draws. A pane nobody has typed a real ask into says nothing
-  about one.
+- **What it says names the pane, which COPY of the project it is, what that pane was in the
+  middle of, and when.** `paneWord` is `(1) taskdriver` and `(3) PaneForge lane a`: the number
+  leads in brackets because a sentence naming several panes buries them otherwise, and it is the
+  Ctrl key; the lane is `place.ts`'s own `role` and is added ONLY for a lane, because a bare
+  project name already means the trunk. `(3)` is also a form `paneNumbers` reads, or the pet
+  cannot answer a sentence it printed itself. The subject comes off `Session.gist` pushed onto
+  the LIVE session, and the time is `agoWords`, rebuilt as the bubble draws. A pane nobody has
+  typed a real ask into says nothing about one.
+- **A pet is decoration; the reading is not, and `pet: 'none'` is the difference.** Turning the
+  mascot OFF was the only way to say "no animal", and it took the ladder's only voice with it.
+  `NO_PET` in `shared/pets.ts` keeps every reading and drops the sprite: the card docks
+  bottom-right (`position: fixed`, no walk, no dash, no blink), and a pill carrying the pane
+  count and the total is the press that opens the ask box, since there is no sprite to click.
+- **Everything it says is selectable and copyable.** `body { user-select: none }` inherits, so
+  `.mascot-say` and `.mascot-count-say` opt back in with both spellings, and one `⧉` in the
+  tools copies `saidText`, the SAME expression the card renders, so a reading that goes stale
+  (`agoWords`, the countdown) cannot be copied from a different moment than the one being read.
+- **"What is open" is an answer.** Every other command needs a pane named or described first, so
+  the most obvious opening sentence anybody types fell through to "I only know this machine". A
+  dev server named beside a pane NUMBER (`stop the dev server in pane 2`) narrows the SERVERS
+  rather than handing the sentence to the pane branch: answering it with "close pane 2?" offers
+  the larger of the two things asked for. A bare "pane" with no number still means the panes, and
+  two servers with nothing to separate them is still a question.
 - **A bubble takes itself away** (`mascot.hideSeconds`, 60s, 0 = until pressed): a reading left on
   screen stops being one. The clock restarts on every keystroke in the ask box, and a COUNTDOWN
   is exempt.
