@@ -366,8 +366,12 @@ pane must say which it is on its card.
   absent — its headless flags are unverified, and `drivable()` refusing beats a guess.
 - `npm run test:agentenv`.
 
-**Gemini CLI no longer has a login of its own.** Google ended the free "sign in with Google"
-tier on 2026-08-23: every launch dies `IneligibleTierError ... UNSUPPORTED_CLIENT`, inside a
+**Gemini CLI no longer has a login of its own.** Google cut consumer accounts off on
+**2026-06-18** (announced 2026-05-19; Gemini CLI is being folded into Antigravity CLI), and
+this machine hit it on 2026-08-23 - the date below is when it was NOTICED, not when it broke,
+and rollout was uneven enough that people were still filing fresh bugs in July. **Google AI
+Pro/Ultra does not entitle Gemini CLI at all any more**; only a Code Assist Standard/Enterprise
+licence keeps an OAuth login, and everyone else pays per token on an API key. So: every launch dies `IneligibleTierError ... UNSUPPORTED_CLIENT`, inside a
 pane that otherwise looks healthy. So `google` (AI Studio) is a `KEY_PROVIDERS` entry, the
 agent's `env` names `keyVar('google')`, and `keyProviderFor` reads `GEMINI_API_KEY`.
 `GEMINI_DEFAULT_AUTH_TYPE` is set beside it and is NOT enough on its own: a machine whose
