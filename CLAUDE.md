@@ -957,6 +957,12 @@ Every row carries one line: the first thing typed at the agent, plus how many as
   stamp the reader has to subtract from their own status bar; past a day the calendar takes back
   over, because `31h ago` identifies nothing. `whenWords` in `shared/elapsed.ts`, one minute clock
   for the whole list, the exact moment on the hover. `npm run test:elapsed`.
+- **A row says whether it is still OPEN.** Green rail plus a green `open since` chip for a
+  session with no `endedAt`, red rail plus a red `closed …` chip for every other row, so
+  the answer is never carried by hue alone.
+- **`View all` prints every chapter on the row**, out of `summaryFull`, replacing the
+  clipped two-line gist. Drawn only where there is more than the row already shows (more
+  than one chapter, or `dropped`), and it costs nothing — the chapters are on the entry.
 - **The FIRST ask, not the latest.** The twentieth is a follow-up inside it and reads as nothing
   once the session is closed.
 - **Scraping the transcript was tried and abandoned on the evidence** — a boxed composer is
