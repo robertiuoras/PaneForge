@@ -372,4 +372,67 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   )
 }
 
+// -- Nobody at the machine: the clock freezes rather than running through the absence. ---
+//
+// Robert, 2026-08-24: "i wasnt at my laptop for like 10 mins and all tabs closed because i
+// wasnt here to stop it". The countdown is only honest while somebody could act on it, so
+// while the OS reports no input it is frozen at the moment they left. The load-bearing
+// half is the two negatives: a machine no person has ever touched (the second desk this
+// feature exists for) must keep today's behaviour exactly, and the pause may only ever
+// DELAY a close - it can never resurrect a pane that was already due.
+{
+  const awayFile = join(work, 'away.bundle.cjs')
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: ['src/shared/away.ts'],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: awayFile
+  })
+  const { readAway, deskNow, NOBODY_YET, AWAY_AFTER_MS } = createRequire(import.meta.url)(awayFile)
+
+  const here = readAway(NOBODY_YET, 0, NOW)
+  eq('typing here means nobody is away', here.awaySince, null)
+  eq('...and that a person has been seen', here.sawPerson, true)
+
+  const gone = readAway(here, 10 * 60_000, NOW)
+  eq('ten minutes of no input is away, stamped where they left', gone.awaySince, NOW - 10 * 60_000)
+  const back = readAway(gone, 5_000, NOW)
+  eq('a mouse move ends it', back.awaySince, null)
+
+  eq('a few seconds of stillness is not away', readAway(here, AWAY_AFTER_MS - 1, NOW).awaySince, null)
+
+  // The second desk. Nobody has ever touched its own keyboard, so there is nobody to be
+  // away and nothing pauses - the machine this whole clock was turned on for.
+  const desk2 = readAway(NOBODY_YET, 6 * HOUR, NOW)
+  eq('a machine no person has touched is never "away"', desk2.awaySince, null)
+  eq('...and still has not seen anybody', desk2.sawPerson, false)
+
+  eq('present: the clock is wall time', deskNow(NOW, null), NOW)
+  eq('away: the clock is frozen where they left', deskNow(NOW, NOW - 10 * 60_000), NOW - 10 * 60_000)
+  eq('a clock ahead of now is clamped, never rewound forward', deskNow(NOW, NOW + HOUR), NOW)
+
+  // What it buys, through the sweep itself: five minutes' work, then ten minutes away.
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 10 }
+  const left = NOW - 10 * 60_000
+  const p = pane({ id: 'coffee', lastKeyboard: left - 5 * 60_000 })
+  check('CONTROL: wall time closes it', ids(idleClosePlan([p, pane({ id: 'other', lastKeyboard: NOW })], CLOCKED, NOW)) === 'coffee')
+  check(
+    'the frozen clock does not',
+    idleClosePlan([p, pane({ id: 'other', lastKeyboard: NOW })], CLOCKED, deskNow(NOW, left)).length === 0
+  )
+  eq(
+    'and the card counts down to the same frozen moment',
+    idleCloseAt(p, CLOCKED, deskNow(NOW, left)),
+    left - 5 * 60_000 + 10 * 60_000
+  )
+  // The pause holds a pane that was still counting; it does not undo a decision.
+  const overdue = pane({ id: 'overdue', lastKeyboard: left - 60 * 60_000 })
+  check(
+    'a pane already past its deadline when they left still goes',
+    ids(idleClosePlan([overdue, pane({ id: 'other', lastKeyboard: NOW })], CLOCKED, deskNow(NOW, left))) === 'overdue'
+  )
+}
+
 console.log(`reclaim: ${checks} checks passed`)

@@ -97,6 +97,7 @@ import {
   type Reclaim,
   type ReclaimPane
 } from '../../shared/reclaim'
+import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
   idleOffloadPlan,
@@ -1349,6 +1350,20 @@ export default function App(): JSX.Element {
   useEffect(() => api.onCapacity(setCapacity), [])
 
   /**
+   * Since when nobody has been at this machine, or null while somebody is.
+   *
+   * A ref, not state: the only two things that read it are a minute timer and the closing
+   * publisher, and re-rendering every pane because the mouse stopped moving would cost
+   * more than the reading is worth. `publishClosingRef` is called on the change so the
+   * cards' countdowns freeze at the same moment the sweep does - the two disagreeing is
+   * the worst failure this feature has (see `idleCloseAt`).
+   */
+  const [awayAt, setAwayAt] = useState<number | null>(null)
+  const awayRef = useRef<number | null>(null)
+  awayRef.current = awayAt
+  useEffect(() => api.onAway(setAwayAt), [])
+
+  /**
    * Send what this machine cannot afford to a paired device, and hand back the rest.
    *
    * The capacity verdict has said "the paired device can take the next one" in the
@@ -2304,7 +2319,9 @@ export default function App(): JSX.Element {
           reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id], pinnedRef.current[s.id])
         ),
         cfg,
-        Date.now()
+        // Frozen while nobody is at this machine: the clock counts time a person could
+        // have acted in, not wall time. See src/shared/away.ts.
+        deskNow(Date.now(), awayRef.current)
       )
       // ...and out loud, and not yet. This sweep has closed panes into a console nobody
       // has open since it shipped; now it counts down on the mascot first, and a press
@@ -3548,7 +3565,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const run = (): void => {
       const cfg = config?.reclaim ?? DEFAULT_RECLAIM
-      const now = Date.now()
+      // The same frozen clock the sweep reads, or a card counts down to a close that is
+      // not coming.
+      const now = deskNow(Date.now(), awayRef.current)
       const live = new Set<string>()
       for (const s of sessions) {
         if (s.remote) continue
@@ -3571,7 +3590,9 @@ export default function App(): JSX.Element {
     }
     publishClosingRef.current = run
     run()
-  }, [sessions, config?.reclaim, activeId, pinned])
+    // `awayAt` is in here because the deadline it publishes is computed from the frozen
+    // clock: a card must stop counting down the moment the sweep stops counting.
+  }, [sessions, config?.reclaim, activeId, pinned, awayAt])
 
   /**
    * Hold these panes where they are, for an hour.

@@ -184,6 +184,7 @@ export const SURFACE: Surface = {
   paneBell: ['send', 'sessions:bell'],
   onRemote: ['on', 'remote:changed'],
   onCapacity: ['on', 'capacity:changed'],
+  onAway: ['on', 'system:away'],
   onUsage: ['on', 'usage:changed'],
   usage: ['invoke', 'usage:get'],
   listDevServers: ['invoke', 'devs:list'],

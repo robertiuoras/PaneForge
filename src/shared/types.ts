@@ -2230,6 +2230,14 @@ export interface Api {
   /** What this machine can still hold - see src/shared/capacity.ts. */
   onCapacity(cb: (v: Verdict) => void): () => void
   /**
+   * Nobody is at this machine since this moment, epoch ms - or null while somebody is.
+   *
+   * The idle close reads it and freezes its clock there; see `src/shared/away.ts`. Null is
+   * also the answer on a machine no person has ever touched, which is the second desk this
+   * whole feature exists for and the one place the pause must never fire.
+   */
+  onAway(cb: (awaySince: number | null) => void): () => void
+  /**
    * What the panes are costing right now, measured rather than modelled - see
    * src/shared/usage.ts. Pushed every few seconds while a window is on screen.
    */
