@@ -1324,6 +1324,18 @@ body.sizing * { user-select: none !important; }
    squeezed in a narrow pane, never the digits - a clock ellipsised to "1m…" is worse
    than no clock. */
 .pt-clock { flex: none; font-variant-numeric: tabular-nums; font-size: 10px; }
+/* The pane's own age, beside the turn's. Two clocks a few pixels apart are only readable
+   if they do not look like one number split in two, so this one is a step dimmer and
+   carries the units it is measured in; the turn clock keeps the accent it has always had.
+   Tabular figures on both, or the header shifts under the pointer every minute. */
+.pt-open {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.85;
+}
+.hist-open { font-variant-numeric: tabular-nums; }
 /* The inset belongs on the host, not on .xterm. Measured both ways at the same pane size
    (870px tall): padding here proposes 57 rows whose last row still lands 12px clear of the
    clipped edge, while padding on .xterm proposes 56 and clips the last row by 3px - the fit

@@ -178,6 +178,7 @@
     "test:phoneview": "node scripts/phone-view-test.mjs",
     "test:funnel": "node scripts/funnel-test.mjs",
     "test:gist": "node scripts/gist-test.mjs",
+    "test:elapsed": "node scripts/elapsed-test.mjs",
     "test:usage": "node scripts/usage-test.mjs",
     "test:turncopyview": "node scripts/turn-copy-view-test.mjs",
     "test:lanepeers": "node scripts/lane-peers-test.mjs",
