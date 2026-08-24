@@ -709,6 +709,22 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   />
                 )}
                 {config.autoAnswer?.enabled === true && (
+                  <Switch
+                    checked={config.autoAnswer?.holdWhileWatching !== false}
+                    onChange={(v) =>
+                      onChange({
+                        autoAnswer: {
+                          ...DEFAULT_AUTO_ANSWER,
+                          ...config.autoAnswer,
+                          holdWhileWatching: v
+                        }
+                      })
+                    }
+                    label="...but never while you are looking at this window"
+                    hint="The wait exists so somebody who disagrees can reach the pane first, which only means anything while nobody is here. On, nothing is pressed for as long as this window has the keyboard - the pane says which option it would press and that it is holding - and the full wait starts from the moment you look away. That is also what makes the Telegram message answerable: the question only ever reaches a phone with this window in the background."
+                  />
+                )}
+                {config.autoAnswer?.enabled === true && (
                   <div className="setting">
                     <label>Wait before answering</label>
                     <Select

@@ -118,6 +118,15 @@ export interface Session {
    */
   autoAnswerAt?: number
   /**
+   * True while that press is being HELD because somebody is at this window.
+   *
+   * Separate from `autoAnswerAt` rather than encoded as a large one: a held question has no
+   * deadline at all - it starts a fresh `waitMs` the moment the window is left - so a
+   * countdown is the one thing that must not be drawn for it. What the pane draws instead
+   * is the option it WOULD press and the reason nothing is happening.
+   */
+  autoAnswerHeld?: boolean
+  /**
    * When the idle clock will CLOSE this pane, epoch ms, or absent when nothing will.
    *
    * Published by the desk that owns the pty (`shared/reclaim.ts`'s `idleCloseAt`), never

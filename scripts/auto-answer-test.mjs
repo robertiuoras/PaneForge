@@ -285,6 +285,38 @@ ok('no question, nothing to answer', () => {
   assert.equal(dueForAuto(state({ askSince: 0 }), ON, T + 600_000), false)
 })
 
+// ---------------------------------------------------------------------------
+// The hold. The wait is the window in which somebody who disagrees reaches the pane, and
+// that argument is empty while they are already at the desk reading it - so the seconds
+// are only spent AWAY from the window. The load-bearing half is that looking away starts
+// the whole wait again rather than resuming a part-spent one.
+// ---------------------------------------------------------------------------
+ok('a question is not answered while somebody is at the window', () => {
+  // Settled long ago, but the hold was stamped a moment ago: nothing is pressed.
+  const here = state({ askHold: T + 500_000 })
+  assert.equal(dueForAuto(here, ON, T + 500_000), false)
+  assert.equal(dueForAuto(here, ON, T + 500_000 + ON.waitMs - 1), false)
+  assert.equal(dueForAuto(here, ON, T + 500_000 + ON.waitMs), true, 'the full wait, from the look away')
+})
+
+ok('the countdown drawn is the countdown pressed, hold included', () => {
+  // The one defect the countdown exists to prevent: two start lines, so the pane promises
+  // seconds the presser does not keep.
+  const s = { ...state({ askHold: T + 9_000 }), askKey: askKeyOf(PERMISSION) }
+  const at = autoAnswerAt(s, ON, PERMISSION)
+  assert.equal(at, T + 9_000 + ON.waitMs)
+  assert.equal(dueForAuto(s, ON, at - 1), false)
+  assert.equal(dueForAuto(s, ON, at), true)
+})
+
+ok('a hold older than the wait changes nothing', () => {
+  // The control: askHold is a start line, never a veto. A window left half an hour ago
+  // must not hold a question that settled after it.
+  const gone = state({ askSince: T + 60_000, askHold: T })
+  assert.equal(dueForAuto(gone, ON, T + 60_000 + ON.waitMs), true)
+  assert.equal(dueForAuto(state(), ON, T + ON.waitMs), true, 'no hold at all is the old behaviour')
+})
+
 ok('the identity of a question leaves the arrow out', () => {
   const a = ask(1, 'Yes', 'No')
   const b = ask(2, 'Yes', 'No')
@@ -302,6 +334,10 @@ const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 ok('the sweep is wired and the decision above is the one it asks', () => {
   assert.match(sessions, /sweepAutoAnswer\(live\)/, 'called from the sweep')
   assert.match(sessions, /dueForAuto\(live, cfg, Date\.now\(\)\)/, 'the timing is the tested one')
+  // The hold is a start line nothing computes on its own: without this stamp every case
+  // above passes and the shipped app counts down while somebody reads the question.
+  assert.match(sessions, /live\.askHold = Date\.now\(\)/, 'the hold is actually stamped')
+  assert.match(sessions, /deskFocused\(\)/, 'and off the one focus probe, not a second one')
   // The keys go through `choose`, which re-checks the question before every one of them.
   assert.match(sessions, /this\.choose\(live\.meta\.id, pick\.n\)/)
 })

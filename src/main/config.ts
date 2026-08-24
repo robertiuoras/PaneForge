@@ -394,13 +394,24 @@ function migrateAutoAnswer(
   // carries it (so a config written from here already has it), and asking the merge whether
   // it is set therefore answers yes for every config in existence - which is how the first
   // version of this ran the migration on nothing at all and left this desk exactly as it was.
-  if (raw?.defaultsV2) return merged
-  merged.enabled = DEFAULT_AUTO_ANSWER.enabled
-  // Only the wait nobody could have chosen: there was no control for it before this, so
-  // the old default is a value written by the app and is safe to move. Anything else is a
-  // number somebody typed.
-  if (merged.waitMs === 1200) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+  if (raw?.defaultsV3) return merged
+  if (!raw?.defaultsV2) {
+    merged.enabled = DEFAULT_AUTO_ANSWER.enabled
+    // Only the wait nobody could have chosen: there was no control for it before this, so
+    // the old default is a value written by the app and is safe to move. Anything else is a
+    // number somebody typed.
+    if (merged.waitMs === 1200) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+    merged.defaultsV2 = true
+  }
+  // V3: the wait is now spent entirely away from this window, so 5s - a number that only
+  // ever had to be long enough to NOTICE - becomes 30s, which is long enough to answer the
+  // Telegram message instead. Moved only where it is still the value this app wrote; a wait
+  // somebody picked in Settings is theirs. The hold is applied unconditionally because it
+  // never existed as a switch before, so no config in existence carries an answer to it.
+  if (merged.waitMs === 1200 || merged.waitMs === 5000) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
+  merged.holdWhileWatching = DEFAULT_AUTO_ANSWER.holdWhileWatching
   merged.defaultsV2 = true
+  merged.defaultsV3 = true
   return merged
 }
 

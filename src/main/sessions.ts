@@ -49,6 +49,7 @@ import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
@@ -286,6 +287,7 @@ interface Live {
    * them mid-move. Zero means there is no question.
    */
   askSince: number
+  askHold: number
   askSig: string
   /**
    * The same question WITHOUT the arrow (`askKeyOf`), which is what "have I already
@@ -511,6 +513,7 @@ export class SessionManager extends EventEmitter {
       recoverSeen: 0,
       recoverTries: 0,
       askSince: 0,
+      askHold: 0,
       askSig: '',
       askKey: '',
       autoRun: 0,
@@ -1770,11 +1773,28 @@ export class SessionManager extends EventEmitter {
   private refreshAutoPlan(live: Live): boolean {
     const cfg = getConfig().autoAnswer ?? DEFAULT_AUTO_ANSWER
     const ask = live.meta.ask
+    // Somebody is at this window, so the wait has not started: stamp the hold, which is the
+    // second start line `autoAnswer` reads. Both the presser and the countdown come off
+    // that one number, so they cannot promise different seconds. A mirrored pane is left
+    // alone - the desk that owns the pty owns this decision, and our focus says nothing
+    // about whether anybody is at THAT one.
+    const held = !!ask && cfg.holdWhileWatching !== false && !live.meta.remote && deskFocused()
+    if (held) live.askHold = Date.now()
     const at = ask ? autoAnswerAt(live, cfg, ask) : 0
-    const n = at && ask ? pickAnswer(ask, cfg)?.n : undefined
-    if (live.meta.autoAnswerAt === (at || undefined) && live.meta.autoAnswerN === n) return false
+    const n = ask && (at || held) ? pickAnswer(ask, cfg)?.n : undefined
+    // Held is drawn instead of a clock, never beside one: a deadline that restarts the
+    // moment the window is left is not a countdown, and drawing one would be a promise
+    // about a second that never arrives.
+    const heldNow = held && !!n ? true : undefined
+    if (
+      live.meta.autoAnswerAt === (at || undefined) &&
+      live.meta.autoAnswerN === n &&
+      live.meta.autoAnswerHeld === heldNow
+    )
+      return false
     live.meta.autoAnswerAt = at || undefined
     live.meta.autoAnswerN = n
+    live.meta.autoAnswerHeld = heldNow
     return true
   }
 

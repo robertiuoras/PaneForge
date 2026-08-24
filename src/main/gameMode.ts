@@ -78,6 +78,18 @@ export function setFocusProbe(fn: (() => boolean) | null): void {
   focusProbe = fn
 }
 
+/**
+ * Is somebody demonstrably AT this window right now?
+ *
+ * Exported because `autoAnswer` needs the same reading for a different reason: its wait is
+ * the window in which a person who disagrees reaches the pane, which is only meaningful
+ * while that person is not already here. One probe rather than a second one wired
+ * separately - two answers to "is this window focused" is how they end up disagreeing.
+ */
+export function deskFocused(): boolean {
+  return weAreOnScreen()
+}
+
 /** Never allowed to be the reason DND turns ON - only ever the reason it turns off. */
 function weAreOnScreen(): boolean {
   if (!focusProbe) return false

@@ -131,6 +131,8 @@ interface Props {
    */
   autoAnswerAt?: number
   autoAnswerN?: number
+  /** That press is being held because somebody is at this window. See `shared/types.ts`. */
+  autoAnswerHeld?: boolean
   /**
    * Which CLI is running in this pane.
    *
@@ -154,10 +156,41 @@ interface Props {
  * happen; the point of showing it at all is that somebody who disagrees can reach the pane
  * first, and they cannot disagree with a number.
  */
-function AskCountdown({ at, n, ask }: { at: number; n?: number; ask: PaneAsk }): React.JSX.Element {
-  const now = useNow()
+function AskCountdown({
+  at,
+  n,
+  ask,
+  held
+}: {
+  at: number
+  n?: number
+  ask: PaneAsk
+  held?: boolean
+}): React.JSX.Element {
+  // Aligned to the DEADLINE, not to the wall clock. `useNow()`'s buckets turn over on the
+  // second boundary while `at` is an arbitrary millisecond, so the last step before a press
+  // was however much of a second happened to be left - measured as a number that sits for
+  // 900ms and then jumps two, which is what "buggy when the timer counts down" was. With
+  // `at` as the offset every tick lands exactly on a whole second of the real remainder.
+  const now = useNow(held ? Infinity : 1000, at)
   const left = Math.max(0, Math.ceil((at - now) / 1000))
   const label = ask.options.find((o) => o.n === n)?.label
+  if (held)
+    return (
+      // Held has no deadline to draw: leaving the window starts the whole wait again, so a
+      // number here would be a second that never arrives. It still names the option, which
+      // is the half of the promise that is true either way.
+      <div
+        className="pane-ask-auto"
+        title="Nothing is pressed while you are looking at this window. Settings -> Answer an agent's question for me"
+      >
+        <span className="pane-ask-auto-left">hold</span>
+        <span className="pane-ask-auto-word">
+          Waiting while you are here, then
+          {label ? <b className="pane-ask-auto-pick"> {label}</b> : null}
+        </span>
+      </div>
+    )
   return (
     <div className="pane-ask-auto" title="Settings -> Answer an agent's question for me">
       {/* The seconds are their own element and are the biggest thing on the row: this is
@@ -674,6 +707,7 @@ function TerminalPane({
   ask = null,
   autoAnswerAt,
   autoAnswerN,
+  autoAnswerHeld,
   agent,
   onToast
 }: Props): JSX.Element {
@@ -3716,7 +3750,14 @@ function TerminalPane({
               copy was clamped to two lines so it was the worse of the two. What this holds
               is the part the terminal cannot say: what this app is about to press, when,
               and a target for a pointer or a thumb. */}
-          {autoAnswerAt ? <AskCountdown at={autoAnswerAt} n={autoAnswerN} ask={ask} /> : null}
+          {autoAnswerAt || autoAnswerHeld ? (
+            <AskCountdown
+              at={autoAnswerAt ?? 0}
+              n={autoAnswerN}
+              ask={ask}
+              held={autoAnswerHeld}
+            />
+          ) : null}
           <div className="pane-ask-row">
             {ask.options.map((o) => (
               <button
@@ -3730,10 +3771,10 @@ function TerminalPane({
                 className={
                   'pane-ask-btn' +
                   (o.n === ask.selected ? ' on' : '') +
-                  (autoAnswerAt && o.n === autoAnswerN ? ' auto' : '')
+                  ((autoAnswerAt || autoAnswerHeld) && o.n === autoAnswerN ? ' auto' : '')
                 }
                 title={
-                  autoAnswerAt && o.n === autoAnswerN
+                  (autoAnswerAt || autoAnswerHeld) && o.n === autoAnswerN
                     ? `${o.n}. ${o.label} - this is the one that will be pressed for you`
                     : `${o.n}. ${o.label}`
                 }
@@ -3814,6 +3855,7 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.onToast === b.onToast &&
     a.autoAnswerAt === b.autoAnswerAt &&
     a.autoAnswerN === b.autoAnswerN &&
+    a.autoAnswerHeld === b.autoAnswerHeld &&
     a.replayCols === b.replayCols &&
     sameAsk(a.ask, b.ask) &&
     sameGrid(a.mirror, b.mirror) &&

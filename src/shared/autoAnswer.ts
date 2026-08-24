@@ -116,6 +116,25 @@ export interface AutoAnswerConfig {
    */
   waitMs: number
   /**
+   * Hold the countdown for as long as this window has the keyboard.
+   *
+   * The wait exists to be the window in which somebody who disagrees reaches the pane. That
+   * argument only holds while nobody is there: sitting at the desk READING the question,
+   * the clock is counting down against the very person it was put there for, and switching
+   * to the pane to read it is exactly the moment it runs out. Robert, 2026-08-24: "timer
+   * keeps going down when I go to that tab or have focus on PaneForge ... I want it to stop
+   * so I can actually read the question".
+   *
+   * So the whole wait is spent AWAY from the app: while this window is focused nothing is
+   * pressed and no clock is drawn, and looking away starts the full `waitMs` from that
+   * moment - which is also what makes a Telegram answer reachable, since the phone is only
+   * ever answered with this window in the background.
+   *
+   * Not a pause that resumes where it left off: the question is only readable while
+   * somebody is here, so the seconds spent here are not seconds of grace.
+   */
+  holdWhileWatching: boolean
+  /**
    * Answers in a row on one pane before it stops and leaves the next one for a person.
    *
    * The counter resets whenever the pane has no question, so an ordinary run - question,
@@ -134,6 +153,15 @@ export interface AutoAnswerConfig {
    * that decides, and turning it off stays off through every later update.
    */
   defaultsV2?: boolean
+  /**
+   * Marker for the second one-time flip: the 5s wait onto 30s, and the hold above ON.
+   *
+   * Same shape and same reason as `defaultsV2` - `defaults()` is WRITTEN at first launch,
+   * so every config in existence carries an explicit `waitMs`, and moving the default alone
+   * would reach nobody. Read off the SAVED config, never off the merge. V2 is superseded and
+   * must not run on the way here.
+   */
+  defaultsV3?: boolean
 }
 
 export const DEFAULT_AUTO_ANSWER: AutoAnswerConfig = {
@@ -146,12 +174,17 @@ export const DEFAULT_AUTO_ANSWER: AutoAnswerConfig = {
   // that stops. A question with no obvious answer still waits for a person for ever.
   enabled: true,
   anyQuestion: false,
-  // Five seconds rather than 1.2: the wait is the window in which somebody who disagrees
-  // reaches the pane, and while this was off by default that window only had to satisfy
-  // whoever went looking for the setting. On by default it has to be long enough to READ.
-  waitMs: 5000,
+  // Thirty seconds rather than five, and the two changes are one change: the wait is now
+  // spent entirely away from this window (`holdWhileWatching`), so it is no longer the time
+  // it takes to notice - it is the time it takes to answer from somewhere else. The
+  // question also leaves the machine (`main/askNotify.ts` posts it to Telegram with the
+  // options as buttons), and five seconds is not long enough to read a phone notification,
+  // unlock, and press one.
+  waitMs: 30000,
+  holdWhileWatching: true,
   maxRun: 12,
-  defaultsV2: true
+  defaultsV2: true,
+  defaultsV3: true
 }
 
 /**
@@ -188,6 +221,15 @@ export interface AutoAnswerState {
   askKey: string
   /** When the frame last changed, arrow included. A person arrowing restarts this. */
   askSince: number
+  /**
+   * The last moment somebody was demonstrably AT this window, or 0.
+   *
+   * Stamped by the owner of the pty while its window has the keyboard, and read here as a
+   * second start line for the wait: the clock runs from whichever is later. So the seconds
+   * only accumulate once the app has been left alone, and coming back to read the question
+   * puts the full `waitMs` in front of the press again.
+   */
+  askHold?: number
   /** The identity last pressed, and when. */
   autoKey: string
   autoAt: number
@@ -204,10 +246,22 @@ export interface AutoAnswerState {
  * question this has not already pressed, the last press has to be far enough behind that
  * its own keystrokes are not still landing, and a pane may not do this for ever.
  */
+/**
+ * When this question's wait started: the later of the frame settling and the last moment
+ * somebody was at the window.
+ *
+ * One function rather than two copies, because `dueForAuto` is what presses and
+ * `autoAnswerAt` is what the pane DRAWS - and a countdown computed from a different start
+ * line than the press is the exact defect the countdown exists to prevent.
+ */
+function startOf(s: AutoAnswerState): number {
+  return Math.max(s.askSince, s.askHold ?? 0)
+}
+
 export function dueForAuto(s: AutoAnswerState, cfg: AutoAnswerConfig, now: number): boolean {
   if (!cfg.enabled) return false
   if (!s.askKey || !s.askSince) return false
-  if (now - s.askSince < cfg.waitMs) return false
+  if (now - startOf(s) < cfg.waitMs) return false
   if (s.askKey === s.autoKey) return false
   if (s.autoAt && now - s.autoAt < PRESS_COOLDOWN_MS) return false
   return s.autoRun < cfg.maxRun
@@ -236,7 +290,7 @@ export function autoAnswerAt(
   if (s.askKey === s.autoKey) return 0
   if (s.autoRun >= cfg.maxRun) return 0
   if (!pickAnswer(ask, cfg)) return 0
-  const settled = s.askSince + cfg.waitMs
+  const settled = startOf(s) + cfg.waitMs
   const cooled = s.autoAt ? s.autoAt + PRESS_COOLDOWN_MS : 0
   return Math.max(settled, cooled)
 }

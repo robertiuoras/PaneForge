@@ -98,7 +98,18 @@ await evalIn(`(async () => {
     // and a dev profile with alerts off would report a working countdown as silent.
     soundOnIdle: true,
     sounds: { ...(c.sounds || {}), volume: Math.max(0.2, (c.sounds || {}).volume ?? 1) },
-    autoAnswer: { ...(c.autoAnswer || {}), enabled: true, waitMs: 20000, anyQuestion: false, maxRun: 5 }
+    // `holdWhileWatching` off, deliberately: this test is about the countdown being DRAWN,
+    // and the hold's whole job is to draw no countdown while this window has the keyboard.
+    // Left on, the test would pass or fail on whether the probe's window happened to be
+    // focused, which is a coin toss and not the thing under test.
+    autoAnswer: {
+      ...(c.autoAnswer || {}),
+      enabled: true,
+      waitMs: 20000,
+      holdWhileWatching: false,
+      anyQuestion: false,
+      maxRun: 5
+    }
   })
 })()`)
 

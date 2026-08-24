@@ -181,7 +181,11 @@ import {
  * second for a clock almost no desk is showing.
  */
 function AskClock({ at }: { at: number }): React.JSX.Element | null {
-  const now = useNow()
+  // Ticked against the DEADLINE, not the wall clock: `at` is an arbitrary millisecond, so
+  // wall-aligned buckets made the last step a random fraction of a second - a chip that
+  // sat on one number and then skipped one. Same fix as `AskCountdown` in the pane, and
+  // they have to agree because they are two readings of one press.
+  const now = useNow(1000, at)
   const left = Math.ceil((at - now) / 1000)
   // Nothing is drawn once the clock has run out: the keys are landing, and a chip stuck at
   // 0s reads as a timer that jammed.
@@ -4907,6 +4911,7 @@ export default function App(): JSX.Element {
               ask={s.ask}
               autoAnswerAt={s.autoAnswerAt}
               autoAnswerN={s.autoAnswerN}
+              autoAnswerHeld={s.autoAnswerHeld}
               // Which CLI is in here, so a dropped image can be handed to the ones that
               // read an image off the clipboard and typed as a path to the ones that do not.
               agent={s.agent}
