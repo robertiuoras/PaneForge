@@ -467,6 +467,32 @@ const desk = [
 }
 
 {
+  // The most obvious opening sentence anybody types, and the one question the pet could
+  // not answer: everything else here needs a pane named or described first, so "what is
+  // open" fell through to "I only know this machine".
+  const all = parse('what is open', desk)
+  eq('the whole desk is an answer', all.kind, 'report')
+  eq('...covering every pane', all.ids.length, desk.length)
+  check('...and it counts them', /panes/.test(all.say), all.say)
+  eq('an empty desk says so rather than reporting nothing', parse('what is open', []).kind, 'say')
+
+  // A pane NUMBER beside a dev server is which SERVER, not an offer to close the pane.
+  // Answering "stop the dev server in pane 2" with "close pane 2?" is the app offering the
+  // larger of the two things it was asked for.
+  const devs = [
+    { pid: 41, pane: 2, label: 'dev', port: 3000, where: 'taskdriver' },
+    { pid: 42, pane: 5, label: 'dev', port: 3007, where: 'crypto' }
+  ]
+  const inPane = parse('stop the dev server in pane 2', desk, devs)
+  eq('a dev server is stopped, not a pane', inPane.kind, 'stopDev')
+  eq('...and it is the one in that pane', inPane.pids.join(','), '41')
+  // The control: the same sentence with no server in it is still about the pane.
+  eq('a pane with no server in the sentence is still a pane', parse('close pane 2', desk).kind, 'close')
+  // Two servers and nothing to separate them is a question, never a guess.
+  eq('...and an ambiguous one asks', parse('stop the dev server', desk, devs).kind, 'say')
+}
+
+{
   // Which pane, and what it was in the middle of. "Closed a pane, about 190 MB back" is
   // the sentence this replaces: it names neither the conversation that went nor when, and
   // both are the only things somebody wants when a pane they were using is not there.
@@ -495,13 +521,13 @@ const desk = [
   // Reading back its own sentence has to work, or "close (3) PaneForge lane a" - which is
   // the exact string the pet just printed - is a pane it cannot find.
   {
-    const back = parse('close (3) PaneForge lane a', [pane({ id: 'c', pane: 3, name: 'PaneForge' }), ...desk])
+    const back = parse('close (3) PaneForge lane a', [pane({ id: 'p3', pane: 3, name: 'PaneForge' })])
     eq('the bracketed number it prints is a number it can read', back.kind, 'close')
-    eq('...and it is that pane', back.ids.join(','), 'c')
+    eq('...and it is that pane', back.ids.join(','), 'p3')
   }
 
   const one = actedWords('closed', [{ word: paneWord(p), doing: p.doing }], 190, 3 * MIN)
-  check('a close names the pane', /taskdriver pane 1/.test(one), one)
+  check('a close names the pane', /\(1\) taskdriver/.test(one), one)
   check('...says what it was working on', /login redirect/.test(one), one)
   check('...says how long ago', /3 min ago/.test(one), one)
   check('...and still says what it gave back', /190 MB/.test(one), one)
@@ -512,15 +538,15 @@ const desk = [
   const many = actedWords(
     'closed',
     [
-      { word: 'taskdriver pane 1', doing: 'fix the login redirect' },
-      { word: 'PaneForge pane 4', doing: 'the mascot bubble' }
+      { word: '(1) taskdriver', doing: 'fix the login redirect' },
+      { word: '(4) PaneForge lane a', doing: 'the mascot bubble' }
     ],
     380,
     45_000
   )
   check('several panes are counted', /2 panes/.test(many), many)
   check('...listed one per line', many.split('\n').length === 3, many)
-  check('...and named', /PaneForge pane 4/.test(many) && /taskdriver pane 1/.test(many), many)
+  check('...and named', /\(4\) PaneForge lane a/.test(many) && /\(1\) taskdriver/.test(many), many)
 
   // A subject long enough to be a paragraph is cut rather than allowed to fill the window.
   // The report afterwards names the machine too - `where` is optional, so a caller that
