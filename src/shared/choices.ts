@@ -47,6 +47,29 @@ export interface PaneAsk {
  */
 const FOOTER = /^\s*(?:.*·\s*)?Enter to (?:select|confirm|choose)\b/im
 
+/**
+ * The last screen of a multi-question ask, which prints NO footer at all.
+ *
+ * Claude Code's AskUserQuestion asks its questions one at a time and then draws a review:
+ * a tab strip, the answers so far, and `1. Submit answers / 2. Cancel`. Nothing is sent
+ * until that list is answered - and the widget does not print the `Enter to select`
+ * footer on it, measured off two real frames in this machine's own pane logs
+ * (`s10-mt5pfcld`, `s11-mt2ptrhm`, 2026-08-23). So the footer, which is the load-bearing
+ * signal everywhere else in this file, is simply absent for the one screen that commits
+ * the whole exchange: every question in the set was answered, buttons and all, and then
+ * the pane sat for ever holding answers nobody could send. What the app drew instead was
+ * the PREVIOUS question's frame, whose footer is still the last one in the tail.
+ *
+ * So this screen gets a signal of its own, and it is the prompt line ABOVE the list
+ * rather than a footer below it. That sentence is drawn by the review widget and by
+ * nothing else, which is the same property the footer is trusted for.
+ *
+ * It cannot open the door to a false question. The list under it must still be 1..N with
+ * exactly one `❯`, which an agent quoting this sentence in an answer never produces, and
+ * `reviewTail` additionally refuses one that is not the last thing on the screen.
+ */
+const REVIEW = /^\s*Ready to submit your answers\?/i
+
 /** `❯ 1. Label`, `  2. Label`. The arrow is optional; exactly one line carries it. */
 const OPTION = /^(\s*)(❯\s*|>\s*)?(\d{1,2})\.\s*(\S.*)$/
 
@@ -91,6 +114,67 @@ export const ASK_TAIL_CHARS = 4000
 export const CHOOSE_GAP_MS = 90
 
 /**
+ * The submit/cancel list under a review prompt, walking DOWN from the prompt line.
+ *
+ * Down rather than up, because this list has no footer beneath it to walk up from - the
+ * prompt sentence above it is the anchor. Everything else is the same reading as the main
+ * walk: 1..N with no gaps, exactly one arrow, descriptions indented under their option.
+ *
+ * The refusal that keeps this honest is `only blanks below`. Once the answers are sent the
+ * CLI prints its transcript under the very same rows - `⏺ User answered Claude's
+ * questions:` and the echo of every answer - and those rows stay in the painted tail for a
+ * while. A review with anything but blank rows and rules beneath it has already been
+ * answered, and pressing return at it would put a stray newline into a composer somebody
+ * may be holding a draft in. While it is live it owns the screen and nothing follows it.
+ */
+function readReview(lines: string[], lead: number): PaneAsk | null {
+  const found = new Map<number, { label: string; arrow: boolean }>()
+  let last = -1
+  for (let i = lead + 1; i < lines.length && i - lead < 20; i++) {
+    const line = lines[i]
+    const m = OPTION.exec(line)
+    if (m) {
+      const n = Number(m[3])
+      if (!found.has(n)) found.set(n, { label: stripPreview(m[4]), arrow: Boolean(m[2]) })
+      last = i
+      continue
+    }
+    if (!line.trim() || RULE.test(line)) {
+      if (found.has(1)) break
+      continue
+    }
+    // A description indented under its own option, exactly as in the main walk.
+    if (found.size && /^\s{4,}\S/.test(line)) continue
+    break
+  }
+  if (last < 0) return null
+
+  const ns = [...found.keys()].sort((a, b) => a - b)
+  if (ns.length < 2 || ns[0] !== 1 || ns[ns.length - 1] !== ns.length) return null
+  const arrows = ns.filter((n) => found.get(n)!.arrow)
+  if (arrows.length !== 1) return null
+
+  // Nothing but BLANK rows below the list, and a rule is not blank.
+  //
+  // A live chooser owns the screen: the CLI draws no composer under it and no frame after
+  // the last option, so the rows beneath are empty. Once the answers are sent it prints
+  // `⏺ User answered Claude's questions:` and the whole echo over those same rows, and its
+  // composer's own rules land there too - which is why this cannot be as generous as the
+  // main walk and let a `─` through. A stale review whose transcript has scrolled away but
+  // whose composer rule has not would otherwise read as live, and the return pressed at it
+  // lands in a draft somebody is holding.
+  for (let i = last + 1; i < lines.length; i++) {
+    if (lines[i].trim()) return null
+  }
+
+  return {
+    question: lines[lead].trim(),
+    options: ns.map((n) => ({ n, label: found.get(n)!.label })),
+    selected: arrows[0]
+  }
+}
+
+/**
  * The question on this pane's screen, or null.
  *
  * `text` is ANSI-stripped output - the same painted tail the busy read uses, not the
@@ -110,6 +194,20 @@ export function readAsk(text: string): PaneAsk | null {
       break
     }
   }
+
+  // The review screen, when it is newer than the last footer. Newer matters: the frame
+  // that carries a review also carries the footer of the question asked just before it,
+  // and reading that one leaves the app drawing buttons for a question the CLI has
+  // already moved past.
+  let lead = -1
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (REVIEW.test(lines[i])) {
+      lead = i
+      break
+    }
+  }
+  if (lead > foot) return readReview(lines, lead)
+
   if (foot < 0) return null
 
   // Walk up from the footer collecting numbered rows. A description line under an option

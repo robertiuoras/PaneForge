@@ -17,7 +17,10 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
+import { smallestBorrow, type Borrow } from '../shared/paneSize'
+import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
+import { CHUNK_GAP_MS, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -29,9 +32,20 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
 import { killPaneStrays, trackStrays } from './strays'
-import { clearsConversation, isQuietSlash, isSlashCommand, typeLine } from '../shared/slashTurn'
+import {
+  clearsConversation,
+  feedSubmitLine,
+  isBareReturn,
+  isQuietSlash,
+  isSlashCommand,
+  newSubmitLine,
+  typeLine
+} from '../shared/slashTurn'
+import type { DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
+import { homedir } from 'node:os'
+import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
@@ -61,7 +75,7 @@ const WIN = process.platform === 'win32'
  * same figure `usage.ts` settled on, and for the same reason: the answer is read by a
  * person glancing at a row, not by a control loop. POSIX needs none of it.
  */
-const WIN_JOB_MS = 4000
+const TABLE_JOB_MS = 4000
 /**
  * How long it must stay quiet before the pane is treated as *waiting for you*.
  * A single turn goes quiet many times - the model thinking, a long tool call, a
@@ -198,6 +212,16 @@ interface Live {
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
+   * Every screen currently borrowing this pane, keyed by who it is, and the grid each one
+   * asked for. `borrowed` above is now "this map is not empty".
+   *
+   * A map rather than one set of numbers because a pane is routinely drawn by more than
+   * one viewer at once - a phone and a mirror, or two paired devices - and last-writer-wins
+   * makes those viewers fight over the pty for as long as they are both open. See
+   * `shared/paneSize.ts`.
+   */
+  borrows?: Map<string, Borrow>
+  /**
    * What the pane can see and this process cannot: the agent's own footer still
    * says it is running ("esc to interrupt"). A long tool call is silent for
    * minutes, which used to look exactly like a finished turn and chimed for it.
@@ -283,6 +307,14 @@ interface Live {
    * bell over a pane the user had cleared two seconds earlier and was still sitting at.
    */
   typed: string
+  /**
+   * The SAME keystrokes, read a second way - see `slashTurn.isBareReturn`.
+   *
+   * `typed` is deliberately blind to a paste and to a history recall, so it cannot tell
+   * an empty composer from one holding a pasted prompt. This one can, and that is the
+   * only question it is asked: did this Enter send anything at all.
+   */
+  submitLine: DraftState
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -314,8 +346,10 @@ export class SessionManager extends EventEmitter {
    * Windows only: what each shell pane's pty had running at the last table read.
    * Empty on POSIX, where the tty answers the same question for free.
    */
-  private winJobs = new Map<string, { name: string; elapsed?: number }>()
-  private winJobsBusy = false
+  private tableJobs = new Map<string, { name: string; elapsed?: number }>()
+  /** One armed /clear per pane, cleared by every path that stands one down. */
+  private autoClearTimers = new Map<string, NodeJS.Timeout>()
+  private tableJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -326,7 +360,7 @@ export class SessionManager extends EventEmitter {
     // own timer would mean N timers doing the same 1s tick.
     setInterval(() => this.sweepIdle(), 1000).unref()
     // Windows only, and it stops itself when no shell pane is open. See `sweepWinJobs`.
-    if (WIN) setInterval(() => this.sweepWinJobs(), WIN_JOB_MS).unref()
+    setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
     trackStrays(() => this.roots())
@@ -406,7 +440,13 @@ export class SessionManager extends EventEmitter {
 
   start(req: StartSessionRequest): Session {
     if (!req.cwd || !existsSync(req.cwd)) throw new Error(`Folder not found: ${req.cwd}`)
-    const agent: Agent = req.agent ?? 'claude'
+    // Coerce, because this request crosses IPC, the phone server, the device link and
+    // `pf-ctl call`: a caller handing over the whole AgentInfo instead of its id typechecks
+    // nowhere and arrives anyway, and the object then reaches history and the renderer.
+    const asked = req.agent as unknown
+    const agent: Agent = (typeof asked === 'string'
+      ? asked
+      : ((asked as { id?: string } | null)?.id ?? 'claude')) as Agent
     // Before anything reads the folder: a lane the sweep reclaimed while this pane was
     // closed is still the pane's remembered cwd, and a CLI spawned into a folder that is
     // not there loses every hook to `posix_spawn '/bin/sh'` ENOENT. See ensureLaneFolder.
@@ -414,6 +454,11 @@ export class SessionManager extends EventEmitter {
     // Before the CLI is spawned, not after: it reads .claude.json at startup and would
     // already be sitting on the trust prompt by the time anything here could help.
     if (agent === 'claude') ensureTrusted(req.cwd)
+    // Before the pty exists, because there is no taking it back afterwards: an agent
+    // pointed at another provider posts every file it opens to that provider, and this
+    // is the only moment the folder can still be refused.
+    const trust = allowsCwd(specFor(agent), req.cwd, getConfig().paneTrust, homedir())
+    if (!trust.ok) throw new Error(trust.reason)
     const id = `s${++this.seq}-${Date.now().toString(36)}`
     const clock = restoredClock(req, Date.now())
 
@@ -442,18 +487,18 @@ export class SessionManager extends EventEmitter {
       arrivedFrom: req.arrivedFrom,
       lane: req.lane,
       laneNote: req.laneNote,
-      cols: 120,
-      rows: 30
+      cols: START_COLS,
+      rows: START_ROWS
     }
     const live: Live = {
       meta,
-      proc: this.spawn(req, agent, 120, 30),
+      proc: this.spawn(req, agent, START_COLS, START_ROWS),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
-      cols: 120,
-      rows: 30,
-      deskCols: 120,
-      deskRows: 30,
+      cols: START_COLS,
+      rows: START_ROWS,
+      deskCols: START_COLS,
+      deskRows: START_ROWS,
       runner: specFor(agent).bin,
       jobName: null,
       busyUntil: 0,
@@ -472,6 +517,7 @@ export class SessionManager extends EventEmitter {
       autoAt: 0,
       lastTail: '',
       typed: '',
+      submitLine: newSubmitLine(),
       slashAt: 0,
       slashQuietUntil: 0,
       stallRaised: false
@@ -742,6 +788,7 @@ export class SessionManager extends EventEmitter {
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
     live.typed = typeLine(live.typed, data)
+    live.submitLine = feedSubmitLine(live.submitLine, data)
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
@@ -765,10 +812,27 @@ export class SessionManager extends EventEmitter {
     // screen for the reason the whole of `slashTurn.ts` is: the keystrokes look the same
     // for every CLI and the drawn composer does not.
     let cleared = false
+    // A return pressed at an EMPTY composer sent nothing, so it asked nothing.
+    //
+    // This used to be indistinguishable from a real prompt and the cost was the one
+    // thing "Ready" is for: Claude Code's completion menu takes the FIRST return of a
+    // `/clear` (measured in a dev copy 2026-08-23 - the command is completed into the
+    // box and stays there), so the return that actually runs it is a second keypress at
+    // a composer this app has already emptied. That second one read as a fresh prompt:
+    // `engaged` came straight back on and the pane a person had just cleared went to
+    // Running and then sat under "Your move" for ever. Reported as "even after doing
+    // /clear it moves the pane to running when it should've gone to ready".
+    //
+    // Every stray return has the same shape - answering nothing, waking a screensaver,
+    // a phone's send button on an empty box - and none of them is work anybody is
+    // waiting on.
+    let bare = false
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
+      bare = !slash && isBareReturn(live.submitLine)
+      live.submitLine = newSubmitLine()
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a
       // second pane on the same repo must not be able to drift onto it), so this is
@@ -778,7 +842,10 @@ export class SessionManager extends EventEmitter {
       }
       const quiet = slash && isQuietSlash(live.typed)
       live.typed = ''
-      this.beginRun(live)
+      // A bare return starts no turn. If it turns out to have answered a chooser the
+      // agent's own busy footer starts one a moment later, which is the same path a
+      // turn this app never saw typed has always come in on.
+      if (!bare) this.beginRun(live)
       // A slash command still gets the run clock (the readout should say how long
       // /compact took) but not the bell: turnPending stays down unless the run turns
       // out to be real work - see SLASH_TURN_MS where the footer ends.
@@ -790,14 +857,19 @@ export class SessionManager extends EventEmitter {
       if (slash) live.turnPending = false
     }
     // Typing into a pane is both "I have asked it something" (so its next quiet
-    // moment is a real end-of-turn) and "I have seen it" (so drop any nag).
-    if (!live.meta.engaged || live.meta.attention) {
-      live.meta.engaged = true
+    // moment is a real end-of-turn) and "I have seen it" (so drop any nag). A bare
+    // return is only the second of those: somebody is at the pane, and nothing was
+    // asked of the agent.
+    let touched = false
+    if (live.meta.attention) {
       live.meta.attention = false
-      this.emitSessions()
-    } else if (submitted) {
-      this.emitSessions()
+      touched = true
     }
+    if (!bare && !live.meta.engaged) {
+      live.meta.engaged = true
+      touched = true
+    }
+    if (touched || submitted) this.emitSessions()
     // ...and a `/clear` un-asks it, AFTER the rule above has treated the keystroke as
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running
@@ -899,9 +971,42 @@ export class SessionManager extends EventEmitter {
    * phone stream closes. A desk resize takes ownership back on the spot: a window the user
    * is dragging is a person at the desk, and they win.
    */
-  resize(id: string, cols: number, rows: number, borrowed = false): void {
+  resize(
+    id: string,
+    cols: number,
+    rows: number,
+    borrowed = false,
+    viewer = 'guest',
+    /**
+     * false RE-APPLIES a borrow without recording it against anybody.
+     *
+     * `smallestBorrow` mins each axis SEPARATELY, so the grid it returns is regularly one
+     * no single viewer asked for - and recording it under a name is then a lie about what
+     * that screen wants. `returnSize` used to hand the surviving `[0]` key those numbers,
+     * which overwrote a real request with somebody else's and left every later smallest
+     * calculation reading from a corrupted entry. Invisible with two borrowers, because
+     * the survivor IS the smallest; permanent with three.
+     */
+    record = true
+  ): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
+    // Several screens may be borrowing this pane at once, so a borrow is RECORDED against
+    // whoever asked and the pty is then set to the one grid they can all draw - never to
+    // the last number that arrived. Without this two viewers flip the pty between their
+    // two windows for as long as both are open. See `shared/paneSize.ts`.
+    if (borrowed) {
+      const borrows = s.borrows ?? (s.borrows = new Map())
+      if (record) borrows.set(viewer, { cols: Math.max(cols, 20), rows: Math.max(rows, 5) })
+      const all = smallestBorrow(borrows.values())
+      if (all) {
+        cols = all.cols
+        rows = all.rows
+      }
+      // Nothing to do when the pty is already at that grid: a mirror re-states its size on
+      // every repaint, and obeying each one costs the CLI a full redraw for no change.
+      if (s.cols === cols && s.rows === rows && s.borrowed) return
+    }
     // A DESK resize arriving while a phone is holding this pane is remembered, not
     // obeyed. "The desk wins on the spot" was written for a borrow that had OUTLIVED the
     // phone, and the desk does not only resize when somebody drags the window: showing a
@@ -925,7 +1030,10 @@ export class SessionManager extends EventEmitter {
     if (borrowed) {
       s.borrowed = true
     } else {
+      // A desk resize takes ownership back from EVERY borrower, or the next repaint from
+      // a viewer that is still attached re-applies the old minimum on top of it.
       s.borrowed = false
+      s.borrows?.clear()
       s.deskCols = s.cols
       s.deskRows = s.rows
     }
@@ -968,9 +1076,23 @@ export class SessionManager extends EventEmitter {
    * three of this desk's panes and stop watching one, and returning the other two with
    * it would snap two panes somebody is still looking at.
    */
-  returnSize(id: string): void {
+  returnSize(id: string, viewer?: string): void {
     const s = this.sessions.get(id)
     if (!s || !s.borrowed) return
+    // One viewer looking away is not every viewer looking away. Drop that one's borrow and,
+    // if anybody is still watching, re-apply the smallest of what is left - the pane goes
+    // back to the desk only when the last screen has let go.
+    if (viewer !== undefined && s.borrows?.size) {
+      s.borrows.delete(viewer)
+      const rest = smallestBorrow(s.borrows.values())
+      if (rest) {
+        // Applied, not recorded: nobody asked for this grid, it is the floor of what the
+        // viewers still watching asked for. See `record` on resize().
+        this.resize(id, rest.cols, rest.rows, true, '', false)
+        return
+      }
+    }
+    s.borrows?.clear()
     s.borrowed = false
     if (s.cols === s.deskCols && s.rows === s.deskRows) {
       if (s.meta.borrowed) {
@@ -983,9 +1105,18 @@ export class SessionManager extends EventEmitter {
     this.redraw(id)
   }
 
-  returnSizes(): void {
+  returnSizes(viewer?: string): void {
+    // With a viewer named this is just `returnSize` over every pane it is holding - the
+    // phone's "I have looked away" now has to leave a mirror's borrow alone.
+    if (viewer !== undefined) {
+      for (const [id, s] of this.sessions) {
+        if (s.borrows?.has(viewer)) this.returnSize(id, viewer)
+      }
+      return
+    }
     for (const [id, s] of this.sessions) {
       if (!s.borrowed) continue
+      s.borrows?.clear()
       s.borrowed = false
       if (s.cols === s.deskCols && s.rows === s.deskRows) {
         // Same numbers, but the desk is drawing this pane as a borrowed one until it is
@@ -1068,6 +1199,30 @@ export class SessionManager extends EventEmitter {
    * repeat it every second or so, so the deadline it sets expires by itself if the pane
    * goes away.
    */
+  /**
+   * When the idle clock is going to close this pane, as decided by the window.
+   *
+   * The decision lives in the renderer because that is where the two facts it needs live -
+   * which pane has focus, and the config the sweep is already reading - so this is the
+   * PUBLISHING half: it puts the deadline on the session, where the sidebar reads it and
+   * where a paired device gets it for free with everything else about that pane.
+   *
+   * A viewer may not compute this for itself. The deadline is a fact about THIS machine's
+   * settings and its own refusals, and a mirror drawing its own guess would count down on
+   * a pane nobody is going to close. `sessions:closing` is refused for a mirrored id in
+   * `index.ts` for exactly the reason `sessions:busy` is.
+   */
+  setClosingAt(id: string, at: number | null): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    const next = at && at > 0 ? at : undefined
+    // Only when it MOVED: this arrives on every session change, and emitting a fresh list
+    // in response to one would be a loop that never settles.
+    if (s.meta.closingAt === next) return
+    s.meta.closingAt = next
+    this.emitSessions()
+  }
+
   setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock): void {
     const s = this.sessions.get(id)
     if (!s) return
@@ -1231,6 +1386,64 @@ export class SessionManager extends EventEmitter {
    * `reclaim.ts`, which must not close a pane a handoff is mid-flight on - that would free
    * the same memory and lose the work, since the far end is about to resume from it.
    */
+  /**
+   * Arm this pane's own /clear, `seconds` from now, and report it on the session.
+   *
+   * The typing goes through `write` in the SPLIT `clearChunks` gives, spaced by
+   * `CHUNK_GAP_MS`: a long chunk arriving in one pty read is a paste to Claude Code and a
+   * CR inside a paste is a newline, which is how the resume prompt was left sitting unsent
+   * in the box after a clear that otherwise worked.
+   */
+  armAutoClear(id: string, ask: { steps: string[]; prompt: string; seconds: number }): { ok: boolean; reason?: string } {
+    const s = this.sessions.get(id)
+    if (!s) return { ok: false, reason: 'no such pane' }
+    const why = dropFor(s.meta)
+    // Refused rather than queued: the hook asks again on the next Stop, and a countdown
+    // that waits for a busy pane to go quiet is a clear nobody was watching for.
+    if (why) return { ok: false, reason: dropWords(why) }
+    this.cancelAutoClear(id, 'cancelled')
+    const at = Date.now() + ask.seconds * 1000
+    s.meta.autoClearAt = at
+    s.meta.autoClearPrompt = ask.prompt
+    s.meta.autoClearSteps = ask.steps
+    const timer = setTimeout(() => {
+      this.autoClearTimers.delete(id)
+      const live = this.sessions.get(id)
+      if (!live || live.meta.autoClearAt !== at) return
+      // Asked again at the last moment: the pane may have started a turn during the
+      // countdown, and a snapshot taken when it was armed is not a licence to clear now.
+      const stop = dropFor(live.meta)
+      if (stop) return this.cancelAutoClear(id, stop)
+      const chunks = clearChunks(live.meta.autoClearPrompt ?? '')
+      this.cancelAutoClear(id, 'cancelled')
+      chunks.forEach((c, i) => {
+        const t = setTimeout(() => this.write(id, c), i * CHUNK_GAP_MS)
+        t.unref?.()
+      })
+    }, ask.seconds * 1000)
+    timer.unref?.()
+    this.autoClearTimers.set(id, timer)
+    this.emitSessions()
+    return { ok: true }
+  }
+
+  /** Drop an armed countdown. Silent when there is none - every caller asks blind. */
+  cancelAutoClear(id: string, why: DropReason): boolean {
+    const s = this.sessions.get(id)
+    const timer = this.autoClearTimers.get(id)
+    if (timer) {
+      clearTimeout(timer)
+      this.autoClearTimers.delete(id)
+    }
+    if (!s?.meta.autoClearAt) return false
+    delete s.meta.autoClearAt
+    delete s.meta.autoClearPrompt
+    delete s.meta.autoClearSteps
+    console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
+    this.emitSessions()
+    return true
+  }
+
   setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return
@@ -1353,7 +1566,7 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: { ...agentEnv(), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
+      env: { ...scrubForeignKeys(agentEnv(), spec), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
     })
   }
 
@@ -1604,7 +1817,7 @@ export class SessionManager extends EventEmitter {
    */
   private jobOf(live: Live, now: number): { name: string; since: number } | null {
     if (WIN) {
-      const found = this.winJobs.get(live.meta.id)
+      const found = this.tableJobs.get(live.meta.id)
       // The table knows how long it has been alive, so the pane's clock is the command's
       // real age rather than the moment this app noticed it - which matters most for the
       // pane that was already running when the app restarted.
@@ -1612,41 +1825,70 @@ export class SessionManager extends EventEmitter {
     }
     try {
       const name = paneJob(live.proc.process, live.runner)
-      return name ? { name, since: now } : null
+      if (name) return { name, since: now }
     } catch {
-      return null
+      // A pane whose pty has just died throws from the tty read, inside a sweep that runs
+      // every second for every pane. Fall through: the table may still know.
     }
+    // Nothing in the FOREGROUND is not the same as nothing running. `cmd &` leaves the
+    // SHELL itself in front of the tty, so `paneJob` is silent about a background job that
+    // may run for hours - and silence there means no `runSince`, which means `busy` is
+    // false in `reclaim.ts` and the idle clock starts counting down on a working pane.
+    // Reported 2026-08-24: "1 shell 2 monitors running in session 2, why is it trying to
+    // close it". The table sees them, because on POSIX the pty pid IS the shell and every
+    // child of it is a job somebody started. It is sampled on the slower timer, so a
+    // background job is invisible for at most TABLE_JOB_MS - which costs a clock that
+    // starts a beat late, never a pane that is closed.
+    const found = this.tableJobs.get(live.meta.id)
+    return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
   }
 
   /**
-   * Windows only: one process table, folded into `winJobs`.
+   * One process table, folded into `tableJobs`.
    *
-   * On demand rather than always - a CIM query is expensive and most desks have no shell
-   * pane at all - and never twice at once. Silent about everything it cannot read: an
-   * empty table leaves every pane exactly as it was, because "the table did not answer"
-   * and "nothing is running" must not share a shape.
+   * Windows needs it for EVERY shell pane: `IPty.process` there returns the terminal name
+   * whether or not anything is running, so there is no foreground reading at all. POSIX
+   * needs it for one case the exact reading cannot see - a job the shell was told to run
+   * in the BACKGROUND, where the foreground is the shell itself.
+   *
+   * On demand rather than always - a table read is a whole `ps`/CIM query and most desks
+   * have no shell pane at all - and never twice at once. Silent about everything it cannot
+   * read: an empty table leaves every pane exactly as it was, because "the table did not
+   * answer" and "nothing is running" must not share a shape.
    */
-  private sweepWinJobs(): void {
-    if (!WIN || this.winJobsBusy) return
-    const shells = [...this.sessions.values()].filter(
-      (l) => l.meta.status !== 'exited' && SHELLS.has(programName(l.runner).toLowerCase())
-    )
+  private sweepTableJobs(): void {
+    if (this.tableJobsBusy) return
+    const shells = [...this.sessions.values()].filter((l) => {
+      if (l.meta.status === 'exited') return false
+      if (!SHELLS.has(programName(l.runner).toLowerCase())) return false
+      // POSIX: the tty already answered, exactly and for free, so do not pay for a table
+      // to repeat it. Only a pane whose foreground IS its own shell has anything left to
+      // find out about.
+      if (!WIN) {
+        try {
+          if (paneJob(l.proc.process, l.runner)) return false
+        } catch {
+          // A pty that has just died: let the table have the question.
+        }
+      }
+      return true
+    })
     if (!shells.length) {
-      if (this.winJobs.size) this.winJobs.clear()
+      if (this.tableJobs.size) this.tableJobs.clear()
       return
     }
-    this.winJobsBusy = true
+    this.tableJobsBusy = true
     void jobTable()
       .then((procs) => {
         if (!procs.length) return
-        this.winJobs.clear()
+        this.tableJobs.clear()
         for (const live of shells) {
           const found = jobFromTable(procs, live.proc.pid, live.runner)
-          if (found) this.winJobs.set(live.meta.id, found)
+          if (found) this.tableJobs.set(live.meta.id, found)
         }
       })
       .finally(() => {
-        this.winJobsBusy = false
+        this.tableJobsBusy = false
       })
   }
 
@@ -1687,10 +1929,13 @@ export class SessionManager extends EventEmitter {
       // written. Measured in a dev copy before this: `true\r`, then 38 characters typed
       // with no return, still reported `status: working, runSince: true` two seconds later.
       //
-      // POSIX only, because there the reading is exact and asked every sweep (`paneJob`
-      // is the tty's own foreground process). Windows has no such reading: the table is
-      // sampled every WIN_JOB_MS and asynchronously, so a command would read as finished
-      // for the seconds before the table first sees it. There, the quiet backstop stays.
+      // POSIX only, because there the FOREGROUND reading is exact and asked every sweep
+      // (`paneJob` is the tty's own foreground process). Windows has no such reading: the
+      // table is sampled every TABLE_JOB_MS and asynchronously, so a command would read as
+      // finished for the seconds before the table first sees it. There, the quiet backstop
+      // stays. A POSIX BACKGROUND job comes off that same table, so for up to TABLE_JOB_MS
+      // one may end the run clock early - a clock that restarts, never a pane that closes,
+      // because `reclaim.ts` refuses on `job` as well as on `busy`.
       const shellDone =
         !WIN &&
         !jobName &&

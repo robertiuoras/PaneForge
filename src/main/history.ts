@@ -243,13 +243,24 @@ export function list(): HistoryEntry[] {
           // Not stored - a folder can come back, and a stale `gone` in a metadata file
           // would outlive the truth. One stat per row, next to the one already being made.
           e.gone = !e.cwd || !existsSync(e.cwd)
+          // A row written with the whole agent SPEC where its id belongs. Two are on this
+          // machine; every later reader (the logo, the `a.id === e.agent` lookup) expects a
+          // string. Repaired on the way out rather than migrated - the file is a nicety and
+          // a rewrite of 280 of them is not worth a launch.
+          if (e.agent && typeof e.agent !== 'string')
+            e.agent = ((e.agent as unknown as { id?: string }).id ?? '') as typeof e.agent
           return e
         } catch {
           return null
         }
       })
       .filter((e): e is HistoryEntry => Boolean(e) && Boolean(e!.id))
-      .sort((a, b) => b.startedAt - a.startedAt)
+      // Newest CLOSED first, not newest opened. This list is read to find the session you
+      // were last in - "which one do I want back" - and a window opened this morning and
+      // left running sorted above the one closed a minute ago, which is the opposite of
+      // what the reader is looking for. A session still open has no `endedAt` and falls
+      // back to when it started, which keeps it at the top where it belongs.
+      .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
       .map(backfill)
   } catch {
     return []

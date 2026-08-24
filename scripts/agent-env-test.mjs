@@ -89,6 +89,37 @@ for (const id of ['opencode', 'aider', 'crush']) {
   ok(!needsOpenRouterKey(spec), `${id} still runs on its own login without one, so it is not blocked`)
 }
 
+// --- Gemini CLI: its own login is gone, so the key is not optional --------------
+// Measured 2026-08-23 against gemini-cli 0.56.0: an oauth-personal launch dies with
+// `IneligibleTierError ... UNSUPPORTED_CLIENT`, while the same binary with an api-key
+// auth type reaches the API and rejects only the (junk) key. The catalogue entry has to
+// carry that, or a Gemini pane is a healthy-looking window that can never answer.
+const gem = findAgent(BUILTIN_AGENTS, 'gemini')
+is(keyProviderFor(gem), 'google', 'a Gemini pane is blocked on the Google key, not on nothing')
+is(
+  resolveEnv(gem, { google: 'AIza-test' }).GEMINI_API_KEY,
+  'AIza-test',
+  'the pasted AI Studio key reaches the CLI'
+)
+is(
+  resolveEnv(gem, { google: 'AIza-test' }).GEMINI_DEFAULT_AUTH_TYPE,
+  'gemini-api-key',
+  'and it is told which auth to default to, so a machine that has never picked picks this'
+)
+ok(
+  !('GEMINI_API_KEY' in resolveEnv(gem, {})),
+  'with no key the variable is dropped rather than handed over as a credential'
+)
+is(
+  resolveEnv(gem, {}).GEMINI_DEFAULT_AUTH_TYPE,
+  'gemini-api-key',
+  'the literal beside it still passes through - it is a default, not a credential'
+)
+ok(
+  !('GEMINI_API_KEY' in resolveEnv(gem, { openrouter: 'sk-or-test' })),
+  "and another provider's key cannot fill it"
+)
+
 // --- it is still Claude Code ---------------------------------------------------
 is(or.bin, 'claude', 'it is the same binary, so every Claude-shaped feature in the app still applies')
 assert.deepEqual(

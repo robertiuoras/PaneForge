@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.150",
+  "version": "0.8.155",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -26,7 +26,7 @@
     "test:busy": "node scripts/busy-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
-    "test:lanes": "node scripts/lane-args-test.mjs && node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/idle-main-test.mjs && node scripts/visitor-park-test.mjs && node scripts/busy-hold-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs && node scripts/lane-holder-test.mjs && node scripts/lane-anyrepo-test.mjs && node scripts/lane-tagsync-test.mjs && node scripts/lane-stack-test.mjs && node scripts/lane-orphan-test.mjs && node scripts/lane-foreign-test.mjs && node scripts/lane-lock-test.mjs && node scripts/lane-naming-test.mjs && node scripts/lane-automerge-test.mjs && node scripts/lane-anyuser-test.mjs && node scripts/lane-heal-test.mjs && node scripts/lane-roster-test.mjs && node scripts/lane-peers-test.mjs && node scripts/lane-device-test.mjs && node scripts/lane-devicename-test.mjs && node scripts/lane-squat-test.mjs && node scripts/lane-adopt-test.mjs",
+    "test:lanes": "node scripts/lane-args-test.mjs && node scripts/lane-test.mjs && node scripts/lane-memory-test.mjs && node scripts/idle-lane-test.mjs && node scripts/idle-main-test.mjs && node scripts/visitor-park-test.mjs && node scripts/busy-hold-test.mjs && node scripts/tentative-lane-test.mjs && node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs && node scripts/lane-lag-test.mjs && node scripts/lane-owner-test.mjs && node scripts/lane-holder-test.mjs && node scripts/lane-anyrepo-test.mjs && node scripts/lane-tagsync-test.mjs && node scripts/lane-stack-test.mjs && node scripts/lane-orphan-test.mjs && node scripts/lane-foreign-test.mjs && node scripts/lane-lock-test.mjs && node scripts/lane-naming-test.mjs && node scripts/lane-automerge-test.mjs && node scripts/lane-anyuser-test.mjs && node scripts/lane-heal-test.mjs && node scripts/lane-roster-test.mjs && node scripts/lane-peers-test.mjs && node scripts/lane-device-test.mjs && node scripts/lane-devicename-test.mjs && node scripts/lane-squat-test.mjs && node scripts/lane-adopt-test.mjs && node scripts/lane-ghost-test.mjs",
     "test:lanestack": "node scripts/lane-stack-test.mjs",
     "test:laneowner": "node scripts/lane-owner-test.mjs",
     "test:lanework": "node scripts/lane-work-test.mjs && node scripts/lane-sweep-test.mjs",
@@ -61,6 +61,7 @@
     "test:fleet": "node scripts/fleet-test.mjs",
     "test:desk": "node scripts/desk-test.mjs",
     "test:panejob": "node scripts/panejob-test.mjs",
+    "test:panebackjobs": "node scripts/pane-backjobs-test.mjs",
     "test:surfacereach": "node scripts/surface-reach-test.mjs",
     "test:mirrorfit": "node scripts/mirrorfit-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",
@@ -104,6 +105,7 @@
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
     "test:replaywidth": "node scripts/replay-width-test.mjs",
+    "test:panegrid": "node scripts/pane-grid-test.mjs",
     "test:markanchor": "node scripts/mark-anchor-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:turncopy": "node scripts/turncopy-test.mjs",
@@ -176,6 +178,7 @@
     "test:phoneview": "node scripts/phone-view-test.mjs",
     "test:funnel": "node scripts/funnel-test.mjs",
     "test:gist": "node scripts/gist-test.mjs",
+    "test:elapsed": "node scripts/elapsed-test.mjs",
     "test:usage": "node scripts/usage-test.mjs",
     "test:turncopyview": "node scripts/turn-copy-view-test.mjs",
     "test:lanepeers": "node scripts/lane-peers-test.mjs",
@@ -189,7 +192,10 @@
     "test:tips": "node scripts/tips-test.mjs",
     "test:improve": "node scripts/prompt-draft-test.mjs && node scripts/prompt-redact-test.mjs",
     "test:orcatalogue": "node scripts/or-catalogue-test.mjs",
-    "desks": "node scripts/desks.mjs"
+    "desks": "node scripts/desks.mjs",
+    "test:awake": "node scripts/awake-test.mjs",
+    "test:autoclear": "node scripts/autoclear-test.mjs",
+    "test:panetrust": "node scripts/pane-trust-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

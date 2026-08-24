@@ -45,16 +45,16 @@ if (close) {
   process.exit(0)
 }
 
-// Each checkout gets its own profile, so two agents working in two worktrees never
-// land on the same one. They would not crash - the second launch would just raise the
-// first window and exit on the single-instance lock - but it looks exactly like "my
-// change did not apply", which is a bad hour. `claude-orchestrator-twin` -> `dev-twin`.
-// Both names of the checkout are stripped: the repo is PaneForge, and the folder is
-// renamed to match by scripts/rename-repo.mjs - which waits for a moment when no chat is
-// sitting in any of the four directories, because Windows will not rename a folder that
-// a running process has as its working directory.
+// ONE dev copy per machine, whatever checkout launches it - a second window is a second
+// taskbar button and a second set of panes for the same screen, and Robert asked for one
+// (2026-08-23). The risk that used to buy the per-checkout profile - a launch raising
+// somebody else's window and exiting on the single-instance lock, which reads exactly
+// like "my change did not apply" - is paid by closeTestApps above instead: it closes the
+// dev copy whatever checkout started it, so a launch always ends with THIS build in the
+// one window. Last launcher wins.
 // The naming itself is in scripts/dev-profile.mjs, so the probes that have to FIND this
-// copy's settings folder cannot drift from the script that launches it.
+// copy's settings folder cannot drift from the script that launches it. `--profile=x`
+// still overrides it for a test that genuinely needs a second, throwaway profile.
 const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? devProfile(root)).trim()
 
 // Anything this script does not use is Electron's. The one that matters is

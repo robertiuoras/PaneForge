@@ -30,7 +30,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
-import { GRID, petFor, runsOf, type Rect } from '@shared/pets'
+import { GRID, hasPet, petFor, runsOf, type Rect } from '@shared/pets'
 import {
   actedWords,
   agoWords,
@@ -59,6 +59,14 @@ export interface CloseSoon {
   names: string[]
   deadline: number
   why: 'idle' | 'pressure'
+  /**
+   * Set when the countdown is a MOVE to another machine rather than a close.
+   *
+   * One countdown, two outcomes, because they are the same decision at different rungs of
+   * one ladder - and a move used to have no countdown at all: `runHandoffs` reported into
+   * a console nobody has open, so a pane left this desk with nothing on screen saying so.
+   */
+  move?: { device: string; deviceName: string }
 }
 
 export interface MascotProps {
@@ -86,7 +94,7 @@ export interface MascotProps {
   /** The automatic handoff is on and has somewhere to move a pane to. */
   willMove: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
   /** A close that is about to happen, counted down out loud. */
   closeSoon?: CloseSoon
   /** Stop that close and leave those panes alone for a while. */
@@ -108,7 +116,7 @@ interface Bubble {
    * the words are built at render time against the clock rather than once, when it was
    * said. Everything else the pet says is fixed the moment it is said.
    */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number }
+  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
 }
 
 /** Where it stands, as a fraction of the window, so a resize never strands it. */
@@ -176,6 +184,8 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // on screen is the only thing that changes, and a timer running when nothing is pending
   // is a re-render of the whole layer for no reading at all.
   const [tick, setTick] = useState(0)
+  /** A copy is silent otherwise, and a button that gives no receipt reads as broken. */
+  const [copied, setCopied] = useState(false)
   const said = useRef(new Set<string>())
   const input = useRef<HTMLInputElement | null>(null)
   // A drag ends in a `click` on the same element, so the press that opens the bubble has
@@ -199,6 +209,17 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // identity - so switching pet costs one walk and changing nothing costs none.
   const pet = petFor(cfg.pet)
   const A = pet.art
+  /**
+   * Is an animal drawn at all?
+   *
+   * `pet: 'none'` keeps every reading and drops the sprite: the card then docks in the
+   * bottom-right corner and stays there, because with nothing to point AT there is nothing
+   * for a walk to mean. Everything else - the countdown, the two presses, the ask box, the
+   * notice - is identical, which is the whole reason this is a pet id rather than a second
+   * switch beside `enabled`. Turning the mascot OFF used to be the only way to say "no
+   * animal, please", and it took the only report of the resource ladder with it.
+   */
+  const drawn = hasPet(cfg.pet)
 
   /** Say it, and - only if the speaker has been pressed - say it out loud. */
   const say = useCallback(
@@ -229,6 +250,8 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
       // Dragged there by a person: the walk would take it straight back, which reads as
       // the drag not having worked at all.
       if (pinned) return
+      // Nothing is drawn, so there is nothing to move and nowhere for it to point.
+      if (!drawn) return
       if (!cfg.roam) return setSpot(HOME)
       const el = id ? document.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`) : null
       if (!el) return
@@ -238,7 +261,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         y: Math.min(0.9, (r.top + r.height / 2) / window.innerHeight)
       })
     },
-    [cfg.roam, pinned]
+    [cfg.roam, pinned, drawn]
   )
 
   // The countdown owns the sprite while it is running: it walks to the first pane it is
@@ -271,7 +294,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     const key = `acted:${a.at}`
     if (said.current.has(key)) return
     said.current.add(key)
-    say({ say: actedWords(a.what, a.panes, a.mb, Date.now() - a.at), acted: a, key })
+    say({ say: actedWords(a.what, a.panes, a.mb, Date.now() - a.at, a.where), acted: a, key })
   }, [props.acted, cfg.enabled, say])
 
   // A report of something that HAPPENED carries how long ago, and that number is only true
@@ -305,13 +328,13 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   }, [bubble?.key, open, typing, cfg.hideSeconds, soon])
 
   useEffect(() => {
-    if (!cfg.enabled) return
+    if (!cfg.enabled || !drawn) return
     const t = window.setInterval(() => {
       setBlink(true)
       window.setTimeout(() => setBlink(false), 160)
     }, 5200)
     return () => window.clearInterval(t)
-  }, [cfg.enabled])
+  }, [cfg.enabled, drawn])
 
   // Whether anybody is looking. `document.hidden` is dead code in this window
   // (backgroundThrottling is off, so Chromium never marks it hidden - see appVisible.ts),
@@ -334,7 +357,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // spot somebody dragged it to, `roam` off and a window nobody is looking at.
   const lastDash = useRef(Date.now())
   useEffect(() => {
-    if (!cfg.enabled) return
+    if (!cfg.enabled || !drawn) return
     const t = window.setInterval(() => {
       if (
         !dueDash({
@@ -354,7 +377,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
       window.setTimeout(() => setDash(null), DASH_MS + 120)
     }, DASH_TICK_MS)
     return () => window.clearInterval(t)
-  }, [cfg.enabled, cfg.roam, pinned, bubble, open, soon, awake])
+  }, [cfg.enabled, cfg.roam, pinned, bubble, open, soon, awake, drawn])
 
   // The drag itself. Pointer events, so a mouse, a pen and a touch are one path, and the
   // pointer is CAPTURED - without it a fast drag leaves the sprite behind the moment the
@@ -471,6 +494,26 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const secs = Math.max(0, Math.ceil(left / 1000))
   const showBubble = counting || !!bubble || open
 
+  /**
+   * What is on screen, as one string.
+   *
+   * The card used to build its sentence inline in two places, so a copy button would have
+   * had to build a THIRD - and the readings that go stale (`agoWords`, the countdown) would
+   * then have been copied at a different moment from the one being read. One expression,
+   * rendered and copied.
+   */
+  const saidText = counting && soon
+    ? countdownWords(soon.names, left, soon.why, soon.move?.deviceName)
+    : bubble?.acted
+      ? actedWords(
+          bubble.acted.what,
+          bubble.acted.panes,
+          bubble.acted.mb,
+          Date.now() - bubble.acted.at,
+          bubble.acted.where
+        )
+      : (bubble?.say ?? '')
+
   // Where it is DRAWN. A dash overrides the walk for its two and a half seconds and then
   // hands the sprite straight back - it never writes `spot`, so nothing about the run
   // outlives it.
@@ -509,35 +552,32 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           ref={bubbleEl}
           className={
             'mascot-bubble' +
+            (drawn ? '' : ' dock') +
             (box.above ? '' : ' below') +
             (dragging ? ' dragging' : '') +
             (counting ? ' counting' : '')
           }
           role="status"
-          style={{ left: box.left, top: box.top, maxWidth: box.max }}
+          style={drawn ? { left: box.left, top: box.top, maxWidth: box.max } : undefined}
         >
           {counting && soon && (
             <>
               <div className="mascot-count">
                 <span className="mascot-secs">{secs}</span>
-                <span className="mascot-count-say">{countdownWords(soon.names, left, soon.why)}</span>
+                <span className="mascot-count-say">{saidText}</span>
               </div>
               <div className="mascot-acts">
                 <button className="primary small" onClick={() => props.onKeep(soon.ids)}>
-                  Keep {soon.ids.length > 1 ? 'them' : 'it'} open
+                  Keep {soon.ids.length > 1 ? 'them' : 'it'} {soon.move ? 'here' : 'open'}
                 </button>
                 <button className="ghost small" onClick={() => props.onCloseNow(soon.ids)}>
-                  Close now
+                  {soon.move ? 'Move now' : 'Close now'}
                 </button>
               </div>
             </>
           )}
           {!counting && bubble && (
-            <div className="mascot-say">
-              {bubble.acted
-                ? actedWords(bubble.acted.what, bubble.acted.panes, bubble.acted.mb, Date.now() - bubble.acted.at)
-                : bubble.say}
-            </div>
+            <div className="mascot-say">{saidText}</div>
           )}
           {!counting && bubble?.action && (
             <div className="mascot-acts">
@@ -571,6 +611,21 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             </div>
           )}
           <div className="mascot-tools">
+            {/* Every reading here is a sentence somebody may want in a commit message or a
+                message to somebody else, and a card is the one surface in this window whose
+                text is NOT in a terminal buffer. The text is selectable as well; this is
+                the one press that gets all of it including the part scrolled out. */}
+            <button
+              className="mascot-icon"
+              title="Copy this"
+              onClick={() => {
+                void navigator.clipboard?.writeText(saidText)
+                setCopied(true)
+                window.setTimeout(() => setCopied(false), 1200)
+              }}
+            >
+              {copied ? '✓' : '⧉'}
+            </button>
             {/* The speaker is the only way a voice is ever turned on: nothing this app
                 decided by itself may make a noise into somebody's room. */}
             <button
@@ -599,6 +654,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           </div>
         </div>
       )}
+      {drawn ? (
       <div
         className={
           'mascot' +
@@ -707,6 +763,25 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
           </svg>
         </button>
       </div>
+      ) : (
+        !showBubble && (
+          /* With no animal there is nothing to press, so the ask box would be unreachable.
+             One pill in the corner, the same corner the card docks in, carrying the reading
+             it opens onto. */
+          <button
+            className="mascot-dock-open"
+            title="Ask about this machine"
+            onClick={() => {
+              setOpen(true)
+              say({ say: 'Ask me - "what is open", "what dev servers are running".', key: 'greet' })
+            }}
+          >
+            <span className="mascot-dock-dot" />
+            {panes.length} {panes.length === 1 ? 'pane' : 'panes'}
+            {total ? ` · ${Math.round(total)} MB` : ''}
+          </button>
+        )
+      )}
     </div>
   )
 }

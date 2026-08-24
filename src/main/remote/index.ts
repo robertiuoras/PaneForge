@@ -26,12 +26,12 @@ import type {
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
-import type { HandoffPayload, HandoffResult } from '../../shared/handoff'
+import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
-import { dropSelf, isSelfPeer } from './peers'
+import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 
@@ -178,6 +178,22 @@ export class Remote extends EventEmitter {
     })
   }
 
+  /**
+   * Bring a mirrored pane back to this device.
+   *
+   * `handoffTo` above is this device pushing a pane out; this is the same move asked for
+   * from the other side of it. It reaches the far end as a request rather than a pull -
+   * see `RemoteClient.takeBack` - so everything that decides whether a pane may move is
+   * decided over there, where the pty is.
+   */
+  bringHere(id: string): Promise<HandoffItem[]> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!cut || !client) return Promise.reject(new Error('That pane is not on a paired device'))
+    if (client.status !== 'online') return Promise.reject(new Error('That device is not connected'))
+    return client.takeBack(cut.local)
+  }
+
   /** Keep a pick the link made on its own (a launch, a handoff) across restarts. */
   private rememberWatch(client: RemoteClient): void {
     this.savePeer({ ...client.peer, watch: client.watched() })
@@ -247,7 +263,7 @@ export class Remote extends EventEmitter {
         hosting: this.host.listening,
         error: this.host.error || undefined,
         addresses: localAddresses(),
-        pairByAsking: c.pairByAsking !== false
+        pairByAsking: pairAskingOn(c)
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
@@ -282,7 +298,8 @@ export class Remote extends EventEmitter {
             runSince: s.runSince,
             stalledSince: s.stalledSince,
             createdAt: s.createdAt,
-            job: s.job
+            job: s.job,
+            closingAt: s.closingAt
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,
@@ -310,7 +327,7 @@ export class Remote extends EventEmitter {
    */
   private onAsked(peer: PeerIdentity, sas: string, address: string): Promise<boolean> {
     const c = getConfig().remote
-    if (!c.host || !c.pairByAsking) return Promise.resolve(false)
+    if (!c.host || !pairAskingOn(c)) return Promise.resolve(false)
     if (this.asking) return Promise.resolve(false)
     return new Promise<boolean>((resolve) => {
       let settled = false

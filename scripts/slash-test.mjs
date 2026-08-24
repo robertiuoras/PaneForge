@@ -32,7 +32,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { typeLine, isSlashCommand, isQuietSlash, clearsConversation } =
+const { typeLine, isSlashCommand, isQuietSlash, clearsConversation, newSubmitLine, feedSubmitLine, isBareReturn } =
   createRequire(import.meta.url)(out)
 
 /** Feed a sequence of write() chunks and say whether Enter would read as a command. */
@@ -152,6 +152,35 @@ for (const c of clears) {
   if (typed.length > 200) {
     failed++
     console.error(`FAIL cap: typed grew to ${typed.length}`)
+  }
+}
+
+// Did this Enter send anything at all?
+//
+// The load-bearing half is the NEGATIVES: a bare return must be told apart from a
+// pasted prompt and from a recalled one, because reading either of those as "nothing
+// was asked" parks a real turn in Ready - a strictly worse bug than the one this fixes.
+const PASTE_ON = '\u001b[200~'
+const PASTE_OFF = '\u001b[201~'
+const bares = [
+  { name: 'bare return at an empty composer', chunks: [], want: true },
+  { name: 'return after backspacing the box empty', chunks: ['hi', '\u007f', '\u007f'], want: true },
+  { name: 'return after Ctrl-U', chunks: ['a question', '\u0015'], want: true },
+  { name: 'a focus report is not typing', chunks: ['\u001b[O'], want: true },
+  { name: 'a typed prompt', chunks: ['what is this'], want: false },
+  { name: 'a PASTED prompt', chunks: [PASTE_ON + 'what is this' + PASTE_OFF], want: false },
+  { name: 'a paste split across chunks', chunks: [PASTE_ON, 'what is this', PASTE_OFF], want: false },
+  { name: 'a recalled prompt (up arrow)', chunks: ['\u001b[A'], want: false },
+  { name: 'a Tab completion', chunks: ['./sr', '\t'], want: false },
+  { name: 'a slash command', chunks: ['/clear'], want: false }
+]
+for (const c of bares) {
+  let line = newSubmitLine()
+  for (const ch of c.chunks) line = feedSubmitLine(line, ch)
+  const got = isBareReturn(line)
+  if (got !== c.want) {
+    failed++
+    console.error(`FAIL bare "${c.name}": expected ${c.want}, got ${got}`)
   }
 }
 

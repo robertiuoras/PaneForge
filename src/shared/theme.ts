@@ -393,6 +393,16 @@ export function paletteFor(theme: ThemeConfig): Vars {
     // much chroma it has), so it sets the number and the others sit with it.
     '--warn': inGamut(light ? 0.54 : 0.78, 0.15, 78),
     '--danger': inGamut(light ? 0.54 : 0.72, 0.16, 24),
+    /**
+     * Text ON a filled danger pill - the auto-answer countdown, the `auto` badge.
+     *
+     * `var(--bg)` was the obvious answer and it is wrong on a light theme: Paper's ground
+     * is nearly white and `--danger` at L 0.54 is a medium red, which measured **4.14:1**
+     * - under the 4.5:1 floor for the 13px it is drawn at. Dark themes were fine, which is
+     * exactly how a light-theme contrast bug ships. Same helper, same reason, as
+     * `--accent-on`: ask the contrast question rather than pick a side.
+     */
+    '--danger-on': onColor(inGamut(light ? 0.54 : 0.72, 0.16, 24)),
     '--ok': inGamut(light ? 0.54 : 0.78, 0.16, 152),
     // Blue is "happening somewhere else, on its own". It exists because green was already
     // spoken for twice - a working pane's dot and a lane whose work is FINISHED - and a

@@ -37,12 +37,20 @@ function markFor(id: string): string | undefined {
  * fall back to a monogram tile rather than an empty gap, so every row lines up.
  */
 export default function AgentLogo({ id, spec, size = 16, tile, muted }: Props): JSX.Element {
-  const key = markFor(id)
+  // A mark is decoration and may NEVER take the window down with it. `id` reaches here
+  // from persisted records (history rows, a peer's pane list, a restore file) written by
+  // builds and callers this one does not control, and a row holding the whole agent SPEC
+  // instead of its id turned `.replace` into a TypeError that unmounted the entire app -
+  // History would not open at all. Coerce, never trust the type.
+  const name = typeof id === 'string' ? id : (((id ?? {}) as { id?: unknown }).id ?? '')
+  const safeId = typeof name === 'string' ? name : ''
+  const key = markFor(safeId)
   const color = spec?.color ?? '#8b8b99'
   const style = { width: size, height: size, color, opacity: muted ? 0.45 : 1 }
 
   if (!key) {
-    const initial = (spec?.label ?? id).replace(/[^a-z0-9]/gi, '').slice(0, 1).toUpperCase() || '?'
+    const word = typeof spec?.label === 'string' ? spec.label : safeId
+    const initial = word.replace(/[^a-z0-9]/gi, '').slice(0, 1).toUpperCase() || '?'
     return (
       <span
         className={'agent-logo mono' + (tile ? ' tile' : '')}

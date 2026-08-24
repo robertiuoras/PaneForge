@@ -131,22 +131,34 @@ is(
 // A real pty. Everything above is arithmetic over two strings; this is the question of
 // whether node-pty answers with the tty's foreground process at all.
 
-const { spawn } = require('@lydell/node-pty')
-const shell = process.platform === 'win32' ? 'powershell' : process.env.SHELL || '/bin/zsh'
-const p = spawn(shell, [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env })
-p.onData(() => {})
-const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-await wait(1500)
-is(paneJob(p.process, shell), null, 'a real shell sitting at its prompt reports no job')
-p.write(process.platform === 'win32' ? 'Start-Sleep -Seconds 20\r' : 'sleep 20\r')
-await wait(2000)
-const job = paneJob(p.process, shell)
-assert.ok(job, `a real command in front of a real pty is named (got ${JSON.stringify(p.process)})`)
-checks++
-try {
-  p.kill()
-} catch {
-  /* already gone */
+// POSIX only, and that is the POINT rather than a gap: `jobOf` refuses the tty on
+// Windows before it ever asks (the source assertion above pins that), because
+// `IPty.process` there answers with the terminal NAME whatever is running. So this
+// block asserts a reading Windows deliberately does not take - and conpty cannot even
+// start a bare `powershell` here, which is how it failed: `Error: File not found:` with
+// nothing after the colon, on a machine whose 96 other suites were green. Skipped OUT
+// LOUD, never silently: a suite that quietly drops its only live check is worse than a
+// red one. The Windows reading is `jobFromTable`, covered above.
+if (process.platform === 'win32') {
+  console.log('  skip real pty - POSIX only; Windows reads jobFromTable, asserted above')
+} else {
+  const { spawn } = require('@lydell/node-pty')
+  const shell = process.platform === 'win32' ? 'powershell' : process.env.SHELL || '/bin/zsh'
+  const p = spawn(shell, [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env })
+  p.onData(() => {})
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  await wait(1500)
+  is(paneJob(p.process, shell), null, 'a real shell sitting at its prompt reports no job')
+  p.write(process.platform === 'win32' ? 'Start-Sleep -Seconds 20\r' : 'sleep 20\r')
+  await wait(2000)
+  const job = paneJob(p.process, shell)
+  assert.ok(job, `a real command in front of a real pty is named (got ${JSON.stringify(p.process)})`)
+  checks++
+  try {
+    p.kill()
+  } catch {
+    /* already gone */
+  }
 }
 
 console.log(`\n${checks} checks - all good`)

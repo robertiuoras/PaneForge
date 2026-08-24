@@ -122,7 +122,70 @@ manager.returnSizes()
 ok(shape() === '100x40', 'a return gives back what the desk chose last', shape())
 ok(live.borrowed !== true, 'and clears the debt')
 
-// ---- 5. an exited pane is not resized ---------------------------------------------
+// ---- 5. TWO screens borrowing at once ---------------------------------------------
+//
+// The bug this was written for, 2026-08-23: "the remote window keeps changing sizes". A
+// borrow was one flag and one set of numbers, so a phone and a mirror - or two paired
+// devices - each fitted their own window, each wrote the pty, and the pty flipped between
+// their two grids for as long as both were open, with the CLI redrawing its whole frame
+// every round. Picking a winner is not the fix either: a viewer sent a grid wider than its
+// window draws a screen cut off at the edge. They are lent the SMALLEST grid asked for,
+// which every one of them can draw.
+manager.resize(id, 157, 57)
+manager.resize(id, 120, 40, true, 'mirror-a')
+ok(shape() === '120x40', 'one borrower gets what it asked for', shape())
+manager.resize(id, 90, 50, true, 'phone')
+ok(shape() === '90x40', 'a second borrower narrows it to what BOTH can draw', shape())
+{
+  const n = sizes.length
+  manager.resize(id, 120, 40, true, 'mirror-a')
+  ok(sizes.length === n, 'and the first one re-stating its size costs the CLI nothing', String(sizes.length - n))
+}
+manager.resize(id, 200, 60, true, 'mirror-a')
+ok(shape() === '90x50', 'a borrower growing hands the floor to the other one', shape())
+manager.returnSize(id, 'phone')
+ok(shape() === '200x60', 'one screen looking away leaves the other holding the pane', shape())
+ok(live.borrowed === true, 'and the pane is still borrowed')
+manager.returnSize(id, 'mirror-a')
+ok(shape() === '157x57', 'the last one lets go and the desk has its shape back', shape())
+ok(live.borrowed !== true, 'and owes nothing')
+
+// A phone looking away may not take a mirror's borrow with it - that is what `returnSizes`
+// did before it could be told who was asking.
+manager.resize(id, 100, 30, true, 'mirror-a')
+manager.resize(id, 60, 20, true, 'phone')
+manager.returnSizes('phone')
+ok(shape() === '100x30', "the phone leaving does not end the mirror's borrow", shape())
+ok(live.borrowed === true, 'which is still on record')
+// ...and case 4's rule is untouched by any of it: a desk resize arriving while somebody is
+// still holding the pane is REMEMBERED, never obeyed, and is what they get back.
+manager.resize(id, 157, 57)
+ok(shape() === '100x30', 'a desk resize under a live borrow still does not snap the pty', shape())
+manager.returnSizes()
+ok(shape() === '157x57', 'and the last thing the desk chose is what it gets back', shape())
+ok(live.borrowed !== true, 'with every borrow cleared')
+
+// ---- 5b. THREE screens, and one of them leaving --------------------------------------
+// The bug two borrowers cannot show. `smallestBorrow` mins each axis SEPARATELY, so the
+// grid it returns is regularly one NOBODY asked for - and `returnSize` used to hand those
+// numbers back into `resize()` under the first surviving key, overwriting that viewer's
+// real request. With two borrowers the survivor IS the smallest, so the overwrite is a
+// no-op and the old code passed. With three it is permanent: every later smallest is then
+// computed from a corrupted entry.
+manager.returnSizes()
+manager.resize(id, 200, 60, true, 'mirror-a')
+manager.resize(id, 100, 30, true, 'phone')
+manager.resize(id, 150, 25, true, 'tv')
+ok(shape() === '100x25', 'three screens are lent the floor of all three, per axis', shape())
+manager.returnSize(id, 'phone')
+ok(shape() === '150x25', 'one leaving re-applies the floor of the rest', shape())
+// The load-bearing line: mirror-a asked for 200x60 and must still be on record as asking
+// for it. Under the old code it was rewritten to 150x25 by the step above.
+manager.returnSize(id, 'tv')
+ok(shape() === '200x60', "the last screen left keeps the size IT asked for", shape())
+manager.returnSizes()
+
+// ---- 6. an exited pane is not resized ---------------------------------------------
 const before = sizes.length
 live.meta.status = 'exited'
 manager.resize(id, 80, 24)

@@ -1,3 +1,4 @@
+import type { AutoClearAsk } from './autoclear'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
@@ -9,6 +10,7 @@ import type { MascotConfig } from './mascot'
 import type { TipsConfig } from './tips'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
+import type { PaneTrustConfig } from './paneTrust'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
 import type { RunningDev } from './devList'
@@ -115,7 +117,28 @@ export interface Session {
    * the first anybody hears of it.
    */
   autoAnswerAt?: number
+  /**
+   * When the idle clock will CLOSE this pane, epoch ms, or absent when nothing will.
+   *
+   * Published by the desk that owns the pty (`shared/reclaim.ts`'s `idleCloseAt`), never
+   * derived by a viewer: the deadline is a fact about the owner's settings and its own
+   * refusals - which pane is focused over there, whether a shell job is still running -
+   * and a second machine guessing at it would draw a countdown nobody is going to honour.
+   */
+  closingAt?: number
   autoAnswerN?: number
+  /**
+   * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
+   *
+   * Armed by the `autoclear` Stop hook once context is past its line and a handoff on disk
+   * lists steps a fresh session could start on. On the session rather than in a map of its
+   * own because every refusal that drops it - a keystroke, another turn, a live question -
+   * is already a fact about the session, and a countdown nobody can see is the bug this
+   * replaced. See `shared/autoclear.ts`.
+   */
+  autoClearAt?: number
+  autoClearPrompt?: string
+  autoClearSteps?: string[]
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -881,6 +904,8 @@ export interface RemotePaneInfo {
   createdAt?: number
   /** the command running in that pane's foreground, when it is a shell pane running one */
   job?: string
+  /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
+  closingAt?: number
 }
 
 /** Live state of one paired device. */
@@ -1505,6 +1530,13 @@ export interface Config {
    * ladder: closing is what happens when there is nowhere to move a pane to.
    */
   autoHandoff?: AutoHandoffConfig
+
+  /**
+   * Where a pane on somebody else's inference provider may be opened, and whether it is
+   * confined at all - see `shared/paneTrust.ts`. Absent means unconfined, which is what
+   * every desk that has not asked otherwise gets.
+   */
+  paneTrust?: PaneTrustConfig
   /**
    * Quit the WHOLE app after this many minutes with no input - see shared/idlequit.ts.
    * 0 (the default) is off. Distinct from `reclaim`, which closes single panes: this
@@ -1512,6 +1544,14 @@ export interface Config {
    * pane that is working/starting/stalled, and on any pane another device is driving.
    */
   idleQuitMinutes?: number
+  /**
+   * Hold the display (and so the machine) awake while any pane has an agent mid-turn or
+   * is sitting on a question - see shared/awake.ts. On by default: this Mac had
+   * `displaysleep 1` on battery, so a ten-minute turn ran behind a black screen and the
+   * question at the end of it was never seen. Capped at one unbroken busy stretch, so a
+   * wedged pane cannot keep a laptop lit all night.
+   */
+  keepDisplayAwake?: boolean
   /**
    * The phone client. Optional so a config written by an older build still loads -
    * `getConfig` fills it in, off, with a fresh code.
@@ -1755,6 +1795,12 @@ export interface Api {
    * this app happened to notice the turn.
    */
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
+  /**
+   * When the idle clock will close this pane, or null when nothing will. The window
+   * decides it (it holds the focus and the config); the session carries it, so this
+   * desk's card and every paired device's listing draw the same number.
+   */
+  setClosing(id: string, at: number | null): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**
@@ -1887,6 +1933,13 @@ export interface Api {
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
+  /**
+   * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
+   * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
+   */
+  askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
+  /** The two buttons on that card. */
+  /** Countdowns in flight, for a window that has just opened. */
   checkForUpdates(): Promise<UpdateState>
   /**
    * Start the restart-into-the-new-version. Resolves to what actually happened, because
@@ -2103,10 +2156,26 @@ export interface Api {
     /** false moves a pane mid-turn and loses the answer being written. Default true. */
     waitForTurn?: boolean
   ): Promise<HandoffItem[]>
+  /**
+   * Bring a MIRRORED pane back to this device - the other direction of the same move.
+   *
+   * The pty never travels, so this cannot pull: the device that owns the pane is asked to
+   * run its own handoff at us. Every refusal and the mid-turn queue are therefore the far
+   * end's, and the report is the same `HandoffItem[]` a local hand-off gives.
+   */
+  bringPaneHere(id: string): Promise<HandoffItem[]>
   /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
+  /**
+   * Arm a pane's own /clear, from the `autoclear` Stop hook. See `shared/autoclear.ts`.
+   *
+   * Answers `{ ok: false, reason }` rather than throwing, because the caller is a detached
+   * child process whose stderr nobody reads: a refusal has to be something it can log.
+   */
+  askAutoClear(ask: unknown): Promise<{ ok: boolean; reason?: string }>
+  cancelAutoClear(id: string): Promise<boolean>
 
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>

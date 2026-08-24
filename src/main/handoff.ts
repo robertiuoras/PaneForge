@@ -85,6 +85,12 @@ export interface SendDeps {
   kill(id: string): void
   /** the pane's screen, from its history file - raw bytes, ANSI intact */
   tailOf(id: string, bytes: number): string
+  /**
+   * The width those bytes were painted at. History's own reading, never the live pane's
+   * `cols` - a pane whose size a phone or a mirror has BORROWED reports the borrower's
+   * grid, and the bytes on disk were painted at the desk's.
+   */
+  tailColsOf?(id: string): number
   /** where the pane's conversation lives on this disk, if anywhere */
   transcriptFileFor(cwd: string, resumeId: string): string | null
   deliver(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
@@ -172,6 +178,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     senderDevice: deps.selfDevice?.() || undefined,
     repo: repo ?? undefined,
     tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
+    tailCols: deps.tailColsOf?.(pane.id) || undefined,
     closeReceiverWhenDone: closeReceiverWhenDone || undefined,
     dev: dev.length ? dev : undefined
   }
@@ -268,6 +275,12 @@ export interface ReceiveDeps {
   start(req: StartSessionRequest): Session | Promise<Session>
   /** where this machine keeps pane history logs */
   historyDir(): string
+  /**
+   * Record the width the arriving screen was painted at, against the id it is written
+   * under. `restoredTail` asks `colsOf` for exactly this a moment later, and an unknown
+   * width means the far desk's frame is replayed raw into this one.
+   */
+  noteTailCols?(id: string, cols: number): void
   /** where this machine's Claude CLI keeps transcripts for a folder */
   claudeProjectDir(cwd: string): string
   /**
@@ -335,6 +348,9 @@ export async function receiveHandoff(
     const dir = deps.historyDir()
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, `${sid}.log`), payload.tail)
+    // Before the pane starts, or `restoredTail` asks `colsOf` about an id nothing has
+    // ever said a width for and replays the far desk's frame raw into this one.
+    if (payload.tailCols && payload.tailCols > 0) deps.noteTailCols?.(sid, payload.tailCols)
     req.scrollbackId = sid
   }
 

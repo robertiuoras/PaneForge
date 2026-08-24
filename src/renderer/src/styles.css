@@ -575,14 +575,25 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px;
   border-radius: 3px; background: var(--danger); animation: pulse 1.8s ease-in-out infinite;
 }
-.chip.asks { color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c; flex: none; margin-left: auto; }
-/* How long is left before that question is answered for you. Beside the chip above and in
-   the same red, because it is the same fact one step further on - and tabular so a card
-   does not jog sideways as 10 becomes 9. It is the sidebar half of `AskCountdown`: the
-   pane draws the full sentence, and the pane is regularly not what is on screen. */
-.chip.asks-in {
-  color: var(--surface-1); background: var(--danger); border-color: var(--danger);
-  flex: none; font-variant-numeric: tabular-nums; font-weight: 600;
+.chip.asks {
+  color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c;
+  flex: none; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+/* How long is left before that question is answered for you, drawn INSIDE the red box
+   above rather than as a second chip beside it: "asks you" and the seconds are one fact a
+   step apart, and two red boxes on the title line read as two separate readings.
+
+   Solid on the tinted box, which is the same figure/ground the pane's own card uses
+   (`.pane-ask-auto-left` is a solid danger pill inside a danger-bordered row) - so the
+   number is the thing the eye lands on, which is the whole point of moving it in here.
+   Tabular and wide enough for two digits plus the word "now", so a card does not jog
+   sideways as 10 becomes 9 and does not reflow on the last tick either. */
+.chip.asks .asks-in {
+  flex: none; min-width: 30px; text-align: center;
+  padding: 0 4px; border-radius: 4px;
+  color: var(--danger-on); background: var(--danger);
+  font-variant-numeric: tabular-nums; font-weight: 600;
 }
 /* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
    beside it rather than pushing it off the end. */
@@ -604,6 +615,22 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* Pushed to the far end of the title line, and never squeezed: the name beside it has an
    ellipsis and this does not - "1m 2" is a wrong number, where "PaneFo…" is a short name. */
 .row-title .elapsed, .row-title .chip.dead { margin-left: auto; flex: none; }
+/* A pane on its way out. It takes the clock's place on the right of the title line - the
+   two are never both worth drawing, and a pane about to be closed is the more urgent of
+   them. Warn rather than danger: nothing is lost by it happening, which is the whole
+   reason the app is allowed to do it at all. */
+.row-title .chip.closing {
+  margin-left: auto; flex: none;
+  color: var(--warn); border-color: #f0b42933; background: #f0b4291a;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+button.chip.closing { cursor: pointer; font: inherit; font-size: 11px; }
+button.chip.closing:hover { filter: brightness(1.3); }
+/* ...and red in the last minute, matching the card's own glow: past that point this is
+   not a clock, it is the app about to close somebody's pane. */
+.row-title .chip.closing.soon {
+  color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c;
+}
 /* It WRAPS. Everything below this rule is about which of five true facts gets destroyed
    when they do not fit in 190px, and the answer kept being a different one - the clock,
    then the agent's name, then the place - because with one line there is no answer that
@@ -646,9 +673,16 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    shifts the title beside it on every sample when the digits have their natural widths;
    and no colour at all until there is something to say - a readout that is always amber
    is a readout nobody reads. Heavy is 2 GB (a pane running a build), hot is a full core. */
+.chip.jobs {
+  color: var(--accent);
+  border-color: var(--line-strong);
+  background: transparent;
+  white-space: nowrap;
+}
+
 .chip.res, .badge.res { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chip.res { background: transparent; }
-.chip.res.heavy { color: var(--fg); border-color: var(--line-strong); }
+.chip.res.heavy { color: var(--text); border-color: var(--line-strong); }
 .chip.res.hot { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
 .badge.res { background: #ffffff0f; color: var(--muted); border-color: var(--line); font-weight: 500; }
 /* Second figure, same chip: dimmer, because memory is the one that answers "which pane
@@ -775,11 +809,10 @@ html.app-blurred .num-wrap:has(> .num.attn)::before { animation: none; opacity: 
    telling you about. */
 html.app-blurred .num.live::after { animation: none; }
 html.app-blurred .dot.working { animation: none; }
-/* The waiting ring is the one loop with no resting value of its own: the blanket below
-   would freeze it wherever it happened to be, leaving a half-grown halo at half opacity
-   sitting around the dot for as long as the window is unfocused. Dropping the layer
-   instead leaves the dot's own static ring, which is what the ring grows out of. */
-html.app-blurred .dot.idle::after { content: none; }
+/* The waiting ring needs no rule here any more. It used to be the one loop with no
+   resting value of its own, so the blanket below would have frozen it half-grown and this
+   dropped the layer instead - which also dropped the STATE it was drawing. It is a still
+   ring now, so an unfocused window keeps the mark and pays nothing for it. */
 /* Nothing at all loops behind an unfocused window. The five rules above are the ones
    that also need a resting VALUE (a glow held at full, a band parked off the edge); this
    catches everything else that loops - the badges, the connecting dot, the stuck lane -
@@ -825,13 +858,34 @@ html.hi-refresh .num.live::after { animation: none; }
 .empty.first-run code { color: var(--text); word-break: break-all; }
 .hint { color: var(--muted); font-size: 11px; }
 
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* `position: relative` is load-bearing, not tidiness: the waiting ring below is
+   `position: absolute; inset: 0`, so with a STATIC dot it resolved against the nearest
+   positioned ancestor, which is the whole `.row`. Measured 2026-08-23 in a real window -
+   `getComputedStyle(dot).position` static, the pseudo's offsetParent the card - the ring
+   was therefore drawn around the ENTIRE card and scaled it to 1.85, every 2.4s, for ever,
+   on every pane that was waiting for a person. That is what "the Your move shimmer goes
+   too many times" was: not the arrival flash (fixed, one pass) and not the amber bar
+   (still), but a card-sized halo nobody had ever intended - the comment on `callRing`
+   below has always described an 8px dot going to 12px. */
+.dot { position: relative; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.starting { background: var(--warn); box-shadow: 0 0 0 3px #f0b4291f; }
 .dot.working { background: var(--ok); box-shadow: 0 0 0 3px #35d07f24; animation: pulse 2s ease-in-out infinite; }
+/* The standing mark: a lit ring around the dot, and it does not move. Same law as the
+   amber bar and the arrival flash above - motion is for news, and a pane that has been
+   waiting for ten minutes is not news. A ring that grew out of the dot every 2.4s for as
+   long as the pane went unread was the third looping decoration on one card saying one
+   fact. `will-change` goes with it: a layer promoted for an animation it no longer has is
+   a compositor layer for nothing. */
 .dot.idle::after {
   content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
   box-shadow: 0 0 0 2px var(--accent-dim);
-  animation: callRing 2.4s ease-out infinite;
+}
+/* ONCE, on arrival, and only on the card that is also flashing - `just-done` is set by the
+   same event and comes off after DONE_GLOW_MS (2100), so the ring runs its single pass and
+   the class is gone before it could run a second. It says WHICH pane just raised its hand;
+   the static ring above is what says it is still raised. */
+.row.just-done .dot.idle::after {
+  animation: callRing 1.9s ease-out 1;
   will-change: transform, opacity;
 }
 /* Quiet but never asked anything: "ready", not "waiting on you". Still, therefore. */
@@ -931,7 +985,7 @@ html.app-blurred .elapsed::after { animation: none; }
   color: var(--muted); border-color: var(--line); background: transparent;
   font: inherit; font-size: 10px; line-height: inherit; cursor: pointer;
 }
-.chip.piping:hover { color: var(--fg); border-color: var(--muted); }
+.chip.piping:hover { color: var(--text); border-color: var(--muted); }
 .chip.piping.behind { color: var(--danger); border-color: var(--danger); }
 
 /* The lane's own dialog: the state of the checkout, then why a merge will not run. */
@@ -954,7 +1008,7 @@ html.app-blurred .elapsed::after { animation: none; }
 /* The help button was a 150px pill on a 433px card, which is a third of the header spent on
    a footnote. It is a link now: same target, same words, no box. */
 .lane-dialog .lane-what { padding: 0; border: 0; background: none; font-size: 11.5px; text-decoration: underline; text-underline-offset: 3px; }
-.lane-plain { color: var(--fg); line-height: 1.55; }
+.lane-plain { color: var(--text); line-height: 1.55; }
 .lane-plain code, .lane-git code { font-size: 11.5px; color: var(--muted); }
 .lane-git { margin-top: 10px; }
 .lane-git .lane-dialog-sub { margin-top: 0; display: block; }
@@ -977,7 +1031,7 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-copy.done .lane-copy-tag { color: var(--ok); }
 .lane-copy.stuck .lane-copy-tag { color: var(--danger); }
 .lane-copy-text { min-width: 0; flex: 1; }
-.lane-copy-title { color: var(--fg); font-size: 12px; }
+.lane-copy-title { color: var(--text); font-size: 12px; }
 .lane-copy-held { color: var(--muted); }
 /* Two lines at most: a commit subject is a sentence and clipping it to one line is how a
    summary stops being one, but four lines of somebody else's commit message is the list
@@ -987,7 +1041,7 @@ html.app-blurred .elapsed::after { animation: none; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .lane-dialog-warn { margin-top: 6px; color: var(--danger); }
-.lane-dialog-said { margin-top: 8px; color: var(--fg); }
+.lane-dialog-said { margin-top: 8px; color: var(--text); }
 
 /* The PaneForge dev lane a pane holds, on that pane's own card. Quiet while the lane is
    merely held - it is one more fact on a crowded line - and red once the lane's finished
@@ -1041,7 +1095,7 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-help-now li { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .lane-help-who { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lane-help-states { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 12px; }
-.lane-help-states b { color: var(--fg); font-weight: 600; }
+.lane-help-states b { color: var(--text); font-weight: 600; }
 .lane-help-states li { color: var(--muted); line-height: 1.45; }
 
 /* There was a `.lane-live` ring here: a breathing blue halo around the whole card of a
@@ -1270,6 +1324,18 @@ body.sizing * { user-select: none !important; }
    squeezed in a narrow pane, never the digits - a clock ellipsised to "1m…" is worse
    than no clock. */
 .pt-clock { flex: none; font-variant-numeric: tabular-nums; font-size: 10px; }
+/* The pane's own age, beside the turn's. Two clocks a few pixels apart are only readable
+   if they do not look like one number split in two, so this one is a step dimmer and
+   carries the units it is measured in; the turn clock keeps the accent it has always had.
+   Tabular figures on both, or the header shifts under the pointer every minute. */
+.pt-open {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.85;
+}
+.hist-open { font-variant-numeric: tabular-nums; }
 /* The inset belongs on the host, not on .xterm. Measured both ways at the same pane size
    (870px tall): padding here proposes 57 rows whose last row still lands 12px clear of the
    clipped edge, while padding on .xterm proposes 56 and clips the last row by 3px - the fit
@@ -1393,7 +1459,7 @@ body.sizing * { user-select: none !important; }
 .pane-ask-n {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 16px; height: 16px; border-radius: 4px;
-  background: var(--surface-1); color: var(--muted);
+  background: var(--surface); color: var(--muted);
   font-size: 10px;
 }
 /* A finger, not a pointer: 30px is a comfortable target for a mouse and a miss for a
@@ -1875,7 +1941,7 @@ body.sizing * { user-select: none !important; }
    with the body rather than in the button row: it changes what the answer MEANS, and a
    tick box between two buttons reads as a third button. */
 .confirm-check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
-.confirm-check input { accent-color: var(--acc); width: 14px; height: 14px; }
+.confirm-check input { accent-color: var(--accent); width: 14px; height: 14px; }
 /* Three things measured wrong on the offload question ("Start this pane on <PC>?"), all
    of them inherited from the dialog shell rather than written here:
 
@@ -2361,7 +2427,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .text-sheet {
   flex: 1; display: flex; flex-direction: column; min-width: 0;
   margin: max(8px, env(safe-area-inset-top)) 8px max(8px, calc(env(safe-area-inset-bottom) + 4px));
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: var(--shadow); overflow: hidden;
 }
 .text-sheet-head {
@@ -2448,7 +2514,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .dev-jobs-head .hint { flex: 1 1 auto; min-width: 0; }
 .dev-job {
   display: flex; align-items: center; gap: 7px; min-width: 0;
-  padding: 3px 6px; border-radius: 6px; background: var(--surface-1);
+  padding: 3px 6px; border-radius: 6px; background: var(--surface);
   font-size: 11.5px; color: var(--muted);
 }
 /* The kind is a word rather than a colour: "agent run" and "dev" are different KINDS of
@@ -2590,7 +2656,7 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .peer-dot.live { background: var(--ok, #6ec46e); border-color: transparent; }
 .peer .ghost.small { margin-left: auto; flex: none; }
 .peer-since { flex: none; }
-.peer-tailnet .peer-dot { background: var(--acc); }
+.peer-tailnet .peer-dot { background: var(--accent); }
 .peer-internet .peer-dot { background: var(--warn, #f0a868); }
 /* ---- a device that stopped looking like itself ----
    The wrap is on the marked row ONLY. `.peer` is a single flex line whose `since` and
@@ -3177,14 +3243,14 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   /* Its own banded row rather than a line of small text: at 11px on a dark card, under a
      question and above a row of buttons, it was reported as not being on screen at all. */
   padding: 4px 8px; border-radius: 8px;
-  border: 1px solid var(--danger); background: var(--surface-1);
+  border: 1px solid var(--danger); background: var(--surface);
 }
 /* The seconds. Tabular so the row does not jog sideways as 10 becomes 9, and wide enough
    for two digits plus the word "now", so nothing reflows on the last tick either. */
 .pane-ask-auto-left {
   flex: none; min-width: 34px; text-align: center;
   padding: 2px 6px; border-radius: 6px;
-  background: var(--danger); color: var(--surface-1);
+  background: var(--danger); color: var(--danger-on);
   font-size: 13px; font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -3205,7 +3271,7 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pane-ask-btn.auto::after {
   content: 'auto';
   margin-left: 2px; padding: 0 5px; border-radius: 999px;
-  background: var(--danger); color: var(--surface-1);
+  background: var(--danger); color: var(--danger-on);
   font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
 }
 
@@ -3328,29 +3394,78 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    the placer computes keep it inside a narrow window as well as a wide one. */
 .mascot-bubble {
   position: absolute; pointer-events: auto; min-width: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong); border-radius: var(--r);
-  padding: 9px 10px; box-shadow: var(--shadow); font-size: 12px;
-  display: flex; flex-direction: column; gap: 8px;
+  /* A surface derived off the page rather than picked: one step up from the window, with
+     the accent barely in it, and a HAIRLINE instead of a drawn border - the same ladder
+     every other surface in this window is built from (`shared/theme.ts`). */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 5%, var(--surface-2)),
+    var(--surface-2)
+  );
+  border: 1px solid color-mix(in oklab, var(--text) 13%, transparent);
+  border-radius: 12px;
+  padding: 11px 12px 9px; font-size: 12px; line-height: 1.5;
+  /* Two shadows, not one: a 1px contact edge so it sits ON the window, and a wide soft
+     one so it reads as lifted. A single mid shadow is the generic card look. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 14px 34px -14px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: 9px;
   transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
 }
+/* No animal: the card docks in the corner and stops walking. `position: fixed` rather than
+   a corner of the layer, so it is placed against the WINDOW and the placer's pixels (which
+   are about a sprite that is not there) are simply not applied. */
+.mascot-bubble.dock {
+  position: fixed; right: 14px; bottom: 14px; left: auto; top: auto;
+  width: 330px; max-width: calc(100vw - 28px); transition: none;
+}
+/* One pill, in the corner the card docks in: with no sprite there is nothing to press. */
+.mascot-dock-open {
+  position: fixed; right: 14px; bottom: 14px; pointer-events: auto;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface-2); color: var(--muted);
+  border: 1px solid color-mix(in oklab, var(--text) 11%, transparent);
+  border-radius: 999px; padding: 6px 12px 6px 10px;
+  font: 500 11.5px/1 inherit; letter-spacing: -0.01em; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 10px 24px -14px rgba(0, 0, 0, 0.5);
+  transition: color 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+}
+.mascot-dock-open:hover {
+  color: var(--text); background: var(--surface-3);
+  border-color: color-mix(in oklab, var(--text) 20%, transparent);
+}
+.mascot-dock-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 /* A dragged sprite lands under the pointer; a bubble walking after it for 900ms
    reads as the drag not having worked. */
 .mascot-bubble.dragging { transition: none; }
-.mascot-say { white-space: pre-wrap; color: var(--text); line-height: 1.45; }
+/* Selectable, both spellings: `body { user-select: none }` inherits down to here, and what
+   the pet says is regularly the one sentence naming a pane, a port or a machine that
+   somebody wants to paste somewhere. The copy button beside it takes all of it. */
+.mascot-say {
+  white-space: pre-wrap; color: var(--text); line-height: 1.5;
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
 /* The countdown. The number is TABULAR and given its own column, so the sentence beside
    it does not jog sideways as 10 becomes 9 - the same reading `AskCountdown` needed. */
-.mascot-bubble.counting { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+/* Counting down: an accent rail down the left edge rather than a louder border, so the
+   card reads as the same object in a different state. */
+.mascot-bubble.counting {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.22),
+    0 14px 34px -14px rgba(0, 0, 0, 0.45);
+}
 .mascot-count { display: flex; gap: 9px; align-items: flex-start; }
 .mascot-secs {
   font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 590;
   line-height: 1.05; color: var(--accent); min-width: 26px; text-align: right;
 }
-.mascot-count-say { color: var(--text); line-height: 1.45; }
+.mascot-count-say {
+  color: var(--text); line-height: 1.5;
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
 .mascot-acts { display: flex; gap: 6px; }
 .mascot-ask { display: flex; gap: 6px; }
 .mascot-ask input {
-  flex: 1; min-width: 0; background: var(--surface-1); color: var(--text);
+  flex: 1; min-width: 0; background: var(--surface); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: 12px;
 }
 .mascot-tools { display: flex; gap: 4px; justify-content: flex-end; }
@@ -3437,6 +3552,10 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pet-swatch:hover { border-color: var(--line-strong); background: var(--surface-3); }
 .pet-swatch.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
 .pet-name { font-size: 10.5px; color: var(--muted); }
+.pet-none-box { stroke: var(--muted); }
+.pet-none-line { fill: var(--muted); }
+.pet-swatch.on .pet-none-box { stroke: var(--accent); }
+.pet-swatch.on .pet-none-line { fill: var(--accent); }
 .pet-swatch.on .pet-name { color: var(--text); }
 
 /* A chip that is also a control - the queued-move chip cancels the move. It has to look
@@ -3449,4 +3568,70 @@ button.chip {
 }
 button.chip:hover {
   opacity: 0.85;
+}
+
+/* --------------------------------------------------------------------------
+   The automatic-/clear countdown. Same card as the update toast, plus the two
+   things that card never needed: what is about to be continued, and how long
+   is left to stop it. It sits ABOVE the update card when both are up - one is
+   a new version waiting, the other is a session about to end. */
+.update-toast.autoclear { z-index: 62; }
+.ac-steps { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+.ac-steps li { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.ac-bar { height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.ac-bar > i { display: block; height: 100%; background: var(--accent); transition: width 0.25s linear; }
+/* A session about to clear itself. Corner card, never a dialog - nothing the app decided
+   by itself may take the screen. Under every dialog and over the panes. */
+.autoclear-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 45;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.autoclear-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.autoclear-left {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 590;
+  letter-spacing: -0.022em;
+  color: var(--accent);
+}
+.autoclear-word {
+  color: var(--text);
+  line-height: 1.35;
+}
+.autoclear-steps {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.autoclear-keep {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.autoclear-keep:hover {
+  background: var(--surface-3);
 }

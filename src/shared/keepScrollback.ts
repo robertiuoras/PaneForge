@@ -101,6 +101,29 @@
 /** How long an armed clear stands the rewrite below down for. */
 const ARM_MS = 10_000
 
+/**
+ * How many rows a CLI has to erase in a row before that run is a wipe.
+ *
+ * ...and then 2.1.241 wiped the screen a FOURTH way, walking UP instead of down:
+ *
+ *   ESC[8D ESC[30B  (ESC[2K ESC[1A) x32  ESC[G ESC[1A  ESC[11A  <banner>
+ *
+ * The cursor still ends at the top of the screen, but it gets there with cursor-ups
+ * rather than a home - so `homed` is never set, `homeWipe` never fires, and the turn that
+ * was on screen is destroyed with nothing filed. Measured 2026-08-24 in this desk's own
+ * pane log: 5 of these against 73 of the home-then-walk-down shape, and the last two are
+ * the clears Robert lost his screen to.
+ *
+ * So the shape this keys on is the RUN itself rather than where the cursor came from:
+ * erase a row, step one row, repeat, writing nothing in between. Nothing redraws that way
+ * except a wipe. Measured over the same 3.7 MB log, the run lengths are bimodal with
+ * nothing in the middle - 12 runs of 0-1 rows (a CLI redrawing the composer it stands on)
+ * and 79 runs of 10-32 (every one a wipe) - so a threshold of 6 separates them with room
+ * either side. A report is cheap in any case: `screenLoss.ts` decides whether the screen
+ * was really lost, and refuses a repaint that put its own rows back.
+ */
+const WIPE_RUN = 6
+
 /** Is this submitted line an ask for the screen to be cleared? */
 export function clearsScreen(line: string): boolean {
   return /^\/(clear|compact|new|reset)\b/i.test(line.trim())
@@ -266,6 +289,9 @@ export function keepScrollback(
   // since. An erase arriving in that state is a wipe rather than a repaint - see the note
   // at the top of the file for the measurement that says so.
   let homed = false
+  // How many rows this run of erase-in-line has blanked with nothing written between
+  // them. See `WIPE_RUN`.
+  let eraseRun = 0
   // `CSI <rows> ; 1 H` then one newline per row: the newlines scroll, and a scroll is what
   // puts a line into the scrollback rather than deleting it. `\r` keeps the cursor at
   // column 1 on the way.
@@ -346,7 +372,11 @@ export function keepScrollback(
       if (ch !== '\x1b') {
         // Anything written lands where the cursor is, so the screen is no longer waiting
         // untouched at its top.
-        if (ch !== '\r' && ch !== '\n') homed = false
+        if (ch !== '\r' && ch !== '\n') {
+          homed = false
+          // Something was written between two erases, so this is a redraw and not a walk.
+          eraseRun = 0
+        }
         out += ch
         i++
         continue
@@ -398,6 +428,7 @@ export function keepScrollback(
       if (final === 'H' || final === 'f') {
         // A home is the only cursor move that arms this: `ESC[H`, `ESC[1;1H`, `ESC[1H`.
         homed = n === '' || n === '1' || n === '1;1'
+        eraseRun = 0
         out += seq
       } else if (final === 'J' && n === '3') {
         // The one sequence that destroys the scrollback itself. Nothing in a session wants
@@ -418,15 +449,22 @@ export function keepScrollback(
           out += seq
         }
         homed = false
+        eraseRun = 0
       } else if (final === 'K') {
         // Erase in line. One of these at the top of an untouched screen is the first row
-        // of an erase-per-row wipe - which is how Claude Code 2.1.235 clears.
+        // of an erase-per-row wipe - which is how Claude Code 2.1.235 clears. And a RUN of
+        // them, whichever way the cursor is walking, is how 2.1.241 clears - see
+        // `WIPE_RUN`.
         if (homed) wiped()
+        if (++eraseRun === WIPE_RUN) wiped()
         out += seq
       } else if ('ABCDEFGIdSTLM@P'.includes(final)) {
         // Every other cursor move, scroll or insert: the top of the screen is no longer
         // where the next byte lands.
         homed = false
+        // A one-row step is what an erase-per-row walk is made of, in either direction, so
+        // it carries the run; anything else ends it.
+        if (!((final === 'A' || final === 'B') && (n === '' || n === '1'))) eraseRun = 0
         out += seq
       } else {
         // Colours, modes, cursor shape, scroll regions: they write nothing, so a home

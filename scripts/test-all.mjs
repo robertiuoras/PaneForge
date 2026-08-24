@@ -30,7 +30,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
+  ['awake', 'awake-test.mjs'],
+  ['autoclear', 'autoclear-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
+  ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
@@ -47,6 +50,7 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
+  ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
@@ -72,6 +76,7 @@ const TESTS = [
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
+  ['panetrust', 'pane-trust-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device
   // that freezes instead of reporting itself gone is too costly to catch by hand.
   ['deadlink', 'deadlink-test.mjs'],
@@ -93,6 +98,7 @@ const TESTS = [
   ['fleet', 'fleet-test.mjs'],
   ['desk', 'desk-test.mjs'],
   ['panejob', 'panejob-test.mjs'],
+  ['panebackjobs', 'pane-backjobs-test.mjs'],
   ['surfacereach', 'surface-reach-test.mjs'],
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
@@ -130,6 +136,7 @@ const TESTS = [
   ['gist', 'gist-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
+  ['autoclear', 'autoclear-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]

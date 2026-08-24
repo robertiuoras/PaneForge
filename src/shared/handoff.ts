@@ -54,6 +54,26 @@ export interface HandoffPayload {
   xfer?: string
   /** what was on the pane's screen, replayed into the new pane's scrollback */
   tail?: string
+  /**
+   * The width `tail` was PAINTED at, on the machine that is sending it.
+   *
+   * Without it a handed-off pane is the restore bug over again, and worse: a restore at
+   * least replays into the same window, while a handoff replays one desk's frame into
+   * another desk's pane. Every agent CLI draws in absolute column moves (`\x1b[143G`),
+   * and a terminal CLAMPS a move past its own last column - so a 157-column frame in an
+   * 85-column pane piles every line onto the right-hand edge, one word over the last, and
+   * no repaint can repair it because the wreckage is in the SCROLLBACK. Fix asks the CLI
+   * to redraw the screen and the CLI has nothing to say about scrollback.
+   *
+   * The restore path already solved this (`restoredTail` -> `colsOf` -> `replayCols`,
+   * see `shared/replayWidth.ts`); the receiver only ever wrote the .log and never the
+   * metadata `colsOf` reads, so the answer came back 0 and the width was dropped in
+   * silence. Measured PC -> Mac, 2026-08-23.
+   *
+   * Optional: a sender older than this says nothing and the receiver replays raw, exactly
+   * as it did before.
+   */
+  tailCols?: number
   /** close the receiver only after this transferred pane ends and nothing else runs there */
   closeReceiverWhenDone?: boolean
   /**
