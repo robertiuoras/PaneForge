@@ -472,9 +472,29 @@ function hasWinFeed(tag: string): Promise<boolean> {
   })
 }
 
+/**
+ * One resolution at a time, and the cache stamped when the ANSWER is known.
+ *
+ * Stamping `winPinAt` before the await looks like a lock and is not one: a second call
+ * arriving while `gh` is still running sees a fresh timestamp, returns the PREVIOUS tag -
+ * an empty string on the first ever check - and pins nothing, so that check silently falls
+ * back to the path this is meant to replace. The in-flight promise is the actual lock; the
+ * timestamp is only the cache.
+ */
+let winPinFlight: Promise<string> | null = null
+
 async function winDevTag(): Promise<string> {
+  if (winPinFlight) return winPinFlight
   if (Date.now() - winPinAt < WIN_PIN_MS) return winPinTag
-  winPinAt = Date.now()
+  winPinFlight = resolveWinTag()
+  try {
+    return await winPinFlight
+  } finally {
+    winPinFlight = null
+  }
+}
+
+async function resolveWinTag(): Promise<string> {
   const tags = await ghTags()
   const tag = await pickWinTag(tags, hasWinFeed)
   if (tag && tag !== winPinTag) log('feed', `dev channel pinned to ${tag} (newest release with a latest.yml)`)
@@ -482,6 +502,8 @@ async function winDevTag(): Promise<string> {
     log('feed', `no release in the last ${tags.length} carries a latest.yml - leaving the feed alone`)
   }
   winPinTag = tag
+  // Stamped here, with the answer, rather than on the way in.
+  winPinAt = Date.now()
   return tag
 }
 

@@ -47,6 +47,7 @@ import { buildArgs, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
+import { outputIsWork } from '../shared/fleet'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
@@ -1606,19 +1607,13 @@ export class SessionManager extends EventEmitter {
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
-      // still only booting its CLI.
-      //
-      // `engaged` used to be the gate here and it is the WRONG fact: it is sticky for the
-      // life of the session (see its note), so once a pane had been asked anything, every
-      // byte it printed afterwards read as work - including the CLI echoing the prompt
-      // being typed into its own composer. Reported as "it shows Running while I am typing
-      // the prompt". A pane is working while a TURN is running, which is exactly
-      // `runSince`: set by the submit keystroke (`beginRun`), by the agent's own busy
-      // footer, and by a shell pane's live command - and cleared by `endRun` the moment
-      // the footer stops. Typing at an idle composer sets none of those. Anything else
-      // keeps the status it had, so a fresh pane stays amber 'starting' and settles into
-      // 'idle' on its own timer.
-      if (meta.runSince || live.busyUntil > now) meta.status = 'working'
+      // still only booting its CLI. A pane counts as working when a TURN is running, which
+      // `outputIsWork` decides and `npm run test:fleet` pins - never merely because the session
+      // has been typed into before (`engaged` is set by the first keystroke and never cleared,
+      // so the echo of typing moved the card between Running and Your move). Anything else keeps
+      // the status it had, so a fresh pane stays amber 'starting' and settles into 'idle'.
+      if (outputIsWork({ ...meta, turnPending: live.turnPending, busyUntil: live.busyUntil, now }))
+        meta.status = 'working'
       this.emit('data', id, data)
       if (wasIdle && meta.status === 'working') this.emitSessions()
     })
