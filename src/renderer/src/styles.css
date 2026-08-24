@@ -3382,25 +3382,74 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
    the placer computes keep it inside a narrow window as well as a wide one. */
 .mascot-bubble {
   position: absolute; pointer-events: auto; min-width: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong); border-radius: var(--r);
-  padding: 9px 10px; box-shadow: var(--shadow); font-size: 12px;
-  display: flex; flex-direction: column; gap: 8px;
+  /* A surface derived off the page rather than picked: one step up from the window, with
+     the accent barely in it, and a HAIRLINE instead of a drawn border - the same ladder
+     every other surface in this window is built from (`shared/theme.ts`). */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 5%, var(--surface-2)),
+    var(--surface-2)
+  );
+  border: 1px solid color-mix(in oklab, var(--text) 13%, transparent);
+  border-radius: 12px;
+  padding: 11px 12px 9px; font-size: 12px; line-height: 1.5;
+  /* Two shadows, not one: a 1px contact edge so it sits ON the window, and a wide soft
+     one so it reads as lifted. A single mid shadow is the generic card look. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 14px 34px -14px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: 9px;
   transition: left 900ms cubic-bezier(.22,.61,.36,1), top 900ms cubic-bezier(.22,.61,.36,1);
 }
+/* No animal: the card docks in the corner and stops walking. `position: fixed` rather than
+   a corner of the layer, so it is placed against the WINDOW and the placer's pixels (which
+   are about a sprite that is not there) are simply not applied. */
+.mascot-bubble.dock {
+  position: fixed; right: 14px; bottom: 14px; left: auto; top: auto;
+  width: 330px; max-width: calc(100vw - 28px); transition: none;
+}
+/* One pill, in the corner the card docks in: with no sprite there is nothing to press. */
+.mascot-dock-open {
+  position: fixed; right: 14px; bottom: 14px; pointer-events: auto;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface-2); color: var(--muted);
+  border: 1px solid color-mix(in oklab, var(--text) 11%, transparent);
+  border-radius: 999px; padding: 6px 12px 6px 10px;
+  font: 500 11.5px/1 inherit; letter-spacing: -0.01em; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 10px 24px -14px rgba(0, 0, 0, 0.5);
+  transition: color 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+}
+.mascot-dock-open:hover {
+  color: var(--text); background: var(--surface-3);
+  border-color: color-mix(in oklab, var(--text) 20%, transparent);
+}
+.mascot-dock-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 /* A dragged sprite lands under the pointer; a bubble walking after it for 900ms
    reads as the drag not having worked. */
 .mascot-bubble.dragging { transition: none; }
-.mascot-say { white-space: pre-wrap; color: var(--text); line-height: 1.45; }
+/* Selectable, both spellings: `body { user-select: none }` inherits down to here, and what
+   the pet says is regularly the one sentence naming a pane, a port or a machine that
+   somebody wants to paste somewhere. The copy button beside it takes all of it. */
+.mascot-say {
+  white-space: pre-wrap; color: var(--text); line-height: 1.5;
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
 /* The countdown. The number is TABULAR and given its own column, so the sentence beside
    it does not jog sideways as 10 becomes 9 - the same reading `AskCountdown` needed. */
-.mascot-bubble.counting { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
+/* Counting down: an accent rail down the left edge rather than a louder border, so the
+   card reads as the same object in a different state. */
+.mascot-bubble.counting {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.22),
+    0 14px 34px -14px rgba(0, 0, 0, 0.45);
+}
 .mascot-count { display: flex; gap: 9px; align-items: flex-start; }
 .mascot-secs {
   font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 590;
   line-height: 1.05; color: var(--accent); min-width: 26px; text-align: right;
 }
-.mascot-count-say { color: var(--text); line-height: 1.45; }
+.mascot-count-say {
+  color: var(--text); line-height: 1.5;
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
 .mascot-acts { display: flex; gap: 6px; }
 .mascot-ask { display: flex; gap: 6px; }
 .mascot-ask input {
@@ -3491,6 +3540,10 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .pet-swatch:hover { border-color: var(--line-strong); background: var(--surface-3); }
 .pet-swatch.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
 .pet-name { font-size: 10.5px; color: var(--muted); }
+.pet-none-box { stroke: var(--muted); }
+.pet-none-line { fill: var(--muted); }
+.pet-swatch.on .pet-none-box { stroke: var(--accent); }
+.pet-swatch.on .pet-none-line { fill: var(--accent); }
 .pet-swatch.on .pet-name { color: var(--text); }
 
 /* A chip that is also a control - the queued-move chip cancels the move. It has to look

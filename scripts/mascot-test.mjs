@@ -239,7 +239,7 @@ const desk = [
   {
     const one = notice([desk[0], desk[1]], { idleCloseOn: false })
     check('one stale pane is still worth a sentence', !!one && one.action.ids.join(',') === 'b', one)
-    check('and it names that pane rather than counting', /pane 2/.test(one.say), one.say)
+    check('and it names that pane rather than counting', /\(2\)/.test(one.say), one.say)
   }
   eq(
     'silent when the panes are cheap',
@@ -471,10 +471,34 @@ const desk = [
   // the sentence this replaces: it names neither the conversation that went nor when, and
   // both are the only things somebody wants when a pane they were using is not there.
   const p = pane({ pane: 1, name: 'taskdriver', doing: 'fix the login redirect' })
-  eq('the project comes before the number', paneWord(p), 'taskdriver pane 1')
+  eq('the number leads, then the place', paneWord(p), '(1) taskdriver')
   check('and the subject rides with it', /was working on "fix the login redirect"/.test(paneDoing(p)), paneDoing(p))
   // Never invented. A pane nobody has typed a real ask into is named and nothing more.
-  eq('a pane with no recorded ask says nothing about one', paneDoing(pane({ pane: 4, name: 'vrb' })), 'vrb pane 4')
+  eq('a pane with no recorded ask says nothing about one', paneDoing(pane({ pane: 4, name: 'vrb' })), '(4) vrb')
+
+  // Which COPY of the project. Three lanes of one repo were three panes all called
+  // `PaneForge`, so a sentence about one of them was equally true of the other two - the
+  // one fact that separates them was the only one left out.
+  eq(
+    'a lane is named as well as the project',
+    paneWord(pane({ pane: 3, name: 'PaneForge', where: 'lane a' })),
+    '(3) PaneForge lane a'
+  )
+  // ...and a trunk pane is NOT given "main checkout": `place.ts`'s own rule is that a bare
+  // project name already means the project's own checkout, and adding it to every sentence
+  // is two words that say nothing on the common case.
+  eq(
+    'and a trunk pane is left alone',
+    paneWord(pane({ pane: 3, name: 'PaneForge', where: '' })),
+    '(3) PaneForge'
+  )
+  // Reading back its own sentence has to work, or "close (3) PaneForge lane a" - which is
+  // the exact string the pet just printed - is a pane it cannot find.
+  {
+    const back = parse('close (3) PaneForge lane a', [pane({ id: 'c', pane: 3, name: 'PaneForge' }), ...desk])
+    eq('the bracketed number it prints is a number it can read', back.kind, 'close')
+    eq('...and it is that pane', back.ids.join(','), 'c')
+  }
 
   const one = actedWords('closed', [{ word: paneWord(p), doing: p.doing }], 190, 3 * MIN)
   check('a close names the pane', /taskdriver pane 1/.test(one), one)

@@ -6,7 +6,7 @@
 // ten looping sprites in a settings dialog is the animation budget spent on a decision
 // that takes two seconds.
 
-import { GRID, PETS, runsOf, type Pet } from '@shared/pets'
+import { GRID, NO_PET, PETS, runsOf, type Pet } from '@shared/pets'
 
 /** The still pose: the body, both fixed extras, and whichever eye position looks ahead. */
 function still(pet: Pet): string[][] {
@@ -29,6 +29,30 @@ interface Props {
 export default function PetPicker({ value, onChange }: Props): JSX.Element {
   return (
     <div className="pet-grid">
+      {/* No animal, and every reading kept. It sits in the picker rather than beside the
+          on/off switch because it IS the same choice - which pet - and because the switch
+          next to it turns off the ladder's only voice, which is a different thing to want. */}
+      <button
+        className={'pet-swatch' + (value === NO_PET ? ' on' : '')}
+        title="No pet - the readings dock in the corner instead"
+        onClick={() => onChange(NO_PET)}
+      >
+        <svg viewBox={`0 0 ${GRID} ${GRID}`} width="38" height="38" aria-hidden="true">
+          <rect
+            className="pet-none-box"
+            x="4.5"
+            y="7.5"
+            width="15"
+            height="10"
+            rx="2.5"
+            fill="none"
+            strokeWidth="1.4"
+          />
+          <rect className="pet-none-line" x="7" y="10.5" width="10" height="1.4" rx="0.7" />
+          <rect className="pet-none-line" x="7" y="13.5" width="6.5" height="1.4" rx="0.7" />
+        </svg>
+        <span className="pet-name">None</span>
+      </button>
       {PETS.map((pet) => (
         <button
           key={pet.id}

@@ -534,7 +534,14 @@ export default function App(): JSX.Element {
     const s = sessionsRef.current[i]
     // The project as well as the number: "closed pane 3" names a keystroke, and the thing
     // somebody wants back is a conversation. Same words the mascot uses everywhere else.
-    return paneWord({ name: projectNameOf(s.cwd) || s.title, pane: i + 1 } as MascotPane)
+    const place = describePlace({ cwd: s.cwd, lane: s.lane })
+    return paneWord({
+      name: projectNameOf(s.cwd) || s.title,
+      pane: i + 1,
+      // Only a lane earns the extra words: `place.ts`'s rule is that a trunk checkout is
+      // what a bare project name already means.
+      where: place.kind === 'lane' ? place.role : ''
+    })
   })
   /**
    * ...and the same pane with what it was in the middle of.
@@ -3506,6 +3513,12 @@ export default function App(): JSX.Element {
         id: s.id,
         pane: i + 1,
         name: projectNameOf(s.cwd) || s.title,
+        // Which COPY of that project. Three lanes of one repo were three panes with the
+        // same name, so every sentence about one of them named the other two as well.
+        where: (() => {
+          const place = describePlace({ cwd: s.cwd, lane: s.lane })
+          return place.kind === 'lane' ? place.role : ''
+        })(),
         state: fleetState(s),
         memMb: usage?.panes[s.id]?.rssMb ?? null,
         idleMs: Math.max(0, Date.now() - (Math.max(s.lastKeyboard, s.lastOutput ?? 0) || s.createdAt || Date.now())),
