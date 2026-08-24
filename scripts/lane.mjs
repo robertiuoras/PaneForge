@@ -848,6 +848,35 @@ function reap(state) {
       delete c.tentative
       reaped = true
     }
+    // A hold on a checkout that is not on disk. The folder was deleted, or the worktree was
+    // never built, so nothing can ever be typed in it and no heartbeat will ever arrive -
+    // and STALE_MS is twelve hours, so the row sat in `LANES ELSEWHERE` all day saying a
+    // chat had a lane it could not have. 2026-08-24, `assistant`: three rows, a/b/c, each
+    // "quiet 10h", against a repo whose only worktree was the trunk.
+    //
+    // The wait is TENTATIVE_MS rather than nothing, because a claim is written before the
+    // worktree is built and a claim made seconds ago with no folder yet is a lane being
+    // set up, not a ghost.
+    //
+    // A branch master does not have is the one thing that stops this. `drainLane` cannot
+    // rescue it - every step it takes (`laneWork`, `catchUp`) needs a checkout, so with
+    // the folder gone it returns null and the commits become invisible to a release, which
+    // is lesson_release_decisions_read_local_tags' bug arriving by a different road. So a
+    // ghost carrying commits is left to STALE_MS exactly as before, where the twelve-hour
+    // path can rebuild nothing either but at least does not quietly widen the hole.
+    if (
+      id !== 'main' &&
+      !existsSync(laneDir(id)) &&
+      now() - (c.seen ?? c.claimed ?? 0) > TENTATIVE_MS &&
+      !state.ready[id] &&
+      !state.conflicts[id] &&
+      aheadOf(laneBranch(id)) === 0
+    ) {
+      dropClaims(state, c.session)
+      delete state.lanes[id]
+      reaped = true
+      continue
+    }
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
       // closed the `npm run try` window it left running either. Both go here - but its
