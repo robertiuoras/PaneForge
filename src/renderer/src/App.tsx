@@ -201,11 +201,16 @@ function AskClock({ at }: { at: number }): React.JSX.Element | null {
  * from the same object. Two copies of this mapping is how a card ends up counting down on
  * a pane the sweep would never touch - a threat the app does not carry out.
  */
-function reclaimPaneOf(s: Session, activeId: string | null): ReclaimPane {
+function reclaimPaneOf(s: Session, activeId: string | null, lastFocus?: number): ReclaimPane {
   return {
     id: s.id,
     state: fleetState(s),
     lastKeyboard: s.lastKeyboard,
+    // Reading a pane is using it. Only the renderer knows which pane had the keyboard, so
+    // the moment focus LEFT is threaded in here - see `ReclaimPane.lastFocus` for the
+    // report this answers: a pane read for six minutes was overdue the instant it was
+    // switched away from, and its card's first word about it was a red `closes 0:01`.
+    lastFocus,
     // Quiet means quiet: `lastKeyboard` alone calls a pane whose agent has been printing
     // for two hours "idle for two hours".
     lastOutput: s.lastOutput,
@@ -394,6 +399,21 @@ export default function App(): JSX.Element {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  /**
+   * When the keyboard last LEFT each pane, which is when its idle clock may start.
+   *
+   * A ref, not state: nothing draws it, and every sweep that reads it already runs off a
+   * timer or off a session broadcast. Written once per focus change and never persisted -
+   * after a restart a pane's own `lastKeyboard`/`lastOutput` are the launch moment anyway,
+   * so there is nothing for a remembered blur to correct.
+   */
+  const focusLeftAt = useRef<Record<string, number>>({})
+  const hadFocus = useRef<string | null>(null)
+  useEffect(() => {
+    if (hadFocus.current && hadFocus.current !== activeId)
+      focusLeftAt.current[hadFocus.current] = Date.now()
+    hadFocus.current = activeId
+  }, [activeId])
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
   // Which page Settings should open on, when a button somewhere IS about one page - the
@@ -1982,6 +2002,8 @@ export default function App(): JSX.Element {
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
+        // Looking at a pane is using it, for a move exactly as for a close.
+        lastFocus: focusLeftAt.current[s.id],
         focused: s.id === activeRef.current,
         visible: visibleRef.current.has(s.id),
         remote: !!s.remote,
@@ -2164,6 +2186,8 @@ export default function App(): JSX.Element {
         id: s.id,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
+        // The same focus reading the clock uses - see `ReclaimPane.lastFocus`.
+        lastFocus: focusLeftAt.current[s.id],
         // Quiet means quiet. `lastKeyboard` alone called a pane whose agent had been
         // printing for two hours "idle for two hours" - see ReclaimPane.lastOutput.
         lastOutput: s.lastOutput,
@@ -2201,7 +2225,7 @@ export default function App(): JSX.Element {
     if (!cfg.enabled || !(cfg.idleCloseMinutes > 0)) return
     const sweep = (): void => {
       const plan = idleClosePlan(
-        sessionsRef.current.map((s) => reclaimPaneOf(s, activeRef.current)),
+        sessionsRef.current.map((s) => reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id])),
         cfg,
         Date.now()
       )
@@ -3452,7 +3476,7 @@ export default function App(): JSX.Element {
       for (const s of sessions) {
         if (s.remote) continue
         live.add(s.id)
-        const due = idleCloseAt(reclaimPaneOf(s, activeId), cfg, now)
+        const due = idleCloseAt(reclaimPaneOf(s, activeId, focusLeftAt.current[s.id]), cfg, now)
         // A pane somebody pressed "keep it open" on is held by that, not by the clock -
         // and the card must say so rather than counting down to a close that will not
         // happen for another hour.

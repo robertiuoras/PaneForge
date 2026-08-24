@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 
 // The real source, through node's type stripping - see usage-test.mjs for why.
-const { formatElapsed, stepFor, bucketOf, kb } = await import(
+const { formatElapsed, stepFor, bucketOf, kb, whenWords, DAY_MS } = await import(
   'file://' + join(root, 'src', 'shared', 'elapsed.ts').replace(/\\/g, '/')
 )
 
@@ -123,6 +123,25 @@ const opened = Date.UTC(2026, 7, 24, 9, 0, 30) // :30 past, on purpose
   const b2 = bucketOf(opened + 7 * 24 * H, Infinity, opened)
   ok('a frozen clock never changes bucket', b1 === b2, `${b1} vs ${b2}`)
   ok('and its bucket is a number', Number.isFinite(b1), String(b1))
+}
+
+// How a moment in the PAST is said - History's rows, where the reader's question is "which
+// of these did I just close" and a wall-clock stamp makes them subtract it from the clock in
+// their own status bar first. The boundary is the load-bearing half: past a day a distance
+// stops identifying anything (`31h ago`) and the calendar takes back over.
+{
+  const NOW = Date.parse('2026-08-24T13:15:00Z')
+  eq('a moment ago is not a number', whenWords(NOW - 12_000, NOW), 'just now')
+  eq('under a minute is still just now', whenWords(NOW - 59_000, NOW), 'just now')
+  eq('minutes are minutes', whenWords(NOW - 5 * 60_000, NOW), '5 min ago')
+  eq('and stay minutes to the hour', whenWords(NOW - 59 * 60_000, NOW), '59 min ago')
+  eq('past an hour it carries both units', whenWords(NOW - (3 * 60 + 20) * 60_000, NOW), '3h 20m ago')
+  eq('a round hour drops the empty minutes', whenWords(NOW - 4 * 3600_000, NOW), '4h ago')
+  eq('just inside a day is still a distance', whenWords(NOW - (DAY_MS - 60_000), NOW), '23h 59m ago')
+  // The control: past the boundary this is a DATE, not a distance, whatever the locale.
+  const old = NOW - DAY_MS - 3600_000
+  eq('past a day the calendar takes over', whenWords(old, NOW), new Date(old).toLocaleString())
+  eq('and so does a timestamp from the future', whenWords(NOW + 60_000, NOW), new Date(NOW + 60_000).toLocaleString())
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
+import { whenWords } from '@shared/elapsed'
 import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
-import Elapsed from './Elapsed'
+import Elapsed, { useNow } from './Elapsed'
 
 const api = window.api
 
@@ -33,6 +34,10 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
   const [open, setOpen] = useState<HistoryEntry | null>(null)
   const [text, setText] = useState('')
+  // The rows say how long AGO, so they go stale sitting on screen. One clock for the whole
+  // list, on the minute - the same subscription every other clock in the app shares, and
+  // the only unit `whenWords` moves in inside a day.
+  const now = useNow(60_000)
 
   useEffect(() => {
     api.listHistory().then(setEntries)
@@ -154,12 +159,25 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                   <strong>{e.title}</strong>
                   <span className="hint">{e.cwd}</span>
                   {/* The time the list is SORTED by, so the order can be read off the
-                      rows. A session still open has no closing time and says when it
-                      started instead. */}
-                  <span className="chip">
+                      rows: newest closed at the top. A session still open has no closing
+                      time and says when it started instead.
+
+                      Said as a DISTANCE inside a day (`closed 5 min ago`) and as a date
+                      past that. The question this list is open for is "which one did I just
+                      close", and a wall-clock timestamp makes the reader subtract it from
+                      the clock in their own status bar first. The exact moment is still
+                      there, on the hover. */}
+                  <span
+                    className="chip"
+                    title={
+                      e.endedAt
+                        ? `Closed ${new Date(e.endedAt).toLocaleString()}, opened ${new Date(e.startedAt).toLocaleString()}`
+                        : `Still open, since ${new Date(e.startedAt).toLocaleString()}`
+                    }
+                  >
                     {e.endedAt
-                      ? `closed ${new Date(e.endedAt).toLocaleString()}`
-                      : new Date(e.startedAt).toLocaleString()}
+                      ? `closed ${whenWords(e.endedAt, now)}`
+                      : `open since ${whenWords(e.startedAt, now)}`}
                   </span>
                   {/* How long the window was actually open, which is the question the
                       two timestamps make somebody do arithmetic on. Frozen for a closed
