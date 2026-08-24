@@ -26,7 +26,7 @@ import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
-import { promptEcho } from '../../../shared/promptEcho'
+import { seedPrompts } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
@@ -1686,11 +1686,12 @@ function TerminalPane({
       if (list.length) return
       const b = t.buffer.active
       const cursor = b.baseY + b.cursorY
-      const found: { line: number; text: string }[] = []
-      for (let i = 0; i < cursor; i++) {
-        const text = promptEcho(b.getLine(i)?.translateToString(true) ?? '')
-        if (text) found.push({ line: i, text })
-      }
+      const rows: string[] = []
+      for (let i = 0; i < cursor; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
+      // One tag per prompt, on the copy that is still in the right place - see
+      // `seedPrompts`. Row by row this gave three tags for one ask and a tag on a line of
+      // test output, because a replayed screen holds every repaint of the prompt block.
+      const found = seedPrompts(rows)
       // Same cap as the live rail, and the same end of the list: past this many the tags
       // are a solid bar, and the newest are the ones being looked for.
       for (const f of found.slice(-MARK_CAP)) {
