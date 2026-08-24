@@ -2535,7 +2535,45 @@ Buttons fixed "nobody was at the desk". The next cost is at the desk: most of th
 questions are the CLI asking whether it may do the thing it was just told to do, and the
 person presses return. `shared/autoAnswer.ts` presses it instead — **on by default**
 (Settings → "Answer an agent's question for me when the answer is obvious"), with the wait
-adjustable beside it and a **five second** default rather than 1.2s.
+adjustable beside it and a **thirty second** default (1.2s, then 5s, then this).
+
+**The wait is spent away from the window, and that is what fixed the number.** Robert,
+2026-08-24: "timer keeps going down when I go to that tab or have focus on PaneForge ...
+I want it to stop so I can actually read the question ... and it doesn't give me time to
+reply in Telegram with the button". Both halves are the same defect: the wait was sold as
+"the window in which somebody who disagrees can reach the pane", and it was being spent by
+the person who had already reached it — switching to the pane to read the question was
+exactly when it ran out, and the seconds it burned there were the seconds a phone needed.
+
+So `holdWhileWatching` (on, and a switch under the enable) stamps `askHold` for as long as
+this window has the keyboard, and `startOf` starts the clock at the later of `askHold` and
+`askSince`. Consequences, each deliberate:
+
+- **Looking away starts the WHOLE wait again**, never a part-spent one. The question is only
+  readable while somebody is here, so time here is not grace.
+- **Held draws no countdown**, only a `hold` row naming the option it would press
+  (`autoAnswerHeld` on the session; `AskCountdown` returns early and subscribes to
+  `Infinity`, so it does not wake the app once a second either). A deadline that resets the
+  moment the window is left is not a countdown, and drawing one promises a second that never
+  arrives.
+- **30s rather than 5s** falls out of it: the wait is no longer "long enough to notice", it
+  is "long enough to answer from somewhere else", and the question does leave the machine —
+  `main/askNotify.ts` posts it to Telegram with the options as buttons. Five seconds is not
+  a notification, an unlock and a press.
+- **One focus probe**, `gameMode.deskFocused()`, which main already hands the window to.
+  A second one is how two answers to "is this window focused" end up disagreeing.
+- **`migrateAutoAnswer`'s `defaultsV3`** moves an existing desk once, off the SAVED config,
+  and only where `waitMs` is still 1200 or 5000 — a number typed in Settings is somebody's
+  own. The hold is applied unconditionally because no config in existence carries an answer
+  to a switch that did not exist.
+- `test:askrender` sets `holdWhileWatching: false`: it is about the countdown being DRAWN,
+  and left on it would pass or fail on whether the probe's window happened to be focused.
+
+**And both clocks now tick against the deadline.** `AskCountdown` and `AskClock` called
+`useNow()`, whose buckets turn over on the wall second while `at` is an arbitrary
+millisecond — so the last step before a press was however much of a second was left, which
+is what "looks a bit buggy when the timer counts down" was. `useNow(1000, at)` aligns every
+tick to the real remainder. The two have to agree: they are two readings of one press.
 
 It was off for exactly one reason — "arriving switched on with an update would answer a
 permission prompt on a desk that never asked for that" — and the answer to that is the

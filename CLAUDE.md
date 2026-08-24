@@ -769,7 +769,7 @@ arrow moves went from 34 renders of every pane to 5 on the question's pane and 0
 
 ## ...and a question with an obvious answer is answered
 
-`shared/autoAnswer.ts` presses return instead — **on by default**, with a **five second**
+`shared/autoAnswer.ts` presses return instead — **on by default**, with a **thirty second**
 default wait (Settings → "Answer an agent's question for me when the answer is obvious").
 
 - **It takes the BEST option, not the first one.** Every CLI marks its own preference in the
@@ -783,6 +783,20 @@ default wait (Settings → "Answer an agent's question for me when the answer is
   bare word `always`) is never reachable, and neither is one that stops or answers with a
   question of its own. `anyQuestion` is the wider setting and takes the CLI's own default;
   both refusals still hold over it.
+- **The whole wait is spent AWAY from this window.** `holdWhileWatching` (on) stamps
+  `askHold` for as long as the app has the keyboard, and `startOf` runs the clock from the
+  later of that and `askSince` — so nothing is pressed while somebody is reading the
+  question, and looking away starts the full `waitMs` again rather than resuming a
+  part-spent one. Held draws no countdown at all (`autoAnswerHeld`, a `hold` row naming the
+  option): a deadline that restarts the moment the window is left is not a countdown. That
+  is also what makes the Telegram buttons reachable — the question only ever reaches a phone
+  with this window in the background, which is why the default is 30s and not 5.
+  The one focus reading is `gameMode.deskFocused()`; a second probe is how two answers to
+  "is this window focused" end up disagreeing.
+- **Both clocks tick against the DEADLINE, not the wall clock.** `useNow(1000, at)` in
+  `AskCountdown` and `AskClock`: with wall-aligned buckets the last step before a press was
+  whatever fraction of a second happened to be left, which reads as a number that sits and
+  then skips one.
 - **The timing is `dueForAuto`, and it takes TWO signatures.** A press waits until the frame has
   sat unchanged for `waitMs`, and that signature includes the arrow, so arrowing at the desk
   restarts the wait. But "have I already pressed this one" may NOT ask that signature — our own
