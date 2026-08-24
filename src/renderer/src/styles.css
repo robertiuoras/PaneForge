@@ -2406,6 +2406,12 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 
 .hist-list { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .hist-item { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); padding: 8px 10px; }
+/* Which of these is still running. An accent RAIL rather than a tinted card: the list is
+   read down its left edge, and a filled surface per row would fight the chapters block
+   inside it. The chip on the row carries the same two colours, so the reading never
+   depends on hue alone. */
+.hist-item.live { border-left: 3px solid var(--ok); }
+.hist-item.closed { border-left: 3px solid var(--danger); }
 .hist-head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .hist-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The one line saying what a session was for. Indented to the title above it and clipped

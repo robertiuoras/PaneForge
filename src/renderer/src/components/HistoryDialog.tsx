@@ -34,6 +34,13 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
   const [open, setOpen] = useState<HistoryEntry | null>(null)
   const [text, setText] = useState('')
+  /**
+   * Rows whose whole summary is showing. The row clips to three chapters and two lines,
+   * which is the recognise-this-row reading; the whole thing is `summaryFull`, and it was
+   * only reachable by opening the transcript or hovering for a tooltip. Costs nothing to
+   * show - the chapters are already on the entry.
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // The rows say how long AGO, so they go stale sitting on screen. One clock for the whole
   // list, on the minute - the same subscription every other clock in the app shares, and
   // the only unit `whenWords` moves in inside a day.
@@ -153,7 +160,12 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
         ) : (
           <div className="hist-list">
             {entries.map((e) => (
-              <div key={e.id} className="hist-item">
+              /* Still open or closed is the first thing the eye needs off this list - a
+                 row for the pane that is on screen right now reads exactly like a row
+                 for one closed a week ago. Green edge for live, red for closed, and the
+                 chip below carries the same two colours so the answer is not carried by
+                 hue alone. */
+              <div key={e.id} className={`hist-item ${e.endedAt ? 'closed' : 'live'}`}>
                 <div className="hist-head" onClick={() => setOpen(e)}>
                   <AgentLogo id={e.agent} spec={agents.find((a) => a.id === e.agent)} size={13} />
                   <strong>{e.title}</strong>
@@ -168,7 +180,7 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       the clock in their own status bar first. The exact moment is still
                       there, on the hover. */}
                   <span
-                    className="chip"
+                    className={`chip ${e.endedAt ? 'dead' : 'kept'}`}
                     title={
                       e.endedAt
                         ? `Closed ${new Date(e.endedAt).toLocaleString()}, opened ${new Date(e.startedAt).toLocaleString()}`
@@ -194,12 +206,32 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                     one window and only the first of them used to be shown. Absent rather
                     than guessed for a session that closed before the app recorded one - a
                     wrong sentence about which session to bring back is worse than none. */}
-                {summaryOf(e) && (
-                  <div className="hist-gist" title={summaryFull(e)}>
-                    {summaryOf(e)}
-                  </div>
-                )}
+                {summaryOf(e) &&
+                  (expanded.has(e.id) ? (
+                    <div className="hist-chapters">{summaryFull(e)}</div>
+                  ) : (
+                    <div className="hist-gist" title={summaryFull(e)}>
+                      {summaryOf(e)}
+                    </div>
+                  ))}
                 <div className="hist-actions">
+                  {/* Only where there is something the row is not already showing: one
+                      chapter is printed whole, so a button offering to print it again is
+                      a button that does nothing. */}
+                  {((e.chapters?.length ?? 0) > 1 || Boolean(e.dropped)) && (
+                    <button
+                      className="ghost small"
+                      onClick={() =>
+                        setExpanded((s) => {
+                          const next = new Set(s)
+                          if (!next.delete(e.id)) next.add(e.id)
+                          return next
+                        })
+                      }
+                    >
+                      {expanded.has(e.id) ? 'Show less' : 'View all'}
+                    </button>
+                  )}
                   {/* A folder that is not there any more cannot be reopened, and pressing
                       the button did nothing at all: main catches a missing folder per
                       request so one bad row cannot abort a workspace launch, and the row
