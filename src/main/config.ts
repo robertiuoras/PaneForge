@@ -405,11 +405,24 @@ function migrateAutoAnswer(
   }
   // V3: the wait is now spent entirely away from this window, so 5s - a number that only
   // ever had to be long enough to NOTICE - becomes 30s, which is long enough to answer the
-  // Telegram message instead. Moved only where it is still the value this app wrote; a wait
-  // somebody picked in Settings is theirs. The hold is applied unconditionally because it
-  // never existed as a switch before, so no config in existence carries an answer to it.
+  // Telegram message instead.
+  //
+  // 5000 is the one value this cannot tell apart: it was V2's own default AND it is an
+  // option in the Settings menu, and once `defaultsV2` is set there is nothing left in the
+  // file that says which it was. It is moved anyway, deliberately - it is the app's own
+  // write on nearly every desk, and the alternative is that the desk this was asked for
+  // never gets the new wait at all. Anyone who really wanted 5s picks it again, once.
   if (merged.waitMs === 1200 || merged.waitMs === 5000) merged.waitMs = DEFAULT_AUTO_ANSWER.waitMs
-  merged.holdWhileWatching = DEFAULT_AUTO_ANSWER.holdWhileWatching
+  // The hold, only where the file has NO answer to it - never over one it does.
+  //
+  // Writing it unconditionally looked safe ("no config in existence carries an answer to a
+  // switch that did not exist") and was the bug: `setConfig` merges a patch at the TOP
+  // level, so anything sending `{ autoAnswer: { holdWhileWatching: false } }` replaces the
+  // whole object and takes `defaultsV3` with it. The early return above then never fires
+  // and the next launch turns the switch back on - a switch nobody can keep off is worse
+  // than no switch. Keyed on the field itself, this survives losing its own marker.
+  if (raw?.holdWhileWatching === undefined)
+    merged.holdWhileWatching = DEFAULT_AUTO_ANSWER.holdWhileWatching
   merged.defaultsV2 = true
   merged.defaultsV3 = true
   return merged

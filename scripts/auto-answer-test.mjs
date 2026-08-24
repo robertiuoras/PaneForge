@@ -338,6 +338,31 @@ ok('the sweep is wired and the decision above is the one it asks', () => {
   // above passes and the shipped app counts down while somebody reads the question.
   assert.match(sessions, /live\.askHold = Date\.now\(\)/, 'the hold is actually stamped')
   assert.match(sessions, /deskFocused\(\)/, 'and off the one focus probe, not a second one')
+
+  // The migration, which is the only part of this that touches a config somebody already
+  // has. A switch that cannot be kept off is worse than no switch: `setConfig` merges a
+  // patch at the top level, so a caller sending only `holdWhileWatching` drops
+  // `defaultsV3` and the early return stops firing - which is why this is keyed on the
+  // FIELD being absent rather than on the marker.
+  const config = readFileSync(join(root, 'src/main/config.ts'), 'utf8')
+  assert.match(
+    config,
+    /if \(raw\?\.holdWhileWatching === undefined\)\s*\n?\s*merged\.holdWhileWatching/,
+    'the hold is written only where the saved config has no answer to it'
+  )
+
+  // The held row is a branch no window test reaches - `test:askrender` turns the hold OFF
+  // on purpose, because with it on that test would pass or fail on whether the probe's
+  // window happened to be focused. So its shape is pinned here instead: held returns
+  // early, draws no seconds, and subscribes to no tick.
+  const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+  assert.match(pane, /useNow\(held \? Infinity : 1000, at\)/, 'held wakes the app for nothing')
+  assert.match(pane, /if \(held\)\s*\n?\s*return \(/, 'held is its own row, not a countdown')
+  assert.match(
+    pane,
+    /Waiting while you are here[\s\S]{0,200}pane-ask-auto-pick/,
+    'and it still names the option it would press'
+  )
   // The keys go through `choose`, which re-checks the question before every one of them.
   assert.match(sessions, /this\.choose\(live\.meta\.id, pick\.n\)/)
 })
