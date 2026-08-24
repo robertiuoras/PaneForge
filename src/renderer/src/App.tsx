@@ -201,7 +201,12 @@ function AskClock({ at }: { at: number }): React.JSX.Element | null {
  * from the same object. Two copies of this mapping is how a card ends up counting down on
  * a pane the sweep would never touch - a threat the app does not carry out.
  */
-function reclaimPaneOf(s: Session, activeId: string | null, lastFocus?: number): ReclaimPane {
+function reclaimPaneOf(
+  s: Session,
+  activeId: string | null,
+  lastFocus?: number,
+  pinned?: boolean
+): ReclaimPane {
   return {
     id: s.id,
     state: fleetState(s),
@@ -226,7 +231,9 @@ function reclaimPaneOf(s: Session, activeId: string | null, lastFocus?: number):
     visible: false,
     remote: !!s.remote,
     asking: !!s.ask,
-    handingOff: !!s.handingOff
+    handingOff: !!s.handingOff,
+    // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
+    pinned
   }
 }
 
@@ -297,6 +304,14 @@ const api = window.api
  * one and a half minutes rather than never.
  */
 const VISIBILITY_REFRESH_MS = 30_000
+
+/**
+ * How long the memory notice stays on screen.
+ *
+ * Long enough to read two sentences and a figure, short enough that it is gone before it
+ * becomes furniture - which is the whole complaint the strip it replaces collected.
+ */
+const CAPACITY_NOTE_MS = 12_000
 
 /* One pass of `doneGlow` (1.9s in styles.css) plus a beat, and nothing more: the class has
    to come off when the flash ends or the card keeps the last frame's tint for another
@@ -412,8 +427,23 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (hadFocus.current && hadFocus.current !== activeId)
       focusLeftAt.current[hadFocus.current] = Date.now()
+    // ...and the pane being ARRIVED at, which is the half that was missing. Reading the
+    // blur alone means a pane's clock only restarts on the way OUT, so a pane picked up
+    // while its chip said `closes 1:12` kept that deadline for as long as the keyboard sat
+    // in it without producing a keystroke or a byte, and the card went straight back to
+    // 1:12 on the way out. Robert, 2026-08-24: "when you click on session the 5min closing
+    // timer doesnt reset". Touching a pane is using it, at both ends of the visit.
+    if (activeId) focusLeftAt.current[activeId] = Date.now()
     hadFocus.current = activeId
   }, [activeId])
+  /**
+   * Panes somebody has said are never to be closed for being idle - see
+   * `ReclaimPane.pinned`. State rather than a ref because the card's menu draws which way
+   * the switch is, and the chip has to go the moment it is pressed.
+   */
+  const [pinned, setPinned] = useState<Record<string, true>>({})
+  const pinnedRef = useRef(pinned)
+  pinnedRef.current = pinned
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
   // Which page Settings should open on, when a button somewhere IS about one page - the
@@ -1298,6 +1328,20 @@ export default function App(): JSX.Element {
   // Declared up here rather than beside the trim effect that also reads it: the launch
   // path below has to know whether this machine is full BEFORE it starts anything.
   const [capacity, setCapacity] = useState<Verdict | null>(null)
+  /**
+   * The memory notice on screen right now, or null - see the card in the JSX below.
+   *
+   * Armed by the verdict CHANGING into something worth saying, never by it being true:
+   * `capacity` is recomputed every few seconds and a card that re-armed on each reading
+   * would be the permanent strip again with an animation. `capacityShown` is the identity
+   * of the thing already said, cleared when the desk goes back to ok, so a machine that
+   * recovers and fills up again says so a second time.
+   */
+  const [capacityNote, setCapacityNote] = useState<
+    { level: Verdict['level']; advice: string; numbers: string } | null
+  >(null)
+  const capacityShown = useRef('')
+  const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onCapacity(setCapacity), [])
 
   /**
@@ -1883,6 +1927,32 @@ export default function App(): JSX.Element {
    * is running" rather than "not measured yet".
    */
   const [usage, setUsage] = useState<UsageReport | null>(null)
+
+  /**
+   * Put the memory notice on screen when the reading BECOMES worth saying, and take it
+   * away again a few seconds later. `usage` is read here rather than in the card so the
+   * figure is the one that was true when the card armed - a number that goes on moving
+   * inside a card nobody is looking at is a second reading, not the one being reported.
+   */
+  useEffect(() => {
+    if (!capacity || capacity.level === 'ok' || !capacity.say) {
+      capacityShown.current = ''
+      return
+    }
+    const key = `${capacity.level}|${capacity.why}`
+    if (capacityShown.current === key) return
+    capacityShown.current = key
+    const u = usageRef.current
+    const numbers = u && u.totalMb > 0
+      ? `${formatMb(u.totalMb)} in ${sessionsRef.current.length} pane` +
+        `${sessionsRef.current.length === 1 ? '' : 's'} plus PaneForge itself, of ` +
+        `${formatMb(u.machineMb)} on this machine` +
+        (u.cpuPct === null ? '' : ` - ${u.cpuPct}% of one CPU core`)
+      : ''
+    setCapacityNote({ level: capacity.level, advice: capacity.advice, numbers })
+    window.clearTimeout(capacityTimer.current)
+    capacityTimer.current = window.setTimeout(() => setCapacityNote(null), CAPACITY_NOTE_MS)
+  }, [capacity])
   /**
    * What the ladder did on its own, for the mascot to say. It is a fact with a timestamp
    * rather than a message queue: the mascot keys off `at`, so the same sweep is announced
@@ -2201,7 +2271,8 @@ export default function App(): JSX.Element {
         asking: !!s.ask,
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
-        handingOff: !!s.handingOff
+        handingOff: !!s.handingOff,
+        pinned: pinnedRef.current[s.id]
       })),
       capacity,
       cfg,
@@ -2225,7 +2296,9 @@ export default function App(): JSX.Element {
     if (!cfg.enabled || !(cfg.idleCloseMinutes > 0)) return
     const sweep = (): void => {
       const plan = idleClosePlan(
-        sessionsRef.current.map((s) => reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id])),
+        sessionsRef.current.map((s) =>
+          reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id], pinnedRef.current[s.id])
+        ),
         cfg,
         Date.now()
       )
@@ -3476,7 +3549,11 @@ export default function App(): JSX.Element {
       for (const s of sessions) {
         if (s.remote) continue
         live.add(s.id)
-        const due = idleCloseAt(reclaimPaneOf(s, activeId, focusLeftAt.current[s.id]), cfg, now)
+        const due = idleCloseAt(
+          reclaimPaneOf(s, activeId, focusLeftAt.current[s.id], pinned[s.id]),
+          cfg,
+          now
+        )
         // A pane somebody pressed "keep it open" on is held by that, not by the clock -
         // and the card must say so rather than counting down to a close that will not
         // happen for another hour.
@@ -3490,7 +3567,7 @@ export default function App(): JSX.Element {
     }
     publishClosingRef.current = run
     run()
-  }, [sessions, config?.reclaim, activeId])
+  }, [sessions, config?.reclaim, activeId, pinned])
 
   /**
    * Hold these panes where they are, for an hour.
@@ -3523,6 +3600,29 @@ export default function App(): JSX.Element {
     // `keptUntil` is a ref, so nothing about this reaches the effect that publishes the
     // deadline. Without this the chip goes on counting down to a close an hour away.
     publishClosingRef.current()
+  }, [])
+
+  /**
+   * This pane was just used by a person - restart its idle clock and say so on the card.
+   *
+   * The focus effect above covers switching BETWEEN panes; this covers the press itself,
+   * so the chip goes the instant the card is clicked rather than on the next session
+   * broadcast. `publishClosingRef` because `focusLeftAt` is a ref and nothing else would
+   * notice that it moved.
+   */
+  const touchPane = useCallback((id: string) => {
+    focusLeftAt.current[id] = Date.now()
+    publishClosingRef.current()
+  }, [])
+
+  /** "Keep this pane open" / "Let it close when idle", off the card's right-click. */
+  const togglePin = useCallback((id: string) => {
+    setPinned((was) => {
+      const next = { ...was }
+      if (next[id]) delete next[id]
+      else next[id] = true
+      return next
+    })
   }, [])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
@@ -3758,6 +3858,7 @@ export default function App(): JSX.Element {
               }
               onPointerDown={(e) => {
                 const pick = (): void => {
+                  touchPane(s.id)
                   setActiveId(s.id)
                   handheld.showPane()
                 }
@@ -3769,6 +3870,7 @@ export default function App(): JSX.Element {
               }}
               onClick={() => {
                 if (draggedRef.current) return
+                touchPane(s.id)
                 setActiveId(s.id)
                 // On a phone the tap has to hand over the screen even when that pane was
                 // ALREADY the active one - which is the normal case, because the list is
@@ -3903,6 +4005,21 @@ export default function App(): JSX.Element {
                         `idleCloseAt` outright, so the three can never be true at once. */}
                     {s.closingAt ? (
                       <CloseClock at={s.closingAt} onKeep={() => keepOpen([s.id])} />
+                    ) : pinned[s.id] ? (
+                      // A switch with no reading is a switch nobody can tell they pressed:
+                      // pinning a pane removes the only thing on the card that was about
+                      // the idle clock, so it takes that place rather than leaving a gap.
+                      <button
+                        type="button"
+                        className="chip kept"
+                        title="This pane is never closed for being idle. Press to put it back on the clock."
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          togglePin(s.id)
+                        }}
+                      >
+                        kept open
+                      </button>
                     ) : null}
                     {/* A pane on its way out says so, and says it here for the same reason
                         the chip above is here: the sub-line has no room and this is
@@ -4252,19 +4369,6 @@ export default function App(): JSX.Element {
           onHelp={() => setLaneHelp(true)}
         />
 
-        {/* What the machine can still hold, in the one place a person is already looking
-            when they are about to open another pane. Only when it is NOT ok: a line that
-            is always there is a line nobody reads, and on a healthy desk there is nothing
-            to say. And only when the app is not already DOING something about it
-            (`Verdict.say`) - a reading whose whole advice is a job the ladder is about to
-            perform is narration, and it is what got this strip complained about. The wording carries the numbers (see capacity.ts) because "low memory"
-            with no figure is the message that got the app blamed for the browsers. */}
-        {capacity && capacity.level !== 'ok' && capacity.say && (
-          <div className={'capacity ' + capacity.level} title={`Panes here hold about ${capacity.usedMb} MB. Each new one adds about ${capacity.nextPaneMb} MB.`}>
-            {capacity.advice}
-          </div>
-        )}
-
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
@@ -4279,7 +4383,7 @@ export default function App(): JSX.Element {
                 back". The per-pane chips say which one to close; this says whether to
                 bother. Only once something is running - a total of "250 MB" over an
                 empty desk is a number about nothing. */}
-            {usage && usage.totalMb > 0 && sessions.length > 0 && (
+            {usage && usage.totalMb > 0 && sessions.length > 0 && capacity && capacity.level !== 'ok' && (
               <span
                 className="badge res"
                 title={
@@ -4482,7 +4586,10 @@ export default function App(): JSX.Element {
                   : null)
               } as React.CSSProperties
             }
-            onMouseDown={() => setActiveId(s.id)}
+            onMouseDown={() => {
+              touchPane(s.id)
+              setActiveId(s.id)
+            }}
           >
             <div
               className={'pane-title' + (tiled ? ' draggable' : '')}
@@ -5135,6 +5242,28 @@ export default function App(): JSX.Element {
           />
         )
       })()}
+      {/* What the machine is up against, said at the moment it becomes true and then taken
+          away. It was a strip in the sidebar that was on screen for as long as the reading
+          held, which is most of a working day on a full desk - and a line that is always
+          there is a line nobody reads. Robert, 2026-08-24: "i dont really like the message
+          memory is tight ... because its showing at all times ... id rather some popup for
+          short time with exact overloaded". The exact figure comes with it, which is why
+          the total is no longer a permanent badge beside the pane count. */}
+      {capacityNote && (
+        <div
+          className={'cap-pop ' + capacityNote.level}
+          role="status"
+          title="Press to dismiss"
+          onClick={() => setCapacityNote(null)}
+        >
+          <div className="cap-pop-head">
+            {capacityNote.level === 'over' ? 'Out of memory' : 'Memory is tight'}
+          </div>
+          <div className="cap-pop-body">{capacityNote.advice}</div>
+          {capacityNote.numbers && <div className="cap-pop-num">{capacityNote.numbers}</div>}
+        </div>
+      )}
+
       {/* Hand off asks one question - which machine - so it gets one box rather than the
           whole Devices screen with a banner over it. */}
       {handoff && (
@@ -5164,7 +5293,15 @@ export default function App(): JSX.Element {
             y={cardMenu.y}
             onClose={shut}
             items={[
-              { key: 'open', label: 'Open this pane', run: () => { setActiveId(s.id); handheld.showPane() } },
+              {
+                key: 'pin',
+                label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
+                hint: pinned[s.id]
+                  ? 'the idle clock may close it again'
+                  : 'the idle clock never closes it'
+                ,
+                run: () => togglePin(s.id)
+              },
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
               ...(s.handoffQueuedAt

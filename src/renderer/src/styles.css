@@ -428,13 +428,28 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 
 /* The memory notice. Amber for tight, red for over - and deliberately quiet type: this
    appears while the machine is already struggling, and a loud banner on a laptop that is
-   merely busy would be the app crying wolf. It is absent entirely when there is nothing
-   to say, so anything visible here is worth reading. */
-.capacity { font-size: 10px; line-height: 1.35; padding: 6px 8px; margin: 0 2px 6px;
-  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r-sm);
-  background: var(--surface-2); color: var(--muted); }
-.capacity.tight { border-left-color: var(--warn); }
-.capacity.over { border-left-color: var(--danger); color: var(--danger); }
+   merely busy would be the app crying wolf. It arrives when the reading becomes true and
+   takes itself away after CAPACITY_NOTE_MS, so anything visible here is new.
+
+   Bottom LEFT: the mascot owns the bottom right and this must not land on top of it, and
+   z-index 39 keeps it under the mascot's own layer and under every dialog. */
+.cap-pop { position: fixed; left: 12px; bottom: 12px; z-index: 39; max-width: 320px;
+  padding: 8px 10px; border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: var(--r-sm); background: var(--surface-2); color: var(--muted);
+  font-size: 11px; line-height: 1.4; cursor: pointer;
+  box-shadow: 0 6px 20px #0000004d; }
+.cap-pop.tight { border-left-color: var(--warn); }
+.cap-pop.over { border-left-color: var(--danger); }
+.cap-pop-head { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.cap-pop.over .cap-pop-head { color: var(--danger); }
+.cap-pop-num { margin-top: 4px; font-size: 10px; font-variant-numeric: tabular-nums;
+  color: var(--muted); opacity: 0.85; }
+
+/* A pane taken off the idle clock, where its countdown would have been. Green rather than
+   amber: nothing is about to happen to this pane, which is the whole point of it. */
+.chip.kept { color: var(--ok); border-color: #35d07f33; background: #35d07f14; }
+button.chip.kept { cursor: pointer; font: inherit; font-size: 11px; }
+button.chip.kept:hover { filter: brightness(1.3); }
 .section-btn { padding: 2px 4px; display: inline-flex; align-items: center; line-height: 1; }
 .device-filter { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; padding: 0 2px; }
 .device-filter select { min-width: 0; flex: 1; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 6px; font: inherit; }
