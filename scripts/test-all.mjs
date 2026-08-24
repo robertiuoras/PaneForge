@@ -96,6 +96,7 @@ const TESTS = [
   ['voice', 'voice-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
+  ['crlf', 'crlf-test.mjs'],
   ['desk', 'desk-test.mjs'],
   ['panejob', 'panejob-test.mjs'],
   ['panebackjobs', 'pane-backjobs-test.mjs'],
