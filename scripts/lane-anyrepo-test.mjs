@@ -43,10 +43,13 @@ function git(cwd, ...args) {
 
 /** The real CLI, exactly as the hook calls it. */
 function lane(repo, ...args) {
+  // A trailing object is an env overlay, for the one caller that needs PF_RELEASE.
+  const env = args.length && typeof args[args.length - 1] === 'object' ? args.pop() : null
   const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], {
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 120_000
+    timeout: 120_000,
+    env: env ? { ...process.env, ...env } : process.env
   })
   return { code: r.status ?? 1, out: (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim() }
 }
@@ -189,6 +192,22 @@ function project(name, { lanes, version } = {}) {
   ok('the engine repo does not cut a version by itself', s.mode === 'merge', s.mode)
   ok('...on its own branch', s.branch === 'master', s.branch)
   ok('...and is recognised as its own checkout', s.own === true)
+
+  // How a release is ASKED FOR without editing the standing policy.
+  //
+  // Editing `.lanes.json` was the only way, and it is a trap with no way out: the edit
+  // makes the main checkout dirty and `ship` refuses a dirty checkout, so the release
+  // never happens and the file is left flipped if anything throws in between. Measured
+  // 2026-08-24 - `ship patch` answered `main checkout is dirty, commit first: M
+  // .lanes.json`. The ask is per-invocation, so it is an environment variable; the FILE
+  // stays the standing policy, and nothing automatic sets the variable, so a scheduled
+  // `autoship` still merges.
+  const asked = JSON.parse(lane(repoRoot, 'status', { PF_RELEASE: 'version' }).out)
+  ok('asking for a release once turns the version path on', asked.mode === 'version', asked.mode)
+  const after = JSON.parse(lane(repoRoot, 'status').out)
+  ok('...and the standing answer is unchanged the moment the ask ends', after.mode === 'merge', after.mode)
+  const junk = lane(repoRoot, 'status', { PF_RELEASE: 'yes-please' })
+  ok('a value that is not a release mode is refused, not guessed at', junk.code !== 0, junk.err || junk.out)
 }
 
 try {

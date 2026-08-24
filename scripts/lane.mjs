@@ -309,7 +309,20 @@ function loadProfile() {
       branch = o.ok && o.out ? o.out.replace(/^origin\//, '') : 'master'
     }
   }
-  const release = cfg.release ?? (OWN ? 'version' : 'merge')
+  // `PF_RELEASE` is how a release is ASKED FOR in a repo whose standing answer is "merge".
+  //
+  // PaneForge sets `"release": "merge"` on purpose - finishing work merges and pushes, and
+  // a version is cut only when Robert says so. The only way to honour that ask was to edit
+  // `.lanes.json`, and that is a trap with no way out: the edit makes the main checkout
+  // dirty, and `ship` refuses a dirty checkout, so the release never happens and the
+  // policy file is left flipped if anything throws in between. Measured 2026-08-24 -
+  // `ship patch` answered `main checkout is dirty, commit first: M .lanes.json`.
+  //
+  // An environment variable is the right shape for it because the ask is per-invocation,
+  // exactly like the ask itself. The FILE stays the standing policy, which is the thing
+  // that must not drift; nothing automatic sets this, so a scheduled `autoship` still
+  // obeys the file.
+  const release = process.env.PF_RELEASE || cfg.release || (OWN ? 'version' : 'merge')
   if (!['version', 'merge', 'none'].includes(release))
     throw new Error(`.lanes.json: unknown release "${release}" - use "version", "merge" or "none"`)
   return {
