@@ -347,4 +347,29 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   )
 }
 
+// "Keep this pane open" - a person overruling the clock outright, not for an hour.
+// `keptUntil` is the hour-long hold the countdown chip arms and it is the right answer for
+// "not now"; a pane holding something the app has no reading for (a watcher, a paragraph
+// somebody is part way through) needs "not ever", or the clock starts again an hour later.
+// Robert, 2026-08-24: "you can make it so stops closing in 5min timer always keeps
+// starting". It refuses BOTH sweeps: a person who said keep this one did not mean unless
+// memory is tight.
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 60 }
+  const kept = pane({ id: 'kept', pinned: true, lastKeyboard: NOW - 5 * HOUR })
+  const plain = pane({ id: 'plain', lastKeyboard: NOW - 5 * HOUR })
+  eq('a pinned pane has no deadline at all', idleCloseAt(kept, CLOCKED, NOW), null)
+  check('CONTROL: the same pane unpinned is due now', idleCloseAt(plain, CLOCKED, NOW) === NOW)
+  check('the clock leaves it and takes the other', ids(idleClosePlan([kept, plain], CLOCKED, NOW)) === 'plain')
+  const CRIT = { level: 'critical', mb: 0, panes: 0 }
+  check(
+    'and pressure does not overrule it either',
+    !reclaimPlan([kept, plain], CRIT, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'kept')
+  )
+  check(
+    'CONTROL: pressure does close the unpinned one',
+    reclaimPlan([kept, plain], CRIT, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'plain')
+  )
+}
+
 console.log(`reclaim: ${checks} checks passed`)
