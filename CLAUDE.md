@@ -1332,6 +1332,15 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   already past a five-minute deadline the instant it was switched away from, and its card's first
   word about it was a red `closes 0:01` — a countdown nobody can act on. One reading, so the sweep
   and the card cannot disagree.
+- **The clock counts time a person could have acted in, not wall time.** `shared/away.ts`
+  freezes it at the moment the machine's last input happened while
+  `powerMonitor.getSystemIdleTime()` says nobody is here (`AWAY_AFTER_MS`, 60s), and it
+  carries on from there when they come back — ten minutes away costs a pane nothing.
+  `main/away.ts` polls every 15s and pushes `system:away` on a CHANGE. The second desk is
+  refused by `sawPerson`, not by a setting: a machine no person has ever touched has nobody
+  to be away, so it behaves exactly as before. **Only the clock pauses** — `reclaimPlan`,
+  which fires on real pressure, is untouched, so a laptop left open all night is still
+  protected by the reading that was always the honest trigger.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has typed
   into for that long whatever the memory says; 0 is the default. The switch sets
   `IDLE_CLOSE_MINUTES` = **30 minutes**. It exists for the second machine — a desk driven over the
