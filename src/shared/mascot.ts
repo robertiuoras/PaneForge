@@ -203,6 +203,16 @@ export interface MascotPane {
   pane: number
   /** The pane's own name, or the project it is in. What `place.ts` already worked out. */
   name: string
+  /**
+   * Which COPY of that project this pane is in - `place.ts`'s own `role`, and only when it
+   * is not the project's own checkout.
+   *
+   * A desk running three lanes of one repo had three panes all called `PaneForge`, so
+   * "Closed PaneForge pane 3" named a project and a keystroke and left out the one fact
+   * that separates it from the pane beside it. Empty for a trunk pane, because "main
+   * checkout" is what a bare project name already means (`place.ts`'s rule, verbatim).
+   */
+  where?: string
   state: FleetState
   /** This pane's whole process tree, MB. null when the sampler has not read it yet. */
   memMb: number | null
@@ -294,14 +304,18 @@ function byName(text: string, panes: MascotPane[]): MascotPane[] {
 }
 
 /**
- * How the mascot refers to a pane in a sentence: the project first, then the number.
+ * How the mascot refers to a pane in a sentence: the number in brackets, then the place.
  *
- * The number is the keystroke that reaches it (Ctrl+N) and the project is what a person
- * has in their head, so "taskdriver pane 1" is both halves in the order they are thought
- * of. It used to be `pane 1 (taskdriver)`, which reads as an id with a note after it.
+ * The number is the keystroke that reaches it (Ctrl+N) and the place is what a person has
+ * in their head, so both halves are always there. It leads with the number in brackets
+ * because a sentence naming several panes - "Closed (1) PaneForge lane a and (4) crypto" -
+ * is otherwise a run of words with numbers buried inside it, and the numbers are the half
+ * that is actionable. `where` is the lane, added only when the project name does not
+ * already imply the checkout.
  */
-export function paneWord(p: MascotPane): string {
-  return p.name ? `${p.name} pane ${p.pane}` : `pane ${p.pane}`
+export function paneWord(p: { name?: string; pane: number; where?: string }): string {
+  const place = [p.name, (p.where ?? '').trim()].filter(Boolean).join(' ')
+  return place ? `(${p.pane}) ${place}` : `pane ${p.pane}`
 }
 
 /** The most of a pane's ask that goes in a sentence. Longer than this is a paragraph. */
