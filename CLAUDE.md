@@ -894,7 +894,13 @@ the conversation and not one line of the screen.
 - **The prompt tags come back with it.** The rail is built from KEYSTROKES, so a replay
   registers none. `seedMarks` scans the replayed buffer for the CLI's own `❯ <text>` echo, once,
   and only while the rail is empty. **`❯` only** — `>` starts a quote, a diff line, a shell
-  prompt and a blockquote. A rebuilt tag carries no time (`at: 0`). `test:promptecho`.
+  prompt and a blockquote. A rebuilt tag carries no time (`at: 0`).
+  **A row at a time is not enough**: a replayed screen holds every repaint of the prompt
+  block, so `seedPrompts` refuses a row carrying a rule or followed by one (a torn
+  repaint), refuses one with a non-blank row above it (an echo painted over tool output),
+  and keeps ONE tag per prompt, on the LAST copy - the one still in the place the reader is
+  looking at. Measured over this desk's own history logs: four tags for one ask, three of
+  them wrong. `test:promptecho`.
 
 **And `/clear` no longer takes the previous turn with it.** Three releases of Claude Code have
 wiped the screen three different ways, so the answer is not a list of vendor bytes:
@@ -1293,9 +1299,22 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
 - **A pane waiting for a person is never closed.** `needsYou` is quiet BECAUSE it is owed an
   answer. Nor is the focused pane, one on screen, one working or starting or stalled, or a mirror.
 - **The window is never emptied.**
-- **Looking at a pane is USING it.** `quietSince` is the latest of a keystroke, a printed byte and
+- **The reading of the machine is a card that ARRIVES and LEAVES, never a strip.** The
+  sidebar's `.capacity` line was on screen for as long as the reading held, which is most
+  of a working day on a full desk, and a line that is always there is a line nobody reads.
+  `.cap-pop` is armed by the verdict CHANGING into something worth saying (`level|why`,
+  cleared when the desk goes back to ok) and takes itself away after `CAPACITY_NOTE_MS`
+  (12s), carrying the exact figures with it. The desk TOTAL beside the pane count went with
+  it: it is drawn only while `capacity.level !== 'ok'`, because it is a pressure reading.
+- **A pane can be taken off the clock for good.** `ReclaimPane.pinned` - "Keep this pane
+  open" on the card's right-click, `kept open` where its countdown would have been - is
+  refused by `onTheClock` AND by `reclaimPlan`'s filter: somebody who said keep this one did
+  not mean unless memory is tight. `keptUntil` stays the answer for "not now" (an hour).
+- **Looking at a pane is USING it, at BOTH ends of the visit.** `quietSince` is the latest of a keystroke, a printed byte and
   the moment the KEYBOARD LEFT (`ReclaimPane.lastFocus`, threaded in from the renderer, which is
-  the only side that knows which pane is focused). Without it a pane read for ten minutes was
+  the only side that knows which pane is focused) - stamped when focus LEAVES and when it
+  ARRIVES, plus `touchPane` on the press itself, or a pane picked up while its chip said
+  `closes 1:12` kept that deadline for the whole visit and went straight back to it. Without it a pane read for ten minutes was
   already past a five-minute deadline the instant it was switched away from, and its card's first
   word about it was a red `closes 0:01` — a countdown nobody can act on. One reading, so the sweep
   and the card cannot disagree.
