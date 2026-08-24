@@ -932,6 +932,11 @@ Every row carries one line: the first thing typed at the agent, plus how many as
 - **It costs nothing.** No model, no tokens, no request — the line comes from keystrokes the app
   already relays, the same feed `promptArchive` is built from, so it works identically for every
   CLI. `shared/gist.ts` is only the tidy-up.
+- **A row says when, as a DISTANCE.** Newest closed at the top (`endedAt ?? startedAt`, in
+  `main/history.ts`), and inside a day the chip is `closed 5 min ago` rather than a wall-clock
+  stamp the reader has to subtract from their own status bar; past a day the calendar takes back
+  over, because `31h ago` identifies nothing. `whenWords` in `shared/elapsed.ts`, one minute clock
+  for the whole list, the exact moment on the hover. `npm run test:elapsed`.
 - **The FIRST ask, not the latest.** The twentieth is a follow-up inside it and reads as nothing
   once the session is closed.
 - **Scraping the transcript was tried and abandoned on the evidence** — a boxed composer is
@@ -1288,6 +1293,12 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
 - **A pane waiting for a person is never closed.** `needsYou` is quiet BECAUSE it is owed an
   answer. Nor is the focused pane, one on screen, one working or starting or stalled, or a mirror.
 - **The window is never emptied.**
+- **Looking at a pane is USING it.** `quietSince` is the latest of a keystroke, a printed byte and
+  the moment the KEYBOARD LEFT (`ReclaimPane.lastFocus`, threaded in from the renderer, which is
+  the only side that knows which pane is focused). Without it a pane read for ten minutes was
+  already past a five-minute deadline the instant it was switched away from, and its card's first
+  word about it was a red `closes 0:01` — a countdown nobody can act on. One reading, so the sweep
+  and the card cannot disagree.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has typed
   into for that long whatever the memory says; 0 is the default. The switch sets
   `IDLE_CLOSE_MINUTES` = **30 minutes**. It exists for the second machine — a desk driven over the
