@@ -67,7 +67,7 @@ import {
   startGameWatch,
   whenClear
 } from './gameMode'
-import { startAway } from './away'
+import { startAway, stopAway } from './away'
 import {
   initProfile,
   isQuietRelaunch,
@@ -3531,6 +3531,7 @@ app.on('will-quit', () => {
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
   presence.dispose()
   stopPressure()
+  stopAway()
   stopUsage()
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.

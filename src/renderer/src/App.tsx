@@ -2244,7 +2244,11 @@ export default function App(): JSX.Element {
       const cfg = handoffCfgRef.current
       const minutes = offloadMinutes(cfg)
       if (!cfg.enabled || !minutes) return
-      const now = Date.now()
+      // The same frozen clock the idle CLOSE reads. This sweep mirrors `idleClosePlan`
+      // deliberately (see shared/autoHandoff.ts), and the two reading different clocks is
+      // the same bug in a quieter place: a pane moved to the other machine while somebody
+      // was making coffee is a pane that vanished off this desk for the same reason.
+      const now = deskNow(Date.now(), awayRef.current)
       const panes = handoffPanes()
       const worthAsking = panes.some(
         (p) =>
