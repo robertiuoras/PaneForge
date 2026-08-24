@@ -2846,3 +2846,24 @@ The lesson for the next merge like this: when two lanes answer the same ask, res
 conflicted files is the small half. Grep the whole merged tree for duplicate registrations
 - `ipcMain.handle`, object-literal keys, component renders - because a clean auto-merge of
 two additions is exactly how you get two of something that must be one.
+
+**Two things `verify-build` caught in the migration, both about a switch nobody could keep
+off.** `merged.holdWhileWatching = DEFAULT` ran unconditionally on the argument that "no
+config in existence carries an answer to a switch that did not exist" - true on the day it
+shipped and false the moment somebody turns it off. `setConfig` merges a patch at the TOP
+level, so anything sending `{ autoAnswer: { holdWhileWatching: false } }` replaces the whole
+object and takes `defaultsV3` with it; the early return then stops firing and the next
+launch turns the switch back on, for ever. Keyed on the FIELD being absent
+(`raw?.holdWhileWatching === undefined`) it survives losing its own marker, which is the
+general shape: a migration guarded only by its marker is guarded by nothing once a partial
+write can drop the marker. Red-proofed by putting the unconditional line back.
+
+And `waitMs === 5000` genuinely cannot be told apart - it was V2's own default AND it is an
+option in the Settings menu, and after `defaultsV2` nothing in the file records which it
+was. It is moved anyway and the comment now says so rather than claiming "a wait somebody
+picked is theirs": the alternative is that the desk this was asked for never gets 30s.
+
+The held row is the one branch no window test reaches (`test:askrender` turns the hold off,
+or it would pass or fail on whether the probe's window happened to be focused), so its shape
+is pinned by source assertions in `test:autoanswer` instead - early return, no seconds, no
+tick subscription, and the option still named.
