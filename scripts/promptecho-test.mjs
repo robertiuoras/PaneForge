@@ -26,7 +26,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { promptEcho } = createRequire(import.meta.url)(outfile)
+const { promptEcho, seedPrompts } = createRequire(import.meta.url)(outfile)
 
 // Captured verbatim, trailing padding included - the terminal pads every row to the pane's
 // width, and a reader written against a trimmed line passes here and finds nothing live.
@@ -84,3 +84,48 @@ assert.ok(
 )
 
 console.log('promptecho: ok')
+
+
+// A whole replayed SCREEN, not one row at a time - these rows are copied out of this
+// desk's own `history/s18-*.log` rendered through a real xterm (2026-08-24). Read one row
+// at a time they yield FOUR tags for one ask, three of them wrong, which is the rail being
+// wrong rather than empty. Robert: "when i open history and the previous session i cant
+// see the tags next to scroll bar ... refine that better so its more accurate to the
+// prompt in the right place".
+{
+  const RULE = '\u2500'.repeat(60)
+  const screen = [
+    'ok    onestash       0.1s',
+    // The start of an echo painted over a finished test run - no blank row above it, and
+    // what follows the marker is that run's own output.
+    '\u276f aok    stash         21.3s',
+    '     ... +12 lines (ctrl+o to expand)' + RULE,
+    '  (gtimeout 6m 40s)' + RULE,
+    '',
+    // A torn repaint: a half-typed earlier keystroke, with the block's rule on the row
+    // below it.
+    '\u276f also when i epen historymasd the previous session i cant see the tags next to scroll bar which',
+    ' refine that better so its more ' + RULE,
+    '',
+    // The ask itself, drawn once...
+    '\u276f also when i open history and the previous session i cant see the tags next to scroll bar which',
+    ' refine that better so its more        ',
+    '  accurate to the prompt in the right place',
+    '',
+    'some answer',
+    '',
+    // ...and again, lower down, which is the copy still in the right place.
+    '\u276f also when i open history and the previous session i cant see the tags next to scroll bar which',
+    ' refine that better so its more        ',
+    ''
+  ]
+  const seeded = seedPrompts(screen)
+  assert.equal(seeded.length, 1, 'one ask on the screen is one tag')
+  assert.equal(seeded[0].line, 14, 'and it is the LAST copy of it, not the first')
+  assert.ok(seeded[0].text.startsWith('also when i open history'), seeded[0].text)
+
+  // CONTROL: row by row - what shipped - the same screen is four tags.
+  const naive = screen.filter((r) => promptEcho(r)).length
+  assert.equal(naive, 4, 'CONTROL: reading each row on its own tags four times')
+}
+
