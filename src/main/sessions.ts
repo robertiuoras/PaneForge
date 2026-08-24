@@ -20,7 +20,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { CHUNK_GAP_MS, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
+import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -352,6 +352,18 @@ export class SessionManager extends EventEmitter {
   private tableJobs = new Map<string, { name: string; elapsed?: number }>()
   /** One armed /clear per pane, cleared by every path that stands one down. */
   private autoClearTimers = new Map<string, NodeJS.Timeout>()
+  /**
+   * Asks that arrived while the pane was mid-turn, waiting for it to go quiet.
+   *
+   * This is the whole reason autoclear never fired. The Stop hook runs INSIDE the turn it
+   * is ending, so at the moment it asks, the pane is still `working` by definition - and
+   * `armAutoClear` refused every such ask outright. `~/.claude/autoclear.log` shows the
+   * pattern exactly: every `clear` decision followed within the same second by
+   * "no countdown: the pane started another turn", six of seven arms on 2026-08-24, and
+   * the session then grew until Robert asked why it had never cleared. A busy pane is a
+   * reason to WAIT, not to refuse: the countdown starts the moment the turn ends.
+   */
+  private autoClearPending = new Map<string, { steps: string[]; prompt: string; seconds: number }>()
   private tableJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
@@ -956,7 +968,22 @@ export class SessionManager extends EventEmitter {
     // while the chime is announcing that its turn finished.
     live.stallRaised = false
     live.meta.stalledSince = undefined
+    // The pane just went quiet, which is the moment a deferred ask has been waiting for.
+    this.resumePendingAutoClear(live.meta.id)
     return true
+  }
+
+  /** Start a countdown that was queued while the pane was mid-turn. */
+  private resumePendingAutoClear(id: string): void {
+    const ask = this.autoClearPending.get(id)
+    if (!ask) return
+    this.autoClearPending.delete(id)
+    const res = this.armAutoClear(id, ask)
+    console.info(
+      res.ok
+        ? `autoclear: ${id} countdown started - the turn ended (${ask.seconds}s)`
+        : `autoclear: ${id} dropped after the turn - ${res.reason}`,
+    )
   }
 
   /**
@@ -1402,9 +1429,16 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s) return { ok: false, reason: 'no such pane' }
     const why = dropFor(s.meta)
-    // Refused rather than queued: the hook asks again on the next Stop, and a countdown
-    // that waits for a busy pane to go quiet is a clear nobody was watching for.
-    if (why) return { ok: false, reason: dropWords(why) }
+    // 'working' is deferred, everything else is still refused. A pane holding a question,
+    // or one that has gone, cannot be cleared later either - but a pane mid-turn is the
+    // NORMAL state when the Stop hook asks, and refusing it is what made this feature
+    // dead on arrival.
+    const decision = armDecision(why)
+    if (decision === 'queue') {
+      this.autoClearPending.set(id, ask)
+      return { ok: true, reason: 'queued until this turn ends' }
+    }
+    if (decision === 'refuse') return { ok: false, reason: dropWords(why as DropReason) }
     this.cancelAutoClear(id, 'cancelled')
     const at = Date.now() + ask.seconds * 1000
     s.meta.autoClearAt = at
@@ -1417,7 +1451,19 @@ export class SessionManager extends EventEmitter {
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
       const stop = dropFor(live.meta)
-      if (stop) return this.cancelAutoClear(id, stop)
+      if (stop) {
+        // A turn that started during the countdown puts the ask back in the queue rather
+        // than throwing it away: the session is still oversized, and the next quiet
+        // moment is exactly when clearing is safe.
+        if (stop === 'working') {
+          this.autoClearPending.set(id, {
+            steps: live.meta.autoClearSteps ?? [],
+            prompt: live.meta.autoClearPrompt ?? '',
+            seconds: ask.seconds,
+          })
+        }
+        return this.cancelAutoClear(id, stop)
+      }
       const chunks = clearChunks(live.meta.autoClearPrompt ?? '')
       this.cancelAutoClear(id, 'cancelled')
       chunks.forEach((c, i) => {
@@ -1433,6 +1479,9 @@ export class SessionManager extends EventEmitter {
 
   /** Drop an armed countdown. Silent when there is none - every caller asks blind. */
   cancelAutoClear(id: string, why: DropReason): boolean {
+    // Somebody using the pane means the whole idea is off, queue included. A 'working'
+    // cancel is the internal re-queue above and must leave the pending ask alone.
+    if (why !== 'working') this.autoClearPending.delete(id)
     const s = this.sessions.get(id)
     const timer = this.autoClearTimers.get(id)
     if (timer) {

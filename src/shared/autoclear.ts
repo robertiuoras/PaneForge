@@ -89,3 +89,22 @@ export function dropWords(why: DropReason): string {
   if (why === 'gone') return 'the pane closed'
   return 'you stopped it'
 }
+
+/**
+ * What to do with an ask, given why the pane cannot be cleared this instant.
+ *
+ * Split out of the manager so it can be tested: the bug that killed this feature for a
+ * whole day was a one-word decision buried in `armAutoClear`. The Stop hook runs INSIDE
+ * the turn it ends, so `dropFor` says 'working' for essentially EVERY ask - refusing on
+ * that meant the countdown never started, and ~/.claude/autoclear.log recorded six of
+ * seven arms as "no countdown: the pane started another turn" within the same second as
+ * the decision to clear.
+ *
+ * 'working' therefore QUEUES: the countdown starts when the turn ends. Everything else
+ * still refuses, because a pane holding a question or a pane that has closed will not
+ * become clearable by waiting.
+ */
+export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
+  if (!why) return 'arm'
+  return why === 'working' ? 'queue' : 'refuse'
+}

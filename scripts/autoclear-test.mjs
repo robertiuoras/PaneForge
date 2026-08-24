@@ -34,7 +34,18 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, clampSeconds, readAsk, dropFor, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
+const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
+
+console.log('a busy pane WAITS, it is not refused')
+{
+  // The Stop hook fires inside the turn it is ending, so this is the normal case, not
+  // an edge one. Refusing it is what stopped every clear on 2026-08-24.
+  ok('mid-turn queues', armDecision('working') === 'queue')
+  ok('idle arms', armDecision(null) === 'arm')
+  ok('a pending question refuses', armDecision('asked') === 'refuse')
+  ok('a closed pane refuses', armDecision('gone') === 'refuse')
+  ok('typing refuses', armDecision('typed') === 'refuse')
+}
 
 console.log('keystrokes')
 {
