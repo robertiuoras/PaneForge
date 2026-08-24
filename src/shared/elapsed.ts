@@ -47,6 +47,30 @@ export function bucketOf(now: number, step: number, offset = 0): number {
   return Math.floor((now - offset) / step)
 }
 
+export const DAY_MS = 86_400_000
+
+/**
+ * When something happened, said the way somebody actually reads it: `4 min ago`.
+ *
+ * A closing time drawn as `24/08/2026, 13:15` makes the reader do arithmetic against the
+ * clock in their own status bar before they can answer the only question History is open
+ * for - which of these did I just close. Inside a day the distance is the useful half; past
+ * a day the distance stops being readable (`31h ago`) and the date is what identifies it,
+ * so that is where this hands back over to the calendar.
+ */
+export function whenWords(at: number, now = Date.now()): string {
+  const ms = now - at
+  // A clock that disagrees with the one that wrote the timestamp - a session closed on the
+  // other desk, a machine whose clock moved - is not a reason to print a negative age.
+  if (!(ms >= 0) || ms >= DAY_MS) return new Date(at).toLocaleString()
+  if (ms < 60_000) return 'just now'
+  const m = Math.floor(ms / 60_000)
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  return r ? `${h}h ${r}m ago` : `${h}h ago`
+}
+
 /** 0 B / 74 KB / 3.2 MB - short enough to sit inside a chip on a pane header. */
 export function kb(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`

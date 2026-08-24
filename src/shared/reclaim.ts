@@ -138,6 +138,18 @@ export interface ReclaimPane {
    */
   lastOutput?: number
   /**
+   * Epoch ms this pane last had the keyboard, when the caller knows it.
+   *
+   * Looking at a pane is using it. Without this the idle clock counted from the last
+   * keystroke while the pane sat focused on screen, so a pane read for six minutes and then
+   * left was already PAST its deadline the instant focus moved: the card went from no chip
+   * at all straight to a red `closes 0:01`, which is a countdown nobody can act on and is
+   * exactly how it was reported ("it showed red with 0:01 to close"). Every refusal here
+   * already exempts the focused pane, so the only thing that was missing was the moment
+   * focus left.
+   */
+  lastFocus?: number
+  /**
    * A turn is in flight (the pane's run clock is going).
    *
    * Belt and braces beside `state`: `endRun` clears the run clock and flips the status in
@@ -183,13 +195,16 @@ export interface ReclaimPane {
 }
 
 /**
- * When this pane last did anything at all - the later of a keystroke and a printed byte.
+ * When this pane last did anything at all - the latest of a keystroke, a printed byte and
+ * the moment the keyboard left it.
  *
  * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
  * not `lastKeyboard` on its own.
  */
-export function quietSince(p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput'>): number {
-  return Math.max(p.lastKeyboard, p.lastOutput ?? 0)
+export function quietSince(
+  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'>
+): number {
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0)
 }
 
 export interface Reclaim {

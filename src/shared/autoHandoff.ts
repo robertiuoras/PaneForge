@@ -178,6 +178,8 @@ export interface AutoPane {
    * pane has printed nothing.
    */
   lastOutput?: number
+  /** epoch ms the keyboard last left it - see `ReclaimPane.lastFocus`, same reading */
+  lastFocus?: number
   focused: boolean
   visible: boolean
   /** another device's pty, mirrored here - moving it frees nothing on this machine */
