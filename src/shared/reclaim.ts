@@ -192,6 +192,22 @@ export interface ReclaimPane {
    * handoff sweep above this one.
    */
   handingOff?: boolean
+  /**
+   * Somebody has said, on this pane, that it is not to be closed for being idle.
+   *
+   * `keptUntil` is the hour-long hold the countdown chip arms, and it is the right answer
+   * for "not now". This is the answer for "not ever": a pane holding a long-running thing
+   * the app cannot see - a watcher, a session being read a paragraph at a time, a build
+   * somebody wants to come back to - has no reading that says so, and an hour later the
+   * clock starts again. Robert, 2026-08-24: "if you right click session you can make it so
+   * stops closing in 5min timer always keeps starting".
+   *
+   * It refuses the pressure sweep as well as the clock. Both close the pane, and a person
+   * who said "keep this one" did not mean "unless memory is tight" - the ladder still has
+   * three rungs above closing, and the honest thing under real pressure is to move or to
+   * say so rather than to overrule them.
+   */
+  pinned?: boolean
 }
 
 /**
@@ -244,6 +260,7 @@ export function reclaimPlan(
         !p.asking &&
         !p.busy &&
         !p.job &&
+        !p.pinned &&
         CLOSEABLE.has(p.state)
     )
     .filter((p) => now - quietSince(p) >= minIdle)
@@ -333,6 +350,7 @@ function onTheClock(p: ReclaimPane): boolean {
     !p.asking &&
     !p.busy &&
     !p.job &&
+    !p.pinned &&
     CLOSEABLE.has(p.state)
   )
 }
