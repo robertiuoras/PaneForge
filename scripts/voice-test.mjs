@@ -120,8 +120,28 @@ try {
   live = null
 }
 
+// ONE dev copy per machine (scripts/dev-profile.mjs), so the window on this port is
+// regularly another checkout's build - and probe.mjs refuses a foreign one, correctly:
+// a probe that measures somebody else's build measures nothing. That is a fact about
+// whose window is up, not a failure of this suite. Before this, `npm test` in a lane went
+// red on `voice` alone whenever the other lane had launched last, which reads as a broken
+// build and is not one.
+//
+// The trailing `/out/` is load-bearing: this checkout's path is a PREFIX of every lane's
+// (`PaneForge` inside `PaneForge-a`), so a bare `includes(root)` calls a foreign window
+// ours - measured, the skip never fired and the suite stayed red.
+const foreign = !!live && !(live.url ?? '').includes(`${root.replace(/\\/g, '/')}/out/`)
+if (foreign)
+  console.log(
+    `\nSKIP: the window on port ${port} belongs to another checkout:\n` +
+      `      ${live.url}\n` +
+      '      Relaunch it from here: npm run build && npm run try -- --keep --remote-debugging-port=9333'
+  )
+
 if (process.platform !== 'darwin') {
   console.log('\nSKIP: the spoken half needs macOS `say` to make the clip.')
+} else if (foreign) {
+  /* said once above */
 } else if (!live) {
   console.log(
     `\nSKIP: no window on port ${port}.\n` +
@@ -203,7 +223,7 @@ if (process.platform !== 'darwin') {
 // A phone-sized window, driven through the real hook: the overlay has to cover the
 // viewport, keep both actions above the fold and hit the 44 px touch minimum. And a
 // desktop-sized window must NOT get it - the pane's own mic is the whole UI there.
-if (live) {
+if (live && !foreign) {
   console.log('\nfull-screen mic')
   const probe = (w, h, expr) =>
     JSON.parse(

@@ -784,6 +784,24 @@ export const PETS: Pet[] = [bot, fox, cat, dog, owl, crab, slime, dino, drone, g
 
 export type PetId = string
 
+/**
+ * No animal at all: the readings, with nothing drawn.
+ *
+ * A pet is decoration before it is a reading, and a desk that finds a sprite walking
+ * around the corner of its window expensive used to have exactly one way to say so -
+ * turning the mascot OFF, which also turned off the only thing that ever says the resource
+ * ladder acted. Two different facts under one switch. This is the id that keeps the mouth
+ * and drops the animal, and it is deliberately not a `Pet` with empty art: something has
+ * to answer "is anything drawn" and an all-blank sprite still occupies its 48px and still
+ * takes the drag.
+ */
+export const NO_PET = 'none'
+
+/** Whether an id draws anything at all. */
+export function hasPet(id: string | undefined): boolean {
+  return id !== NO_PET
+}
+
 /** The pet a config names, or the robot - a config from before this existed still loads. */
 export function petFor(id: string | undefined): Pet {
   return PETS.find((p) => p.id === id) ?? PETS[0]

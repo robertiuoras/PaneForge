@@ -38,6 +38,8 @@ const {
   queueVerdict,
   queuedNote,
   offloadMinutes,
+  expensive,
+  paneCost,
   DEFAULT_AUTO_HANDOFF,
   IDLE_OFFLOAD_MINUTES
 } = createRequire(import.meta.url)(outfile)
@@ -298,7 +300,12 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 // this is the last block.
 {
   const budget = { ...ok, over: 3 }
-  const three = (o = {}) => [pane({ id: 'a', ...o }), pane({ id: 'b' }), pane({ id: 'c' }), pane({ id: 'd' })]
+  // Every fixture in this block is EXPENSIVE, because since 2026-08-23 the budget rung
+  // only moves a pane that would give the machine something back. The gate itself is the
+  // block below; here it is held constant so the ordering and the refusals are still the
+  // thing being measured.
+  const big = (o = {}) => pane({ memMb: 900, ...o })
+  const three = (o = {}) => [big({ id: 'a', ...o }), big({ id: 'b' }), big({ id: 'c' }), big({ id: 'd' })]
 
   eq('past the budget it moves exactly the overshoot', ids(autoHandoffPlan(three(), budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)).split(',').length, 3)
   eq(
@@ -313,12 +320,12 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // turn in flight is picked last of all.
   {
     const panes = [
-      pane({ id: 'busy', busy: true, state: 'working' }),
-      pane({ id: 'seen', visible: true }),
-      pane({ id: 'quiet' }),
+      big({ id: 'busy', busy: true, state: 'working' }),
+      big({ id: 'seen', visible: true }),
+      big({ id: 'quiet' }),
       // The pane being typed in, so it is refused rather than competing for a slot: three
       // eligible panes and an overshoot of three is what makes the ORDER the assertion.
-      pane({ id: 'me', focused: true })
+      big({ id: 'me', focused: true })
     ]
     eq('quiet and off-screen first, then on-screen, then mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen,busy')
   }
@@ -326,7 +333,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // ...and a pane that has only just been typed into is still eligible. The budget is not
   // a statement about idleness, which is the whole difference from the two clocks.
   {
-    const panes = [pane({ id: 'fresh', lastKeyboard: NOW - 5_000 }), pane({ id: 'me', focused: true })]
+    const panes = [big({ id: 'fresh', lastKeyboard: NOW - 5_000 }), big({ id: 'me', focused: true })]
     eq('a pane quiet for five seconds still counts', ids(autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
   }
 
@@ -340,26 +347,26 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     ['a pane whose process has ended', { state: 'exited' }]
   ]
   for (const [label, extra] of refusals) {
-    const panes = [pane({ id: 'x', ...extra }), pane({ id: 'keep' })]
+    const panes = [big({ id: 'x', ...extra }), big({ id: 'keep' })]
     eq(`the budget never moves ${label}`, ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
   }
 
   {
-    const panes = [pane({ id: 'x' }), pane({ id: 'keep' })]
+    const panes = [big({ id: 'x' }), big({ id: 'keep' })]
     eq('a pane on cooldown after a failed move is left alone', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, { x: NOW + MIN }, NOW)), 'keep')
   }
 
   {
-    const panes = [pane({ id: 'only' })]
+    const panes = [big({ id: 'only' })]
     eq('the window is never emptied, however far past the budget', autoHandoffPlan(panes, { ...ok, over: 5 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
   }
 
   {
     // ...and it does not take a slot with it: the other pane still moves, and the window
     // is still not emptied.
-    const panes = [pane({ id: 'a', projectName: 'elsewhere' }), pane({ id: 'keep' })]
+    const panes = [big({ id: 'a', projectName: 'elsewhere' }), big({ id: 'keep' })]
     eq('a project the peer does not have stays here', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
-    const alone = [pane({ id: 'a', projectName: 'elsewhere' })]
+    const alone = [big({ id: 'a', projectName: 'elsewhere' })]
     eq('and with nowhere for any of them, nothing moves', autoHandoffPlan(alone, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
   }
 
@@ -371,8 +378,8 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     // Quiet for longer than the clock sweep's own threshold, so the only thing that can
     // keep `busy` out of either answer is the refusal being tested.
     const panes = [
-      pane({ id: 'busy', busy: true, state: 'working', lastKeyboard: NOW - 40 * MIN }),
-      pane({ id: 'keep', lastKeyboard: NOW - 40 * MIN })
+      big({ id: 'busy', busy: true, state: 'working', lastKeyboard: NOW - 40 * MIN }),
+      big({ id: 'keep', lastKeyboard: NOW - 40 * MIN })
     ]
     eq('a mid-turn pane is still refused when the budget is not the trigger', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
     eq('...and by the clock sweep too', ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }, {}, NOW)), 'keep')
@@ -382,7 +389,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // keeping two agents are each right about their own budget, and between them they would
   // pass one pane back and forth for ever - so a pane never goes back where it came from.
   {
-    const panes = [pane({ id: 'came', arrivedFrom: 'pc' }), pane({ id: 'me', focused: true })]
+    const panes = [big({ id: 'came', arrivedFrom: 'pc' }), big({ id: 'me', focused: true })]
     eq('a pane handed here is never handed straight back', autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
 
     // ...and the control: it is refused because of WHERE it came from, not because it
@@ -400,15 +407,84 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // the ordinary case, not a contrived one.
   {
     const panes = [
-      pane({ id: 'orphan1', projectName: 'nowhere', lastKeyboard: NOW - 90 * MIN }),
-      pane({ id: 'orphan2', projectName: 'nowhere', lastKeyboard: NOW - 80 * MIN }),
-      pane({ id: 'a', lastKeyboard: NOW - 70 * MIN }),
-      pane({ id: 'b', lastKeyboard: NOW - 60 * MIN }),
-      pane({ id: 'c', lastKeyboard: NOW - 50 * MIN }),
-      pane({ id: 'me', focused: true })
+      big({ id: 'orphan1', projectName: 'nowhere', lastKeyboard: NOW - 90 * MIN }),
+      big({ id: 'orphan2', projectName: 'nowhere', lastKeyboard: NOW - 80 * MIN }),
+      big({ id: 'a', lastKeyboard: NOW - 70 * MIN }),
+      big({ id: 'b', lastKeyboard: NOW - 60 * MIN }),
+      big({ id: 'c', lastKeyboard: NOW - 50 * MIN }),
+      big({ id: 'me', focused: true })
     ]
     eq('panes no peer can host do not eat the moves', ids(autoHandoffPlan(panes, { ...ok, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b,c')
     eq('...and the pressure sweep counts the same way', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b')
+  }
+
+  // ------------------------------------------------------------- what it may move at all
+  //
+  // The budget counts panes and a count is not a cost. Five idle agent panes at ~190 MB
+  // apiece are three over a budget of two and are costing this machine nothing anybody can
+  // feel - moving one of those is the app rearranging somebody's desk for a number, which
+  // is what happened on 2026-08-23 ("randomly 2 sessions moved"). The load-bearing half is
+  // the FIRST case: it must be possible to be far over budget and move nothing.
+  {
+    const cheap = [pane({ id: 'a', memMb: 190 }), pane({ id: 'b', memMb: 190 }), pane({ id: 'c', memMb: 12 })]
+    eq('three panes over budget, none of them expensive: nothing moves', autoHandoffPlan(cheap, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+    const unmeasured = [pane({ id: 'a' }), pane({ id: 'b' }), pane({ id: 'c' })]
+    eq('and an UNMEASURED pane is not expensive - a hidden window samples nothing', autoHandoffPlan(unmeasured, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+    const mixed = [pane({ id: 'small', memMb: 190 }), pane({ id: 'heavy', memMb: 1400 }), pane({ id: 'keep', memMb: 100 })]
+    eq('the heavy one goes and the small ones stay', ids(autoHandoffPlan(mixed, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'heavy')
+
+    const cpu = [pane({ id: 'hot', memMb: 120, cpuPct: 90 }), pane({ id: 'keep', memMb: 120 })]
+    eq('a pane burning a core counts even when it holds little', ids(autoHandoffPlan(cpu, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'hot')
+
+    // Robert's own words: "only when it has like an intense dev server or shell running".
+    // A server that has just started holds nothing yet and is exactly the pane to move.
+    const dev = [pane({ id: 'server', memMb: 60, job: 'npm run dev' }), pane({ id: 'keep', memMb: 300 })]
+    eq('a live dev server outranks every measured pane', ids(autoHandoffPlan(dev, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'server')
+
+    // Dearest first among several that all qualify.
+    const order = [
+      pane({ id: 'mid', memMb: 800 }),
+      pane({ id: 'top', memMb: 2400 }),
+      pane({ id: 'low', memMb: 520 }),
+      pane({ id: 'me', focused: true })
+    ]
+    eq('and the dearest goes first', ids(autoHandoffPlan(order, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'top,mid,low')
+
+    // The floor is configurable, and the control that the gate is really what decided.
+    const loose = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 100 }
+    eq('with the floor lowered the same cheap panes DO move', autoHandoffPlan(cheap, budget, peers, loose, {}, NOW).length > 0, true)
+
+    check('expensive() refuses a pane with no reading at all', !expensive({}, DEFAULT_AUTO_HANDOFF))
+    check('...and takes a job whatever the numbers say', expensive({ memMb: 1, job: 'vite' }, DEFAULT_AUTO_HANDOFF))
+    // config.json is also what `pf-ctl call config:set` writes, so a threshold arrives
+    // unvalidated. `Math.max(0, NaN)` is NaN and every `>=` against NaN is false, so a
+    // junk value did not fall back - it switched BOTH cost gates off and left the budget
+    // rung deciding on `job` alone. Same hardening as keepLocalOf.
+    const junk = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 'lots', budgetMinCpu: null }
+    check(
+      'a non-numeric threshold falls back to the default, it does not disable the gate',
+      expensive({ memMb: DEFAULT_AUTO_HANDOFF.budgetMinMb + 1 }, junk)
+    )
+    check(
+      '...and a pane under that default is still refused',
+      !expensive({ memMb: DEFAULT_AUTO_HANDOFF.budgetMinMb - 1, cpuPct: 0 }, junk)
+    )
+    check(
+      'a NEGATIVE threshold is clamped at 0, not honoured as a floor below zero',
+      expensive({ memMb: 0, cpuPct: 0 }, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: -5 })
+    )
+    check('the floor sits above an ordinary agent pane and below a build', DEFAULT_AUTO_HANDOFF.budgetMinMb > 197 && DEFAULT_AUTO_HANDOFF.budgetMinMb < 1024)
+  }
+
+  // The PRESSURE sweep is unchanged: when the kernel is objecting, every pane is worth
+  // moving and a cheap one is still memory back. The control that the gate above did not
+  // leak into the rung it does not belong to.
+  {
+    const cheap = [pane({ id: 'a', memMb: 190 }), pane({ id: 'keep', memMb: 190, focused: true })]
+    eq('pressure still moves a cheap pane', ids(autoHandoffPlan(cheap, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a')
+    eq('...and so does the idle clock', ids(idleOffloadPlan(cheap, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 10 }, {}, NOW)), 'a')
   }
 
   check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))

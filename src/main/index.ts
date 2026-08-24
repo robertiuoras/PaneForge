@@ -40,6 +40,7 @@ import { PhoneServer, newPhoneCode } from './phone'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
+import { startDisplayAwake } from './awake'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { diffFiles, diffPatch } from './diff'
@@ -85,6 +86,7 @@ import {
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
+import { readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -646,10 +648,19 @@ function alive(): boolean {
   return !!win && !win.isDestroyed() && !win.webContents.isDestroyed()
 }
 
+/**
+ * Things that re-read the desk whenever it changes: the display-sleep hold and any
+ * /clear countdown in flight. A mutable holder rather than a direct call because `send`
+ * is defined above the things it pokes, and a startup broadcast would otherwise hit a
+ * const that has not been initialised yet.
+ */
+let onDeskChanged: (() => void) | null = null
+
 function send(channel: string, ...args: unknown[]): void {
   // Ahead of the window check on purpose: a phone watching this desk must keep getting
   // output while the window is minimized, hidden, or being rebuilt after a quiet restart.
   phone.broadcast(channel, args)
+  if (channel === 'sessions:changed') onDeskChanged?.()
   if (!alive()) return
   win!.webContents.send(channel, ...args)
 }
@@ -883,7 +894,15 @@ const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
   write: (id, data) => manager.write(id, data),
-  resize: (id, cols, rows) => manager.resize(id, cols, rows),
+  // `viewer` is who is asking, and it MUST be forwarded rather than named here: this one
+  // object is the phone's surface AND the remote host's backend, so hardcoding a name
+  // filed every paired device's borrow under the phone's own slot - two viewers writing
+  // one entry, which is exactly the last-writer-wins the borrow map replaced. Measured
+  // 2026-08-23 with a real guest: `host-resize ... guest:1` arrived at the manager as
+  // `viewer=phone`. The default stays 'phone' because only the host passes a name.
+  resize: (id, cols, rows, borrowed, viewer) =>
+    manager.resize(id, cols, rows, borrowed === true, typeof viewer === 'string' ? viewer : 'phone'),
+  returnSize: (id, viewer) => manager.returnSize(id, viewer),
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
   clearAttention: (id) => manager.clearAttention(id),
@@ -905,6 +924,7 @@ const remote = new Remote({
         place: (req) => laneFor(req),
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
+        noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
         startDev: (dir, script) => startDevServer(dir, script)
       },
@@ -917,6 +937,10 @@ const remote = new Remote({
       }
       return result
     }),
+  // A device that mirrors one of our panes asking for it back. It is the ordinary
+  // outward handoff, aimed at the device that asked - so a mid-turn pane is queued and
+  // travels when its turn ends, exactly as it would had somebody pressed Hand off here.
+  handBack: (id, device) => runHandoff(device, { ids: [id], waitForTurn: true }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
@@ -1245,11 +1269,30 @@ ipcMain.on('sessions:bell', (_e, id: string) => manager.bell(id))
 ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
-ipcMain.on('pty:write', (_e, id: string, data: string) => {
+/** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
+function writePane(id: string, data: string): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
+  // Somebody is using this pane, so the promise the countdown made is off. Only THIS path
+  // cancels - the clear itself types through `manager.write` inside the manager and never
+  // reaches this handler, so it cannot stand its own countdown down on the way out.
+  manager.cancelAutoClear(id, 'typed')
   manager.write(id, data)
+}
+
+ipcMain.on('pty:write', (_e, id: string, data: string) => writePane(id, data))
+
+// ---- and the screen staying on while a pane works ------------------------------------
+const displayAwake = startDisplayAwake({
+  panes: () =>
+    allSessions().map((s) => ({ runSince: s.runSince, status: s.status, asking: !!s.ask })),
+  enabled: () => getConfig().keepDisplayAwake !== false,
+  log: (line) => console.log(`[awake] ${line}`)
 })
+
+onDeskChanged = (): void => {
+  displayAwake.tick()
+}
 
 // A job the APP hands a chat, not bytes a person typed: the text goes in and the return is
 // pressed for real. Never `notePaneInput` - that means a person took a dispatched pane
@@ -1333,14 +1376,21 @@ async function laneWentQuiet(id: string): Promise<void> {
  * host's own cols/rows and scaled to fit whatever window is watching it.
  */
 ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?: boolean) => {
-  if (!remote.owns(id)) manager.resize(id, cols, rows, borrowed === true)
+  // A mirrored pane's resize is not dropped any more: it is sent to the machine that
+  // owns the pty as a BORROW, so the far end draws at the grid this window has room for
+  // and keeps its own desk size to go back to. See `mirrorFit` in TerminalPane.
+  if (remote.owns(id)) remote.resizeOn(id, cols, rows)
+  // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
+  // never borrows, it owns. Named so a mirror watching the same pane is a separate
+  // borrower rather than the same one changing its mind.
+  else manager.resize(id, cols, rows, borrowed === true, 'window')
 })
 /**
  * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at
  * 50 columns is right for the phone and wrong for the 157-column window it is also drawn
  * in, and before this nothing ever undid it - see `resize` in sessions.ts.
  */
-ipcMain.on('pty:return', () => manager.returnSizes())
+ipcMain.on('pty:return', () => manager.returnSizes('phone'))
 /**
  * Which panes are on screen, so the pump can gather a background pane's output for
  * longer (dataPump.ts). Every screen watching this desk says for itself and carries
@@ -1372,6 +1422,13 @@ ipcMain.on(
     if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail, clock)
   }
 )
+
+// The idle clock's deadline, from the window that decides it. Refused for a mirrored id
+// for the same reason the busy footer is: the pane lives on the other machine, and its
+// own desk publishes when it will close it.
+ipcMain.on('sessions:closing', (_e, id: string, at: number | null) => {
+  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null)
+})
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 
@@ -1892,6 +1949,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       snapshot: () => manager.snapshot(),
       kill: (id) => manager.kill(id),
       tailOf: (id, bytes) => history.tail(id, bytes),
+      tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
@@ -1942,11 +2000,25 @@ ipcMain.handle(
       waitForTurn: waitForTurn !== false
     })
 )
+// One press on a mirrored pane's own card. The answer is the far end's report, so a
+// refusal ("dirty checkout over there") arrives as a sentence naming the pane.
+ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(id)))
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
 // False means nothing was waiting: the pane is already on its way, or was never queued.
 ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
+// A session clearing ITSELF once it has grown too big and written its handoff. The decision
+// is the Stop hook's (`claude-config/autoclear.mjs`); this end owns the countdown, which is
+// the only part a person can stop. Payload is re-read here because the phone server reaches
+// this channel too - see `readAutoClearAsk`.
+ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
+  const ask = readAutoClearAsk(raw)
+  if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
+  if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  return manager.armAutoClear(ask.paneId, ask)
+})
+ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the

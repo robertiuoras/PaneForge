@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -27,6 +27,7 @@ import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { promptEcho } from '../../../shared/promptEcho'
+import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -187,6 +188,13 @@ import { isPhoneClient } from '../client'
  * command palette can all reach the focused pane without threading a ref through App.
  */
 export const paneRepair = new Map<string, () => void>()
+
+/**
+ * Re-render a pane from its own bytes. Separate from `paneRepair` on purpose: that one is
+ * cheap and runs on its own (a restore, a font change), this one rewrites the whole buffer
+ * and only ever runs because somebody pressed Fix. See `redrawHistory`.
+ */
+export const paneRedraw = new Map<string, () => Promise<boolean>>()
 
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
 export const renderCount = new Map<string, number>()
@@ -380,6 +388,10 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
   return t.cols !== cols || t.rows !== rows
 }
 
+/** A mirror asks for its grid at most this often, and this many times per target. */
+const BORROW_EVERY_MS = 1200
+const BORROW_TRIES = 6
+
 /**
  * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
  * the largest font at or below the user's own at which that grid still fits here.
@@ -396,15 +408,33 @@ function mirrorFit(
   pinned: boolean,
   mirror: { cols: number; rows: number },
   maxFont: number,
-  host: HTMLElement | null
+  host: HTMLElement | null,
+  /**
+   * Ask the machine that owns this pty to draw it at the grid THIS window has room for.
+   *
+   * Fitting the font was the only lever a mirror had, and it cannot win: the PC's pane
+   * was 69x35 (its window is small - a disconnected RDP session) against room for 152x58
+   * here, so the far end's screen was either a block of text in the corner or, once it
+   * was allowed to grow, enormous. Neither is the screen the agent is drawing on.
+   *
+   * So a mirror BORROWS the size, exactly as a phone borrows a desk pane's (see `resize`
+   * in main/sessions.ts): the host bends the pty to the viewer, keeps its own desk size,
+   * and takes it back the moment the mirror detaches. Nothing here forces it - a host
+   * that ignores the request leaves this function fitting the font, as before.
+   */
+  ask?: (cols: number, rows: number) => void
 ): boolean {
   const cols = t.cols
   const rows = t.rows
   let stepped = false
   let scaleWanted = 1
   const d = f.proposeDimensions()
+  // The font the measurement was TAKEN at, read before anything below changes it. `d`
+  // answers for the font that is set right now, so every conversion off it has to use
+  // THIS number and not the one the shrink is about to write - see `borrowGrid`, whose
+  // comment carries the infinite loop that cost.
+  const current = t.options.fontSize ?? maxFont
   if (d && d.cols > 0 && d.rows > 0) {
-    const current = t.options.fontSize ?? maxFont
     const out = mirrorSize({
       fitCols: d.cols,
       fitRows: d.rows,
@@ -423,6 +453,12 @@ function mirrorFit(
     // off at the edge - reported as "half way cut across the screen". xterm's hit
     // testing reads getBoundingClientRect, which includes the transform, so a click
     // in a scaled mirror still lands on the cell under the pointer.
+  }
+  if (ask && d && d.cols > 0 && d.rows > 0) {
+    // The grid to ask for is the one that fits at the USER's font, so the answer arrives
+    // and needs no shrinking at all - converted with the font `d` was measured at.
+    const want = borrowGrid({ fitCols: d.cols, fitRows: d.rows, font: current, maxFont })
+    if (want.cols !== mirror.cols || want.rows !== mirror.rows) ask(want.cols, want.rows)
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
 
@@ -448,7 +484,33 @@ function mirrorFit(
     // decides whether scaling is needed at all and is what the tests pin; the DOM
     // decides by how much.
     const fits = Math.min(scaleWanted, measured)
-    const want = fits < 0.999 ? `scale(${Math.max(0.05, fits).toFixed(3)})` : ''
+    const s = fits < 0.999 ? Math.max(0.05, fits) : 1
+    // ...and whatever room is STILL left over is split, not left on one side.
+    //
+    // A grid is a whole number of cells, so a mirror almost never fills its pane
+    // exactly - and the leftover used to sit entirely at the right and the bottom,
+    // which is what makes a correctly-drawn remote screen read as a broken one: text
+    // jammed into the top-left corner with a black L around it. Centring is layout
+    // arithmetic only (`clientWidth`, `offsetWidth` - neither moves under a transform)
+    // so it cannot feed on itself the way a rect-based measurement would.
+    const pad = getComputedStyle(host)
+    const padX = parseFloat(pad.paddingLeft) || 0
+    const padY = (parseFloat(pad.paddingTop) || 0) + (parseFloat(pad.paddingBottom) || 0)
+    // ...and only when the leftover is worth splitting. A borrowed mirror fills its pane
+    // to within a cell, and nudging THAT by 7px only moves the pane off the left edge it
+    // is meant to sit flush against (the scrollbar hugs the right, see styles.css).
+    const cellW = drawn / Math.max(1, t.cols)
+    const cellH = tall / Math.max(1, t.rows)
+    const halfX = Math.max(0, Math.round((room - padX - drawn * s) / 2))
+    const halfY = Math.max(0, Math.round((host.clientHeight - padY - tall * s) / 2))
+    // Two cells, not one: a grid is whole cells, so a pane that took everything it
+    // could still leaves up to a cell over on each axis, and that is not slack - it is
+    // the pane being full.
+    const slackX = halfX * 2 >= cellW * 2 ? halfX : 0
+    const slackY = halfY * 2 >= cellH * 2 ? halfY : 0
+    const move = slackX || slackY ? `translate(${slackX}px, ${slackY}px)` : ''
+    const zoom = s < 0.999 ? `scale(${s.toFixed(3)})` : ''
+    const want = [move, zoom].filter(Boolean).join(' ')
     if (host.style.transform !== want) {
       host.style.transformOrigin = 'top left'
       host.style.transform = want
@@ -711,6 +773,26 @@ function TerminalPane({
   const wasDerived = useRef(false)
   const fontRef = useRef(fontSize)
   fontRef.current = fontSize
+
+  /**
+   * The last grid this mirror asked the host for.
+   *
+   * A request that is never applied - an older build over there, a pane whose size
+   * something else owns - must not become a request per animation frame for ever, so
+   * the same target is asked at most `BORROW_TRIES` times and never faster than
+   * `BORROW_EVERY_MS`. A DIFFERENT target (this window was resized) starts again.
+   */
+  const borrowRef = useRef<{ cols: number; rows: number; at: number; tries: number } | null>(null)
+  const askBorrow = (cols: number, rows: number): void => {
+    const now = Date.now()
+    const b = borrowRef.current
+    if (b && b.cols === cols && b.rows === rows) {
+      if (b.tries >= BORROW_TRIES || now - b.at < BORROW_EVERY_MS) return
+      b.tries += 1
+      b.at = now
+    } else borrowRef.current = { cols, rows, at: now, tries: 1 }
+    api.resize(sessionId, cols, rows, true)
+  }
   // Same reason as the font: the terminal is built once per session, and changing the
   // theme must not tear down a running agent's scrollback to recolour its background.
   const themeRef = useRef(termTheme)
@@ -736,7 +818,7 @@ function TerminalPane({
     if (replaying.current) return false
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0)
-      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, askBorrow)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
@@ -1187,9 +1269,20 @@ function TerminalPane({
   useEffect(() => {
     if (!host.current) return
     const t = new Terminal({
+      // The pty is already this wide (see shared/paneGrid.ts). xterm's own default is
+      // 80, and every byte a resumed CLI prints before the first fit is drawn at the
+      // PTY's width - into whatever grid this terminal happens to be. Clamped, and no
+      // repaint can undo it.
+      cols: START_COLS,
+      rows: START_ROWS,
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
-      cursorBlink: true,
+      // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the
+      // pane is idle and nothing on it changed. Measured 2026-08-23 with 6 panes open
+      // and no output at all: renderer 42-46% CPU, GPU helper 30-34%, WindowServer 46%,
+      // GPU device utilisation 50% - enough to make every other app on the machine
+      // judder. A steady block cursor is just as visible and costs nothing.
+      cursorBlink: false,
       allowProposedApi: true,
       scrollback: FULL_SCROLLBACK,
       theme: themeRef.current ?? {
@@ -1407,6 +1500,10 @@ function TerminalPane({
         term: t,
         fit: f,
         host: host.current,
+        // The full re-render Fix runs (see `redrawHistory`). On the handle because a
+        // probe cannot press a button, and repairing torn scrollback is only checkable by
+        // reading the buffer back afterwards.
+        redraw: () => paneRedraw.get(sessionId)?.(),
         dropWebgl: () => {
           glRef.current?.dispose()
           glRef.current = null
@@ -2531,16 +2628,31 @@ function TerminalPane({
      * The link to the other device came back and it re-sent the whole scrollback.
      * Everything already on screen is a prefix of what just arrived, so the pane is
      * wiped and redrawn from it - appending would show the run twice.
+     *
+     * This is also how a mirror gets its screen in the FIRST place: attaching asks the
+     * far end for the pane, which answers with one `buffer` frame, and that arrives here
+     * as a reset. So it is the only moment a mirrored pane's prompts can get their rail
+     * tags - the disk replay at the top of this effect never runs for one, and everything
+     * after this is ordinary streamed output with no prompt echoes in it. That is why the
+     * rail was empty on every mirrored pane: nothing here called `seedMarks`.
      */
     const offReset = api.onPaneReset((id) => {
       if (id !== sessionId) return
       t.reset()
+      // Every tag was anchored into the buffer that reset just threw away, and the tail
+      // about to arrive carries those same prompts for `seedMarks` to read back out.
+      // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
+      for (const m of list.splice(0)) m.marker.dispose()
+      publish()
       void api.getBuffer(sessionId).then((b) => {
         if (dead) return
         sawOutput = Boolean(b)
         if (b) setBlank(false)
         pinned.current = true
-        t.write(keep(b), () => t.scrollToBottom())
+        t.write(keep(b), () => {
+          t.scrollToBottom()
+          seedMarks()
+        })
       })
     })
 
@@ -2591,6 +2703,49 @@ function TerminalPane({
         /* hidden or detached - the visibility effect refits it */
       }
     }
+    /**
+     * Draw this pane's whole byte stream again, at a width no narrower than any width it
+     * was painted at.
+     *
+     * `repair` above asks the CLI to repaint, which redraws the SCREEN. It cannot touch
+     * the scrollback, and the scrollback is where mis-widthed drawing ends up: bytes made
+     * at one width and clamped into a narrower grid are word-on-word for good, whatever
+     * the pane is resized to afterwards. The bytes themselves are still correct - the
+     * buffer in main is the raw stream, not this rendering of it - so writing them into a
+     * terminal that is wide enough repairs it. See shared/paneGrid.ts for how a pane got
+     * into that state at all, which is now fixed at the source; this is the way back for
+     * a pane that is already in it.
+     *
+     * Widest of what we know, never a guess: the pane now, the width a restored tail was
+     * painted at, and the grid every pty starts on. A byte drawn at column N is safe in
+     * any terminal at least N wide, and the terminal is put back afterwards - xterm
+     * re-wraps what is in its buffer, so nothing is lost to the second resize.
+     *
+     * User-initiated only. It reads the capped buffer, so scrollback older than that cap
+     * does not come back, and paying that to un-break a pane is a person's call.
+     */
+    const redrawHistory = async (): Promise<boolean> => {
+      if (mirrorRef.current) return false
+      const b = await api.getBuffer(sessionId)
+      if (!b) return false
+      const back = t.cols
+      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      try {
+        replaying.current = true
+        t.reset()
+        if (wide !== back) t.resize(wide, t.rows)
+        await new Promise<void>((res) => t.write(keep(b), () => res()))
+        if (wide !== back) t.resize(back, t.rows)
+      } finally {
+        replaying.current = false
+      }
+      reshape(t, f)
+      t.scrollToBottom()
+      setScrolledUp(false)
+      seedMarks()
+      return true
+    }
+    paneRedraw.set(sessionId, redrawHistory)
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
       const away = keep.arm()
@@ -2829,6 +2984,7 @@ function TerminalPane({
       window.clearTimeout(fixTimer)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
+      paneRedraw.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)

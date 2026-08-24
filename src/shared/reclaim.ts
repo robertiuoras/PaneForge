@@ -84,6 +84,15 @@ export interface ReclaimConfig {
    * is half an hour rather than the two hours it started at.
    */
   idleCloseMinutes: number
+  /**
+   * Marker for the one-time move onto the clock being ON by default.
+   *
+   * `defaults()` is WRITTEN to config.json at first launch, so every install in existence
+   * carries `idleCloseMinutes: 0` explicitly and a flip in `DEFAULT_RECLAIM` alone would be
+   * read as somebody's own choice and never applied. Same shape as `autoAnswer.defaultsV2`,
+   * and read off the SAVED config for the same reason.
+   */
+  defaultsV2?: boolean
 }
 
 /**
@@ -97,13 +106,14 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 30
+export const IDLE_CLOSE_MINUTES = 5
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
   maxPerSweep: 2,
-  idleCloseMinutes: 0
+  idleCloseMinutes: IDLE_CLOSE_MINUTES,
+  defaultsV2: true
 }
 
 export interface ReclaimPane {
@@ -128,6 +138,18 @@ export interface ReclaimPane {
    */
   lastOutput?: number
   /**
+   * Epoch ms this pane last had the keyboard, when the caller knows it.
+   *
+   * Looking at a pane is using it. Without this the idle clock counted from the last
+   * keystroke while the pane sat focused on screen, so a pane read for six minutes and then
+   * left was already PAST its deadline the instant focus moved: the card went from no chip
+   * at all straight to a red `closes 0:01`, which is a countdown nobody can act on and is
+   * exactly how it was reported ("it showed red with 0:01 to close"). Every refusal here
+   * already exempts the focused pane, so the only thing that was missing was the moment
+   * focus left.
+   */
+  lastFocus?: number
+  /**
    * A turn is in flight (the pane's run clock is going).
    *
    * Belt and braces beside `state`: `endRun` clears the run clock and flips the status in
@@ -150,6 +172,18 @@ export interface ReclaimPane {
    */
   asking?: boolean
   /**
+   * The command a SHELL pane is running right now, when there is one.
+   *
+   * `busy` already carries this through `runSince`, and this is the second, independent
+   * reading beside it - the same belt-and-braces `busy` itself is beside `state`. It earns
+   * its line because the two are set by different things and one of them was wrong: a
+   * background job (`cmd &`) leaves the SHELL in front of the tty, so `paneJob` saw
+   * nothing, `runSince` was never set, and a pane with two monitors running in it read as
+   * idle and started counting down. Reported 2026-08-24: "1 shell 2 monitors running in
+   * session 2, why is it trying to close it".
+   */
+  job?: string | null
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -161,13 +195,16 @@ export interface ReclaimPane {
 }
 
 /**
- * When this pane last did anything at all - the later of a keystroke and a printed byte.
+ * When this pane last did anything at all - the latest of a keystroke, a printed byte and
+ * the moment the keyboard left it.
  *
  * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
  * not `lastKeyboard` on its own.
  */
-export function quietSince(p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput'>): number {
-  return Math.max(p.lastKeyboard, p.lastOutput ?? 0)
+export function quietSince(
+  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'>
+): number {
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0)
 }
 
 export interface Reclaim {
@@ -200,7 +237,14 @@ export function reclaimPlan(
   const eligible = panes
     .filter(
       (p) =>
-        !p.focused && !p.visible && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state)
+        !p.focused &&
+        !p.visible &&
+        !p.remote &&
+        !p.handingOff &&
+        !p.asking &&
+        !p.busy &&
+        !p.job &&
+        CLOSEABLE.has(p.state)
     )
     .filter((p) => now - quietSince(p) >= minIdle)
     // Oldest quiet first: of two finished panes, the one nobody has looked at since this
@@ -245,7 +289,7 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && !p.asking && !p.busy && CLOSEABLE.has(p.state))
+    .filter(onTheClock)
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
 
@@ -264,4 +308,60 @@ export function idleClosePlan(
 /** MB the plan is expected to return, for the line that says whether it was worth doing. */
 export function reclaimedMb(plan: Reclaim[]): number {
   return plan.reduce((mb, p) => mb + (p.hadAgent ? SESSION_MB : 0), 0)
+}
+
+/**
+ * Whether this pane is ON THE CLOCK at all - the whole refusal set, in one place.
+ *
+ * `idleClosePlan` decides WHO closes and `idleCloseAt` decides WHEN the card says it will,
+ * and those two disagreeing is the worst failure this feature has: a card counting down on
+ * a pane that will never be closed is a threat the app does not carry out, and a pane
+ * closing with no countdown in front of it is the thing the countdown exists to prevent.
+ * So there is one predicate and both read it.
+ *
+ * `busy` is the load-bearing one for a SHELL pane. A pane whose agent has finished and a
+ * pane running `npm run build` look identical in the sidebar - both quiet, both green -
+ * and `paneJob.ts` is what tells them apart: a live foreground command sets `runSince`,
+ * which arrives here as `busy`. Robert, 2026-08-23: "its actually stopped not just stopped
+ * but shell or something background still running".
+ */
+function onTheClock(p: ReclaimPane): boolean {
+  return (
+    !p.focused &&
+    !p.remote &&
+    !p.handingOff &&
+    !p.asking &&
+    !p.busy &&
+    !p.job &&
+    CLOSEABLE.has(p.state)
+  )
+}
+
+/**
+ * When this pane is due to be closed by the idle clock, or null when it is not on it.
+ *
+ * null is a REFUSAL and never "soon": the caller draws nothing for it. A pane that is
+ * working, holding a question, focused, mid-handoff, another device's, or simply not in a
+ * closeable state has no deadline at all, and inventing one for it - even a far-off one -
+ * would put a countdown on a card nothing is going to close.
+ *
+ * This is deliberately per-pane and ignores `maxPerSweep` and the last-pane rule, which
+ * are about which of several due panes go FIRST. Both can only ever delay a close, and a
+ * countdown that says "about now" for a pane that goes one sweep later is honest; one that
+ * says nothing because the pane happened to be third in the list is not.
+ */
+export function idleCloseAt(
+  pane: ReclaimPane,
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0
+): number | null {
+  if (!cfg.enabled) return null
+  const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
+  if (!minutes) return null
+  if (!onTheClock(pane)) return null
+  const at = quietSince(pane) + minutes * 60_000
+  // A pane already past its deadline is due NOW, not overdue by four minutes: the sweep
+  // runs on a minute timer, so `now` is regularly a little past the moment it was due and
+  // a chip counting UP from zero reads as a clock that jammed.
+  return Math.max(at, now)
 }

@@ -657,8 +657,31 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     })
                   }
                   label="Close a pane nobody has touched for a while"
-                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
                 />
+                {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
+                  <div className="setting">
+                    <label>Close after (minutes)</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      step={1}
+                      value={config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES}
+                      onChange={(e) =>
+                        onChange({
+                          reclaim: {
+                            ...DEFAULT_RECLAIM,
+                            ...config.reclaim,
+                            enabled: true,
+                            idleCloseMinutes: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                )}
                 <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>
@@ -1078,6 +1101,50 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </span>
                   </div>
                 ))}
+                {/*
+                  The key fields above are what a pane authenticates WITH. This is the other
+                  half: what it may read. An agent pointed at another provider posts every
+                  file it opens to that provider, and a stealth model's provider states that
+                  it RETAINS what it is sent - so the control that matters is the folder, and
+                  it has to be decided before the pty exists. shared/paneTrust.ts.
+
+                  An allowlist rather than a denylist: a list of forbidden places is wrong
+                  the day a new repo is cloned, and it fails silently - the pane opens and
+                  the secret leaves. This fails the other way, with a named refusal.
+                */}
+                <div className="setting">
+                  <Switch
+                    label="Confine a third-party model to certain folders"
+                    hint="An agent on OpenRouter, DeepSeek, Z.ai or Grok posts every file it opens to that provider - and a stealth model's provider keeps what it is sent. With this on, such a pane will only open inside the folders below."
+                    checked={!!config.paneTrust?.restrictThirdParty}
+                    onChange={(v) =>
+                      onChange({ paneTrust: { ...(config.paneTrust ?? {}), restrictThirdParty: v } })
+                    }
+                  />
+                  <textarea
+                    className="search"
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={'~/Projects/PaneForge\n~/Projects/toolstash'}
+                    value={(config.paneTrust?.allowedRoots ?? []).join('\n')}
+                    onChange={(e) =>
+                      onChange({
+                        paneTrust: {
+                          ...(config.paneTrust ?? {}),
+                          allowedRoots: e.target.value
+                            .split('\n')
+                            .map((r) => r.trim())
+                            .filter(Boolean)
+                        }
+                      })
+                    }
+                  />
+                  <span className="hint">
+                    One folder per line; everything under it counts. Leave the switch off and
+                    nothing is confined - which is what every desk that has not asked for this
+                    gets. First-party panes are never confined.
+                  </span>
+                </div>
                 <div className="setting-row">
                   <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>

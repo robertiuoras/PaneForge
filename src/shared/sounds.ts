@@ -87,7 +87,7 @@ export interface CustomSound {
 }
 
 /** Which alert is being played. Each one picks its own sound. */
-export type SoundEvent = 'done' | 'stall' | 'bell' | 'ask' | 'tick'
+export type SoundEvent = 'done' | 'stall' | 'bell' | 'ask' | 'tick' | 'move'
 
 export interface SoundConfig {
   /** a session finished its turn or asked you something */
@@ -116,6 +116,17 @@ export interface SoundConfig {
    * still has the seconds it is counting to disagree.
    */
   tick: string
+  /**
+   * the app is about to move or close one of your panes, and is counting down first.
+   *
+   * The one alert here that is not about an AGENT: it is the app announcing something it
+   * decided by itself. It exists because the countdown it goes with is drawn beside a
+   * mascot in a corner and takes itself away after a minute - so on 2026-08-23 two panes
+   * went to the other machine while Robert was looking somewhere else, and the first he
+   * knew of it was two panes missing. Everything the ladder does is reversible and none of
+   * it is worth anything if nobody is told in time to disagree.
+   */
+  move: string
   /** 0..1, applied on top of every sound's own level */
   volume: number
   custom: CustomSound[]
@@ -611,6 +622,7 @@ export const DEFAULT_SOUNDS: SoundConfig = {
   bell: 'ping',
   ask: 'knock',
   tick: 'tick',
+  move: 'bowl',
   volume: 1,
   custom: []
 }
@@ -742,6 +754,7 @@ export function pruneSounds(sounds: SoundConfig, exists: (file: string) => boole
     bell: keep(sounds.bell, DEFAULT_SOUNDS.bell),
     ask: keep(sounds.ask, DEFAULT_SOUNDS.ask),
     tick: keep(sounds.tick, DEFAULT_SOUNDS.tick),
+    move: keep(sounds.move, DEFAULT_SOUNDS.move),
     volume: clampVolume(sounds.volume)
   }
 }

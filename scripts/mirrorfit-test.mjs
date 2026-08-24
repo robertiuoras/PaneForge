@@ -10,7 +10,7 @@
 // far too wide simply cut off at the pane edge.
 
 import { strict as assert } from 'node:assert'
-import { mirrorFit, MIN_FONT } from '../src/shared/mirrorFit.ts'
+import { borrowGrid, mirrorFit, MIN_FONT } from '../src/shared/mirrorFit.ts'
 
 let pass = 0
 const t = (name, fn) => {
@@ -156,6 +156,92 @@ t('a zero host grid cannot divide by zero', () => {
   const out = mirrorFit({ fitCols: 80, fitRows: 24, hostCols: 0, hostRows: 0, font: 12, maxFont: 13 })
   assert.ok(Number.isFinite(out.font) && Number.isFinite(out.scale))
   assert.ok(out.scale > 0)
+})
+
+
+// ---------------------------------------------------------------------------
+// The BORROW loop: the mirror does not only draw the host's grid, it asks the host
+// to change it. That closes a feedback loop through another machine, and a loop is
+// the one thing a per-frame test cannot see - every individual frame here is
+// defensible and the SEQUENCE never lands.
+//
+// Measured live 2026-08-23 against a real PC pane in a 458x459 mirror: 27x13 @ font
+// 13 and 126x65 @ font 6, alternating several times a second, indefinitely. That is
+// Robert's "every second it keeps changing shape".
+// ---------------------------------------------------------------------------
+
+/**
+ * One mirror, one host that obeys instantly. `roomCols` is what fits at font 1, so a
+ * font change re-measures exactly as the real observer does.
+ *
+ * `convert` is the only thing that varies: which font the ask converts the measurement
+ * with. Shipped used the font that had just been WRITTEN; the fix uses the one the
+ * measurement was TAKEN at.
+ */
+function borrowWalk({ roomCols, roomRows, hostCols, hostRows, maxFont = 13, steps = 24, convert }) {
+  let font = maxFont
+  const seen = []
+  for (let i = 0; i < steps; i++) {
+    const fitCols = Math.floor(roomCols / font)
+    const fitRows = Math.floor(roomRows / font)
+    const measuredAt = font
+    const out = mirrorFit({ fitCols, fitRows, hostCols, hostRows, font, maxFont })
+    font = out.font
+    const want = convert({ fitCols, fitRows, measuredAt, after: font, maxFont })
+    // The host obeys: nobody else is borrowing this pane.
+    hostCols = want.cols
+    hostRows = want.rows
+    seen.push(`${hostCols}x${hostRows}@${font}`)
+  }
+  return seen
+}
+
+const asked = (which) => ({ fitCols, fitRows, measuredAt, after, maxFont }) =>
+  borrowGrid({ fitCols, fitRows, font: which === 'measured' ? measuredAt : after, maxFont })
+
+// The live numbers: 59x30 of room at font 13, so 767x390 at font 1.
+const LIVE = { roomCols: 59 * 13, roomRows: 30 * 13, hostCols: 126, hostRows: 65 }
+
+t('the borrow settles on one grid instead of trading two', () => {
+  const seen = borrowWalk({ ...LIVE, convert: asked('measured') })
+  const tail = new Set(seen.slice(-8))
+  assert.equal(tail.size, 1, `never settled: ${[...tail].join(' ')}`)
+  // ...and on a grid this window can actually draw at the user's own font.
+  const [grid] = [...tail]
+  const [cols, rows] = grid.split('@')[0].split('x').map(Number)
+  assert.ok(cols <= Math.floor(LIVE.roomCols / 13), `${cols} columns is wider than the room`)
+  assert.ok(rows <= Math.floor(LIVE.roomRows / 13), `${rows} rows is taller than the room`)
+})
+
+t('CONTROL: converting with the font just written cycles for ever', () => {
+  const seen = borrowWalk({ ...LIVE, convert: asked('after') })
+  const tail = new Set(seen.slice(-8))
+  assert.ok(tail.size > 1, 'the shipped bug is meant to be unable to settle')
+  // The measured pair: a tiny grid at the floor font and the whole room at the user's,
+  // trading places for ever. (The model's cell width is exactly linear, so its large
+  // half is 127 where the real pane measured 126.)
+  assert.ok(seen.some((f) => f.startsWith('27x13@')), `expected the small half, got ${seen.slice(0, 4).join(' ')}`)
+  assert.ok(seen.some((f) => /^12[67]x65@/.test(f)), `expected the large half, got ${seen.slice(0, 4).join(' ')}`)
+})
+
+t('a mirror bigger than the host settles too, at the room', () => {
+  const seen = borrowWalk({ roomCols: 152 * 13, roomRows: 58 * 13, hostCols: 69, hostRows: 35, convert: asked('measured') })
+  const tail = new Set(seen.slice(-8))
+  assert.equal(tail.size, 1, `never settled: ${[...tail].join(' ')}`)
+  assert.equal([...tail][0], '152x58@13', 'the host is lent the room at the user’s own font')
+})
+
+t('the ask is font-independent: the same room asks for the same grid', () => {
+  const at13 = borrowGrid({ fitCols: 59, fitRows: 30, font: 13, maxFont: 13 })
+  const at6 = borrowGrid({ fitCols: 126, fitRows: 65, font: 6, maxFont: 13 })
+  assert.deepEqual(at13, { cols: 59, rows: 30 })
+  assert.ok(Math.abs(at6.cols - at13.cols) <= 2, `${at6.cols} vs ${at13.cols}`)
+  assert.ok(Math.abs(at6.rows - at13.rows) <= 2, `${at6.rows} vs ${at13.rows}`)
+})
+
+t('the ask never goes below the floors the caller applies', () => {
+  const tiny = borrowGrid({ fitCols: 4, fitRows: 2, font: 6, maxFont: 13 })
+  assert.deepEqual(tiny, { cols: 20, rows: 5 })
 })
 
 console.log(`\nmirrorfit: ${pass} cases passed`)

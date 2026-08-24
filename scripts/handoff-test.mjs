@@ -75,6 +75,7 @@ function inertBackend() {
     buffer: () => '',
     write: () => {},
     resize: () => {},
+    returnSize: () => {},
     redraw: () => {},
     setBusy: () => {},
     clearAttention: () => {},
@@ -147,6 +148,7 @@ writeFileSync(transcript, line.repeat(1300)) // ~5.2 MB
 const transcriptBytes = readFileSync(transcript)
 
 const started = []
+const notedCols = []
 const receiver = {
   root: () => receiverRoot,
   place: async (req) => ({ ...req }),
@@ -155,6 +157,7 @@ const receiver = {
     return { id: `pc-${started.length}`, title: req.title ?? 'pane', cwd: req.cwd, agent: req.agent ?? 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }
   },
   historyDir: () => historyDir,
+  noteTailCols: (id, cols) => notedCols.push([id, cols]),
   claudeProjectDir: (cwd) => join(claudeDir, cwd.replace(/[^A-Za-z0-9]/g, '-'))
 }
 
@@ -197,6 +200,7 @@ const sender = {
   ],
   kill: (id) => killed.push(id),
   tailOf: () => 'SCREEN-TAIL\u001b[32mgreen\u001b[0m\n',
+  tailColsOf: () => 157,
   transcriptFileFor: () => transcript,
   deliver: (dev, payload, file) => client.handoff(payload, file),
   deviceName: () => 'PC'
@@ -229,6 +233,17 @@ const landed = join(receiver.claudeProjectDir(clone), 'conv123.jsonl')
 ok('the transcript landed where the CLI looks', existsSync(landed))
 ok('5 MB of chunks reassembled byte-for-byte', existsSync(landed) && readFileSync(landed).equals(transcriptBytes))
 ok('the screen tail seeds the far scrollback', Boolean(req?.scrollbackId) && readFileSync(join(historyDir, `${req.scrollbackId}.log`), 'utf8').includes('SCREEN-TAIL'))
+// The tail is a frame of ABSOLUTE column moves painted in the sender's pane, and a
+// terminal clamps a move past its own last column - so replayed into a narrower pane it
+// piles every line onto the right-hand edge and no repaint can repair it, because the
+// wreckage is in the scrollback and Fix only redraws the screen. Measured PC -> Mac,
+// 2026-08-23: a 157-column frame in this Mac pane, unreadable.
+ok('the width the tail was painted at travels', received[0]?.tailCols === 157, String(received[0]?.tailCols))
+ok(
+  'and is recorded against the id the tail was written under, so colsOf can answer',
+  notedCols.length === 1 && notedCols[0][0] === req?.scrollbackId && notedCols[0][1] === 157,
+  JSON.stringify(notedCols)
+)
 
 // ---------------------------------------------------------------- refusals
 console.log('refusals')

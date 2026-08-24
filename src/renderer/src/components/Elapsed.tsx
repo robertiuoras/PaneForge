@@ -5,31 +5,69 @@
 // of them would re-render its parent.
 
 import { useEffect, useState } from 'react'
+import { bucketOf, formatElapsed, kb, stepFor } from '@shared/elapsed'
 
-const subs = new Set<(t: number) => void>()
+// Re-exported so the dozen files that already import these from here keep working: the
+// rules moved to `shared/elapsed.ts` to be testable, not to be relocated for callers.
+export { formatElapsed, kb, stepFor }
+
+/**
+ * A subscriber, and the size of the step it actually cares about.
+ *
+ * Every clock used to be woken once a second, whatever it drew. That is right for `42s`
+ * and pure waste for `12h 04m`, which changes 60 times less often - and the pane header's
+ * "open for" clock is one per pane, so on a desk of eight panes it was 8 React renders a
+ * second, for ever, to redraw a string that was already correct 59 times out of 60.
+ *
+ * The timer stays ONE interval for the whole app (a dozen setIntervals for the same tick
+ * is the thing this file was written to avoid). What changed is that a tick is delivered
+ * to a subscriber only when the bucket it named has actually turned over.
+ */
+interface Sub {
+  fn: (t: number) => void
+  step: number
+  /**
+   * What the buckets are measured FROM, which has to be the clock's own start.
+   *
+   * Bucketing on the wall minute instead looks identical in a unit test and is wrong on
+   * screen: a pane opened at 09:00:30 turns over its displayed minute at :30 past, so a
+   * bucket aligned to :00 leaves the header reading `1h 04m` for up to 59 seconds after it
+   * became `1h 05m`. A slow clock that is never WRONG is the whole point of the step.
+   */
+  offset: number
+  bucket: number
+}
+
+const subs = new Set<Sub>()
 let timer: ReturnType<typeof setInterval> | null = null
 
-function tick(): void {
+/** `force` ignores the buckets: a window coming back on screen must be right at once. */
+function tick(force = false): void {
   const now = Date.now()
-  for (const s of subs) s(now)
+  for (const s of subs) {
+    const bucket = bucketOf(now, s.step, s.offset)
+    if (!force && bucket === s.bucket) continue
+    s.bucket = bucket
+    s.fn(now)
+  }
 }
 
 // Chromium throttles timers in an occluded window to about one a minute, so the
 // readout can be a minute stale the moment you look at it again. Catching focus
 // and visibility changes makes it correct as soon as it is on screen.
 function wake(): void {
-  if (subs.size) tick()
+  if (subs.size) tick(true)
 }
 
-function subscribe(fn: (t: number) => void): () => void {
-  subs.add(fn)
+function subscribe(sub: Sub): () => void {
+  subs.add(sub)
   if (!timer) {
-    timer = setInterval(tick, 1000)
+    timer = setInterval(() => tick(), 1000)
     window.addEventListener('focus', wake)
     document.addEventListener('visibilitychange', wake)
   }
   return () => {
-    subs.delete(fn)
+    subs.delete(sub)
     if (subs.size === 0 && timer) {
       clearInterval(timer)
       timer = null
@@ -39,29 +77,20 @@ function subscribe(fn: (t: number) => void): () => void {
   }
 }
 
-/** Wall clock that updates once a second, shared by every component that asks. */
-export function useNow(): number {
+/**
+ * Wall clock shared by every component that asks, updated no faster than it is read.
+ *
+ * `step` is the smallest unit the CALLER draws: 1000 for a seconds readout, 60000 for one
+ * that shows minutes, `Infinity` for a clock that has stopped. Asking for a bigger step
+ * costs nothing and saves a render.
+ */
+export function useNow(step = 1000, offset = 0): number {
   const [now, setNow] = useState(() => Date.now())
-  useEffect(() => subscribe(setNow), [])
+  useEffect(() => {
+    if (!Number.isFinite(step)) return
+    return subscribe({ fn: setNow, step, offset, bucket: bucketOf(Date.now(), step, offset) })
+  }, [step, offset])
   return now
-}
-
-/** 42s / 5m 23s / 1h 04m - always two units, so the width barely moves. */
-export function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const s = total % 60
-  const m = Math.floor(total / 60) % 60
-  const h = Math.floor(total / 3600)
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
-  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
-  return `${s}s`
-}
-
-/** 0 B / 74 KB / 3.2 MB - short enough to sit inside a chip on a pane header. */
-export function kb(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 interface Props {
@@ -73,7 +102,11 @@ interface Props {
 }
 
 export default function Elapsed({ since, until, className = 'elapsed', title }: Props): JSX.Element {
-  const now = useNow()
+  // A frozen clock subscribes to nothing at all - it was still being woken every second to
+  // recompute a number that cannot change. The step is derived from the reading itself, so
+  // a pane crossing its first hour drops to minute ticks on the next render.
+  const step = until !== undefined ? Infinity : stepFor(Date.now() - since)
+  const now = useNow(step, since)
   const text = formatElapsed((until ?? now) - since)
   return (
     // One copy of the digits, and only one. The clock used to carry `data-t` so a

@@ -87,7 +87,17 @@ const ASK_WINDOW_MS = 10 * 60_000
  * transports, and a channel that is desk-only is a property of the TRANSPORT, not of the
  * surface. The window keeps reaching these through ipcMain exactly as before.
  */
-const DESK_ONLY = new Set(['phone:typeGate', 'phone:forgetKey', 'phone:clearMark'])
+// ...and `sessions:closing` is desk-only for the reason the pty's SIZE is: it is a
+// decision made from facts that are true of the machine holding the pane. The phone runs
+// the same renderer, so it would publish a deadline computed against ITS idea of which
+// pane is focused - and the two would then overwrite each other's number on every session
+// broadcast, which is the same last-writer-wins fight `shared/paneSize.ts` documents.
+const DESK_ONLY = new Set([
+  'phone:typeGate',
+  'phone:forgetKey',
+  'phone:clearMark',
+  'sessions:closing'
+])
 
 /**
  * The channels a browser may not reach without a passkey touch.
@@ -120,6 +130,7 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  'autoclear:ask',
   'sessions:start',
   'sessions:startMany',
   'sessions:restart',
@@ -133,6 +144,11 @@ const GATED_INVOKE = new Set([
   // set was a door straight past the gate: a stolen cookie could pick "1. Yes, run it"
   // on any permission prompt on screen without a passkey touch.
   'pty:choose',
+  // Typing, on a delay. `autoclear:ask` ends in `/clear` plus a prompt typed into a pane
+  // unless somebody at the desk stops it, and `autoclear:answer` with 'now' skips even
+  // that wait - so both are the same class as `pty:write`, not a lesser one.
+  'autoclear:ask',
+  'autoclear:answer',
   // Elevation. `admin:enable` registers the scheduled task that relaunches this app
   // ELEVATED with no UAC prompt (index.ts, enableAdminMode) - the single biggest thing a
   // cookie could buy on this desk, and it sat outside the gate because the rule was read
@@ -163,6 +179,9 @@ const GATED_INVOKE = new Set([
   // never asked.
   'remote:start',
   'remote:handoff',
+  // The same move asked for from the other side of it: it kills a pane on the paired
+  // machine and starts one here, so it is weighed exactly as handing one out.
+  'remote:bringHere',
   // Cancelling a queued move destroys nothing, but it decides where a pane runs, which is
   // the same authority as starting one. Same class as its opposite, for one touch.
   'remote:handoffCancel',

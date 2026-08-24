@@ -141,6 +141,10 @@ for (const p of PRESETS) {
   // A filled accent button has to be readable too, and which of black/white wins depends
   // on the accent - hard-coding one is how a yellow button gets white text.
   ok(contrast(v['--accent'], v['--accent-on']) >= 4.5, `${p.name}: text on a filled accent button`)
+  // The countdown seconds and the `auto` badge are drawn ON a filled danger pill, and
+  // var(--bg) measured 4.14:1 there on Paper - fine on every dark theme, which is how a
+  // light-theme contrast bug ships.
+  ok(contrast(v['--danger'], v['--danger-on']) >= 4.5, `${p.name}: text on a filled danger pill`)
   // The three semantic colours are small text on a surface - a lane chip, a badge, a second
   // line - so 3:1 is the floor they have to clear, on the light presets as much as the dark
   // ones. They were literal hex before this, picked against a near-black window: `#8b9dff`

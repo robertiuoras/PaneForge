@@ -262,11 +262,21 @@ export function transcriptFor(id: string): string | null {
     settled.add(id)
     return next
   }
-  // Newest first, and only files written since this pane started: an older conversation
-  // in the same folder belongs to whoever had it, not to whoever opened a pane last.
+  // Newest first, and only conversations BORN since this pane started: an older one in
+  // the same folder belongs to whoever had it, not to whoever opened a pane last.
+  //
+  // The gate reads `birth`, never the sort key. `transcripts()` sorts by mtime, which is
+  // right for "newest activity first" and catastrophic as an eligibility test: a live chat
+  // in that folder is rewritten on every turn, so its mtime is ALWAYS newer than a pane
+  // that just opened. And `taken` only knows panes THIS app started - a chat running in
+  // the installed copy is invisible to a dev copy, and vice versa. Measured 2026-08-23: a
+  // fresh pane opened in /Users/robertiuoras/Projects/PaneForge claimed the transcript of
+  // the Claude Code session that was driving it, and a hand-off then shipped that 309KB
+  // file to the PC, where the pane resumed somebody else's conversation and sat frozen
+  // mid-turn showing its tool output. `movedTo` had this right at the other call site.
   const pick = transcripts(dir).find(
     (t) =>
-      t.at >= s.at - START_SLACK_MS &&
+      birth(t.file) >= s.at - START_SLACK_MS &&
       !taken.has(t.file) &&
       !released.has(t.file) &&
       interactive(t.file)

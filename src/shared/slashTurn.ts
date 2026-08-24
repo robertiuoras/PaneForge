@@ -18,7 +18,8 @@
 // reconstruct what is being typed. This file keeps only the question it asks and the
 // narrow rules that question needs, as `SLASH_OPTIONS`.
 
-import { feedDraft, SLASH_OPTIONS } from './draft'
+import type { DraftState } from './draft'
+import { feedDraft, newDraft, SLASH_OPTIONS, SUBMIT_OPTIONS } from './draft'
 
 /**
  * Fold one chunk of keystrokes into the line-so-far. Backspace erases ("/cl" backspaced
@@ -59,4 +60,55 @@ export function isSlashCommand(typed: string): boolean {
  */
 export function isQuietSlash(typed: string): boolean {
   return /^\s*\/(clear|compact|resume)\b/.test(typed.trimStart())
+}
+
+/**
+ * Did this submitted line throw the conversation AWAY?
+ *
+ * `/clear` alone, out of the three quiet commands: `/compact` rewrites the conversation
+ * the pane is still in and `/resume` swaps in another one, and both leave a pane with a
+ * history somebody may want to read. Only `/clear` puts the pane back where a brand new
+ * one starts, which is the whole of what the sessions list means by "Ready" - see
+ * `fleet.ts`. Without it `engaged` is sticky for the life of the session and a pane sits
+ * under "Your move" for ever after its first turn.
+ *
+ * Partial forms count, for the reason `keepScrollback.mayClearScreen` documents at
+ * length: what was TYPED is not what was SENT, and `/cle` picked out of the CLI's own
+ * completion menu runs `/clear`. Only prefixes that can be nothing else - `cl`, `cle`,
+ * `clea` - so `/c` (which is also `/compact`, `/config`, `/cost`) is left alone. Being
+ * wrong in this direction costs a card reading Ready one turn early; being wrong the
+ * other way is a pane that can never leave Your move.
+ */
+export function clearsConversation(typed: string): boolean {
+  const t = typed.trimStart()
+  if (/^\/clear\b/i.test(t)) return true
+  const m = /^\/(cl[a-z]*)$/i.exec(t.trim())
+  return Boolean(m && 'clear'.startsWith(m[1].toLowerCase()))
+}
+
+/**
+ * The other half of the same keystroke: was anything actually SENT?
+ *
+ * `typeLine` answers "is this a slash command" and is deliberately blind to a paste and
+ * to a history recall - it errs toward "a real prompt", which is the safe reading for
+ * the bell. That blindness cannot answer "was the composer EMPTY", because a pasted
+ * prompt and a bare return look identical to it, and reading an empty line as "nothing
+ * was asked" would then park a pasted prompt in Ready.
+ *
+ * So this is a second, fuller reconstruction of the same keystrokes (`SUBMIT_OPTIONS`),
+ * and `isBareReturn` is only true when the line is empty AND the parser has followed
+ * every edit made to it. A paste, an up-arrow and a Tab completion each fail one of
+ * those and are treated as a real prompt, exactly as before.
+ */
+export function newSubmitLine(): DraftState {
+  return newDraft()
+}
+
+export function feedSubmitLine(prev: DraftState, data: string): DraftState {
+  return feedDraft(prev, data, SUBMIT_OPTIONS).state
+}
+
+/** Nothing in the box, and nothing arrived that this could not follow. */
+export function isBareReturn(line: DraftState): boolean {
+  return line.text.trim() === '' && line.certain && !line.inPaste
 }

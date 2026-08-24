@@ -203,6 +203,16 @@ export interface MascotPane {
   pane: number
   /** The pane's own name, or the project it is in. What `place.ts` already worked out. */
   name: string
+  /**
+   * Which COPY of that project this pane is in - `place.ts`'s own `role`, and only when it
+   * is not the project's own checkout.
+   *
+   * A desk running three lanes of one repo had three panes all called `PaneForge`, so
+   * "Closed PaneForge pane 3" named a project and a keystroke and left out the one fact
+   * that separates it from the pane beside it. Empty for a trunk pane, because "main
+   * checkout" is what a bare project name already means (`place.ts`'s rule, verbatim).
+   */
+  where?: string
   state: FleetState
   /** This pane's whole process tree, MB. null when the sampler has not read it yet. */
   memMb: number | null
@@ -261,9 +271,12 @@ const MIN = 60_000
 /** "pane 4", "session 4", "#4", "4" - the number a person actually says. */
 function paneNumbers(text: string): number[] {
   const out: number[] = []
-  const re = /(?:pane|session|tab|window)\s*#?\s*(\d{1,2})|#(\d{1,2})/gi
+  // `(3)` is in the list because it is how the mascot itself names a pane now - reading
+  // back its own sentence has to work, or "close (3) PaneForge lane a" is a pane it cannot
+  // find in a message it wrote.
+  const re = /(?:pane|session|tab|window)\s*#?\s*(\d{1,2})|#(\d{1,2})|\((\d{1,2})\)/gi
   let m: RegExpExecArray | null
-  while ((m = re.exec(text))) out.push(Number(m[1] ?? m[2]))
+  while ((m = re.exec(text))) out.push(Number(m[1] ?? m[2] ?? m[3]))
   // A bare number is only a pane when the sentence is otherwise about closing one:
   // "close 4" is a pane, "close the 2 idle ones" is a count and must not be.
   if (!out.length) {
@@ -294,14 +307,18 @@ function byName(text: string, panes: MascotPane[]): MascotPane[] {
 }
 
 /**
- * How the mascot refers to a pane in a sentence: the project first, then the number.
+ * How the mascot refers to a pane in a sentence: the number in brackets, then the place.
  *
- * The number is the keystroke that reaches it (Ctrl+N) and the project is what a person
- * has in their head, so "taskdriver pane 1" is both halves in the order they are thought
- * of. It used to be `pane 1 (taskdriver)`, which reads as an id with a note after it.
+ * The number is the keystroke that reaches it (Ctrl+N) and the place is what a person has
+ * in their head, so both halves are always there. It leads with the number in brackets
+ * because a sentence naming several panes - "Closed (1) PaneForge lane a and (4) crypto" -
+ * is otherwise a run of words with numbers buried inside it, and the numbers are the half
+ * that is actionable. `where` is the lane, added only when the project name does not
+ * already imply the checkout.
  */
-export function paneWord(p: MascotPane): string {
-  return p.name ? `${p.name} pane ${p.pane}` : `pane ${p.pane}`
+export function paneWord(p: { name?: string; pane: number; where?: string }): string {
+  const place = [p.name, (p.where ?? '').trim()].filter(Boolean).join(' ')
+  return place ? `(${p.pane}) ${place}` : `pane ${p.pane}`
 }
 
 /** The most of a pane's ask that goes in a sentence. Longer than this is a paragraph. */
@@ -412,8 +429,15 @@ export function parse(text: string, panes: MascotPane[], devs: RunningDev[] = []
   // Dev servers come first, because "close the dev" is a close with no pane in it and
   // would otherwise fall through to "nothing quiet enough to close" - an answer about
   // panes to a question about servers.
-  if (mentionsDev(t) && !/\bpane\b/.test(low.replace(/\bpane\s*#?\s*\d/g, ''))) {
-    const named = pickDevs(t, devs)
+  //
+  // A pane NUMBER in the sentence no longer hands it back to the pane branch. "stop the
+  // dev server in pane 2" is a sentence about a server that happens to say where it is,
+  // and answering it by offering to close pane 2 is the app doing the larger of the two
+  // things somebody asked for. The number narrows the servers instead; a bare word "pane"
+  // with no number still means the panes.
+  if (mentionsDev(t) && (nums.length > 0 || !/\bpane\b/.test(low.replace(/\bpane\s*#?\s*\d/g, '')))) {
+    const inPane = nums.length ? devs.filter((d) => d.pane && nums.includes(d.pane)) : []
+    const named = inPane.length ? inPane : pickDevs(t, devs)
     if (wantsClose) {
       if (!devs.length) return { kind: 'say', say: 'No dev server running that I can see.' }
       if (!named.length)
@@ -471,6 +495,23 @@ export function parse(text: string, panes: MascotPane[], devs: RunningDev[] = []
       say: panes.length ? 'Nothing on this desk fits that.' : 'No panes open here.'
     }
 
+  // "what is open", "list the panes", "what is running" - the whole desk, in the order the
+  // sidebar has it. It was the one question the pet could not answer: everything else here
+  // needs a pane named or described first, so the most obvious opening sentence anybody
+  // types fell through to "I only know this machine".
+  if (/\b(list|everything|all)\b/.test(low) || /\bwhat(?:'s| is| are)?\b/.test(low)) {
+    if (/\b(pane|panes|session|sessions|open|running|going on|desk|here)\b/.test(low)) {
+      if (!panes.length) return { kind: 'say', say: 'No panes open here.' }
+      const known = panes.filter((p) => p.memMb !== null)
+      const total = known.reduce((n, p) => n + (p.memMb as number), 0)
+      return {
+        kind: 'report',
+        ids: panes.map((p) => p.id),
+        say: `${panes.length} ${panes.length === 1 ? 'pane' : 'panes'}${total ? `, about ${formatMb(total)} between them` : ''}.\n${panes.map(paneLine).join('\n')}`
+      }
+    }
+  }
+
   if (/\b(memory|ram|total|how much|usage|resources)\b/.test(low)) {
     const known = panes.filter((p) => p.memMb !== null)
     const total = known.reduce((n, p) => n + (p.memMb as number), 0)
@@ -485,12 +526,16 @@ export function parse(text: string, panes: MascotPane[], devs: RunningDev[] = []
   if (/\b(help|what can you|commands?)\b/.test(low))
     return {
       kind: 'say',
-      say: 'Try: "what is pane 3", "what are the two biggest", "close the idle ones", "hand off pane 2", "what dev servers are running", "close both dev servers", "memory".'
+      say: [
+        'Panes: "what is open", "what is pane 3", "what are the two biggest", "memory".',
+        'Dev servers: "what dev servers are running", "stop the server on 3000", "close the dev server in pane 2".',
+        'Doing things: "close the idle ones", "close (3) PaneForge", "hand off pane 2".'
+      ].join('\n')
     }
 
   return {
     kind: 'say',
-    say: `I only know this machine - panes, memory, dev servers and closing them. "help" lists it.`
+    say: `I only know this machine - panes, memory, dev servers and closing them. Try "what is open" or "help".`
   }
 }
 
@@ -576,7 +621,10 @@ export function actedWords(
   what: 'closed' | 'moved' | 'trimmed',
   panes: ActedPane[],
   mb?: number,
-  agoMs = 0
+  agoMs = 0,
+  /** Which machine it went to. Named, because "the paired device" is the one fact a
+   *  person cannot get back from anywhere on screen once the pane has gone. */
+  where?: string
 ): string {
   const subject = (p: ActedPane): string => {
     const s = paneSubject(p.doing)
@@ -590,7 +638,7 @@ export function actedWords(
     what === 'trimmed'
       ? `Trimmed ${who} ${when}${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
       : what === 'moved'
-        ? `Moved ${who} to the paired device ${when} - this machine was out of memory.`
+        ? `Moved ${who} to ${where || 'the paired device'} ${when} - it is mirrored here, so it is still on screen.`
         : `Closed ${who} ${when}${back} - reopen from History, nothing is lost.`
   // Several panes are listed under the sentence rather than folded into it: the whole
   // point is which conversations went, and a comma-joined run of four is unreadable.
@@ -619,13 +667,29 @@ export const CLOSE_COUNTDOWN_MS = 15_000
  */
 export const KEEP_MINUTES = 60
 
-/** The countdown, in words. `names` are already `paneWord` strings. */
-export function countdownWords(names: string[], msLeft: number, why: 'idle' | 'pressure'): string {
+/**
+ * The countdown, in words. `names` are already `paneWord` strings.
+ *
+ * `toDevice` turns it into the OTHER thing the ladder does by itself. A close counted
+ * down and could be stopped; a move said nothing at all - `runHandoffs` reported into a
+ * console nobody has open - so a pane simply left the machine. Same countdown, same
+ * press, and the machine is named: where it went is the one fact that cannot be
+ * recovered from the screen afterwards.
+ */
+export function countdownWords(
+  names: string[],
+  msLeft: number,
+  why: 'idle' | 'pressure',
+  toDevice?: string
+): string {
   const secs = Math.max(0, Math.ceil(msLeft / 1000))
   const who = names.length === 1 ? names[0] : `${names.length} panes (${names.join(', ')})`
   const reason =
     why === 'pressure'
       ? 'this machine is out of memory'
       : 'nobody has typed there in a while'
+  if (toDevice) {
+    return `Moving ${who} to ${toDevice} in ${secs}s - ${reason}. The conversation and the screen go too, and it comes straight back as a mirror. A pane mid-turn travels when its turn ends.`
+  }
   return `Closing ${who} in ${secs}s - ${reason}. Nothing is lost: History reopens the conversation and the screen.`
 }

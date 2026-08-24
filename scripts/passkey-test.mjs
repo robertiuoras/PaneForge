@@ -617,7 +617,15 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // start anything and cannot delete a transcript. `voice:transcribe` spawns whisper on an
   // uploaded blob: a process, but one that burns this desk's CPU and returns text, with
   // nothing on the far side to steal. Everything else here is a read.
+  // `autoclear:ask` ends in `/clear` and a prompt being TYPED into a pane, so it is gated
+  // with everything else that types: it reaches the app through the phone server, where
+  // `pane-clear.mjs` pairs exactly as a browser does. A 423 there is the gate working -
+  // the hook logs the refusal and asks again on the next Stop rather than clearing.
+  //
+  // `autoclear:cancel` only ever stands a countdown DOWN. Gating it would be a lock that
+  // can stop somebody keeping their own session, which is the wrong way round.
   const REVIEWED_SAFE = new Set([
+    'autoclear:cancel',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
@@ -635,6 +643,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // A read of the process table, filtered to dev servers. `devs:stop` is the other half
     // and is GATED - it kills a process on this desk.
     'devs:list',
+    // Reviewed 2026-08-23. A read of the /clear countdowns in flight - what is pending and
+    // when it is due. The two channels that START or SKIP one (`autoclear:ask`,
+    // `autoclear:answer`) are GATED: both end in keystrokes reaching a pane.
+    'autoclear:pending',
     // Reviewed 2026-08-22. The same process table filtered to work no pane owns, here and
     // on a paired machine. Both are reads and neither can start or stop anything: the
     // remote one goes out as a `jobs` frame the other end answers by reading ITS table,

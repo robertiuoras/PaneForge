@@ -239,7 +239,7 @@ const desk = [
   {
     const one = notice([desk[0], desk[1]], { idleCloseOn: false })
     check('one stale pane is still worth a sentence', !!one && one.action.ids.join(',') === 'b', one)
-    check('and it names that pane rather than counting', /pane 2/.test(one.say), one.say)
+    check('and it names that pane rather than counting', /\(2\)/.test(one.say), one.say)
   }
   eq(
     'silent when the panes are cheap',
@@ -448,6 +448,48 @@ const desk = [
   // sixty seconds later, for ever - which is what gets a feature switched off.
   check('the count is long enough to read and reach', CLOSE_COUNTDOWN_MS >= 10_000, CLOSE_COUNTDOWN_MS)
   check('and keeping a pane holds for an hour', KEEP_MINUTES >= 30, KEEP_MINUTES)
+
+  // The other thing the ladder does by itself, and the one that had no countdown at all:
+  // a pane MOVED to the other machine. `runHandoffs` reported into a console nobody has
+  // open, so a pane left the desk with nothing on screen saying so - while a close, the
+  // more recoverable of the two, counted down and could be stopped.
+  const moved = countdownWords(['taskdriver pane 1'], 12_000, 'pressure', 'Desk PC')
+  check('a move counts down like a close', /in 12s/.test(moved), moved)
+  check('and says it is a move, not a close', /^Moving /.test(moved) && !/Closing/.test(moved), moved)
+  // Where it went is the one fact that cannot be recovered from this screen afterwards.
+  check('and names the machine it is going to', /Desk PC/.test(moved), moved)
+  // A mid-turn pane is queued by the far end rather than killed, and the sentence has to
+  // say so or the press reads as "lose the answer being written".
+  check('and says a mid-turn pane travels when the turn ends', /turn ends/.test(moved), moved)
+  // The control: with no device named nothing about the old sentence may change.
+  const closing = countdownWords(['taskdriver pane 1'], 12_000, 'pressure')
+  check('a close still reads exactly as it did', /^Closing /.test(closing) && !/Moving/.test(closing), closing)
+}
+
+{
+  // The most obvious opening sentence anybody types, and the one question the pet could
+  // not answer: everything else here needs a pane named or described first, so "what is
+  // open" fell through to "I only know this machine".
+  const all = parse('what is open', desk)
+  eq('the whole desk is an answer', all.kind, 'report')
+  eq('...covering every pane', all.ids.length, desk.length)
+  check('...and it counts them', /panes/.test(all.say), all.say)
+  eq('an empty desk says so rather than reporting nothing', parse('what is open', []).kind, 'say')
+
+  // A pane NUMBER beside a dev server is which SERVER, not an offer to close the pane.
+  // Answering "stop the dev server in pane 2" with "close pane 2?" is the app offering the
+  // larger of the two things it was asked for.
+  const devs = [
+    { pid: 41, pane: 2, label: 'dev', port: 3000, where: 'taskdriver' },
+    { pid: 42, pane: 5, label: 'dev', port: 3007, where: 'crypto' }
+  ]
+  const inPane = parse('stop the dev server in pane 2', desk, devs)
+  eq('a dev server is stopped, not a pane', inPane.kind, 'stopDev')
+  eq('...and it is the one in that pane', inPane.pids.join(','), '41')
+  // The control: the same sentence with no server in it is still about the pane.
+  eq('a pane with no server in the sentence is still a pane', parse('close pane 2', desk).kind, 'close')
+  // Two servers and nothing to separate them is a question, never a guess.
+  eq('...and an ambiguous one asks', parse('stop the dev server', desk, devs).kind, 'say')
 }
 
 {
@@ -455,13 +497,37 @@ const desk = [
   // the sentence this replaces: it names neither the conversation that went nor when, and
   // both are the only things somebody wants when a pane they were using is not there.
   const p = pane({ pane: 1, name: 'taskdriver', doing: 'fix the login redirect' })
-  eq('the project comes before the number', paneWord(p), 'taskdriver pane 1')
+  eq('the number leads, then the place', paneWord(p), '(1) taskdriver')
   check('and the subject rides with it', /was working on "fix the login redirect"/.test(paneDoing(p)), paneDoing(p))
   // Never invented. A pane nobody has typed a real ask into is named and nothing more.
-  eq('a pane with no recorded ask says nothing about one', paneDoing(pane({ pane: 4, name: 'vrb' })), 'vrb pane 4')
+  eq('a pane with no recorded ask says nothing about one', paneDoing(pane({ pane: 4, name: 'vrb' })), '(4) vrb')
+
+  // Which COPY of the project. Three lanes of one repo were three panes all called
+  // `PaneForge`, so a sentence about one of them was equally true of the other two - the
+  // one fact that separates them was the only one left out.
+  eq(
+    'a lane is named as well as the project',
+    paneWord(pane({ pane: 3, name: 'PaneForge', where: 'lane a' })),
+    '(3) PaneForge lane a'
+  )
+  // ...and a trunk pane is NOT given "main checkout": `place.ts`'s own rule is that a bare
+  // project name already means the project's own checkout, and adding it to every sentence
+  // is two words that say nothing on the common case.
+  eq(
+    'and a trunk pane is left alone',
+    paneWord(pane({ pane: 3, name: 'PaneForge', where: '' })),
+    '(3) PaneForge'
+  )
+  // Reading back its own sentence has to work, or "close (3) PaneForge lane a" - which is
+  // the exact string the pet just printed - is a pane it cannot find.
+  {
+    const back = parse('close (3) PaneForge lane a', [pane({ id: 'p3', pane: 3, name: 'PaneForge' })])
+    eq('the bracketed number it prints is a number it can read', back.kind, 'close')
+    eq('...and it is that pane', back.ids.join(','), 'p3')
+  }
 
   const one = actedWords('closed', [{ word: paneWord(p), doing: p.doing }], 190, 3 * MIN)
-  check('a close names the pane', /taskdriver pane 1/.test(one), one)
+  check('a close names the pane', /\(1\) taskdriver/.test(one), one)
   check('...says what it was working on', /login redirect/.test(one), one)
   check('...says how long ago', /3 min ago/.test(one), one)
   check('...and still says what it gave back', /190 MB/.test(one), one)
@@ -472,17 +538,25 @@ const desk = [
   const many = actedWords(
     'closed',
     [
-      { word: 'taskdriver pane 1', doing: 'fix the login redirect' },
-      { word: 'PaneForge pane 4', doing: 'the mascot bubble' }
+      { word: '(1) taskdriver', doing: 'fix the login redirect' },
+      { word: '(4) PaneForge lane a', doing: 'the mascot bubble' }
     ],
     380,
     45_000
   )
   check('several panes are counted', /2 panes/.test(many), many)
   check('...listed one per line', many.split('\n').length === 3, many)
-  check('...and named', /PaneForge pane 4/.test(many) && /taskdriver pane 1/.test(many), many)
+  check('...and named', /\(4\) PaneForge lane a/.test(many) && /\(1\) taskdriver/.test(many), many)
 
   // A subject long enough to be a paragraph is cut rather than allowed to fill the window.
+  // The report afterwards names the machine too - `where` is optional, so a caller that
+  // does not know it still gets the sentence this had before.
+  const movedTo = actedWords('moved', [{ word: 'taskdriver pane 1' }], undefined, 0, 'Desk PC')
+  check('a move is reported with the machine named', /Moved/.test(movedTo) && /Desk PC/.test(movedTo), movedTo)
+  check('and says the pane is still on screen as a mirror', /mirror/.test(movedTo), movedTo)
+  const movedAnon = actedWords('moved', [{ word: 'taskdriver pane 1' }])
+  check('an unnamed machine still reports the move', /paired device/.test(movedAnon), movedAnon)
+
   const long = actedWords('closed', [{ word: 'x pane 1', doing: 'a'.repeat(400) }], 10, 0)
   check('a very long ask is cut', long.length < 260, long.length)
 }
@@ -524,7 +598,8 @@ const desk = [
   )
   check(
     'the acted sentence is rebuilt as it is drawn, not stored',
-    /actedWords\(bubble\.acted\.what/.test(drawn),
+    // `\s*`: the call wraps once it carries the machine the pane moved to.
+    /actedWords\(\s*bubble\.acted\.what/.test(drawn),
     'the bubble must re-render its "ago" rather than keeping the string it was said with'
   )
 }

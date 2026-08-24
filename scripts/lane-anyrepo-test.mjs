@@ -43,10 +43,13 @@ function git(cwd, ...args) {
 
 /** The real CLI, exactly as the hook calls it. */
 function lane(repo, ...args) {
+  // A trailing object is an env overlay, for the one caller that needs PF_RELEASE.
+  const env = args.length && typeof args[args.length - 1] === 'object' ? args.pop() : null
   const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], {
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 120_000
+    timeout: 120_000,
+    env: env ? { ...process.env, ...env } : process.env
   })
   return { code: r.status ?? 1, out: (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim() }
 }
@@ -180,9 +183,31 @@ function project(name, { lanes, version } = {}) {
   // The one that must not have changed: driving THIS repo by --repo has to look exactly
   // like driving it by living in it, or every PaneForge release story is now wrong.
   const s = JSON.parse(lane(repoRoot, 'status').out)
-  ok('the engine repo still cuts versions', s.mode === 'version', s.mode)
+  // It USED to be `version`, and this asserted that. Robert turned it off on 2026-08-23
+  // ("wasting time with releases"): finishing work merges and pushes, and a version is cut
+  // only when he asks, with `npm run ship`. The assertion is kept rather than deleted
+  // because the flip is one line in `.lanes.json` and a silent flip back - by an editor, a
+  // merge, or a script that thinks it knows better - would start publishing builds to his
+  // machines again with nothing on screen saying so.
+  ok('the engine repo does not cut a version by itself', s.mode === 'merge', s.mode)
   ok('...on its own branch', s.branch === 'master', s.branch)
   ok('...and is recognised as its own checkout', s.own === true)
+
+  // How a release is ASKED FOR without editing the standing policy.
+  //
+  // Editing `.lanes.json` was the only way, and it is a trap with no way out: the edit
+  // makes the main checkout dirty and `ship` refuses a dirty checkout, so the release
+  // never happens and the file is left flipped if anything throws in between. Measured
+  // 2026-08-24 - `ship patch` answered `main checkout is dirty, commit first: M
+  // .lanes.json`. The ask is per-invocation, so it is an environment variable; the FILE
+  // stays the standing policy, and nothing automatic sets the variable, so a scheduled
+  // `autoship` still merges.
+  const asked = JSON.parse(lane(repoRoot, 'status', { PF_RELEASE: 'version' }).out)
+  ok('asking for a release once turns the version path on', asked.mode === 'version', asked.mode)
+  const after = JSON.parse(lane(repoRoot, 'status').out)
+  ok('...and the standing answer is unchanged the moment the ask ends', after.mode === 'merge', after.mode)
+  const junk = lane(repoRoot, 'status', { PF_RELEASE: 'yes-please' })
+  ok('a value that is not a release mode is refused, not guessed at', junk.code !== 0, junk.err || junk.out)
 }
 
 try {

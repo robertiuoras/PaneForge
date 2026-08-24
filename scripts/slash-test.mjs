@@ -32,7 +32,8 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { typeLine, isSlashCommand, isQuietSlash } = createRequire(import.meta.url)(out)
+const { typeLine, isSlashCommand, isQuietSlash, clearsConversation, newSubmitLine, feedSubmitLine, isBareReturn } =
+  createRequire(import.meta.url)(out)
 
 /** Feed a sequence of write() chunks and say whether Enter would read as a command. */
 function submits(chunks) {
@@ -108,6 +109,42 @@ for (const c of quiet) {
   }
 }
 
+// Which submitted line puts the pane back to Ready.
+//
+// The narrow half of `isQuietSlash`: /compact rewrites the conversation the pane is
+// still in and /resume swaps another one in, and neither leaves a pane with nothing
+// to read. Only /clear does, and only /clear un-asks the pane in sessions.ts - which
+// is what stops "Ready" from being a bag of panes that merely happened never to be
+// typed into.
+const clears = [
+  { line: '/clear', want: true },
+  { line: ' /clear ', want: true, name: 'padded' },
+  { line: '/CLEAR', want: true, name: 'shouted' },
+  // Picked out of the CLI's own completion menu: what was typed is not what was sent.
+  { line: '/cl', want: true },
+  { line: '/cle', want: true },
+  { line: '/clea', want: true },
+  // Ambiguous prefixes are left alone - /c is also /compact, /config, /cost.
+  { line: '/c', want: false },
+  { line: '/co', want: false },
+  // The other two quiet commands keep their conversation, so they keep the pane's state.
+  { line: '/compact', want: false },
+  { line: '/resume', want: false },
+  // A longer word that merely starts with it is a different command.
+  { line: '/clearance', want: false },
+  { line: '/clean-up-the-tests', want: false },
+  // Not a command at all.
+  { line: 'clear the failing test', want: false },
+  { line: '', want: false }
+]
+for (const c of clears) {
+  const got = clearsConversation(c.line)
+  if (got !== c.want) {
+    failed++
+    console.error(`FAIL clears ${c.name ?? c.line}: expected ${c.want}, got ${got}`)
+  }
+}
+
 // The cap: a pasted-then-typed monster line cannot grow without bound.
 {
   let typed = ''
@@ -118,9 +155,38 @@ for (const c of quiet) {
   }
 }
 
+// Did this Enter send anything at all?
+//
+// The load-bearing half is the NEGATIVES: a bare return must be told apart from a
+// pasted prompt and from a recalled one, because reading either of those as "nothing
+// was asked" parks a real turn in Ready - a strictly worse bug than the one this fixes.
+const PASTE_ON = '\u001b[200~'
+const PASTE_OFF = '\u001b[201~'
+const bares = [
+  { name: 'bare return at an empty composer', chunks: [], want: true },
+  { name: 'return after backspacing the box empty', chunks: ['hi', '\u007f', '\u007f'], want: true },
+  { name: 'return after Ctrl-U', chunks: ['a question', '\u0015'], want: true },
+  { name: 'a focus report is not typing', chunks: ['\u001b[O'], want: true },
+  { name: 'a typed prompt', chunks: ['what is this'], want: false },
+  { name: 'a PASTED prompt', chunks: [PASTE_ON + 'what is this' + PASTE_OFF], want: false },
+  { name: 'a paste split across chunks', chunks: [PASTE_ON, 'what is this', PASTE_OFF], want: false },
+  { name: 'a recalled prompt (up arrow)', chunks: ['\u001b[A'], want: false },
+  { name: 'a Tab completion', chunks: ['./sr', '\t'], want: false },
+  { name: 'a slash command', chunks: ['/clear'], want: false }
+]
+for (const c of bares) {
+  let line = newSubmitLine()
+  for (const ch of c.chunks) line = feedSubmitLine(line, ch)
+  const got = isBareReturn(line)
+  if (got !== c.want) {
+    failed++
+    console.error(`FAIL bare "${c.name}": expected ${c.want}, got ${got}`)
+  }
+}
+
 rmSync(work, { recursive: true, force: true })
 if (failed) {
   console.error(`${failed} case(s) failed`)
   process.exit(1)
 }
-console.log(`slash-test: all ${cases.length + quiet.length + 1} cases pass`)
+console.log(`slash-test: all ${cases.length + quiet.length + clears.length + 1} cases pass`)

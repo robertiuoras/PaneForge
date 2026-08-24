@@ -9,7 +9,7 @@
 //
 //   node scripts/history-prune-test.mjs
 
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -117,6 +117,33 @@ ok(row('dead') && row('dead').gone === true, 'a folder that has been deleted is 
 // The transcript is still the reason to keep the row, so nothing is hidden or pruned for
 // being unopenable - only the button changes.
 ok(rows.length === 2, 'and the row itself is kept - its output is still readable', rows.length)
+
+// --- a row written with the whole agent SPEC where its id belongs -------------------
+// Two of these are on this machine (a `shell` spec, 2026-08-23). Every later reader
+// expects a string: `agents.find((a) => a.id === e.agent)` misses, and the logo's
+// `(spec?.label ?? id).replace(...)` threw a TypeError that unmounted the whole renderer,
+// so History would not open at all. Repaired on the way out of `list()`.
+writeFileSync(
+  join(dir, 'spec.json'),
+  JSON.stringify({
+    id: 'spec',
+    startedAt: Date.now(),
+    title: 'spec',
+    cwd: here,
+    agent: { id: 'shell', label: 'Shell', bin: 'bash' }
+  })
+)
+const fixed = h.list().find((r) => r.id === 'spec')
+ok(typeof fixed?.agent === 'string', 'an agent stored as an object is read back as its id', JSON.stringify(fixed?.agent))
+ok(fixed?.agent === 'shell', 'and it is the id, not a stringified object', fixed?.agent)
+
+// The renderer half of the same defect: a mark is decoration and may never be the thing
+// that takes the window down, whatever a persisted record holds.
+const logo = readFileSync(join(root, 'src/renderer/src/components/AgentLogo.tsx'), 'utf8')
+ok(
+  !/\(spec\?\.label \?\? id\)\.replace/.test(logo),
+  'AgentLogo does not call .replace on a value it has not proved is a string'
+)
 
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall passed')

@@ -41,6 +41,11 @@ const EVENTS: { key: SoundEvent; label: string; hint: string }[] = [
     hint: 'The run has stopped and will not move again until somebody answers. Make this one unmistakable - it is the alert whose cost is the rest of the run.'
   },
   {
+    key: 'move',
+    label: 'A pane is about to be moved or closed',
+    hint: 'PaneForge itself decided - the machine is past what it agreed to hold, or a pane has been idle. It counts down first and can be stopped by pressing Keep it open, so this is the sound that buys you those seconds. Nothing is lost either way: a closed pane keeps its conversation and its screen, and a moved one comes straight back as a mirror.'
+  },
+  {
     key: 'tick',
     label: 'A question is about to be answered for you',
     hint: 'One tick a second while the countdown runs, so a question being answered in a pane you are not looking at is still something you can hear in time to disagree with it. Quieter than the alerts above by design - it is a clock, not an interruption.'

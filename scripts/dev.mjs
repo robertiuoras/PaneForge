@@ -4,15 +4,15 @@
 //   npm run dev -- --show    same, with the window on screen (still takes no focus)
 //
 // Why this wrapper exists: `electron-vite dev` on its own launched with no profile and
-// no start mode. That resolved to the `dev` profile - shared by every checkout, so two
-// lanes fought over one single-instance lock - and to start mode `inactive`, which
-// paints a full window over whatever you are reading. Neither is what an agent running
-// a build check in the live app wants, and this is developed from a session inside that
-// app. Same defaults as `npm run try`: own profile, out of sight, no focus taken.
+// no start mode - and start mode `inactive` paints a full window over whatever you are
+// reading. That is not what an agent running a build check in the live app wants, and
+// this is developed from a session inside that app. Same defaults as `npm run try`: the
+// dev profile, out of sight, no focus taken.
 //
-// The profile is derived from the folder, so `PaneForge-a` is `dev-a` and never lands
-// on the copy `PaneForge-b` is running. Anything already in the environment wins, so
-// PANEFORGE_PROFILE=x npm run dev still works.
+// The profile is `dev` for every checkout - one dev window per machine (see
+// dev-profile.mjs), so a launch from a lane replaces the window rather than opening a
+// second one. Anything already in the environment wins, so PANEFORGE_PROFILE=x npm run
+// dev still works for a throwaway second copy.
 
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'

@@ -155,8 +155,20 @@ const CLAUDE_MODELS: ModelChoice[] = [
 /** The placeholder an agent's `env` uses to ask for the OpenRouter key from Settings. */
 export const OPENROUTER_KEY_VAR = '${OPENROUTER_KEY}'
 
-/** OpenRouter's own address, and the one it answers the Anthropic Messages API on. */
-export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
+/**
+ * OpenRouter's own address, and the one it answers the Anthropic Messages API on.
+ *
+ * NO `/v1` - the CLI appends `/v1/messages` itself, exactly as the DeepSeek and Z.ai
+ * entries below document. This carried the suffix for eight days and every OpenRouter
+ * pane in that time posted to `https://openrouter.ai/api/v1/v1/messages`, which is a
+ * 404 HTML page. What the CLI prints for that is NOT a transport error: it is
+ * `There's an issue with the selected model (<id>). It may not exist or you may not
+ * have access to it.` - a sentence about the MODEL, in a pane whose model is fine, so
+ * every report of it was a hunt for a model id that did not need fixing. Measured
+ * 2026-08-23 against the real `claude` binary: with `/api/v1` both `stealth/ox-alpha`
+ * and `z-ai/glm-5.2` print that line and exit; with `/api` both answer.
+ */
+export const OPENROUTER_BASE = 'https://openrouter.ai/api'
 
 // A shortcut list, same as every other one here - OpenRouter carries hundreds of ids
 // and any of them can be typed. These are the ones worth reaching for by name: GLM is
@@ -395,10 +407,26 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'fastest' }
     ],
     color: '#4285f4',
+    // Google ENDED the free "sign in with Google" tier for this client on 2026-08-23:
+    // every launch dies with `IneligibleTierError ... UNSUPPORTED_CLIENT ... migrate to
+    // the Antigravity suite`, inside a pane that otherwise looks perfectly healthy. The
+    // key path is not a preference any more, it is the only one that answers - measured
+    // here with a junk key, which reaches generativelanguage.googleapis.com and comes
+    // back `400 API key not valid` instead of the tier error.
+    //
+    // `GEMINI_DEFAULT_AUTH_TYPE` is a DEFAULT: it decides only for a machine that has
+    // never picked, which is why it is set unconditionally and why it is not enough on
+    // its own. A machine whose ~/.gemini/settings.json already says `oauth-personal`
+    // keeps sending the pane to the dead endpoint until that file is changed, and
+    // nothing this app passes in the environment can overrule it.
+    env: {
+      GEMINI_API_KEY: keyVar('google'),
+      GEMINI_DEFAULT_AUTH_TYPE: 'gemini-api-key'
+    },
     install: 'npm i -g @google/gemini-cli',
     uninstall: 'npm rm -g @google/gemini-cli',
     free: true,
-    note: 'Free tier with a Google account - no card needed',
+    note: 'AI Studio key - Google ended the free CLI sign-in',
     docs: 'https://github.com/google-gemini/gemini-cli'
   },
   {
@@ -793,6 +821,14 @@ export const KEY_PROVIDERS: KeyProvider[] = [
     note: 'Runs Claude Code on GLM 5.2, including a GLM Coding Plan subscription.'
   },
   {
+    id: 'google',
+    label: 'Google AI Studio',
+    placeholder: keyVar('google'),
+    hint: 'AIza...',
+    url: 'https://aistudio.google.com/apikey',
+    note: 'The only way Gemini CLI still authenticates - it has a free tier of its own.'
+  },
+  {
     id: 'xai',
     label: 'xAI (Grok)',
     placeholder: keyVar('xai'),
@@ -838,7 +874,13 @@ export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string
  * OpenRouter as one option among several.
  */
 export function keyProviderFor(spec: AgentSpec): string {
-  const token = spec.env?.ANTHROPIC_AUTH_TOKEN ?? spec.env?.ANTHROPIC_API_KEY ?? ''
+  // GEMINI_API_KEY is here for the same reason the Anthropic pair is and NOT for the
+  // reason XAI_API_KEY is absent: Grok can still sign itself in, and Gemini CLI cannot
+  // any more - its own login now answers `UNSUPPORTED_CLIENT`. So a Gemini pane with no
+  // key is blocked, and Settings must say so rather than leaving somebody to find out
+  // when the pane's first turn dies.
+  const token =
+    spec.env?.ANTHROPIC_AUTH_TOKEN ?? spec.env?.ANTHROPIC_API_KEY ?? spec.env?.GEMINI_API_KEY ?? ''
   return KEY_BY_PLACEHOLDER.get(token) ?? ''
 }
 

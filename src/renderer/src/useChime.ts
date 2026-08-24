@@ -281,6 +281,30 @@ export function playEvent(event: SoundEvent, sounds: Partial<SoundConfig> | unde
 }
 
 /**
+ * The app announcing something it is about to do to somebody's pane.
+ *
+ * Same sound as an alert and deliberately NOT subject to the 900ms guard, which exists so
+ * that several alerts meaning "a turn ended" do not stack. This one does not mean that: it
+ * means a pane is about to be closed or moved, and the pane picked for that is very often
+ * the one that just FINISHED - so `done` rings, the sweep arms in the same instant, and the
+ * one alert nobody may miss is the one the guard drops. Reported 2026-08-23: "theres no
+ * sound on the countdown".
+ *
+ * It still MOVES the guard, so it can suppress a chime landing on top of it - the asymmetry
+ * is the whole point. `__pfAlerts` is what makes this checkable: a probe cannot hear.
+ */
+export function playAction(event: SoundEvent, sounds: Partial<SoundConfig> | undefined): void {
+  const w = window as unknown as { __pfAlerts?: number }
+  w.__pfAlerts = (w.__pfAlerts ?? 0) + 1
+  lastPlayed = Date.now()
+  const volume = clampVolume(sounds?.volume ?? 1)
+  if (!volume) return
+  const fallback = soundFor(undefined, event)
+  const backup = fallback.kind === 'builtin' ? fallback.def : null
+  playResolved(sounds?.[event] ?? '', sounds, volume, backup)
+}
+
+/**
  * One second of an auto-answer countdown.
  *
  * Deliberately NOT throttled and deliberately not `playEvent`: the 900ms guard exists so

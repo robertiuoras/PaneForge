@@ -2456,6 +2456,76 @@ whichever one has a hook.
   edit the source did, so `'[B' === '[B'` passed while the app would have typed the
   letters into a chooser.
 
+### The screen that ENDS a multi-question ask prints no footer (2026-08-23)
+
+Reported as "when it asks questions it doesn't finish and submit answers". Every question
+in the set WAS answered - the tab strip shows each one ticked, several of them by
+`autoAnswer` itself off a `(Recommended)` marker - and then the widget draws a review:
+the answers listed back, and `1. Submit answers / 2. Cancel`. Nothing is sent until that
+list is answered, and the app could not see it.
+
+Two separate faults, and the first one hides the second:
+
+- **`readAsk` returned the WRONG question, not none.** The review screen prints no `Enter
+  to select` footer at all, measured off two real frames in this machine's own pane logs
+  (`history/s10-mt5pfcld.log`, `history/s11-mt2ptrhm.log`). The footer is the load-bearing
+  signal in `choices.ts` and `readAsk` takes the LAST one in the tail - which on that
+  frame belongs to the question asked immediately before the review. So the pane drew
+  buttons for a question the CLI had already moved past, `askKey` never changed, and
+  `dueForAuto` correctly refused to press a question it had already answered. A missing
+  footer read as a stale question rather than as no question, which is why nothing in the
+  app said anything was wrong.
+
+  `REVIEW` is a second anchor, and it sits ABOVE its list rather than below it, so
+  `readReview` walks DOWN. It wins only when it is NEWER than the last footer. The two
+  refusals that keep it as narrow as the footer: the list must still be 1..N with exactly
+  one `❯` (a numbered list quoted in an answer never carries one), and **nothing but
+  blank rows and rules may follow it** - once the answers are sent the CLI prints
+  `⏺ User answered Claude's questions:` and the whole echo under those same rows, and they
+  stay in the painted tail. A return pressed at that would land in a composer somebody may
+  be holding a draft in.
+
+- **`GOES` did not read `Submit` as a go-ahead.** With the review readable, `pickAnswer`
+  still returned null: `Submit answers` leads with none of the yes-shaped words, and
+  `Cancel` is refused by `STOPS`, so a question with exactly one usable option had no
+  answer. `submit|done|finish` are the narrowest sense of "go on with what you were
+  doing" there is - every decision was made on the screens before this one, and the only
+  alternative discards them all. A `Submit answers and don't ask again` is still refused
+  by `WIDENS`, and the arrow sitting on `Cancel` still does not make Cancel takeable.
+
+### ...and the countdown it draws was red on red
+
+`--surface-1` is defined **nowhere** - the palette is `--bg`, `--surface`, `--surface-2`,
+`--surface-3` - and `.pane-ask-auto-left` asked for `color: var(--surface-1)` over
+`background: var(--danger)`. An invalid `var()` in a `color` falls back to `unset`, which
+for an inherited property means inherit, and the parent `.pane-ask-auto` is `var(--danger)`
+itself. Measured in a real window: **1.00:1**. The red box was there, with the seconds
+invisible inside it - which is exactly the report, "in the small card it should show the
+number counting down inside the red box".
+
+Seven sites had it, all silent, and the same edit had just added an eighth. Backgrounds
+became `var(--surface)` and the two text-on-danger cases `var(--bg)`; measured after,
+**7.47:1**. The same sweep found `var(--acc)` (three sites - the palette is `--accent`),
+`var(--fg)` (six - it is `--text`), and the whole `.autoclear-card` block written against
+`--panel` / `--border` / `--text-secondary` / `--text-muted` / `--hover`, none of which
+exist: that card shipped the same day with a transparent background and no border.
+
+The tell for the next one: an invalid `var()` never errors, never logs, and in a `color`
+it inherits something plausible. Only two things catch it - reading the computed value in
+a real window, and checking every `var(--x)` in the stylesheets against the keys
+`paletteFor` actually returns (`--agent`, `--level` and `--mono` are the legitimate
+exceptions: the first two are set inline per element, and every `--mono` use carries a
+font-family fallback).
+
+### The seconds are inside the red box, not beside it
+
+The sidebar card drew two chips - `asks you` in tinted red, then a separate solid-red
+`12s`. Two red boxes on a 190px title line read as two readings about two things, and the
+half that is actually moving looked like the unrelated one. They are one fact a step
+apart, so the clock is now a child of the chip. `min-width: 30px`, because measured at 22
+the pill was 22 / 27 / 28.6px for `9s` / `12s` / `now` and the row jogged sideways on
+every tick and again on the last one.
+
 ---
 
 ## ...and a question with an obvious answer is answered (full rules, moved out of CLAUDE.md 2026-08-21)
@@ -2527,6 +2597,49 @@ which is how the first version of this ran on nothing and left this desk exactly
   stop asking me" (not the two strings this desk has captured), the timing behaviourally
   over a fake clock, and source assertions on the STATE the guards read, because a test
   that only matches the comparison lets the assignment making it true be deleted.
+
+## A pane says how long it has been open
+
+Reported 2026-08-24: "i wanted a running counter on any session open in the top header, it
+just shows full time this session has been open, it still runs up even after a /clear ... i
+just dont want it to lag me that much so think of a good method to keep track then in
+history could show like sesssion open for 12h etc."
+
+The reading itself was already on the session - `openedAt`, with `createdAt` behind it - and
+already drawn, in `SessionInfo`'s "Open for" row. What was missing was the header, and the
+cost of putting it there. The turn clock is one per pane and short-lived; this one is one per
+pane and lives for DAYS, so the naive version is a React render per pane per second, for the
+whole life of the desk, redrawing a string that was already correct.
+
+Hence the step. `Elapsed` asks the shared timer for the unit it draws rather than for the
+second: `stepFor` returns 1000 under an hour and 60_000 past it, straight off the shape of
+`formatElapsed`, and a clock with `until` set asks for `Infinity` and subscribes to nothing -
+a History list of eighty closed sessions was eighty subscribers being woken every second to
+recompute numbers that cannot change. Measured in the test: 3600 wakeups an hour becomes 60.
+
+The trap is the offset, and it is invisible in a wakeup count. Bucketing on the wall minute
+(`Math.floor(now / step)`) ticks exactly as rarely as bucketing on the pane's start, so any
+test that asserts "once a minute" passes either way - and a pane opened at 09:00:30 turns its
+displayed minute over at :30 past, so the wall-aligned version leaves the header reading
+`1h 04m` for up to 59 seconds after it became `1h 05m`. A clock that is SLOW is a design
+choice; a clock that is WRONG is a bug. `bucketOf(now, step, since)` is the fix and the
+offset-free version is kept as the control assertion.
+
+The arithmetic moved to `src/shared/elapsed.ts` for one reason: `Elapsed.tsx` is TSX, node
+cannot load JSX through type stripping, and so `formatElapsed` - read a hundred times a
+second and never tested - had no test at all. `Elapsed.tsx` re-exports it so the dozen
+existing importers did not move.
+
+`formatElapsed` grew days on the way (`7d 03h`): this clock is routinely overnight and
+occasionally a week, and `171h 20m` is a number somebody has to do arithmetic on to read.
+
+One trap hit while building it, and it is the one CLAUDE.md already warns about: `.pt-open`
+was first written `color: var(--text-dim)`, which is not a key `paletteFor` returns. A
+`var()` naming a token that does not exist does not error - in a `color` it inherits
+something plausible. It is `var(--muted)`, the token `.hint` uses.
+
+Verified in a live window on :9334: one chip per pane, `1s` with the full title,
+`rgb(160,151,143)` at 10px, ticking 2s -> 5s across three seconds.
 
 ## The sessions list is the whole desk, both machines
 
@@ -2615,3 +2728,83 @@ optional), renders, and sorts every remote pane wrong for ever. Red-proofed by d
 by Task Scheduler is not a pane and nothing here can see it; that is a process-table read on
 the far end (`shared/devList.ts` is the shape, and it only ever runs locally), and it is the
 next thing worth doing for a machine meant to run automated work.
+
+
+## A session that clears itself asks first
+
+2026-08-23. The instant version shipped the same morning and Robert saw it as a session that
+vanished: "it shouldnt be auto clearing instantly or at least put popup for a countdown when
+its about to auto clear just so i can stop it if needed". The same day, a test for the tool
+that typed it had itself typed `/clear` plus the literal string `--not-a-flag` into his live
+pane - so the feature's whole failure mode was already on the record before this was built.
+
+Three decisions worth keeping:
+
+- **The countdown lives in the app, not in the hook.** Its refusals - the pane started
+  another turn, somebody typed into it, the pane went away - can only be seen from inside
+  PaneForge, and the card is the thing being added. The hook only asks.
+- **A refusal is re-read every tick**, never trusted from when the ask arrived. Same rule as
+  `handoffQueue`, and it is what makes "he asked it something during the countdown" safe.
+- **An older build refuses rather than falling back.** The fallback would be the exact
+  behaviour this replaced, and it would fire on the machine that had not been updated - i.e.
+  silently, where nobody was looking.
+
+Verified in the dev copy over CDP, not by reading the diff: the card renders with its steps
+(`Clearing clearprobe in 25s`, both buttons, contrast 14.1 title / 5.78 hint and steps at
+12px on `rgb(37,29,23)`), the countdown really counts (25s -> 23s), **Keep this session**
+leaves the pane's buffer with no `/clear` in it, and a 5s countdown left alone put `/clear`
+and then the resume prompt into a real bash pane.
+
+## The screen stays on while a pane works
+
+2026-08-23, Robert: "dont sleep if sessions running in paneforge because right now its
+sleep/screen off to quickly". Measured on the Mac first: `pmset -g custom` had
+`displaysleep 1` on battery and 10 on AC, and the screensaver was at 300s - so the machine
+was behaving exactly as configured, and an agent turn longer than a minute always ran behind
+a black screen. The OS side was fixed too (battery `displaysleep 10`, screensaver 900s).
+
+The app half exists because settings are global and this is not: the screen should stay on
+while THIS app has work running, not always. `powerSaveBlocker('prevent-display-sleep')`
+also prevents system sleep, which is what a long turn needs.
+
+The cap is on the busy STRETCH rather than the hold, and that is the part a naive
+implementation gets wrong: `runSince` survives an agent that wedged, so "hold while busy"
+with no cap means a laptop lit until somebody notices. `nextBusySince` only moves on the
+0 -> n edge, so a capped stretch cannot re-arm itself by ticking; a real quiet moment does
+re-arm it. Verified live against `pmset -g assertions`: nothing before,
+`NoDisplaySleepAssertion named: "Electron"` while a pane was busy, nothing after.
+
+
+## Two autoclears, and why master's is the one that shipped
+
+2026-08-23, resolving lane-a's merge with master. Both sides built the countdown in front
+of an automatic `/clear` on the same day - master as `cf163df`, lane-a as its own
+`ClearCountdown` in `src/main/autoclear.ts` - so the merge produced two complete
+implementations wired into one app. Git marked five files conflicted and left the worse
+damage in files it merged cleanly:
+
+- `src/main/index.ts` registered `ipcMain.handle('autoclear:ask')` TWICE. Electron throws
+  on a second handler for one channel, so the merged app would not have started. Nothing
+  flagged this; typecheck passes on it.
+- `App.tsx` imported `AutoClearToast` twice and rendered it twice, once with `panes`/
+  `onKeep` and once with no props.
+- `src/shared/surface.ts` and `scripts/surface-reach-test.mjs` each declared
+  `askAutoClear` twice in one object literal. Only the first of those is a type error.
+
+Master's implementation won because the already-merged consumers use it end to end:
+`sessions.ts` owns `armAutoClear`/`cancelAutoClear` and sets `Session.autoClearAt`,
+`index.ts` re-reads the payload through `readAsk` because the phone server reaches that
+channel, and the card renders from the pane list with no subscription of its own. Lane-a's
+path went with it: `src/main/autoclear.ts`, the `autoclear:answer` / `:pending` /
+`:changed` channels, their `Surface` and `PaneApi` members, and the lane-a half of
+`src/shared/autoclear.ts`.
+
+The guard that caught the leftovers was `npm run test:surfacereach`, which failed with
+three UNREACHABLE channels - the exact signature of a half-removed feature. Its rule (every
+Surface method needs either a control in the window or a named non-window caller in
+DESK_SIDE) is the reason a dead IPC channel cannot sit quietly in this repo.
+
+The lesson for the next merge like this: when two lanes answer the same ask, resolving the
+conflicted files is the small half. Grep the whole merged tree for duplicate registrations
+- `ipcMain.handle`, object-literal keys, component renders - because a clean auto-merge of
+two additions is exactly how you get two of something that must be one.

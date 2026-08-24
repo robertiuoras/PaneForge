@@ -11,7 +11,12 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
-import { HANDOFF_MAX_FILE, type HandoffPayload, type HandoffResult } from '../../shared/handoff'
+import {
+  HANDOFF_MAX_FILE,
+  type HandoffItem,
+  type HandoffPayload,
+  type HandoffResult
+} from '../../shared/handoff'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
@@ -22,7 +27,9 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   write(id: string, data: string): void
-  resize(id: string, cols: number, rows: number): void
+  resize(id: string, cols: number, rows: number, borrowed?: boolean, viewer?: string): void
+  /** Give a pane whose size a guest borrowed back to this desk. */
+  returnSize?(id: string, viewer?: string): void
   redraw(id: string): void
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
   clearAttention(id: string): void
@@ -38,6 +45,14 @@ export interface HostBackend {
   startSession(req: StartSessionRequest): Session | Promise<Session>
   /** a pane another device is handing to this one - pull, restore, start */
   receiveHandoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
+  /**
+   * A guest asking for one of THIS device's panes back. It is the ordinary outward
+   * handoff - queue, repo push, refusals and all - aimed at the guest's own device id,
+   * which is why it returns `HandoffItem[]` and not a bare ok.
+   *
+   * Optional so a backend that cannot do it refuses in a sentence rather than throwing.
+   */
+  handBack?(id: string, device: string): Promise<HandoffItem[]>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /**
@@ -66,7 +81,17 @@ export interface Guest {
   watching: number
 }
 
+let guestSeq = 0
+
 class GuestConn {
+  /**
+   * Who this guest IS, for the pane-size bookkeeping.
+   *
+   * Per CONNECTION rather than per device on purpose: a device that reconnects is a new
+   * window with a new size, and the old connection's borrow is dropped when it goes. Two
+   * windows on one machine are two viewers, which is exactly what they are.
+   */
+  readonly key = `guest:${++guestSeq}`
   attached = new Set<string>()
   /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
   xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
@@ -193,7 +218,11 @@ export class RemoteHost extends EventEmitter {
     this.pending.add(conn)
     conn.on('gone', () => {
       this.pending.delete(conn)
-      if (this.guests.delete(guest)) this.emit('changed')
+      if (this.guests.delete(guest)) {
+        // A guest that vanished cannot detach, so its borrows are returned here too.
+        for (const id of guest.attached) this.backend.returnSize?.(id, guest.key)
+        this.emit('changed')
+      }
     })
     try {
       const how = await conn.accept(
@@ -255,17 +284,31 @@ export class RemoteHost extends EventEmitter {
         }
         case 'detach':
           guest.attached.delete(id)
+          // Whatever that guest borrowed goes back to this desk the moment it looks
+          // away - the same contract a phone has. Without this, one look from another
+          // machine would leave this pane at somebody else's width for ever.
+          this.backend.returnSize?.(id, guest.key)
           this.emit('changed')
           return
         case 'write':
           this.backend.write(id, String(m.data ?? ''))
           return
         case 'resize':
-          // Honoured, but nothing sends it: this device owns the size of its own
-          // panes and a mirror draws itself at whatever cols/rows the session says.
-          // Two windows both fitting one pty would trade SIGWINCHes forever, with a
-          // full-screen CLI repainting its entire frame every round.
-          this.backend.resize(id, Number(m.cols ?? 80), Number(m.rows ?? 24))
+          // A mirror asking to BORROW the size, which is what stops the far end drawing
+          // this desk's grid at the wrong scale. Borrowed, never owned: this desk keeps
+          // `deskCols/deskRows` and gets them back on detach or when the guest goes.
+          // The old ping-pong worry does not apply - a mirror fits itself to its own
+          // window and asks for that, so it never chases the number it was sent.
+          // Named, so two devices mirroring one pane are two borrowers rather than one
+          // that keeps changing its mind - `shared/paneSize.ts` lends them the smallest
+          // grid of the two instead of flipping the pty between their windows.
+          this.backend.resize(
+            id,
+            Number(m.cols ?? 80),
+            Number(m.rows ?? 24),
+            m.borrowed === true,
+            guest.key
+          )
           return
         case 'redraw':
           this.backend.redraw(id)
@@ -321,6 +364,27 @@ export class RemoteHost extends EventEmitter {
             return
           }
           this.runHandoff(conn, rid, payload, null)
+          return
+        }
+        // "Bring it back here". The pane lives on THIS machine, so this machine is the
+        // one that can move it: the guest only names the pane, and the device it goes to
+        // is the one on the other end of this socket - never a device id in the frame,
+        // which a guest could otherwise point anywhere.
+        case 'takeback': {
+          const rid = Number(m.rid ?? 0)
+          const device = conn.peer.id
+          if (!device) {
+            conn.send({ t: 'failed', rid, error: 'That device has not identified itself' })
+            return
+          }
+          if (!this.backend.handBack) {
+            conn.send({ t: 'failed', rid, error: 'This machine cannot send a pane back yet' })
+            return
+          }
+          void this.backend
+            .handBack(id, device)
+            .then((items) => conn.send({ t: 'takebackdone', rid, items }))
+            .catch((err: Error) => conn.send({ t: 'failed', rid, error: err.message }))
           return
         }
         case 'handoffdata': {

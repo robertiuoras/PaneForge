@@ -81,9 +81,24 @@ function backend() {
   ]
   const buffers = { s1: 'SECRET-SCROLLBACK-s1', s2: '' }
   const typed = []
+  // What a mirror asked this desk to do to the SIZE of its own panes.
+  const resized = []
+  const returned = []
   const started = []
+  // What a guest asked this desk to hand BACK, and what this desk answers with. The
+  // answer is settable because the interesting cases are the ones that are not a plain
+  // yes: a pane mid-turn (queued over there), a refusal, and a backend too old to know
+  // the request at all.
+  const handBacks = []
+  let handBackFail = ''
+  let handBackResult = null
   return {
+    handBacks,
+    failHandBack: (msg) => (handBackFail = msg),
+    setHandBack: (items) => (handBackResult = items),
     typed,
+    resized,
+    returned,
     started,
     sessions,
     emitData(id, data) {
@@ -100,7 +115,8 @@ function backend() {
       list: () => sessions,
       buffer: (id) => buffers[id] ?? '',
       write: (id, data) => typed.push([id, data]),
-      resize: () => {},
+      resize: (id, cols, rows, borrowed) => resized.push([id, cols, rows, borrowed === true]),
+      returnSize: (id) => returned.push(id),
       redraw: () => {},
       setBusy: () => {},
       clearAttention: () => {},
@@ -111,6 +127,11 @@ function backend() {
       startSession: (req) => {
         started.push(req)
         return { ...sessions[0], agent: req.agent ?? sessions[0].agent, model: req.model }
+      },
+      handBack: async (id, device) => {
+        handBacks.push([id, device])
+        if (handBackFail) throw new Error(handBackFail)
+        return handBackResult ?? [{ id, title: 'jarvis', ok: true, notes: [] }]
       },
       projects: async () => [{ name: 'assistant', path: '/w/assistant', lastUsed: 0, isGit: true }],
       agents: async () => [{ id: 'claude', label: 'Claude Code', available: true }],
@@ -274,6 +295,37 @@ async function main() {
   ok('live output streams through', await until(() => seen.some(([id, d]) => id === '@HOSTID/s2' && d.includes('hello from the other machine'))))
   ok('the mirror keeps its own copy', client.buffer('s2').includes('hello from the other machine'))
 
+  // A mirror BORROWS the size. Fitting the font is unwinnable when the two windows
+  // are different sizes (the PC's pane was 69x35 against room for 152x58 here), so a
+  // mirrored pane asks the host to draw its pty at the viewer's grid - and the host
+  // must be told it is a borrow, or it overwrites the desk's own size with no way back.
+  client.resizeOn('s1', 150, 50)
+  ok(
+    'a mirror can lend its grid to the far pty',
+    await until(() => be.resized.some(([id, c, r]) => id === 's1' && c === 150 && r === 50)),
+    JSON.stringify(be.resized)
+  )
+  ok(
+    'and it arrives as a BORROW, never as an owned resize',
+    be.resized.at(-1)?.[3] === true,
+    JSON.stringify(be.resized.at(-1))
+  )
+  // The refusal that keeps this honest: a resize changes what is on somebody else's
+  // screen, so it may only be sent about a pane this device is actually drawing.
+  client.resizeOn('s2-not-watched', 10, 10)
+  ok(
+    'a pane this device does not watch is never resized',
+    !be.resized.some(([id]) => id === 's2-not-watched'),
+    JSON.stringify(be.resized)
+  )
+  // ...and looking away gives it straight back, per pane. Returning ALL of them would
+  // snap the other panes this device is still watching.
+  client.setWatch(['s2'])
+  ok('detaching returns the borrowed size', await until(() => be.returned.includes('s1')), JSON.stringify(be.returned))
+  ok('and only that pane', !be.returned.includes('s2'), JSON.stringify(be.returned))
+  client.setWatch(['s1', 's2'])
+  ok('both are watched again', await until(() => client.list().length === 2))
+
   // Keystrokes back.
   client.send({ t: 'write', id: 's1', data: 'npm test\r' })
   ok('keystrokes reach the far pty', await until(() => be.typed.some(([id, d]) => id === 's1' && d === 'npm test\r')))
@@ -381,6 +433,56 @@ async function main() {
 
   sniffed.disconnect()
   sniffHost.stop()
+
+  // ------------------------------------------------------------- bring it back
+  // The other direction of a handoff, and why it is a REQUEST rather than a pull: the
+  // pty, the repo and the transcript are all on the host, so the host is the only machine
+  // that can move the pane. The guest names the pane; the DEVICE it goes to is the one on
+  // the other end of this socket and is never read out of the frame - a guest that could
+  // name any device could push somebody else's pane at a third machine.
+  {
+    const before = be.handBacks.length
+    const items = await client.takeBack('s2')
+    ok(
+      'a mirrored pane can be asked back in one call',
+      Array.isArray(items) && items.length === 1 && items[0].ok === true,
+      JSON.stringify(items)
+    )
+    ok(
+      'the host moves the named pane, to the device that asked',
+      be.handBacks.length === before + 1 &&
+        be.handBacks[before][0] === 's2' &&
+        be.handBacks[before][1] === 'GUEST',
+      JSON.stringify(be.handBacks)
+    )
+    // The far end's own report travels whole. A pane mid-turn is QUEUED over there, and
+    // this end has to read that as "not yet" - never as a refusal, and never as done.
+    be.setHandBack([
+      { id: 's2', title: 'jarvis', ok: false, pending: true, error: 'Queued: it moves when the turn ends', notes: [] }
+    ])
+    const queued = await client.takeBack('s2')
+    ok(
+      'a mid-turn pane comes back queued, not done and not refused',
+      queued[0].pending === true && queued[0].ok === false,
+      JSON.stringify(queued)
+    )
+    be.setHandBack(null)
+    // A refusal is a sentence, not a hang: the caller is a person who just pressed a
+    // button, and a promise that never settles is the one failure this app cannot see.
+    be.failHandBack('That checkout has unpushed work')
+    let said = ''
+    await client.takeBack('s2').catch((err) => (said = err.message))
+    ok('a refusal arrives as its own sentence', said === 'That checkout has unpushed work', said)
+    be.failHandBack('')
+    // The control: a host whose backend cannot do this at all - an older build - must
+    // still answer. Nothing here may leave the button spinning for HANDOFF_ASK_MS.
+    const saved = be.api.handBack
+    delete be.api.handBack
+    let older = ''
+    await client.takeBack('s2').catch((err) => (older = err.message))
+    ok('a host that cannot send one back says so rather than hanging', /cannot send a pane back/i.test(older), older)
+    be.api.handBack = saved
+  }
 
   // ---------------------------------------------------------------- disconnect
   client.disconnect()
