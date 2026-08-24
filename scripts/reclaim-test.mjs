@@ -314,4 +314,37 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('and the pressure sweep refuses it too', !reclaimPlan([withJob, noJob], CRITICAL, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'mon'))
 }
 
+// Looking at a pane is USING it, and this is the bug that made the whole clock read as
+// broken: `quietSince` counted from the last keystroke while the pane sat focused on
+// screen, so a pane read for ten minutes was already past its five-minute deadline the
+// instant the keyboard moved elsewhere. Its card's first word about it was a red
+// `closes 0:01` - a countdown nobody can act on. Robert, 2026-08-24: "some bug when i
+// opened session it showed red with 0:01 to close i think then after that countdown
+// started". The focused pane is refused by every rule here already; the only thing missing
+// was the moment focus LEFT.
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 60 }
+  const read = pane({ id: 'read', lastKeyboard: NOW - 10 * 60_000, lastFocus: NOW - 1000 })
+  eq(
+    'a pane the keyboard has just left starts its clock there, not at the last keystroke',
+    idleCloseAt(read, CLOCKED, NOW),
+    NOW - 1000 + 60 * 60_000
+  )
+  check(
+    'so the sweep leaves it alone and takes the genuinely quiet one',
+    ids(idleClosePlan([read, pane({ id: 'other', lastKeyboard: NOW - 5 * HOUR })], CLOCKED, NOW)) === 'other'
+  )
+  // CONTROL: the same pane with no focus reading at all is the old behaviour - overdue on
+  // the spot, which is what the report was.
+  const blind = pane({ id: 'read', lastKeyboard: NOW - 10 * HOUR })
+  eq('CONTROL: with nothing but keystrokes it is due at once', idleCloseAt(blind, CLOCKED, NOW), NOW)
+  // ...and focus is not a way to keep a pane alive for ever: left an hour ago, it is due.
+  const left = pane({ id: 'left', lastKeyboard: NOW - 5 * HOUR, lastFocus: NOW - 2 * HOUR })
+  eq('a pane left two hours ago is due', idleCloseAt(left, CLOCKED, NOW), NOW)
+  check(
+    'and the sweep and the card agree about it',
+    idleClosePlan([left, pane({ id: 'keep', lastKeyboard: NOW })], CLOCKED, NOW).map((r) => r.id).join() === 'left'
+  )
+}
+
 console.log(`reclaim: ${checks} checks passed`)
