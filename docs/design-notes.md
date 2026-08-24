@@ -2598,6 +2598,49 @@ which is how the first version of this ran on nothing and left this desk exactly
   over a fake clock, and source assertions on the STATE the guards read, because a test
   that only matches the comparison lets the assignment making it true be deleted.
 
+## A pane says how long it has been open
+
+Reported 2026-08-24: "i wanted a running counter on any session open in the top header, it
+just shows full time this session has been open, it still runs up even after a /clear ... i
+just dont want it to lag me that much so think of a good method to keep track then in
+history could show like sesssion open for 12h etc."
+
+The reading itself was already on the session - `openedAt`, with `createdAt` behind it - and
+already drawn, in `SessionInfo`'s "Open for" row. What was missing was the header, and the
+cost of putting it there. The turn clock is one per pane and short-lived; this one is one per
+pane and lives for DAYS, so the naive version is a React render per pane per second, for the
+whole life of the desk, redrawing a string that was already correct.
+
+Hence the step. `Elapsed` asks the shared timer for the unit it draws rather than for the
+second: `stepFor` returns 1000 under an hour and 60_000 past it, straight off the shape of
+`formatElapsed`, and a clock with `until` set asks for `Infinity` and subscribes to nothing -
+a History list of eighty closed sessions was eighty subscribers being woken every second to
+recompute numbers that cannot change. Measured in the test: 3600 wakeups an hour becomes 60.
+
+The trap is the offset, and it is invisible in a wakeup count. Bucketing on the wall minute
+(`Math.floor(now / step)`) ticks exactly as rarely as bucketing on the pane's start, so any
+test that asserts "once a minute" passes either way - and a pane opened at 09:00:30 turns its
+displayed minute over at :30 past, so the wall-aligned version leaves the header reading
+`1h 04m` for up to 59 seconds after it became `1h 05m`. A clock that is SLOW is a design
+choice; a clock that is WRONG is a bug. `bucketOf(now, step, since)` is the fix and the
+offset-free version is kept as the control assertion.
+
+The arithmetic moved to `src/shared/elapsed.ts` for one reason: `Elapsed.tsx` is TSX, node
+cannot load JSX through type stripping, and so `formatElapsed` - read a hundred times a
+second and never tested - had no test at all. `Elapsed.tsx` re-exports it so the dozen
+existing importers did not move.
+
+`formatElapsed` grew days on the way (`7d 03h`): this clock is routinely overnight and
+occasionally a week, and `171h 20m` is a number somebody has to do arithmetic on to read.
+
+One trap hit while building it, and it is the one CLAUDE.md already warns about: `.pt-open`
+was first written `color: var(--text-dim)`, which is not a key `paletteFor` returns. A
+`var()` naming a token that does not exist does not error - in a `color` it inherits
+something plausible. It is `var(--muted)`, the token `.hint` uses.
+
+Verified in a live window on :9334: one chip per pane, `1s` with the full title,
+`rgb(160,151,143)` at 10px, ticking 2s -> 5s across three seconds.
+
 ## The sessions list is the whole desk, both machines
 
 Two changes, and the second is only possible because of what the first one found.

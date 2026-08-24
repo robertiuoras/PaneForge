@@ -5,6 +5,7 @@ import type { HistoryEntry, HistoryHit } from '@shared/types'
 import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
+import Elapsed from './Elapsed'
 
 const api = window.api
 
@@ -159,6 +160,14 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                     {e.endedAt
                       ? `closed ${new Date(e.endedAt).toLocaleString()}`
                       : new Date(e.startedAt).toLocaleString()}
+                  </span>
+                  {/* How long the window was actually open, which is the question the
+                      two timestamps make somebody do arithmetic on. Frozen for a closed
+                      session (`until`), live for one still running - and a frozen
+                      `Elapsed` subscribes to no timer at all, so a list of eighty rows
+                      costs nothing. */}
+                  <span className="chip" title="How long this session was open">
+                    open <Elapsed since={e.startedAt} until={e.endedAt} className="hist-open" />
                   </span>
                   <span className="chip">{Math.max(1, Math.round(e.bytes / 1024))} KB</span>
                 </div>

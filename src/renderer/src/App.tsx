@@ -4576,6 +4576,24 @@ export default function App(): JSX.Element {
                   said the last of those for months, and the sidebar is the thing you are
                   not looking at in a grid of four - "which of these is still working" is
                   a question about the pane, asked at the pane. */}
+              {/* How long this PANE has been open, which is a different question from the
+                  clock beside it and the one nothing on screen answered. The turn clock
+                  resets every time the agent finishes, and `/clear` throws the
+                  conversation away without touching the pty - so a window somebody has
+                  had open since yesterday morning read `12s` and there was nowhere to
+                  find out otherwise but the info sheet.
+
+                  It costs one render a minute per pane, not one a second: `Elapsed` asks
+                  the shared timer for the step it actually draws (`stepFor`), and past an
+                  hour that is a minute. Off the header on a phone, where the header is
+                  404px and says only WHICH pane this is. */}
+              {!handheld.handheld && s.status !== 'exited' && (
+                <Elapsed
+                  since={s.openedAt ?? s.createdAt}
+                  className="elapsed pt-open"
+                  title={`Open for - since ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}. Not the turn, and a /clear does not reset it.`}
+                />
+              )}
               {s.status === 'exited' ? (
                 <span className="chip dead">exited {s.exitCode ?? ''}</span>
               ) : s.runSince ? (

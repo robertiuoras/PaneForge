@@ -441,6 +441,28 @@ to turn a folder, branch, worktree suffix and lane id into words.
 - The sidebar has no `git status` of its own, so it may not assert "not a git checkout".
 - `npm run test:place` is 56 assertions on the strings.
 
+## A pane says how long it has been open
+
+The header's clock is the TURN and resets whenever the agent finishes; `/clear` throws the
+conversation away without touching the pty. So nothing on screen answered "how long has
+this window been open" but the info sheet. `.pt-open` is that reading, from
+`openedAt ?? createdAt`, beside the turn clock and off the header on a phone. History
+carries the same number as an `open 12h 03m` chip, frozen at `endedAt`.
+
+- **A clock is woken no faster than it is READ.** `stepFor` (`shared/elapsed.ts`) is the
+  unit the string actually draws: 1s under an hour, **60s past it**, and `Infinity` - no
+  subscription at all - for a frozen clock. One interval still serves the whole app; a tick
+  is delivered only when that subscriber's bucket turns over. A day-old pane costs 60
+  renders an hour instead of 3600, per pane, for ever.
+- **The buckets are measured from the clock's OWN start, never from the wall clock.** A
+  wall-minute bucket ticks exactly as rarely - so a test that counts wakeups passes - and
+  shows the wrong minute for up to 59 seconds of every one: a pane opened at :30 turns its
+  displayed minute over at :30. That is the CONTROL assertion in the test.
+- **The arithmetic lives in `src/shared/elapsed.ts`, not in `Elapsed.tsx`**, because a test
+  cannot load JSX through node's type stripping and these rules were unchecked.
+  `formatElapsed` carries days (`7d 03h`), since this clock is routinely overnight.
+- `npm run test:elapsed`.
+
 ## The sessions list is the whole desk, both machines
 
 There is no Fleet screen. The sidebar answers "which pane needs me first": grouped
@@ -1157,6 +1179,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
 | `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
 | `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:elapsed` | what a clock prints, and how rarely it may wake the app to print it - with the wall-clock bucket kept as the control that must FAIL |
 | `npm run test:surfacereach` | that every method the window exposes has a call site under `src/renderer/src`; four are desk-side on purpose and each names who calls it |
 | `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, with all three failed walks kept as controls, and growth past the user's font up to `MAX_FILL_FONT` (28) |
 | `npm run test:panebackjobs` | what an AGENT pane left running: real trees off this machine as fixtures, every permanent MCP server and `caffeinate` refused, the naive descendant count kept as the control, and a last block over this machine's own live table |

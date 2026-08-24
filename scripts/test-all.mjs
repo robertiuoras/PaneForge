@@ -33,6 +33,7 @@ const TESTS = [
   ['awake', 'awake-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
+  ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
