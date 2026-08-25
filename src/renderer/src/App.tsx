@@ -49,7 +49,8 @@ import {
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
 import { PhoneAsk } from './components/PhoneAsk'
-import { isPhoneClient } from './client'
+import { isPhoneClient, viewerName } from './client'
+import { linkLost, linkNote, linkWords, type LinkState } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
   onPaneDraft,
@@ -385,6 +386,33 @@ interface AskState {
   onConfirm: (value: string, checked: boolean) => void
   /** Only for a question whose two answers are both real choices. Esc means cancel. */
   onCancel?: (checked: boolean) => void
+}
+
+/**
+ * "The desk is not answering" - the one thing a phone cannot read off its own screen.
+ *
+ * Every pane a phone draws comes from the last session list it was sent, and that list
+ * carries no clock. So a sleeping Mac changes nothing on the phone: the rows keep the
+ * status they had when the link died and a desk of finished turns reads as a desk of dead
+ * sessions. This says the rows are a photograph and how old it is. See shared/linkState.ts
+ * for why it never claims the machine is asleep - this screen cannot tell that from a
+ * dropped tunnel or from a handset with no signal.
+ *
+ * Drawn only on a phone: the desk window is looking at its own machine.
+ */
+function LinkBanner(): JSX.Element | null {
+  const [link, setLink] = useState<LinkState>({ up: true, lastSeen: Date.now() })
+  useEffect(() => window.api.onLinkState?.((s: LinkState) => setLink(s)), [])
+  // One second while the gap is short, so the first "12s" moves; a minute past that, which
+  // is the unit the string actually draws. Same rule as every other clock here.
+  const now = useNow(link.lastSeen && Date.now() - link.lastSeen > 60_000 ? 60_000 : 1000)
+  if (!isPhoneClient() || !linkLost(link, now)) return null
+  return (
+    <div className="link-down" role="status">
+      <span className="link-down-head">{linkWords(link, now)}</span>
+      <span className="link-down-note">{linkNote()}</span>
+    </div>
+  )
 }
 
 export default function App(): JSX.Element {
@@ -1916,7 +1944,7 @@ export default function App(): JSX.Element {
   const clientId = useRef(`c${Math.random().toString(36).slice(2)}`)
   useEffect(() => {
     if (!sessions.length) return
-    const say = (): void => window.api.paneVisibility(clientId.current, [...visibleIds])
+    const say = (): void => window.api.paneVisibility(clientId.current, [...visibleIds], viewerName())
     say()
     const t = setInterval(say, VISIBILITY_REFRESH_MS)
     return () => clearInterval(t)
@@ -4288,6 +4316,7 @@ export default function App(): JSX.Element {
     <BlurbContext.Provider value={blurbs}>
     <div className="app">
       <aside className="sidebar">
+        <LinkBanner />
         <div className="brand">
           <span className="brand-name">
             <AppLogo size={17} />

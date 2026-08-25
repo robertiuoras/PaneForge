@@ -16,9 +16,65 @@
 // It is to lend every borrower a grid they can ALL draw: the smallest one asked for. The
 // others get slack, which is the one failure here nobody notices, and the number is stable
 // because it does not depend on who spoke last.
-export interface Borrow {
+/** A grid, with no claim about who asked for it. */
+export interface Grid {
   cols: number
   rows: number
+}
+
+export interface Borrow extends Grid {
+  /**
+   * When this screen last said it was still looking.
+   *
+   * A borrow ends when the borrower says so - and a phone in a pocket never says so. Its
+   * screen locks, iOS suspends the tab, and the SSE stream stays nominally open behind a
+   * tunnel, so nothing on the desk ever hears "I have looked away": measured 2026-08-25 on
+   * this machine's own pane s24-mt81jexv, sitting at 72x33 with `borrowed: true` while the
+   * three panes beside it in the same window were 159x57 and a person was at the desk.
+   *
+   * So a borrow is a LEASE, not a flag. Every screen already re-states which panes it has
+   * on screen every `VISIBILITY_REFRESH_MS` (30s, App.tsx) - the same tick that expires a
+   * dataPump claim - and that tick renews this stamp. A screen that stops ticking loses
+   * its borrow on its own, which is the only reading that survives a phone that vanishes.
+   *
+   * **0 means no lease at all.** A screen on the far side of the device link has no tick
+   * of ours to renew with - a mirrored pane only re-states its size when it repaints, and
+   * an idle one is silent for hours - so its borrow ends with the CONNECTION (the link
+   * drops, `returnSizeOn` runs) and must never end on a clock. Expiring those would snap
+   * the pty back under somebody who is still reading it, which is the older bug in
+   * `mirrorFit.ts` arriving by a new door.
+   */
+  at: number
+}
+
+/**
+ * How long a borrow outlives the last tick from the screen holding it.
+ *
+ * Three ticks: two may be lost to a phone's flaky stream without the pane snapping back
+ * under somebody who is still reading it.
+ */
+export const BORROW_TTL_MS = 90_000
+
+/**
+ * Drop every borrow whose lease has run out. True when the map changed.
+ *
+ * Separated from `smallestBorrow` so the caller can tell "the numbers moved" from
+ * "somebody let go", and so the expiry is one line a test can hold still.
+ */
+export function dropStale(
+  borrows: Map<string, Borrow>,
+  now: number,
+  ttl: number = BORROW_TTL_MS
+): boolean {
+  let dropped = false
+  for (const [who, b] of borrows) {
+    if (b.at === 0) continue
+    if (now - b.at > ttl) {
+      borrows.delete(who)
+      dropped = true
+    }
+  }
+  return dropped
 }
 
 /**
@@ -28,7 +84,7 @@ export interface Borrow {
  * have no single window between them, and cols and rows are independent constraints -
  * pairing them would hand somebody a grid wider than their screen to keep an aspect.
  */
-export function smallestBorrow(borrows: Iterable<Borrow>): Borrow | null {
+export function smallestBorrow(borrows: Iterable<Borrow>): Grid | null {
   let cols = Infinity
   let rows = Infinity
   for (const b of borrows) {

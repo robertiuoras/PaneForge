@@ -1,4 +1,5 @@
 import type { AutoClearAsk } from './autoclear'
+import type { LinkState } from './linkState'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
@@ -1812,7 +1813,7 @@ export interface Api {
    * from erasing each other. Re-state the claim on a timer: it expires, which is the
    * only thing that copes with a screen that goes away without saying so.
    */
-  paneVisibility(client: string, ids: string[]): void
+  paneVisibility(client: string, ids: string[], viewer?: string): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
   /**
@@ -2229,6 +2230,8 @@ export interface Api {
    * 'visible' forever, so nothing in the page can tell.
    */
   onAppVisible(cb: (visible: boolean) => void): () => void
+  /** Whether this screen can still hear the desk. Only a phone ever gets one. */
+  onLinkState(cb: (state: LinkState) => void): () => void
   /** the window state right now, for the page's first paint (the push can arrive first) */
   appVisibleNow(): Promise<boolean>
   /** game started or ended, or something joined/left the queue waiting on it */

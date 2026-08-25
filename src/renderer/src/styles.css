@@ -3666,3 +3666,33 @@ button.chip:hover {
 .autoclear-keep:hover {
   background: var(--surface-3);
 }
+
+/*
+ * The desk is not answering.
+ *
+ * Amber rather than red: nothing is broken and nothing was lost - the rows below are
+ * simply older than they look. Red is this app's word for a live question waiting on a
+ * person, and spending it on a sleeping laptop would make both mean less. It sits at the
+ * TOP of the list because it is a statement about everything under it.
+ */
+.link-down {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d8a657) 45%, transparent);
+  background: color-mix(in srgb, var(--warn, #d8a657) 13%, transparent);
+}
+.link-down-head {
+  font-size: 12.5px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  color: var(--text, #e6e6e6);
+}
+.link-down-note {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted, #a8a8a8);
+}

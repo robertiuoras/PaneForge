@@ -1451,9 +1451,14 @@ ipcMain.on('pty:return', (_e, viewer?: string) => {
  * A claim expires (see `CLAIM_TTL_MS`), so a phone that was closed, locked or driven
  * out of range stops counting on its own. Nothing here needs a disconnect.
  */
-ipcMain.on('pty:visible', (_e, client: string, ids: string[]) => {
+ipcMain.on('pty:visible', (_e, client: string, ids: string[], viewer?: string) => {
   if (typeof client !== 'string' || !client || !Array.isArray(ids)) return
   pump.setVisible(client, ids)
+  // The same tick is the heartbeat under a pane's size borrow: a screen saying which
+  // panes it has renews its lease on those, and every borrow whose screen has gone
+  // quiet expires here. That is what gives the desk its pane back when a phone locks,
+  // backgrounds or walks out of range without ever saying `pty:return`.
+  manager.touchBorrows(typeof viewer === 'string' && viewer ? viewer : 'window', ids)
 })
 ipcMain.on('pty:redraw', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)

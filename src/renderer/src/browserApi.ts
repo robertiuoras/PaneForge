@@ -21,6 +21,7 @@
 
 import type { Api } from '@shared/types'
 import { buildApi, type Transport } from '@shared/surface'
+import type { LinkState } from '@shared/linkState'
 import { decodeWire, encodeWire } from '@shared/wireJson'
 import { unlock } from './passkeyClient'
 
@@ -38,6 +39,26 @@ class HttpTransport implements Transport {
   /** Has a stream ever been up? The second one onwards has a gap behind it. */
   private opened = false
   private nextId = 1
+  /** Is the stream carrying anything? Pushed to the UI - see shared/linkState.ts. */
+  private up = false
+
+  /**
+   * Tell this screen whether the desk is still answering.
+   *
+   * Sent on the transport's own `link:state` channel rather than over the wire, because
+   * the whole point is the moments when nothing is coming over the wire. The desk build
+   * registers the same channel on IPC, where nothing ever sends it - a window looking at
+   * its own machine has no link to lose.
+   */
+  private sayLink(up: boolean): void {
+    if (up) this.lastSeen = Date.now()
+    // Deduped both ways: the stale timer says "still down" every 15s and the banner
+    // keeps its own clock, so re-emitting the same verdict only costs renders.
+    if (up === this.up) return
+    this.up = up
+    const state: LinkState = { up, lastSeen: this.lastSeen }
+    for (const h of this.handlers.get('link:state') ?? []) h(state)
+  }
 
   /** Open the event stream. Resolves on the server's hello, or on its first failure. */
   async open(): Promise<void> {
@@ -51,7 +72,7 @@ class HttpTransport implements Transport {
         resolve()
       }
       source.onopen = () => {
-        this.lastSeen = Date.now()
+        this.sayLink(true)
         // A reconnect starts a NEW stream, and every event sent while the old one was
         // down is gone - a phone in a pocket loses its stream constantly. Nothing re-read
         // the list afterwards, so a pane closed at the desk stayed on the phone's screen
@@ -65,7 +86,7 @@ class HttpTransport implements Transport {
         done()
       }
       source.onmessage = (ev: MessageEvent<string>) => {
-        this.lastSeen = Date.now()
+        this.sayLink(true)
         done()
         let frame: { channel?: string; args?: unknown[] }
         try {
@@ -79,6 +100,7 @@ class HttpTransport implements Transport {
       // A 401 arrives as an error, not a message: the cookie expired mid-session, which
       // means the code was rotated. The pairing page is what should be on screen.
       source.onerror = () => {
+        this.sayLink(false)
         if (!settled) {
           void fetch('/pf/events', { method: 'HEAD' }).then((r) => {
             if (r.status === 401) location.reload()
@@ -90,11 +112,34 @@ class HttpTransport implements Transport {
       // than one that is down - nothing repaints and nothing says why.
       setInterval(() => {
         if (this.lastSeen && Date.now() - this.lastSeen > STALE_MS) {
+          // Say it BEFORE the reopen: a phone whose desk has gone to sleep loops through
+          // here for as long as the machine is out, and this is the only moment anything
+          // knows the rows on screen are a photograph.
+          this.sayLink(false)
           this.lastSeen = Date.now()
           this.source?.close()
           void this.open()
         }
       }, STALE_MS / 3)
+      // A phone does not close its tab, it BACKGROUNDS it - and iOS then suspends both
+      // the EventSource and the timer above, so the stale check that was meant to notice
+      // is itself asleep. Coming back to the tab is the one moment a handset is certainly
+      // running, so it re-reads the desk on the spot rather than waiting up to 15s for a
+      // throttled timer to fire. That is "lag, not running mobile refresh".
+      if (typeof document !== 'undefined') {
+        const woke = (): void => {
+          if (document.visibilityState !== 'visible') return
+          if (this.lastSeen && Date.now() - this.lastSeen > STALE_MS / 3) {
+            this.source?.close()
+            void this.open()
+            return
+          }
+          void this.resync()
+        }
+        document.addEventListener('visibilitychange', woke)
+        window.addEventListener('pageshow', woke)
+        window.addEventListener('online', woke)
+      }
     })
   }
 
@@ -111,7 +156,10 @@ class HttpTransport implements Transport {
       if (!Array.isArray(list)) return
       for (const h of this.handlers.get('sessions:changed') ?? []) h(list)
     } catch {
-      /* the stream is up; the next change will repaint */
+      // The list is the cheapest possible probe, so a failure here is also the fastest
+      // proof the desk is not answering - and on a phone it is regularly the FIRST proof,
+      // because a suspended EventSource never fires an error at all.
+      this.sayLink(false)
     }
   }
 
@@ -119,11 +167,19 @@ class HttpTransport implements Transport {
     // Anything already typed goes first: `write` then `sessions:buffer` must not swap.
     await this.flush()
     const id = this.nextId++
-    const res = await fetch('/pf/call', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: encodeWire({ id, channel, args })
-    })
+    let res: Response
+    try {
+      res = await fetch('/pf/call', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: encodeWire({ id, channel, args })
+      })
+    } catch (e) {
+      // The desk is not answering. Said out loud before the throw, or a phone whose Mac
+      // went to sleep gets a failed button and no explanation anywhere on screen.
+      this.sayLink(false)
+      throw e
+    }
     if (res.status === 401) {
       location.reload()
       throw new Error('not paired')

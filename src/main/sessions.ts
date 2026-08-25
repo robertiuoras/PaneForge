@@ -17,7 +17,7 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
-import { smallestBorrow, type Borrow } from '../shared/paneSize'
+import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
@@ -1028,7 +1028,18 @@ export class SessionManager extends EventEmitter {
     // two windows for as long as both are open. See `shared/paneSize.ts`.
     if (borrowed) {
       const borrows = s.borrows ?? (s.borrows = new Map())
-      if (record) borrows.set(viewer, { cols: Math.max(cols, 20), rows: Math.max(rows, 5) })
+      // A borrow whose screen stopped ticking is not a borrow any more - see `at` in
+      // shared/paneSize.ts. Swept on the read path as well as on the tick, or a pane
+      // nobody is drawing keeps a dead phone's grid until somebody else resizes it.
+      dropStale(borrows, Date.now())
+      if (record)
+        borrows.set(viewer, {
+          cols: Math.max(cols, 20),
+          rows: Math.max(rows, 5),
+          // A screen on the far side of the link has no tick of ours to renew with, so it
+          // holds no lease and lets go when the connection does. See `at` in paneSize.ts.
+          at: viewer.startsWith('guest') ? 0 : Date.now()
+        })
       const all = smallestBorrow(borrows.values())
       if (all) {
         cols = all.cols
@@ -1134,6 +1145,41 @@ export class SessionManager extends EventEmitter {
     }
     this.resize(id, s.deskCols, s.deskRows)
     this.redraw(id)
+  }
+
+  /**
+   * A screen says it is still looking, so its borrows keep their lease - and every
+   * borrow whose screen has gone quiet loses one.
+   *
+   * Fed by `pty:visible`, which every screen already re-states every 30s. That makes
+   * "the phone let go" an expiry rather than an announcement, which is the only shape
+   * that survives a handset that locked, backgrounded or walked out of range: those
+   * never send `pty:return`, and the pane sat at phone width on the desk for ever.
+   *
+   * The sweep runs over EVERY pane, not only the ones named: the tick that renews one
+   * screen's borrows is also the heartbeat that proves another screen's are dead.
+   */
+  touchBorrows(viewer: string, ids: string[]): void {
+    const now = Date.now()
+    const on = new Set(ids)
+    for (const [id, s] of this.sessions) {
+      const b = s.borrows?.get(viewer)
+      if (b && on.has(id)) b.at = now
+    }
+    this.sweepBorrows(now)
+  }
+
+  /** Give back every pane whose borrowers have all stopped ticking. */
+  sweepBorrows(now = Date.now()): void {
+    for (const [id, s] of this.sessions) {
+      if (!s.borrowed || !s.borrows) continue
+      if (!dropStale(s.borrows, now)) continue
+      const rest = smallestBorrow(s.borrows.values())
+      // Somebody is still watching: fall back to the floor of what is left, exactly as
+      // one viewer looking away does. Nobody left: the desk owns it again.
+      if (rest) this.resize(id, rest.cols, rest.rows, true, '', false)
+      else this.returnSize(id)
+    }
   }
 
   returnSizes(viewer?: string): void {

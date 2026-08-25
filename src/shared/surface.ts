@@ -177,6 +177,9 @@ export const SURFACE: Surface = {
   onInstall: ['on', 'agents:install-event'],
   onUpdate: ['on', 'update:changed'],
   onAppVisible: ['on', 'app:visible'],
+  // Answered by the phone's own transport, never sent by main: a window looking at its
+  // own machine has no link to lose. See browserApi.ts `sayLink`.
+  onLinkState: ['on', 'link:state'],
   onGameMode: ['on', 'game:changed'],
   onAttention: ['on', 'sessions:attention'],
   onStalled: ['on', 'sessions:stalled'],

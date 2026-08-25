@@ -185,7 +185,36 @@ manager.returnSize(id, 'tv')
 ok(shape() === '200x60', "the last screen left keeps the size IT asked for", shape())
 manager.returnSizes()
 
-// ---- 6. an exited pane is not resized ---------------------------------------------
+// ---- 6. a borrow is a LEASE, not a flag -------------------------------------------
+// The bug this closes: a phone that locked, backgrounded or walked out of range never
+// sends `pty:return`, and behind a tunnel its stream stays nominally open, so nothing
+// ever ended the borrow. Measured 2026-08-25 on the live desk: pane s24-mt81jexv at
+// 72x33 with `borrowed: true` while the three panes beside it in the same window were
+// 159x57 and a person was sitting at it.
+manager.resize(id, 159, 57)
+manager.resize(id, 72, 33, true, 'phone')
+ok(shape() === '72x33', 'a phone still borrows the pane it is drawing', shape())
+// A tick from the desk window renews only ITS OWN lease. The phone's is untouched and
+// still fresh, so nothing moves yet - the control for the line below.
+manager.touchBorrows('window', [id])
+ok(shape() === '72x33', "another screen's tick does not end the phone's borrow", shape())
+// Wind the phone's lease past its TTL by hand: this is the phone going quiet, which is
+// the only signal there ever is.
+live.borrows.get('phone').at = Date.now() - 200_000
+manager.touchBorrows('window', [id])
+ok(shape() === '159x57', 'a borrow whose screen stopped ticking expires and the desk gets it back', shape())
+ok(live.meta.borrowed === false, 'and the pane stops being drawn as borrowed', String(live.meta.borrowed))
+
+// A screen on the far side of the device link holds NO lease - it has no tick of ours to
+// renew with, and expiring it would snap the pty out from under somebody still reading.
+manager.resize(id, 90, 40, true, 'guest:1/window')
+ok(shape() === '90x40', 'a mirror borrows too', shape())
+ok(live.borrows.get('guest:1/window').at === 0, 'a mirror is filed with no lease', String(live.borrows.get('guest:1/window').at))
+manager.touchBorrows('window', [id])
+ok(shape() === '90x40', 'and no clock can take it away - only the link dropping', shape())
+manager.returnSizes()
+
+// ---- 7. an exited pane is not resized ---------------------------------------------
 const before = sizes.length
 live.meta.status = 'exited'
 manager.resize(id, 80, 24)
