@@ -130,11 +130,23 @@ export class Remote extends EventEmitter {
     return Boolean(cut && this.clients.has(cut.peer))
   }
 
-  /** Lend this window's grid to a mirrored pane's pty on the machine that owns it. */
-  resizeOn(id: string, cols: number, rows: number): void {
+  /**
+   * Lend one of THIS device's screens' grids to a mirrored pane's pty on the machine that
+   * owns it. `viewer` is which screen - the desk window and a phone are two borrowers of
+   * one pty and the far end must file them apart, or the smaller one silently replaces the
+   * larger and the pane is drawn at a phone's width in a 157-column window.
+   */
+  resizeOn(id: string, cols: number, rows: number, viewer?: string): void {
     const cut = splitId(id)
     if (!cut) return
-    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows)
+    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer)
+  }
+
+  /** One screen here has stopped drawing a mirrored pane: give that one borrow back. */
+  returnSizeOn(id: string, viewer?: string): void {
+    const cut = splitId(id)
+    if (!cut) return
+    this.clients.get(cut.peer)?.returnSizeOn(cut.local, viewer)
   }
 
   buffer(id: string): string {

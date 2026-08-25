@@ -1381,22 +1381,55 @@ async function laneWentQuiet(id: string): Promise<void> {
  * every round. The device the agent runs on owns the size; the mirror is drawn at the
  * host's own cols/rows and scaled to fit whatever window is watching it.
  */
-ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number, borrowed?: boolean) => {
+ipcMain.on(
+  'pty:resize',
+  (_e, id: string, cols: number, rows: number, borrowed?: boolean, viewer?: string) => {
+    const who = typeof viewer === 'string' && viewer ? viewer : borrowed === true ? 'phone' : 'window'
   // A mirrored pane's resize is not dropped any more: it is sent to the machine that
   // owns the pty as a BORROW, so the far end draws at the grid this window has room for
   // and keeps its own desk size to go back to. See `mirrorFit` in TerminalPane.
-  if (remote.owns(id)) remote.resizeOn(id, cols, rows)
-  // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
-  // never borrows, it owns. Named so a mirror watching the same pane is a separate
-  // borrower rather than the same one changing its mind.
-  else manager.resize(id, cols, rows, borrowed === true, 'window')
-})
+    // The borrow is carried across the link under the name of the screen that asked, or
+    // this whole device is ONE viewer over there: the desk window's 157 columns and a
+    // phone's 50 land in the same slot on the far end and the last one to speak wins. That
+    // is "the Mac shows the remote pane at phone size" - the phone's borrow overwrote the
+    // window's and nothing ever put it back.
+    if (remote.owns(id)) {
+      if (borrowed === true) borrowedRemote(who).add(id)
+      remote.resizeOn(id, cols, rows, who)
+    }
+    // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
+    // never borrows, it owns. Named so a mirror watching the same pane is a separate
+    // borrower rather than the same one changing its mind.
+    else manager.resize(id, cols, rows, borrowed === true, who)
+  }
+)
+/**
+ * Which mirrored panes each screen here is borrowing, so `pty:return` can hand back a
+ * borrow that lives on ANOTHER machine. A local borrow is remembered by the session it
+ * is on; a remote one is remembered by the far end, which never hears about a phone
+ * being put down unless this side says so.
+ */
+const remoteBorrows = new Map<string, Set<string>>()
+function borrowedRemote(viewer: string): Set<string> {
+  const held = remoteBorrows.get(viewer)
+  if (held) return held
+  const made = new Set<string>()
+  remoteBorrows.set(viewer, made)
+  return made
+}
 /**
  * The phone has looked away, so the desk gets its shape back. A phone drawing a pane at
  * 50 columns is right for the phone and wrong for the 157-column window it is also drawn
  * in, and before this nothing ever undid it - see `resize` in sessions.ts.
  */
-ipcMain.on('pty:return', () => manager.returnSizes('phone'))
+ipcMain.on('pty:return', (_e, viewer?: string) => {
+  const who = typeof viewer === 'string' && viewer ? viewer : 'phone'
+  manager.returnSizes(who)
+  const held = remoteBorrows.get(who)
+  if (!held) return
+  for (const id of held) remote.returnSizeOn(id, who)
+  held.clear()
+})
 /**
  * Which panes are on screen, so the pump can gather a background pane's output for
  * longer (dataPump.ts). Every screen watching this desk says for itself and carries

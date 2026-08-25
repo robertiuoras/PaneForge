@@ -224,7 +224,7 @@ function AskCountdown({
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
 import { isMac } from '../platform'
-import { isPhoneClient } from '../client'
+import { isPhoneClient, viewerName } from '../client'
 
 /**
  * Panes register their repair function here, so the toolbar button, the shortcut and the
@@ -905,7 +905,7 @@ function TerminalPane({
     if (step.do === 'none' || step.do === 'wait') return false
     if (step.do === 'ask') {
       asked.current = { cols: step.cols, rows: step.rows, at: Date.now() }
-      api.resize(sessionId, step.cols, step.rows, isPhoneClient())
+      api.resize(sessionId, step.cols, step.rows, isPhoneClient(), viewerName())
       // Nothing moved on screen, so this is not a resize as far as the caller is concerned
       // - the repaint belongs to the fit that follows the grant. The timer is only the
       // floor under a grant that never comes; the effect below is the fast path.
@@ -924,7 +924,7 @@ function TerminalPane({
     // simply won and never gave it back - the desk went on drawing a full-width pane whose
     // every line wrapped a third of the way across, for as long as it took somebody to
     // resize the window by hand. See `resize` in main/sessions.ts.
-    if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient())
+    if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
     return changed
   }
   // The pty has just reported a new grid. A pane holding a shrink back was waiting for

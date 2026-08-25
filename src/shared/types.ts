@@ -1789,9 +1789,16 @@ export interface Api {
    * cannot be two shapes, so a phone that opens a pane bends it to a phone and the desk
    * gets the size back the moment the phone looks away - see `returnSizes` in sessions.ts.
    */
-  resize(id: string, cols: number, rows: number, borrowed?: boolean): void
-  /** the phone has stopped looking: every borrowed pty goes back to the desk's shape */
-  returnSize(): void
+  resize(id: string, cols: number, rows: number, borrowed?: boolean, viewer?: string): void
+  /**
+   * The phone has stopped looking: every borrowed pty goes back to the desk's shape.
+   *
+   * `viewer` is WHICH screen stopped looking, and it must be the same name that screen
+   * borrowed under - a borrow filed under one name and returned under another is never
+   * given back, which is how a mirrored pane stayed at phone width on the machine that
+   * owns it long after the phone was put down.
+   */
+  returnSize(viewer?: string): void
   /**
    * Which panes this client currently has on screen, and who this client is.
    *

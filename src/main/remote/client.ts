@@ -201,9 +201,22 @@ export class RemoteClient extends EventEmitter {
    * on the other machine's own screen, so it may not be sent about a pane this device
    * is not even drawing.
    */
-  resizeOn(localId: string, cols: number, rows: number): void {
+  resizeOn(localId: string, cols: number, rows: number, viewer?: string): void {
     if (!this.watching.has(localId)) return
-    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true })
+    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer })
+  }
+
+  /**
+   * One screen here has let go of a pane we are still watching.
+   *
+   * Detaching returns every borrow this connection holds, which is right when the pane
+   * stops being drawn at all and wrong when only the PHONE looked away - the window is
+   * still mirroring it. An older host does not know this message and ignores it, which
+   * leaves exactly the behaviour that shipped before it.
+   */
+  returnSizeOn(localId: string, viewer?: string): void {
+    if (!this.watching.has(localId)) return
+    this.conn?.send({ t: 'unborrow', id: localId, viewer })
   }
 
   /** Request/response for the few calls that answer something (projects, agents, start). */

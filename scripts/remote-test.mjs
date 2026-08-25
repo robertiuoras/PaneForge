@@ -115,8 +115,9 @@ function backend() {
       list: () => sessions,
       buffer: (id) => buffers[id] ?? '',
       write: (id, data) => typed.push([id, data]),
-      resize: (id, cols, rows, borrowed) => resized.push([id, cols, rows, borrowed === true]),
-      returnSize: (id) => returned.push(id),
+      resize: (id, cols, rows, borrowed, viewer) =>
+        resized.push([id, cols, rows, borrowed === true, viewer]),
+      returnSize: (id, viewer) => returned.push([id, viewer]),
       redraw: () => {},
       setBusy: () => {},
       clearAttention: () => {},
@@ -318,10 +319,44 @@ async function main() {
     !be.resized.some(([id]) => id === 's2-not-watched'),
     JSON.stringify(be.resized)
   )
+  // Two SCREENS behind one connection: this device's own window and the phone it is
+  // serving both draw s1, and both borrow. Filed under one key per CONNECTION the phone's
+  // 50 columns simply replaced the window's 157 over here - which is a mirrored pane drawn
+  // at phone width in a full-size window, with nothing to put it back. They must land as
+  // two borrowers, so `smallestBorrow` can lend them one grid instead of flipping.
+  client.resizeOn('s1', 157, 57, 'window')
+  client.resizeOn('s1', 50, 40, 'phone')
+  await until(() => be.resized.filter(([id]) => id === 's1').length >= 3)
+  const named = be.resized.filter(([id, c]) => id === 's1' && (c === 157 || c === 50))
+  const keys = new Set(named.map((r) => r[4]))
+  ok('two screens on one link are two borrowers', keys.size === 2, JSON.stringify(named))
+  ok(
+    'and each borrow is named after the screen that asked',
+    [...keys].every((k) => /\/(window|phone)$/.test(String(k))),
+    JSON.stringify([...keys])
+  )
+  // The phone goes back to its list while the window is still mirroring the pane. Only the
+  // phone's borrow ends: returning the whole connection's here is what left the desk
+  // holding a grid nobody asked for.
+  client.returnSizeOn('s1', 'phone')
+  ok(
+    'a phone looking away returns only ITS borrow',
+    await until(() => be.returned.some(([id, v]) => id === 's1' && /\/phone$/.test(String(v)))),
+    JSON.stringify(be.returned)
+  )
+  ok(
+    'and the window it is still drawn in keeps its own',
+    !be.returned.some(([id, v]) => id === 's1' && /\/window$/.test(String(v))),
+    JSON.stringify(be.returned)
+  )
   // ...and looking away gives it straight back, per pane. Returning ALL of them would
   // snap the other panes this device is still watching.
   client.setWatch(['s2'])
-  ok('detaching returns the borrowed size', await until(() => be.returned.includes('s1')), JSON.stringify(be.returned))
+  ok(
+    'detaching returns the borrowed size',
+    await until(() => be.returned.some(([id]) => id === 's1')),
+    JSON.stringify(be.returned)
+  )
   ok('and only that pane', !be.returned.includes('s2'), JSON.stringify(be.returned))
   client.setWatch(['s1', 's2'])
   ok('both are watched again', await until(() => client.list().length === 2))
