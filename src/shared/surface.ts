@@ -50,6 +50,7 @@ export const SURFACE: Surface = {
   paneLog: ['invoke', 'sessions:log'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],
+  logReclaim: ['send', 'reclaim:log'],
   clearAttention: ['send', 'sessions:attention-clear'],
   write: ['send', 'pty:write'],
   sendPrompt: ['send', 'pty:prompt'],

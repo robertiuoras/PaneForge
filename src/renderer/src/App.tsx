@@ -3392,7 +3392,12 @@ export default function App(): JSX.Element {
         )
         mb = Math.round((mb * live.length) / ids.length)
       }
-      for (const id of live) void api.killSession(id)
+      for (const id of live) {
+        // The line that answers "what closed my pane" after the fact. `armed` says a sweep
+        // picked it; this says it actually went.
+        api.logReclaim({ event: 'closed', id, name: paneWordRef.current(id) })
+        void api.killSession(id)
+      }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
     [stillCloseable]
@@ -3481,11 +3486,23 @@ export default function App(): JSX.Element {
     // and the second would silently replace the first mid-count.
     if (closeSoonRef.current) return
     const mb = reclaimedMb(keep)
-    for (const p of keep)
-      console.info(
+    for (const p of keep) {
+      const line =
         `${log}: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
-          `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
-      )
+        `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
+      console.info(line)
+      // ...and on disk. The console line above is a DevTools window nobody has open, so
+      // every pane this sweep has ever taken went without leaving a trace to read after.
+      api.logReclaim({
+        event: 'armed',
+        why,
+        id: p.id,
+        name: paneWordRef.current(p.id),
+        idleMin: Math.round(p.idleMs / 60000),
+        hadAgent: p.hadAgent,
+        log
+      })
+    }
     const ids = keep.map((p) => p.id)
     pendingMb.current = mb
     // With the mascot hidden there is nowhere to draw a count and nowhere to press, so the

@@ -153,7 +153,7 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { logActivation } from './activationLog'
+import { logActivation, logReclaim } from './activationLog'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -2907,6 +2907,7 @@ ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory
 
 // --- history ---------------------------------------------------------------
 
+ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => logReclaim(entry))
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))

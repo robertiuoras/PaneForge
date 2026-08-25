@@ -1749,6 +1749,8 @@ export interface Api {
    * Mirrored ids are carried along and ignored by the machine that receives them.
    */
   reorderSessions(ids: string[]): void
+  /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
+  logReclaim(entry: Record<string, unknown>): void
   killSession(id: string): Promise<void>
   /**
    * Quit the app because nobody has used it for a while. The renderer owns the clock

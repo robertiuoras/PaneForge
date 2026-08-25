@@ -19,9 +19,10 @@ import { app } from 'electron'
 /** Big enough to hold days of ordinary use, small enough to never matter. */
 const MAX_BYTES = 64 * 1024
 
-let path: string | null = null
+const paths = new Map<string, string>()
 
-function file(): string {
+function file(name: string): string {
+  let path = paths.get(name)
   if (!path) {
     const dir = app.getPath('userData')
     try {
@@ -29,14 +30,32 @@ function file(): string {
     } catch {
       /* it is the app's own data dir */
     }
-    path = join(dir, 'activation.log')
+    path = join(dir, name)
+    paths.set(name, path)
   }
   return path
 }
 
+/**
+ * Why a pane closed, on disk rather than in a console nobody has open.
+ *
+ * The idle sweep has always written its reasoning to `console.info` in the renderer, which
+ * is a DevTools window that is shut on a normal day - so when a pane went on 2026-08-25
+ * ("i renamed it to pizzasrus and kept open but its gone now") there was nothing anywhere
+ * to say what took it, and the answer had to be reconstructed from the History row's
+ * `endedAt` and the config. One line per close, same bounded file as above.
+ */
+export function logReclaim(entry: Record<string, unknown>): void {
+  write('reclaim.log', entry)
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
+  write('activation.log', entry)
+}
+
+function write(name: string, entry: Record<string, unknown>): void {
   try {
-    const f = file()
+    const f = file(name)
     appendFileSync(f, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n')
     // Trimmed on the way past rather than on a timer: this is called a few times a day, so
     // the read only happens when the file has genuinely grown.
