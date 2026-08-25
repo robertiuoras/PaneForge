@@ -106,7 +106,7 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 5
+export const IDLE_CLOSE_MINUTES = 30
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
