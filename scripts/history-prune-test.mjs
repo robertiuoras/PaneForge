@@ -137,6 +137,28 @@ const fixed = h.list().find((r) => r.id === 'spec')
 ok(typeof fixed?.agent === 'string', 'an agent stored as an object is read back as its id', JSON.stringify(fixed?.agent))
 ok(fixed?.agent === 'shell', 'and it is the id, not a stringified object', fixed?.agent)
 
+// A closed pane must remember WHICH conversation it was on, or "Open again" resumes the
+// newest chat in that folder instead - which after the pane closed is somebody else's.
+// Reported 2026-08-25, on a pane the idle sweep closed.
+writeFileSync(
+  join(dir, 'chatty.json'),
+  JSON.stringify({ id: 'chatty', startedAt: Date.now(), title: 'chatty', cwd: here, agent: 'claude', bytes: 0 })
+)
+h.recordEnd('chatty', 'abc-123')
+const ended = JSON.parse(readFileSync(join(dir, 'chatty.json'), 'utf8'))
+ok(ended.resumeId === 'abc-123', 'a closed pane keeps the conversation id it was on', ended.resumeId)
+ok(typeof ended.endedAt === 'number', 'and is still marked ended', ended.endedAt)
+h.recordEnd('chatty')
+const again = JSON.parse(readFileSync(join(dir, 'chatty.json'), 'utf8'))
+ok(again.resumeId === 'abc-123', 'a later close with no id does not erase it', again.resumeId)
+
+// The renderer half: the reopen button has to PASS it, or storing it changes nothing.
+const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+ok(
+  /resume: true, resumeId: e\.resumeId/.test(app),
+  'Open again resumes the row\'s own conversation, not the folder\'s newest'
+)
+
 // The renderer half of the same defect: a mark is decoration and may never be the thing
 // that takes the window down, whatever a persisted record holds.
 const logo = readFileSync(join(root, 'src/renderer/src/components/AgentLogo.tsx'), 'utf8')
