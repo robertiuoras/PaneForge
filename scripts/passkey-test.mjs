@@ -674,7 +674,11 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
     'recents:drag', 'recents:remove', 'recents:clear', 'recents:inWindow', 'shelf:toggle',
-    'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell'
+    'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
+    // Reviewed 2026-08-25: one line in this desk's own reclaim log saying why a pane was
+    // or was not closed. It starts nothing and answers nothing - the worst a phone reaches
+    // is a bigger log file.
+    'reclaim:log'
   ])
   const unclassifiedSend = sends.filter(
     (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)
