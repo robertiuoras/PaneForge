@@ -1060,6 +1060,14 @@ export class SessionManager extends EventEmitter {
     // very buggy on mobile, it spams the Claude thinking info". The borrow ends the way
     // it always did: `returnSizes`, when the phone looks away or its stream closes.
     if (!borrowed && s.borrowed) {
+      // ...unless every screen holding it has gone quiet. A stuck borrow used to be
+      // unrecoverable BY CONSTRUCTION: this branch swallows every desk resize while
+      // `borrowed` is set, so the one repair anybody would reach for - drag the window -
+      // could never work, and the pane stayed at phone width until the app was restarted.
+      // Measured on the live desk 2026-08-25: s24-mt81jexv, 72x33 with clients:0, and a
+      // `pty:return` for every viewer name it could have been filed under changed nothing.
+      this.sweepBorrows()
+      if (!s.borrowed) return this.resize(id, cols, rows, false, viewer, record)
       s.deskCols = Math.max(cols, 20)
       s.deskRows = Math.max(rows, 5)
       return

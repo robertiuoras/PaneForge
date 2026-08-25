@@ -205,6 +205,21 @@ manager.touchBorrows('window', [id])
 ok(shape() === '159x57', 'a borrow whose screen stopped ticking expires and the desk gets it back', shape())
 ok(live.meta.borrowed === false, 'and the pane stops being drawn as borrowed', String(live.meta.borrowed))
 
+// ...and a desk resize is the repair anybody would actually reach for, so it has to work.
+// This branch used to swallow every desk resize while `borrowed` was set, which made a
+// stuck borrow unrecoverable by construction - dragging the window did nothing and the
+// pane stayed at phone width until the app was restarted.
+manager.resize(id, 100, 40, true, 'phone')
+live.borrows.get('phone').at = Date.now() - 200_000
+manager.resize(id, 159, 57)
+ok(shape() === '159x57', 'a desk resize under a DEAD borrow is obeyed, not remembered', shape())
+// The control: under a LIVE borrow it is still only remembered - a phone somebody is
+// reading must not be snapped to the desk's grid mid-turn.
+manager.resize(id, 100, 40, true, 'phone')
+manager.resize(id, 159, 57)
+ok(shape() === '100x40', 'and under a live one it is still only remembered', shape())
+manager.returnSizes()
+
 // A screen on the far side of the device link holds NO lease - it has no tick of ours to
 // renew with, and expiring it would snap the pty out from under somebody still reading.
 manager.resize(id, 90, 40, true, 'guest:1/window')

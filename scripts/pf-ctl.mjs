@@ -169,6 +169,21 @@ if (cmd === 'list') {
   }
   const out = await call(channel, args)
   console.log(out === undefined ? 'ok' : JSON.stringify(out))
+} else if (cmd === 'send') {
+  // The same escape hatch for the `send` half of surface.ts. `call` cannot reach these -
+  // a send channel has no reply to wait on - and some of them are the only way to say a
+  // thing at all: `pty:return` is how a pane whose size a vanished phone is still holding
+  // gets handed back to the desk without dragging the window.
+  const channel = rest.shift()
+  if (!channel) fail(1, 'send needs a channel: pf-ctl send <channel> [json-arg...]')
+  let args
+  try {
+    args = rest.map((a) => JSON.parse(a))
+  } catch (e) {
+    fail(1, `each argument must be JSON - ${e instanceof Error ? e.message : e}`)
+  }
+  await send(channel, args)
+  console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | type | call`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | type | call | send`)
 }

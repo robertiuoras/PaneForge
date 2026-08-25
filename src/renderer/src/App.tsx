@@ -402,7 +402,7 @@ interface AskState {
  */
 function LinkBanner(): JSX.Element | null {
   const [link, setLink] = useState<LinkState>({ up: true, lastSeen: Date.now() })
-  useEffect(() => window.api.onLinkState?.((s: LinkState) => setLink(s)), [])
+  useEffect(() => window.api.onLinkState((s: LinkState) => setLink(s)), [])
   // One second while the gap is short, so the first "12s" moves; a minute past that, which
   // is the unit the string actually draws. Same rule as every other clock here.
   const now = useNow(link.lastSeen && Date.now() - link.lastSeen > 60_000 ? 60_000 : 1000)
