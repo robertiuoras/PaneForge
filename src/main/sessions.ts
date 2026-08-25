@@ -1428,7 +1428,7 @@ export class SessionManager extends EventEmitter {
   armAutoClear(id: string, ask: { steps: string[]; prompt: string; seconds: number }): { ok: boolean; reason?: string } {
     const s = this.sessions.get(id)
     if (!s) return { ok: false, reason: 'no such pane' }
-    const why = dropFor(s.meta)
+    const why = dropFor({ ...s.meta, typed: s.typed })
     // 'working' is deferred, everything else is still refused. A pane holding a question,
     // or one that has gone, cannot be cleared later either - but a pane mid-turn is the
     // NORMAL state when the Stop hook asks, and refusing it is what made this feature
@@ -1450,7 +1450,7 @@ export class SessionManager extends EventEmitter {
       if (!live || live.meta.autoClearAt !== at) return
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
-      const stop = dropFor(live.meta)
+      const stop = dropFor({ ...live.meta, typed: live.typed })
       if (stop) {
         // A turn that started during the countdown puts the ask back in the queue rather
         // than throwing it away: the session is still oversized, and the next quiet

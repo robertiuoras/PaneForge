@@ -436,9 +436,13 @@ export class Tunnel {
     this.kill()
     this.url = ''
     // Not a child process: `funnel --bg` is a setting tailscaled keeps, so nothing here
-    // dying takes it down. Said unconditionally rather than only when `via` was tailscale,
-    // because the state that most needs clearing is the one a crashed run left behind.
-    if (this.via === 'tailscale' || !this.via) await this.funnel.stop().catch(() => {})
+    // dying takes it down - quitting has to say so. Only a funnel THIS run put up is taken
+    // down. `|| !this.via` was there to clear what a crashed run left behind, and its real
+    // effect was that every quit ran `tailscale funnel off` over a funnel the app had
+    // never started: one started by hand, or by another copy of this app, died on the next
+    // restart and nothing brought it back. Measured 2026-08-25: `tailscale funnel status`
+    // said `No serve config` and the phone could not reach this desk at all.
+    if (this.via === 'tailscale') await this.funnel.stop().catch(() => {})
     this.via = ''
     if (this.phase !== 'off') this.note('off')
   }

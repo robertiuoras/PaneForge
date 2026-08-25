@@ -34,7 +34,8 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
+const { clearChunks, clampSeconds, readAsk, dropFor,
+  armDecision, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
 
 console.log('a busy pane WAITS, it is not refused')
 {
@@ -91,6 +92,17 @@ console.log('refusals - the whole point of the countdown')
   ok('a pane holding a question is never cleared', dropFor({ ask: { options: [] } }) === 'asked')
   ok('a pane that went away is not cleared', dropFor(null) === 'gone')
   ok('an idle pane with nothing pending is fine', dropFor({}) === null)
+  // 2026-08-25: a message being typed was destroyed by a countdown that armed after the
+  // keystrokes stopped. `/clear` is typed into the same pty, so it lands on the end of the
+  // draft line - `their words/clear` runs and the draft is gone.
+  ok('a pane holding an unsent draft is never cleared', dropFor({ typed: 'half a message' }) === 'drafting')
+  ok('an empty draft is not a draft', dropFor({ typed: '   ' }) === null)
+  // Queued, not refused: the draft is sent or abandoned within the turn, and the session is
+  // still oversized afterwards.
+  ok('a draft queues the clear rather than throwing it away', armDecision('drafting') === 'queue')
+  ok('a question still refuses outright', armDecision('asked') === 'refuse')
+  ok('a mid-turn pane still queues', armDecision('working') === 'queue')
+  ok('nothing wrong still arms', armDecision(null) === 'arm')
 }
 
 rmSync(out, { recursive: true, force: true })

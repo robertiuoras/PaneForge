@@ -71,19 +71,28 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
  * asymmetry is deliberate - a wrong cancel costs one oversized session, a wrong clear costs
  * a conversation that cannot be got back.
  */
-export type DropReason = 'typed' | 'working' | 'gone' | 'asked' | 'cancelled'
+export type DropReason = 'typed' | 'drafting' | 'working' | 'gone' | 'asked' | 'cancelled'
 
-export function dropFor(pane: { runSince?: number | null; ask?: unknown } | null): DropReason | null {
+export function dropFor(
+  pane: { runSince?: number | null; ask?: unknown; typed?: string } | null
+): DropReason | null {
   if (!pane) return 'gone'
   // A pane holding a live question is owed an answer by a PERSON, and clearing it throws
   // that question away along with the conversation that raised it.
   if (pane.ask) return 'asked'
   if (pane.runSince) return 'working'
+  // A half-typed line in the composer is somebody's unsent message. `/clear` is typed into
+  // the same pty, so it lands on the END of that line: what runs is `their words/clear`,
+  // the draft is gone, and nothing on screen ever said it was there. `pty:write` cancels a
+  // countdown as it is typed, but a draft left sitting is exactly the state that survives
+  // until the countdown fires. 2026-08-25: a message being typed was destroyed this way.
+  if (pane.typed && pane.typed.trim()) return 'drafting'
   return null
 }
 
 export function dropWords(why: DropReason): string {
   if (why === 'typed') return 'you started typing'
+  if (why === 'drafting') return 'there is an unsent line in the box'
   if (why === 'working') return 'the pane started another turn'
   if (why === 'asked') return 'the agent is asking something'
   if (why === 'gone') return 'the pane closed'
@@ -106,5 +115,9 @@ export function dropWords(why: DropReason): string {
  */
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
-  return why === 'working' ? 'queue' : 'refuse'
+  // 'drafting' queues for the same reason 'working' does: the line is submitted or
+  // abandoned within the turn, so the ask is still good afterwards. Refusing would throw
+  // away a clear that is genuinely due; clearing would eat the draft. 'typed' is the
+  // different fact - a keystroke arriving DURING a countdown - and still drops it outright.
+  return why === 'working' || why === 'drafting' ? 'queue' : 'refuse'
 }
