@@ -710,6 +710,19 @@ export interface HistoryEntry {
   /** asks that were work (never a slash command); 40 and 1 are different sessions */
   asks?: number
   /**
+   * The conversation this pane was on when it closed, so "Open again" brings back the
+   * CHAT and not just the folder.
+   *
+   * `reclaim.ts` closes idle panes on the reasoning that a closed pane here is a minimised
+   * one - the row keeps the transcript and the screen, so reopening is a click. That was
+   * only ever true of a pane RESTORED from a desk spec, which carries its own `resumeId`.
+   * A pane started fresh had none anywhere, so its row reopened with `resume: true` and no
+   * id, which resumes whatever the newest conversation in that folder happens to be by
+   * then - somebody else's. Reported 2026-08-25: a chat closed by the idle sweep, and the
+   * only way back to it was the raw transcript file.
+   */
+  resumeId?: string
+  /**
    * The folder this session ran in is not there any more.
    *
    * Computed on every read rather than stored, because it is a fact about the disk and not

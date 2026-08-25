@@ -624,7 +624,7 @@ export class SessionManager extends EventEmitter {
     } catch {
       /* already dead */
     }
-    recordEnd(id)
+    recordEnd(id, resumeIdFor(id))
     // A restart is a new conversation unless the CLI is being asked to resume one, and
     // either way the pane is writing a different file from here.
     noteSession(
@@ -1534,7 +1534,7 @@ export class SessionManager extends EventEmitter {
       /* already dead */
     }
     stopPipe(id)
-    recordEnd(id)
+    recordEnd(id, resumeIdFor(id))
     forgetSession(id)
     this.sessions.delete(id)
     this.emitSessions()
@@ -1570,7 +1570,7 @@ export class SessionManager extends EventEmitter {
     // from the map, but its stream is only closed here if anything went wrong above.
     stopAllPipes()
     if (!live.length) return
-    endAll(ids)
+    endAll(ids, resumeIdFor)
 
     if (process.platform === 'win32') {
       const args = live
@@ -1680,7 +1680,7 @@ export class SessionManager extends EventEmitter {
       stopPipe(id)
       meta.piping = undefined
       this.endRun(live)
-      recordEnd(id)
+      recordEnd(id, resumeIdFor(id))
       this.emitSessions()
     })
   }

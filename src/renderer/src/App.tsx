@@ -5136,7 +5136,11 @@ export default function App(): JSX.Element {
           agents={agents}
           onResume={(e: HistoryEntry) => {
             setHistory(false)
-            start([{ cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true }])
+            // With the id, not just `resume: true`: without one the CLI resumes the newest
+            // conversation in that folder, which after the pane closed is somebody else's.
+            start([
+              { cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true, resumeId: e.resumeId }
+            ])
           }}
           onClose={() => setHistory(false)}
         />

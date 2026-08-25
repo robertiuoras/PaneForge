@@ -183,9 +183,9 @@ export function recordData(id: string, chunk: string): void {
   }
 }
 
-export function recordEnd(id: string): void {
+export function recordEnd(id: string, resumeId?: string): void {
   flush()
-  writeEnd(id)
+  writeEnd(id, resumeId)
 }
 
 /**
@@ -195,16 +195,20 @@ export function recordEnd(id: string): void {
  * down on the way out meant eight full flushes of the same map. On the quit path that
  * is the difference between the app being gone and the app being gone in a moment.
  */
-export function endAll(ids: string[]): void {
+export function endAll(ids: string[], resumeFor?: (id: string) => string | undefined): void {
   flush()
-  for (const id of ids) writeEnd(id)
+  for (const id of ids) writeEnd(id, resumeFor?.(id))
 }
 
-function writeEnd(id: string): void {
+function writeEnd(id: string, resumeId?: string): void {
   try {
     const raw = readFileSync(metaFile(id), 'utf8')
     const entry = JSON.parse(raw) as HistoryEntry
     entry.endedAt = Date.now()
+    // The last moment the pane's own transcript is still identifiable - see
+    // HistoryEntry.resumeId. Never cleared: a pane that closes without one keeps
+    // whatever earlier close recorded.
+    if (resumeId) entry.resumeId = resumeId
     entry.bytes = sizes.get(id) ?? entry.bytes
     entry.cols = widths.get(id) ?? entry.cols
     writeFileSync(metaFile(id), JSON.stringify(entry), 'utf8')
