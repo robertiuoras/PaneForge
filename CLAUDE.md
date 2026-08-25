@@ -211,7 +211,14 @@ decisions not to re-litigate:
   **The viewer name must be forwarded, never invented at the boundary**: the api object in
   `main/index.ts` is both the phone's surface and the remote host's backend, so hardcoding
   `'phone'` files every paired device under the phone's slot. A guest is keyed per
-  CONNECTION (`GuestConn.key`). `npm run test:panesize`.
+  CONNECTION (`GuestConn.key`). **A borrow is a LEASE, not a flag**: it carries `at`,
+  renewed by the `pty:visible` tick every screen already sends every 30s, and expires after
+  `BORROW_TTL_MS` (90s) - a phone that locks, backgrounds or walks out of range never sends
+  `pty:return`, and behind a tunnel its stream stays nominally open, so announcement is not
+  a signal that exists. A viewer over the device LINK is filed `at: 0` and never expires on
+  a clock; its borrow ends with the connection. And a desk resize under a borrow sweeps
+  first: "remembered, not obeyed" made a stuck borrow unrecoverable by construction, so
+  dragging the window could not repair it either. `npm run test:panesize`.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
@@ -322,6 +329,19 @@ a channel to a transport; add it there.
   desk resize during a borrow is REMEMBERED and applied when the phone lets go. A phone
   re-wrapping a pane scrolls the old frame away and may never `clear()` it; a COLUMN change
   clears the buffer and asks for a repaint — `clear`, never `reset`.
+- **A phone cannot read "the desk is asleep" off its own screen.** Its panes come from the
+  last session list it was sent and that list carries no clock, so a sleeping Mac leaves
+  every row frozen at whatever it was doing - a desk of finished turns reads as a desk of
+  dead sessions. `shared/linkState.ts` is the reading and `LinkBanner` in `App.tsx` draws
+  it: how long since the desk said ANYTHING, plus the note that the rows below are a
+  photograph. It never claims the machine is asleep - this screen cannot tell that from a
+  dropped tunnel or a handset with no signal, so "asleep?" carries its question mark.
+  `LINK_QUIET_MS` (20s) is the floor, because an ordinary handset reconnect is not an
+  outage. The transport says so from three places: the stream erroring, the stale timer,
+  and a failed `/pf/call` - which on a phone is regularly the FIRST proof, since a
+  suspended EventSource never fires an error at all. Coming back to the tab (`visibility
+  change`/`pageshow`/`online`) re-reads the desk on the spot rather than waiting for a
+  throttled timer. `npm run test:linkstate`.
 - **A phone is not a small desktop.** `handheld.ts` + one `@media` block: under 720px, or a
   coarse pointer under 520px tall, the list and the panes take turns with `display: none`.
   `100dvh`, never `100vh`. The pane header keeps only what says WHICH pane this is; every
@@ -1240,7 +1260,8 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:settingsearch` | that a setting is findable by what it DOES (the index is generated from the dialog's source) |
 | `npm run test:onestash` | that there is one Stash |
 | `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |
-| `npm run test:panesize` | who owns a pane's shape when several screens borrow one pty |
+| `npm run test:panesize` | who owns a pane's shape when several screens borrow one pty, and that a borrow whose screen went quiet expires - with a mirror's leaseless borrow, and a desk resize under a LIVE borrow, kept as the controls |
+| `npm run test:linkstate` | what a phone says when the desk stops answering, and the ordinary reconnects it must stay quiet through |
 | `npm run test:tunnel` | a URL never called up before it resolves, a hanging cloudflared settling anyway, per-platform asset names |
 | `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
 | `npm run test:gist` | the one line History puts under a closed session |
