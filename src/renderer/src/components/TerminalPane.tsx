@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { pastesClipboardImage } from '../../../shared/agents'
 import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
+import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
 import {
@@ -88,6 +89,15 @@ interface Props {
    * attach paths.
    */
   grid?: { cols: number; rows: number } | null
+  /**
+   * The grid the pty is CONFIRMED to be at, for a local pane.
+   *
+   * Not the same question as `grid`, which is only set while somebody else is holding the
+   * pane's size. This is always the pty's own shape, and it is here so a SHRINK can wait
+   * for it: the terminal must never be narrower than the width the agent is painting at.
+   * See `shared/shrinkFirst.ts`.
+   */
+  pty?: { cols: number; rows: number } | null
   /**
    * The width the restored part of this pane's buffer was painted at.
    *
@@ -702,6 +712,7 @@ function TerminalPane({
   autoFixUi,
   mirror = null,
   grid = null,
+  pty = null,
   replayCols,
   termTheme,
   ask = null,
@@ -802,6 +813,14 @@ function TerminalPane({
   mirrorRef.current = mirror
   const gridRef = useRef(grid)
   gridRef.current = grid
+  // The grid the pty is CONFIRMED to be at, so a shrink can wait for it rather than
+  // assuming. Asking and assuming is what tore a pane on every resize.
+  const ptyRef = useRef(pty)
+  ptyRef.current = pty
+  /** the shrink this pane has asked the pty for and has not seen granted yet */
+  const asked = useRef<{ cols: number; rows: number; at: number } | null>(null)
+  /** gives up on an ask main never grants - see GRANT_GRACE_MS */
+  const grantTimer = useRef<number | undefined>(undefined)
   /** whether this pane's shape was last drawn from somebody else's grid - see the font
    *  effect, which must refit when that stops being true even if the font does not move */
   const wasDerived = useRef(false)
@@ -862,6 +881,43 @@ function TerminalPane({
     // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
     // or the pane keeps drawing at two thirds size with nothing to explain it.
     if (host.current && host.current.style.transform) host.current.style.transform = ''
+    // Which of this pane's two widths moves first. A GROW may fit here and tell the pty
+    // afterwards - a terminal wider than the paint only leaves short lines. A SHRINK may
+    // not: for the one IPC hop between the two the CLI is still painting at the old width,
+    // and every absolute column move past the new last column CLAMPS onto the right-hand
+    // edge, one word over the last, into scrollback no repaint can reach. See
+    // `shared/shrinkFirst.ts` for the asymmetry and the measurement behind it.
+    const room = ((): { cols: number; rows: number } | null => {
+      try {
+        const d = f.proposeDimensions()
+        return d && d.cols > 0 && d.rows > 0 ? { cols: d.cols, rows: d.rows } : null
+      } catch {
+        return null
+      }
+    })()
+    const step = nextResize({
+      have: { cols: t.cols, rows: t.rows },
+      want: room,
+      pty: ptyRef.current,
+      asked: asked.current,
+      waitedMs: asked.current ? Date.now() - asked.current.at : 0
+    })
+    if (step.do === 'none' || step.do === 'wait') return false
+    if (step.do === 'ask') {
+      asked.current = { cols: step.cols, rows: step.rows, at: Date.now() }
+      api.resize(sessionId, step.cols, step.rows, isPhoneClient())
+      // Nothing moved on screen, so this is not a resize as far as the caller is concerned
+      // - the repaint belongs to the fit that follows the grant. The timer is only the
+      // floor under a grant that never comes; the effect below is the fast path.
+      window.clearTimeout(grantTimer.current)
+      grantTimer.current = window.setTimeout(() => {
+        const tt = term.current
+        const ff = fit.current
+        if (tt && ff && asked.current) reshape(tt, ff)
+      }, GRANT_GRACE_MS + 50)
+      return false
+    }
+    asked.current = null
     const changed = refit(t, f, pinned.current)
     // A phone BORROWS the pty's shape rather than owning it. One pty cannot be 50 columns
     // for a phone and 157 for the window it is also drawn in, and before this the phone
@@ -871,6 +927,14 @@ function TerminalPane({
     if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient())
     return changed
   }
+  // The pty has just reported a new grid. A pane holding a shrink back was waiting for
+  // exactly this, so it applies now instead of at the end of the grace.
+  useEffect(() => {
+    if (!asked.current) return
+    const t = term.current
+    const f = fit.current
+    if (t && f) reshape(t, f)
+  }, [pty?.cols, pty?.rows])
   const [dropping, setDropping] = useState(false)
 
   /**
@@ -3017,6 +3081,7 @@ function TerminalPane({
       window.clearTimeout(settle)
       window.clearTimeout(settle2)
       window.clearTimeout(fixTimer)
+      window.clearTimeout(grantTimer.current)
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneRedraw.delete(sessionId)

@@ -4971,6 +4971,11 @@ export default function App(): JSX.Element {
               // Not `mirror`: this pane's pty is still ours, and everything else a mirror
               // implies (no busy reading, no local clipboard) is wrong for it.
               grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // The pty's CONFIRMED grid, whoever owns it. A pane shrinking asks for a
+              // narrower pty and waits to see it here before narrowing its own terminal -
+              // going the other way round paints the agent's next frame at the old width
+              // into the new grid, where every column move clamps. See shrinkFirst.ts.
+              pty={!s.remote && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
               // A restored pane replays the screen of the pane it came back from, painted
               // in absolute column moves at THAT pane's width. See shared/replayWidth.ts.
               replayCols={s.replayCols}
