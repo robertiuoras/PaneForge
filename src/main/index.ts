@@ -1201,9 +1201,18 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
-ipcMain.handle('sessions:kill', (_e, id: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'kill' }) : manager.kill(id)
-)
+ipcMain.handle('sessions:kill', (_e, id: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'kill' })
+  // A client asking to close a pane this desk does not have is a client holding a STALE
+  // list - a phone whose event stream was down while the pane was closed. `kill` on an
+  // unknown id changes nothing, so nothing was broadcast, so the row it was pressing
+  // could never go: the pane looked stuck and the button looked broken. Answer a stale
+  // ask with the truth.
+  const known = allSessions().some((s) => s.id === id)
+  manager.kill(id)
+  if (!known) send('sessions:changed', allSessions())
+  return
+})
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )

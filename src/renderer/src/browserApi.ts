@@ -35,6 +35,8 @@ class HttpTransport implements Transport {
   private flushing = false
   private source: EventSource | null = null
   private lastSeen = 0
+  /** Has a stream ever been up? The second one onwards has a gap behind it. */
+  private opened = false
   private nextId = 1
 
   /** Open the event stream. Resolves on the server's hello, or on its first failure. */
@@ -50,6 +52,16 @@ class HttpTransport implements Transport {
       }
       source.onopen = () => {
         this.lastSeen = Date.now()
+        // A reconnect starts a NEW stream, and every event sent while the old one was
+        // down is gone - a phone in a pocket loses its stream constantly. Nothing re-read
+        // the list afterwards, so a pane closed at the desk stayed on the phone's screen
+        // for ever, and pressing Close on it asked main to kill an id it no longer has:
+        // nothing happened, and nothing could. The truth is one call away, so ask for it
+        // every time the stream comes up rather than trusting a stream that was down.
+        // Not `settled`: the stale timer opens a BRAND NEW EventSource whose first open is
+        // also a reconnect, and that is exactly the case this exists for.
+        if (this.opened) void this.resync()
+        this.opened = true
         done()
       }
       source.onmessage = (ev: MessageEvent<string>) => {
@@ -84,6 +96,23 @@ class HttpTransport implements Transport {
         }
       }, STALE_MS / 3)
     })
+  }
+
+  /**
+   * Re-read what the desk actually has, after a gap in the event stream.
+   *
+   * Only the session list: it is the one piece of state that decides what is on screen
+   * AND that every other view is keyed by, and it is small. A failure is silent on
+   * purpose - the stream that just came up will carry the next change anyway.
+   */
+  private async resync(): Promise<void> {
+    try {
+      const list = await this.invoke('sessions:list', [])
+      if (!Array.isArray(list)) return
+      for (const h of this.handlers.get('sessions:changed') ?? []) h(list)
+    } catch {
+      /* the stream is up; the next change will repaint */
+    }
   }
 
   async invoke(channel: string, args: unknown[], retried = false): Promise<unknown> {
