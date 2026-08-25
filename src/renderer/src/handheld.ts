@@ -118,7 +118,7 @@ export function useHandheld(activeId: string | null): Handheld {
     // and pressing the phone's Back must not leave the history stack in two shapes.
     if (history.state?.pfPane) history.back()
     else setListOpen(true)
-    if (isPhoneClient()) window.api.returnSize()
+    if (isPhoneClient()) window.api.returnSize('phone')
   }, [])
 
   return {

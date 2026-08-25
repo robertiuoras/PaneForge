@@ -1481,6 +1481,16 @@ body.sizing * { user-select: none !important; }
    thumb, and answering from the phone is most of why this exists. */
 @media (pointer: coarse) {
   .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
+  /* A finger cannot hover, so a control revealed BY hover is a control a phone does not
+     have: the card's close button sat at `opacity: 0` unless the row was already the
+     active one, and closing a pane meant opening the menu behind the `...`. Always
+     drawn here, and at a real touch target rather than the 12px glyph a pointer gets. */
+  .row .x {
+    opacity: 1;
+    min-width: 40px; min-height: 40px;
+    padding: 8px 10px; font-size: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
   /* A phone gives the answers the width of the screen. The right-hand dock exists so a
      desk can read the CLI's own question beside the card; a handset is showing one pane
      at a time and has nothing to read beside it. */

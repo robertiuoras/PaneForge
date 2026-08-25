@@ -13,6 +13,17 @@
  * full-screen veil over whatever that phone was doing, and it offers Approve to a device
  * that cannot see the desk.
  */
+/**
+ * Which SCREEN this renderer is, for the pane-size bookkeeping in main/sessions.ts.
+ *
+ * The desk window and a phone are two viewers of one pty and each borrows under its own
+ * name; main cannot tell them apart on its own, because a phone reaches the identical
+ * `ipcMain` body through `ipcTap`. Naming it here is the only place that knows.
+ */
+export function viewerName(): string {
+  return isPhoneClient() ? 'phone' : 'window'
+}
+
 export function isPhoneClient(): boolean {
   return !!(window as unknown as { __pfPhone?: boolean }).__pfPhone
 }

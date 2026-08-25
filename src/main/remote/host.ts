@@ -92,11 +92,34 @@ class GuestConn {
    * windows on one machine are two viewers, which is exactly what they are.
    */
   readonly key = `guest:${++guestSeq}`
+  /**
+   * Every borrow name this connection has used, because one connection is several SCREENS.
+   *
+   * A paired device draws a pane in its desk window AND may be serving the same pane to a
+   * phone, and both fit their own screen. Filed under one key per connection they are one
+   * viewer changing its mind, so the phone's 50 columns replaced the window's 157 and the
+   * pane came back phone-sized on the machine that owns it. Filed apart they are two
+   * borrowers and `shared/paneSize.ts` lends them the smallest grid instead.
+   */
+  readonly viewers = new Set<string>()
   attached = new Set<string>()
   /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
   xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
   readonly since = Date.now()
   constructor(readonly conn: Conn) {}
+
+  /** The borrow name for one of that device's screens. Unnamed = the connection itself. */
+  viewerKey(viewer?: unknown): string {
+    if (typeof viewer !== 'string' || !viewer) return this.key
+    const named = `${this.key}/${viewer}`
+    this.viewers.add(named)
+    return named
+  }
+
+  /** Every name this guest may be holding a borrow under. */
+  viewerKeys(): string[] {
+    return [this.key, ...this.viewers]
+  }
 }
 
 export class RemoteHost extends EventEmitter {
@@ -220,7 +243,8 @@ export class RemoteHost extends EventEmitter {
       this.pending.delete(conn)
       if (this.guests.delete(guest)) {
         // A guest that vanished cannot detach, so its borrows are returned here too.
-        for (const id of guest.attached) this.backend.returnSize?.(id, guest.key)
+        for (const id of guest.attached)
+          for (const key of guest.viewerKeys()) this.backend.returnSize?.(id, key)
         this.emit('changed')
       }
     })
@@ -287,8 +311,15 @@ export class RemoteHost extends EventEmitter {
           // Whatever that guest borrowed goes back to this desk the moment it looks
           // away - the same contract a phone has. Without this, one look from another
           // machine would leave this pane at somebody else's width for ever.
-          this.backend.returnSize?.(id, guest.key)
+          for (const key of guest.viewerKeys()) this.backend.returnSize?.(id, key)
           this.emit('changed')
+          return
+        case 'unborrow':
+          // ONE of that device's screens let go - its phone went back to the list, say -
+          // while the device itself is still mirroring the pane. Only that screen's borrow
+          // ends; what the others asked for still holds.
+          if (!id) return
+          this.backend.returnSize?.(id, guest.viewerKey(m.viewer))
           return
         case 'write':
           this.backend.write(id, String(m.data ?? ''))
@@ -307,7 +338,7 @@ export class RemoteHost extends EventEmitter {
             Number(m.cols ?? 80),
             Number(m.rows ?? 24),
             m.borrowed === true,
-            guest.key
+            guest.viewerKey(m.viewer)
           )
           return
         case 'redraw':
