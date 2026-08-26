@@ -123,6 +123,7 @@ const cases = [
   ['antigravity generating', '⣷  Generating...\n' + AGY, true],
   ['antigravity running a command', '⣽  Running command...\n' + AGY, true],
   ['antigravity waiting', '⣟  Waiting...\n' + AGY, true],
+  ['antigravity background task execution', '[02:11:07] vercel inspect --wait https://taskdriver-qt6yyf90e-robertiuoras-projects.vercel.app running\n' + AGY, true],
   // Torn repaints: it draws the word a character at a time, same as Claude Code.
   ['antigravity mid-repaint, no dots yet', '⣟  Workin\n' + AGY, false],
   ['antigravity mid-repaint, one dot', '⡿  Working.\n' + AGY, false],
