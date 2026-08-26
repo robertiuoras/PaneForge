@@ -65,8 +65,15 @@ const ok = (what, cond) => {
   n++
 }
 
-/** A transcript as Claude Code writes one: the opening records, then a turn. */
-function chat(id, how, { turns = 1 } = {}) {
+/**
+ * A transcript as Claude Code writes one: the opening records, then a turn.
+ *
+ * `cwd` is what the real file states on every turn record, and the blocks below that
+ * leave it out do so deliberately: those cases are about the CLOCK rules, and a stated
+ * folder would answer them before a clock was ever read. The block that states one is
+ * the shape every real transcript on disk actually has.
+ */
+function chat(id, how, { turns = 1, cwd = null } = {}) {
   const lines = [
     JSON.stringify({ type: 'mode', mode: 'normal', sessionId: id }),
     JSON.stringify({ type: 'permission-mode', permissionMode: 'default', sessionId: id })
@@ -80,7 +87,13 @@ function chat(id, how, { turns = 1 } = {}) {
     )
   }
   for (let i = 0; i < turns; i++) {
-    lines.push(JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello' } }))
+    lines.push(
+      JSON.stringify({
+        type: 'user',
+        ...(cwd ? { cwd } : {}),
+        message: { role: 'user', content: 'hello' }
+      })
+    )
   }
   writeFileSync(join(trunk, `${id}.jsonl`), lines.join('\n') + '\n')
   return id
@@ -158,6 +171,37 @@ ok('...and so does the other one', projectDir(CWD + '-b') === projectDir(CWD))
   forgetSession('pane-a')
   forgetSession('pane-b')
   rmSync(join(trunk, `${rivalsNew}.jsonl`))
+}
+
+// ------------------------------- a transcript states its own folder, and that is final
+{
+  // The live shape from 2026-08-26, where every clock rule pointed the wrong way: the
+  // desk was written with `piateam` (lane a) and `pizzasrus` (the trunk) both holding
+  // transcripts recorded in lane b, and the lane-b pane holding none. A `/clear` in
+  // lane b is born after lane a went quiet and says `clear`, so it satisfies `movedTo`
+  // on the clocks alone - and it names its folder in the file.
+  const mine = chat('states-lane-a', 'startup', { cwd: CWD + '-a' })
+  noteSession('pane-a', CWD + '-a', 'claude', mine)
+  await sleep(20)
+  const rivals = chat('states-lane-b', 'clear', { cwd: CWD + '-b' })
+
+  ok('a chat naming another lane is refused', resumeIdFor('pane-a') === mine)
+
+  // ...and the pane it belongs to takes it, or the rule above is a pane that never moves.
+  noteSession('pane-b', CWD + '-b', 'claude')
+  ok('...and the pane whose folder it names takes it', resumeIdFor('pane-b') === rivals)
+
+  // The same for a claimless pane: the unclaimed branch has to refuse it too. Asserted
+  // as "not that file" rather than "nothing at all" - earlier blocks left chats in this
+  // folder that state no cwd, and those are the clock rules' business, not this one's.
+  forgetSession('pane-b')
+  noteSession('pane-c', CWD, 'claude')
+  ok('a claimless trunk pane refuses a lane-b chat', resumeIdFor('pane-c') !== rivals)
+
+  forgetSession('pane-a')
+  forgetSession('pane-c')
+  rmSync(join(trunk, `${mine}.jsonl`))
+  rmSync(join(trunk, `${rivals}.jsonl`))
 }
 
 // ------------------------------------------------------------------ the control

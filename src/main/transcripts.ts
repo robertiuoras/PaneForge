@@ -171,6 +171,59 @@ function interactive(file: string): boolean {
 }
 
 /**
+ * The folder a conversation was actually held in, when the file says.
+ *
+ * Every timestamp rule below exists to tell apart panes that share a history folder, and
+ * they share it far more often than the folder name suggests: a lane worktree's project
+ * directory is a SYMLINK to the trunk's, so `clients`, `clients-a`, `clients-b` and
+ * `clients-c` are one directory under four names. Four panes then disambiguate by clock
+ * alone - and on 2026-08-26 they got it wrong in both directions at once: the desk was
+ * written with the `clients` pane (`pizzasrus`) and the `clients-a` pane (`piateam`) both
+ * holding transcripts recorded in `clients-b`, while the `clients-b` pane (`sonia`) held
+ * none at all and came back on `--continue`, inside somebody else's work.
+ *
+ * Claude Code writes its own `cwd` into the first few records, which is the fact those
+ * rules were guessing at. A file that states a different folder is not this pane's,
+ * whatever the clocks say. A file that states nothing is left to the rules as before -
+ * this refuses, it never elects.
+ */
+export function heldElsewhere(file: string, cwd: string): boolean {
+  const said = wroteIn(file)
+  if (!said || !cwd || said === cwd) return false
+  // Narrow on purpose: the refusal is for a SIBLING sharing this history folder, which
+  // is the whole failure. A transcript stating a path this machine files somewhere else
+  // is a pane handed here from another device - the receiver writes that file into its
+  // own folder deliberately, and refusing it would lose the conversation it came for.
+  return projectDir(said) === projectDir(cwd)
+}
+
+function wroteIn(file: string): string | null {
+  const hit = cwds.get(file)
+  if (hit !== undefined) return hit
+  let fd = -1
+  let said: string | null = null
+  try {
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(HEAD_BYTES)
+    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
+    const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(buf.toString('utf8', 0, n))
+    if (m) said = m[1].replace(/\\(.)/g, '$1')
+  } catch {
+    said = null
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+  // A file whose head has not been flushed yet says nothing, and it is about to. Only a
+  // real answer is remembered: caching the silence would pin a newborn chat as anonymous
+  // for the rest of the app's run, which is the one case this exists to decide.
+  if (said) cwds.set(file, said)
+  return said
+}
+
+/** What each transcript said its folder was. A conversation never changes folder. */
+const cwds = new Map<string, string>()
+
+/**
  * How a conversation began, when the file says: `clear` for one started by `/clear` or
  * `/compact` inside a pane nobody restarted, `startup` for a CLI somebody launched.
  *
@@ -300,6 +353,7 @@ export function transcriptFor(id: string): string | null {
       // `clients-a` pane adopted the chat of a pane opened 11 hours later in `clients-b`,
       // and the desk snapshot then offered to reopen it inside somebody else's work.
       !launchedElsewhere(t.file, s) &&
+      !heldElsewhere(t.file, s.cwd) &&
       !bornForAnotherPane(id, s, t.file) &&
       interactive(t.file)
   )
@@ -409,6 +463,9 @@ function movedTo(
       // folder, and a pane is not allowed to walk into one of those.
       birth(t.file) >= s.at - START_SLACK_MS &&
       birth(t.file) >= mineAt &&
+      // A `/clear` keeps the pane where it is standing, so the new conversation states
+      // this pane's folder. One stating a sibling lane is another pane's clear.
+      !heldElsewhere(t.file, s.cwd) &&
       interactive(t.file)
   )
   if (!cand) return null

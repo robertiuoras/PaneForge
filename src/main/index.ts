@@ -85,7 +85,14 @@ import {
   sweepOwnConsolesOnExit
 } from './consoles'
 import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
-import { lastPrompt, projectDir, resumable, resumeIdFor, transcriptPath } from './transcripts'
+import {
+  heldElsewhere,
+  lastPrompt,
+  projectDir,
+  resumable,
+  resumeIdFor,
+  transcriptPath
+} from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
 import { readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
@@ -3152,12 +3159,27 @@ function restorePanes(specs: StartSessionRequest[]): void {
   restoredThisRun = true
   for (const req of specs.slice(0, MAX_RESTORE)) {
     try {
+      // Reopen the conversation this pane was in BY NAME, or open nothing.
+      //
+      // The fallback that used to sit here - resume with no id, which is `--continue`,
+      // "the newest conversation in this folder" - is a pane adopting somebody else's
+      // work, because a lane worktree's project folder is a SYMLINK to the trunk's:
+      // `clients`, `clients-a`, `clients-b` and `clients-c` are one history in four
+      // names. Measured 2026-08-26 on this desk: pane 4 (`sonia`, clients-b) was written
+      // to disk with no resumeId, so the restart handed it `--continue`, which is the
+      // newest file across all four lanes - pane 1's (`pizzasrus`) conversation. Two
+      // panes then carried one chat under two names and both looked like they had been
+      // switched round. A pane whose transcript is gone comes back EMPTY, which is a
+      // thing the person can see, rather than silently inside another pane's work.
+      // A desk written BEFORE the claim rules learned to read a transcript's own folder
+      // can carry an id belonging to a sibling lane - this desk did, twice - so the saved
+      // id is checked the same way a fresh claim now is, not trusted for being saved.
+      const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
+      const named = Boolean(file && !heldElsewhere(file, req.cwd))
       manager.start({
         ...req,
-        resume: true,
-        // Reopen the conversation this pane was in by name, and fall back to "the newest
-        // one here" if that transcript has been deleted since the desk was written.
-        resumeId: resumable(req.cwd, req.resumeId) ? req.resumeId : undefined,
+        resume: named,
+        resumeId: named ? req.resumeId : undefined,
         prompt: undefined
       })
     } catch {
@@ -3179,7 +3201,10 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
   const installed = listAgents().find((a) => a.id === agent)?.available ?? false
   // A conversation deleted since the desk was written cannot be resumed by name, and
   // asking the CLI for one it does not have is worse than continuing the newest.
-  const resumeId = resumable(spec.cwd, spec.resumeId) ? spec.resumeId : undefined
+  // Same reading as the restore itself, or the dialog offers a pane under a line of
+  // somebody else's work and then opens it empty.
+  const held = spec.resumeId ? transcriptPath(spec.cwd, spec.resumeId) : null
+  const resumeId = held && !heldElsewhere(held, spec.cwd) ? spec.resumeId : undefined
   return {
     id: String(i),
     cwd: spec.cwd,
