@@ -145,13 +145,34 @@ if (process.platform === 'win32') {
   const { spawn } = require('@lydell/node-pty')
   const shell = process.platform === 'win32' ? 'powershell' : process.env.SHELL || '/bin/zsh'
   const p = spawn(shell, [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env })
-  p.onData(() => {})
+  // The shell has printed its prompt, rather than "1500ms have passed". A fixed wait was
+  // the bug: this machine's zsh sources five profile files and on a loaded box it was
+  // still starting up when the test typed at it, so `sleep` had not reached the front of
+  // the tty and the reading came back as the SHELL - a red suite about nothing. Measured
+  // 2026-08-26: 3 of 3 runs red at one commit and 1 of 3 at the next, with no change
+  // between them that paneJob can see.
+  let printed = false
+  p.onData(() => {
+    printed = true
+  })
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-  await wait(1500)
+  /** Poll `read` until it answers something truthy, or give up after `budgetMs`. */
+  const until = async (read, budgetMs = 15000) => {
+    const stop = Date.now() + budgetMs
+    for (;;) {
+      const v = read()
+      if (v) return v
+      if (Date.now() >= stop) return null
+      await wait(100)
+    }
+  }
+  await until(() => printed)
+  // And then a beat for the prompt to be the foreground process rather than the tail of
+  // the startup it was drawn by.
+  await wait(400)
   is(paneJob(p.process, shell), null, 'a real shell sitting at its prompt reports no job')
   p.write(process.platform === 'win32' ? 'Start-Sleep -Seconds 20\r' : 'sleep 20\r')
-  await wait(2000)
-  const job = paneJob(p.process, shell)
+  const job = await until(() => paneJob(p.process, shell))
   assert.ok(job, `a real command in front of a real pty is named (got ${JSON.stringify(p.process)})`)
   checks++
   try {
