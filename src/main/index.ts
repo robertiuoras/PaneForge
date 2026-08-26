@@ -1306,10 +1306,15 @@ function writePane(id: string, data: string): void {
 
 ipcMain.on('pty:write', (_e, id: string, data: string) => writePane(id, data))
 
-// ---- and the screen staying on while a pane works ------------------------------------
+// ---- and keeping the system awake while a pane works ---------------------------------
 const displayAwake = startDisplayAwake({
   panes: () =>
-    allSessions().map((s) => ({ runSince: s.runSince, status: s.status, asking: !!s.ask })),
+    allSessions().map((s) => ({
+      runSince: s.runSince,
+      status: s.status,
+      asking: !!s.ask,
+      job: s.job
+    })),
   enabled: () => getConfig().keepDisplayAwake !== false,
   log: (line) => console.log(`[awake] ${line}`)
 })

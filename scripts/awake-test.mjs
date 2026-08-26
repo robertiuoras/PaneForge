@@ -37,12 +37,27 @@ const deadButMarked = { runSince: NOW - 5_000, status: 'exited' }
 // --- what counts as working ------------------------------------------------------------
 assert.equal(awakeBusy([quiet, quiet]), 0)
 assert.equal(awakeBusy([working, quiet]), 1)
-// A pane sitting on a question is the reason the screen must not go off: the answer is
+// A pane sitting on a question is the reason the system must not go off: the answer is
 // wanted from a person, and a black screen is how that question is missed.
 assert.equal(awakeBusy([asking]), 1)
+// A shell running a foreground build or command (e.g. npm, cargo, python) counts as busy.
+const shellJob = { status: 'idle', job: 'cargo' }
+assert.equal(awakeBusy([shellJob]), 1)
+// Background monitors / watcher tasks outliving the prompt turn count as busy.
+const backJob = { status: 'idle', backJobsCount: 2 }
+assert.equal(awakeBusy([backJob]), 1)
+// Dev servers running for a project count as busy.
+const devServer = { status: 'idle', devServersCount: 1 }
+assert.equal(awakeBusy([devServer]), 1)
+// Status working or starting counts as busy.
+const starting = { status: 'starting' }
+const activeWorking = { status: 'working' }
+assert.equal(awakeBusy([starting]), 1)
+assert.equal(awakeBusy([activeWorking]), 1)
 // An agent that exited mid-turn keeps the runSince it had. Counting it would hold the
-// display for the rest of the session - the same trap updateHold.ts records.
+// system for the rest of the session - the same trap updateHold.ts records.
 assert.equal(awakeBusy([deadButMarked]), 0)
+assert.equal(awakeBusy([{ status: 'exited', job: 'cargo', backJobsCount: 1 }]), 0)
 
 // --- the verdict -------------------------------------------------------------------------
 const v = (over) =>
