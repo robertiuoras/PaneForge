@@ -430,6 +430,41 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     docs: 'https://github.com/google-gemini/gemini-cli'
   },
   {
+    // Where Gemini CLI's consumer login WENT. Google moved the free, Pro and Ultra tiers
+    // onto this client on 2026-06-18, which is why the entry above now needs an AI Studio
+    // key: this is the one that still signs in with a Google account, and a Google AI
+    // Pro/Ultra subscription raises its limits rather than being the price of entry.
+    //
+    // A Go binary from Google's own installer, NOT an npm package - `npm i -g` finds only
+    // unrelated community packages of the same name. It lands in `~/.local/bin/agy` on
+    // macOS and Linux and `%LOCALAPPDATA%\agy\bin` on Windows, both of which `which.ts`
+    // hydrates, so a pane finds it without the user's shell profile.
+    id: 'antigravity',
+    label: 'Antigravity CLI',
+    bin: 'agy',
+    // `--continue` is the newest conversation in this folder; `--conversation <id>` is the
+    // one this pane was in. Both measured off `agy --help` (v1.1.21).
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--conversation'],
+    modelFlag: '--model',
+    // No model list on purpose. The flag exists, but Google publishes no model IDS for it
+    // anywhere - `agy models` refuses until the CLI is signed in, and the pricing page
+    // names models in prose ("Gemini 3.1 Pro", "Claude Sonnet & Opus 4.6") rather than by
+    // id. A guessed id here is a pane that dies on launch with a sentence about a model,
+    // which is the exact failure the OpenRouter entry above documents. `/model` inside the
+    // TUI picks one from the live list and persists it, and anything typed still reaches
+    // the flag.
+    color: '#5b6ef5',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://antigravity.google/cli/install.ps1 | iex"',
+    // No uninstall: the installer appends a PATH line to five shell profiles, and a button
+    // that deletes the binary and leaves those behind is the half-removal this field's
+    // contract refuses.
+    free: true,
+    note: 'Signs in with your Google account - AI Pro/Ultra raises the limits',
+    docs: 'https://antigravity.google/docs/cli/getting-started'
+  },
+  {
     id: 'qwen',
     label: 'Qwen Code',
     bin: 'qwen',

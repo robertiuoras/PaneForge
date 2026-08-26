@@ -30,6 +30,9 @@ export function hydrateUserPath(): string {
     add(process.env.APPDATA && join(process.env.APPDATA, 'npm'))
     add(process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'pnpm'))
     add(home && join(home, '.local', 'bin'))
+    // Google's Antigravity installer puts `agy` here, and nothing else on this machine
+    // does - a GUI launch that does not read the shell profile would report it missing.
+    add(process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'agy', 'bin'))
   } else {
     add('/opt/homebrew/bin')
     add('/usr/local/bin')

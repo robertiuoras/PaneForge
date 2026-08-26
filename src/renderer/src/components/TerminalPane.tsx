@@ -9,6 +9,7 @@ import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/at
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
+import { whenWords } from '../../../shared/elapsed'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
 import {
   applyKey,
@@ -656,15 +657,26 @@ interface Mark {
 /**
  * What a rail tag reads out on hover. The time is the point of it as much as the text is -
  * "what did I ask at 14:32" is how you find a prompt again hours into a run.
+ *
+ * The tip says the DISTANCE (`/clear  (5 min ago)`) and the native tooltip under it says
+ * the exact moment. A wall-clock time is the thing somebody has to subtract from the clock
+ * in their own status bar before it answers "is this pane stuck or did I only just ask" -
+ * which is the question the rail is opened for. The exact time is still one hover-hold
+ * away, because "5 min ago" is the wrong half once a session is being read back hours
+ * later. Same split, and the same `whenWords`, as History's rows.
  */
-function markLabel(m: Mark): string {
+function markLabel(m: Mark, now: number): string {
   // 0 is a tag rebuilt from a restored pane's own output (seedMarks): the text is known
   // and the clock is not. A confident wrong time on a prompt is worse than no time - it is
   // what somebody uses to decide which tag to press.
-  if (!m.at) return m.text
-  const time = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const text = m.text.length > 160 ? m.text.slice(0, 159) + '…' : m.text
-  return time + '  ' + text
+  if (!m.at) return text
+  return text + '  (' + whenWords(m.at, now) + ')'
+}
+
+/** The exact moment, for the hover-hold. Empty for a tag whose clock is unknown. */
+function markWhen(m: Mark): string {
+  return m.at ? new Date(m.at).toLocaleString() : ''
 }
 
 /** Quote a dropped path only when it needs it, so an agent reads it as one argument. */
@@ -980,6 +992,19 @@ function TerminalPane({
   // Every prompt submitted to this pane, oldest first. State rather than a ref because the
   // rail is rendered by React and has to repaint when a prompt is sent or scrolled away.
   const [marks, setMarks] = useState<Mark[]>([])
+  /**
+   * The clock behind each tag's `(5 min ago)`.
+   *
+   * A minute, never a second: `whenWords` draws nothing finer than a minute under an hour,
+   * so a second-by-second wakeup would re-render the whole pane - which re-measures the
+   * turn-copy pairs and the rail against the live xterm buffer - to write out an identical
+   * string. `Infinity` on a pane with no tags subscribes to nothing at all.
+   *
+   * The offset is the NEWEST tag's own moment, so its minute turns over exactly when it
+   * became true rather than up to 59 seconds later on the wall minute. It is the tag being
+   * read: the older ones are within a minute of correct, which is inside their own unit.
+   */
+  const railNow = useNow(marks.length ? 60_000 : Infinity, marks[marks.length - 1]?.at ?? 0)
   /**
    * Nothing has come out of this pty yet.
    *
@@ -3732,7 +3757,8 @@ function TerminalPane({
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p
-            const label = markLabel(m)
+            const label = markLabel(m, railNow)
+            const exact = markWhen(m)
             return (
               <button
                 key={m.id}
@@ -3751,7 +3777,8 @@ function TerminalPane({
                     '--hit-down': `${hitDown}px`
                   } as React.CSSProperties
                 }
-                title={label}
+                // The tip carries the distance; the hover-hold carries the moment.
+                title={exact ? exact + '\n' + label : label}
                 aria-label={label}
                 // Same reason as the pill: a mousedown inside the pane would take focus off
                 // the terminal and start a selection drag.
