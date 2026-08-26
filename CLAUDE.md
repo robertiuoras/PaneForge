@@ -1204,6 +1204,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:scrollback` | and what is on its screen when it gets there |
 | `npm run test:replaywidth` | ...drawn at the width it was drawn at, with the shipped behaviour kept as the control that must FAIL |
 | `npm run test:panegrid` | that the pty and the terminal open on the SAME width (the old 80-column default is the control that must still tear), and that Fix re-renders from raw bytes |
+| `npm run test:claim` | which conversation a pane may claim when three lanes share one project folder: somebody else's launch refused, the pane's own taken, and the pane following its own `/clear` kept as the control |
 | `npm run test:restoreturn` | the display clock, the engaged flag, continuing a cut-off turn, plus source assertions so a green test over a function nothing calls cannot pass |
 | `npm run test:promptecho` | rebuilding prompt tags from the `❯` echo, and the four things that must NOT become tags |
 | `npm run test:consoles` | sweeping console hosts left behind |
