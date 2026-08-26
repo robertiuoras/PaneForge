@@ -19,6 +19,7 @@ import {
 } from '../../shared/handoff'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
+import type { BusyReason } from '../../shared/busy'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
@@ -31,7 +32,7 @@ export interface HostBackend {
   /** Give a pane whose size a guest borrowed back to this desk. */
   returnSize?(id: string, viewer?: string): void
   redraw(id: string): void
-  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
+  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock, reason?: BusyReason): void
   clearAttention(id: string): void
   kill(id: string): void
   restart(id: string): Session | null

@@ -196,6 +196,7 @@ import type {
   TurnClock,
   UpdateState
 } from '../shared/types'
+import type { BusyReason } from '../shared/busy'
 import type { AgentSpec } from '../shared/agents'
 
 // Before a single handler registers: the phone client calls the same ipcMain bodies the
@@ -905,7 +906,7 @@ const remote = new Remote({
     manager.resize(id, cols, rows, borrowed === true, typeof viewer === 'string' ? viewer : 'phone'),
   returnSize: (id, viewer) => manager.returnSize(id, viewer),
   redraw: (id) => manager.redraw(id),
-  setBusy: (id, busy, tail, clock) => manager.setBusyOnScreen(id, busy, tail, clock),
+  setBusy: (id, busy, tail, clock, reason) => manager.setBusyOnScreen(id, busy, tail, clock, reason),
   clearAttention: (id) => manager.clearAttention(id),
   kill: (id) => manager.kill(id),
   restart: (id) => manager.restart(id),
@@ -1471,8 +1472,8 @@ ipcMain.on('pty:redraw', (_e, id: string) =>
  */
 ipcMain.on(
   'sessions:busy',
-  (_e, id: string, busy: boolean, tail?: string, clock?: TurnClock) => {
-    if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail, clock)
+  (_e, id: string, busy: boolean, tail?: string, clock?: TurnClock, reason?: BusyReason) => {
+    if (!remote.owns(id)) manager.setBusyOnScreen(id, busy, tail, clock, reason)
   }
 )
 
