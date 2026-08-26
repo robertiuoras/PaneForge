@@ -1328,6 +1328,29 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s) return
     const now = Date.now()
+    // Every FLIP of the pane's own busy reading, written down as it happens.
+    //
+    // "It printed while the card said Your move" has now been reported twice and chased
+    // once with an instrument that cannot be read: `window.__paneBusy` lives in renderer
+    // memory, and the app Robert actually runs has no debug port. The reading that
+    // decides it arrives here and nowhere else, so this is the one place the evidence
+    // can be on disk before anybody goes looking. The state recorded is the state the
+    // flip is about to act on - a `false` landing on `engaged` with no `runSince` is the
+    // exact shape of the report - and `tail` is the frame the pane judged, so a footer
+    // sitting in it names the bug outright. One line per flip: a turn is two.
+    if (busy !== (s.busyUntil > now)) {
+      audit('busy-flip', {
+        title: s.meta.title,
+        agent: s.meta.agent,
+        reads: busy,
+        status: s.meta.status,
+        engaged: Boolean(s.meta.engaged),
+        runSince: s.meta.runSince ? now - s.meta.runSince : null,
+        quietMs: now - s.meta.lastOutput,
+        agentSaysMs: clock?.ms ?? null,
+        tail: plainTail(tail || s.lastTail, 4)
+      })
+    }
     // Once a pane has read this agent's "running" footer even once, this session's
     // turn boundaries are knowable, and the bell stops trusting the quiet clock alone.
     if (busy) s.sawFooter = true
