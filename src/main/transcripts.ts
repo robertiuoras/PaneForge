@@ -43,6 +43,20 @@ const TAIL_BYTES = 256 * 1024
 /** The head of a transcript that has to hold its opening records. */
 const HEAD_BYTES = 256 * 1024
 
+/**
+ * How long a brand-new transcript is allowed to be undecided about how it began.
+ *
+ * `opening()` answers `unknown` for two different files: one written by a CLI with no
+ * SessionStart hook, which will never say more, and one born a second ago whose hook
+ * record has not been flushed yet. The second is the dangerous one - it is a chat
+ * somebody has just LAUNCHED, and reading its silence as "not a startup" is how a pane
+ * walks into it. Measured on this desk 2026-08-26: a pane opened at 12:50 in
+ * `clients-b`, and the `clients-a` pane that had been running since 01:51 claimed its
+ * conversation within the minute. So an undecided file younger than this is left alone
+ * and asked again on the next sweep, by which time the head is written.
+ */
+const OPENING_GRACE_MS = 15_000
+
 /** Enough of a prompt to recognise the work, short enough for one line of a dialog. */
 const PROMPT_CHARS = 220
 
@@ -279,6 +293,14 @@ export function transcriptFor(id: string): string | null {
       birth(t.file) >= s.at - START_SLACK_MS &&
       !taken.has(t.file) &&
       !released.has(t.file) &&
+      // A conversation somebody LAUNCHED is never a pane's continuation. `movedTo` has
+      // refused one since the day it was written and this branch did not, so the pane
+      // with no claim - a restored one, or one whose chat was deleted - took the newest
+      // file in the folder whatever it was. That is the whole bug: on 2026-08-26 the
+      // `clients-a` pane adopted the chat of a pane opened 11 hours later in `clients-b`,
+      // and the desk snapshot then offered to reopen it inside somebody else's work.
+      !launchedElsewhere(t.file, s) &&
+      !bornForAnotherPane(id, s, t.file) &&
       interactive(t.file)
   )
   if (!pick) return null
@@ -309,6 +331,46 @@ function mtime(file: string): number {
   } catch {
     return 0
   }
+}
+
+/**
+ * True while a transcript is somebody ELSE's launch, rather than this pane's own.
+ *
+ * `opening()` reads the file's own SessionStart record. `clear` is a pane continuing
+ * itself and is always adoptable. `startup` is a CLI somebody launched: it belongs to
+ * the pane that was starting at that moment, so it is adoptable only inside this pane's
+ * own launch window and is a flat refusal outside it - which is the bug, an 11-hour-old
+ * pane taking a chat born a minute ago in another lane. `unknown` is the awkward one: a
+ * CLI with no SessionStart hook says nothing ever, and a file born a second ago has not
+ * flushed its record yet, so an undecided NEWBORN is read as a launch until it answers
+ * (OPENING_GRACE_MS) and an undecided old file is left to the quiet-gap rules.
+ */
+function launchedElsewhere(file: string, s: Started): boolean {
+  const said = opening(file)
+  if (said === 'clear') return false
+  const mine = birth(file) <= s.at + START_SLACK_MS
+  if (said === 'startup') return !mine
+  return !mine && Date.now() - birth(file) < OPENING_GRACE_MS
+}
+
+/**
+ * True while another pane in the same project has a better claim on this file than we do.
+ *
+ * A pane that has started and holds no transcript yet is a pane whose conversation is
+ * still being written. Anything born after it started in that project's folder is far
+ * more likely to be its own than an older pane's, so it is not free to be adopted. This
+ * is the guard that does not depend on a hook being configured.
+ */
+function bornForAnotherPane(id: string, s: Started, file: string): boolean {
+  const born = birth(file)
+  const dir = projectDir(s.cwd)
+  for (const [other, o] of started) {
+    if (other === id) continue
+    if (projectDir(o.cwd) !== dir) continue
+    if (claimed.has(other)) continue
+    if (o.at <= born + START_SLACK_MS && o.at > s.at) return true
+  }
+  return false
 }
 
 /**
@@ -357,7 +419,11 @@ function movedTo(
     // Settled rivals count too, now that being settled no longer means a pane can never
     // have moved: the pane that went quiet in the gap is the one that cleared, whether or
     // not anybody told either of them about it.
-    if (other === id || o.cwd !== s.cwd) continue
+    // Same PROJECT, not the same cwd string. A lane worktree's project folder is a
+    // symlink to the trunk's, so `clients`, `clients-a` and `clients-b` are one history
+    // in three names, and comparing cwd left every cross-lane rival invisible - which is
+    // exactly the pair this went wrong on.
+    if (other === id || projectDir(o.cwd) !== projectDir(s.cwd)) continue
     const theirs = claimed.get(other)
     if (!theirs) continue
     const at = mtime(theirs)
