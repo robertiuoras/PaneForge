@@ -32,7 +32,7 @@ export const MAX_SECONDS = 300
 
 export function clampSeconds(n: unknown): number {
   const s = Math.round(Number(n))
-  if (!Number.isFinite(s)) return 45
+  if (!Number.isFinite(s)) return 15
   return Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, s))
 }
 
