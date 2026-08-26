@@ -16,7 +16,7 @@
  * this, Codex still does, and it stays first because it is unambiguous.
  */
 const SAYS_INTERRUPT =
-  /esc to interrupt|esc to cancel|ctrl\+c to (stop|interrupt|cancel)|press esc to stop|esc interrupt|working…|thinking…/i
+  /esc to interrupt|esc to cancel|esc to stop|ctrl\+c to (stop|interrupt|cancel)|press esc to stop|esc interrupt|working(?:…|\.\.\.)|thinking(?:…|\.\.\.)/i
 
 /**
  * Claude Code 2.1 dropped the hint and prints a spinner glyph, an invented gerund and
@@ -28,7 +28,7 @@ const SAYS_INTERRUPT =
  * Glyphs only, never a bullet or an asterisk: a markdown list in an answer sits in the
  * same rows, and "* one of the things we tried…" must not read as a running agent.
  */
-const SPINNING = /^[^\S\n]*[✢✳✶✻✽✷✺◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S[^\n]*…/m
+const SPINNING = /^[^\S\n]*[✢✳✶✻✽✷✺◐◓◑◒◴◷◶◵◰◳◲◱\u2800-\u28ff]\s+\S[^\n]*(?:…|\.\.\.)/m
 
 /**
  * The gerund on its own, with no glyph in front of it at all: Claude Code 2.1.220
@@ -38,7 +38,7 @@ const SPINNING = /^[^\S\n]*[✢✳✶✻✽✷✺◐◓◑◒⠋⠙⠹⠸⠼⠴�
  * insists on a glyph is that prose and markdown live in these same rows, and
  * "* one of the things we tried…" must not read as a running agent.
  */
-const LONE_GERUND = /^[^\S\n]*[A-Z][a-z]+…[^\S\n]*$/m
+const LONE_GERUND = /^[^\S\n]*[A-Z][a-z]+(?:…|\.\.\.)[^\S\n]*$/m
 
 /**
  * The agent is asking *you* something: a permission prompt, a tool approval, a choice.
