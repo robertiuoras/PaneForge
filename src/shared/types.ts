@@ -92,6 +92,12 @@ export interface Session {
    */
   openedAt?: number
   exitCode?: number
+  /**
+   * Epoch ms since this pane's `cwd` stopped existing on disk, unset while it is there.
+   * A live pane keeps running (its shell falls back to $HOME); an EXITED one whose folder
+   * has been gone for a minute is a card about nothing and gets reaped by `sweepIdle`.
+   */
+  cwdGone?: number
   /** went quiet while you were looking elsewhere - cleared when you open the pane */
   attention?: boolean
   /**

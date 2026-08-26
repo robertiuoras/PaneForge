@@ -48,6 +48,7 @@ import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
+import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
@@ -67,6 +68,19 @@ import type {
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
+
+/**
+ * How often a pane's cwd is asked whether it still exists. A `statSync` per pane per
+ * second is a syscall nobody needs: a folder disappearing is a once-a-week event and
+ * the card it affects is already dead, so a lazy answer is the right answer.
+ */
+const CWD_CHECK_MS = 10_000
+/**
+ * How long a pane must be BOTH exited and folder-less before its card is removed.
+ * Long enough that a folder removed and recreated in two steps - which is what a
+ * checkout swap, a `mv` or an installer looks like from out here - never reaps.
+ */
+const CWD_GONE_REAP_MS = 60_000
 
 const WIN = process.platform === 'win32'
 
@@ -368,6 +382,8 @@ export class SessionManager extends EventEmitter {
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
+  /** pane id -> when its cwd was last checked for existence. See `markCwdGone`. */
+  private cwdCheckedAt = new Map<string, number>()
 
   constructor() {
     super()
@@ -2013,9 +2029,26 @@ export class SessionManager extends EventEmitter {
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
+    const reap: string[] = []
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      if (this.markCwdGone(live, now)) changed = true
+      // A dead pty whose folder has also gone is a card about nothing: no process to
+      // go back to, and no directory left to resume in. Only that PAIR reaps. A live
+      // pane keeps its card however missing the folder is - a rename, a `git clean`, a
+      // worktree moved out from under a working session must never close the chat, and
+      // the shell recovers to $HOME on its own. The grace window is so a folder that is
+      // replaced in two steps (remove, recreate) does not take the pane with it.
+      if (
+        reapForMissingCwd({
+          status: meta.status,
+          cwdGone: meta.cwdGone,
+          now,
+          graceMs: CWD_GONE_REAP_MS
+        })
+      )
+        reap.push(meta.id)
       // Does the pane's own footer still say the agent is running? This outranks the
       // quiet clock everywhere below: silence during a five minute tool call is not
       // the same thing as silence at an empty prompt, and treating them alike is what
@@ -2196,7 +2229,31 @@ export class SessionManager extends EventEmitter {
         changed = true
       }
     }
+    // After the loop: `kill` mutates the map this was iterating.
+    for (const id of reap) {
+      audit('reap-cwd-gone', { id, cwd: this.sessions.get(id)?.meta.cwd ?? null })
+      this.kill(id)
+    }
     if (changed) this.emitSessions()
+  }
+
+  /**
+   * Has this pane's folder been deleted out from under it?
+   *
+   * Stamped rather than flagged, because the reap wants to know for HOW LONG, and the
+   * renderer wants to say so on the card. Cleared the moment the folder is back, so a
+   * worktree that is reset and recreated leaves nothing behind. Only the timestamp is
+   * new state; nothing here closes anything, that decision is in `sweepIdle`.
+   */
+  private markCwdGone(live: Live, now: number): boolean {
+    if (now - (this.cwdCheckedAt.get(live.meta.id) ?? 0) < CWD_CHECK_MS) return false
+    this.cwdCheckedAt.set(live.meta.id, now)
+    const gone = !!live.meta.cwd && !existsSync(live.meta.cwd)
+    const { value, changed } = nextCwdGone(gone, live.meta.cwdGone, now)
+    if (!changed) return false
+    if (value === undefined) delete live.meta.cwdGone
+    else live.meta.cwdGone = value
+    return true
   }
 
   /**

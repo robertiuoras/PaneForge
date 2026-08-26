@@ -32,6 +32,7 @@ const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],
+  ['cwdgone', 'cwd-gone-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
