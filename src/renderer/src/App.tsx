@@ -3966,8 +3966,19 @@ export default function App(): JSX.Element {
                 {renaming === s.id ? (
                   <input
                     className="rename"
-                    autoFocus
                     defaultValue={s.title}
+                    // The box opens with the whole name SELECTED: a rename is almost
+                    // always a replacement, so the first keystroke should clear it.
+                    // Done from the ref rather than `autoFocus` + `onFocus`, because
+                    // React focuses an autoFocus field during the commit, before its
+                    // own onFocus listener can see that first focus - measured at
+                    // selectionStart === selectionEnd === title.length.
+                    ref={(el) => {
+                      if (el && document.activeElement !== el) {
+                        el.focus()
+                        el.select()
+                      }
+                    }}
                     onBlur={(e) => {
                       api.renameSession(s.id, e.target.value)
                       setRenaming(null)
