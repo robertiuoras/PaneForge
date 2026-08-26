@@ -19,6 +19,7 @@ export function startDisplayAwake(opts: {
   function killCaffeinate(): void {
     if (caffeinateProc) {
       try {
+        opts.log?.(`caffeinate PID ${caffeinateProc.pid} stopping`)
         caffeinateProc.kill('SIGTERM')
       } catch {
         // ignore
@@ -36,11 +37,13 @@ export function startDisplayAwake(opts: {
         stdio: 'ignore',
         detached: false
       })
+      opts.log?.(`caffeinate started PID ${caffeinateProc.pid}`)
       caffeinateProc.on('error', (err) => {
         opts.log?.(`caffeinate error: ${err.message}`)
         caffeinateProc = null
       })
-      caffeinateProc.on('exit', () => {
+      caffeinateProc.on('exit', (code) => {
+        opts.log?.(`caffeinate exited with code ${code}`)
         caffeinateProc = null
       })
     } catch (e) {
@@ -54,7 +57,9 @@ export function startDisplayAwake(opts: {
     // caffeinate -u declares user activity (IOPMAssertionDeclareUserActivity) to prevent
     // low-power screen shutoff while working.
     try {
-      execFile('caffeinate', ['-u', '-t', '5'], { timeout: 4000 }, () => {})
+      execFile('caffeinate', ['-u', '-t', '5'], { timeout: 4000 }, () => {
+        opts.log?.('caffeinate user activity tickle sent')
+      })
     } catch {
       // ignore
     }

@@ -54,6 +54,15 @@ const starting = { status: 'starting' }
 const activeWorking = { status: 'working' }
 assert.equal(awakeBusy([starting]), 1)
 assert.equal(awakeBusy([activeWorking]), 1)
+// Recent log output or recent keyboard input keeps the screen awake so reading logs does not go dark.
+const recentLogs = { status: 'idle', lastOutput: NOW - 60_000 }
+assert.equal(awakeBusy([recentLogs], NOW), 1)
+const oldLogs = { status: 'idle', lastOutput: NOW - 6 * 60_000 }
+assert.equal(awakeBusy([oldLogs], NOW), 0)
+const recentKeys = { status: 'idle', lastKeyboard: NOW - 30_000 }
+assert.equal(awakeBusy([recentKeys], NOW), 1)
+const oldKeys = { status: 'idle', lastKeyboard: NOW - 6 * 60_000 }
+assert.equal(awakeBusy([oldKeys], NOW), 0)
 // An agent that exited mid-turn keeps the runSince it had. Counting it would hold the
 // system for the rest of the session - the same trap updateHold.ts records.
 assert.equal(awakeBusy([deadButMarked]), 0)
