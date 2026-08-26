@@ -3629,6 +3629,7 @@ app.on('before-quit', () => {
 })
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  displayAwake.stop()
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
   presence.dispose()
   stopPressure()
