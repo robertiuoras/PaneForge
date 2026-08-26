@@ -398,41 +398,12 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     docs: 'https://developers.openai.com/codex/cli'
   },
   {
-    id: 'gemini',
-    label: 'Gemini CLI',
-    bin: 'gemini',
-    modelFlag: '--model',
-    models: [
-      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'fastest' }
-    ],
-    color: '#4285f4',
-    // Google ENDED the free "sign in with Google" tier for this client on 2026-08-23:
-    // every launch dies with `IneligibleTierError ... UNSUPPORTED_CLIENT ... migrate to
-    // the Antigravity suite`, inside a pane that otherwise looks perfectly healthy. The
-    // key path is not a preference any more, it is the only one that answers - measured
-    // here with a junk key, which reaches generativelanguage.googleapis.com and comes
-    // back `400 API key not valid` instead of the tier error.
-    //
-    // `GEMINI_DEFAULT_AUTH_TYPE` is a DEFAULT: it decides only for a machine that has
-    // never picked, which is why it is set unconditionally and why it is not enough on
-    // its own. A machine whose ~/.gemini/settings.json already says `oauth-personal`
-    // keeps sending the pane to the dead endpoint until that file is changed, and
-    // nothing this app passes in the environment can overrule it.
-    env: {
-      GEMINI_API_KEY: keyVar('google'),
-      GEMINI_DEFAULT_AUTH_TYPE: 'gemini-api-key'
-    },
-    install: 'npm i -g @google/gemini-cli',
-    uninstall: 'npm rm -g @google/gemini-cli',
-    free: true,
-    note: 'AI Studio key - Google ended the free CLI sign-in',
-    docs: 'https://github.com/google-gemini/gemini-cli'
-  },
-  {
-    // Where Gemini CLI's consumer login WENT. Google moved the free, Pro and Ultra tiers
-    // onto this client on 2026-06-18, which is why the entry above now needs an AI Studio
-    // key: this is the one that still signs in with a Google account, and a Google AI
+    // Where Gemini CLI's consumer login WENT, and why Gemini CLI is no longer in this
+    // catalogue at all. Google moved the free, Pro and Ultra tiers onto this client on
+    // 2026-06-18 and ended the old client's sign-in on 2026-08-23, leaving that binary
+    // reachable only with a paid AI Studio key - a second, worse way to run Google's
+    // models, offered beside this one. Removed 2026-08-26 on Robert's word. This is the
+    // one that still signs in with a Google account, and a Google AI
     // Pro/Ultra subscription raises its limits rather than being the price of entry.
     //
     // A Go binary from Google's own installer, NOT an npm package - `npm i -g` finds only
@@ -854,14 +825,6 @@ export const KEY_PROVIDERS: KeyProvider[] = [
     hint: 'your Z.ai API key',
     url: 'https://z.ai/manage-apikey/apikey-list',
     note: 'Runs Claude Code on GLM 5.2, including a GLM Coding Plan subscription.'
-  },
-  {
-    id: 'google',
-    label: 'Google AI Studio',
-    placeholder: keyVar('google'),
-    hint: 'AIza...',
-    url: 'https://aistudio.google.com/apikey',
-    note: 'The only way Gemini CLI still authenticates - it has a free tier of its own.'
   },
   {
     id: 'xai',

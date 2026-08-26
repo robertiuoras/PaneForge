@@ -55,7 +55,7 @@ ok('claude code alias pastes', drop({ agent: 'claude-code' }))
 ok('openrouter is claude code, so it pastes', drop({ agent: 'openrouter' }))
 // The whole reason the decision exists: these would swallow the drop.
 ok('codex takes the path', !drop({ agent: 'codex' }))
-ok('gemini takes the path', !drop({ agent: 'gemini' }))
+ok('antigravity takes the path', !drop({ agent: 'antigravity' }))
 ok('a custom agent takes the path', !drop({ agent: 'my-own-cli' }))
 ok('an unknown agent takes the path', !drop({ agent: undefined }))
 

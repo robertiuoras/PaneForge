@@ -85,7 +85,7 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
   { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
   { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
-  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex gemini copilot cursor install uninstall model custom cli path' },
+  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path' },
   { id: 'stash', label: 'Stash', note: 'Clipboard history', find: 'clipboard copy paste history overlay pin float peek images files' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
   { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },

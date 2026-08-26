@@ -89,34 +89,40 @@ for (const id of ['opencode', 'aider', 'crush']) {
   ok(!needsOpenRouterKey(spec), `${id} still runs on its own login without one, so it is not blocked`)
 }
 
-// --- Gemini CLI: its own login is gone, so the key is not optional --------------
-// Measured 2026-08-23 against gemini-cli 0.56.0: an oauth-personal launch dies with
-// `IneligibleTierError ... UNSUPPORTED_CLIENT`, while the same binary with an api-key
-// auth type reaches the API and rejects only the (junk) key. The catalogue entry has to
-// carry that, or a Gemini pane is a healthy-looking window that can never answer.
-const gem = findAgent(BUILTIN_AGENTS, 'gemini')
-is(keyProviderFor(gem), 'google', 'a Gemini pane is blocked on the Google key, not on nothing')
-is(
-  resolveEnv(gem, { google: 'AIza-test' }).GEMINI_API_KEY,
-  'AIza-test',
-  'the pasted AI Studio key reaches the CLI'
-)
-is(
-  resolveEnv(gem, { google: 'AIza-test' }).GEMINI_DEFAULT_AUTH_TYPE,
-  'gemini-api-key',
-  'and it is told which auth to default to, so a machine that has never picked picks this'
+// --- Antigravity CLI: a Google login, and no key at all -------------------------
+// Where Gemini CLI's consumer sign-in went (2026-06-18). Gemini CLI itself was dropped
+// from the catalogue on 2026-08-26: Google ended its sign-in, leaving it reachable only
+// with a paid AI Studio key, which is a second and worse way to run the same models.
+// The rule that block used to pin lives on here as its opposite - an agent that needs
+// NO key must never be reported as blocked on one, or Settings grows a field for a
+// provider nothing asks for.
+const agy = findAgent(BUILTIN_AGENTS, 'antigravity')
+is(agy.bin, 'agy', 'the Google-login CLI is its own binary, not Claude Code pointed elsewhere')
+ok(!keyProviderFor(agy), 'it signs in with a Google account, so no key gates it')
+assert.deepEqual(resolveEnv(agy, {}), {}, 'and nothing is handed to it from the key store')
+ok(
+  !BUILTIN_AGENTS.some((a) => a.id === 'gemini'),
+  'Gemini CLI is gone from the catalogue, not left as a dead row somebody can pick'
 )
 ok(
-  !('GEMINI_API_KEY' in resolveEnv(gem, {})),
-  'with no key the variable is dropped rather than handed over as a credential'
+  !KEY_PROVIDERS.some((p) => p.id === 'google'),
+  '...and so is the key field that only it asked for'
 )
+
+// A provider key still reaches the agent that names it, and is dropped when blank.
+const ds = findAgent(BUILTIN_AGENTS, 'deepseek')
+is(keyProviderFor(ds), 'deepseek', 'a keyed agent names its own provider')
 is(
-  resolveEnv(gem, {}).GEMINI_DEFAULT_AUTH_TYPE,
-  'gemini-api-key',
-  'the literal beside it still passes through - it is a default, not a credential'
+  resolveEnv(ds, { deepseek: 'sk-ds-test' }).ANTHROPIC_AUTH_TOKEN,
+  'sk-ds-test',
+  'the pasted key reaches the CLI'
 )
 ok(
-  !('GEMINI_API_KEY' in resolveEnv(gem, { openrouter: 'sk-or-test' })),
+  !('ANTHROPIC_AUTH_TOKEN' in resolveEnv(ds, {})),
+  'with no key the variable is dropped rather than handed over empty'
+)
+ok(
+  !('ANTHROPIC_AUTH_TOKEN' in resolveEnv(ds, { openrouter: 'sk-or-test' })),
   "and another provider's key cannot fill it"
 )
 

@@ -20,8 +20,6 @@ const ALIASES: Record<string, string> = {
   gpt: 'codex',
   'codex-cli': 'codex',
   openai: 'openai',
-  'gemini-cli': 'gemini',
-  google: 'gemini',
   'github-copilot': 'copilot',
   'cursor-agent': 'cursor'
 }
