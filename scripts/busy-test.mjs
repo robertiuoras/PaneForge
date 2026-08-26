@@ -35,7 +35,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { readsBusy, readsElapsedMs, anchoredStart } = createRequire(import.meta.url)(out)
+const { readsBusy, readsElapsedMs, anchoredStart, busyReason } = createRequire(import.meta.url)(out)
 
 /** The statusline and input box that sit BELOW the working line on this machine. */
 const CHROME = [
@@ -205,7 +205,45 @@ for (const [name, runSince, clock, want] of anchors) {
   }
 }
 
-const total = cases.length + clocks.length + grains.length + anchors.length
+// WHICH rule read the frame, and the one that must never be trusted on its own.
+//
+// Claude Code's finished line keeps the turn's number - "✻ Baked for 7m 57s · done
+// 3:08 PM" - and the app used to take a bare duration as evidence of a running agent.
+// That is not merely a green dot: `anchoredStart` re-anchors the run clock to the
+// number it just read, so a pane that had gone quiet started a phantom turn already
+// 7m57s old and counted on from there. Measured on this desk 2026-08-26:
+// attention-audit.log has PaneForge stalled at quietMs 1507149 with busyOnScreen:true
+// and runMs 476436 - 7m 56s - over exactly that frame.
+const reasons = [
+  ['✢ Smooshing… (8s · ↓ 282 tokens)', 'spin'],
+  ['some output\n  ⎿  Running…\n(esc to interrupt)', 'interrupt'],
+  ['Considering…', 'gerund'],
+  ['✻ Baked for 7m 57s · done 3:08 PM', null],
+  ['✻ Sautéed for 10s · 1 shell still running', null]
+]
+for (const [frame, want] of reasons) {
+  const got = busyReason(frame)
+  if (got !== want) {
+    bad++
+    console.error(`FAIL reason ${JSON.stringify(frame.slice(0, 40))}: ${got}, expected ${want}`)
+  } else console.log(`ok   reason ${JSON.stringify(frame.slice(0, 40))} -> ${got}`)
+}
+
+// The pane must CONFIRM a counter-only `true` the way it confirms a `false`. Source
+// assertion because the timing lives in a React effect a node test cannot mount, and a
+// green rules test over a pane that reports the first frame it sees proves nothing.
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+for (const [needle, why] of [
+  ["reason === 'counter'", 'the counter-only reading is singled out'],
+  ['settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS', 'the confirming tick is ARMED, not left to output that never comes']
+]) {
+  if (!pane.includes(needle)) {
+    bad++
+    console.error(`FAIL source: ${why} (${needle})`)
+  } else console.log(`ok   source ${why}`)
+}
+
+const total = cases.length + reasons.length + 2 + clocks.length + grains.length + anchors.length
 if (bad) {
   console.error(`\n${bad} of ${total} frames read wrong. A pane that cannot see its`)
   console.error('agent working freezes the turn clock and rings the bell mid-turn.')

@@ -77,12 +77,29 @@ function hasTurnCounter(text: string): boolean {
   return scanDuration(text)?.footer === true
 }
 
+/**
+ * WHICH rule said the agent is running, or null for a frame that did not.
+ *
+ * The reason is worth carrying because the four are not equally trustworthy and a
+ * pane stuck on the wrong one is unreadable from outside: 'counter' is the weakest -
+ * it is a duration in a `·` group and nothing else, so it survives on a frame whose
+ * working line has already gone - and 'interrupt' and 'spin' are the CLI saying so
+ * outright. It rides along to the main process so `attention-audit.log` names the
+ * rule, rather than a later session re-deriving it from a screenshot nobody took.
+ */
+export type BusyReason = 'interrupt' | 'spin' | 'gerund' | 'counter'
+
+export function busyReason(text: string): BusyReason | null {
+  if (ASK_PROMPT.test(text)) return null
+  if (SAYS_INTERRUPT.test(text)) return 'interrupt'
+  if (SPINNING.test(text)) return 'spin'
+  if (LONE_GERUND.test(text)) return 'gerund'
+  return hasTurnCounter(text) ? 'counter' : null
+}
+
 /** True while the frame says an agent is running and is not waiting on an answer. */
 export function readsBusy(text: string): boolean {
-  if (ASK_PROMPT.test(text)) return false
-  return (
-    SAYS_INTERRUPT.test(text) || SPINNING.test(text) || LONE_GERUND.test(text) || hasTurnCounter(text)
-  )
+  return busyReason(text) !== null
 }
 
 /**

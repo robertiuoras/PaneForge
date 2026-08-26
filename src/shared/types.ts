@@ -66,7 +66,7 @@ export interface Project {
  * has been running, and how coarsely it printed that (`24m 3s` is second-accurate,
  * `24m` says nothing about the seconds). Defined next to the reader that produces it.
  */
-import type { TurnClock } from './busy'
+import type { BusyReason, TurnClock } from './busy'
 export type { TurnClock }
 import type { PaneAsk } from './choices'
 export type { PaneAsk }
@@ -1832,7 +1832,7 @@ export interface Api {
    * the precision it printed - the run clock is anchored to it rather than to when
    * this app happened to notice the turn.
    */
-  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock): void
+  setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock, reason?: BusyReason): void
   /**
    * When the idle clock will close this pane, or null when nothing will. The window
    * decides it (it holds the focus and the config); the session carries it, so this

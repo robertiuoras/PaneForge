@@ -10,6 +10,7 @@ import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
 import { readsBusy, readsElapsedMs } from '../../../shared/busy'
 import { whenWords } from '../../../shared/elapsed'
+import { busyReason, readsElapsedMs, type BusyReason } from '../../../shared/busy'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
 import {
   applyKey,
@@ -2667,9 +2668,15 @@ function TerminalPane({
     let lastReport = 0
     // First tick that read "not running" while we were reporting busy. See below.
     let offSince = 0
+    // First tick that read a counter-only `true` while we were reporting idle.
+    let onSince = 0
     // The last question this pane reported, arrow position included. See checkBusy.
     let lastAsk = ''
     let settle2: number | undefined
+    /** How long a `false` must hold before it is believed. See the grace below. */
+    const BUSY_SETTLE_MS = 1200
+    /** How far past the grace the re-check is armed, so it cannot land a tick short. */
+    const BUSY_SETTLE_STEP_MS = 350
     const checkBusy = (): void => {
       if (!sawOutput) return
       // A mirror never judges this. The machine the agent runs on is reading the same
@@ -2680,12 +2687,14 @@ function TerminalPane({
       const at = Date.now()
       lastBusyCheck = at
       let now = false
+      let reason: BusyReason | null = null
       let text = ''
       try {
         text = screenText(t, BUSY_ROWS)
         // A question on screen is not work in progress, whatever the footer says - that
         // rule and the footers themselves live in shared/busy.ts, against real frames.
-        now = readsBusy(text)
+        reason = busyReason(text)
+        now = reason !== null
       } catch {
         return
       }
@@ -2711,9 +2720,36 @@ function TerminalPane({
       // so one confirming tick first: a heavy repaint can push the footer out of the
       // frame for a single read, and that must not blink the pane to "waiting for you"
       // in the middle of a turn. A `true` is still reported immediately.
+      // A `true` whose only evidence is a duration in a `·` group - no spinner, no
+      // "esc to interrupt" - is the weakest reading there is, and it is the one that
+      // outlives the turn: the CLI's finished line still carries the number. Taken at
+      // face value it does not merely keep the pane green, it RE-ANCHORS the run clock
+      // to that stale number (`anchoredStart`), so a pane that had just gone quiet
+      // started a phantom turn already 7m57s old and counted on from there. So it is
+      // confirmed exactly the way a `false` is: one more tick reading the same thing.
+      if (now && !busy && reason === 'counter') {
+        if (!onSince) onSince = at
+        if (at - onSince < BUSY_SETTLE_MS) {
+          window.clearTimeout(settle2)
+          settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS - (at - onSince) + BUSY_SETTLE_STEP_MS)
+          return
+        }
+      } else onSince = 0
       if (!now && busy) {
         if (!offSince) offSince = at
-        if (at - offSince < 1200) return
+        if (at - offSince < BUSY_SETTLE_MS) {
+          // ...and the confirming tick has to be ARMED, because every other check in
+          // here is driven by output and a finished turn prints nothing more. The
+          // after-the-burst timer fires at 900ms, which is inside this 1200ms grace, so
+          // it deferred a second time and nothing ever asked again: the last thing main
+          // heard about the pane was `true`, its run clock kept counting, and the card
+          // said Running for the rest of the day. Measured 2026-08-26 on this desk -
+          // `attention-audit.log` has PaneForge at quietMs 1507149 with
+          // busyOnScreen:true over the frame `✻ Baked for 7m 57s · done 3:08 PM`.
+          window.clearTimeout(settle2)
+          settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
+          return
+        }
       }
       offSince = 0
       // Still busy and quiet about it for a while. Reporting only on change was enough
@@ -2745,7 +2781,7 @@ function TerminalPane({
       // The frame goes with a `false` only: that is the reading that can ring the bell,
       // and it is the one worth being able to read back afterwards. It is the wide one,
       // so the main process can read a question out of it for the phone and the bot.
-      api.setBusy(sessionId, now, now ? undefined : wide, clock ?? undefined)
+      api.setBusy(sessionId, now, now ? undefined : wide, clock ?? undefined, reason ?? undefined)
     }
 
     /**

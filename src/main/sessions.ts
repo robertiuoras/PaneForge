@@ -46,7 +46,7 @@ import { OutBuffer } from './outBuffer'
 import { buildArgs, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
-import { anchoredStart, readsBusy } from '../shared/busy'
+import { anchoredStart, readsBusy, type BusyReason } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
@@ -1324,7 +1324,7 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
-  setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock): void {
+  setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock, reason?: BusyReason): void {
     const s = this.sessions.get(id)
     if (!s) return
     const now = Date.now()
@@ -1343,6 +1343,7 @@ export class SessionManager extends EventEmitter {
         title: s.meta.title,
         agent: s.meta.agent,
         reads: busy,
+        reason: reason ?? null,
         status: s.meta.status,
         engaged: Boolean(s.meta.engaged),
         runSince: s.meta.runSince ? now - s.meta.runSince : null,
