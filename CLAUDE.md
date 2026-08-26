@@ -386,17 +386,17 @@ pane must say which it is on its card.
   absent — its headless flags are unverified, and `drivable()` refusing beats a guess.
 - `npm run test:agentenv`.
 
-**Gemini CLI no longer has a login of its own.** Google cut consumer accounts off on
-**2026-06-18** (announced 2026-05-19; Gemini CLI is being folded into Antigravity CLI), and
-this machine hit it on 2026-08-23 - the date below is when it was NOTICED, not when it broke,
-and rollout was uneven enough that people were still filing fresh bugs in July. **Google AI
-Pro/Ultra does not entitle Gemini CLI at all any more**; only a Code Assist Standard/Enterprise
-licence keeps an OAuth login, and everyone else pays per token on an API key. So: every launch dies `IneligibleTierError ... UNSUPPORTED_CLIENT`, inside a
-pane that otherwise looks healthy. So `google` (AI Studio) is a `KEY_PROVIDERS` entry, the
-agent's `env` names `keyVar('google')`, and `keyProviderFor` reads `GEMINI_API_KEY`.
-`GEMINI_DEFAULT_AUTH_TYPE` is set beside it and is NOT enough on its own: a machine whose
-`~/.gemini/settings.json` says `oauth-personal` keeps going to the dead endpoint, and nothing
-in the environment can overrule it.
+**Gemini CLI is not in the catalogue.** Google cut consumer accounts off on
+**2026-06-18** (announced 2026-05-19; the client folded into Antigravity CLI), and this
+machine hit it on 2026-08-23 - every launch dying `IneligibleTierError ...
+UNSUPPORTED_CLIENT` inside a pane that otherwise looks healthy. **Google AI Pro/Ultra does
+not entitle Gemini CLI at all any more**; only a Code Assist Standard/Enterprise licence
+keeps an OAuth login, and everyone else pays per token on an AI Studio key. It was carried
+for three days as a key-only entry and then **removed on 2026-08-26**: a second, worse way
+to reach Google's models, sitting in the dropdown beside the one that signs in for free.
+`GEMINI_DEFAULT_AUTH_TYPE` went with it - it is a DEFAULT, and a machine whose
+`~/.gemini/settings.json` says `oauth-personal` keeps going to the dead endpoint whatever
+the environment says, which is half the reason the entry was not worth keeping.
 
 **Antigravity CLI is where that login WENT, and it is its own entry.** `agy` (id
 `antigravity`), a Go binary from Google's own installer - NOT npm, where the name is
