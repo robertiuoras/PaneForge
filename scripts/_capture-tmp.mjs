@@ -1,4 +1,4 @@
-import pty from 'node-pty'
+import pty from '@lydell/node-pty'
 import xt from '@xterm/headless'
 import { busyReason } from '../src/shared/busy.ts'
 const { Terminal } = xt
