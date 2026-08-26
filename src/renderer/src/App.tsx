@@ -3063,8 +3063,9 @@ export default function App(): JSX.Element {
           id: 'reveal',
           group: 'This pane',
           title: 'Open folder in Explorer',
-          hint: 'drop files there, or drag them straight onto the pane',
-          run: () => api.reveal(active.cwd)
+          hint: 'the project folder - to reach the agent, drag files onto the pane',
+          run: () =>
+            void api.revealProject(active.cwd).then((p) => p || flash('That folder is gone.'))
         },
         {
           id: 'board',
@@ -5072,8 +5073,15 @@ export default function App(): JSX.Element {
                 {!s.remote && (
                   <button
                     className="icon desk-only"
-                    title={`Open ${s.cwd} in Explorer - drop files there, or drag them onto this pane`}
-                    onClick={() => api.reveal(s.cwd)}
+                    title={
+                      /* A lane is a worktree and its untracked files are swept with it,
+                         so this opens the PROJECT. Dropping a file where the agent can
+                         read it is what dragging onto the pane is for. */
+                      `Open this project in Explorer - to reach the agent, drag files onto this pane`
+                    }
+                    onClick={() =>
+                      void api.revealProject(s.cwd).then((p) => p || flash('That folder is gone.'))
+                    }
                   >
                     📁
                   </button>

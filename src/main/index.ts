@@ -43,6 +43,7 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
+import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import type { DiffScope, PhoneState, ShelfEdge } from '../shared/types'
 import { laneExtras, resolveLane } from './lanes'
@@ -1595,6 +1596,27 @@ ipcMain.on('shell:reveal', (_e, path: string) => {
 ipcMain.handle('shell:pathKind', (_e, cwd: string, token: string) =>
   resolveRevealTarget(cwd ?? '', token ?? '')
 )
+
+/**
+ * "Open the folder" for a PANE, which is not the same question as "open this path".
+ *
+ * A pane running in a lane is running in a git worktree, and a worktree is scratch - its
+ * untracked files are swept with it. Somebody pressing a folder button means the project,
+ * so a lane resolves to its trunk checkout. Everything else, including a folder git will
+ * not answer about, opens exactly what it was handed.
+ *
+ * Returns the folder actually opened, so the caller can say which one that was.
+ */
+ipcMain.handle('shell:revealProject', async (_e, cwd: string) => {
+  const root = await projectRoot(cwd ?? '')
+  try {
+    if (!statSync(root).isDirectory()) return null
+  } catch {
+    return null /* gone: pointing Explorer at it would just raise an error dialog */
+  }
+  shell.openPath(root)
+  return root
+})
 ipcMain.handle('shell:editor', (_e, path: string) => {
   // VS Code / Cursor ship a `code`-style launcher on PATH; without one, fall back to
   // Explorer so the button still does something useful.

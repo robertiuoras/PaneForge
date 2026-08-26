@@ -77,6 +77,7 @@ const TESTS = [
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
+  ['projectroot', 'projectroot-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device

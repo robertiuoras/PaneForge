@@ -1881,6 +1881,13 @@ export interface Api {
   /** open a folder, or open a file's folder with the file selected */
   reveal(path: string): void
   /**
+   * Open the PROJECT a pane's folder belongs to: a lane (a git worktree) resolves to its
+   * trunk checkout, because a lane is scratch and a file left in one is swept with it.
+   * Anything that is not a worktree opens unchanged. Answers with the folder that was
+   * opened, or null when it is not there any more.
+   */
+  revealProject(cwd: string): Promise<string | null>
+  /**
    * Resolve a path an agent printed, relative to the pane it was printed in.
    *
    * Null means "not a path on this machine", which is how the terminal decides whether a
