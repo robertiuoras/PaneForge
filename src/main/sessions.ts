@@ -68,14 +68,6 @@ import type {
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
-/**
- * How long a busy reading survives ONE frame that says otherwise.
- *
- * Not a debounce on the turn ending - the 4s backstop above is that - but a floor under a
- * repaint. An agent CLI writes its footer in several ANSI moves, and the screen between the
- * first and the last is a frame no reader can call busy.
- */
-const TORN_FRAME_MS = 1200
 
 /**
  * How often a pane's cwd is asked whether it still exists. A `statSync` per pane per
@@ -1386,25 +1378,7 @@ export class SessionManager extends EventEmitter {
     // the pane means the pane is gone, not that the turn is still going. The old ten
     // minute deadline was longer than the heartbeat by so much that a pane torn down
     // mid-turn left its session frozen as "working" for the rest of the ten minutes.
-    // ...and a busy reading is never un-read by ONE frame.
-    //
-    // Claude Code repaints its footer a CHARACTER AT A TIME with absolute cursor moves.
-    // Measured off this desk's own log on 2026-08-26: the spinner glyph, then `p`, `n`,
-    // `i`, `a`, `r`, `g` written individually at columns 8-16, then the `…`, then the
-    // counter digit, then `thinking with medium effort` at column 41. The settled frame
-    // reads `✽ Bootstrapping… (1m 18s · ↓ 3.7k tokens)` and `readsBusy` says true - but the
-    // frames BETWEEN those writes are torn, carry neither the ellipsis nor the counter, and
-    // read false. Zeroing on one of them dropped `busyOnScreen`, so `status` never became
-    // `working` and the pane fell into "Your move" while its agent was printing: Robert,
-    // 2026-08-26, "piateam is running but its showing in your move". The recorder caught 12
-    // of them in ten minutes, each lasting one sample.
-    //
-    // So a false frame SHORTENS the deadline instead of clearing it. A turn that has really
-    // ended stops repainting and expires it within `TORN_FRAME_MS`, well inside the 4s the
-    // run-clock backstop waits anyway, so nothing about a finished pane is slower. Nothing
-    // else is delayed: `readAsk` above runs on this same false frame exactly as before, so a
-    // question still reaches the card, the sound and the phone the moment it is drawn.
-    s.busyUntil = busy ? now + 180_000 : Math.min(s.busyUntil, now + TORN_FRAME_MS)
+    s.busyUntil = busy ? now + 180_000 : 0
     // The footer is the honest turn boundary, so it drives the run clock too: it
     // starts a turn the app never saw typed (a queued prompt, /clear, a resumed
     // session) and ends one the instant the agent stops saying it is running.
