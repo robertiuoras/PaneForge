@@ -167,6 +167,9 @@ const GATED_INVOKE = new Set([
   // package manager, an editor, an installer. `pty:attach*` inserts a path into a live
   // pane, which is typing.
   'shell:editor',
+  // Opens a file manager here, exactly as `shell:reveal` does on the send side - it only
+  // reaches a different folder (the project a lane belongs to, rather than the lane).
+  'shell:revealProject',
   'pty:attach',
   'pty:attachClipboard',
   'agents:install',
