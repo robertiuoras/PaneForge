@@ -1899,12 +1899,21 @@ export class SessionManager extends EventEmitter {
     // about whether anybody is at THAT one.
     const held = !!ask && cfg.holdWhileWatching !== false && !live.meta.remote && deskFocused()
     if (held) live.askHold = Date.now()
-    const at = ask ? autoAnswerAt(live, cfg, ask) : 0
-    const n = ask && (at || held) ? pickAnswer(ask, cfg)?.n : undefined
+    const due = ask ? autoAnswerAt(live, cfg, ask) : 0
+    const n = ask && (due || held) ? pickAnswer(ask, cfg)?.n : undefined
     // Held is drawn instead of a clock, never beside one: a deadline that restarts the
     // moment the window is left is not a countdown, and drawing one would be a promise
     // about a second that never arrives.
     const heldNow = held && !!n ? true : undefined
+    // ...and "instead of" has to mean the DEADLINE goes, not only that the pane draws a
+    // different row. `autoAnswerAt` is read in three places, and the pane was the only one
+    // that looked at `held` beside it: the card's `AskClock` and the desk's tick (the
+    // SOONEST `autoAnswerAt` on the desk, `soonestAuto` in `App.tsx`) read the number
+    // alone. So clicking onto a pane holding a question stamped the hold, moved the
+    // deadline 30s out - and the card went on counting down and the tick went on ticking,
+    // once a second, at somebody who had just arrived to answer it by hand. Held is
+    // deadline-less everywhere or it is deadline-less nowhere.
+    const at = heldNow ? 0 : due
     if (
       live.meta.autoAnswerAt === (at || undefined) &&
       live.meta.autoAnswerN === n &&

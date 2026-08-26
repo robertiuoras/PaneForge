@@ -457,5 +457,31 @@ ok('the plan is refreshed from the TIMER as well as from a frame', () => {
   assert.match(sessions, /this\.refreshAutoPlan\(s\)/, 'and from the frame path')
 })
 
+ok('a held question has NO deadline anywhere, not just no seconds in the pane', () => {
+  // The pane was the only consumer that looked at `autoAnswerHeld` beside the number. The
+  // card's `AskClock` and the desk's tick both read `autoAnswerAt` alone, so a hold that
+  // moved the deadline instead of clearing it left the card counting down and the tick
+  // sounding once a second at somebody who had just clicked onto the pane to answer it.
+  assert.match(sessions, /const at = heldNow \? 0 : due/, 'the hold clears the deadline at the source')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(app, /s\.autoAnswerAt && \(!min \|\| s\.autoAnswerAt < min\)/, 'the tick reads the number alone')
+  assert.match(app, /\{s\.autoAnswerAt \? <AskClock at=\{s\.autoAnswerAt\} \/> : null\}/, 'so does the card')
+})
+
+ok('a person arriving at a pane takes its close countdown with them', () => {
+  // `stillCloseable` is what the "went back to work" effect keys on, and a click changes
+  // none of it - so clicking a pane restarted its idle clock and left the 15s count
+  // running underneath, closing or moving the pane being read.
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const touch = app.slice(app.indexOf('const touchPane = useCallback'), app.indexOf('const togglePin'))
+  assert.ok(touch, 'touchPane is where a press on a pane lands')
+  assert.match(touch, /closeSoonRef\.current/, 'it reads the live countdown')
+  assert.match(touch, /soon\?\.ids\.includes\(id\)/, 'and only for a pane that countdown NAMED')
+  assert.match(touch, /setCloseSoon\(undefined\)/)
+  // A move countdown holds the sweep lock. Dropping the count without giving it back is
+  // how `stopMove` shipped as a control that worked once and then moved nothing ever.
+  assert.match(touch, /if \(soon\.move\) handoffSweeping\.current = false/)
+})
+
 rmSync(out, { recursive: true, force: true })
 console.log(`\n${n} checks passed`)

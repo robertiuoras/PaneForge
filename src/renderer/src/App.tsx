@@ -3686,6 +3686,25 @@ export default function App(): JSX.Element {
    */
   const touchPane = useCallback((id: string) => {
     focusLeftAt.current[id] = Date.now()
+    // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
+    // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
+    // on `stillCloseable`, which a click does not change - so clicking the pane restarted
+    // its idle clock, published a new deadline on its card, and left the 15s count running
+    // underneath, closing or moving the pane somebody was in the middle of reading.
+    //
+    // Only the countdown goes, not the pane's turn at the sweep: the press above is what
+    // keeps it from being picked again (`quietSince` reads `lastFocus`). Any OTHER pane in
+    // the same plan is re-decided by the next sweep rather than closed on a count that is
+    // no longer on screen - that is the honest half, because nobody arrived at those.
+    const soon = closeSoonRef.current
+    if (soon?.ids.includes(id)) {
+      console.info(`reclaim: countdown dropped - somebody came to ${id}`)
+      // The move sweep holds a lock for as long as its countdown is up. Dropping the
+      // countdown without giving it back is how `stopMove` shipped as a control that
+      // appeared to work and then let nothing move ever again.
+      if (soon.move) handoffSweeping.current = false
+      setCloseSoon(undefined)
+    }
     publishClosingRef.current()
   }, [])
 
