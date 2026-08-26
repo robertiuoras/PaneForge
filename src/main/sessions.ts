@@ -1544,19 +1544,21 @@ export class SessionManager extends EventEmitter {
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
       const stop = dropFor({ ...live.meta, typed: live.typed })
-      if (stop) {
-        // A turn that started during the countdown puts the ask back in the queue rather
-        // than throwing it away: the session is still oversized, and the next quiet
-        // moment is exactly when clearing is safe.
-        if (stop === 'working') {
-          this.autoClearPending.set(id, {
-            steps: live.meta.autoClearSteps ?? [],
-            prompt: live.meta.autoClearPrompt ?? '',
-            seconds: ask.seconds,
-          })
-        }
-        return this.cancelAutoClear(id, stop)
-      }
+      // 'working' is NOT a refusal at this point, and treating it as one is what made a
+      // countdown everybody watched expire into nothing at all. A blocking Stop gate
+      // (ideas-gate, next-steps-gate, verify-gate) starts another turn inside the window
+      // on almost every arm, so re-queueing on 'working' sent the ask round a
+      // queue -> arm -> expire -> queue loop and the pane was never cleared. Measured
+      // 2026-08-26 in ~/.claude/autoclear.log: 15 countdowns started, 14 queued, and the
+      // panes they were armed on still held their whole context afterwards.
+      //
+      // Typing it anyway is safe, and is exactly what the hook's own fallback path
+      // already does: Claude Code QUEUES pty input that arrives mid-turn and runs it at
+      // the turn boundary, so the clear lands the moment the turn ends rather than never.
+      // Every other reason still refuses, because a pane holding a question, a pane with
+      // an unsent draft and a pane that has closed do not become clearable by being typed
+      // into - they lose something instead.
+      if (stop && stop !== 'working') return this.cancelAutoClear(id, stop)
       const chunks = clearChunks(live.meta.autoClearPrompt ?? '')
       this.cancelAutoClear(id, 'cancelled')
       chunks.forEach((c, i) => {
