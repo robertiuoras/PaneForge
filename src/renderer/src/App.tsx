@@ -42,6 +42,7 @@ import {
   FleetIcon,
   HistoryIcon,
   LinkIcon,
+  SearchIcon,
   RemoteIcon,
   SwarmIcon,
   TrashIcon
@@ -106,6 +107,8 @@ import {
   movable as handoffMovable,
   queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
+  staysHere,
+  suggestMove,
   type AutoHandoff,
   type AutoPane
 } from '../../shared/autoHandoff'
@@ -446,6 +449,11 @@ export default function App(): JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [config, setConfigState] = useState<Config | null>(null)
+  // The live config for the two async paths that read it long after their effect closed
+  // over it - the pressure card's move suggestion is one. A stale `autoHandoff` there would
+  // offer a pane the current settings refuse.
+  const configRef = useRef<Config | null>(null)
+  configRef.current = config
   const [activeId, setActiveId] = useState<string | null>(null)
   /**
    * When the keyboard last LEFT each pane, which is when its idle clock may start.
@@ -1371,7 +1379,21 @@ export default function App(): JSX.Element {
    * recovers and fills up again says so a second time.
    */
   const [capacityNote, setCapacityNote] = useState<
-    { level: Verdict['level']; advice: string; numbers: string } | null
+    {
+      level: Verdict['level']
+      advice: string
+      numbers: string
+      /**
+       * The one pane worth moving, resolved a beat after the card arrives.
+       *
+       * Robert, 2026-08-26: the card told him the machine was tight and left him to work
+       * out which of eleven panes to do something about - the half of the reading nobody
+       * has. `suggestMove` names it and names the machine, so the card carries the move as
+       * a press. Absent until the peers answer, and absent for good when nothing may go:
+       * no paired device, nothing movable, or the only candidate is Mac-only work.
+       */
+      move?: { id: string; pane: string; deviceName: string; project: string }
+    } | null
   >(null)
   const capacityShown = useRef('')
   const capacityTimer = useRef<number | undefined>(undefined)
@@ -1999,6 +2021,53 @@ export default function App(): JSX.Element {
     setCapacityNote({ level: capacity.level, advice: capacity.advice, numbers })
     window.clearTimeout(capacityTimer.current)
     capacityTimer.current = window.setTimeout(() => setCapacityNote(null), CAPACITY_NOTE_MS)
+    // ...and which pane, and where. Asked here rather than on a timer: the peers have to be
+    // asked over the link and their project lists fetched, which is the reason this is not
+    // computed in the same tick as the card. `key` is re-checked on the way back so a slow
+    // answer cannot land on a card about a different reading, and a card the reader has
+    // already dismissed takes the answer with it (`prev` is null).
+    void (async () => {
+      try {
+        const state = await api.remoteState()
+        const online = state.peers.filter((p) => p.status === 'online')
+        if (!online.length) return
+        const candidates = await Promise.all(
+          online.map(async (p) => ({
+            device: p.id,
+            deviceName: p.name,
+            online: true,
+            projects: await api
+              .remoteProjects(p.id)
+              .catch(() => [] as { name: string; path: string }[])
+          }))
+        )
+        const pick = suggestMove(
+          handoffPanesRef.current(),
+          candidates,
+          configRef.current?.autoHandoff ?? DEFAULT_AUTO_HANDOFF,
+          handoffBlocked.current,
+          Date.now()
+        )
+        if (!pick) return
+        if (capacityShown.current !== key) return
+        const project = projectNameOf(sessionsRef.current.find((x) => x.id === pick.id)?.cwd ?? '')
+        setCapacityNote((prev) =>
+          prev
+            ? {
+                ...prev,
+                move: {
+                  id: pick.id,
+                  pane: paneWordRef.current(pick.id),
+                  deviceName: pick.deviceName,
+                  project
+                }
+              }
+            : prev
+        )
+      } catch {
+        /* a peer that cannot be asked is one that cannot be offered - the card stands alone */
+      }
+    })()
   }, [capacity])
   /**
    * What the ladder did on its own, for the mascot to say. It is a fact with a timestamp
@@ -2112,6 +2181,9 @@ export default function App(): JSX.Element {
   // would re-arm the 60s timer built on it and it would never fire.
   const usageRef = useRef<UsageReport | null>(null)
   usageRef.current = usage
+  // Read from the pressure card's async suggestion, which is created in an effect that ran
+  // long before this callback existed on that render.
+  const handoffPanesRef = useRef<() => AutoPane[]>(() => [])
   const handoffPanes = useCallback(
     (): AutoPane[] =>
       sessionsRef.current.map((s) => ({
@@ -2145,6 +2217,7 @@ export default function App(): JSX.Element {
       })),
     []
   )
+  handoffPanesRef.current = handoffPanes
 
   /**
    * Ask the peers, run `make` against them, and carry out whatever it returns.
@@ -4855,6 +4928,29 @@ export default function App(): JSX.Element {
                     onChange={(a, m) => switchAgent(s, a, m)}
                   />
                 )}
+                {/* Search has been Ctrl/Cmd+F since it shipped, and a shortcut with nothing
+                    on screen is a feature only the person who built it knows about. The
+                    icon is the discoverable half of the same thing - it opens the pane's
+                    own find bar, which already highlights every match, counts them (`3/10`)
+                    and steps through them with ↑ ↓. On a phone it is in the ⋯ sheet instead,
+                    where the header has room for the pane's name and nothing else. */}
+                {!handheld.handheld && (
+                  <button
+                    className="icon pt-find"
+                    title="Find in this pane (Ctrl/Cmd F)"
+                    aria-label={`Find in ${s.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      // The pane has to be the active one first: the find bar is drawn in
+                      // the pane it belongs to, and typing into it while another pane holds
+                      // the keyboard is the "why is my search going somewhere else" bug.
+                      setActiveId(s.id)
+                      paneFind.get(s.id)?.()
+                    }}
+                  >
+                    <SearchIcon size={13} />
+                  </button>
+                )}
                 {/* One target instead of six. Everything below is still rendered on a
                     desktop window; on a phone the sheet is the only way to any of it. */}
                 {handheld.handheld && (
@@ -5287,6 +5383,18 @@ export default function App(): JSX.Element {
                 run: () => copyPaneOutput(s)
               },
               {
+                key: 'find',
+                label: 'Find in this pane',
+                hint: 'highlights every match, and steps through them',
+                icon: '⌕',
+                // The desk has the icon in the header and Ctrl/Cmd F; a phone has neither
+                // a header with room in it nor those keys, so the sheet is the only way in.
+                run: () => {
+                  setActiveId(s.id)
+                  paneFind.get(s.id)?.()
+                }
+              },
+              {
                 key: 'text',
                 label: 'Select text',
                 hint: 'read it back, pick out a line, copy it',
@@ -5376,6 +5484,67 @@ export default function App(): JSX.Element {
           </div>
           <div className="cap-pop-body">{capacityNote.advice}</div>
           {capacityNote.numbers && <div className="cap-pop-num">{capacityNote.numbers}</div>}
+          {/* The half the card was missing: WHICH pane, and where it would go. A press
+              moves it through the same path the automatic sweep uses - named machine, the
+              repo pushed as an `auto-sync:` commit, the pane back here as a mirror - and
+              the other press says this project's work is Mac-only and never offers it
+              again. Both stop the click from dismissing the card underneath them. */}
+          {capacityNote.move && (
+            <div className="cap-pop-move" onClick={(e) => e.stopPropagation()}>
+              <span className="cap-pop-move-say">
+                Move {capacityNote.move.pane} to {capacityNote.move.deviceName}?
+              </span>
+              <button
+                className="ghost small"
+                title={`Hand this pane to ${capacityNote.move.deviceName}. Its agent, folder and conversation go with it, and it comes straight back here as a mirror.`}
+                onClick={() => {
+                  const m = capacityNote.move
+                  if (!m) return
+                  setCapacityNote(null)
+                  const cfg = configRef.current?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+                  // Through `runHandoffs` and not through `handoffToDevice` directly: that
+                  // is where the peers are re-asked, the sweep lock is taken, and a refusal
+                  // is put on the pane's cooldown. Re-deciding on the way rather than
+                  // trusting the id this card was drawn with is the point - the pane may
+                  // have started a turn since, and then it is QUEUED rather than moved.
+                  runHandoffs(
+                    handoffPanesRef.current(),
+                    (candidates, at) => {
+                      const pick = suggestMove(
+                        handoffPanesRef.current(),
+                        candidates,
+                        cfg,
+                        handoffBlocked.current,
+                        at
+                      )
+                      return pick && pick.id === m.id ? [pick] : []
+                    },
+                    'asked on the pressure card',
+                    cfg.cooldownMinutes
+                  )
+                }}
+              >
+                Move it
+              </button>
+              <button
+                className="ghost small"
+                title={`Never move ${capacityNote.move.project} off this machine. For work only this device can do - its own Keychain, its own launchd jobs, a browser on this screen.`}
+                onClick={() => {
+                  const m = capacityNote.move
+                  if (!m) return
+                  setCapacityNote(null)
+                  const cfg = configRef.current?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+                  if (staysHere(cfg, m.project)) return
+                  void api.setConfig({
+                    autoHandoff: { ...cfg, keepHere: [...(cfg.keepHere ?? []), m.project] }
+                  })
+                  flash(`${m.project} stays on this machine now. Settings undoes it.`)
+                }}
+              >
+                Keep it here
+              </button>
+            </div>
+          )}
         </div>
       )}
 

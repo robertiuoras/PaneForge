@@ -556,6 +556,42 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     </p>
                   </div>
                 )}
+                {config.autoHandoff?.enabled !== false &&
+                  (config.autoHandoff?.keepHere ?? []).length > 0 && (
+                    <div className="setting">
+                      <label>Projects that never leave this machine</label>
+                      <div className="keephere">
+                        {(config.autoHandoff?.keepHere ?? []).map((name) => (
+                          <button
+                            key={name}
+                            className="chip keephere-chip"
+                            title={`Stop holding ${name} here - it may be moved to a paired machine again`}
+                            onClick={() =>
+                              onChange({
+                                autoHandoff: {
+                                  ...DEFAULT_AUTO_HANDOFF,
+                                  ...config.autoHandoff,
+                                  keepHere: (config.autoHandoff?.keepHere ?? []).filter(
+                                    (n) => n !== name
+                                  )
+                                }
+                              })
+                            }
+                          >
+                            {name} <span className="keephere-x">✕</span>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="hint">
+                        Added by &quot;Keep it here&quot; on the memory card, for work only this
+                        device can do - its own Keychain, its own scheduled jobs, a browser on
+                        this screen. A project listed here is refused by every rule above: the
+                        budget, the pressure sweep and the idle clock. Press one to take it off
+                        the list. The list is empty, and this row is hidden, until something is
+                        on it.
+                      </p>
+                    </div>
+                  )}
                 {config.autoHandoff?.enabled !== false && (
                   <Switch
                     checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}

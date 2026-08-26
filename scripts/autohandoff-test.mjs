@@ -41,7 +41,10 @@ const {
   expensive,
   paneCost,
   DEFAULT_AUTO_HANDOFF,
-  IDLE_OFFLOAD_MINUTES
+  IDLE_OFFLOAD_MINUTES,
+  staysHere,
+  suggestMove,
+  budgetPlan
 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -490,6 +493,81 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
   check('and a question is neither', !queueable({ state: 'needsYou', asking: true }) && !movable({ state: 'needsYou', asking: true }))
   check('the default keeps a couple here', DEFAULT_AUTO_HANDOFF.keepLocal === 2)
+}
+
+{
+  // The pressure card's offer: which pane, and where. Robert, 2026-08-26 - the card said
+  // memory was tight and left him to work out which of eleven panes to act on.
+  const panes = [
+    pane({ id: 'cheap', memMb: 120 }),
+    pane({ id: 'dear', memMb: 1800 }),
+    pane({ id: 'keep' })
+  ]
+  const pick = suggestMove(panes, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)
+  eq('the card offers the dearest pane', pick?.id, 'dear')
+  eq('...and names the machine it would go to', pick?.deviceName, 'PC')
+
+  // The refusals are the feature here exactly as they are for the sweeps. Each is paired
+  // with a plain pane so the last-pane rule never masks the case under test.
+  for (const [label, extra] of [
+    ['the focused pane', { focused: true }],
+    ["another device's mirrored pty", { remote: true }],
+    ['a pane already on its way', { handingOff: true }],
+    ['a pane holding a live question', { state: 'needsYou', asking: true }]
+  ]) {
+    const two = [pane({ id: 'x', memMb: 4000, ...extra }), pane({ id: 'keep', memMb: 100 })]
+    const got = suggestMove(two, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)
+    check(`the card never offers ${label}`, got?.id !== 'x', got)
+  }
+
+  // A busy pane IS offered - it is queued by main and travels when its turn ends, never
+  // killed - which is the one place this is wider than `movable`.
+  const busy = [pane({ id: 'busy', state: 'working', memMb: 4000 }), pane({ id: 'keep' })]
+  eq('a mid-turn pane is offered, and queued', suggestMove(busy, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)?.id, 'busy')
+
+  // The window is never emptied here either.
+  eq('one pane on the desk is never offered', suggestMove([pane({ id: 'only' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW), null)
+  // No peer holds the project, so there is nowhere for it to go.
+  eq('nothing to offer when no machine holds the project',
+    suggestMove([pane({ id: 'a', projectName: 'other' }), pane({ id: 'b', projectName: 'other' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW), null)
+  // Never back where it came from, or two desks pass one pane between them for ever.
+  eq('never back to the machine that sent it',
+    suggestMove([pane({ id: 'a', arrivedFrom: 'pc' }), pane({ id: 'b', arrivedFrom: 'pc' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW), null)
+}
+
+{
+  // "automated windows need to keep on this laptop though since pc cant do it" - a project
+  // this machine alone can run. One list, read by every rung, or the card refuses it and
+  // the sweep behind it takes it anyway.
+  const cfg = { ...DEFAULT_AUTO_HANDOFF, keepHere: ['Mac-only'] }
+  check('a listed project stays', staysHere(cfg, 'Mac-only'))
+  // The list is written from a card that prints the project as `place.ts` words it, so a
+  // stored name with different case or a stray space must still match.
+  check('...however it was cased or spaced', staysHere(cfg, ' mac-ONLY '))
+  check('an unlisted project is free to move', !staysHere(cfg, 'proj'))
+  check('an empty name is never held', !staysHere(cfg, ''))
+  check('an empty list holds nothing', !staysHere(DEFAULT_AUTO_HANDOFF, 'Mac-only'))
+  eq('the default holds nothing', DEFAULT_AUTO_HANDOFF.keepHere, [])
+
+  const held = [pane({ id: 'x', projectName: 'Mac-only', memMb: 4000 }), pane({ id: 'keep', memMb: 100 })]
+  // It offers the OTHER pane instead of nothing: a card that goes quiet because its first
+  // choice is held would read as "there is nothing to do" on a machine that is swapping.
+  eq('the card never offers a held project', suggestMove(held, peers, cfg, {}, NOW)?.id, 'keep')
+  eq('...and offers nothing at all when the held one is the only candidate',
+    suggestMove([pane({ id: 'x', projectName: 'Mac-only' }), pane({ id: 'y', projectName: 'Mac-only' })], peers, cfg, {}, NOW), null)
+  // And every automatic rung refuses it too - the card refusing alone would be a promise
+  // the sweep behind it breaks a minute later.
+  const macPeers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name: 'Mac-only', path: '/pc/m' }] }]
+  eq('the budget rung refuses it', budgetPlan(held, macPeers, { ...cfg, budgetMinMb: 1 }, {}, NOW, 1).length, 0)
+  eq('the idle clock refuses it',
+    idleOffloadPlan(held, macPeers, { ...cfg, offloadIdleMinutes: 1 }, {}, NOW).length, 0)
+  eq('the pressure sweep refuses it', autoHandoffPlan(held, over, macPeers, cfg, {}, NOW).length, 0)
+  // The control: the same panes, the same peers, with the project NOT held.
+  const free = { ...cfg, keepHere: [] }
+  check('...and all three move it once it is off the list',
+    budgetPlan(held, macPeers, { ...free, budgetMinMb: 1 }, {}, NOW, 1).length === 1 &&
+      idleOffloadPlan(held, macPeers, { ...free, offloadIdleMinutes: 1 }, {}, NOW).length === 1 &&
+      autoHandoffPlan(held, over, macPeers, free, {}, NOW).length === 1)
 }
 
 console.log(`autohandoff: ${checks} checks passed`)

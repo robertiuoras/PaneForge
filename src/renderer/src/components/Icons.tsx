@@ -153,6 +153,16 @@ export function CopyReplyIcon(p: IconProps): JSX.Element {
   )
 }
 
+/** Find in this pane. A lens, on the same 16px grid and the same 1.5 stroke as the rest. */
+export function SearchIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="M10.1 10.1 13.4 13.4" />
+    </Svg>
+  )
+}
+
 /** Live link, drawn as a signal. Used on the pane badge of a mirrored session. */
 export function LinkIcon(p: IconProps): JSX.Element {
   return (

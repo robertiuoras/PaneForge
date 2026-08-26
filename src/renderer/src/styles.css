@@ -444,6 +444,20 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 .cap-pop.over .cap-pop-head { color: var(--danger); }
 .cap-pop-num { margin-top: 4px; font-size: 10px; font-variant-numeric: tabular-nums;
   color: var(--muted); opacity: 0.85; }
+/* The offer under the reading: which pane, which machine, and the two answers. `cursor:
+   default` because the card itself is a press that dismisses it, and a row of buttons that
+   also dismisses the thing it is in is a control that fights itself. */
+.cap-pop-move { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 8px; padding-top: 8px; cursor: default;
+  border-top: 1px solid var(--line); }
+.cap-pop-move-say { flex: 1 1 100%; color: var(--text); }
+
+/* Projects held on this machine, in Settings. One chip per project, and the chip is the
+   press that takes it off the list. */
+.keephere { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+.keephere-chip { cursor: pointer; }
+.keephere-x { opacity: 0.6; }
+.keephere-chip:hover .keephere-x { opacity: 1; }
 
 /* A pane taken off the idle clock, where its countdown would have been. Green rather than
    amber: nothing is about to happen to this pane, which is the whole point of it. */

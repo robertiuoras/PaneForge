@@ -119,6 +119,21 @@ export interface AutoHandoffConfig {
   budgetMinMb: number
   /** ...or this much of one core, which is what a build or a dev server looks like. */
   budgetMinCpu: number
+  /**
+   * Projects that never leave this machine, by name.
+   *
+   * Robert, 2026-08-26: "automated windows need to keep on this laptop though since pc
+   * cant do it". Some work is only correct HERE - a pane driving the Mac's own Keychain,
+   * a browser probe against a local display, anything wired to this device's launchd - and
+   * a move that is otherwise perfect breaks it silently, because the far end starts a
+   * healthy-looking pane that cannot do the job.
+   *
+   * By PROJECT and not by session id, deliberately: a pane's id dies with the pane and this
+   * has to survive a restart, and "this project's work is Mac-only" is the fact somebody
+   * actually holds. Read by every rung - the two automatic sweeps and the suggestion on the
+   * pressure card - so there is one answer to "may this leave", not three.
+   */
+  keepHere: string[]
 }
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
@@ -138,7 +153,10 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   // many sessions can be watched from here.
   keepLocal: 2,
   budgetMinMb: 500,
-  budgetMinCpu: 50
+  budgetMinCpu: 50,
+  // Empty: nothing is Mac-only until somebody says so, and the only thing that says so is
+  // "Keep it here" on the pressure card.
+  keepHere: []
 }
 
 /**
@@ -399,6 +417,9 @@ export function budgetPlan(
   if (!cfg.enabled || over <= 0) return []
   const eligible = panes
     .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
+    // Mac-only work, per `AutoHandoffConfig.keepHere`. Before the cost gate on purpose: the
+    // dearest pane on the desk is exactly the one this list exists to hold back.
+    .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     // The cost gate. A desk five panes over its budget with nothing expensive on it moves
     // NOTHING and stays over - which is the honest answer, because there is nothing here
@@ -430,6 +451,63 @@ export function budgetPlan(
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
   }
   return out
+}
+
+/**
+ * Is this pane's project one that may not leave this machine?
+ *
+ * Compared case-insensitively on the trimmed name, because the list is written from a card
+ * that prints the project as `place.ts` words it, and a stored `PaneForge ` that never
+ * matches `PaneForge` is a refusal that silently stops refusing.
+ */
+export function staysHere(cfg: Pick<AutoHandoffConfig, 'keepHere'>, projectName: string): boolean {
+  const want = (projectName ?? '').trim().toLowerCase()
+  if (!want) return false
+  return (cfg.keepHere ?? []).some((n) => n.trim().toLowerCase() === want)
+}
+
+/**
+ * The one pane worth moving right now, named, or null - what the pressure card OFFERS.
+ *
+ * The card said "memory is tight" and left the reader to work out which of eleven panes to
+ * do something about, which is the half of the reading nobody has. This answers it with the
+ * pane and the machine, so the card can carry the move as a press.
+ *
+ * It is `budgetPlan`'s eligibility with two deliberate differences and no others. The cost
+ * gate is dropped, because a card that appears BECAUSE memory is tight has already made the
+ * statement `expensive()` exists to make, and refusing to name anything on a desk of eleven
+ * unmeasured panes would be a card that says there is nothing to do while the machine
+ * swaps. And nothing is capped or moved here: this returns one suggestion, and a person
+ * presses it.
+ *
+ * Every refusal that protects work is `budgetPlan`'s, verbatim: never the focused pane,
+ * never a mirror, never one already moving, never one holding a live question, never the
+ * last pane on the desk, never back where it came from, and never a project marked
+ * `keepHere`.
+ */
+export function suggestMove(
+  panes: AutoPane[],
+  peers: OffloadCandidate[],
+  cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
+  blocked: Record<string, number> = {},
+  now = 0
+): AutoHandoff | null {
+  if (!cfg.enabled) return null
+  const eligible = panes
+    .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => !staysHere(cfg, p.projectName))
+    .filter((p) => !((blocked[p.id] ?? 0) > now))
+    .sort(
+      (a, b) => paneCost(b) - paneCost(a) || rank(a) - rank(b) || quietSince(a) - quietSince(b)
+    )
+  // The window is never emptied, here either.
+  if (panes.length - eligible.length < 1 && eligible.length <= 1) return null
+  for (const p of eligible) {
+    const host = hostFor(peers, p.projectName, p.arrivedFrom)
+    if (!host) continue
+    return { id: p.id, ...host, idleMs: now - quietSince(p) }
+  }
+  return null
 }
 
 /** Cheapest to move first: quiet and off-screen, then quiet, then mid-turn. */
@@ -483,6 +561,7 @@ function pick(
   const out: AutoHandoff[] = []
   const eligible = panes
     .filter((p) => !p.focused && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !(screen && p.visible))
     .filter((p) => now - quietSince(p) >= minIdle)
     .filter((p) => !((blocked[p.id] ?? 0) > now))
