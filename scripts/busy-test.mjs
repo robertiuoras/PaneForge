@@ -47,6 +47,29 @@ const CHROME = [
   '  ⏵⏵ bypass permissions on · 1 shell · ← for agents'
 ].join('\n')
 
+/**
+ * Antigravity's chrome BELOW its working line: a rule, the composer, a rule and its
+ * model row. Deliberately without the `esc to cancel` status row - that row is what
+ * used to carry these frames, and it is not painted on every one of them.
+ */
+const AGY = [
+  '────────────────────────────────────────────────────────────',
+  '>',
+  '────────────────────────────────────────────────────────────',
+  '                                                    Gemini 3.7 Flash · high'
+].join('\n')
+
+/** The right-hand end of grok's working line: its own clock, tokens and stop hint. */
+const GROK_TAIL = '                    3.9s ⇣7.72k [stop]'
+
+/** Grok's idle frame, key hints included - `Esc:cancel` is on screen permanently. */
+const GROK = [
+  '  ╭──────────────────────────────────────────────────────────╮',
+  '  │ ❯                                                        │',
+  '  ╰────────────────────────────────── Grok 4.6 (high) ───────╯',
+  '  Shift+Tab:mode  │  Esc:cancel  │  Ctrl+x:shortcuts'
+].join('\n')
+
 const cases = [
   // Torn repaints, off THIS desk's own log on 2026-08-26 (pane `pizzasrus`, 159 cols).
   // Claude Code writes its footer a character at a time with absolute cursor moves - the
@@ -87,7 +110,40 @@ const cases = [
   // footer group. An answer or a tool summary quoting one is a finished thing.
   ['duration quoted in prose', 'The whole run took (2m 14s) end to end.\n' + CHROME, false],
   // A question outranks a spinner: the CLI is mid-turn but nothing moves until you answer.
-  ['permission prompt over a spinner', '✢ Smooshing… (8s · ↓ 282 tokens)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n', false]
+  ['permission prompt over a spinner', '✢ Smooshing… (8s · ↓ 282 tokens)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n', false],
+
+  // ---- Antigravity CLI (`agy`), captured off this desk's own pane log on 2026-08-26
+  // (userData/history/s5-mta1hyqm.log, replayed through a real xterm). Its spinner is
+  // an EIGHT-dot braille glyph and its ellipsis is three ASCII periods, so the old
+  // SPINNING - a six-glyph list plus U+2026 - matched none of it. Measured over that
+  // log: 94 of 171 spinner frames read as NOT busy, and the 77 that did got there only
+  // through the `esc to cancel` status row, which is not painted on every frame. So a
+  // running antigravity pane flickered out of Running and mostly sat in Your move.
+  ['antigravity working', '⣯  Working...\n' + AGY, true],
+  ['antigravity generating', '⣷  Generating...\n' + AGY, true],
+  ['antigravity running a command', '⣽  Running command...\n' + AGY, true],
+  ['antigravity waiting', '⣟  Waiting...\n' + AGY, true],
+  // Torn repaints: it draws the word a character at a time, same as Claude Code.
+  ['antigravity mid-repaint, no dots yet', '⣟  Workin\n' + AGY, false],
+  ['antigravity mid-repaint, one dot', '⡿  Working.\n' + AGY, false],
+  // Its own idle frame, and the line it prints when a turn ENDS.
+  ['antigravity idle', '  Press up to edit queued messages\n' + AGY, false],
+  ['antigravity finished thought', '▸ Thought for 2s, 269 tokens\n' + AGY, false],
+  // A question outranks the spinner here too - this frame carries both.
+  [
+    'antigravity permission prompt',
+    '⣯  Running command...\nDo you want to proceed?\n> 1. Yes\n  4. No\nesc to cancel',
+    false
+  ],
+
+  // ---- Grok CLI, captured 2026-08-26 by driving a real `grok` pty for 25s
+  // (18 of 25 sampled seconds read busy; the first 7 were before it answered).
+  ['grok waiting for response', '⠴ Waiting for response… 3.9s' + GROK_TAIL + '\n' + GROK, true],
+  ['grok thinking', '⠋ Thinking… 0.4s' + GROK_TAIL + '\n' + GROK, true],
+  ['grok responding', '⠙ Responding… 2.1s' + GROK_TAIL + '\n' + GROK, true],
+  // The load-bearing negative: grok's key hints are on screen at ALL times, and
+  // `Esc:cancel` must not be read as the `esc to cancel` an agent prints while running.
+  ['grok idle', GROK, false]
 ]
 
 let bad = 0
