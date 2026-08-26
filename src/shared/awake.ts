@@ -28,6 +28,10 @@ export interface AwakePane {
   backJobsCount?: number
   /** dev server processes running for this pane / project */
   devServersCount?: number
+  /** epoch ms of the most recent output or logs */
+  lastOutput?: number
+  /** epoch ms of the most recent keyboard input */
+  lastKeyboard?: number
 }
 
 export interface AwakeInput {
@@ -50,9 +54,12 @@ export interface AwakeVerdict {
 }
 
 export const DEFAULT_MAX_HOLD_MS = 3 * 60 * 60_000
+/** Keep awake for 5 minutes after recent logs or output so reading logs does not turn off the screen */
+export const RECENT_LOGS_HOLD_MS = 5 * 60_000
 
-/** A pane with an agent mid-turn, one holding a question, a shell running a command, or a background job/monitor. */
-export function awakeBusy(panes: readonly AwakePane[]): number {
+/** A pane with an agent mid-turn, one holding a question, a shell running a command, recent log output, or a background job/monitor. */
+export function awakeBusy(panes: readonly AwakePane[], now?: number): number {
+  const currentNow = now ?? Date.now()
   return panes.filter((p) => {
     if (p.status === 'exited') return false
     if (p.runSince || p.asking) return true
@@ -60,13 +67,15 @@ export function awakeBusy(panes: readonly AwakePane[]): number {
     if (p.job) return true
     if ((p.backJobsCount ?? 0) > 0) return true
     if ((p.devServersCount ?? 0) > 0) return true
+    if (p.lastOutput && currentNow - p.lastOutput < RECENT_LOGS_HOLD_MS) return true
+    if (p.lastKeyboard && currentNow - p.lastKeyboard < RECENT_LOGS_HOLD_MS) return true
     return false
   }).length
 }
 
 export function awakeVerdict(input: AwakeInput): AwakeVerdict {
   if (!input.enabled) return { hold: false, reason: 'off', busy: 0 }
-  const busy = awakeBusy(input.panes)
+  const busy = awakeBusy(input.panes, input.now)
   if (!busy) return { hold: false, reason: 'nothing running', busy: 0 }
   const cap = input.maxHoldMs ?? DEFAULT_MAX_HOLD_MS
   if (input.busySince !== null && input.now - input.busySince > cap) {

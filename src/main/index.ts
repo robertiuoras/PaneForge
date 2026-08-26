@@ -1313,7 +1313,9 @@ const displayAwake = startDisplayAwake({
       runSince: s.runSince,
       status: s.status,
       asking: !!s.ask,
-      job: s.job
+      job: s.job,
+      lastOutput: s.lastOutput,
+      lastKeyboard: s.lastKeyboard
     })),
   enabled: () => getConfig().keepDisplayAwake !== false,
   log: (line) => console.log(`[awake] ${line}`)
