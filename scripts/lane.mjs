@@ -2493,6 +2493,17 @@ function ship(kind, session) {
     const dirty = git(MAIN, 'status', '--porcelain')
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
+    // A hand-cut release skips the SUITE, deliberately - it is Robert asking for a build
+    // of work he has already watched being verified - but it may not skip the compiler.
+    // Measured 2026-08-26: v0.8.160 was cut this way over a master carrying a duplicate
+    // import, both platform builds died on `TS2300: Duplicate identifier`, the notes job
+    // printed `No release v0.8.160 - both builds must have failed`, and the only thing on
+    // the channel was a tag with no installer behind it. Nothing on this machine said a
+    // word. A typecheck is ~15s and answers exactly that question, so it runs before the
+    // version is committed rather than eight minutes later in somebody else's CI.
+    const broken = typecheckFailure()
+    if (broken) throw new Error(broken)
+
     // An expired token used to surface only after the version was committed and
     // tagged, which stranded the release (the resume path below is the recovery).
     // Refuse up front instead: a dry-run push exercises credentials and the network
