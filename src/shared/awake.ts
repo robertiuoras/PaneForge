@@ -15,13 +15,19 @@
 // not on the hold: it resets only when the desk actually goes quiet, so a wedged pane
 // cannot re-arm it by ticking.
 
-/** The three fields of a pane this reads. Loose so a test can build one. */
+/** The fields of a pane this reads. Loose so a test can build one. */
 export interface AwakePane {
   /** epoch ms the current turn started, absent when nothing is running */
   runSince?: number
   status: string
   /** the pane is sitting on a question it drew on screen */
   asking?: boolean
+  /** foreground command running in a shell pane */
+  job?: string
+  /** background shell / monitor / watcher tasks under the pane */
+  backJobsCount?: number
+  /** dev server processes running for this pane / project */
+  devServersCount?: number
 }
 
 export interface AwakeInput {
@@ -31,7 +37,7 @@ export interface AwakeInput {
   now: number
   /** epoch ms the current busy stretch began; null when the desk was last quiet */
   busySince: number | null
-  /** how long one unbroken busy stretch may hold the display. Default 3h. */
+  /** how long one unbroken busy stretch may hold the system. Default 3h. */
   maxHoldMs?: number
 }
 
@@ -45,9 +51,17 @@ export interface AwakeVerdict {
 
 export const DEFAULT_MAX_HOLD_MS = 3 * 60 * 60_000
 
-/** A pane with an agent mid-turn, or one holding a question nobody has answered. */
+/** A pane with an agent mid-turn, one holding a question, a shell running a command, or a background job/monitor. */
 export function awakeBusy(panes: readonly AwakePane[]): number {
-  return panes.filter((p) => (p.runSince || p.asking) && p.status !== 'exited').length
+  return panes.filter((p) => {
+    if (p.status === 'exited') return false
+    if (p.runSince || p.asking) return true
+    if (p.status === 'working' || p.status === 'starting') return true
+    if (p.job) return true
+    if ((p.backJobsCount ?? 0) > 0) return true
+    if ((p.devServersCount ?? 0) > 0) return true
+    return false
+  }).length
 }
 
 export function awakeVerdict(input: AwakeInput): AwakeVerdict {
@@ -114,11 +128,11 @@ export class AwakeKeeper {
     })
     if (verdict.hold && this.id === null) {
       this.id = this.deps.start()
-      this.say(`display held awake - ${verdict.reason}`)
+      this.say(`system held awake - ${verdict.reason}`)
     } else if (!verdict.hold && this.id !== null) {
       this.deps.stop(this.id)
       this.id = null
-      this.say(`display released - ${verdict.reason}`)
+      this.say(`system sleep released - ${verdict.reason}`)
     }
     return verdict
   }
@@ -133,7 +147,7 @@ export class AwakeKeeper {
     if (this.id === null) return
     this.deps.stop(this.id)
     this.id = null
-    this.say('display released - shutting down')
+    this.say('system sleep released - shutting down')
   }
 
   private say(line: string): void {
