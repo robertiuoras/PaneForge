@@ -41,6 +41,14 @@ const SPINNING = /^[^\S\n]*[✢✳✶✻✽✷✺◐◓◑◒◴◷◶◵◰◳�
 const LONE_GERUND = /^[^\S\n]*[A-Z][a-z]+(?:…|\.\.\.)[^\S\n]*$/m
 
 /**
+ * Antigravity CLI, Vercel, and background tool execution patterns:
+ * e.g. "[02:11:07] vercel inspect --wait https://... running",
+ * "Running command...", "Executing tool...", "Running task...", "Waiting for task..."
+ */
+const RUNNING_TASK =
+  /(?:^|\n)[^\S\n]*(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s+.*?\s+running\b|running command(?:…|\.\.\.)|executing (?:tool|command|task)(?:…|\.\.\.)|(?:working|generating|waiting|thinking)(?:…|\.\.\.))[^\S\n]*(?=\n|$)/im
+
+/**
  * The agent is asking *you* something: a permission prompt, a tool approval, a choice.
  * This outranks everything above, because the two are on screen together - the CLI is
  * technically mid-turn, but nothing moves until you answer, and the pane claiming to be
@@ -80,20 +88,21 @@ function hasTurnCounter(text: string): boolean {
 /**
  * WHICH rule said the agent is running, or null for a frame that did not.
  *
- * The reason is worth carrying because the four are not equally trustworthy and a
+ * The reason is worth carrying because the five are not equally trustworthy and a
  * pane stuck on the wrong one is unreadable from outside: 'counter' is the weakest -
  * it is a duration in a `·` group and nothing else, so it survives on a frame whose
- * working line has already gone - and 'interrupt' and 'spin' are the CLI saying so
+ * working line has already gone - and 'interrupt', 'spin' and 'task' are the CLI saying so
  * outright. It rides along to the main process so `attention-audit.log` names the
  * rule, rather than a later session re-deriving it from a screenshot nobody took.
  */
-export type BusyReason = 'interrupt' | 'spin' | 'gerund' | 'counter'
+export type BusyReason = 'interrupt' | 'spin' | 'gerund' | 'task' | 'counter'
 
 export function busyReason(text: string): BusyReason | null {
   if (ASK_PROMPT.test(text)) return null
   if (SAYS_INTERRUPT.test(text)) return 'interrupt'
   if (SPINNING.test(text)) return 'spin'
   if (LONE_GERUND.test(text)) return 'gerund'
+  if (RUNNING_TASK.test(text)) return 'task'
   return hasTurnCounter(text) ? 'counter' : null
 }
 
