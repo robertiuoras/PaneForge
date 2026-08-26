@@ -11,15 +11,30 @@ export function startDisplayAwake(opts: {
   enabled(): boolean
   log?(line: string): void
 }): { keeper: AwakeKeeper; tick(): void; stop(): void } {
+  let displayBlockerId: number | null = null
+  let appBlockerId: number | null = null
+
   const keeper = new AwakeKeeper({
     panes: opts.panes,
     enabled: opts.enabled,
-    // 'prevent-app-suspension' allows the screen/display to turn off when the lid is closed,
-    // while keeping the CPU, network, shells, and agent processes running in the background.
-    // When all work finishes, the hold is released so the machine can sleep naturally.
-    start: () => powerSaveBlocker.start('prevent-app-suspension'),
-    stop: (id) => {
-      if (powerSaveBlocker.isStarted(id)) powerSaveBlocker.stop(id)
+    // 1. 'prevent-display-sleep' keeps the screen illuminated while the laptop is open,
+    // protecting against macOS 1-minute low-power screen shutoffs while watching or working.
+    // 2. 'prevent-app-suspension' keeps CPU, networking, child processes, and agent turns
+    // executing at full speed in the background when the lid is closed.
+    start: () => {
+      displayBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+      appBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+      return displayBlockerId
+    },
+    stop: () => {
+      if (displayBlockerId !== null && powerSaveBlocker.isStarted(displayBlockerId)) {
+        powerSaveBlocker.stop(displayBlockerId)
+        displayBlockerId = null
+      }
+      if (appBlockerId !== null && powerSaveBlocker.isStarted(appBlockerId)) {
+        powerSaveBlocker.stop(appBlockerId)
+        appBlockerId = null
+      }
     },
     now: () => Date.now(),
     log: opts.log
