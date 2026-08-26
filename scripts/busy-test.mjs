@@ -13,7 +13,7 @@
 //   node scripts/busy-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -48,6 +48,16 @@ const CHROME = [
 ].join('\n')
 
 const cases = [
+  // Torn repaints, off THIS desk's own log on 2026-08-26 (pane `pizzasrus`, 159 cols).
+  // Claude Code writes its footer a character at a time with absolute cursor moves - the
+  // spinner glyph, then the gerund's letters one by one, then the ellipsis, then the
+  // counter - so the screen between those writes is a frame no reader can call busy. These
+  // read FALSE on purpose, and they are here to say why `TORN_FRAME_MS` exists in
+  // `main/sessions.ts`: a false frame there shortens the busy deadline instead of clearing
+  // it, or one of these drops the pane into "Your move" mid-turn.
+  ['a footer caught mid-repaint, no ellipsis yet', '✽ Bootstrappin\n' + CHROME, false],
+  ['...and the spinner alone, before the word', '✽\n' + CHROME, false],
+  ['...and the settled frame those two become', '✽ Bootstrapping… (1m 18s · ↓ 3.7k tokens)\n' + CHROME, true],
   // Claude Code 2.1.220, mid-turn. Both shapes were on screen during the same turn.
   ['claude 2.1 spinner with counter', '✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, true],
   ['claude 2.1 spinner, no counter yet', '✶ Cultivating…\n' + CHROME, true],
@@ -190,6 +200,20 @@ for (const [name, runSince, clock, want] of anchors) {
     console.error(`FAIL anchor ${name}: ${got}, expected ${want}`)
   } else {
     console.log(`ok   anchor ${name}`)
+  }
+}
+
+// The grace itself lives in main, where the frames arrive. A source assertion, because a
+// test over `readsBusy` alone would stay green with the shortening removed - and removing
+// it is exactly the regression this file exists to catch.
+{
+  const src = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const want = /s\.busyUntil = busy \? now \+ 180_000 : Math\.min\(s\.busyUntil, now \+ TORN_FRAME_MS\)/
+  if (!want.test(src)) {
+    bad++
+    console.error('FAIL a false frame must SHORTEN the busy deadline, never clear it')
+  } else {
+    console.log('ok   a false frame shortens the busy deadline instead of clearing it')
   }
 }
 
