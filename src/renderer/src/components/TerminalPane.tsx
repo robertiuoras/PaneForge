@@ -3757,7 +3757,12 @@ function TerminalPane({
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p
-            const label = markLabel(m, railNow)
+            // Never earlier than the tag itself: `railNow` is only refreshed on a bucket
+            // turnover, so a prompt sent between two ticks is NEWER than the clock reading
+            // it is measured against - and `whenWords` answers a negative age with the full
+            // calendar date, which is how a prompt sent one second ago first drew as
+            // `26/08/2026, 18:27:42`. Measured in a dev copy before this line existed.
+            const label = markLabel(m, Math.max(railNow, m.at))
             const exact = markWhen(m)
             return (
               <button

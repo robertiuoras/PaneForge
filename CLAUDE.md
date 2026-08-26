@@ -398,6 +398,19 @@ agent's `env` names `keyVar('google')`, and `keyProviderFor` reads `GEMINI_API_K
 `~/.gemini/settings.json` says `oauth-personal` keeps going to the dead endpoint, and nothing
 in the environment can overrule it.
 
+**Antigravity CLI is where that login WENT, and it is its own entry.** `agy` (id
+`antigravity`), a Go binary from Google's own installer - NOT npm, where the name is
+squatted - landing in `~/.local/bin` or `%LOCALAPPDATA%\agy\bin`, both hydrated by
+`which.ts`. It signs in with a plain Google account and an **AI Pro/Ultra plan raises the
+limits rather than being the price of entry**, which is the whole reason to reach for it
+over the entry above. `--continue` resumes the newest conversation here, `--conversation
+<id>` the one a pane was in. **It carries no model list on purpose**: `--model` exists,
+`agy models` refuses until the CLI is signed in, and Google publishes the names in prose
+("Gemini 3.1 Pro") and the ids nowhere - so `/model` inside the TUI picks one and anything
+typed still reaches the flag. No `uninstall` either: the installer appends a PATH line to
+five shell profiles and a button that deletes only the binary is the half-removal that
+field refuses.
+
 ## ...and the model list is not this build's opinion of what exists
 
 `main/orModels.ts` keeps a copy of OpenRouter's own public list on disk, beside the
@@ -534,6 +547,24 @@ carries everything `FleetPane` reads, so a PC pane sorts into `Your move` beside
 - `shared/desk.ts` is the arithmetic. `npm run test:desk`, whose load-bearing half is the
   negatives and whose last block is a SOURCE assertion: a field added to `FleetPane` and not
   forwarded through the peer map still typechecks and sorts every remote pane wrong for ever.
+
+## A prompt tag says how long ago it was asked
+
+The rail's hover tip is `echo rail  (5 min ago)`; the hover-HOLD under it is the exact
+moment. A wall-clock time on its own is a number somebody subtracts from the clock in their
+own status bar before it answers the question the rail is opened for - is this pane stuck,
+or did I only just ask - and the exact time is still the right half once a session is being
+read back hours later. Same `whenWords` as History's rows.
+
+- **The clock is a minute, never a second**, since `whenWords` draws nothing finer under an
+  hour, and a pane's render re-measures the turn-copy pairs and the rail against the live
+  xterm buffer. A pane with no tags subscribes to nothing (`Infinity`). The offset is the
+  NEWEST tag's own moment, so its minute turns over when it became true.
+- **A tag is never measured against a clock older than itself.** `railNow` only moves on a
+  bucket turnover, so a prompt sent between two ticks is newer than the reading - and
+  `whenWords` answers a negative age with the full calendar date, which is how a prompt
+  sent one second ago first drew as `26/08/2026, 18:27:42`. `Math.max(railNow, m.at)`.
+- A tag rebuilt from a restored pane's own output has no clock and says nothing about one.
 
 ## Finding something in a pane
 
