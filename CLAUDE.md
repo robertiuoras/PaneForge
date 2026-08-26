@@ -535,6 +535,13 @@ carries everything `FleetPane` reads, so a PC pane sorts into `Your move` beside
   negatives and whose last block is a SOURCE assertion: a field added to `FleetPane` and not
   forwarded through the peer map still typechecks and sorts every remote pane wrong for ever.
 
+## Finding something in a pane
+
+Ctrl/Cmd+F, the ⌕ in the pane header, or `Find in this pane` in the phone's ⋯ sheet - all
+three are `paneFind`, the map `TerminalPane` registers itself in. The bar highlights every
+match, counts them (`3/10`) and steps with ↑ ↓ or Enter / Shift-Enter. It searches the live
+xterm buffer, so it reaches as far back as that pane's scrollback and no further.
+
 ## Finding a setting
 
 The search box finds the SETTING, not the page: matching rows are tinted, the best is
@@ -827,6 +834,11 @@ default wait (Settings → "Answer an agent's question for me when the answer is
 - **It says when, and what, before it does it.** `autoAnswerAt` puts the press's clock on the
   session under the same guards the presser runs under, refreshed from the TIMER as well as
   from a frame.
+- **A hold CLEARS the deadline, it does not move it.** `refreshAutoPlan` writes
+  `autoAnswerAt = 0` while held: the pane reads `held`, but the card's `AskClock` and the
+  desk-wide tick (`soonestAuto`) read the bare number, so a hold that merely pushed the
+  deadline out left the card counting and the tick sounding at somebody who had just clicked
+  onto the pane to answer it.
 - **The countdown is a banded row in the pane, a chip on the CARD, and a TICK.** In the pane
   (`AskCountdown`) it is a pill with tabular seconds beside `Answering for you with <option>`,
   and that option's button carries `.auto` — dashed, because `.on` is a different fact. The
@@ -1348,6 +1360,12 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   cleared when the desk goes back to ok) and takes itself away after `CAPACITY_NOTE_MS`
   (12s), carrying the exact figures with it. The desk TOTAL beside the pane count went with
   it: it is drawn only while `capacity.level !== 'ok'`, because it is a pressure reading.
+- **A press on a pane takes its countdown with it.** `touchPane` drops `closeSoon` when the
+  countdown names that pane (and gives `handoffSweeping` back for a move). The "went back to
+  work" effect keys on `stillCloseable`, which a click does not change - so before this,
+  clicking the pane restarted its idle clock and published a new deadline on its card while
+  the 15s count ran on underneath. Other panes in the same plan are re-decided by the next
+  sweep: nobody arrived at those.
 - **A pane can be taken off the clock for good.** `ReclaimPane.pinned` - "Keep this pane
   open" on the card's right-click, `kept open` where its countdown would have been - is
   refused by `onTheClock` AND by `reclaimPlan`'s filter: somebody who said keep this one did
@@ -1418,6 +1436,12 @@ The ladder is four rungs, each firing only where the one above did not solve it:
   `watchPressure` watches the lag BAND too.
 - **Nothing asks any more.** `offloadAsk` defaults off with a one-time `offloadDefaultsV2`
   migration (the `migrateAutoAnswer` shape — read off the SAVED config).
+- **The pressure card OFFERS the move.** `suggestMove` names the dearest movable pane and the
+  machine it would go to, and `.cap-pop` carries `Move it` / `Keep it here` - the card said
+  memory was tight and left the reader to work out which of eleven panes to act on.
+  `Keep it here` adds the PROJECT to `autoHandoff.keepHere`, which every rung refuses (a
+  pane's id dies with the pane; "this project is Mac-only" survives a restart). Settings
+  lists them and a press takes one off.
 - **A pane is never handed back where it came from** — two desks each keeping two agents are each
   correct and would pass one pane between them for ever. The sender puts its own id in the payload
   (`senderDevice`), the receiver stamps it (`arrivedFrom`), and `hostFor` skips that device. A
