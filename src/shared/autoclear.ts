@@ -62,8 +62,32 @@ export function clearCommandFor(agent: string | null | undefined): string | null
   return spec?.bin === 'claude' ? '/clear' : null
 }
 
-/** Between chunks, so the CLI has processed the clear before the prompt arrives. */
-export const CHUNK_GAP_MS = 400
+/**
+ * When each chunk goes out, relative to the fire.
+ *
+ * Flat 400ms gaps were not enough (2026-08-27, pane s2): `/clear` restarts the CLI's
+ * session and redraws, which takes seconds, and a submit CR that arrives while it is
+ * still initialising is swallowed - the prompt was left sitting in the box unsent, with
+ * no newline where the CR should have been. So the prompt waits for the clear to settle,
+ * and the CR arrives a beat after the prompt.
+ */
+export function chunkDelayMs(i: number): number {
+  if (i <= 0) return 0
+  return CLEAR_SETTLE_MS + (i - 1) * SUBMIT_GAP_MS
+}
+
+/** How long `/clear` gets to finish restarting the session before the prompt is typed. */
+export const CLEAR_SETTLE_MS = 2500
+
+/** Between the prompt landing in the composer and the CR that submits it. */
+export const SUBMIT_GAP_MS = 1200
+
+/**
+ * Re-send the submit CR this long after the last chunk went out, unless somebody has
+ * started typing. Enter on an empty composer is a no-op in every CLI we clear, so the
+ * retry is free when the first CR landed and a rescue when the CLI swallowed it.
+ */
+export const SUBMIT_RETRIES_MS = [3000, 8000]
 
 export const MIN_SECONDS = 5
 export const MAX_SECONDS = 300

@@ -46,7 +46,12 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
+<<<<<<< HEAD
   watchDecision, expiryDecision, dropWords, writeCancels,
+=======
+  watchDecision, expiryDecision, dropWords, chunkDelayMs,
+  CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS,
+>>>>>>> lane-b
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
 
@@ -111,6 +116,15 @@ console.log('keystrokes')
   // same split, different first word.
   ok('the command is the CLI\'s own', JSON.stringify(clearChunks('carry on', '/new')) === JSON.stringify(['/new\r', 'carry on', '\r']))
   ok('a promptless codex clear is one chunk', JSON.stringify(clearChunks('', '/new')) === JSON.stringify(['/new\r']))
+
+  // The SCHEDULE, not just the split (2026-08-27, s2 again): flat 400ms gaps typed the
+  // prompt fine and lost the submit CR, because /clear restarts the CLI and a CR arriving
+  // mid-redraw is swallowed. The prompt must wait for the clear to settle, the CR follows
+  // the prompt, and the retries land after the whole sequence.
+  ok('the clear goes out immediately', chunkDelayMs(0) === 0)
+  ok('the prompt waits for /clear to settle', chunkDelayMs(1) === CLEAR_SETTLE_MS && CLEAR_SETTLE_MS >= 2000)
+  ok('the submit follows the prompt, not the clear', chunkDelayMs(2) === CLEAR_SETTLE_MS + SUBMIT_GAP_MS && SUBMIT_GAP_MS >= 1000)
+  ok('submit retries exist and are ordered', SUBMIT_RETRIES_MS.length >= 2 && SUBMIT_RETRIES_MS.every((v, i, a) => v > 0 && (!i || v > a[i - 1])))
 
   // PARITY. Two copies of one contract, in two repos, and nothing compared them.
   const hook = await import(pathToFileURL('/Users/robertiuoras/Projects/claude-memory/claude-config/autoclear.mjs').href).catch(() => null)

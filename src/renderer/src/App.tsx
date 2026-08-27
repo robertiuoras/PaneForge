@@ -709,8 +709,23 @@ export default function App(): JSX.Element {
     // Both on the way DOWN: a dropdown's own Escape handler stops the event dead so the
     // global shortcuts cannot see it, and a bubble-phase listener here would never run.
     // Nothing is decided at this point anyway - the tick is what looks at the result.
+    // Focus is also lost with no click and no key at all: a `pane:reset` tears down the
+    // terminal that was holding the keys and the browser drops them on `document.body`,
+    // where nothing can be typed and nothing will ever hand them back. Only that case is
+    // caught - a null `relatedTarget` means the focus went nowhere, and the tick confirms
+    // nothing has claimed it since - so a deliberate move into a field, a button or a
+    // dialog somewhere else in the app is never pulled out from under it.
+    const onFocusOut = (e: FocusEvent): void => {
+      if (e.relatedTarget) return
+      window.setTimeout(() => {
+        const el = document.activeElement
+        if (el && el !== document.body) return
+        restoreFocus()
+      }, 0)
+    }
     document.addEventListener('click', give, true)
     document.addEventListener('keydown', onKey, true)
+    document.addEventListener('focusout', onFocusOut, true)
     // Coming back to the app from somewhere else. Windows hands the keyboard to whatever
     // held it when you left, which after a click on a button is that button - so the first
     // thing typed after an alt-tab went nowhere.
@@ -718,6 +733,7 @@ export default function App(): JSX.Element {
     return () => {
       document.removeEventListener('click', give, true)
       document.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('focusout', onFocusOut, true)
       window.removeEventListener('focus', give)
     }
   }, [restoreFocus])

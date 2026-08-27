@@ -25,6 +25,15 @@ import type { GitInfo, Session } from './types'
 export interface FleetPane {
   status: Session['status']
   bell?: boolean
+  /**
+   * A question is on screen RIGHT NOW.
+   *
+   * Kept apart from `bell` because the two age differently. A bell is sticky - nothing
+   * lowers it but a person looking at the pane - so one left unacknowledged outlives the
+   * turn that rang it. A question is read off the live frame and goes away with itself,
+   * which is what makes it safe to outrank a running turn.
+   */
+  asking?: boolean
   stalledSince?: number
   engaged?: boolean
   runSince?: number
@@ -136,14 +145,21 @@ export function outputIsWork(t: {
 
 export function fleetState(s: FleetPane): FleetState {
   if (s.status === 'exited') return 'exited'
-  // A rung bell outranks everything a live process could be doing: the CLI is asking a
-  // question, and it can ask one mid-turn.
-  if (s.bell) return 'needsYou'
   // Checked before `working`, because a stalled pane IS working as far as the pty knows -
   // that is exactly what makes it worth a row of its own.
   if (s.stalledSince !== undefined) return 'stalled'
+  // A question on screen outranks the turn it is inside: the CLI can ask one mid-run, and
+  // it is the loudest reason to open a pane.
+  if (s.asking) return 'needsYou'
+  // A pane mid-turn is Running whatever it rang earlier. The bell is sticky until somebody
+  // looks at the pane, so an unacknowledged one from a previous turn used to park an
+  // actively generating pane under "Your move" - a pane 53 seconds into a turn was missing
+  // from Running entirely. A real mid-turn question is not lost by this: the CLI's question
+  // and its running footer are never on screen together, so the pane is idle by the time it
+  // asks, and the bell keeps its claim the moment the turn ends.
   if (s.status === 'working') return 'working'
   if (s.status === 'starting') return 'starting'
+  if (s.bell) return 'needsYou'
   return s.engaged ? 'needsYou' : 'ready'
 }
 

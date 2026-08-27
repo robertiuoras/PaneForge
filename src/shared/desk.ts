@@ -60,6 +60,7 @@ function fromSession(s: Session, number: number): DeskRow {
     session: s,
     status: s.status,
     bell: s.bell,
+    asking: Boolean(s.ask),
     stalledSince: s.stalledSince,
     engaged: s.engaged,
     runSince: s.runSince,
@@ -80,7 +81,8 @@ function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }):
     // A question over there cannot be ANSWERED from a row - the buttons need the frame
     // the chooser was read off, which needs a mirror - but it is the loudest reason to
     // open one, so it ranks the row exactly as a local question does.
-    bell: pane.bell || pane.asking,
+    bell: pane.bell,
+    asking: pane.asking,
     stalledSince: pane.stalledSince,
     engaged: pane.engaged,
     runSince: pane.runSince,

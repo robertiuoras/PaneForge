@@ -92,13 +92,28 @@ is(
 )
 is(
   fleetState(sess({ status: 'working', bell: true })),
-  'needsYou',
-  'a rung bell outranks a live turn: the CLI can ask a question mid-run'
+  'working',
+  'a live turn outranks a bell rung before it: the pane is generating, not waiting on you'
+)
+is(
+  fleetState(sess({ status: 'starting', bell: true })),
+  'starting',
+  'and so does one still coming up'
 )
 is(
   fleetState(sess({ status: 'working', bell: true, stalledSince: 500 })),
+  'stalled',
+  'a stall is still the thing worth saying about a quiet mid-turn pane'
+)
+is(
+  fleetState(sess({ status: 'idle', engaged: true, bell: true })),
   'needsYou',
-  'and it outranks a stall too'
+  'and the bell keeps its claim the moment the turn ends'
+)
+is(
+  fleetState(sess({ status: 'working', runSince: 5, asking: true })),
+  'needsYou',
+  'a question on screen DOES outrank a live turn - unlike a bell it goes away with itself'
 )
 is(
   fleetState(sess({ status: 'exited', bell: true })),
