@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleCloseAt, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleCloseAt, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -160,8 +160,8 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('on by default', DEFAULT_RECLAIM.idleCloseMinutes, IDLE_CLOSE_MINUTES)
   // The number itself is asked for by name: it is what the Settings SWITCH writes, so it is
   // a user-visible duration and not an implementation detail. Robert, 2026-08-27: "the idle
-  // close is 30 minutes and i want 10".
-  eq('...at ten minutes', IDLE_CLOSE_MINUTES, 10)
+  // close is 30 minutes and i want 10", then "actually sorry its 5 min".
+  eq('...at five minutes', IDLE_CLOSE_MINUTES, 5)
   eq('off when the number is zero', idleClosePlan(panes, { ...DEFAULT_RECLAIM, idleCloseMinutes: 0 }, NOW).length, 0)
   eq('and off when reclaim itself is off', idleClosePlan(panes, { ...CLOCKED, enabled: false }, NOW).length, 0)
   eq('oldest quiet first, and only past the clock', ids(idleClosePlan(panes, CLOCKED, NOW)), 'a,b')
@@ -230,7 +230,15 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 120 }
   const working = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 2000 })
-  const finished = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+  // ...and read: `lastFocus` after the last byte, or the unread refusal below holds it and
+  // this control proves nothing about output.
+  const finished = pane({
+    id: 'x',
+    state: 'needsYou',
+    lastKeyboard: NOW - 9 * HOUR,
+    lastOutput: NOW - 9 * HOUR,
+    lastFocus: NOW - 8 * HOUR
+  })
   const pad = pane({ id: 'pad', lastKeyboard: NOW, lastOutput: NOW })
   eq('the clock never closes a pane that is still printing', idleClosePlan([working, pad], CLOCKED, NOW).length, 0)
   eq('...and the control: the same pane, actually quiet, IS closed', ids(idleClosePlan([finished, pad], CLOCKED, NOW)), 'x')
@@ -476,6 +484,52 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     'a pane already past its deadline when they left still goes',
     ids(idleClosePlan([overdue, pane({ id: 'other', lastKeyboard: NOW })], CLOCKED, deskNow(NOW, left))) === 'overdue'
   )
+}
+
+{
+  // A turn nobody has read has no countdown in front of it. Robert, 2026-08-27: "if you
+  // havent read the output then the closes in countdown wont start".
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: 10 }
+  // Printed an hour ago, and the keyboard has not been at it since (it left two hours ago).
+  const fresh = pane({
+    id: 'unread',
+    lastKeyboard: NOW - 3 * HOUR,
+    lastFocus: NOW - 2 * HOUR,
+    lastOutput: NOW - HOUR
+  })
+  // Same pane, looked at AFTER the output landed.
+  const seen = pane({
+    id: 'seen',
+    lastKeyboard: NOW - 3 * HOUR,
+    lastOutput: NOW - 2 * HOUR,
+    lastFocus: NOW - HOUR
+  })
+
+  check('output printed since the keyboard left is unread', unread(fresh))
+  check('CONTROL: output the keyboard came back to is read', !unread(seen))
+  check('a pane with no output at all is not unread', !unread(pane({})))
+
+  eq('an unread pane has no deadline at all', idleCloseAt(fresh, CLOCKED, NOW), null)
+  eq(
+    'CONTROL: the read one is due, counting from the moment the keyboard left it',
+    idleCloseAt(seen, CLOCKED, NOW),
+    NOW
+  )
+  eq('the clock leaves the unread one and takes the read one', ids(idleClosePlan([fresh, seen], CLOCKED, NOW)), 'seen')
+
+  // The refusal holds the CLOCK only. Under real memory pressure holding an unread pane
+  // open is the more expensive of the two mistakes, so that sweep is untouched.
+  check(
+    'CONTROL: real pressure still closes an unread pane',
+    reclaimPlan([fresh, seen], over, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'unread')
+  )
+
+  // ...and on a machine no person has touched this run, nothing is ever read, so the
+  // refusal would switch the whole feature off on the one desk it exists for.
+  // Both are eligible there, and the last-pane rule keeps one back - so the answer is the
+  // unread one, which is exactly the pane the refusal above was holding.
+  eq('a desk with nobody at it closes it anyway', ids(idleClosePlan([fresh, seen], CLOCKED, NOW, false)), 'unread')
+  eq('...and its card counts down', idleCloseAt(fresh, CLOCKED, NOW, false), NOW)
 }
 
 console.log(`reclaim: ${checks} checks passed`)

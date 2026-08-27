@@ -1433,7 +1433,20 @@ export default function App(): JSX.Element {
   const [awayAt, setAwayAt] = useState<number | null>(null)
   const awayRef = useRef<number | null>(null)
   awayRef.current = awayAt
-  useEffect(() => api.onAway(setAwayAt), [])
+  // Whether a person has been at THIS machine this run - see `Away.sawPerson`. It gates
+  // the unread refusal in shared/reclaim.ts: on a desk nobody sits at, nothing is ever
+  // read, so holding unread panes open would switch the idle clock off entirely.
+  const [personHere, setPersonHere] = useState(false)
+  const personRef = useRef(false)
+  personRef.current = personHere
+  useEffect(
+    () =>
+      api.onAway((a) => {
+        setAwayAt(a.awaySince)
+        setPersonHere(a.sawPerson)
+      }),
+    []
+  )
 
   /**
    * Send what this machine cannot afford to a paired device, and hand back the rest.
@@ -2448,7 +2461,8 @@ export default function App(): JSX.Element {
         cfg,
         // Frozen while nobody is at this machine: the clock counts time a person could
         // have acted in, not wall time. See src/shared/away.ts.
-        deskNow(Date.now(), awayRef.current)
+        deskNow(Date.now(), awayRef.current),
+        personRef.current
       )
       // ...and out loud, and not yet. This sweep has closed panes into a console nobody
       // has open since it shipped; now it counts down on the mascot first, and a press
@@ -3763,7 +3777,8 @@ export default function App(): JSX.Element {
             usage?.panes[s.id]?.jobs?.[0]?.label
           ),
           cfg,
-          now
+          now,
+          personHere
         )
         // A pane somebody pressed "keep it open" on is held by that, not by the clock -
         // and the card must say so rather than counting down to a close that will not
@@ -3780,7 +3795,7 @@ export default function App(): JSX.Element {
     run()
     // `awayAt` is in here because the deadline it publishes is computed from the frozen
     // clock: a card must stop counting down the moment the sweep stops counting.
-  }, [sessions, config?.reclaim, activeId, pinned, awayAt])
+  }, [sessions, config?.reclaim, activeId, pinned, awayAt, personHere])
 
   /**
    * Hold these panes where they are, for an hour.

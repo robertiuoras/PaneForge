@@ -466,6 +466,7 @@ function migrateReclaim(
   }
   merged.defaultsV2 = true
   merged.defaultsV3 = true
+  merged.defaultsV4 = true
   return merged
 }
 
@@ -478,12 +479,32 @@ function migrateReclaim(
  * `pf-ctl call config:set` and is that person's choice of duration.
  */
 function migrateReclaimV3(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
-  if (raw?.defaultsV3) return merged
+  // Chained, never short-circuited: every config written since this morning already carries
+  // `defaultsV3`, and returning here would put V4 out of reach of exactly the configs it is
+  // for.
+  if (raw?.defaultsV3) return migrateReclaimV4(merged, raw)
   const OLD_SWITCH_MINUTES = 30
   if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
     merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
   }
   merged.defaultsV3 = true
+  return migrateReclaimV4(merged, raw)
+}
+
+/**
+ * And the same again, ten minutes becoming five. Robert, 2026-08-27, hours after asking for
+ * ten: "actually sorry its 5 min".
+ *
+ * Its own flag for the same reason V3 has one: every config written since this morning
+ * already carries `defaultsV3` and a ten in it. Only the old switch value moves.
+ */
+function migrateReclaimV4(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
+  if (raw?.defaultsV4) return merged
+  const OLD_SWITCH_MINUTES = 10
+  if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
+    merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
+  }
+  merged.defaultsV4 = true
   return merged
 }
 
