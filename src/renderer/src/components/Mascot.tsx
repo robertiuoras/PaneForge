@@ -51,6 +51,7 @@ import {
 } from '@shared/mascot'
 import type { RunningDev } from '@shared/devList'
 import { appVisible, onAppVisible } from '../appVisible'
+import { setMascotRect } from '../mascotSpot'
 
 /** A close the app has decided on and has not done yet. The person gets the seconds. */
 export interface CloseSoon {
@@ -200,6 +201,8 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   // those readings are needed here: the window it has to stay inside, and its own size.
   const [vp, setVp] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
   const bubbleEl = useRef<HTMLDivElement | null>(null)
+  /** The sprite itself, measured for the panes it is standing over. See `spriteReserve`. */
+  const body = useRef<HTMLButtonElement | null>(null)
   const [bubbleSize, setBubbleSize] = useState({ w: 0, h: 0 })
 
   const panes = props.panes
@@ -484,6 +487,39 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   const total = useMemo(() => panes.reduce((n, p) => n + (p.memMb ?? 0), 0), [panes])
 
+  /**
+   * Tell the panes underneath where the sprite is, so none of them draws a line under it.
+   *
+   * Measured off the element rather than worked out from `at`: the sprite is centred on
+   * its spot with a transform and it scales on hover, so the fraction is not the box. The
+   * walk is a 900ms CSS transition and a `left`/`top` transition emits no event per frame,
+   * so the box is re-read on a frame loop for as long as one can be running - `DASH_MS`
+   * covers the walk and the longer dash both - and the loop stops on its own. See
+   * `spriteReserve` in shared/mascot.ts for what a pane does with it.
+   */
+  useEffect(() => {
+    if (!drawn || !cfg.enabled) {
+      setMascotRect(null)
+      return
+    }
+    let raf = 0
+    const stop = Date.now() + DASH_MS + 200
+    const read = (): void => {
+      const el = body.current
+      if (el) {
+        const r = el.getBoundingClientRect()
+        setMascotRect({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+      }
+      if (Date.now() < stop) raf = requestAnimationFrame(read)
+    }
+    read()
+    return () => {
+      cancelAnimationFrame(raf)
+    }
+  }, [drawn, cfg.enabled, spot.x, spot.y, dash])
+
+  useEffect(() => () => setMascotRect(null), [])
+
   if (!cfg.enabled) return null
 
   // Read fresh on every render, and re-rendered once a second by the countdown's own
@@ -520,6 +556,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const at = dash ? { x: dash === 'port' ? DASH_LEFT : DASH_RIGHT, y: DASH_Y } : spot
 
   const ground = A.shadow ?? { cx: GRID / 2 - 0.5, cy: GRID - 1.4, rx: GRID / 3, ry: 1 }
+
 
   const box = bubbleSpot({
     cx: at.x * vp.w,
@@ -666,6 +703,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         data-open={open ? '1' : '0'}
       >
         <button
+          ref={body}
           className={
             'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '') + (counting ? ' alert' : '')
           }

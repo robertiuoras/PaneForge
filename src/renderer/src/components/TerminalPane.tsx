@@ -1,11 +1,13 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, pastesClipboardImage } from '../../../shared/agents'
+import { spriteReserve } from '../../../shared/mascot'
+import { mascotRect, onMascotRect } from '../mascotSpot'
 import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
@@ -156,6 +158,36 @@ interface Props {
   agent?: string
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
+}
+
+/**
+ * The one dim line a pane shows before its pty has said anything.
+ *
+ * Measured on this Mac against a real `claude` pane: `sessions:start` returns in 46ms and
+ * the first byte lands at 1257-2139ms, of which the renderer is 13. So the wait is the
+ * CLI's own boot and nothing in this app can shorten it - what it CAN do is stop the wait
+ * reading as a pane that failed to open. A bare "Starting…" with nothing moving says the
+ * same thing at 200ms and at eight seconds; naming the runner says which program is being
+ * waited for, and a seconds count says it is still happening.
+ *
+ * Not a spinner: `npm run test:anim` refuses a looping decoration, and this is on screen
+ * for about a second in the ordinary case. The count is held back until `COUNT_AFTER_MS`
+ * so a fast pane never flashes a number, and it is its own component so the shared
+ * one-second tick is subscribed to only while a pane is actually starting.
+ */
+const COUNT_AFTER_MS = 1200
+
+function PaneBooting({ agent }: { agent?: string }): React.JSX.Element {
+  const [since] = useState(() => Date.now())
+  const now = useNow(1000, since)
+  const secs = Math.floor((now - since) / 1000)
+  const spec = agent ? allAgents().find((a) => a.id === agent) : undefined
+  return (
+    <div className="pane-booting">
+      Starting {spec?.label ?? 'session'}…
+      {now - since >= COUNT_AFTER_MS && <span className="pane-booting-secs">{secs}s</span>}
+    </div>
+  )
 }
 
 /**
@@ -955,6 +987,60 @@ function TerminalPane({
     const f = fit.current
     if (t && f) reshape(t, f)
   }, [pty?.cols, pty?.rows])
+
+  /**
+   * Pixels of this pane's bottom kept clear so the mascot covers no drawn line.
+   *
+   * The sprite is a fixed overlay standing at a fraction of the WINDOW and it walks onto
+   * whichever pane it is talking about, so it is always over somebody's output - and a
+   * terminal is opaque text down to its last row, which after a `/clear` is the tail of
+   * the conversation being read. `spriteReserve` in shared/mascot.ts is the arithmetic and
+   * the refusals; all that happens here is turning its answer into padding on the host, so
+   * xterm fits fewer rows and the last line lands ABOVE the sprite.
+   */
+  const [reserve, setReserve] = useState(0)
+
+  /**
+   * Follow the mascot, and give the rows back the moment it leaves.
+   *
+   * Subscribed rather than passed down: the sprite's box is only known after layout and
+   * after its 900ms walk, and a pane nowhere near it computes 0 and never sets state - so
+   * the desk does not re-render because a fox moved across one corner of it.
+   */
+  useEffect(() => {
+    const read = (): void => {
+      const el = host.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) return
+      // The HOST's box, never the drawn screen's. The screen is as tall as the rows it is
+      // currently fitted to, so measuring it feeds the answer back into its own input: the
+      // first reserve shrinks the screen, the shrunken screen asks for a bigger reserve,
+      // and the pane pads itself away a few rows per frame (measured: 111px, then 224px).
+      // The host is the room the pane HAS, and padding it does not move it.
+      // The cell height, so the answer is a whole number of ROWS - a terminal gives rows
+      // back and keeps the remainder, which left the last line inside the sprite by 2px.
+      const cell = cellBox()?.cellH ?? 0
+      setReserve(
+        spriteReserve(
+          mascotRect(),
+          { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+          cell
+        )
+      )
+    }
+    read()
+    return onMascotRect(read)
+  }, [])
+
+  // The pane has just given rows up or taken them back, so the terminal is refitted at its
+  // new size. In the callback, not beside the setState: the padding has to be on the
+  // element before the fit reads it.
+  useLayoutEffect(() => {
+    const t = term.current
+    const f = fit.current
+    if (t && f) reshape(t, f)
+  }, [reserve])
   const [dropping, setDropping] = useState(false)
 
   /**
@@ -1215,27 +1301,43 @@ function TerminalPane({
     term.current?.focus()
   }
 
+  /**
+   * Where the rows are, so the copy icons can be drawn beside the ones on screen.
+   *
+   * This is deliberately NOT part of the rail's throttled `syncTotal` any more. The rail's
+   * scale moves by a pixel or two per write, so a 250ms coalesce is free there; the copy
+   * icons are positioned off `viewportY`, which a single wheel notch moves by three whole
+   * ROWS. Coalescing that draws the pair at the place its prompt was up to 250ms ago -
+   * icons that slide away from their own prompt while the view moves and snap back when it
+   * stops, which is "it moves on scroll". So it is called from `onRender` instead, the
+   * frame xterm has just drawn, and the pair rides the row it belongs to.
+   *
+   * The cost is one `getBoundingClientRect` per rendered frame plus a setState that
+   * returns the SAME object when nothing moved - so an idle pane subscribes to nothing and
+   * re-renders for nothing, and a scrolling one pays one render per frame, which is what
+   * "attached to the output" costs.
+   */
+  const syncGeom = (): void => {
+    const box = cellBox()
+    if (!box) return
+    const off = screenOffset()
+    setGeom((p) =>
+      p &&
+      p.viewportY === box.viewportY &&
+      Math.abs(p.cellH - box.cellH) < 0.01 &&
+      Math.abs(p.offY - off.y) < 0.5 &&
+      Math.abs(p.height - box.height) < 0.5
+        ? p
+        : { viewportY: box.viewportY, cellH: box.cellH, offY: off.y, height: box.height }
+    )
+  }
+
   const syncTotal = (): void => {
     const t = term.current
     if (!t) return
     setTotal(t.buffer.active.baseY + t.rows)
     setRows(t.rows)
-    // Where the rows are, so the copy icons can be drawn beside the ones on screen. Same
-    // call the rail's own placement makes, and skipped whole when nothing moved: this runs
-    // on every scroll and every write.
-    const box = cellBox()
-    if (box) {
-      const off = screenOffset()
-      setGeom((p) =>
-        p &&
-        p.viewportY === box.viewportY &&
-        Math.abs(p.cellH - box.cellH) < 0.01 &&
-        Math.abs(p.offY - off.y) < 0.5 &&
-        Math.abs(p.height - box.height) < 0.5
-          ? p
-          : { viewportY: box.viewportY, cellH: box.cellH, offY: off.y, height: box.height }
-      )
-    }
+    syncGeom()
     const w = wrap.current
     const vp = host.current?.querySelector('.xterm-viewport')
     if (!w || !vp) return
@@ -1939,12 +2041,18 @@ function TerminalPane({
     // nothing next to the repaint that fires this.
     t.onRender(() => {
       for (const m of list) if (m.marker.line >= 0) m.line = m.marker.line
+      // The frame that has just been drawn is where the rows ARE, so the copy pairs are
+      // placed off it rather than off a reading up to 250ms old. See `syncGeom`.
+      syncGeom()
     })
 
     t.onScroll(() => {
       const follow = nearBottom()
       pinned.current = follow
       setScrolledUp(!follow)
+      // Immediately, and again from the frame: a scroll that moves the view without
+      // repainting still moved every prompt the pairs are drawn against.
+      syncGeom()
       bumpTotal()
       // The chip is drawn in pane pixels and the highlight lives on absolute buffer rows,
       // so a scroll moves one and not the other. See refreshSelChip.
@@ -3665,12 +3773,22 @@ function TerminalPane({
       }}
       onDrop={onDrop}
     >
-      <div className="xterm-host" ref={host} />
+      <div
+        className="xterm-host"
+        ref={host}
+        /* The mascot is standing over this pane, so the rows stop above it. The padding
+           goes on the TERMINAL element and not on this host: the fit addon reads the
+           host's computed `height`, which under this stylesheet's `border-box` INCLUDES
+           the host's own padding - padding it moved nothing and left the pane at 54 rows
+           with 106px of it behind the sprite - while it subtracts the terminal element's
+           padding by hand. See `spriteReserve` and `.xterm-host .xterm` in styles.css. */
+        style={reserve ? ({ ['--pane-reserve' as string]: `${reserve}px` } as React.CSSProperties) : undefined}
+      />
       {/* Until the pty says something. Not a spinner and not a dialog - one dim line in a
           pane that would otherwise be an empty black box for the seconds the CLI spends
           starting up. It goes on the first byte, whether that byte is the agent's banner
           or a replayed transcript. */}
-      {blank && !mirror && <div className="pane-booting">Starting…</div>}
+      {blank && !mirror && <PaneBooting agent={agent} />}
       {finding && (
         <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
           <input

@@ -693,3 +693,51 @@ export function countdownWords(
   }
   return `Closing ${who} in ${secs}s - ${reason}. Nothing is lost: History reopens the conversation and the screen.`
 }
+
+/**
+ * How much of a pane's bottom must stay empty so the sprite covers no drawn line.
+ *
+ * The mascot is placed as a FRACTION of the window (measured on this desk: 6% across, 83%
+ * down) and it deliberately walks to whichever pane it is talking about - that is how it
+ * says WHICH pane without printing an id. So it is always standing over somebody's
+ * terminal, and a terminal is opaque text the whole way to its last row: the sprite sat on
+ * the tail of the conversation, which is exactly the part being read after a `/clear`
+ * scrolls the old screen up into it.
+ *
+ * The fix is not to move the sprite - the walk is the feature - but to stop the pane
+ * DRAWING under it. The overlap is turned into bottom padding on the terminal host, so
+ * xterm fits fewer rows and the last line lands above the sprite instead of behind it.
+ *
+ * Bottom padding, and never a hole in the middle: a terminal is a grid and there is no
+ * such thing as a row with a bite out of it. That is also why a sprite standing high in a
+ * pane reserves NOTHING - padding away the top two thirds of somebody's pane to clear a
+ * 48px fox is worse than the fox. Above `RESERVE_MAX_FRAC` of the pane the person put it
+ * there themselves (only a drag reaches that far), and a drop already beats every
+ * automatic move in this file.
+ */
+export const SPRITE_GAP = 4
+export const RESERVE_MAX_FRAC = 0.3
+
+export interface Box {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export function spriteReserve(sprite: Box | null, screen: Box, cell = 1): number {
+  if (!sprite) return 0
+  const height = screen.bottom - screen.top
+  if (!(height > 0)) return 0
+  // Nothing of it is over this pane, or it is standing entirely below the last row.
+  if (sprite.right <= screen.left || sprite.left >= screen.right) return 0
+  if (sprite.top >= screen.bottom) return 0
+  const raw = screen.bottom - sprite.top + SPRITE_GAP
+  if (raw <= 0) return 0
+  // Up to a whole ROW. A terminal cannot give back 106 pixels of a 15px grid: it drops
+  // seven rows and keeps the remainder, so the last line landed 2px inside the sprite -
+  // padding that is nearly enough is padding that does not work.
+  const step = cell > 0 ? cell : 1
+  const need = Math.ceil(raw / step) * step
+  return need > height * RESERVE_MAX_FRAC ? 0 : need
+}

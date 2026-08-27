@@ -3710,3 +3710,16 @@ button.chip:hover {
   line-height: 1.35;
   color: var(--muted, #a8a8a8);
 }
+
+/* The seconds beside "Starting <runner>…". Tabular so a pane that takes eight seconds does
+   not shuffle the word beside it every tick, and dimmer than the sentence because the
+   sentence is the answer and the number is only proof it is still happening. */
+.pane-booting-secs {
+  margin-left: 6px; opacity: 0.7; font-variant-numeric: tabular-nums;
+}
+
+/* Rows the pane gives up so the mascot's sprite covers no drawn line - see `spriteReserve`
+   in shared/mascot.ts. On the terminal element rather than on `.xterm-host`, because the
+   fit addon reads the host's computed height (border-box here, so its own padding is
+   already inside it) and subtracts only the terminal element's padding. */
+.xterm-host .xterm { padding-bottom: var(--pane-reserve, 0px); }

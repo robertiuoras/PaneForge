@@ -51,7 +51,10 @@ const {
   KEEP_MINUTES,
   DEFAULT_MASCOT,
   dueDash,
-  DASH_EVERY_MS
+  DASH_EVERY_MS,
+  spriteReserve,
+  SPRITE_GAP,
+  RESERVE_MAX_FRAC
 } =
   createRequire(import.meta.url)(outfile)
 
@@ -614,6 +617,59 @@ const desk = [
   ]
   check('it offers to close idle panes when nothing else will', notice(stale, { idleCloseOn: false }) !== null)
   eq('and says nothing when the handoff is going to move them', notice(stale, { idleCloseOn: false, willMove: true }), null)
+}
+
+{
+  // What a pane must keep clear so the sprite covers no drawn line. The measurements are
+  // this desk's own: window 1335x872, one pane's `.xterm-screen` at 299,58 -> 1312,868,
+  // and the sprite 48px at 6%/83% of the window - 56,726 -> 104,774.
+  const screen = { left: 299, top: 58, right: 1312, bottom: 868 }
+  const sprite = { left: 56, top: 726, right: 104, bottom: 774 }
+  eq('a sprite over the sidebar costs the pane nothing', spriteReserve(sprite, screen), 0)
+  eq('no mascot at all costs nothing', spriteReserve(null, screen), 0)
+
+  // The same sprite once the sidebar is hidden and the pane reaches the window edge.
+  const wide = { left: 8, top: 58, right: 1312, bottom: 868 }
+  eq(
+    'standing in a pane, the rows stop above it',
+    spriteReserve(sprite, wide),
+    868 - 726 + SPRITE_GAP
+  )
+  check(
+    'and the reserve really does clear the sprite',
+    wide.bottom - spriteReserve(sprite, wide) <= sprite.top
+  )
+  // A terminal gives rows back, never pixels: 146px of a 15px grid is nine rows and a
+  // remainder, and keeping the remainder left the last line 2px inside the sprite in a
+  // real window. The control is that the unrounded answer really would have failed.
+  eq('a reserve is rounded up to a whole row', spriteReserve(sprite, wide, 15) % 15, 0)
+  check(
+    'and the rounded reserve clears the sprite where the raw one did not',
+    wide.bottom - spriteReserve(sprite, wide, 15) <= sprite.top
+  )
+
+  // The refusals, which are the half that keeps this from eating somebody's pane.
+  eq(
+    'a sprite below the last row reserves nothing',
+    spriteReserve({ left: 8, top: 900, right: 56, bottom: 948 }, wide),
+    0
+  )
+  eq(
+    'a sprite dragged high in a pane reserves nothing rather than half the pane',
+    spriteReserve({ left: 8, top: 200, right: 56, bottom: 248 }, wide),
+    0
+  )
+  // The control for that refusal: the same sprite one pixel inside the cap is taken.
+  const cap = Math.floor(wide.bottom - (wide.bottom - wide.top) * RESERVE_MAX_FRAC) + SPRITE_GAP + 1
+  check(
+    'a sprite just inside the cap is still cleared',
+    spriteReserve({ left: 8, top: cap, right: 56, bottom: cap + 48 }, wide) > 0
+  )
+  eq(
+    'a pane with no height on screen reserves nothing',
+    spriteReserve(sprite, { left: 8, top: 58, right: 1312, bottom: 58 }),
+    0
+  )
 }
 
 console.log(`mascot: ${checks} checks passed`)
