@@ -175,6 +175,12 @@ export function findPathTokens(line: string): PathToken[] {
     const last = Math.min(words.length - 1, i + MAX_SPACE_WORDS)
     for (let j = last; j > i; j--) {
       if (line.slice(words[i].end, words[j].start).match(/^(?: [^ ]+)* $/) === null) continue
+      // A separator may only appear in the FIRST word of a spaced candidate. That is the
+      // whole difference between `~/Work/Clients/Sonia/Sonia 21st Birthday V9.mp4`, where
+      // the folders are all in front, and `Wrote docs/proposals/thing.pdf`, where the word
+      // before the path is prose - without it every sentence containing a path becomes a
+      // second, longer candidate covering the words around it.
+      if (/[\\/]/.test(line.slice(words[i].end, words[j].end))) continue
       const cand = trimRun(line, words[i].start, words[j].end)
       if (cand && looksLikeSpacedPath(cand.text)) readings.push(cand)
     }

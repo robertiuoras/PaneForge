@@ -1672,18 +1672,43 @@ function TerminalPane({
         if (!tokens.length) return done(undefined)
         void Promise.all(
           tokens.map(async (tok): Promise<ILink | null> => {
-            const target = await kindOf(dir, tok.text)
-            if (!target) return null
-            return {
-              // xterm columns are 1-based and its end is inclusive.
-              range: { start: { x: tok.start + 1, y: row }, end: { x: tok.end, y: row } },
-              text: tok.text,
-              activate: () => api.reveal(target.abs)
+            // A filename with spaces in it has no shape prose does not also have, so the
+            // token arrives as several readings of the same run, longest first, and the
+            // DISK picks: the first one that is really there wins. `~/Work/Clients/Sonia/
+            // Sonia 21st Birthday V9.mp4` used to link only as far as the folder, because
+            // the matcher stopped at the first space and the folder happens to exist.
+            for (const reading of [tok, ...(tok.alts ?? [])]) {
+              const target = await kindOf(dir, reading.text)
+              if (!target) continue
+              return {
+                // xterm columns are 1-based and its end is inclusive.
+                range: {
+                  start: { x: reading.start + 1, y: row },
+                  end: { x: reading.end, y: row }
+                },
+                text: reading.text,
+                activate: () => api.reveal(target.abs)
+              }
             }
+            return null
           })
         ).then((found) => {
-          const links = found.filter((l): l is ILink => l !== null)
-          done(links.length ? links : undefined)
+          // Candidates starting at different words can cover the same cells - "Ignore
+          // Sonia 21st Birthday final V9.mp4" offers a reading from every word in it, and
+          // more than one of them can be a file that exists. Longest wins, and anything
+          // overlapping what has already been taken is dropped: two links on one cell is
+          // xterm picking for us, at random.
+          const links = found
+            .filter((l): l is ILink => l !== null)
+            .sort((a, b) => b.text.length - a.text.length)
+          const taken: ILink[] = []
+          for (const l of links) {
+            const clash = taken.some(
+              (t) => l.range.start.x <= t.range.end.x && t.range.start.x <= l.range.end.x
+            )
+            if (!clash) taken.push(l)
+          }
+          done(taken.length ? taken : undefined)
         })
       }
     })

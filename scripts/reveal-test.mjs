@@ -25,7 +25,7 @@ const bundle = (entry, name) => {
   buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, format: 'cjs', platform: 'node', outfile: out })
   return createRequire(import.meta.url)(out)
 }
-const { findPathTokens, looksLikePath, parsePathToken } = bundle('src/shared/pathToken.ts', 'token.cjs')
+const { MAX_SPACE_WORDS, findPathTokens, looksLikePath, looksLikeSpacedPath, parsePathToken } = bundle('src/shared/pathToken.ts', 'token.cjs')
 const { resolveRevealTarget } = bundle('src/main/revealPath.ts', 'reveal.cjs')
 
 let checks = 0
@@ -92,6 +92,46 @@ const tok = findPathTokens(line)[0]
 eq(line.slice(tok.start, tok.end), tok.text, 'reported columns select exactly the token')
 
 eq(findPathTokens('no paths in this sentence at all').length, 0, 'prose yields nothing')
+
+// ------------------------------------------------- a filename with spaces in it
+
+// The whole reason `alts` exists: the run stops at the first space, and the folder it
+// stops on is real, so the link opened the FOLDER and never the file (2026-08-27).
+const spaced = 'Send file: ~/Work/Clients/Sonia/Sonia 21st Birthday V9.mp4 (734 MB)'
+const sTok = findPathTokens(spaced).find((t) => t.text.startsWith('~/Work'))
+eq(sTok.text, '~/Work/Clients/Sonia/Sonia 21st Birthday V9.mp4', 'the longest reading is offered first')
+eq(spaced.slice(sTok.start, sTok.end), sTok.text, 'columns select exactly the spaced token')
+ok(
+  sTok.alts.some((a) => a.text === '~/Work/Clients/Sonia/Sonia'),
+  'the old no-spaces reading is still in the list, as the last resort'
+)
+
+// A bare filename with spaces and no separator at all.
+const bare = findPathTokens('Ignore Sonia 21st Birthday final V9.mp4 - it is stale')
+ok(
+  bare.some((t) => t.text === 'Sonia 21st Birthday final V9.mp4'),
+  'a spaced filename with no folder in front of it is a candidate'
+)
+
+// Only the disk may decide, so the shape test has to stay weak - but it must still end on
+// something that looks like a file, or every clause in a paragraph becomes a stat call.
+ok(looksLikeSpacedPath('Sonia 21st Birthday V9.mp4'), 'ends on an extension')
+ok(!looksLikeSpacedPath('this is just a sentence about things'), 'prose has no extension to end on')
+ok(!looksLikeSpacedPath('https://example.com/a b.mp4'), 'a URL is not revealed')
+
+// Two spaces is column padding in a listing, never the inside of a filename.
+eq(
+  findPathTokens('name.txt    other.mp4').filter((t) => t.text.includes('  ')).length,
+  0,
+  'a padded column is never joined into one path'
+)
+
+// The cap is real: a candidate may not reach across a whole paragraph.
+const long = 'a b c d e f g h i j k l m n o p.mp4'
+ok(
+  findPathTokens(long).every((t) => t.text.split(' ').length <= MAX_SPACE_WORDS + 1),
+  'no candidate reaches past MAX_SPACE_WORDS'
+)
 
 // ---------------------------------------------------------------- resolving against a pane
 
