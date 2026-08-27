@@ -44,9 +44,8 @@ if (from < 0 || to < from) {
 const parsers = join(dir, 'parsers.ts')
 // `UsageRow` survives only in annotations, which are stripped, so the slice needs no import.
 writeFileSync(parsers, mainSrc.slice(from, to), 'utf8')
-const { parseWindows, parsePosix, parseCpuTime, parseTopMem, mergeFootprint } = await import(
-  'file://' + parsers.replace(/\\/g, '/')
-)
+const { parseWindows, parsePosix, parseCpuTime, parseTopMem, mergeFootprint, dueForFootprint, FOOTPRINT_MS } =
+  await import('file://' + parsers.replace(/\\/g, '/'))
 
 let failed = 0
 const ok = (name, cond, detail) => {
@@ -185,6 +184,44 @@ const merged = mergeFootprint(
 ok('a pid with a footprint reading uses it', merged[1].rssKb === 592_000, merged[1].rssKb)
 ok('a pid without one keeps its RSS rather than vanishing', merged[0].rssKb === 4_000)
 ok('an empty map changes nothing', mergeFootprint(merged, new Map())[1].rssKb === 592_000)
+
+// ---------------------------------------------------------------------------
+// How often the machine pays for `top`.
+//
+// Measured on this desk 2026-08-27, 840 processes: `top -l 1 -stats pid,mem` real
+// 0.97-1.11s of which sys 0.82-1.04s, against 0.03-0.05s for the whole `ps` table. At
+// SAMPLE_MS that was about a quarter of a core in the kernel, for ever. These pin the
+// rule that stopped it - and the two cases that must still pay, because a footprint
+// nobody refreshes is a readout that quietly stops being one.
+const seen = new Set([10, 20, 30])
+
+ok('the first sample always pays', dueForFootprint(1_000, 0, [10], seen))
+ok(
+  'a sample inside the window does not',
+  !dueForFootprint(5_000, 1_000, [10, 20], seen)
+)
+ok(
+  'the window is FOOTPRINT_MS and it is measured from the last READ',
+  dueForFootprint(1_000 + FOOTPRINT_MS, 1_000, [10], seen)
+)
+ok(
+  'one second under the window still does not pay',
+  !dueForFootprint(1_000 + FOOTPRINT_MS - 1, 1_000, [10], seen)
+)
+ok(
+  'a pane that opened since the last table forces one',
+  dueForFootprint(2_000, 1_000, [10, 99], seen)
+)
+ok(
+  'a pane that CLOSED since does not - there is nothing new to measure',
+  !dueForFootprint(2_000, 1_000, [10], seen)
+)
+ok('no panes at all asks for nothing', !dueForFootprint(2_000, 1_000, [], seen))
+ok(
+  'an empty cache is a failed probe, not a fresh one',
+  dueForFootprint(2_000, 1_000, [10], new Set())
+)
+ok('20s, not 20 minutes and not 2s', FOOTPRINT_MS === 20_000, String(FOOTPRINT_MS))
 ok('the rows are not mutated in place', merged !== undefined && desk[2].rssKb === 190_000)
 
 // The control, and the reason any of this exists: on a real Mac the two numbers DISAGREE,

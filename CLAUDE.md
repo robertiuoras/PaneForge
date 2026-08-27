@@ -975,6 +975,15 @@ pane title and the total beside the Sessions count answer "which one is eating t
   sample has no CPU figure; a process first seen mid-flight is capped at the interval.
 - The sampler does not read the process table while the window is hidden or minimised, and never
   has two reads in flight.
+- **The memory column is read five times more slowly than the rest of the sample.** `top -l 1`
+  costs ~1.0s wall of which **0.82-1.04s is SYS** against 0.03-0.05s for the whole `ps` table
+  (measured 2026-08-27, 840 processes, load 34), and `-pid` is a display FILTER that makes it no
+  cheaper - so at `SAMPLE_MS` the memory chip alone burned about a quarter of one core inside the
+  kernel, permanently, and got worse the busier the machine was. CPU is a delta and has to be read
+  every tick; memory is a level nothing reads faster than a person glancing at it. `FOOTPRINT_MS`
+  (20s) is the rate and `dueForFootprint` the rule - and a pane that opened since the cached table
+  forces a fresh one, because a pane's FIRST sample is what the capacity ladder acts on. Measured
+  end to end against the real table: **16 -> 4** `top` launches a minute.
 - `npm run test:usage`.
 
 ## A reopened pane comes back with what was on its screen
