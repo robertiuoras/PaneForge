@@ -37,6 +37,25 @@ if (!existsSync(deskFile)) {
   console.error(`no live desk at ${deskFile} - open some panes in the real app first`)
   process.exit(2)
 }
+if (!existsSync(join(root, 'out', 'renderer', 'index.html'))) {
+  console.error('no build in out/ - run `npm run build` first (a stale build measures the wrong code)')
+  process.exit(2)
+}
+
+// A dev copy still holding the profile's single-instance lock makes the new launch exit
+// with no window, which reads exactly like "the app did not start". Wait for it to be gone.
+spawnSync('node', [join(root, 'scripts/try.mjs'), '--close'], { stdio: 'ignore' })
+// Only a checkout's own node_modules/electron - never /Applications/PaneForge.app, which
+// is the app this session is running inside.
+spawnSync('pkill', ['-f', 'PaneForge[^/]*/node_modules/electron'])
+for (let i = 0; i < 30; i++) {
+  const r = spawnSync('pgrep', ['-f', 'PaneForge[^/]*/node_modules/electron'], { encoding: 'utf8' })
+  if (!r.stdout.trim()) break
+  await new Promise((r) => setTimeout(r, 500))
+}
+
+// Seeded AFTER the old copy is gone: a dying PaneForge writes its own desk on the way
+// out, and a seed written before that is silently replaced by an empty one.
 const live = JSON.parse(readFileSync(deskFile, 'utf8'))
 // The saved resumeId is dropped on purpose: two CLIs appending to one transcript is a
 // real conversation mangled for a measurement. The pane still replays its old screen,
@@ -52,19 +71,6 @@ for (const s of specs)
 writeFileSync(join(DEV, 'desk.json'), JSON.stringify({ specs, at: Date.now(), clean: true, reason: 'update' }, null, 2))
 console.log(`seeded ${specs.length} panes into the dev profile`)
 
-if (!existsSync(join(root, 'out', 'renderer', 'index.html'))) {
-  console.error('no build in out/ - run `npm run build` first (a stale build measures the wrong code)')
-  process.exit(2)
-}
-
-// A dev copy still holding the profile's single-instance lock makes the new launch exit
-// with no window, which reads exactly like "the app did not start". Wait for it to be gone.
-spawnSync('node', [join(root, 'scripts/try.mjs'), '--close'], { stdio: 'ignore' })
-for (let i = 0; i < 30; i++) {
-  const r = spawnSync('pgrep', ['-f', 'PaneForge[^/]*/node_modules/electron'], { encoding: 'utf8' })
-  if (!r.stdout.trim()) break
-  await new Promise((r) => setTimeout(r, 500))
-}
 
 const electron = join(root, 'node_modules/electron/dist', process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron.exe')
 const t0 = Date.now()
@@ -101,6 +107,7 @@ async function findPage() {
 }
 const page = await findPage()
 const pageAt = ms()
+console.log(`window at ${pageAt}ms: ${page.url}`)
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 const pending = new Map()
 let seq = 0
@@ -124,7 +131,7 @@ await new Promise((r) => ws.addEventListener('open', r, { once: true }))
 const EXPR = `(() => {
   const pf = window.__pf || {}
   const line = (t, y) => { const l = t.buffer.active.getLine(y); return l ? l.translateToString(true) : '' }
-  return Object.keys(pf).map((id) => {
+  return Object.keys(pf).filter((id) => pf[id] && pf[id].term).map((id) => {
     const t = pf[id].term
     const len = t.buffer.active.length
     let markAt = -1
