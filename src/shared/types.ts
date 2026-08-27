@@ -173,6 +173,15 @@ export interface Session {
   autoClearNoResume?: boolean
   /** Roughly how much context the clear frees, when a watcher measured it. */
   autoClearTokens?: number
+  /**
+   * How the last countdown ENDED ("cleared", or "stood down - ..."), shown ~5s.
+   *
+   * ADDENDUM 2026-08-27: a countdown that stood down used to just vanish - or worse,
+   * freeze at 0:00 - and nobody watching could tell which of the two the app decided.
+   * The outcome is a fact about the session for the same reason the countdown is.
+   */
+  autoClearOutcome?: string
+  autoClearOutcomeAt?: number
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**

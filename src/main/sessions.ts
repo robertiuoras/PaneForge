@@ -20,7 +20,8 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
+import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { acLog } from './autoclearLog'
 
 /**
  * One request to clear a pane: what the Stop hook asks for, and what the watcher asks for.
@@ -1556,9 +1557,13 @@ export class SessionManager extends EventEmitter {
     const decision = armDecision(why)
     if (decision === 'queue') {
       this.autoClearPending.set(id, ask)
+      acLog(`${id} queued until this turn ends (${why})`)
       return { ok: true, reason: 'queued until this turn ends' }
     }
-    if (decision === 'refuse') return { ok: false, reason: dropWords(why as DropReason) }
+    if (decision === 'refuse') {
+      acLog(`${id} refused: ${dropWords(why as DropReason)}`)
+      return { ok: false, reason: dropWords(why as DropReason) }
+    }
     this.cancelAutoClear(id, 'cancelled')
     const at = Date.now() + ask.seconds * 1000
     s.meta.autoClearAt = at

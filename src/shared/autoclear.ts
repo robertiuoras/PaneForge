@@ -233,6 +233,41 @@ export function watchDecision(p: {
   return 'arm'
 }
 
+/**
+ * What the expiry timer does when it finally fires, decided without touching the pty.
+ *
+ * ADDENDUM 2026-08-27: pane s2's countdown reached zero and nothing was typed, and the
+ * old timer body could not say why afterwards - three of its exits were silent `return`s.
+ * Every branch is now a named verdict the caller logs, and the one that used to freeze
+ * the toast at 0:00 ('stale' - meta left behind by an arm this timer no longer owns)
+ * cleans the meta up instead of leaving the card on screen forever.
+ */
+export type ExpiryVerdict = 'fire' | 'vanished' | 'foreign' | 'stale' | DropReason
+
+export function expiryDecision(p: {
+  /** The pane still exists in the manager. */
+  exists: boolean
+  /** `meta.autoClearAt` as the timer found it. */
+  metaAt: number | null | undefined
+  /** The `at` this timer was armed with. */
+  armedAt: number
+  now: number
+  /** `dropFor` over the pane's state right now, null when it is clean. */
+  drop: DropReason | null
+}): ExpiryVerdict {
+  if (!p.exists) return 'vanished'
+  if (p.metaAt !== p.armedAt) {
+    // A LATER countdown owns the meta: its own timer is live, leave everything alone.
+    // Anything else - missing, or stuck in the past - is ours gone stale, and must be
+    // cleaned up or the toast sits at 0:00 forever, which is exactly what Robert watched.
+    return typeof p.metaAt === 'number' && p.metaAt > p.now ? 'foreign' : 'stale'
+  }
+  // 'working' still types: Claude Code queues pty input arriving mid-turn and runs it at
+  // the turn boundary, so the clear lands when the turn ends rather than never.
+  if (p.drop && p.drop !== 'working') return p.drop
+  return 'fire'
+}
+
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or
