@@ -2269,6 +2269,12 @@ export interface Api {
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
   /**
+   * Whether each of these folders' code could reach another machine - a git checkout,
+   * under the projects root, with an origin remote. Asked by the automatic sweeps before
+   * they pick a pane, so a repo that cannot travel is never counted down at.
+   */
+  handoffReady(cwds: string[]): Promise<Record<string, boolean>>
+  /**
    * Arm a pane's own /clear, from the `autoclear` Stop hook. See `shared/autoclear.ts`.
    *
    * Answers `{ ok: false, reason }` rather than throwing, because the caller is a detached

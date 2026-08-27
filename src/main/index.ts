@@ -95,7 +95,7 @@ import {
   resumeIdFor,
   transcriptPath
 } from './transcripts'
-import { receiveHandoff, sendHandoff } from './handoff'
+import { receiveHandoff, sendHandoff, shareable } from './handoff'
 import { clearCommandFor, readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
@@ -2116,6 +2116,20 @@ ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(i
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
+// Which of these panes' repos could reach another machine at all. Asked by the automatic
+// sweeps BEFORE they pick a pane, so a checkout with no origin is never counted down at.
+// A folder that answers no is not retried for five minutes (`shareable` caches).
+ipcMain.handle('remote:handoffReady', async (_e, cwds: unknown) => {
+  const list = Array.isArray(cwds) ? cwds.map(String).slice(0, 64) : []
+  const root = projectsRoot()
+  const out: Record<string, boolean> = {}
+  await Promise.all(
+    [...new Set(list)].map(async (cwd) => {
+      out[cwd] = await shareable(cwd, root).catch(() => false)
+    })
+  )
+  return out
+})
 // False means nothing was waiting: the pane is already on its way, or was never queued.
 ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(String(id)))
 // A session clearing ITSELF once it has grown too big and written its handoff. The decision

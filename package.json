@@ -64,6 +64,7 @@
     "test:desk": "node scripts/desk-test.mjs",
     "test:panejob": "node scripts/panejob-test.mjs",
     "test:panebackjobs": "node scripts/pane-backjobs-test.mjs",
+    "test:panebound": "node scripts/panebound-test.mjs",
     "test:surfacereach": "node scripts/surface-reach-test.mjs",
     "test:mirrorfit": "node scripts/mirrorfit-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",

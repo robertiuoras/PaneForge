@@ -29,6 +29,7 @@ import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
+import MoveSoon from './components/MoveSoon'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
@@ -2239,6 +2240,50 @@ export default function App(): JSX.Element {
   const handoffSweeping = useRef(false)
 
   /**
+   * Which folders' code could reach another machine, keyed by folder.
+   *
+   * A checkout with no origin remote, or one outside the projects root, has no way to
+   * arrive over there - and until this was asked FIRST, that was discovered by attempting
+   * the move: the pane was picked, a machine was named, fifteen seconds were counted down
+   * at somebody, and the only outcome available was a failure and a cooldown.
+   *
+   * A ref rather than state: it is read inside the sweeps' intervals, and a state update
+   * every minute would re-arm the timers built on them. A folder with no answer yet is
+   * `undefined`, which does not refuse - the first answer lands within a minute, and the
+   * cost of refusing on silence is the whole ladder switched off on a slow first read.
+   */
+  const shareableRef = useRef<Record<string, boolean>>({})
+  // The folders on the desk, as one string: this must re-ask when a pane opens in a repo
+  // nobody has asked about, and must NOT re-ask on every byte a pane prints.
+  const localCwdsKey = useMemo(
+    () => [...new Set(sessions.filter((s) => !s.remote && s.cwd).map((s) => s.cwd))].sort().join('\u0000'),
+    [sessions]
+  )
+  useEffect(() => {
+    let live = true
+    const ask = (): void => {
+      const cwds = [...new Set(sessionsRef.current.filter((s) => !s.remote && s.cwd).map((s) => s.cwd))]
+      if (!cwds.length) return
+      void api
+        .handoffReady(cwds)
+        .then((map) => {
+          if (live) shareableRef.current = { ...shareableRef.current, ...map }
+        })
+        .catch(() => {
+          /* an older main, or a git that did not answer: leave every folder unmeasured */
+        })
+    }
+    ask()
+    // Main caches each folder for five minutes, so this is a cheap re-ask that mostly
+    // exists to pick up a repo that has just been given a remote.
+    const t = setInterval(ask, 60_000)
+    return () => {
+      live = false
+      clearInterval(t)
+    }
+  }, [localCwdsKey])
+
+  /**
    * What every pane looks like to both sweeps. Read fresh through `sessionsRef` rather
    * than closed over: these run on a timer, and a desk that is full and quiet emits no
    * session events at all.
@@ -2289,7 +2334,13 @@ export default function App(): JSX.Element {
         job: s.job,
         // ...and what an agent left running, which is the opposite: never move it, because
         // the move kills the pty and the work with it. See `AutoPane.backJob`.
-        backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+        backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+        // ...and what could not follow it AT ALL: a browser being driven on this desk.
+        // See `AutoPane.machineBound`.
+        machineBound: usageRef.current?.panes[s.id]?.bound,
+        // Whether the code could get there. `undefined` until the first answer for that
+        // folder lands, and undefined does not refuse - see `AutoPane.shareable`.
+        shareable: shareableRef.current[s.cwd]
       })),
     []
   )
@@ -3520,6 +3571,11 @@ export default function App(): JSX.Element {
    * clock in it, and doing nothing still closes the pane.
    */
   const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
+  // Debug handle, the same one `window.__pf` is for a pane: a probe cannot wait for this
+  // machine to run out of memory, and a countdown that is only ever drawn by a sweep is a
+  // card no test can read. An empty `ids` is deliberately safe - the outcome of running it
+  // is a loop over no panes - so a probe arms the CARD without arming a move.
+  ;(window as unknown as { __pfSoon?: (s?: CloseSoon) => void }).__pfSoon = setCloseSoon
   const closeSoonRef = useRef<CloseSoon | undefined>(undefined)
   closeSoonRef.current = closeSoon
   /**
@@ -3648,9 +3704,10 @@ export default function App(): JSX.Element {
         `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
       )
     moveSoonRef.current = { plan: fresh, cooldownMinutes }
-    // With the mascot hidden there is nowhere to draw a count and nothing to press, so the
-    // only honest behaviour is the old one: do it, and say so in the log.
-    if (!mascotOnRef.current) return doMove(fresh, cooldownMinutes)
+    // The mascot is no longer the only face this has: `MoveSoon` draws the same countdown
+    // as a plain card when there is no sprite, which matters because the mascot ARRIVES
+    // OFF - so this used to move a pane off the desk of anybody who had never gone looking
+    // for an animal with nothing at all on screen.
     setCloseSoon({
       ids: fresh.map((p) => p.id),
       names: fresh.map((p) => paneWordRef.current(p.id)),
@@ -3688,9 +3745,7 @@ export default function App(): JSX.Element {
     }
     const ids = keep.map((p) => p.id)
     pendingMb.current = mb
-    // With the mascot hidden there is nowhere to draw a count and nowhere to press, so the
-    // old behaviour is the only honest one: do it, and say so in the log.
-    if (!mascotOnRef.current) return doClose(ids, mb)
+    // Same as the move above: with no sprite the count is drawn by `MoveSoon` instead.
     setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline: now + CLOSE_COUNTDOWN_MS, why })
   }
 
@@ -5869,6 +5924,20 @@ export default function App(): JSX.Element {
           and offered Approve to the one screen that cannot check the digits against the
           desk. The desk decides. */}
       {phone?.ask && !isPhoneClient() && <PhoneAsk ask={phone.ask} />}
+      {/* ...and the same countdown for a desk with no sprite to draw it beside. The
+          mascot arrives off, so without this the commonest desk in the app gets no
+          warning at all before a pane moves or closes. */}
+      {!(config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
+        <MoveSoon
+          soon={closeSoon}
+          onKeep={keepOpen}
+          onNow={(ids) =>
+            closeSoon?.move
+              ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+              : doClose(ids, pendingMb.current)
+          }
+        />
+      )}
       {/* The face on the resource ladder. Everything it may do is in shared/mascot.ts;
           this passes it the readings and the two actions, and nothing else. */}
       <Mascot

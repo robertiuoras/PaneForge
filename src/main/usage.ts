@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process'
 import { totalmem } from 'node:os'
 import { app, BrowserWindow } from 'electron'
 import { paneBackJobs } from '../shared/paneBackJobs'
+import { machineBound } from '../shared/paneBound'
 import { report, summarise, treeOf, type UsageReport, type UsageRow } from '../shared/usage'
 
 /**
@@ -384,7 +385,11 @@ export function trackUsage(
       for (const { id, pid } of live) {
         const pane = panes[id]
         if (!pane) continue
-        pane.jobs = paneBackJobs(treeOf(rows, pid), pid)
+        const tree = treeOf(rows, pid)
+        pane.jobs = paneBackJobs(tree, pid)
+        // ...and whether this pane's work is pinned to this machine. Same sample, same
+        // tree, no extra read - see `PaneUsage.bound`.
+        pane.bound = machineBound(tree, pid)
         lastJobs.set(id, pane.jobs[0]?.label ?? null)
       }
       for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)

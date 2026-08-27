@@ -166,6 +166,7 @@ export const SURFACE: Surface = {
   handoffToDevice: ['invoke', 'remote:handoff'],
   bringPaneHere: ['invoke', 'remote:bringHere'],
   handoffPending: ['invoke', 'remote:handoffPending'],
+  handoffReady: ['invoke', 'remote:handoffReady'],
   cancelHandoff: ['invoke', 'remote:handoffCancel'],
   askAutoClear: ['invoke', 'autoclear:ask'],
   cancelAutoClear: ['invoke', 'autoclear:cancel'],
