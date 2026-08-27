@@ -51,6 +51,11 @@ const DESK_SIDE = {
   // How a stuck queue is inspected from outside the window; the card reads
   // `Session.handingOff` for the chip, which is the same fact with no poll.
   handoffPending: 'inspection from a script - the chip reads Session.handingOff',
+  // The "asked before" chip was removed - it shipped with no CSS of its own, so it drew
+  // as an unstyled button over the pane's composer. The ARCHIVE it reads is still written
+  // on every submitted line and is still the answer to "have I asked this", so the lookup
+  // stays reachable from outside the window.
+  priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
 }
 
 function walk(dir, out = []) {
