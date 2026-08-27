@@ -46,7 +46,7 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
-  watchDecision, expiryDecision, dropWords, writeCancels, chunkDelayMs,
+  watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
@@ -59,39 +59,41 @@ console.log('a busy pane WAITS, it is not refused')
   ok('idle arms', armDecision(null) === 'arm')
   ok('a pending question refuses', armDecision('asked') === 'refuse')
   ok('a closed pane refuses', armDecision('gone') === 'refuse')
-  ok('typing refuses', armDecision('typed') === 'refuse')
 }
 
-console.log('a click is not typing')
+console.log('nothing but the button stands a countdown down')
 {
-  const ESC = '\x1b'
-  // The bug: clicking the pane to READ what was about to be cleared took the card away.
-  // `cursorMove.ts` turns a bare click into the arrows that reach the same cell, and they
-  // go out through the same `pty:write` a person typing uses.
-  ok('an arrow does not cancel', writeCancels(ESC + '[C') === false)
-  ok('a run of arrows does not cancel', writeCancels(ESC + '[D' + ESC + '[D' + ESC + '[D') === false)
-  ok('application-mode arrows do not cancel', writeCancels(ESC + 'OB') === false)
-  ok('an SGR mouse report does not cancel', writeCancels(ESC + '[<0;40;12M') === false)
-  ok('an X10 mouse report does not cancel', writeCancels(ESC + '[M' + ' !!') === false)
-  ok('nothing at all does not cancel', writeCancels('') === false)
-  // The controls: content still stands the countdown down, or a session somebody has gone
-  // back to work in is cleared under them.
-  ok('a character cancels', writeCancels('h') === true)
-  ok('a return cancels', writeCancels('\r') === true)
-  ok('a backspace cancels', writeCancels('\x7f') === true)
-  ok('a paste cancels', writeCancels('carry on with the plan') === true)
-  ok('an arrow with a character after it cancels', writeCancels(ESC + '[Cx') === true)
-  // A tab or an escape on its own is not a caret move we generate - it is a keystroke.
-  ok('a bare escape cancels', writeCancels(ESC) === true)
-  ok('a tab cancels', writeCancels('\t') === true)
-
-  // Source assertion: the rule is worthless if the one caller stops asking it. This is
-  // exactly how the feature was dead for a day the first time.
+  // The bug this replaces: clicking the pane to READ what was about to be cleared took the
+  // card away, because `cursorMove.ts` turns a bare click into arrows that go out through
+  // the same `pty:write` a person typing uses. Narrowing the rule to "arrows and mouse
+  // reports do not count" fixed the click and left the real complaint standing - Robert,
+  // 2026-08-27: "it should continue counting down no matter what for the clear unless i
+  // click on keep this session". So the whole cancel-on-write path is gone.
+  //
+  // Source assertions, because the thing being pinned is an ABSENCE: nothing here can
+  // observe a cancel that no longer happens, and a helpful future edit putting one back is
+  // exactly how this feature broke twice.
   const idx = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-  ok(
-    'writePane guards the cancel with it',
-    /if \(writeCancels\(data\)\) manager\.cancelAutoClear\(id, 'typed'\)/.test(idx)
-  )
+  ok('writePane cancels nothing', !/cancelAutoClear\(id, 'typed'\)/.test(idx))
+  ok('and does not reach for a write test', !/writeCancels/.test(idx))
+  const sh = readFileSync(join(root, 'src/shared/autoclear.ts'), 'utf8')
+  ok('there is no typed reason left to give', !/'typed'/.test(sh))
+  // The one press that IS allowed to stop it, and the only one.
+  ok('the button still stands it down', armDecision('cancelled') === 'refuse')
+  ok('and it has words', dropWords('cancelled') === 'you stopped it')
+  const toast = readFileSync(join(root, 'src/renderer/src/components/AutoClearToast.tsx'), 'utf8')
+  ok('the card still carries that button', /Keep this session/.test(toast))
+}
+
+console.log('a countdown can be heard')
+{
+  // A card drawn in the corner of a window that is behind something else is a card nobody
+  // reads in time. Source assertion for the same reason as above - the sound is a side
+  // effect in an effect, and there is nothing to return.
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  ok('the soonest clear countdown is tracked', /const clearSoonAt = sessions\.reduce/.test(app))
+  ok('it ticks', /clearSoonAt - left \* 1000/.test(app))
+  ok('and it announces itself once', /if \(first\) playAction\('move', soundSet\.current\)/.test(app))
 }
 
 console.log('keystrokes')
@@ -236,9 +238,12 @@ console.log('what the timer does when it finally fires - the s2 incident (ADDEND
   // the keystroke checks above already pin against the hook.
   ok('a clean pane fires', expiryDecision(base) === 'fire')
   ok('mid-turn still fires - the pty queues it to the turn boundary', expiryDecision({ ...base, drop: 'working' }) === 'fire')
-  // (c) a draft at expiry stands down, with a reason a person can read in the log.
-  ok('a draft at expiry stands down', expiryDecision({ ...base, drop: 'drafting' }) === 'drafting')
-  ok('and the reason has words', dropWords('drafting').includes('unsent'))
+  // (c) a draft at expiry WAITS - it does not stand down. Typing over somebody's unsent
+  // line is the one damage a clear can do that cannot be undone, and the countdown staying
+  // on screen is what keeps the promise that only the button stops it.
+  ok('a draft at expiry waits', expiryDecision({ ...base, drop: 'drafting' }) === 'wait')
+  ok('and the reason still has words for the log', dropWords('drafting').includes('unsent'))
+  ok('the retry is short enough to be a wait, not a second countdown', DRAFT_RETRY_MS <= 10_000)
   ok('a question at expiry stands down', expiryDecision({ ...base, drop: 'asked' }) === 'asked')
   ok('a vanished pane does nothing at all', expiryDecision({ ...base, exists: false, metaAt: undefined, drop: 'gone' }) === 'vanished')
   // A LATER arm owns the meta: its own timer is live, this one must not touch it.

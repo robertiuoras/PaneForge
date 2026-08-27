@@ -3680,10 +3680,20 @@ export default function App(): JSX.Element {
     (min, s) => (s.autoClearAt && (!min || s.autoClearAt < min) ? s.autoClearAt : min),
     0
   )
+  // A countdown held off by an unsent line re-arms every few seconds (`DRAFT_RETRY_MS`),
+  // which moves the deadline and re-runs this effect. The TICKS should follow it - the
+  // clear really is still coming - but the arrival alert must not sound again every five
+  // seconds, so it plays only when there was no countdown a moment ago.
+  const hadClearSoon = useRef(false)
   useEffect(() => {
-    if (!clearSoonAt) return
+    if (!clearSoonAt) {
+      hadClearSoon.current = false
+      return
+    }
     if (!soundOn.current) return
-    playAction('move', soundSet.current)
+    const first = !hadClearSoon.current
+    hadClearSoon.current = true
+    if (first) playAction('move', soundSet.current)
     const ticks: number[] = []
     for (let left = 10; left >= 1; left--) {
       const at = clearSoonAt - left * 1000 - Date.now()
