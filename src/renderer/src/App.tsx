@@ -248,7 +248,10 @@ function reclaimPaneOf(
     asking: !!s.ask,
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
-    pinned
+    pinned,
+    // A sleeping pane has already given its agent back and the card is the thing being
+    // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
+    asleep: s.asleep
   }
 }
 
@@ -2471,7 +2474,8 @@ export default function App(): JSX.Element {
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
-        pinned: pinnedRef.current[s.id]
+        pinned: pinnedRef.current[s.id],
+        asleep: s.asleep
       })),
       capacity,
       cfg,

@@ -1819,6 +1819,14 @@ export interface Api {
   logReclaim(entry: Record<string, unknown>): void
   killSession(id: string): Promise<void>
   /**
+   * End this pane's agent and keep its card: the process and its whole tree go, the row
+   * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
+   * See `shared/sleep.ts`.
+   */
+  sleepSession(id: string): Promise<Session | null>
+  /** Start a sleeping pane's agent again, back in the conversation it was in. */
+  wakeSession(id: string): Promise<Session | null>
+  /**
    * Quit the app because nobody has used it for a while. The renderer owns the clock
    * (it is the side that knows about keyboard input and focus); main only obeys, and
    * leaves the marker that stops the keep-alive task reopening what was closed on purpose.

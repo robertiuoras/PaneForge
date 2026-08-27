@@ -17,6 +17,7 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
+import { canSleep } from '../shared/sleep'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -167,6 +168,13 @@ const RESET = '\x1bc'
  * cut would otherwise bleed into the caption and into everything the new process writes.
  */
 const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
+/**
+ * The two captions a sleeping pane gets, in the same shape and for the same reason as
+ * `RESTORE_MARK`: dim, one line, attributes reset first because the pane is cut mid-frame.
+ * Nothing else marks the seam - the screen above it is genuinely the screen it had.
+ */
+const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, press to wake it ---\x1b[0m\r\n'
+const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -450,7 +458,11 @@ export class SessionManager extends EventEmitter {
    */
   snapshot(): StartSessionRequest[] {
     return [...this.sessions.values()]
-      .filter((s) => s.meta.status !== 'exited')
+      // A SLEEPING pane is `exited` too and is not an ended run - it is a card somebody
+      // is deliberately keeping, so it comes back. It comes back AWAKE: a restart spawns
+      // what it is given, and a request that starts nothing is a pane with no pty that
+      // nothing in `start()` knows how to make. Cheap and honest; see docs/design-notes.
+      .filter((s) => s.meta.status !== 'exited' || Boolean(s.meta.asleep))
       .map((s) => ({
         cwd: s.meta.cwd,
         title: s.meta.title,
@@ -711,6 +723,100 @@ export class SessionManager extends EventEmitter {
     this.attach(live)
     recordStart(live.meta)
     this.queuePrompt(id, live.req.prompt, live.req.promptDelay)
+    this.emitSessions()
+    return live.meta
+  }
+
+  /**
+   * End this pane's agent and keep its card.
+   *
+   * The pane keeps its id, its place in the sidebar and its terminal, so the renderer
+   * never unmounts the xterm and what is on screen stays on screen - which is why this
+   * writes no RESET and replays nothing. `shared/sleep.ts` holds the refusals and the
+   * reasoning; the one this side cannot make is a background job an agent left running,
+   * which is a reading of the process table that lives on the usage sample, so the menu
+   * refuses that one before it ever gets here.
+   *
+   * `status` goes to `exited` alongside `asleep` on purpose: every guard in this app that
+   * asks whether a pane has a live process already reads that word.
+   */
+  sleep(id: string): Session | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    if (
+      !canSleep({
+        status: live.meta.status,
+        asleep: live.meta.asleep,
+        busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
+        asking: Boolean(live.meta.ask),
+        job: live.meta.job
+      })
+    )
+      return null
+    // Before the pty dies, while its pid still names a group and a tree - the same order
+    // `kill()` uses, and for the same reason: what the pane started detached is reachable
+    // from neither afterwards.
+    killPaneStrays(id, live.proc.pid)
+    try {
+      live.proc.kill()
+    } catch {
+      /* already dead */
+    }
+    stopPipe(id)
+    live.meta.piping = undefined
+    recordEnd(id, resumeIdFor(id))
+    // What waking spawns from. The conversation it was in is read NOW, while the
+    // transcript still names this session - and the launch prompt is dropped, or waking
+    // would re-run the work the pane was opened to do.
+    live.req = { ...live.req, resume: true, resumeId: resumeIdFor(id), prompt: undefined }
+    this.endRun(live)
+    live.jobName = null
+    live.meta.job = undefined
+    live.meta.status = 'exited'
+    live.meta.asleep = Date.now()
+    live.meta.attention = false
+    live.meta.bell = false
+    live.meta.stalledSince = undefined
+    live.stallRaised = false
+    this.emit('data', id, SLEEP_MARK)
+    live.buffer.push(SLEEP_MARK)
+    this.emitSessions()
+    return live.meta
+  }
+
+  /**
+   * Start a sleeping pane's agent again, in the conversation it was in.
+   *
+   * Deliberately not `restart()`, which writes a full terminal reset: the screen this
+   * pane went to sleep with is the screen it must wake with, and it is still in the
+   * renderer's own xterm buffer. Nothing is replayed, so there is no width to get wrong.
+   */
+  wake(id: string): Session | null {
+    const live = this.sessions.get(id)
+    if (!live || !live.meta.asleep) return null
+    noteSession(id, live.meta.cwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.runner = specFor(live.meta.agent).bin
+    live.meta.asleep = undefined
+    live.meta.status = 'starting'
+    live.meta.exitCode = undefined
+    live.meta.engaged = false
+    live.busyUntil = 0
+    live.ackedAt = 0
+    live.turnPending = false
+    live.footerEndedAt = 0
+    live.sawFooter = false
+    live.meta.runSince = undefined
+    // NOT createdAt: that is the age of this process and three timers read it as one.
+    // `openedAt` is the pane's own age and a sleep does not interrupt it.
+    live.meta.createdAt = Date.now()
+    live.meta.lastOutput = Date.now()
+    live.meta.lastKeyboard = Date.now()
+    live.repaintUntil = 0
+    this.emit('data', id, WAKE_MARK)
+    live.buffer.push(WAKE_MARK)
+    this.attach(live)
+    recordStart(live.meta)
     this.emitSessions()
     return live.meta
   }
@@ -1921,6 +2027,10 @@ export class SessionManager extends EventEmitter {
     proc.onExit(({ exitCode }) => {
       if (live.proc !== proc) return
       meta.status = 'exited'
+      // A pane put to sleep killed this process itself and has already said everything
+      // below. Writing the kill's exit code onto it would put `exited 143` on a card
+      // whose whole point is that nothing went wrong - see `sleep()`.
+      if (meta.asleep) return
       meta.exitCode = exitCode
       // The pane has stopped talking for good: a tee left open would hold the file
       // handle for as long as the dead card sits in the list, and on Windows that is
