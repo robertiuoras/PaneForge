@@ -367,6 +367,18 @@ export function forgetSession(id: string): void {
 export function transcriptFor(id: string): string | null {
   const s = started.get(id)
   if (!s || !SUPPORTED.has(s.agent)) return null
+  if (s.agent === 'antigravity') {
+    const mine = claimed.get(id)
+    if (mine && existsSync(mine)) return mine
+    const convId = antigravityConversationFor(s.cwd, s.at)
+    if (convId) {
+      const f = antigravityTranscriptFile(convId) || convId
+      claimed.set(id, f)
+      settled.add(id)
+      return f
+    }
+    return null
+  }
   const dir = projectDir(s.cwd)
   if (!existsSync(dir)) return null
   const mine = claimed.get(id)
@@ -532,7 +544,7 @@ function movedTo(
     // have moved: the pane that went quiet in the gap is the one that cleared, whether or
     // not anybody told either of them about it.
     // Same PROJECT, not the same cwd string. A lane worktree's project folder is a
-    // symlink to the trunk's, so `clients`, `clients-a` and `clients-b` are one history
+    // symlink to the trunk, so `clients`, `clients-a` and `clients-b` are one history
     // in three names, and comparing cwd left every cross-lane rival invisible - which is
     // exactly the pair this went wrong on.
     if (other === id || projectDir(o.cwd) !== projectDir(s.cwd)) continue
@@ -546,6 +558,17 @@ function movedTo(
 
 /** The conversation id to resume this pane with - the transcript's own file name. */
 export function resumeIdFor(id: string): string | undefined {
+  const s = started.get(id)
+  if (s?.agent === 'antigravity') {
+    const claimedFile = claimed.get(id)
+    if (claimedFile) {
+      const m = /([0-9a-fA-F-]{36})/.exec(claimedFile)
+      if (m) return m[1]
+      return basename(claimedFile, '.jsonl')
+    }
+    const convId = antigravityConversationFor(s.cwd, s.at)
+    if (convId) return convId
+  }
   const file = transcriptFor(id)
   return file ? basename(file, '.jsonl') : undefined
 }
@@ -554,7 +577,10 @@ export function resumeIdFor(id: string): string | undefined {
 export function transcriptPath(cwd: string, resumeId: string): string | null {
   if (!cwd || !resumeId || /[\\/]/.test(resumeId)) return null
   const file = join(projectDir(cwd), `${resumeId}.jsonl`)
-  return existsSync(file) ? file : null
+  if (existsSync(file)) return file
+  const agy = antigravityTranscriptFile(resumeId)
+  if (agy) return agy
+  return null
 }
 
 /** True while a remembered conversation can still be resumed. */
@@ -604,16 +630,25 @@ export function promptFromTail(text: string): string | undefined {
   const lines = text.split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
-    if (!line.startsWith('{') || !line.includes('"type":"user"')) continue
+    if (!line.startsWith('{')) continue
     let rec: {
       type?: string
       isSidechain?: boolean
       message?: { role?: string; content?: unknown }
+      content?: unknown
     }
     try {
       rec = JSON.parse(line)
     } catch {
       continue
+    }
+    if (rec.type === 'USER_INPUT' && typeof rec.content === 'string') {
+      const cleaned = rec.content
+        .replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/, '$1')
+        .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
+        .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
+        .trim()
+      if (cleaned) return clean(cleaned)
     }
     if (rec.type !== 'user' || rec.isSidechain) continue
     const typed = plainText(rec.message?.content)

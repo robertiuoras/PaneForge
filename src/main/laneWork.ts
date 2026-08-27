@@ -547,9 +547,12 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     // describe one either way - but nothing is REMOVED unless this app or scripts/lane.mjs
     // made it, which is what the branch name says: `lane-a` now, `pf/w2` for the lanes that
     // predate the two schemes being merged.
-    if (!laneBranches(work.lane).includes(work.branch)) continue
     const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
+    // Keep clean / merged lane worktrees for at least 1 day (24h) after last activity
+    const mtime = existsSync(dir) ? statSync(dir).mtimeMs : 0
+    const lastActive = Math.max(work.at || 0, mtime)
+    if (Date.now() - lastActive < 24 * 60 * 60 * 1000) continue
     // A paused CLI session is invisible to `busy`: its PaneForge pane can remain in the
     // main checkout while the agent process is rooted here. POSIX permits deleting that
     // cwd, but the agent cannot start its next turn afterwards.
