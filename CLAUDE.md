@@ -615,6 +615,10 @@ crossed by reaching for it, and leaving the terminal element takes it away entir
   `mark.full` is what was typed, whole, and is what the clipboard gets.
 - **Full strength as soon as the pointer is in the pane.** Faint is for a pane nobody is
   pointing at.
+- **The pair is placed from the frame that has just been DRAWN.** `syncGeom` is called from
+  `onRender` and from `onScroll`, never from the rail's 250ms-coalesced `syncTotal`: the rail
+  moves a pixel or two per write, a wheel notch moves `viewportY` by whole ROWS. Measured on a
+  live pane, scroll to DOM: 303/267/141ms coalesced, 4/1/2ms now.
 - **Keyed on the mark, never on the buffer row** — a marker's line moves when scrollback is
   trimmed, and a changed React key unmounts the pair mid-click.
 - `npm run test:turncopyview` types a 492-character prompt through xterm's own input path and
@@ -889,9 +893,14 @@ default wait (Settings → "Answer an agent's question for me when the answer is
 ~4.2s cold. Six panes started in one burst all had their first byte by 1.9s, and staggering
 them by 400ms made it worse (4.7s), so `restorePanes` starting the desk in one tick stays.
 
-What was missing is that nothing said any of it. `blank` in `TerminalPane.tsx` draws one dim
-`Starting…` line until the first byte. No spinner — it is on screen for half a second in the
-ordinary case, and a looping decoration is what `test:anim` refuses.
+What was missing is that nothing said any of it. `PaneBooting` in `TerminalPane.tsx` draws one
+dim line until the first byte: **it names the RUNNER** (`Starting Claude Code…`, off the agent's
+own `label`) and adds a seconds count once past `COUNT_AFTER_MS` (1.2s). Measured again
+2026-08-27: `sessions:start` returns in 46ms, the first byte lands at 1257-2139ms, of which the
+renderer is 13 — so the wait is the CLI's own boot and no code here can shorten it. What a bare
+`Starting…` could not do is say it was still happening. No spinner — a looping decoration is what
+`test:anim` refuses — and its own component, so the shared one-second tick is subscribed to only
+while a pane is starting.
 
 ## A picture goes in front of the agent
 
@@ -1125,6 +1134,20 @@ their entire output used to be a `console.info`. `shared/mascot.ts` is the mouth
   `NO_PET` in `shared/pets.ts` keeps every reading and drops the sprite: the card docks
   bottom-right (`position: fixed`, no walk, no dash, no blink), and a pill carrying the pane
   count and the total is the press that opens the ask box, since there is no sprite to click.
+- **It may stand over a pane, but never over a LINE.** The sprite is placed at a fraction of the
+  WINDOW and walks onto whichever pane it is talking about, so it is always over somebody's
+  output — and after a `/clear` the rows under it are the tail of the conversation being read.
+  `spriteReserve` (`shared/mascot.ts`) turns the overlap into bottom padding and the pane fits
+  fewer rows, so the last line lands ABOVE it. Three things make it safe: it is rounded up to a
+  whole ROW (a terminal gives rows back and keeps the remainder — 106px of a 15px grid left the
+  line 2px inside the sprite), it is measured against the HOST's box and never the drawn screen's
+  (which is as tall as the rows it was just fitted to, so the answer fed its own input and the
+  pane padded itself away a few rows a frame), and a sprite standing above `RESERVE_MAX_FRAC`
+  (30%) of the pane reserves NOTHING — only a drag reaches there, and a drop already beats every
+  automatic move. The padding goes on the `.xterm` element, not on `.xterm-host`: the fit addon
+  reads the host's computed `height`, which is border-box here and already contains its padding.
+  Measured in a real window: 54 rows → 46, screen bottom 748 against a sprite top of 761, and 54
+  again the moment it walks off.
 - **Everything it says is selectable and copyable.** `body { user-select: none }` inherits, so
   `.mascot-say` and `.mascot-count-say` opt back in with both spellings, and one `⧉` in the
   tools copies `saidText`, the SAME expression the card renders, so a reading that goes stale
