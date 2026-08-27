@@ -2108,11 +2108,16 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
   // The hook says WHAT to type, this end says how this CLI spells "start again" - the same
-  // ask from a codex pane has to send `/new`. A pane whose agent we cannot name gets the
-  // Claude spelling, because that is who asks over this channel: only Claude Code has a
-  // Stop hook. The unknown-CLI refusal lives on the watcher, which drives panes nobody
-  // asked it to.
-  const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent) ?? '/clear'
+  // ask from a codex pane has to send `/new`.
+  //
+  // An agent we cannot name is REFUSED here, never defaulted to `/clear`. Defaulting is
+  // tempting - only Claude Code has a Stop hook, so only claude panes should ever ask - but
+  // the phone server relays this same channel, which makes the paneId data from outside
+  // that can name any pane on the desk. `/clear` typed into a CLI with no such command is
+  // a prompt sent to a model. Same invariant as the watcher, in the one other place that
+  // can type into a pane nobody is watching.
+  const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent)
+  if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
   return manager.armAutoClear(ask.paneId, { ...ask, command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))

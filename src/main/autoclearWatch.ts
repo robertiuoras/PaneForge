@@ -252,20 +252,24 @@ function agyRows(): AgyRow[] {
 /**
  * How much context this antigravity pane is carrying, or null.
  *
- * `panes` is how many antigravity panes are open, and it is the whole reason this is not a
- * one-liner. The statusline hook is one file for the whole machine, so with two panes open
- * the newest row belongs to whichever of them redrew last. Attribution is by the row's own
- * cwd, and when that cannot separate them the answer is null - never the newest row, which
- * would clear one pane on the other one's size.
+ * The statusline hook is ONE file for the whole machine, and it is the CLI's file rather
+ * than ours: every `agy` on this desk writes to it, including ones started in a plain
+ * terminal that PaneForge has never heard of. So the newest row is not this pane's row, it
+ * is whichever session redrew last - and attribution has to be by the row's own folder,
+ * even when only one pane is open. When nothing separates them the answer is null, never a
+ * guess: clearing a pane on some other session's size is the one outcome this cannot risk.
+ *
+ * `panes` only widens the one honest fallback - rows from a bridge old enough not to carry
+ * a folder at all, with a single pane they could possibly be about.
  */
 export function antigravityContextTokens(cwd: string, panes: number): number | null {
   const rows = agyRows()
   if (!rows.length) return null
-  if (panes <= 1) return agyTokens(rows[0])
   for (const row of rows) {
     const dir = row.workspace?.current_dir ?? row.cwd
     if (dir === cwd) return agyTokens(row)
   }
+  if (panes <= 1 && !rows.some((r) => r.workspace?.current_dir ?? r.cwd)) return agyTokens(rows[0])
   return null
 }
 
