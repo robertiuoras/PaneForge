@@ -3971,7 +3971,7 @@ function sameGrid(a?: { cols: number; rows: number } | null, b?: { cols: number;
  * free either - it re-measures the turn-copy pairs and the prompt rail against the live
  * xterm buffer - which is what made arrowing through an agent's answers feel heavy.
  *
- * Every prop is compared, and the three that are objects are compared by VALUE, because
+ * Every prop is compared, and the object-shaped ones are compared by VALUE, because
  * main sends new ones each time and by reference this comparator would always say "no".
  * A prop added to `Props` without a line here is a pane that STOPS UPDATING for it, and
  * nothing catches that: TypeScript has no exhaustiveness check over an object's keys, so
@@ -4000,6 +4000,10 @@ function samePaneProps(a: Props, b: Props): boolean {
     sameAsk(a.ask, b.ask) &&
     sameGrid(a.mirror, b.mirror) &&
     sameGrid(a.grid, b.grid) &&
+    // Missing here until 2026-08-27, which is exactly the failure the note above describes:
+    // the pane never re-rendered for a confirmed pty size, so the shrink-grant effect kept
+    // the grid it was mounted with and a shrink waited on a width that had already arrived.
+    sameGrid(a.pty, b.pty) &&
     sameTheme(a.termTheme, b.termTheme)
   )
 }

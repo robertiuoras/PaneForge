@@ -136,14 +136,18 @@ export function outputIsWork(t: {
 
 export function fleetState(s: FleetPane): FleetState {
   if (s.status === 'exited') return 'exited'
-  // A rung bell outranks everything a live process could be doing: the CLI is asking a
-  // question, and it can ask one mid-turn.
-  if (s.bell) return 'needsYou'
   // Checked before `working`, because a stalled pane IS working as far as the pty knows -
   // that is exactly what makes it worth a row of its own.
   if (s.stalledSince !== undefined) return 'stalled'
+  // A pane mid-turn is Running whatever it rang earlier. The bell is sticky until somebody
+  // looks at the pane, so an unacknowledged one from a previous turn used to park an
+  // actively generating pane under "Your move" - a pane 53 seconds into a turn was missing
+  // from Running entirely. A real mid-turn question is not lost by this: the CLI's question
+  // and its running footer are never on screen together, so the pane is idle by the time it
+  // asks, and the bell keeps its claim the moment the turn ends.
   if (s.status === 'working') return 'working'
   if (s.status === 'starting') return 'starting'
+  if (s.bell) return 'needsYou'
   return s.engaged ? 'needsYou' : 'ready'
 }
 

@@ -983,6 +983,11 @@ export class SessionManager extends EventEmitter {
     // count from now and report a fraction of the real time.
     live.meta.runSince = Date.now() - (clock?.ms ?? 0)
     live.meta.lastRunMs = undefined
+    // The bell belongs to the turn that rang it. Nothing clears it but a person looking at
+    // the pane, so one left unacknowledged used to follow the pane into its next turn and
+    // claim a running agent was waiting on an answer. Only on a genuinely NEW turn - the
+    // idempotent path above has already returned, so a bell rung mid-turn survives.
+    live.meta.bell = false
     return true
   }
 
