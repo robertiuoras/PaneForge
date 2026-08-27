@@ -1362,6 +1362,16 @@ The cap is the load-bearing part: it is on the BUSY STRETCH, not on the hold, so
 cannot keep a laptop lit all night and cannot re-arm the hold by ticking.
 `config.keepDisplayAwake` turns it off. `npm run test:awake`.
 
+**Holding the MACHINE awake never justified lighting the PANEL.** The lid guard sets
+`pmset -a disablesleep 1` so a working pane survives a lid-close, and that flag makes the
+kernel ignore the lid OUTRIGHT, backlight included - so a shut MacBook ran its OLED at full
+brightness for the whole session. `screenUnseen` (`main/awake.ts`) drops the screen hold
+alone: the system hold, the panes and the turn in flight are untouched. It is narrower than
+"the lid is shut" on purpose - clamshell driving an external monitor reports the lid shut
+too, and blanking THAT is a desk going black mid-use, so Electron's own display list has to
+say the builtin is the only screen. A reading that FAILED counts as false, and the control
+in `test:awake` is the same desk with the lid up, still lit.
+
 ## A pane's two ends open at the same width
 
 Everything an agent CLI prints is absolute column moves, and a terminal CLAMPS a column it cannot
