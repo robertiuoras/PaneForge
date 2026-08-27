@@ -2136,30 +2136,61 @@ export default function App(): JSX.Element {
     return api.onUsage(setUsage)
   }, [])
 
-  const depthRef = useRef(FULL_SCROLLBACK)
+  /**
+   * The depth each pane is on, BY PANE.
+   *
+   * One number for the whole desk could not describe a plan that carries two of them, and
+   * every plan under pressure does: the focused pane is restored in the same pass that
+   * trims the rest. See `PaneRef.current`.
+   */
+  const depths = useRef(new Map<string, number>())
   useEffect(() => {
     if (!capacity) return
     const refs = sessions.map((s) => ({
       id: s.id,
       focused: s.id === activeId,
-      visible: visibleIds.has(s.id)
+      visible: visibleIds.has(s.id),
+      current: depths.current.get(s.id) ?? FULL_SCROLLBACK
     }))
-    const trims = trimPlan(refs, capacity, depthRef.current)
+    for (const id of depths.current.keys()) if (!sessions.some((s) => s.id === id)) depths.current.delete(id)
+    const trims = trimPlan(refs, capacity)
     if (!trims.length) return
     let applied = 0
+    const regrown: string[] = []
     for (const t of trims) {
       const term = paneTerms.get(t.id)
       // A pane whose terminal has not been created yet gets the depth when it is: the
       // constructor reads the same FULL_SCROLLBACK, and the next change re-plans anyway.
       if (!term) continue
+      const was = depths.current.get(t.id) ?? FULL_SCROLLBACK
       term.options.scrollback = t.scrollback
+      depths.current.set(t.id, t.scrollback)
+      if (t.scrollback > was) regrown.push(t.id)
       applied++
     }
-    // One depth for all trimmed panes, so the next plan can tell what it is undoing.
-    depthRef.current = trims[trims.length - 1].scrollback
+    /**
+     * Raising the number back does NOT bring the lines back.
+     *
+     * Measured against a real headless xterm, 501 lines at depth 20000: lowering the option
+     * to 200 leaves 210 lines and the first one reads `line 291`, and putting 20000 back
+     * leaves the buffer exactly as short. xterm DISCARDS on the way down, so a trim is not
+     * a cap - it is a delete, and this ladder was doing it to every pane nobody was looking
+     * at. Robert, 2026-08-27: "i cant scroll up and see the history of the chat".
+     *
+     * The bytes are still in main (`main/history.ts` keeps every pane's raw output), and
+     * `redrawHistory` is the path that re-renders a pane from them - so a pane that grows
+     * back is re-rendered rather than merely permitted to be tall. It resets the terminal
+     * and scrolls to the bottom, so the focused pane is left alone: it is never trimmed in
+     * the first place, and a person reading it must not have it repainted under them.
+     */
+    for (const id of regrown) {
+      if (id === activeId) continue
+      void paneRedraw.get(id)?.()
+    }
     if (applied) {
       console.info(
-        `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB`
+        `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB` +
+          (regrown.length ? `, ${regrown.length} re-rendered from history` : '')
       )
     }
   }, [capacity, sessions, activeId, visibleIds])
