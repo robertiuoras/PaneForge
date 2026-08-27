@@ -49,6 +49,11 @@ export const BLURBS: Blurb[] = [
     text: 'Start several agents on one project at once, each told what it owns. They share the folder, so what keeps them apart is their briefs - and the shared memory file is the handover between them. Work whose parts are genuinely independent wants a lane each instead.'
   },
   {
+    id: 'split',
+    title: 'Split an ask into panes',
+    text: 'Paste one long request and an agent reads it once, headlessly, into the parts that do not need each other - a pane each, with a brief written to stand on its own. Nothing opens until you have read the rows and can edit them.'
+  },
+  {
     id: 'lane',
     title: 'Lane',
     text: 'This pane is working in its own copy of the repo on its own branch, so another chat editing the same project cannot collide with it. Merging brings the work back into the main checkout and lets the copy be cleaned up.'

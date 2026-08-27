@@ -611,6 +611,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gated.has('config:set'), 'the config that decides what start runs is gated')
   ok(gated.has('phone:tunnel') && gated.has('remote:pair'), 'the ways in are gated')
   ok(gated.has('clipboard:read') && gated.has('history:delete'), 'exfil and deletion are gated')
+  ok(gated.has('prompt:split'), 'reading a long ask starts an agent here, so it is gated')
 
   // Reviewed 2026-08-16: reads, watches, and the state a phone needs to draw a screen.
   // `board:tasks`/`board:memory` write, but only to the board's own notes - they cannot

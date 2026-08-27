@@ -1,4 +1,5 @@
 import type { AutoClearAsk } from './autoclear'
+import type { SplitAnswer } from './splitPlan'
 import type { Away } from './away'
 import type { LinkState } from './linkState'
 // Types shared by the Electron main process and the React renderer.
@@ -2278,6 +2279,11 @@ export interface Api {
 
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
+  /**
+   * Break one long ask into the panes that can run at the same time. Expensive - it runs
+   * an agent CLI once, headlessly - so it is only ever called from a press.
+   */
+  splitPrompt(text: string): Promise<SplitAnswer>
   /** Record that a draft was actually sent. Fire-and-forget. */
   promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
 

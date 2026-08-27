@@ -178,15 +178,60 @@ export function mergeFootprint(rows: UsageRow[], mem: Map<number, number>): Usag
   })
 }
 
+/**
+ * How often the FOOTPRINT column is re-read, as opposed to the rest of the sample.
+ *
+ * `top -l 1` is not a cheap read and it is not cheap in USER time, which is why it never
+ * showed up as PaneForge burning a core. Measured on this desk 2026-08-27 at 840
+ * processes and a load average of 34: real 0.97/1.11/1.08s, and of that **sys 0.82-1.04s**
+ * against user 0.10s. `ps -Ao pid=,ppid=,rss=,time=,etime=,command=` on the same table is
+ * 0.03-0.05s - twenty-five times cheaper. So at `SAMPLE_MS` the memory column alone was
+ * costing about a quarter of one core, permanently, inside the kernel, walking every task
+ * on the machine.
+ *
+ * It gets worse exactly when the desk is busy, because `top` walks the WHOLE table however
+ * few pids are asked about: measured with `-pid` narrowed to four PaneForge helpers, real
+ * 1.34-1.77s and sys 0.83-1.00s - no cheaper than the full sweep. `-pid` is a display
+ * filter, not a scope. So frequency is the only lever there is.
+ *
+ * The two halves of a sample want different rates anyway. CPU is a DELTA and has to be read
+ * every tick or the window it is averaged over is wrong. Memory is a level, read by a person
+ * glancing at a chip and by a pressure ladder that acts on the scale of minutes - 20s stale
+ * costs nothing either can notice.
+ */
+export const FOOTPRINT_MS = 20_000
+
+/**
+ * Should this tick pay for `top`, or merge the last one it got?
+ *
+ * `seen` is the pids the cached footprint table covered. A root pid missing from it is a
+ * pane that opened since, and a pane's first sample is exactly when the capacity ladder is
+ * deciding whether there was room for it - reporting it on RSS for up to 20s would be about
+ * half its real cost on this platform. Descendants are deliberately NOT checked: an agent
+ * spawns a shell per tool call, so novelty down there is the normal state and would ask for
+ * `top` every time, which is the behaviour this exists to stop.
+ */
+export function dueForFootprint(
+  now: number,
+  lastAt: number,
+  pids: number[],
+  seen: ReadonlySet<number>
+): boolean {
+  if (!lastAt) return true
+  if (now - lastAt >= FOOTPRINT_MS) return true
+  return pids.some((pid) => !seen.has(pid))
+}
+
 /** One process table, asynchronously. An empty array is a failed probe, never a zero desk. */
 export function snapshot(
-  done: (rows: UsageRow[], mem?: Map<number, number>) => void
+  done: (rows: UsageRow[], mem?: Map<number, number>) => void,
+  footprint = true
 ): void {
   const finish = (err: unknown, stdout: string): void => {
     if (err || !stdout) return done([])
     if (WIN) return done(parseWindows(stdout))
     const rows = parsePosix(stdout)
-    if (process.platform !== 'darwin' || !rows.length) return done(rows)
+    if (process.platform !== 'darwin' || !rows.length || !footprint) return done(rows)
     // The topology and the CPU counters come from `ps`; only the memory column is replaced.
     // A `top` that fails, times out or prints nothing hands back an empty map, and the desk
     // is reported on RSS exactly as it was before any of this existed.
@@ -296,6 +341,11 @@ export function trackUsage(
   let previous = new Map<number, number>()
   let lastAt = 0
   let busy = false
+  // The last footprint table, and when it was read. Kept rather than re-read every tick:
+  // see FOOTPRINT_MS. Empty until the first successful `top`, and a `top` that fails or
+  // prints nothing leaves both untouched so the next tick asks again.
+  let mem = new Map<number, number>()
+  let memAt = 0
 
   const tick = (): void => {
     if (busy || !watched()) return
@@ -306,14 +356,26 @@ export function trackUsage(
       const own = appCost()
       previous = new Map()
       lastAt = 0
+      mem = new Map()
+      memAt = 0
       onReport(report({}, own.mb, own.cpuPct, machineMb()))
       return
     }
     busy = true
     const at = Date.now()
-    snapshot((rows, mem) => {
+    const want = dueForFootprint(at, memAt, live.map((l) => l.pid), new Set(mem.keys()))
+    snapshot((rows, fresh) => {
       busy = false
       if (!rows.length) return
+      if (fresh?.size) {
+        mem = fresh
+        memAt = at
+      } else if (mem.size) {
+        // `snapshot` merges the table it read itself; a tick that skipped `top` gets the
+        // cached one merged here instead, on exactly the same terms - a pid the table does
+        // not carry keeps its RSS rather than dropping out of the readout.
+        rows = mergeFootprint(rows, mem)
+      }
       const elapsed = lastAt ? at - lastAt : 0
       const { panes, cpuNow } = summarise(rows, live, previous, elapsed)
       // What each pane is still RUNNING, off the same sample. Attached here rather than
@@ -328,9 +390,9 @@ export function trackUsage(
       for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)
       previous = cpuNow
       lastAt = at
-      const own = appCost(mem)
+      const own = appCost(mem.size ? mem : undefined)
       onReport(report(panes, own.mb, own.cpuPct, machineMb()))
-    })
+    }, want)
   }
 
   const t = setInterval(tick, SAMPLE_MS)

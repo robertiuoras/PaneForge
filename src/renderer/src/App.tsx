@@ -6,7 +6,6 @@ import type {
   DiffScope,
   HistoryEntry,
   Preset,
-  PriorPrompt,
   Project,
   RecentItem,
   PhoneState,
@@ -54,7 +53,6 @@ import { isPhoneClient, viewerName } from './client'
 import { linkLost, linkNote, linkWords, type LinkState } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
-  onPaneDraft,
   paneCopyMode,
   paneDraft,
   paneFind,
@@ -117,7 +115,6 @@ import { canSleep, sleepRefusal, sleepWords, type SleepPane } from '../../shared
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
-import { STRONG_MATCH } from '../../shared/promptKey'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
 import { keyLabel, modKey, isMac } from './platform'
@@ -137,6 +134,7 @@ import LaneStrip, {
 import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
+import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
 import UpdateToast from './components/UpdateToast'
 import Tips from './components/Tips'
@@ -394,37 +392,6 @@ const TAP_SLOP = 6
  *  flash a hand on every selection; 220ms reads as "I am holding this". */
 const HOLD_CURSOR_MS = 220
 
-/**
- * Quiet before a draft is checked against earlier asks.
- *
- * Shorter than the improve chip's 1200ms because the two are not the same kind of thing: the
- * improver's delay protects a twenty-second CLI run from being started on a half-typed line,
- * and this one only stops an IPC round trip per keystroke. It also has to land while there
- * is still a reason to read it — a warning that arrives after Enter has been pressed is a
- * receipt, not a warning.
- */
-const PRIOR_IDLE_MS = 450
-
-/**
- * What the "asked before" chip says when you hover it.
- *
- * The whole value of the feature is in this string, so it says the three things that decide
- * whether to carry on typing — when, where, and what came of it — and then what to do about
- * it. Without the outcome line it can only tell you the question was asked, which is the
- * half that makes someone go and look anyway.
- */
-function priorTitle(p: PriorPrompt): string {
-  const when = p.at ? new Date(p.at).toLocaleDateString() : 'previously'
-  const where = p.project ? ` in ${p.project}` : ''
-  const times = p.uses > 1 ? `, ${p.uses}x` : ''
-  return (
-    `You asked this ${when}${where}${times}:\n\n"${p.text}"\n\n` +
-    (p.outcome
-      ? `It produced: ${p.outcome}\n\nCheck that first - only redo what is genuinely still missing.`
-      : 'Nothing is recorded about what it produced, so check the repo before starting a fresh search.') +
-    '\n\nClick to dismiss. Nothing is stopped or changed either way.'
-  )
-}
 
 /** A pending question for the in-app confirm/prompt dialog. */
 interface AskState {
@@ -467,7 +434,52 @@ function LinkBanner(): JSX.Element | null {
   )
 }
 
+/**
+ * The tick under the soonest auto-answer countdown.
+ *
+ * Its own component for the reason `AskClock` is, and this one was the expensive miss: the
+ * clock it needs was read at the TOP of App, so the whole desk - sidebar, every card, the
+ * grid - re-rendered once a second for ever, whether or not any pane was counting down.
+ * Measured in a real window on an empty desk: 6 whole-window renders in 6 seconds before
+ * this, 0 after. On a full, already-lagging desk that is the difference between a
+ * countdown that draws and one that stalls.
+ *
+ * It is also phased on the DEADLINE, not the wall clock, which is what the number in the
+ * pane is phased on (`AskCountdown`). Two clocks a second apart is why the sound landed
+ * off the digit it was meant to be counting.
+ */
+function AutoTick({ at, tick }: { at: number; tick: () => void }): null {
+  const now = useNow(at ? 1000 : Infinity, at)
+  // The second last ticked FOR THIS countdown. Keyed by the deadline as well as by the
+  // number, so a new question that happens to start at the same reading is still heard.
+  const last = useRef('')
+  useEffect(() => {
+    if (!at) {
+      last.current = ''
+      return
+    }
+    const left = Math.ceil((at - now) / 1000)
+    // Nothing before the last minute: a wait somebody lengthened to five minutes in
+    // Settings is a clock, not an alarm, and ticking through all of it is a metronome.
+    if (left <= 0 || left > 60) return
+    const key = `${at}:${left}`
+    if (last.current === key) return
+    last.current = key
+    tick()
+  }, [at, now, tick])
+  return null
+}
+
+/** Whole-window render counter, exposed for probes. See the component body. */
+const deskRenders = { n: 0 }
+;(window as unknown as { __pfDeskRenders?: { n: number } }).__pfDeskRenders = deskRenders
+
 export default function App(): JSX.Element {
+  // How many times the WHOLE window has re-rendered, for probes. The sidebar, every card
+  // and the grid hang off this component, so a subscription taken out here costs a render
+  // of the desk - which is how a one-second clock read at the top of App turned into the
+  // most expensive timer in the app. `scripts/desk-render-test.mjs` reads it.
+  deskRenders.n++
   const [rawSessions, setSessions] = useState<Session[]>([])
   /** Which device's panes the sidebar is showing. `all` remains the default desk view. */
   const [deviceFilter, setDeviceFilter] = useState('all')
@@ -546,6 +558,8 @@ export default function App(): JSX.Element {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
+  /** The "split one long ask into panes" dialog. Opened from a press, never on its own. */
+  const [splitting, setSplitting] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
@@ -973,26 +987,12 @@ export default function App(): JSX.Element {
     (min, s) => (s.autoAnswerAt && (!min || s.autoAnswerAt < min) ? s.autoAnswerAt : min),
     0
   )
-  const tickNow = useNow()
-  // The second last ticked FOR THIS countdown. Keyed by the deadline as well as by the
-  // number, so a new question that happens to start at the same reading is still heard.
-  const lastTick = useRef('')
-  useEffect(() => {
-    if (!soonestAuto) {
-      lastTick.current = ''
-      return
-    }
-    const left = Math.ceil((soonestAuto - Date.now()) / 1000)
-    // Nothing before the last minute: a wait somebody lengthened to five minutes in
-    // Settings is a clock, not an alarm, and ticking through all of it is a metronome.
-    if (left <= 0 || left > 60) return
-    const key = `${soonestAuto}:${left}`
-    if (lastTick.current === key) return
-    lastTick.current = key
-    // Same switch as every other sound the app makes about a pane. The volume slider, and
-    // a picker pointed at a file of your own, are honoured by `playTick` itself.
+  // Reads refs, so its identity never changes and the tick's effect is not re-run by this
+  // component rendering for some other reason. The volume slider, and a picker pointed at
+  // a file of your own, are honoured by `playTick` itself.
+  const autoTick = useCallback(() => {
     if (soundOn.current) playTick(soundSet.current)
-  }, [soonestAuto, tickNow])
+  }, [])
 
   // The pane already on screen is acknowledged the moment it raises its hand
   // (the effect above clears it), so chiming for it is noise about something you
@@ -1815,52 +1815,6 @@ export default function App(): JSX.Element {
    * The Enter is a beat late on purpose, so the CLI's slash menu has settled on /clear
    * before the key that accepts it arrives. A plain shell has no slash commands.
    */
-  /**
-   * "You have asked this before."
-   *
-   * Same contract as the two chips beside it — a heuristic on the draft, a chip in the
-   * pane's corner, nothing that moves or takes the keyboard — but a different cost, and the
-   * difference is why this one is not gated on the improve setting and does not wait for the
-   * pane to go idle for as long. Improving a prompt spends twenty seconds of a CLI's time;
-   * this scores a token set against an archive already in memory, so asking is close to
-   * free and the answer is usually null.
-   *
-   * Deliberately not tied to `looksFinished()`: the point is to say something BEFORE the
-   * work is sent, and an ask that repeats an earlier one is worth flagging whether or not it
-   * reads as a finished sentence.
-   */
-  const [priorOffer, setPriorOffer] = useState<{ id: string; prior: PriorPrompt } | null>(null)
-  const priorEnabled = config?.promptRecall.enabled ?? true
-
-  useEffect(() => {
-    if (!priorEnabled) {
-      setPriorOffer(null)
-      return
-    }
-    let timer: number | undefined
-    // Every lookup is answered, but only the newest one is allowed to set state: the
-    // renderer keeps typing while an answer is in the air, and a late reply about older
-    // words would put a chip up about a draft that no longer exists.
-    let generation = 0
-    const stop = onPaneDraft((id, state) => {
-      setPriorOffer(null)
-      window.clearTimeout(timer)
-      const mine = ++generation
-      const text = state.text.trim()
-      if (!state.certain || text.length < 12) return
-      timer = window.setTimeout(() => {
-        void api.priorPrompt(text).then((prior) => {
-          if (!prior || mine !== generation) return
-          setPriorOffer({ id, prior })
-        })
-      }, PRIOR_IDLE_MS)
-    })
-    return () => {
-      stop()
-      window.clearTimeout(timer)
-    }
-  }, [priorEnabled])
-
   /**
    * Type a command into a pane's TUI and press Enter once it has actually arrived.
    *
@@ -3123,6 +3077,13 @@ export default function App(): JSX.Element {
         hint: 'several agents, one folder, one role each',
         keys: 'Ctrl Shift S',
         run: () => setSwarm(true)
+      },
+      {
+        id: 'split',
+        group: 'Actions',
+        title: 'Split a long ask into panes',
+        hint: 'one request, one pane per part that can run alone',
+        run: () => setSplitting(true)
       },
       {
         id: 'history',
@@ -4573,6 +4534,7 @@ export default function App(): JSX.Element {
 
   return (
     <BlurbContext.Provider value={blurbs}>
+    <AutoTick at={soonestAuto} tick={autoTick} />
     <div className="app">
       <aside className="sidebar">
         <LinkBanner />
@@ -5326,26 +5288,6 @@ export default function App(): JSX.Element {
                 {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={15} />}
               </button>
             )}
-            {/* The offer. A chip in the pane's own corner, next to the prompt box it is
-                about - not a popup, not a toast, nothing that moves and nothing that
-                takes the keyboard. It appears only when the draft has gone quiet, reads
-                as finished, and the agent is not mid-turn. */}
-            {priorOffer?.id === s.id && (
-              <div className="pane-offers">
-                {priorOffer?.id === s.id && (
-                  <button
-                    className="prior-chip-offer"
-                    title={priorTitle(priorOffer.prior)}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPriorOffer(null)
-                    }}
-                  >
-                    {priorOffer.prior.score >= STRONG_MATCH ? 'Asked before' : 'Asked something like this'}
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         ))}
         {sessions.length === 0 && (
@@ -5412,6 +5354,19 @@ export default function App(): JSX.Element {
             setSettings(false)
             setSettingsFrom(null)
           }}
+        />
+      )}
+      {splitting && (
+        <SplitDialog
+          projects={projects}
+          cwd={sessions.find((x) => x.id === activeId)?.cwd}
+          onLaunch={(reqs) => {
+            setSplitting(false)
+            if (!reqs.length) return
+            patchConfig({ grid: true })
+            start(reqs)
+          }}
+          onClose={() => setSplitting(false)}
         />
       )}
       {swarm && config && (

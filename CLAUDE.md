@@ -363,6 +363,35 @@ a channel to a transport; add it there.
   copy. A pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).
 
+## One long ask is several panes
+
+`shared/splitPlan.ts` is the rules, `main/splitPrompt.ts` runs the reading, `SplitDialog.tsx`
+is the screen (command palette: "Split a long ask into panes"). Six jobs in one message is
+one session doing them one after another; the parts that need nothing from each other are a
+pane each, opened with a brief already typed (`queuePrompt`).
+
+- **The reading is an agent CLI run ONCE, headlessly, and it is the only agent this app
+  starts outside a pane.** `HEADLESS` there holds only CLIs measured answering a one-shot
+  prompt; a CLI without one is named and refused, never guessed at.
+- **It runs in an EMPTY folder under userData, with `--settings '{"hooks":{},"outputStyle":
+  "default"}'` and `--strict-mcp-config`.** A headless run loads the settings, hooks and
+  CLAUDE.md of wherever it starts: this desk's own reply-length Stop hook answered two
+  splits with `Noted - next reply shorter.` `--settings` covers the user file and cannot
+  cover a project one, so the empty folder is the other half.
+- **An answer that is not a plan is `null`, never an empty plan** - an empty list would
+  share a shape with "this is one job", which is a real answer and is drawn as one pane.
+  The refusal quotes the first 160 characters of what the CLI actually said, because a
+  refusal sentence and a hook answering for it look nothing alike.
+- **Every `{` is tried when reading the object out of the answer**, not only the first: a
+  CLI that writes the shape in a sentence before printing it left the scan chasing a brace
+  that never closed. Measured against a live `claude -p`.
+- **`MAX_TASKS` is 4 - the lane pool** (`main` plus `a`/`b`/`c`), because a fifth pane would
+  share a checkout with one of the others. Everything over it is NAMED in `dropped`, never
+  dropped in silence.
+- **Nothing opens until the rows have been read**: each row's title, folder and whole brief
+  are editable, because that brief is the only thing its pane will ever be told.
+- `npm run test:splitplan`.
+
 ## A pane can run on somebody else's model
 
 Most of `shared/agents.ts` is one binary pointed somewhere else: Claude Code reads
@@ -946,6 +975,15 @@ pane title and the total beside the Sessions count answer "which one is eating t
   sample has no CPU figure; a process first seen mid-flight is capped at the interval.
 - The sampler does not read the process table while the window is hidden or minimised, and never
   has two reads in flight.
+- **The memory column is read five times more slowly than the rest of the sample.** `top -l 1`
+  costs ~1.0s wall of which **0.82-1.04s is SYS** against 0.03-0.05s for the whole `ps` table
+  (measured 2026-08-27, 840 processes, load 34), and `-pid` is a display FILTER that makes it no
+  cheaper - so at `SAMPLE_MS` the memory chip alone burned about a quarter of one core inside the
+  kernel, permanently, and got worse the busier the machine was. CPU is a delta and has to be read
+  every tick; memory is a level nothing reads faster than a person glancing at it. `FOOTPRINT_MS`
+  (20s) is the rate and `dueForFootprint` the rule - and a pane that opened since the cached table
+  forces a fresh one, because a pane's FIRST sample is what the capacity ladder acts on. Measured
+  end to end against the real table: **16 -> 4** `top` launches a minute.
 - `npm run test:usage`.
 
 ## A reopened pane comes back with what was on its screen
@@ -1351,6 +1389,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:linkstate` | what a phone says when the desk stops answering, and the ordinary reconnects it must stay quiet through |
 | `npm run test:tunnel` | a URL never called up before it resolves, a hanging cloudflared settling anyway, per-platform asset names |
 | `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
+| `npm run test:splitplan` | reading a plan out of whatever a headless CLI printed, and the refusals that keep a bad answer from opening panes |
 | `npm run test:gist` | the one line History puts under a closed session |
 | `npm run test:qr` | the pairing QR, by DECODING it — every version at every mask |
 | `npm run test:stash` | what the Stash may cost, search in main, an edit keeping its row |

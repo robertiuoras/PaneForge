@@ -54,6 +54,7 @@ import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
 import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
 import { priorPrompt, recordPrompt } from './promptArchive'
+import { splitPrompt } from './splitPrompt'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
   cancelDeferred,
@@ -3050,6 +3051,21 @@ ipcMain.handle('prompt:prior', (_e, draft: string) => {
     // A feature that says "you asked this before" must never be the reason a pane stops
     // working. Nothing was found is the right failure.
     return null
+  }
+})
+
+/**
+ * "Break this ask into panes" - see main/splitPrompt.ts.
+ *
+ * The one expensive thing on this surface: it starts an agent CLI, headlessly, and waits
+ * for it. It is only ever reached from a press, never from typing, and every failure comes
+ * back as `{ error }` rather than as an empty plan.
+ */
+ipcMain.handle('prompt:split', async (_e, text: string) => {
+  try {
+    return await splitPrompt(text)
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) }
   }
 })
 

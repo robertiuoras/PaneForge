@@ -142,6 +142,7 @@ const TESTS = [
   ['tunnel', 'tunnel-test.mjs'],
   ['funnel', 'funnel-test.mjs'],
   ['gist', 'gist-test.mjs'],
+  ['splitplan', 'split-plan-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],

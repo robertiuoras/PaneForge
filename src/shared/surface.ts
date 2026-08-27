@@ -170,6 +170,7 @@ export const SURFACE: Surface = {
   askAutoClear: ['invoke', 'autoclear:ask'],
   cancelAutoClear: ['invoke', 'autoclear:cancel'],
   priorPrompt: ['invoke', 'prompt:prior'],
+  splitPrompt: ['invoke', 'prompt:split'],
   promptUsed: ['send', 'prompt:used'],
   voiceStatus: ['invoke', 'voice:status'],
   transcribe: ['invoke', 'voice:transcribe'],
