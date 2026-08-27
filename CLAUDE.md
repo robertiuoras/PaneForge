@@ -1364,6 +1364,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:recover` | finishing a turn the transport cut in half, and the refusals |
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
+| `npm run test:trimloss` | that lowering xterm's `scrollback` DELETES lines and raising it back restores none, which is why a trimmed pane is re-rendered from main's log |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
 | `npm run test:autohandoff` | moving a finished pane instead of closing it, and what the BUDGET rung may move at all (red-proofed) |
 | `npm run test:devlist` | what is serving now and which one a sentence names |
