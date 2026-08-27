@@ -44,7 +44,19 @@ export function startDisplayAwake(opts: {
     // -i prevents idle SYSTEM sleep; -d prevents idle DISPLAY sleep.
     const flag = which === 'system' ? '-i' : '-d'
     try {
-      const proc = spawn('caffeinate', [flag], { stdio: 'ignore', detached: false })
+      // `-w <pid>` makes caffeinate exit when THAT process exits, and it is the only
+      // cleanup that survives us not getting to run any code. `process.once('exit')`
+      // below covers a graceful quit; it does not fire on SIGKILL, a renderer crash,
+      // or a force-quit, and on POSIX a child is not killed by its parent dying
+      // (`detached: false` sets the process group, nothing more). Measured on Robert's
+      // Mac 2026-08-28: 19 orphaned caffeinate processes, ppid 1, the oldest 6h,
+      // every one of them an `-i`/`-d` pair from a PaneForge that had gone away, all
+      // still asserting PreventUserIdleDisplaySleep — enough on its own to stop the
+      // screen ever sleeping, lid open or shut.
+      const proc = spawn('caffeinate', [flag, '-w', String(process.pid)], {
+        stdio: 'ignore',
+        detached: false
+      })
       if (which === 'system') systemCaffeinate = proc
       else displayCaffeinate = proc
       opts.log?.(`caffeinate ${which} started PID ${proc.pid}`)

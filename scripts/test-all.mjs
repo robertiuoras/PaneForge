@@ -12,6 +12,7 @@
 // somebody looking at a pane. Measured on this Mac, the lot runs in ~35s.
 //
 // What stays out, and where to run it instead:
+//   test:caffeinate (SIGKILLs real parent processes to prove caffeinate -w cleans up),
 //   test:strays (~25s of real orphan processes), test:lanes,
 //   test:remote, test:updater   - slow, or they spawn real processes and repositories
 //   test:view, test:stashdrag, test:activate                   - need a real window

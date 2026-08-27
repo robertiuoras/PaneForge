@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.168",
+  "version": "0.8.169",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -144,6 +144,7 @@
     "test:reveal": "node scripts/reveal-test.mjs",
     "test:restore": "node scripts/restore-context-test.mjs",
     "test:consoles": "node scripts/console-sweep-test.mjs",
+    "test:caffeinate": "node scripts/caffeinate-orphan-test.mjs",
     "test:strays": "node scripts/stray-sweep-test.mjs",
     "test:gitpoll": "node scripts/git-poll-test.mjs",
     "test:install": "node scripts/install-stop-test.mjs",
