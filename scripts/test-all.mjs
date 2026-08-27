@@ -117,6 +117,9 @@ const TESTS = [
   ['lanepeers', 'lane-peers-test.mjs'],
   ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
+  // A ship may only report a lane it can prove went out, and a lane passed over leaves a
+  // note. Real repos, and a post-receive hook that takes the push and rewinds the branch.
+  ['laneproof', 'lane-proof-test.mjs'],
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],

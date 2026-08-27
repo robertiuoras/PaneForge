@@ -53,6 +53,17 @@ node scripts/lane.mjs status --repo <dir>      # who holds what
   this window's panes, because a lane the app made itself (`main/lanes.ts`) has no ledger
   row. `laneDoing` in `renderer/src/laneWords.ts` is the words; a lane with neither commits
   nor edits says nothing rather than inventing a sentence about somebody else's work.
+- **A lane is reported as shipped only once it is PROVED to be out.** `landedOnOrigin` asks
+  origin for the branch and checks the lane's own commit is an ancestor of it; a lane that
+  fails that is left out of `lastShip.lanes`, KEEPS its ready mark, and is named. `null` -
+  no origin, no network, a commit git does not know - is "nobody could check" and changes
+  nothing, because none of this may block a chat. Recording the intent to merge is the
+  empty-as-success shape, and on 2026-08-28 it cost a production fix: a ship named four
+  lanes, three had merged, and the fourth read as gone out to every other chat.
+- **A lane passed over leaves a note.** A ready mark for work the branch already has is
+  still dropped - there is nothing left to merge - but `state.passed[id]` records why and
+  `doctor` says it, because a silent drop and a successful merge look identical from
+  outside. The note clears when that lane marks ready again.
 - `npm run test:lanes` (which includes `visitor-park-test.mjs`) covers the engine, the
   worktree sweep, ownership, and the any-repo contract (a repo that never asked for releases must never cut a version).
 
@@ -1370,6 +1381,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |
 | `npm run test:install` | quitting takes the install pty's whole process tree |
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, the any-repo release contract |
+| `npm run test:laneproof` | that a ship names only lanes whose commits are really on origin, and that a lane passed over leaves a note - a `post-receive` hook takes the push and rewinds the branch, with the landing push kept as the control |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:laneforeign` | a foreign clone at a lane's path: named and refused, commits untouched (control: it passes the old `--is-inside-work-tree` test) |
 | `npm run test:lanepeers` | the other desk's claim arithmetic and its negatives |

@@ -461,6 +461,7 @@ function read() {
     s.conflicts ??= {}
     s.release ??= null
     s.lastShip ??= null
+    s.passed ??= {}
     // Why the last automatic release did not go out. See noteHold below.
     s.hold ??= null
     // What THIS device last told the other one, so a turn ending can tell whether a
@@ -471,7 +472,7 @@ function read() {
     s.peers ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
+    return { lanes: {}, ready: {}, conflicts: {}, passed: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
   }
 }
 
@@ -918,7 +919,15 @@ function reap(state) {
     if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.conflicts[id]
   }
   for (const id of Object.keys(state.ready)) {
-    if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.ready[id]
+    if (id !== 'main' && aheadOf(laneBranch(id)) === 0) {
+      // Dropping it is right - there is nothing of that lane's left to merge. Dropping it
+      // in SILENCE is what cost a production fix on 2026-08-28: from every other chat, and
+      // from the ledger, a lane that was quietly passed over looks exactly like one that
+      // shipped. So the mark goes and a note stays, until that lane marks ready again.
+      state.passed ??= {}
+      state.passed[id] = { at: now(), commit: state.ready[id]?.commit ?? null, why: `nothing on ${laneBranch(id)} that ${MB} does not already have` }
+      delete state.ready[id]
+    }
   }
   // `ready.main` is a statement by one chat that ITS work on master is finished, and it
   // outlived that chat: the next chat to claim main inherited it, so its pane read "PF
@@ -1818,6 +1827,25 @@ function commitsSinceVersion(version) {
  * reads as 5 commits of work forever, blocking releases and merging nothing. `git cherry`
  * compares patches, so a duplicate counts as what it is: already released.
  */
+/**
+ * Did this commit really reach origin's copy of the branch?
+ *
+ * `true`, `false`, and `null` are three different answers and the third one is the point:
+ * a repo with no origin, an origin that cannot be reached, or a commit git has never heard
+ * of is "nobody could check", which may not be reported as a merge that did not happen -
+ * and may not block a chat either. Only an ANSWERED `false` is a lane that did not go out.
+ */
+function landedOnOrigin(commit) {
+  if (!commit) return null
+  const remote = gitSafe(MAIN, 'ls-remote', 'origin', `refs/heads/${MB}`)
+  if (!remote.ok) return null
+  const sha = remote.out.trim().split(/\s+/)[0]
+  if (!sha) return null
+  const known = gitSafe(MAIN, 'cat-file', '-e', `${sha}^{commit}`)
+  if (!known.ok) return null
+  return gitSafe(MAIN, 'merge-base', '--is-ancestor', commit, sha).ok
+}
+
 function aheadOf(branch) {
   const r = gitSafe(MAIN, 'cherry', MB, branch)
   if (!r.ok) return 0
@@ -2272,6 +2300,7 @@ function markReady(state, id) {
   const ahead = aheadOf(laneBranch(id))
   if (!ahead) throw new Error(`lane ${id} has no commits ${MB} does not already have`)
   state.ready[id] = { at: now(), commit: git(dir, 'rev-parse', 'HEAD'), commits: ahead, session }
+  if (state.passed?.[id]) delete state.passed[id]
   return { lane: id, commits: ahead, note: 'goes out with the next release, not a separate one' }
 }
 
@@ -2521,11 +2550,21 @@ function ship(kind, session) {
     // a lane that cannot be merged. They keep their ready mark and nothing is recorded
     // against them.
     const blocked = []
+    // Lanes that were passed over with nothing recorded against them. A silent skip and a
+    // successful merge look identical from every other chat, which is how a fix sat on an
+    // unmerged lane while the ship reported it as gone out.
+    const skipped = []
     for (const [id, mark] of Object.entries(state.ready)) {
       if (id === 'main') continue
       const branch = laneBranch(id)
       const ahead = aheadOf(branch)
-      if (!ahead) continue
+      if (!ahead) {
+        // Nothing of this lane's is missing from the branch, so there is nothing to merge -
+        // but a lane that vanishes out of `ready` with no word said about it cannot be told
+        // apart from one that merged, which is exactly the confusion of 2026-08-28. Say so.
+        skipped.push({ lane: id, why: `nothing on ${branch} that ${MB} does not already have` })
+        continue
+      }
       const m = gitSafe(MAIN, 'merge', '--no-ff', '-m', `merge lane ${id}`, branch)
       if (!m.ok && m.locked) {
         // Same rule as the lane side: git being busy says nothing about this branch. The
@@ -2580,20 +2619,36 @@ function ship(kind, session) {
         if (c.conflicts.length) noteConflict(conflicts, id, `${MB} merge: ${c.conflicts.join(', ')}`, state.conflicts)
       }
 
+      // A lane is only reported as shipped once its own commit is PROVED to be on origin's
+      // copy of the branch. Recording the intent is the empty-as-success shape: on
+      // 2026-08-28 a ship named four lanes, three of them had really merged, and the fourth
+      // kept a production fix while every other chat read it as gone out. `null` is "nobody
+      // could check" (no origin, no network) and is left exactly as it was, because nothing
+      // here may block a chat.
+      const unproved = []
+      const shippedLanes = []
+      for (const m of merged) {
+        const landed = landedOnOrigin(m.commit)
+        if (landed === false) unproved.push({ ...m, why: `${m.commit?.slice(0, 8)} is not on origin/${MB}` })
+        else shippedLanes.push(m.lane)
+      }
+
       const fresh = read()
       // A lane that could not merge keeps its ready mark: its work still has to go out,
       // in the next release, once someone has resolved it - or, for a lane that only lost
       // a race with another git, as soon as the next release runs and nobody is asked
-      // anything at all.
+      // anything at all. A lane whose merge could not be PROVED keeps it for the same
+      // reason: its work is still not out there.
+      const keep = new Set(unproved.map((m) => m.lane))
       fresh.ready = Object.fromEntries(
-        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.includes(id))
+        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.includes(id) || keep.has(id))
       )
       fresh.conflicts = conflicts
       fresh.release = null
-      fresh.lastShip = { version, at: now(), lanes: merged.map((m) => m.lane) }
+      fresh.lastShip = { version, at: now(), lanes: shippedLanes }
       write(fresh)
 
-      return { shipped: true, version, merged, rebased, conflicts, blocked, built }
+      return { shipped: true, version, merged, rebased, conflicts, blocked, skipped, unproved, built }
     }
 
     // A repository that does not cut versions is finished at the merge. It still gets the
@@ -2606,7 +2661,7 @@ function ship(kind, session) {
         s.conflicts = conflicts
         s.release = null
         write(s)
-        return { shipped: false, reason: 'nothing to release', conflicts }
+        return { shipped: false, reason: 'nothing to release', conflicts, skipped }
       }
       if (RELEASE === 'merge') {
         const pushed = gitSafe(MAIN, 'push')
@@ -2641,7 +2696,11 @@ function ship(kind, session) {
         const s = read()
         s.conflicts = conflicts
         s.release = null
-        s.lastShip = { version: pkg.version, at: now(), lanes: merged.map((m) => m.lane) }
+        s.lastShip = {
+          version: pkg.version,
+          at: now(),
+          lanes: merged.filter((m) => landedOnOrigin(m.commit) !== false).map((m) => m.lane)
+        }
         write(s)
         return { shipped: true, version: pkg.version, merged, rebased: [], conflicts, resumed: true, built: resumedBuilt }
       }
@@ -3149,7 +3208,8 @@ function status(session) {
     blockedBy: busyLanes(state),
     pending: shippable(state),
     release: state.release,
-    lastShip: state.lastShip
+    lastShip: state.lastShip,
+    passed: state.passed ?? {}
   }
 }
 
@@ -3274,6 +3334,10 @@ function doctor() {
   }
   if (s.lastShip)
     say(`  Last ${s.lastShip.version ? `release: v${s.lastShip.version}` : 'merge'}, ${Math.round((now() - s.lastShip.at) / 60000)}m ago.`)
+  // A lane whose ready mark was dropped because its work was already on the branch. Said
+  // out loud, or it cannot be told apart from a lane that shipped.
+  for (const [id, p] of Object.entries(s.passed ?? {}))
+    say(`  Lane ${id} was passed over ${Math.round((now() - p.at) / 60000)}m ago - ${p.why}.`)
 
   // What the next release page will NOT say, although the commit changed the app. The
   // notes drop every subject that is not feat/fix/perf and say nothing about it, so a
@@ -3434,7 +3498,10 @@ try {
   const sayRelease = (r) => {
     if (!r) return
     if (r.shipped) {
-      const lanes = r.merged?.length ? ` (lanes ${r.merged.map((m) => m.lane).join(', ')})` : ''
+      // Only lanes whose commits were PROVED on origin may be named here. Naming the ones
+      // that were merely attempted is how a chat reads its own unshipped fix as gone out.
+      const went = (r.merged ?? []).filter((m) => !(r.unproved ?? []).some((u) => u.lane === m.lane))
+      const lanes = went.length ? ` (lanes ${went.map((m) => m.lane).join(', ')})` : ''
       // No version means this repo merges rather than releases: say what actually
       // happened. "Released vnull" is how a message stops being read at all.
       if (r.version) {
@@ -3446,6 +3513,13 @@ try {
     } else if (r.reason && r.reason !== 'nothing to release') {
       console.log(`No release yet: ${r.reason}`)
     }
+    // Said on every path, shipped or not: a lane left behind with nothing recorded against
+    // it is indistinguishable from one that went out.
+    for (const u of r.unproved ?? [])
+      console.log(
+        `Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`
+      )
+    for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
     for (const [id, c] of Object.entries(r.conflicts ?? {})) {
       console.log(
         `Lane ${id} is finished but conflicts with ${MB}, so it was left out of the release. ` +
@@ -3503,7 +3577,13 @@ try {
     const r = ship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session)
     if (r.shipped) {
       console.log(r.version ? `Shipped v${r.version}.` : `Merged into ${MB}${RELEASE === 'merge' ? ' and pushed' : ''}.`)
-      if (r.merged.length) console.log(`Included lanes: ${r.merged.map((m) => m.lane).join(', ')}`)
+      const went = r.merged.filter((m) => !r.unproved?.some((u) => u.lane === m.lane))
+      if (went.length) console.log(`Included lanes: ${went.map((m) => m.lane).join(', ')}`)
+      // Never silent: a lane that was passed over, or one whose merge could not be proved on
+      // origin, is named here rather than being left to look like one that went out.
+      for (const u of r.unproved ?? [])
+        console.log(`Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`)
+      for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
       if (r.rebased.length) console.log(`Lanes brought up to date: ${r.rebased.join(', ')}`)
       if (r.version) console.log(sayBuilt(r.built))
     } else {
