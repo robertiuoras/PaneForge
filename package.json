@@ -131,6 +131,7 @@
     "ship": "node scripts/lane.mjs ship",
     "lane": "node scripts/lane.mjs",
     "probe": "node scripts/probe.mjs",
+    "boot-timing": "node scripts/boot-timing.mjs",
     "test:trust": "node scripts/trust-test.mjs",
     "test:slash": "node scripts/slash-test.mjs",
     "test:recall": "node scripts/prompt-recall-test.mjs",

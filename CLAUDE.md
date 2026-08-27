@@ -980,7 +980,24 @@ default wait (Settings → "Answer an agent's question for me when the answer is
 ~4.2s cold. Six panes started in one burst all had their first byte by 1.9s, and staggering
 them by 400ms made it worse (4.7s), so `restorePanes` starting the desk in one tick stays.
 
-What was missing is that nothing said any of it. `PaneBooting` in `TerminalPane.tsx` draws one
+What was missing is that nothing said any of it - and `blank` stopped being the reading the
+day scrollback came back: a RESTORED pane opens wearing the screen it had before the
+restart, so it is never blank and said nothing at all while its CLI booted.
+`Session.printed` (main, `sessions.ts`) is the epoch of the FIRST byte out of THIS process -
+undefined until then, cleared by restart and wake - because only main can tell the replayed
+bytes from the new process's own. The pane draws the same line while `booting`, at the
+BOTTOM (`.pane-booting.over`) where the composer will be, on the pane's own background.
+
+Measured on this desk 2026-08-28 with `npm run boot-timing --panes 7` (dev copy, seeded
+from the live desk): every pane back on screen with its old output at **1.3-2.6s**, first
+byte per pane **2.6-8.8s**, a composer you can type into **4.1-14.3s** depending on machine
+load - and the app's own main process spends **under 0.5s of CPU in the whole first 30s**.
+The wait is the agent CLIs: one `claude` alone reaches a composer in **1.4s**, seven at once
+in 4-15s. **Staggering the restore was measured and is WORSE** - 300ms apart put the last
+composer at 26-29s against 4-16s for one tick, twice, interleaved - so they still all start
+in one tick.
+
+ `PaneBooting` in `TerminalPane.tsx` draws one
 dim line until the first byte: **it names the RUNNER** (`Starting Claude Code…`, off the agent's
 own `label`) and adds a seconds count once past `COUNT_AFTER_MS` (1.2s). Measured again
 2026-08-27: `sessions:start` returns in 46ms, the first byte lands at 1257-2139ms, of which the

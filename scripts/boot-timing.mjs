@@ -131,6 +131,8 @@ await new Promise((r) => ws.addEventListener('open', r, { once: true }))
 const EXPR = `(() => {
   const pf = window.__pf || {}
   const line = (t, y) => { const l = t.buffer.active.getLine(y); return l ? l.translateToString(true) : '' }
+  const notes = document.querySelectorAll('.pane-booting').length
+  const over = document.querySelectorAll('.pane-booting.over').length
   return Object.keys(pf).filter((id) => pf[id] && pf[id].term).map((id) => {
     const t = pf[id].term
     const len = t.buffer.active.length
@@ -138,10 +140,11 @@ const EXPR = `(() => {
     for (let y = len - 1; y >= 0 && y > len - 4000; y--) if (line(t, y).includes('above: this pane before the restart')) { markAt = y; break }
     let tail = ''
     for (let y = Math.max(0, len - 25); y < len; y++) tail += line(t, y) + '\\n'
-    return { id, rows: len, cols: t.cols, live: markAt < 0 ? -1 : len - markAt - 1, tail }
+    return { id, rows: len, cols: t.cols, live: markAt < 0 ? -1 : len - markAt - 1, tail, notes, over }
   })
 })()`
 
+const notes = []
 const first = new Map()
 const stamp = (map, id, at) => { if (!map.has(id)) map.set(id, at) }
 const mounted = new Map()
@@ -156,7 +159,9 @@ while (Date.now() < until) {
       new Promise((res) => setTimeout(() => res({}), 4000))
     ])
     if (r.exceptionDetails && !globalThis.__said2) { globalThis.__said2 = 1; console.error('page threw:', JSON.stringify(r.exceptionDetails).slice(0, 300)) }
-    for (const p of r.result?.value ?? []) {
+    const rows = r.result?.value ?? []
+    if (rows.length) notes.push(`${ms()}ms booting-lines=${rows[0].notes} over=${rows[0].over}`)
+    for (const p of rows) {
       stamp(mounted, p.id, ms())
       if (p.live > 0) stamp(printed, p.id, ms())
       if (COMPOSER.test(p.tail)) stamp(composer, p.id, ms())
@@ -183,6 +188,8 @@ console.log(
   `\npanes=${specs.length} stagger=${STAGGER < 0 ? 'default' : STAGGER}  ` +
     `composer: median ${done[Math.floor(done.length / 2)] ?? '-'}ms  last ${done[done.length - 1] ?? '-'}ms  (${done.length}/${specs.length} reached one)`
 )
+console.log('\n--- "Starting…" lines on screen')
+for (const n of notes.filter((n, i) => i === 0 || n.split(' ')[1] !== notes[i - 1].split(' ')[1])) console.log(n)
 console.log('\n--- main process')
 for (const l of mainLog) console.log(l)
 process.exit(0)

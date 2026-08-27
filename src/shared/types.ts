@@ -84,6 +84,17 @@ export interface Session {
   status: SessionStatus
   /** epoch ms of the most recent pty output */
   lastOutput: number
+  /**
+   * Epoch ms of the FIRST byte this process printed, and undefined until it does.
+   *
+   * Not `lastOutput`, which is stamped at start so that every idle reading has a clock to
+   * count from. This one answers "has the CLI in this pane said anything yet", which is the
+   * only honest way to tell a pane that is still booting from one that is sitting there
+   * finished - a RESTORED pane already has a full screen of yesterday's output on it, so
+   * "the terminal is empty" stopped being that reading the moment scrollback came back.
+   * Reset by anything that spawns a new process into the pane (restart, wake).
+   */
+  printed?: number
   /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
   lastKeyboard: number
   createdAt: number

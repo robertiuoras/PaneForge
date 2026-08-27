@@ -702,6 +702,7 @@ export class SessionManager extends EventEmitter {
     live.meta.job = undefined
     live.buffer.set(RESET)
     live.meta.status = 'starting'
+    live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.attention = false
     live.meta.bell = false
@@ -799,6 +800,7 @@ export class SessionManager extends EventEmitter {
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.status = 'starting'
+    live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.engaged = false
     live.busyUntil = 0
@@ -1999,6 +2001,12 @@ export class SessionManager extends EventEmitter {
         meta.stalledSince = undefined
       }
       const now = Date.now()
+      // The first byte out of THIS process. A restored pane comes back with a full screen
+      // of its own history, so nothing on screen says whether the CLI has started yet -
+      // this is what the pane's "Starting…" line waits on. One extra broadcast per pane
+      // per launch, at the one moment the answer changes.
+      const firstByte = meta.printed === undefined
+      if (firstByte) meta.printed = now
       const wasIdle = meta.status !== 'working'
       // A repaint we asked for is not a turn: paint it, but do not touch the
       // status or the quiet clock the attention nudge runs on.
@@ -2021,7 +2029,7 @@ export class SessionManager extends EventEmitter {
       if (outputIsWork({ ...meta, turnPending: live.turnPending, busyUntil: live.busyUntil, now }))
         meta.status = 'working'
       this.emit('data', id, data)
-      if (wasIdle && meta.status === 'working') this.emitSessions()
+      if (firstByte || (wasIdle && meta.status === 'working')) this.emitSessions()
     })
 
     proc.onExit(({ exitCode }) => {
