@@ -20,7 +20,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -1549,10 +1549,11 @@ export class SessionManager extends EventEmitter {
   /**
    * Arm this pane's own /clear, `seconds` from now, and report it on the session.
    *
-   * The typing goes through `write` in the SPLIT `clearChunks` gives, spaced by
-   * `CHUNK_GAP_MS`: a long chunk arriving in one pty read is a paste to Claude Code and a
-   * CR inside a paste is a newline, which is how the resume prompt was left sitting unsent
-   * in the box after a clear that otherwise worked.
+   * The typing goes through `write` in the SPLIT `clearChunks` gives, on the
+   * `chunkDelayMs` schedule: a long chunk arriving in one pty read is a paste to Claude
+   * Code and a CR inside a paste is a newline, and a submit CR arriving while the CLI is
+   * still redrawing after /clear is swallowed outright - both left the resume prompt
+   * sitting unsent in the box.
    */
   armAutoClear(id: string, ask: AutoClearArm): { ok: boolean; reason?: string } {
     const s = this.sessions.get(id)
@@ -1626,9 +1627,27 @@ export class SessionManager extends EventEmitter {
         const t = setTimeout(() => {
           acLog(`${id} chunk ${i + 1}/${chunks.length}: ${JSON.stringify(c)}`)
           this.write(id, c)
-        }, i * CHUNK_GAP_MS)
+        }, chunkDelayMs(i))
         t.unref?.()
       })
+      // Belt and braces on the submit: the CLI can swallow a CR that arrives while it is
+      // still redrawing after /clear (2026-08-27, s2 - the prompt sat unsent in the box).
+      // Enter on an empty composer is a no-op, so re-sending is free when the first one
+      // landed. Skipped the moment somebody starts typing - a retry CR must never submit
+      // a human's half-written line.
+      if (chunks.length > 1) {
+        const lastAt = chunkDelayMs(chunks.length - 1)
+        for (const extra of SUBMIT_RETRIES_MS) {
+          const t = setTimeout(() => {
+            const p = this.sessions.get(id)
+            if (!p) return acLog(`${id} submit retry skipped: pane gone`)
+            if (p.typed && p.typed.trim()) return acLog(`${id} submit retry skipped: somebody is typing`)
+            acLog(`${id} submit retry at +${extra}ms`)
+            this.write(id, '\r')
+          }, lastAt + extra)
+          t.unref?.()
+        }
+      }
     }, ask.seconds * 1000)
     timer.unref?.()
     this.autoClearTimers.set(id, timer)
