@@ -11,6 +11,7 @@ import type { MascotConfig } from './mascot'
 import type { TipsConfig } from './tips'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
+import type { AutoClearConfig } from './autoclear'
 import type { PaneTrustConfig } from './paneTrust'
 import type { ReclaimConfig } from './reclaim'
 import type { UsageReport } from './usage'
@@ -155,6 +156,23 @@ export interface Session {
   autoClearAt?: number
   autoClearPrompt?: string
   autoClearSteps?: string[]
+  /**
+   * The exact keystrokes the countdown will send, frozen when it was armed.
+   *
+   * Not recomputed when the timer fires: the command differs per CLI (`/new` in Codex),
+   * and re-deriving it at the last moment from a prompt string is how the app and the hook
+   * ended up with two copies of one contract. What was decided is what is typed.
+   */
+  autoClearChunks?: string[]
+  /**
+   * Nothing is open - this is context being freed, not work being carried on.
+   *
+   * The card says a different sentence for it, because "clearing and carrying on from its
+   * handoff" over an empty prompt is a promise the clear does not keep.
+   */
+  autoClearNoResume?: boolean
+  /** Roughly how much context the clear frees, when a watcher measured it. */
+  autoClearTokens?: number
   /** swarm role label ("Planner"), shown on the pane header when set */
   role?: string
   /**
@@ -1559,6 +1577,14 @@ export interface Config {
    * ladder: closing is what happens when there is nowhere to move a pane to.
    */
   autoHandoff?: AutoHandoffConfig
+  /**
+   * When a pane clears ITSELF for cost, and whether the app watches for it at all.
+   *
+   * Claude panes are decided by their own Stop hook, which knows the token count exactly.
+   * `watchNonClaude` is the codex/antigravity half, where nothing hooks the end of a turn
+   * and the size has to be read off the CLI's own files - see `main/autoclearWatch.ts`.
+   */
+  autoClear?: AutoClearConfig
 
   /**
    * Where a pane on somebody else's inference provider may be opened, and whether it is

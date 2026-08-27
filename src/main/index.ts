@@ -95,7 +95,8 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
-import { readAsk as readAutoClearAsk } from '../shared/autoclear'
+import { clearCommandFor, readAsk as readAutoClearAsk } from '../shared/autoclear'
+import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -2106,7 +2107,18 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
-  return manager.armAutoClear(ask.paneId, ask)
+  // The hook says WHAT to type, this end says how this CLI spells "start again" - the same
+  // ask from a codex pane has to send `/new`.
+  //
+  // An agent we cannot name is REFUSED here, never defaulted to `/clear`. Defaulting is
+  // tempting - only Claude Code has a Stop hook, so only claude panes should ever ask - but
+  // the phone server relays this same channel, which makes the paneId data from outside
+  // that can name any pane on the desk. `/clear` typed into a CLI with no such command is
+  // a prompt sent to a model. Same invariant as the watcher, in the one other place that
+  // can type into a pane nobody is watching.
+  const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent)
+  if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
+  return manager.armAutoClear(ask.paneId, { ...ask, command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 // The renderer runs from file:// in production, which is not a secure context, so
@@ -3433,6 +3445,10 @@ app.whenReady().then(() => {
   // left open in the background held every deferred restart forever.
   setFocusProbe(() => !!win && !win.isDestroyed() && win.isVisible() && win.isFocused())
   startGameWatch(cfg)
+  // The other half of autoclear: the CLIs with no Stop hook of their own. Also the moment
+  // the antigravity statusline tee is put in place, which is a no-op unless that CLI is
+  // installed here. See autoclearWatch.ts.
+  startAutoClearWatch(manager)
   createWindow()
   applyVoiceHotkey(cfg)
   applyClipboardShelf(cfg)
@@ -3636,6 +3652,7 @@ app.on('will-quit', () => {
   presence.dispose()
   stopPressure()
   stopAway()
+  stopAutoClearWatch()
   stopUsage()
   // The history is saved on a debounce now that the write is async; a copy made in the
   // last second of the app's life would otherwise never reach disk.

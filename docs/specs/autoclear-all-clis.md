@@ -105,3 +105,33 @@ belt-and-braces for claude panes whose Stop hook is not installed)
 - Do not release/bump version — commit only (`.lanes.json` release policy is merge; Robert
   tests in dev window first).
 - Do not type into any live pane while testing.
+
+## ADDENDUM 2026-08-27 (live incident, fix in the same build)
+
+Incident: pane s2 (clients), ask queued 06:40:40Z, countdown toast shown, timer reached zero,
+NO chunks were ever written to the pty (transcript proves no `/clear`/resume row 06:40→06:42).
+The expiry timer in `armAutoClear` has three silent exits and stdout-only logging, so the
+branch cannot be proven after the fact. Fix all four:
+
+1. **Durable log.** Every autoclear decision in sessions.ts (arm, queue, refuse, countdown
+   start, expiry, each drop reason, each chunk write, and the `autoClearAt !== at` guard)
+   appends one line to `<userData>/autoclear-app.log` (reuse an existing app log helper if
+   there is one; otherwise a tiny appendFile with timestamp, never throwing). console.info
+   stays, the file is the record.
+2. **No silent returns.** The `live.meta.autoClearAt !== at` guard must log what it saw
+   (expected at, actual meta value) AND clean up: if meta.autoClearAt is stale/unowned,
+   delete it + emitSessions so the toast cannot sit at 0:00 forever — that frozen-at-zero
+   toast is exactly what Robert watched.
+3. **Toast shows the outcome.** When a countdown stands down (any DropReason) or fires, the
+   renderer toast must show a short outcome state ("cleared", or "stood down — <reason>")
+   for ~5s instead of silently vanishing or freezing at zero. AutoClearToast.tsx is already
+   in your diff.
+4. **Expiry hardening.** At expiry, re-arm instead of dying: for drop reasons 'asked' and
+   'drafting' the countdown cancels (correct) but must ALSO notify the Stop-hook side by
+   touching nothing — the hook's ARM_RETRY_MS re-ask already covers retry — so just log +
+   toast. Add a test in scripts/autoclear-test.mjs covering: (a) the guard-mismatch path
+   cleans up meta, (b) expiry with a clean pane writes exactly the chunks, (c) expiry with
+   'drafting' stands down with a logged reason.
+
+Verify additionally: run the new test file green, and grep your built code to confirm the
+log file path is under userData and writes are wrapped in try/catch.
