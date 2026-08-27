@@ -20,7 +20,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, DRAFT_RETRY_MS, SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -1592,7 +1592,10 @@ export class SessionManager extends EventEmitter {
     if (ask.noResume) s.meta.autoClearNoResume = true
     if (ask.tokens) s.meta.autoClearTokens = ask.tokens
     acLog(`${id} armed: fires at ${new Date(at).toISOString()} (${ask.seconds}s, ${JSON.stringify(s.meta.autoClearChunks[0])})`)
-    const timer = setTimeout(() => {
+    // The timer body is a named function rather than an inline closure because it can now
+    // re-arm ITSELF: an unsent line in the box makes the clear wait instead of standing
+    // down, and waiting means another timer against a deadline that has moved on.
+    const fire = (armedAt: number): void => {
       this.autoClearTimers.delete(id)
       const live = this.sessions.get(id)
       // Asked again at the last moment: the pane may have started a turn during the
@@ -1607,14 +1610,27 @@ export class SessionManager extends EventEmitter {
       const verdict = expiryDecision({
         exists: !!live,
         metaAt: live?.meta.autoClearAt,
-        armedAt: at,
+        armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone'
       })
       acLog(
-        `${id} expiry: ${verdict} (armed ${at}, meta ${live?.meta.autoClearAt ?? 'none'})`
+        `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
       )
       if (verdict === 'vanished' || verdict === 'foreign') return
+      // Held off, not stood down. The card stays up and keeps its button; only the moment
+      // moves. The meta's deadline moves WITH it, or the toast freezes at 0:00 - which is
+      // the exact shape of the s2 incident this file already carries a note about.
+      if (verdict === 'wait') {
+        const next = Date.now() + DRAFT_RETRY_MS
+        live!.meta.autoClearAt = next
+        acLog(`${id} waiting: ${dropWords('drafting')} - asking again at ${new Date(next).toISOString()}`)
+        this.emitSessions()
+        const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
+        again.unref?.()
+        this.autoClearTimers.set(id, again)
+        return
+      }
       if (verdict === 'stale') {
         // Meta left behind by an arm this timer no longer owns, with no live countdown
         // to clean it - exactly the state that froze the toast at 0:00. Clean it up.
@@ -1623,7 +1639,10 @@ export class SessionManager extends EventEmitter {
         this.emitSessions()
         return
       }
-      if (verdict !== 'fire') return this.cancelAutoClear(id, verdict)
+      if (verdict !== 'fire') {
+        this.cancelAutoClear(id, verdict)
+        return
+      }
       const chunks = live!.meta.autoClearChunks ?? clearChunks(live!.meta.autoClearPrompt ?? '')
       this.clearAutoClearMeta(live!)
       this.setAutoClearOutcome(id, 'cleared')
@@ -1665,7 +1684,8 @@ export class SessionManager extends EventEmitter {
           t.unref?.()
         }
       }
-    }, ask.seconds * 1000)
+    }
+    const timer = setTimeout(() => fire(at), ask.seconds * 1000)
     timer.unref?.()
     this.autoClearTimers.set(id, timer)
     this.emitSessions()

@@ -3662,6 +3662,36 @@ export default function App(): JSX.Element {
     return () => ticks.forEach((t) => window.clearTimeout(t))
   }, [closeSoon])
 
+  /**
+   * The same thing for the countdown in front of an automatic /clear.
+   *
+   * That card is drawn in a corner of a window that is regularly behind something else,
+   * and the whole point of it is the button underneath - so a countdown nobody hears is a
+   * countdown nobody stops. Robert, 2026-08-27: "make sure sound effects come and
+   * countdown you can actually hear it".
+   *
+   * Same shape as the sweep's countdown above: `playAction` once when it arms, then a tick
+   * a second through the last ten. Ten rather than five because this clock is fifteen
+   * seconds by default, and five would put the first sound past the two-thirds mark of the
+   * thing it is announcing. Nothing at all before the last ten, or a wait somebody set to
+   * five minutes in Settings becomes a metronome.
+   */
+  const clearSoonAt = sessions.reduce(
+    (min, s) => (s.autoClearAt && (!min || s.autoClearAt < min) ? s.autoClearAt : min),
+    0
+  )
+  useEffect(() => {
+    if (!clearSoonAt) return
+    if (!soundOn.current) return
+    playAction('move', soundSet.current)
+    const ticks: number[] = []
+    for (let left = 10; left >= 1; left--) {
+      const at = clearSoonAt - left * 1000 - Date.now()
+      if (at > 0) ticks.push(window.setTimeout(() => playTick(soundSet.current), at))
+    }
+    return () => ticks.forEach((t) => window.clearTimeout(t))
+  }, [clearSoonAt])
+
   useEffect(() => {
     if (!closeSoon) return
     const t = window.setTimeout(
