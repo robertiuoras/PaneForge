@@ -2189,14 +2189,18 @@ export default function App(): JSX.Element {
      *
      * The bytes are still in main (`main/history.ts` keeps every pane's raw output), and
      * `redrawHistory` is the path that re-renders a pane from them - so a pane that grows
-     * back is re-rendered rather than merely permitted to be tall. It resets the terminal
-     * and scrolls to the bottom, so the focused pane is left alone: it is never trimmed in
-     * the first place, and a person reading it must not have it repainted under them.
+     * back is re-rendered rather than merely permitted to be tall.
+     *
+     * The focused pane is in this list too, and skipping it was the other half of the same
+     * bug. A focused pane is never trimmed, so it can only be HERE if its lines were
+     * deleted while it was in the background - which is exactly the pane somebody has just
+     * switched to and is about to scroll up in. Measured 2026-08-28 on this desk: load
+     * 2.51-3.17 per core pins `assess` at `over` for hours, so every unfocused pane sits
+     * at TRIMMED_SCROLLBACK, and the pane you switch to got its option back and none of
+     * its lines. Nothing is repainted under a reader by this: the redraw runs on the
+     * transition, and a pane already at full depth never appears in `regrown` again.
      */
-    for (const id of regrown) {
-      if (id === activeId) continue
-      void paneRedraw.get(id)?.()
-    }
+    for (const id of regrown) void paneRedraw.get(id)?.()
     if (applied) {
       console.info(
         `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB` +
