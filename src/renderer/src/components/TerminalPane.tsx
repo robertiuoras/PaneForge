@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -433,9 +434,10 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
   return t.cols !== cols || t.rows !== rows
 }
 
-/** A mirror asks for its grid at most this often, and this many times per target. */
-const BORROW_EVERY_MS = 1200
-const BORROW_TRIES = 6
+/**
+ * How often a mirror may ask for its grid, and how many different asks a storm is worth.
+ * The rules and the measurement are in `shared/borrowAsk.ts`.
+ */
 
 /**
  * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
@@ -502,8 +504,10 @@ function mirrorFit(
   if (ask && d && d.cols > 0 && d.rows > 0) {
     // The grid to ask for is the one that fits at the USER's font, so the answer arrives
     // and needs no shrinking at all - converted with the font `d` was measured at.
+    // Unconditional: whether this is worth asking for is `shouldAsk`'s question, and
+    // asking it in two places is how a one-cell wobble got past the guard.
     const want = borrowGrid({ fitCols: d.cols, fitRows: d.rows, font: current, maxFont })
-    if (want.cols !== mirror.cols || want.rows !== mirror.rows) ask(want.cols, want.rows)
+    ask(want.cols, want.rows)
   }
   t.resize(Math.max(20, mirror.cols), Math.max(5, mirror.rows))
 
@@ -843,21 +847,24 @@ function TerminalPane({
   /**
    * The last grid this mirror asked the host for.
    *
-   * A request that is never applied - an older build over there, a pane whose size
-   * something else owns - must not become a request per animation frame for ever, so
-   * the same target is asked at most `BORROW_TRIES` times and never faster than
-   * `BORROW_EVERY_MS`. A DIFFERENT target (this window was resized) starts again.
+   * A request that is never applied - an older build over there, a pane whose size a
+   * second viewer owns - must not become a request per animation frame for ever, and a
+   * target that WOBBLES by a cell must not read as a new request each time. Both rules
+   * and the measurement behind them are in `shared/borrowAsk.ts`.
    */
-  const borrowRef = useRef<{ cols: number; rows: number; at: number; tries: number } | null>(null)
+  const borrowRef = useRef<BorrowAsk | null>(null)
   const askBorrow = (cols: number, rows: number): void => {
-    const now = Date.now()
-    const b = borrowRef.current
-    if (b && b.cols === cols && b.rows === rows) {
-      if (b.tries >= BORROW_TRIES || now - b.at < BORROW_EVERY_MS) return
-      b.tries += 1
-      b.at = now
-    } else borrowRef.current = { cols, rows, at: now, tries: 1 }
-    api.resize(sessionId, cols, rows, true)
+    const m = mirrorRef.current
+    const out = shouldAsk({
+      cols,
+      rows,
+      hostCols: m?.cols ?? 0,
+      hostRows: m?.rows ?? 0,
+      now: Date.now(),
+      state: borrowRef.current
+    })
+    borrowRef.current = out.state
+    if (out.ask) api.resize(sessionId, cols, rows, true)
   }
   // Same reason as the font: the terminal is built once per session, and changing the
   // theme must not tear down a running agent's scrollback to recolour its background.

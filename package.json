@@ -173,6 +173,7 @@
     "test:phone": "node scripts/phone-test.mjs",
     "test:passkey": "node scripts/passkey-test.mjs",
     "test:panesize": "node scripts/pane-size-test.mjs",
+    "test:borrowask": "node scripts/borrowask-test.mjs",
     "test:linkstate": "node scripts/link-state-test.mjs",
     "test:capacity": "node scripts/capacity-test.mjs",
     "test:tunnel": "node scripts/tunnel-test.mjs",

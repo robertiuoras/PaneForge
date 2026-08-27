@@ -1545,9 +1545,15 @@ export default function App(): JSX.Element {
         try {
           await api.startRemote(target.device, { ...req, cwd: target.cwd })
           sent.push(target.deviceName)
-        } catch {
+        } catch (e) {
           // The remote start is the one that may fail for reasons this machine cannot see.
-          // Falling back to local is always safe: it is what would have happened anyway.
+          // Falling back to local is always safe: it is what would have happened anyway -
+          // but it must SAY so. The far end refuses an agent it has never heard of (an
+          // older build over there), and silently opening a different agent here is how a
+          // pane asked to run Antigravity came back running Claude Code with nothing on
+          // screen to explain it.
+          const why = String((e as Error)?.message ?? '').replace(/^Error:\s*/, '')
+          if (why) flash(`${target.deviceName}: ${why} Opening it here instead.`)
           local.push(req)
         }
       }
