@@ -314,6 +314,45 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('and the pressure sweep refuses it too', !reclaimPlan([withJob, noJob], CRITICAL, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'mon'))
 }
 
+// ...and the same thing for what an AGENT pane left running, which is a different reading
+// again (`shared/paneBackJobs.ts`, off the usage sampler's process table). `job` refuses to
+// speak about an agent pane at all, so a `run_in_background` build, a Monitor loop or an
+// `npm run build` an agent started went completely unseen here: the turn ends, the footer
+// stops, `engaged` drops, the card reads finished, and the ladder closed the pane on top of
+// work that was still going. Robert, 2026-08-27: "it shouldnt close or clear mid build".
+{
+  const CLOCKED = { ...DEFAULT_RECLAIM, idleCloseMinutes: IDLE_CLOSE_MINUTES }
+  const HOURS = 5 * 60 * 60 * 1000
+  const building = pane({
+    id: 'build',
+    job: null,
+    backJob: 'npm run build',
+    busy: false,
+    lastKeyboard: NOW - HOURS
+  })
+  const done = pane({ id: 'done', job: null, backJob: null, busy: false, lastKeyboard: NOW - HOURS })
+
+  eq('a background job an agent started refuses the clock', idleCloseAt(building, CLOCKED, NOW), null)
+  check(
+    '...and the idle sweep leaves it alone',
+    !idleClosePlan([building, done], CLOCKED, NOW).some((r) => r.id === 'build')
+  )
+  // The control, exactly as above: without it that same pane closes.
+  check(
+    'control - the same pane with nothing running is closed',
+    idleClosePlan([building, done], CLOCKED, NOW).some((r) => r.id === 'done')
+  )
+  const CRIT = { level: 'critical', mb: 0, panes: 0 }
+  check(
+    'and the pressure sweep refuses it too',
+    !reclaimPlan([building, done], CRIT, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'build')
+  )
+  check(
+    'control - pressure still closes the finished one',
+    reclaimPlan([building, done], CRIT, DEFAULT_RECLAIM, NOW).some((r) => r.id === 'done')
+  )
+}
+
 // Looking at a pane is USING it, and this is the bug that made the whole clock read as
 // broken: `quietSince` counted from the last keystroke while the pane sat focused on
 // screen, so a pane read for ten minutes was already past its five-minute deadline the

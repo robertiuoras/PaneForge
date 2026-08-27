@@ -185,7 +185,7 @@ import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
-import { trackUsage } from './usage'
+import { backJobOf, trackUsage } from './usage'
 import { agentsMidTurn, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
@@ -2126,6 +2126,11 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // can type into a pane nobody is watching.
   const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent)
   if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
+  // A pane that left work running in the background reads as finished from every other
+  // angle - the turn ended, the footer stopped, `engaged` dropped - and clearing it
+  // restarts the CLI on top of a build that is still going. The hook asks again later.
+  const job = backJobOf(ask.paneId)
+  if (job) return { ok: false, reason: `that pane is still running ${job}` }
   return manager.armAutoClear(ask.paneId, { ...ask, command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))

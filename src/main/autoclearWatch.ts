@@ -34,6 +34,7 @@ import {
   watchDecision,
   type AutoClearConfig
 } from '../shared/autoclear'
+import { backJobOf } from './usage'
 import type { Session } from '../shared/types'
 import { ensureAntigravityBridge, PF_CONTEXT_FILE, antigravityDir } from './antigravityBridge'
 import { getConfig } from './config'
@@ -301,6 +302,11 @@ function tick(): void {
     // panes should not walk ~/.codex/sessions four times a minute to be told no.
     if (pane.status !== 'idle') continue
     if (pane.autoClearAt) continue
+    // An agent pane that kicked off a build, a Monitor loop or a `run_in_background` shell
+    // goes quiet the moment its turn ends: the footer stops, `engaged` drops, the card
+    // reads finished - and clearing it now restarts the CLI on top of work that is still
+    // going. `shared/paneBackJobs.ts` is the only reading that can see it.
+    if (backJobOf(pane.id)) continue
     const tokens =
       pane.agent === 'codex'
         ? codexContextTokens(pane.cwd, pane.openedAt ?? pane.createdAt)
