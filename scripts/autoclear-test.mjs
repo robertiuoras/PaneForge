@@ -308,7 +308,11 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
     const a = await ensureBridge(copyDir)
     const text = readFileSync(join(copyDir, 'statusline.sh'), 'utf8')
     const b = await ensureBridge(copyDir)
-    ok('the real hook takes the tee', a.changed === true)
+    // `changed` is false when the file ALREADY carries the tee, which is the normal state
+    // of this machine's own statusline once the bridge has run - the check is that the
+    // copy ends up teed exactly once, not that this particular call did the teeing.
+    const marks = (text.match(/>>> paneforge autoclear bridge >>>/g) ?? []).length
+    ok('the real hook carries the tee, once', marks === 1, `changed=${a.changed} marks=${marks}`)
     ok('and does not take it twice', b.changed === false && readFileSync(join(copyDir, 'statusline.sh'), 'utf8') === text)
     ok('the tee is above the original script', text.indexOf('paneforge autoclear bridge') < text.indexOf('locate jq'))
   }
