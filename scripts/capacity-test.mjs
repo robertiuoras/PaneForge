@@ -165,6 +165,32 @@ ok('restored to the full depth', restore.every((t) => t.scrollback === FULL_SCRO
 ok('the focused pane is restored too', at(restore, 'focused')?.scrollback === FULL_SCROLLBACK)
 ok('nothing to restore is still a no-op', trimPlan(panes, assess(machine({ localPanes: 3 }))).length === 0)
 
+// A plan carries TWO depths whenever there is pressure - the focused pane goes back to
+// full in the same pass that trims the rest - so one number for the whole desk could never
+// describe what had been applied. The caller wrote back whichever depth came last, and
+// every later plan compared every pane against it: panes already at that depth were
+// skipped, and the ones that were not never grew back.
+{
+  const mixed = [
+    { id: 'focused', focused: true, visible: true, current: TRIMMED_SCROLLBACK },
+    { id: 'offscreen', focused: false, visible: false, current: FULL_SCROLLBACK }
+  ]
+  const plan = trimPlan(mixed, crit)
+  ok('the focused pane is restored', at(plan, 'focused')?.scrollback === FULL_SCROLLBACK)
+  ok('...in the same plan that trims the other one', at(plan, 'offscreen')?.scrollback === TRIMMED_SCROLLBACK)
+
+  // The control this whole change exists for: with the desk healthy again, a pane that is
+  // ALREADY full is not re-listed, and the one still short is.
+  const back = trimPlan(
+    [
+      { id: 'short', focused: false, visible: false, current: TRIMMED_SCROLLBACK },
+      { id: 'tall', focused: false, visible: false, current: FULL_SCROLLBACK }
+    ],
+    assess(machine({ localPanes: 3 }))
+  )
+  ok('only the pane that is short is restored', back.length === 1 && back[0].id === 'short')
+}
+
 // A trim that frees nothing worth having should be visible as such.
 ok('the saving is reported in MB', savingMb(critPlan) === Math.round(2 * (18000 / 1000) * BUFFER_MB_PER_1K),
   `got ${savingMb(critPlan)}`)

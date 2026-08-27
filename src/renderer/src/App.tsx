@@ -212,7 +212,9 @@ function reclaimPaneOf(
   s: Session,
   activeId: string | null,
   lastFocus?: number,
-  pinned?: boolean
+  pinned?: boolean,
+  /** what the sampler saw this pane still running, when it has an answer */
+  backJob?: string | null
 ): ReclaimPane {
   return {
     id: s.id,
@@ -232,6 +234,10 @@ function reclaimPaneOf(
     // ...and the job itself, which is set by a different reading than `runSince` is. See
     // `ReclaimPane.job`: a BACKGROUND command is exactly the case the run clock missed.
     job: s.job ?? null,
+    // ...and what the AGENT left running in the background, which no other reading here
+    // can see: the turn ended, so `busy` is false and `job` refuses to speak about an
+    // agent pane at all. See `ReclaimPane.backJob`.
+    backJob: backJob ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -2084,30 +2090,61 @@ export default function App(): JSX.Element {
     return api.onUsage(setUsage)
   }, [])
 
-  const depthRef = useRef(FULL_SCROLLBACK)
+  /**
+   * The depth each pane is on, BY PANE.
+   *
+   * One number for the whole desk could not describe a plan that carries two of them, and
+   * every plan under pressure does: the focused pane is restored in the same pass that
+   * trims the rest. See `PaneRef.current`.
+   */
+  const depths = useRef(new Map<string, number>())
   useEffect(() => {
     if (!capacity) return
     const refs = sessions.map((s) => ({
       id: s.id,
       focused: s.id === activeId,
-      visible: visibleIds.has(s.id)
+      visible: visibleIds.has(s.id),
+      current: depths.current.get(s.id) ?? FULL_SCROLLBACK
     }))
-    const trims = trimPlan(refs, capacity, depthRef.current)
+    for (const id of depths.current.keys()) if (!sessions.some((s) => s.id === id)) depths.current.delete(id)
+    const trims = trimPlan(refs, capacity)
     if (!trims.length) return
     let applied = 0
+    const regrown: string[] = []
     for (const t of trims) {
       const term = paneTerms.get(t.id)
       // A pane whose terminal has not been created yet gets the depth when it is: the
       // constructor reads the same FULL_SCROLLBACK, and the next change re-plans anyway.
       if (!term) continue
+      const was = depths.current.get(t.id) ?? FULL_SCROLLBACK
       term.options.scrollback = t.scrollback
+      depths.current.set(t.id, t.scrollback)
+      if (t.scrollback > was) regrown.push(t.id)
       applied++
     }
-    // One depth for all trimmed panes, so the next plan can tell what it is undoing.
-    depthRef.current = trims[trims.length - 1].scrollback
+    /**
+     * Raising the number back does NOT bring the lines back.
+     *
+     * Measured against a real headless xterm, 501 lines at depth 20000: lowering the option
+     * to 200 leaves 210 lines and the first one reads `line 291`, and putting 20000 back
+     * leaves the buffer exactly as short. xterm DISCARDS on the way down, so a trim is not
+     * a cap - it is a delete, and this ladder was doing it to every pane nobody was looking
+     * at. Robert, 2026-08-27: "i cant scroll up and see the history of the chat".
+     *
+     * The bytes are still in main (`main/history.ts` keeps every pane's raw output), and
+     * `redrawHistory` is the path that re-renders a pane from them - so a pane that grows
+     * back is re-rendered rather than merely permitted to be tall. It resets the terminal
+     * and scrolls to the bottom, so the focused pane is left alone: it is never trimmed in
+     * the first place, and a person reading it must not have it repainted under them.
+     */
+    for (const id of regrown) {
+      if (id === activeId) continue
+      void paneRedraw.get(id)?.()
+    }
     if (applied) {
       console.info(
-        `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB`
+        `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB` +
+          (regrown.length ? `, ${regrown.length} re-rendered from history` : '')
       )
     }
   }, [capacity, sessions, activeId, visibleIds])
@@ -2189,7 +2226,10 @@ export default function App(): JSX.Element {
         cpuPct: usageRef.current?.panes[s.id]?.cpuPct ?? undefined,
         // A shell pane's live command (`shared/paneJob.ts`): a dev server that has just
         // started holds nothing yet and is still the pane worth moving.
-        job: s.job
+        job: s.job,
+        // ...and what an agent left running, which is the opposite: never move it, because
+        // the move kills the pty and the work with it. See `AutoPane.backJob`.
+        backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label
       })),
     []
   )
@@ -2397,7 +2437,13 @@ export default function App(): JSX.Element {
     const sweep = (): void => {
       const plan = idleClosePlan(
         sessionsRef.current.map((s) =>
-          reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id], pinnedRef.current[s.id])
+          reclaimPaneOf(
+            s,
+            activeRef.current,
+            focusLeftAt.current[s.id],
+            pinnedRef.current[s.id],
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+          )
         ),
         cfg,
         // Frozen while nobody is at this machine: the clock counts time a person could
@@ -2741,10 +2787,8 @@ export default function App(): JSX.Element {
         e.preventDefault()
         movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
       } else if (k === 'f' && e.shiftKey) {
-        // Shift for the whole Fleet, plain for find inside one pane: same letter, and the
-        // difference between them is the difference between one pane and all of them.
-        e.preventDefault()
-        setByState((v) => !v)
+        // Fleet is always grouped by state; this shortcut is no longer needed.
+        // Shift is reserved in case we need to add another fleet-level command in the future.
       } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
@@ -2858,14 +2902,6 @@ export default function App(): JSX.Element {
 
     out.push(
       { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
-      {
-        id: 'fleet',
-        group: 'Actions',
-        title: 'Sort the sessions list by who needs you',
-        hint: 'or leave it in the order you dragged it into',
-        keys: 'Ctrl Shift F',
-        run: () => setByState((v) => !v)
-      },
       {
         id: 'changes',
         group: 'Actions',
@@ -3719,7 +3755,13 @@ export default function App(): JSX.Element {
         if (s.remote) continue
         live.add(s.id)
         const due = idleCloseAt(
-          reclaimPaneOf(s, activeId, focusLeftAt.current[s.id], pinned[s.id]),
+          reclaimPaneOf(
+            s,
+            activeId,
+            focusLeftAt.current[s.id],
+            pinned[s.id],
+            usage?.panes[s.id]?.jobs?.[0]?.label
+          ),
           cfg,
           now
         )
@@ -3856,27 +3898,14 @@ export default function App(): JSX.Element {
    * Whether the list is grouped by who needs a person, or left in the order it was
    * dragged into.
    *
-   * Grouped is the default, and is what replaced the Fleet dialog: the whole point of
-   * that screen was "sorted by whoever needs you first", and it was a screen you had to
-   * remember to open. The arranged order is still one press away (Ctrl Shift F) for a
-   * desk somebody has deliberately laid out. Kept in this window rather than in
-   * config.json - it is a view, not a setting, and two machines have no reason to agree
-   * about it.
+   * Grouped by state is the only view. Sessions are always organized by who needs you
+   * first (Your move), then active work (Running), ready-to-use panes (Ready), and
+   * finished ones (Ended). This replaced the Fleet dialog and the toggle between views.
+   * Kept in this window rather than in config.json - it is a view, not a setting, and
+   * two machines have no reason to agree about how to display the same panes.
    */
-  const [byState, setByState] = useState(() => {
-    try {
-      return window.localStorage.getItem('pf.listByState') !== 'off'
-    } catch {
-      return true
-    }
-  })
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('pf.listByState', byState ? 'on' : 'off')
-    } catch {
-      /* a window with site data blocked still sorts; it just forgets between launches */
-    }
-  }, [byState])
+  // Sessions are always grouped by state; the toggle is removed in favor of permanent grouping.
+  const byState = true
 
   /**
    * Every pane on the desk, this machine's and every paired machine's, as one list.
@@ -4479,25 +4508,18 @@ export default function App(): JSX.Element {
             fourth would not have fitted at all; a fixed-width row has room to grow and
             reads faster once you know it. Every one keeps its full sentence on hover. */}
         <div className="quick">
-          {/* First in the row because it is the one that can be UNREAD: the others open
-              something you went looking for, this one tells you something arrived. */}
-          <button
-            className={'ghost quick-btn' + (needsYou ? ' live' : '') + (byState ? ' on' : '')}
+          {/* Sessions are always grouped by state, so the fleet icon shows waiting panes. */}
+          <span
+            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
             title={
               (needsYou
                 ? `${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you. `
-                : '') +
-              keyLabel(
-                byState
-                  ? 'The list is sorted by who needs you first. Press to put it back in the order you arranged (Ctrl Shift F)'
-                  : 'The list is in the order you arranged. Press to sort it by who needs you first (Ctrl Shift F)'
-              )
+                : '') + 'Sessions are grouped by state in the list below.'
             }
-            onClick={() => setByState((v) => !v)}
           >
             <FleetIcon />
             {needsYou > 0 && <span className="quick-dot" />}
-          </button>
+          </span>
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}

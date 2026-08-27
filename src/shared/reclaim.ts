@@ -93,12 +93,27 @@ export interface ReclaimConfig {
    * and read off the SAVED config for the same reason.
    */
   defaultsV2?: boolean
+  /**
+   * The same one-shot, for the switch dropping from thirty minutes to ten.
+   *
+   * A changed default cannot reach an existing desk on its own - `defaults()` is WRITTEN to
+   * config.json at first launch, so every machine already carries the old number as if
+   * somebody had chosen it. This migration moves ONLY the old switch value (30). A zero is
+   * left alone: that is somebody having turned the clock off, and V2's licence to overwrite
+   * it was V2's, not this one's.
+   */
+  defaultsV3?: boolean
 }
 
 /**
  * What the Settings switch sets `idleCloseMinutes` to when it is turned on.
  *
- * Half an hour. It was two, on the reasoning that being early closes a pane somebody was
+ * Ten minutes. It was thirty, and before that two - the two was wrong for the reason below
+ * and the thirty was too slow for the desk it runs on: Robert, 2026-08-27, "the idle close
+ * is 30 minutes and i want 10". Ten still costs nothing when it is early.
+ *
+ * The original note stands, and is why being early is cheap: it was two, on the reasoning
+ * that being early closes a pane somebody was
  * coming back to - true, and it priced that at far more than it costs. A closed pane here
  * keeps its History row, its `resumeId` and its `scrollbackId`, so coming back to one is
  * a click that restores the conversation AND the screen; a pane held open for two hours
@@ -106,14 +121,15 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 30
+export const IDLE_CLOSE_MINUTES = 10
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
-  defaultsV2: true
+  defaultsV2: true,
+  defaultsV3: true
 }
 
 export interface ReclaimPane {
@@ -183,6 +199,19 @@ export interface ReclaimPane {
    * session 2, why is it trying to close it".
    */
   job?: string | null
+  /**
+   * Something the AGENT left running in the background: a `run_in_background` shell, a
+   * Monitor loop, a build (`shared/paneBackJobs.ts`).
+   *
+   * Separate from `job` on purpose. `job` is a SHELL pane's foreground command and also
+   * feeds `busyOnScreen`, where a false positive is a pane the sweep never closes and a
+   * clock that lies. This one feeds nothing but the refusals below, so being wrong costs a
+   * pane that stays open a little longer - and being right is the difference between a
+   * twenty-minute build finishing and being killed at minute three, which is what the
+   * ladder did before this: the turn ends, the CLI's footer goes quiet, `engaged` drops,
+   * the card reads finished, and the work is still going.
+   */
+  backJob?: string | null
   /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
@@ -260,6 +289,7 @@ export function reclaimPlan(
         !p.asking &&
         !p.busy &&
         !p.job &&
+        !p.backJob &&
         !p.pinned &&
         CLOSEABLE.has(p.state)
     )
@@ -350,6 +380,7 @@ function onTheClock(p: ReclaimPane): boolean {
     !p.asking &&
     !p.busy &&
     !p.job &&
+    !p.backJob &&
     !p.pinned &&
     CLOSEABLE.has(p.state)
   )

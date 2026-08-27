@@ -34,6 +34,7 @@ const TESTS = [
   ['autoclear', 'autoclear-test.mjs'],
   ['cwdgone', 'cwd-gone-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
+  ['trimloss', 'trim-loss-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],

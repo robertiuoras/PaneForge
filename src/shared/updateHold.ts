@@ -10,11 +10,35 @@
 // session shapes that actually occur - including the one that made a naive check wrong,
 // an exited pane whose `runSince` was never cleared.
 
-/** The two fields of a session this decision reads. Kept loose so a test can build one. */
+/** The fields of a session this decision reads. Kept loose so a test can build one. */
 export interface RunState {
   runSince?: number
   status: string
+  /** there is a conversation in this pane somebody may be in the middle of */
+  engaged?: boolean
+  /** epoch ms the pty last printed */
+  lastOutput?: number
+  /** epoch ms somebody last typed into it */
+  lastKeyboard?: number
 }
+
+/**
+ * How long a conversation has to have been quiet before a restart may take it.
+ *
+ * `agentsMidTurn` was the whole rule, and it is too narrow by exactly the case that
+ * happened: 2026-08-27 11:41:48, three panes open, one of them nine asks into a
+ * conversation and between turns. Nothing was mid-turn, so the automatic restart fired,
+ * every pty died, and the desk came back with the conversations resumed but the screens
+ * repainted from scratch - which reads as the app clearing a session nobody asked it to.
+ * The pane's own words on the way back were "why did you just clear without doing a
+ * handoff or anyhitng please fix this issue".
+ *
+ * A turn boundary is not a safe moment; it is the pause in the middle of somebody working.
+ * So an ENGAGED pane also holds the restart until it has been quiet this long, which is
+ * long enough that the desk is genuinely abandoned and short enough that an update still
+ * lands the same day. A pane with no conversation in it holds nothing.
+ */
+export const DESK_QUIET_MS = 10 * 60_000
 
 /**
  * How many panes have an agent in the middle of a turn.
@@ -26,6 +50,29 @@ export interface RunState {
  */
 export function agentsMidTurn(sessions: readonly RunState[]): number {
   return sessions.filter((s) => s.runSince && s.status !== 'exited').length
+}
+
+/**
+ * Panes an unprompted restart would interrupt: mid-turn, or in a conversation that is
+ * still warm.
+ *
+ * Deliberately NOT used by the clicked path. A person pressing Restart now has decided;
+ * this is the rule for the restart nobody asked for.
+ */
+export function deskBusy(
+  sessions: readonly RunState[],
+  now: number,
+  quietMs = DESK_QUIET_MS
+): number {
+  return sessions.filter((s) => {
+    if (s.status === 'exited') return false
+    if (s.runSince) return true
+    if (!s.engaged) return false
+    const seen = Math.max(s.lastOutput ?? 0, s.lastKeyboard ?? 0)
+    // No timestamps at all is not a licence to restart over it: an engaged pane the caller
+    // cannot date is treated as warm, because the expensive mistake is the other one.
+    return !seen || now - seen < quietMs
+  }).length
 }
 
 /** What a press of "Restart now" comes to. `wait` carries what the card has to name. */

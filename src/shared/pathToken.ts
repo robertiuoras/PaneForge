@@ -21,6 +21,16 @@ export interface PathToken {
   start: number
   /** 0-based index one past the last character */
   end: number
+  /**
+   * Shorter readings of the same run, longest first, for a candidate carrying spaces.
+   *
+   * A filename with spaces in it cannot be found by shape - `Sonia 21st Birthday V9.mp4`
+   * and a sentence about a file are the same characters - so the caller asks the DISK,
+   * longest first, and takes the first one that is really there. `text` is the longest
+   * reading; these are what to fall back to, ending with the plain no-spaces run that was
+   * the only thing this function used to return.
+   */
+  alts?: PathToken[]
 }
 
 /** A token split into the part that is a path and the `:line:col` an agent appended. */
@@ -101,6 +111,49 @@ export function looksLikePath(token: string): boolean {
 }
 
 /**
+ * How many words a spaced candidate may reach across.
+ *
+ * A real filename with spaces is a handful of words; a sentence is not. Eight covers
+ * `Sonia 21st Birthday final V9.mp4` twice over and keeps the number of disk questions a
+ * hover can ask bounded, which is the cost this constant actually controls.
+ */
+export const MAX_SPACE_WORDS = 8
+
+/** A run's final word carries a real-looking extension - the anchor a spaced path needs. */
+const ENDS_WITH_EXTENSION = /\.[A-Za-z][A-Za-z0-9]{0,7}$/
+
+/**
+ * Is this run - which contains spaces - worth asking the disk about?
+ *
+ * Deliberately weaker than `looksLikePath`, because with spaces allowed there is no shape
+ * left that separates a filename from prose. The one thing held onto is the extension at
+ * the END: a candidate has to finish on something that looks like a file, which is what
+ * stops every clause in a paragraph from becoming a question for the filesystem. Existence
+ * does the rest, exactly as it does for the no-spaces case.
+ */
+export function looksLikeSpacedPath(token: string): boolean {
+  if (token.length < 3) return false
+  if (URL_LIKE.test(token)) return false
+  if (/^-{1,2}[A-Za-z]/.test(token)) return false
+  if (!/[A-Za-z]/.test(token)) return false
+  const { path } = parsePathToken(token)
+  return ENDS_WITH_EXTENSION.test(path)
+}
+
+/** Strip the brackets and quotes an agent wrapped a run in, keeping the columns honest. */
+function trimRun(line: string, start: number, end: number): PathToken | null {
+  let text = line.slice(start, end)
+  const lead = LEADING.exec(text)
+  if (lead) {
+    start += lead[0].length
+    text = text.slice(lead[0].length)
+  }
+  const tail = TRAILING.exec(text)
+  if (tail) text = text.slice(0, text.length - tail[0].length)
+  return text ? { text, start, end: start + text.length } : null
+}
+
+/**
  * Every path-looking token in one line, left to right.
  *
  * Columns are indices into the string handed in. The caller decides what a column means -
@@ -108,22 +161,34 @@ export function looksLikePath(token: string): boolean {
  * than doing anything with them.
  */
 export function findPathTokens(line: string): PathToken[] {
-  const out: PathToken[] = []
+  const words: Array<{ start: number; end: number }> = []
   const runs = /\S+/g
   let m: RegExpExecArray | null
-  while ((m = runs.exec(line)) !== null) {
-    let start = m.index
-    let text = m[0]
+  while ((m = runs.exec(line)) !== null) words.push({ start: m.index, end: m.index + m[0].length })
 
-    const lead = LEADING.exec(text)
-    if (lead) {
-      start += lead[0].length
-      text = text.slice(lead[0].length)
+  const out: PathToken[] = []
+  for (let i = 0; i < words.length; i++) {
+    const readings: PathToken[] = []
+    // Longest first, so the caller's first confirmed answer is also the most complete one.
+    // Only SINGLE spaces are crossed: two or more is column padding in a table or a listing,
+    // never the inside of a filename, and crossing it would join two unrelated cells.
+    const last = Math.min(words.length - 1, i + MAX_SPACE_WORDS)
+    for (let j = last; j > i; j--) {
+      if (line.slice(words[i].end, words[j].start).match(/^(?: [^ ]+)* $/) === null) continue
+      // A separator may only appear in the FIRST word of a spaced candidate. That is the
+      // whole difference between `~/Work/Clients/Sonia/Sonia 21st Birthday V9.mp4`, where
+      // the folders are all in front, and `Wrote docs/proposals/thing.pdf`, where the word
+      // before the path is prose - without it every sentence containing a path becomes a
+      // second, longer candidate covering the words around it.
+      if (/[\\/]/.test(line.slice(words[i].end, words[j].end))) continue
+      const cand = trimRun(line, words[i].start, words[j].end)
+      if (cand && looksLikeSpacedPath(cand.text)) readings.push(cand)
     }
-    const tail = TRAILING.exec(text)
-    if (tail) text = text.slice(0, text.length - tail[0].length)
-
-    if (text && looksLikePath(text)) out.push({ text, start, end: start + text.length })
+    const base = trimRun(line, words[i].start, words[i].end)
+    if (base && looksLikePath(base.text)) readings.push(base)
+    if (!readings.length) continue
+    const [head, ...alts] = readings
+    out.push(alts.length ? { ...head, alts } : head)
   }
   return out
 }

@@ -154,6 +154,13 @@ saying "already working on it".
   `shared/pickRelease.ts` walks the list for the newest release whose assets include the one
   `assetFor` asks for; a list where nothing is installable reports "no update" rather than an
   error. `npm run test:pickrelease`.
+- **A restart nobody asked for waits for the DESK, not for the turn.** `agentsMidTurn` was
+  the whole rule and it is too narrow by one case: three panes open, one nine asks into a
+  conversation and BETWEEN turns, so the automatic restart fired and every pty died
+  (2026-08-27 11:41:48). `deskBusy` in `shared/updateHold.ts` also holds an ENGAGED pane
+  until it has been quiet `DESK_QUIET_MS` (10 min), and an engaged pane with no timestamps
+  counts as warm. The CLICKED restart is deliberately unchanged - somebody asked for it.
+  `npm run test:updatehold`.
 - **The recovery may not live inside the thing that can hang.** A transient phase carries
   `phaseAt`, and `busy()` — asked before every restart — drops one past its budget, whatever
   wedged it. `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min, `PROBE_BUDGET_MS` 5min, all
@@ -1394,6 +1401,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:recover` | finishing a turn the transport cut in half, and the refusals |
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
+| `npm run test:trimloss` | that lowering xterm's `scrollback` DELETES lines and raising it back restores none, which is why a trimmed pane is re-rendered from main's log |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
 | `npm run test:autohandoff` | moving a finished pane instead of closing it, and what the BUDGET rung may move at all (red-proofed) |
 | `npm run test:devlist` | what is serving now and which one a sentence names |

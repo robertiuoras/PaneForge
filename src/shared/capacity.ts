@@ -366,6 +366,16 @@ export interface PaneRef {
   focused: boolean
   /** Is it visible in the grid at all? Visible-but-unfocused is trimmed last. */
   visible: boolean
+  /**
+   * The depth this pane is on RIGHT NOW, when the caller tracks it per pane.
+   *
+   * One number for the whole desk was wrong the moment a plan carried two depths - which
+   * is every plan under pressure, since the focused pane is restored in the same pass that
+   * trims the rest. The caller then wrote back whichever depth happened to be last, and
+   * compared every pane against it next time: panes that were already at that depth were
+   * skipped, and panes that were not never got their scrollback back.
+   */
+  current?: number
 }
 
 export interface Trim {
@@ -384,20 +394,21 @@ export interface Trim {
  * Returns only the panes whose depth CHANGES, so the caller can skip a no-op.
  */
 export function trimPlan(panes: PaneRef[], v: Verdict, current = FULL_SCROLLBACK): Trim[] {
+  const depth = (p: PaneRef): number => p.current ?? current
   if (!v.trim) {
     // Restoring is part of the plan: pressure passes, and a pane that was trimmed while
     // the user was elsewhere must be allowed to grow back rather than staying short forever.
-    if (current >= FULL_SCROLLBACK) return []
-    return panes.map((p) => ({ id: p.id, scrollback: FULL_SCROLLBACK }))
+    const back = panes.filter((p) => depth(p) < FULL_SCROLLBACK)
+    return back.map((p) => ({ id: p.id, scrollback: FULL_SCROLLBACK }))
   }
   const out: Trim[] = []
   for (const p of panes) {
     if (p.focused) {
-      if (current < FULL_SCROLLBACK) out.push({ id: p.id, scrollback: FULL_SCROLLBACK })
+      if (depth(p) < FULL_SCROLLBACK) out.push({ id: p.id, scrollback: FULL_SCROLLBACK })
       continue
     }
     const target = p.visible && v.level !== 'over' ? FULL_SCROLLBACK : TRIMMED_SCROLLBACK
-    if (target !== current) out.push({ id: p.id, scrollback: target })
+    if (target !== depth(p)) out.push({ id: p.id, scrollback: target })
   }
   return out
 }

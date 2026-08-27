@@ -272,6 +272,23 @@ function watched(): boolean {
  * tick is dropped - two overlapping process-table reads cost twice as much and produce
  * one report.
  */
+/**
+ * What each pane was last seen still running, by pane id.
+ *
+ * The sampler already walks the process table every 4s for the memory chip, so this is the
+ * one reading in the app that knows an AGENT pane has a build going after its turn ended.
+ * Kept here as a plain map rather than threaded through the report, because the callers
+ * that need it - the autoclear watcher and the `autoclear:ask` channel - are in main and
+ * have no renderer report to read. Empty until the first sample, which reads as "nothing
+ * running": a refusal that has not measured anything yet must not block a clear for ever.
+ */
+const lastJobs = new Map<string, string | null>()
+
+/** The label of something this pane is still running, or null. */
+export function backJobOf(id: string): string | null {
+  return lastJobs.get(id) ?? null
+}
+
 export function trackUsage(
   roots: () => { id: string; pid: number }[],
   onReport: (r: UsageReport) => void
@@ -304,8 +321,11 @@ export function trackUsage(
       // `PaneUsage.jobs`), and only where the table carried the command lines it needs.
       for (const { id, pid } of live) {
         const pane = panes[id]
-        if (pane) pane.jobs = paneBackJobs(treeOf(rows, pid), pid)
+        if (!pane) continue
+        pane.jobs = paneBackJobs(treeOf(rows, pid), pid)
+        lastJobs.set(id, pane.jobs[0]?.label ?? null)
       }
+      for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)
       previous = cpuNow
       lastAt = at
       const own = appCost(mem)

@@ -186,8 +186,8 @@ import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
-import { trackUsage } from './usage'
-import { agentsMidTurn, decideInstall } from '../shared/updateHold'
+import { backJobOf, trackUsage } from './usage'
+import { agentsMidTurn, deskBusy, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -2127,6 +2127,11 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // can type into a pane nobody is watching.
   const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent)
   if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
+  // A pane that left work running in the background reads as finished from every other
+  // angle - the turn ended, the footer stopped, `engaged` dropped - and clearing it
+  // restarts the CLI on top of a build that is still going. The hook asks again later.
+  const job = backJobOf(ask.paneId)
+  if (job) return { ok: false, reason: `that pane is still running ${job}` }
   return manager.armAutoClear(ask.paneId, { ...ask, command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
@@ -2889,9 +2894,11 @@ function autoInstall(): void {
   }
   // The build stopped being installable while we waited - superseded, or already going.
   if (getUpdateState().phase !== 'ready') return
-  const running = agentsMidTurn(manager.list())
+  // `deskBusy`, not `agentsMidTurn`: a turn boundary is not a safe moment to take somebody's
+  // panes away, it is the pause in the middle of their work. See DESK_QUIET_MS.
+  const running = deskBusy(manager.list(), Date.now())
   if (running > 0) {
-    updateLog('install', `auto-restart held: ${running} agent(s) mid-turn - looking again in 60s`)
+    updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
     autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
     autoInstallTimer.unref?.()
     return
