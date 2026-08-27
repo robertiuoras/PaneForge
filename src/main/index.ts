@@ -3264,41 +3264,65 @@ function confidentRoute(text: string): string | undefined {
  */
 let restoredThisRun = false
 
+/**
+ * Space the restore out, in milliseconds, or 0 for the one tick this has always used.
+ *
+ * `scripts/boot-timing.mjs --stagger N` has set `PF_RESTORE_STAGGER_MS` since it was
+ * written and NOTHING read it, so every staggered run measured the unstaggered code and
+ * the two sets of numbers differed only by how loaded the machine was that minute. A
+ * knob that silently does nothing is worse than no knob: it produces evidence.
+ *
+ * It stays a measurement knob and not a setting - the default is unchanged, one tick -
+ * because whether spacing the starts helps is a question about THIS machine's cores and
+ * disk, and the honest answer is a number from `boot-timing`, not an opinion in here.
+ */
+function restoreStaggerMs(): number {
+  const n = Number(process.env.PF_RESTORE_STAGGER_MS)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 function restorePanes(specs: StartSessionRequest[]): void {
   // One restore per launch. A second answer from a dialog that somehow sent twice
   // would otherwise open every pane again beside the first set.
   if (restoredThisRun) return
   clearDesk()
   restoredThisRun = true
-  for (const req of specs.slice(0, MAX_RESTORE)) {
-    try {
-      // Reopen the conversation this pane was in BY NAME, or open nothing.
-      //
-      // The fallback that used to sit here - resume with no id, which is `--continue`,
-      // "the newest conversation in this folder" - is a pane adopting somebody else's
-      // work, because a lane worktree's project folder is a SYMLINK to the trunk's:
-      // `clients`, `clients-a`, `clients-b` and `clients-c` are one history in four
-      // names. Measured 2026-08-26 on this desk: pane 4 (`sonia`, clients-b) was written
-      // to disk with no resumeId, so the restart handed it `--continue`, which is the
-      // newest file across all four lanes - pane 1's (`pizzasrus`) conversation. Two
-      // panes then carried one chat under two names and both looked like they had been
-      // switched round. A pane whose transcript is gone comes back EMPTY, which is a
-      // thing the person can see, rather than silently inside another pane's work.
-      // A desk written BEFORE the claim rules learned to read a transcript's own folder
-      // can carry an id belonging to a sibling lane - this desk did, twice - so the saved
-      // id is checked the same way a fresh claim now is, not trusted for being saved.
-      const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
-      const named = Boolean(file && !heldElsewhere(file, req.cwd))
-      manager.start({
-        ...req,
-        resume: named,
-        resumeId: named ? req.resumeId : undefined,
-        prompt: undefined
-      })
-    } catch {
-      // Folder moved or the agent is no longer installed - skip that pane only.
+  const gap = restoreStaggerMs()
+  // Started in order whatever the gap is: a pane's number is its place in this list, so
+  // starting one out of turn renumbers the desk and every Ctrl+N with it.
+  specs.slice(0, MAX_RESTORE).forEach((req, i) => {
+    const open = (): void => {
+      try {
+        // Reopen the conversation this pane was in BY NAME, or open nothing.
+        //
+        // The fallback that used to sit here - resume with no id, which is `--continue`,
+        // "the newest conversation in this folder" - is a pane adopting somebody else's
+        // work, because a lane worktree's project folder is a SYMLINK to the trunk's:
+        // `clients`, `clients-a`, `clients-b` and `clients-c` are one history in four
+        // names. Measured 2026-08-26 on this desk: pane 4 (`sonia`, clients-b) was written
+        // to disk with no resumeId, so the restart handed it `--continue`, which is the
+        // newest file across all four lanes - pane 1's (`pizzasrus`) conversation. Two
+        // panes then carried one chat under two names and both looked like they had been
+        // switched round. A pane whose transcript is gone comes back EMPTY, which is a
+        // thing the person can see, rather than silently inside another pane's work.
+        // A desk written BEFORE the claim rules learned to read a transcript's own folder
+        // can carry an id belonging to a sibling lane - this desk did, twice - so the saved
+        // id is checked the same way a fresh claim now is, not trusted for being saved.
+        const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
+        const named = Boolean(file && !heldElsewhere(file, req.cwd))
+        manager.start({
+          ...req,
+          resume: named,
+          resumeId: named ? req.resumeId : undefined,
+          prompt: undefined
+        })
+      } catch {
+        // Folder moved or the agent is no longer installed - skip that pane only.
+      }
     }
-  }
+    if (gap) setTimeout(open, i * gap)
+    else open()
+  })
 }
 
 /**
