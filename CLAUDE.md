@@ -64,6 +64,12 @@ node scripts/lane.mjs status --repo <dir>      # who holds what
   still dropped - there is nothing left to merge - but `state.passed[id]` records why and
   `doctor` says it, because a silent drop and a successful merge look identical from
   outside. The note clears when that lane marks ready again.
+- **A lane that holds nothing is kept until it has been quiet for a day.** `SWEEP_GRACE_MS`
+  in `main/laneWork.ts` (24h, `PF_SWEEP_GRACE_MS` for tests, read at call time): a chat
+  between turns and a lane whose work has just been merged look identical to the sweep, so
+  the folder waits rather than vanishing under somebody. It arrived as a bare `Date.now()`
+  comparison with no name and no test and turned 12 sweep assertions red; the grace is now
+  pinned ON in `lane-sweep-test.mjs`, with the same lane past its grace as the control.
 - `npm run test:lanes` (which includes `visitor-park-test.mjs`) covers the engine, the
   worktree sweep, ownership, and the any-repo contract (a repo that never asked for releases must never cut a version).
 
