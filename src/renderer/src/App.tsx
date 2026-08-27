@@ -111,6 +111,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
+import { canSleep, sleepRefusal, sleepWords, type SleepPane } from '../../shared/sleep'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
@@ -202,6 +203,45 @@ function AskClock({ at }: { at: number }): React.JSX.Element | null {
 }
 
 /**
+ * The chip a sleeping pane wears where its clock would be, and the press that wakes it.
+ *
+ * Its own component for the reason every other clock here has one: the shared tick is
+ * subscribed to only while something is drawing a duration, and this one is drawn at a
+ * MINUTE - `sleepWords` says nothing finer, and a pane asleep overnight would otherwise
+ * wake the app 3600 times an hour to redraw the same string (see `shared/elapsed.ts`).
+ */
+function AsleepChip({ at, id }: { at: number; id: string }): React.ReactElement {
+  const now = useNow(60_000, at)
+  return (
+    <button
+      className="chip asleep"
+      title="Asleep: this pane's agent was stopped and its memory given back. Press to start it again in the same conversation - the screen is still here."
+      onClick={(e) => {
+        e.stopPropagation()
+        void api.wakeSession(id)
+      }}
+    >
+      {sleepWords(at, now)}
+    </button>
+  )
+}
+
+/** One pane as `shared/sleep.ts` reads it - see `reclaimPaneOf` for why this is shared. */
+function sleepPaneOf(s: Session, backJob?: string | null): SleepPane {
+  return {
+    status: s.status,
+    asleep: s.asleep,
+    mirror: !!s.remote,
+    busy: s.runSince !== undefined || s.status === 'working' || s.status === 'starting',
+    asking: !!s.ask,
+    job: s.job,
+    // The one refusal main cannot make for itself: this is a reading of the process
+    // table that rides on the usage sample, and the sampler lives on this side.
+    backJob: backJob ?? undefined
+  }
+}
+
+/**
  * One pane as the reclaim sweeps read it.
  *
  * Extracted so the sweep that CLOSES a pane and the chip that says when it will are built
@@ -246,7 +286,10 @@ function reclaimPaneOf(
     asking: !!s.ask,
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
-    pinned
+    pinned,
+    // A sleeping pane has already given its agent back and the card is the thing being
+    // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
+    asleep: s.asleep
   }
 }
 
@@ -2425,7 +2468,8 @@ export default function App(): JSX.Element {
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
-        pinned: pinnedRef.current[s.id]
+        pinned: pinnedRef.current[s.id],
+        asleep: s.asleep
       })),
       capacity,
       cfg,
@@ -4299,6 +4343,11 @@ export default function App(): JSX.Element {
                           moving
                         </span>
                       )
+                    ) : s.asleep ? (
+                      // Before the exited chip, and a BUTTON: a sleeping pane wears
+                      // `status: 'exited'` (see `Session.asleep`), and the one thing
+                      // anybody wants to do to it is the press that gives it back.
+                      <AsleepChip at={s.asleep} id={s.id} />
                     ) : s.status === 'exited' ? (
                       <span className="chip dead">exited {s.exitCode ?? ''}</span>
                     ) : s.runSince ? (
@@ -4965,7 +5014,9 @@ export default function App(): JSX.Element {
                   title={`Open for - since ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}. Not the turn, and a /clear does not reset it.`}
                 />
               )}
-              {s.status === 'exited' ? (
+              {s.asleep ? (
+                <AsleepChip at={s.asleep} id={s.id} />
+              ) : s.status === 'exited' ? (
                 <span className="chip dead">exited {s.exitCode ?? ''}</span>
               ) : s.runSince ? (
                 <Elapsed since={s.runSince} className="elapsed pt-clock" title="This turn" />
@@ -5648,6 +5699,28 @@ export default function App(): JSX.Element {
                 ,
                 run: () => togglePin(s.id)
               },
+              ...(local
+                ? [
+                    s.asleep
+                      ? {
+                          key: 'wake',
+                          label: 'Wake this pane',
+                          hint: 'start its agent again, in the same conversation',
+                          run: () => void api.wakeSession(s.id)
+                        }
+                      : {
+                          key: 'sleep',
+                          label: 'Sleep this pane',
+                          // The refusal is the hint, so a greyed row says which of the six
+                          // reasons it is - see `sleepRefusal`.
+                          hint:
+                            sleepRefusal(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)) ||
+                            'give the agent back, keep the card and the screen',
+                          disabled: !canSleep(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)),
+                          run: () => void api.sleepSession(s.id)
+                        }
+                  ]
+                : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
               ...(s.handoffQueuedAt

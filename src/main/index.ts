@@ -1209,6 +1209,16 @@ ipcMain.handle('sessions:restart', (_e, id: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'restart' }), null
   return manager.restart(id)
 })
+ipcMain.handle('sessions:sleep', (_e, id: string) => {
+  // A mirrored pane's pty is the other machine's, and sleeping it there is that desk's
+  // decision to make - `canSleep` refuses a mirror at the renderer end too.
+  if (remote.owns(id)) return null
+  return manager.sleep(id)
+})
+ipcMain.handle('sessions:wake', (_e, id: string) => {
+  if (remote.owns(id)) return null
+  return manager.wake(id)
+})
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'switch', agent, model }), null
   return manager.switchAgent(id, agent, model)

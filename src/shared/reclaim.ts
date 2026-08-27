@@ -242,6 +242,15 @@ export interface ReclaimPane {
    * say so rather than to overrule them.
    */
   pinned?: boolean
+  /**
+   * The pane is ASLEEP: its agent has already been given back and the card is what
+   * somebody is keeping (`shared/sleep.ts`).
+   *
+   * It arrives here wearing `state: 'exited'`, which is in `CLOSEABLE` - so without this
+   * both sweeps would close the very pane sleeping exists to keep, and buy nothing at all
+   * for it. There is no memory left in a sleeping pane to reclaim.
+   */
+  asleep?: number
 }
 
 /**
@@ -316,6 +325,7 @@ export function reclaimPlan(
         !p.job &&
         !p.backJob &&
         !p.pinned &&
+        !p.asleep &&
         CLOSEABLE.has(p.state)
     )
     .filter((p) => now - quietSince(p) >= minIdle)
@@ -413,6 +423,7 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     !p.job &&
     !p.backJob &&
     !p.pinned &&
+    !p.asleep &&
     CLOSEABLE.has(p.state)
   )
 }

@@ -142,6 +142,10 @@ const GATED_INVOKE = new Set([
   'sessions:restart',
   'sessions:switchAgent',
   'sessions:kill',
+  // Sleeping ends a real process and waking SPAWNS one - the same class as `kill` and
+  // `start`, which is what these two are made of (see `shared/sleep.ts`).
+  'sessions:sleep',
+  'sessions:wake',
   'sessions:pipe',
   'sessions:swarm',
   'sessions:split',

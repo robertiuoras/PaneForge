@@ -291,6 +291,16 @@ export interface Session {
    * in Running with a clock counting the command rather than nothing at all.
    */
   job?: string
+  /**
+   * Epoch ms this pane was put to sleep: the pty is gone and the card is not.
+   *
+   * A sleeping pane carries `status: 'exited'` as well, deliberately - every guard in
+   * this app that asks whether a pane has a live process already reads that word, and a
+   * fifth `SessionStatus` would have had to be added to each of them one at a time. This
+   * field is what separates the two: an exited pane is a run that ENDED, a sleeping one
+   * is a pane somebody is keeping. See `shared/sleep.ts`.
+   */
+  asleep?: number
 }
 
 /**
@@ -1809,6 +1819,14 @@ export interface Api {
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
   killSession(id: string): Promise<void>
+  /**
+   * End this pane's agent and keep its card: the process and its whole tree go, the row
+   * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
+   * See `shared/sleep.ts`.
+   */
+  sleepSession(id: string): Promise<Session | null>
+  /** Start a sleeping pane's agent again, back in the conversation it was in. */
+  wakeSession(id: string): Promise<Session | null>
   /**
    * Quit the app because nobody has used it for a while. The renderer owns the clock
    * (it is the side that knows about keyboard input and focus); main only obeys, and

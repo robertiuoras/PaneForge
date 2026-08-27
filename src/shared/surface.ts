@@ -45,6 +45,8 @@ export const SURFACE: Surface = {
   switchAgent: ['invoke', 'sessions:switchAgent'],
   renameSession: ['invoke', 'sessions:rename'],
   killSession: ['invoke', 'sessions:kill'],
+  sleepSession: ['invoke', 'sessions:sleep'],
+  wakeSession: ['invoke', 'sessions:wake'],
   quitIdle: ['invoke', 'app:quitIdle'],
   getBuffer: ['invoke', 'sessions:buffer'],
   paneLog: ['invoke', 'sessions:log'],
