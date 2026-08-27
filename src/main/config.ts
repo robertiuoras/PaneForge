@@ -479,7 +479,10 @@ function migrateReclaim(
  * `pf-ctl call config:set` and is that person's choice of duration.
  */
 function migrateReclaimV3(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
-  if (raw?.defaultsV3) return merged
+  // Chained, never short-circuited: every config written since this morning already carries
+  // `defaultsV3`, and returning here would put V4 out of reach of exactly the configs it is
+  // for.
+  if (raw?.defaultsV3) return migrateReclaimV4(merged, raw)
   const OLD_SWITCH_MINUTES = 30
   if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
     merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
