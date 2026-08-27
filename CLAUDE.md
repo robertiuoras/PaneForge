@@ -173,6 +173,40 @@ saying "already working on it".
   `updater.log` is evidence: three days without a good check logs `health STALE`.
 - `npm run test:updater` (second half `npm run test:wedge`) hangs the stub on purpose.
 
+## A window that stops answering comes back on its own
+
+The main process, every pty and the whole desk survive a renderer that wedges - so on
+2026-08-28 the app was healthy behind a window nobody could use, and the only way out was
+killing PaneForge by hand (~14 min of renderer CPU, main thread parked in `mach_msg`).
+`shared/renderWatch.ts` is the arithmetic, `main/renderWatch.ts` the plumbing.
+
+- **`reload()` cannot preempt a spinning renderer.** It is a message to the thread that is
+  busy. Measured against a real bounded `while (true)` in this app's own window: reload
+  alone gave the window back at 45.1s of a 45s spin, which is the spin ending. The process
+  is killed first (`forcefullyCrashRenderer`), and the reload runs from the
+  `render-process-gone` that follows - **24.3s** end to end, against `PROBE_DEAD_MS` 20s
+  plus one 5s tick.
+- **Chromium's `unresponsive` is an INPUT hang monitor**, so a renderer nobody is typing
+  into can spin for a quarter of an hour without it firing - which is what happened. The
+  second reading is a `executeJavaScript('1')` every `PROBE_EVERY_MS` (5s): it queues on the
+  renderer's own task queue, a healthy one answers in single-digit ms, a spinning one never
+  does. `GRACE_MS` (10s) covers the event when it does fire.
+- **The refusals are the feature.** A window is unresponsive BY CONSTRUCTION while it
+  reloads (`RELOAD_COOLDOWN_MS`, 60s), and a renderer that wedges again past `MAX_RELOADS`
+  (3) is LEFT as the app shipped rather than reloaded for ever - a watchdog that keeps
+  trying turns one wedged window into one that never finishes loading.
+- **A dead renderer is rebuilt, not reloaded**, and `app.on('activate')` asks `alive()`
+  rather than `getAllWindows().length`: a window whose renderer died is still in that list,
+  so the app was stranded with a window it could never draw in and no way to ask for one.
+- **Nothing is lost and nothing is taken.** Panes come back from desk.json and `--resume`,
+  the same path a restart uses - proved on a live window, not argued. No focus, no show, no
+  always-on-top.
+- **The evidence is `paneforge-errors.log`**: the act, the reason, the renderer pid, and its
+  CUMULATIVE cpu time out of `ps` - `getAppMetrics().cpu.percentCPUUsage` is a delta since
+  the last call and read `0.0%` for the renderer that had burned 14 minutes.
+- `npm run test:renderwatch` is the arithmetic and the source assertions;
+  `PF_PORT=9334 npm run test:renderwatchlive` spins a real window (needs a copy running).
+
 ## Never take the screen
 
 The app runs all day beside real work. Nothing it does on its own may take focus, raise a
@@ -1411,6 +1445,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:recover` | finishing a turn the transport cut in half, and the refusals |
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
+| `npm run test:renderwatch` | getting a wedged renderer back: both events, the probe Chromium's own monitor cannot replace, and the four refusals that stop a watchdog reloading for ever |
 | `npm run test:trimloss` | that lowering xterm's `scrollback` DELETES lines and raising it back restores none, which is why a trimmed pane is re-rendered from main's log |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
 | `npm run test:autohandoff` | moving a finished pane instead of closing it, and what the BUDGET rung may move at all (red-proofed) |
@@ -1424,7 +1459,8 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 Needing a real window (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view`, `test:stashdrag`, `test:activate`,
 `test:turncopyview` (happy minimized), `test:restorefix` (two launches), `test:askclick`,
-`test:askrender`, `test:devicesfit`, `test:phoneview`.
+`test:askrender`, `test:devicesfit`, `test:phoneview`, `test:renderwatchlive` (spins the
+renderer on purpose, ~25s).
 
 `test:devicesfit` measures the Devices panel in the running app: two columns on a wide window,
 the shell never scrolling, nothing reaching the Close button. Red-proofed by putting the single
@@ -1460,6 +1496,21 @@ fine and the only thing between it and the rest of its answer is somebody typing
 the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Codex).
 `shared/reclaim.ts` returns the agent, by closing the pane. `npm run test:reclaim`.
 
+- **A trim is a DELETE, so the two things that made it fire repeatedly had to stop.** Lowering
+  xterm's `scrollback` discards lines and raising it back restores none, so the recovery is a
+  re-render from main's raw log (`paneRedraw` -> `redrawHistory`): `t.reset()`, a resize, and up
+  to `BUFFER_LIMIT` 400 kB written back through xterm - **45-147 ms of parse alone** in a
+  headless terminal, on the UI thread, before anything is drawn. It was fired by both of the
+  readings that move: **a PANE SWITCH** (the focused pane is never trimmed, so arriving regrew it
+  and leaving trimmed it again - and this desk sits at `over` for hours, load 2.70 per core
+  against `LAG_HARD` 1.8, measured 2026-08-28), and **a verdict that flaps** (the level is
+  re-read every 15s, `lagLevel` has bare thresholds, and a VISIBLE pane's target differs between
+  `over` and `tight`). So `trimPlan` takes a clock: `TRIM_GRACE_MS` (5 min) keeps the lines of a
+  pane the keyboard has only just left, and `TRIM_SETTLE_MS` (60s, longer than the 15s poll)
+  makes a trim wait for its verdict to HOLD. **Growth is never delayed** - it is what hands a
+  reader their history back, and a pane already at full depth is never listed twice. Both are
+  optional: a caller with no clock gets the plan this always made, which is the control in
+  `test:capacity`.
 - **What makes that defensible here**: `kill()` calls `recordEnd`, so a closed pane keeps its
   History row, its `resumeId` and its `scrollbackId`. A closed pane in this app is a minimised
   pane in any other.

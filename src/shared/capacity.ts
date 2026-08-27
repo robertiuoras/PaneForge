@@ -376,11 +376,42 @@ export interface PaneRef {
    * skipped, and panes that were not never got their scrollback back.
    */
   current?: number
+  /**
+   * When the keyboard last left this pane (`focusLeftAt`, the same reading `reclaim.ts`
+   * uses). Optional: a caller that does not supply it, and every existing test, gets the
+   * behaviour this had before the grace window existed.
+   */
+  lastFocus?: number
 }
 
 export interface Trim {
   id: string
   scrollback: number
+}
+
+/**
+ * How long after the keyboard leaves a pane its scrollback is still held at full depth.
+ *
+ * Five minutes is "the pane I am working in and the one I keep flicking back to". Held
+ * panes cost `paneCostMb(FULL_SCROLLBACK)` each, so the set is bounded by how many panes a
+ * person actually visits in five minutes, not by how many are open.
+ */
+export const TRIM_GRACE_MS = 5 * 60_000
+
+/**
+ * How long a trimming verdict must HOLD before any pane gives lines up.
+ *
+ * Longer than the 15s pressure poll, so a reading that flaps across a threshold never
+ * reaches a pane. A genuinely full machine waits a minute for the first trim, which is the
+ * cheaper mistake: trimming is a delete, and the recovery is a full re-render.
+ */
+export const TRIM_SETTLE_MS = 60_000
+
+/** The two clock readings `trimPlan` needs; every field optional, absent = old behaviour. */
+export interface TrimClock {
+  now?: number
+  /** When the verdict last BECAME one that trims (level and trim flag together). */
+  trimmingSince?: number
 }
 
 /**
@@ -393,8 +424,42 @@ export interface Trim {
  *
  * Returns only the panes whose depth CHANGES, so the caller can skip a no-op.
  */
-export function trimPlan(panes: PaneRef[], v: Verdict, current = FULL_SCROLLBACK): Trim[] {
+export function trimPlan(
+  panes: PaneRef[],
+  v: Verdict,
+  current = FULL_SCROLLBACK,
+  clock?: TrimClock
+): Trim[] {
   const depth = (p: PaneRef): number => p.current ?? current
+  const now = clock?.now
+  /**
+   * A pane the keyboard has only just left keeps its lines.
+   *
+   * Without this the pair "trim, then re-render from main's log" fires on every PANE
+   * SWITCH while the desk is pinned at `over` - which this machine is for hours at a time
+   * (load 2.70 per core against `LAG_HARD` 1.8, measured 2026-08-28). Switching A -> B
+   * trimmed A (a delete) and regrew B (`redrawHistory`: `t.reset()`, a resize, and up to
+   * `BUFFER_LIMIT` 400 kB written back through xterm - 45-147 ms of pure parse in a
+   * headless terminal, before the renderer draws any of it, on the UI thread). Switching
+   * back paid it again, for ever. With the grace window a pane is re-rendered at most once
+   * per window instead of once per visit.
+   */
+  const justRead = (p: PaneRef): boolean =>
+    now !== undefined && p.lastFocus !== undefined && now - p.lastFocus < TRIM_GRACE_MS
+  /**
+   * A trim waits for the verdict to HOLD.
+   *
+   * The level is re-read every `SAMPLE_MS` (15s) and `lagLevel` has bare thresholds, so a
+   * load average hovering at `LAG_HARD` flips over <-> tight indefinitely - and the target
+   * for a VISIBLE pane differs between those two, so every flip deleted every visible
+   * pane's lines and re-rendered them 15 seconds later. Growth is left immediate: it is
+   * what gives a reader their history back, and a pane already at full depth never appears
+   * in a plan twice.
+   */
+  const settling =
+    clock?.trimmingSince !== undefined &&
+    now !== undefined &&
+    now - clock.trimmingSince < TRIM_SETTLE_MS
   if (!v.trim) {
     // Restoring is part of the plan: pressure passes, and a pane that was trimmed while
     // the user was elsewhere must be allowed to grow back rather than staying short forever.
@@ -407,8 +472,14 @@ export function trimPlan(panes: PaneRef[], v: Verdict, current = FULL_SCROLLBACK
       if (depth(p) < FULL_SCROLLBACK) out.push({ id: p.id, scrollback: FULL_SCROLLBACK })
       continue
     }
+    if (justRead(p)) {
+      if (depth(p) < FULL_SCROLLBACK) out.push({ id: p.id, scrollback: FULL_SCROLLBACK })
+      continue
+    }
     const target = p.visible && v.level !== 'over' ? FULL_SCROLLBACK : TRIMMED_SCROLLBACK
-    if (target !== depth(p)) out.push({ id: p.id, scrollback: target })
+    if (target === depth(p)) continue
+    if (target < depth(p) && settling) continue
+    out.push({ id: p.id, scrollback: target })
   }
   return out
 }

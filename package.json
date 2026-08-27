@@ -178,6 +178,8 @@
     "test:borrowask": "node scripts/borrowask-test.mjs",
     "test:linkstate": "node scripts/link-state-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",
+    "test:renderwatch": "node scripts/renderwatch-test.mjs",
+    "test:renderwatchlive": "node scripts/renderwatch-live.mjs",
     "test:capacity": "node scripts/capacity-test.mjs",
     "test:tunnel": "node scripts/tunnel-test.mjs",
     "test:qr": "node scripts/qr-test.mjs",

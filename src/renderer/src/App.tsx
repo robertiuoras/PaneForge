@@ -74,6 +74,7 @@ import {
   savingMb,
   stickFor,
   trimPlan,
+  TRIM_SETTLE_MS,
   type OffloadCandidate,
   type OffloadStick,
   type Verdict
@@ -2155,17 +2156,45 @@ export default function App(): JSX.Element {
    * trims the rest. See `PaneRef.current`.
    */
   const depths = useRef(new Map<string, number>())
+  /**
+   * When the verdict last BECAME one that trims - the stamp `TRIM_SETTLE_MS` is measured
+   * from. The shape, not the object: `assess` returns a fresh Verdict on every sample, and
+   * what decides a pane's target is the trim flag together with the level (a VISIBLE pane
+   * is kept full at `tight` and trimmed at `over`).
+   */
+  const trimShape = useRef<{ key: string; since: number }>({ key: '', since: 0 })
+  /** Re-runs the sweep once a suppressed trim has settled. Nothing else reads it. */
+  const [settleTick, setSettleTick] = useState(0)
   useEffect(() => {
     if (!capacity) return
+    const now = Date.now()
+    const key = capacity.trim ? `trim:${capacity.level}` : 'off'
+    if (key !== trimShape.current.key) trimShape.current = { key, since: now }
     const refs = sessions.map((s) => ({
       id: s.id,
       focused: s.id === activeId,
       visible: visibleIds.has(s.id),
-      current: depths.current.get(s.id) ?? FULL_SCROLLBACK
+      current: depths.current.get(s.id) ?? FULL_SCROLLBACK,
+      // The same focus reading the idle clock uses - see `ReclaimPane.lastFocus`.
+      lastFocus: focusLeftAt.current[s.id]
     }))
     for (const id of depths.current.keys()) if (!sessions.some((s) => s.id === id)) depths.current.delete(id)
-    const trims = trimPlan(refs, capacity)
-    if (!trims.length) return
+    const trims = trimPlan(refs, capacity, FULL_SCROLLBACK, {
+      now,
+      trimmingSince: trimShape.current.since
+    })
+    if (!trims.length) {
+      // A trim held back by the settle window has to be re-asked for, or a desk that has
+      // been quiet since the verdict changed never trims at all.
+      if (capacity.trim && now - trimShape.current.since < TRIM_SETTLE_MS) {
+        const t = setTimeout(
+          () => setSettleTick((n) => n + 1),
+          TRIM_SETTLE_MS - (now - trimShape.current.since) + 50
+        )
+        return () => clearTimeout(t)
+      }
+      return
+    }
     let applied = 0
     const regrown: string[] = []
     for (const t of trims) {
@@ -2208,7 +2237,7 @@ export default function App(): JSX.Element {
           (regrown.length ? `, ${regrown.length} re-rendered from history` : '')
       )
     }
-  }, [capacity, sessions, activeId, visibleIds])
+  }, [capacity, sessions, activeId, visibleIds, settleTick])
 
   /**
    * And giving back the part that scrollback never could: the agent.

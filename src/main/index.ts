@@ -80,6 +80,7 @@ import {
   titleSuffix
 } from './profile'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
   rememberAppPid,
   spawnDetachedNoWindow,
@@ -561,6 +562,7 @@ function createWindow(): void {
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
   win.on('closed', () => {
     win = null
+    stopRenderWatch()
     // Output batched for a window that no longer exists has nowhere to go. send()
     // already no-ops on a dead window; this stops the pump holding the string and
     // waking a timer to deliver it to nobody.
@@ -568,6 +570,21 @@ function createWindow(): void {
     // The overlay is a window too, so leaving it open would make `window-all-closed`
     // never fire and the app would stay alive with nothing on screen but a pill.
     closeShelfWindow()
+  })
+  // A renderer that wedges or dies used to be the end of the app: the main process, every
+  // pty and the whole desk stayed healthy behind a window that could not be drawn in, and
+  // the only way out was killing PaneForge by hand (2026-08-28, ~14 min of renderer CPU
+  // with the main thread parked in mach_msg). Reloading is safe here because a pane is
+  // restored from desk.json and `--resume`, the same path a restart uses.
+  watchRenderer(win, () => {
+    const dead = win
+    win = null
+    try {
+      dead?.destroy()
+    } catch {
+      /* it is already gone; the point was to stop referencing it */
+    }
+    createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -3571,7 +3588,10 @@ app.whenReady().then(() => {
     }, ACTIVATION_SETTLE_MS)
   }
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) return createWindow()
+    // `alive()`, not `getAllWindows().length`: a window whose renderer died is still IN
+    // that list, so the app was stranded with a window it could never draw in and no way
+    // to ask for a new one. 2026-08-28.
+    if (!alive()) return createWindow()
     // Clicking the Dock icon (or Cmd-Tabbing in) is the macOS equivalent of clicking a
     // taskbar button, and it is the only way back into a copy that launched hidden -
     // which is what every `npm run try` on a Mac now does. Deliberate, so it focuses.
