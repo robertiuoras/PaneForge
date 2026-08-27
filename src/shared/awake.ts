@@ -43,6 +43,23 @@ export interface AwakeInput {
   busySince: number | null
   /** how long one unbroken busy stretch may hold the system. Default 3h. */
   maxHoldMs?: number
+  /**
+   * Nobody can SEE this machine's screen: the lid is shut and the builtin panel is the
+   * only display there is.
+   *
+   * The system hold and the screen hold are separate decisions and this is the one input
+   * that only the screen hold cares about. `pmset -a disablesleep 1` - which the lid
+   * guard sets so a working pane survives a lid-close - makes the kernel ignore the lid
+   * OUTRIGHT, backlight included, so a shut MacBook runs its OLED at full brightness for
+   * the whole session with nobody looking at it. Holding the MACHINE awake never
+   * justified lighting the PANEL.
+   *
+   * It is deliberately narrower than "the lid is shut": clamshell driving an external
+   * monitor also reports the lid shut, and blanking THAT is a desk going black mid-use.
+   * A reading that failed counts as false, so the fallback is the behaviour this app
+   * always had, never a dark screen somebody is reading.
+   */
+  screenUnseen?: boolean
 }
 
 export interface AwakeVerdict {
@@ -112,6 +129,14 @@ export function awakeVerdict(input: AwakeInput): AwakeVerdict {
     }
   }
   const displayBusy = awakeDisplayBusy(input.panes, input.now)
+  if (input.screenUnseen) {
+    return {
+      hold: true,
+      holdDisplay: false,
+      reason: `${busy} pane${busy === 1 ? '' : 's'} working, lid shut so the screen may sleep`,
+      busy
+    }
+  }
   return {
     hold: true,
     holdDisplay: displayBusy > 0,
@@ -149,6 +174,8 @@ export interface AwakeDeps {
   stop(id: number): void
   now(): number
   maxHoldMs?: number
+  /** Nobody can see the screen - see `AwakeInput.screenUnseen`. Absent counts as false. */
+  screenUnseen?(): boolean
   log?(line: string): void
 }
 
@@ -170,7 +197,8 @@ export class AwakeKeeper {
       enabled: this.deps.enabled(),
       now,
       busySince: this.busySince,
-      maxHoldMs: this.deps.maxHoldMs
+      maxHoldMs: this.deps.maxHoldMs,
+      screenUnseen: this.deps.screenUnseen?.() ?? false
     })
     if (verdict.hold && this.id === null) {
       this.id = this.deps.start()

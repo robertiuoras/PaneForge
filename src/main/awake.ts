@@ -1,11 +1,53 @@
 // Electron's half of "do not sleep while a pane is working". Every judgement is in
 // shared/awake.ts; this file is the power API and the clock.
-import { spawn, execFile, type ChildProcess } from 'node:child_process'
-import { powerSaveBlocker } from 'electron'
+import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process'
+import { powerSaveBlocker, screen } from 'electron'
 import { AwakeKeeper, type AwakePane } from '../shared/awake'
 
 /** How often the desk is re-read. A pane going quiet is not worth a faster clock. */
 export const AWAKE_TICK_MS = 30_000
+
+/**
+ * The clamshell reading, cached for a tick. `ioreg` is a process and the tick is the only
+ * caller, so this is one spawn every 30s and only on macOS.
+ */
+let lidShutAt = 0
+let lidShutAnswer = false
+
+function lidShut(): boolean {
+  if (process.platform !== 'darwin') return false
+  const now = Date.now()
+  if (now - lidShutAt < AWAKE_TICK_MS / 2) return lidShutAnswer
+  lidShutAt = now
+  try {
+    const out = execFileSync('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '4'], {
+      encoding: 'utf8',
+      timeout: 3000
+    })
+    lidShutAnswer = /"AppleClamshellState"\s*=\s*Yes/.test(out)
+  } catch {
+    // A reading that failed is not a shut lid. Falling through to `false` keeps the
+    // behaviour this app always had rather than blanking a screen somebody is reading.
+    lidShutAnswer = false
+  }
+  return lidShutAnswer
+}
+
+/**
+ * Nobody can see this machine's screen - see `AwakeInput.screenUnseen`.
+ *
+ * Electron's own display list answers the external-monitor half without a second process:
+ * a display that is not `internal` is a monitor somebody may be working at, and blanking
+ * a clamshell desk mid-use is the one failure this must never have.
+ */
+export function screenUnseen(): boolean {
+  if (!lidShut()) return false
+  try {
+    return !screen.getAllDisplays().some((d) => !d.internal)
+  } catch {
+    return false
+  }
+}
 
 export function startDisplayAwake(opts: {
   panes(): readonly AwakePane[]
@@ -131,6 +173,7 @@ export function startDisplayAwake(opts: {
       killCaffeinate()
     },
     now: () => Date.now(),
+    screenUnseen,
     log: opts.log
   })
   function run(): void {
