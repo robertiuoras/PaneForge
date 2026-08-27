@@ -10,6 +10,7 @@ import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
+import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
 import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
@@ -273,6 +274,11 @@ function defaults(): Config {
     tips: DEFAULT_TIPS,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
+    // The token line a session clears itself at, and whether the app watches the CLIs that
+    // have no Stop hook of their own. On: the whole cost of a session that has stopped
+    // being useful is re-reading a context nobody is reading, and the countdown card is
+    // stoppable by anyone at the desk. See shared/autoclear.ts.
+    autoClear: { ...DEFAULT_AUTOCLEAR },
     // Off by default. Quitting the app takes every pane with it, so it ships as a number
     // somebody has to set rather than a behaviour that arrives with an update.
     idleQuitMinutes: 0,
@@ -340,6 +346,9 @@ export function getConfig(): Config {
         ...(base.autoHandoff ?? {}),
         ...(raw.autoHandoff ?? {})
       },
+      // Merged for the usual reason: a config written before this existed has no key at
+      // all, and the watcher would then read `undefined.tokens` as its threshold.
+      autoClear: { ...DEFAULT_AUTOCLEAR, ...(base.autoClear ?? {}), ...(raw.autoClear ?? {}) },
       // Same reason: every config written before the Discord tab existed has no
       // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
       discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },

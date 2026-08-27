@@ -21,6 +21,24 @@ import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { CHUNK_GAP_MS, armDecision, clearChunks, dropFor, dropWords, type DropReason } from '../shared/autoclear'
+
+/**
+ * One request to clear a pane: what the Stop hook asks for, and what the watcher asks for.
+ *
+ * `command` and `tokens` are the watcher's half - it drives CLIs that are not Claude Code
+ * and it is the only caller that has measured a size. Both optional so the hook path,
+ * which knows neither, is unchanged.
+ */
+export interface AutoClearArm {
+  steps: string[]
+  prompt: string
+  seconds: number
+  noResume?: boolean
+  /** The CLI's own word for it: `/clear`, or `/new` in Codex. Defaults to `/clear`. */
+  command?: string
+  /** Roughly how much context this frees, for the card to say a number. */
+  tokens?: number
+}
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -377,7 +395,7 @@ export class SessionManager extends EventEmitter {
    * the session then grew until Robert asked why it had never cleared. A busy pane is a
    * reason to WAIT, not to refuse: the countdown starts the moment the turn ends.
    */
-  private autoClearPending = new Map<string, { steps: string[]; prompt: string; seconds: number }>()
+  private autoClearPending = new Map<string, AutoClearArm>()
   private tableJobsBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
@@ -1527,7 +1545,7 @@ export class SessionManager extends EventEmitter {
    * CR inside a paste is a newline, which is how the resume prompt was left sitting unsent
    * in the box after a clear that otherwise worked.
    */
-  armAutoClear(id: string, ask: { steps: string[]; prompt: string; seconds: number }): { ok: boolean; reason?: string } {
+  armAutoClear(id: string, ask: AutoClearArm): { ok: boolean; reason?: string } {
     const s = this.sessions.get(id)
     if (!s) return { ok: false, reason: 'no such pane' }
     const why = dropFor({ ...s.meta, typed: s.typed })
@@ -1546,6 +1564,14 @@ export class SessionManager extends EventEmitter {
     s.meta.autoClearAt = at
     s.meta.autoClearPrompt = ask.prompt
     s.meta.autoClearSteps = ask.steps
+    // Decided HERE, once, and typed verbatim when the timer fires. The command is the
+    // CLI's own (`/new` in Codex), and a pane's agent cannot change under an armed
+    // countdown, so there is nothing to gain from re-deriving it at the last moment - and
+    // one thing to lose, which is the two copies of one contract this feature was buried
+    // by the first time.
+    s.meta.autoClearChunks = clearChunks(ask.prompt, ask.command ?? '/clear')
+    if (ask.noResume) s.meta.autoClearNoResume = true
+    if (ask.tokens) s.meta.autoClearTokens = ask.tokens
     const timer = setTimeout(() => {
       this.autoClearTimers.delete(id)
       const live = this.sessions.get(id)
@@ -1568,7 +1594,7 @@ export class SessionManager extends EventEmitter {
       // an unsent draft and a pane that has closed do not become clearable by being typed
       // into - they lose something instead.
       if (stop && stop !== 'working') return this.cancelAutoClear(id, stop)
-      const chunks = clearChunks(live.meta.autoClearPrompt ?? '')
+      const chunks = live.meta.autoClearChunks ?? clearChunks(live.meta.autoClearPrompt ?? '')
       this.cancelAutoClear(id, 'cancelled')
       chunks.forEach((c, i) => {
         const t = setTimeout(() => this.write(id, c), i * CHUNK_GAP_MS)
@@ -1596,6 +1622,9 @@ export class SessionManager extends EventEmitter {
     delete s.meta.autoClearAt
     delete s.meta.autoClearPrompt
     delete s.meta.autoClearSteps
+    delete s.meta.autoClearChunks
+    delete s.meta.autoClearNoResume
+    delete s.meta.autoClearTokens
     console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
     this.emitSessions()
     return true

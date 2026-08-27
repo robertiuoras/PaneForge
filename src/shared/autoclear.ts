@@ -11,6 +11,8 @@
 // file - so every one of the five clears logged on 2026-08-23 (03:23, 03:33, 06:13, 07:13,
 // 08:07) silently did nothing and could never retry. Hence the two rules below.
 
+import { BUILTIN_AGENTS } from './agents'
+
 /**
  * The keystrokes, in the order they are sent and SPLIT the way they are sent.
  *
@@ -19,9 +21,45 @@
  * rather than a submit - which left the resume prompt sitting unsent in the box after a
  * successful /clear. `/clear\r` is under the paste threshold, so only the long one failed.
  * The hook keeps the same list (`paneChunks`); `npm run test:autoclear` pins them equal.
+ *
+ * An EMPTY prompt is a clear for cost alone - nothing is open, so there is nothing to say
+ * to the fresh session and typing a resume prompt would burn a turn doing nothing. The
+ * hook reached the same shape first (`paneChunks('')` -> `['/clear\r']`), and the parity
+ * check in `npm run test:autoclear` now pins the promptless list too.
+ *
+ * `command` is the CLI's own word for it, because only Claude Code spells it `/clear` -
+ * Codex starts a fresh conversation with `/new`. It is a parameter rather than a lookup
+ * so this stays the pure keystroke function the parity check can compare.
  */
-export function clearChunks(prompt: string): string[] {
-  return ['/clear\r', prompt, '\r']
+export function clearChunks(prompt: string, command = '/clear'): string[] {
+  if (!prompt.trim()) return [command + '\r']
+  return [command + '\r', prompt, '\r']
+}
+
+/**
+ * What this CLI calls "start again", or null for one we cannot name.
+ *
+ * Null is the load-bearing answer. The watcher types into a live pty with nobody
+ * watching, so an agent whose clear command we are guessing at gets a guess typed into
+ * somebody's session - and `/clear` in a CLI that has no such command is a prompt sent to
+ * a model. Unknown therefore means DO NOTHING, for ever, rather than "probably /clear".
+ *
+ * The claude family is read off the catalogue rather than listed here: `openrouter`,
+ * `deepseek` and `glm` are Claude Code with two environment variables changed, they share
+ * every slash command, and there will be more of them. `bin === 'claude'` is the fact that
+ * makes them the same CLI, so a new re-skin gets this for free instead of silently missing
+ * it. A custom agent somebody added themselves is not in the catalogue and stays unknown.
+ */
+export function clearCommandFor(agent: string | null | undefined): string | null {
+  const id = typeof agent === 'string' ? agent.trim() : ''
+  if (!id) return null
+  // Codex: `/clear` is not a command there. `/new` starts a fresh conversation in the same
+  // folder, which is what a clear IS. Antigravity's is `/clear` and it has no `/compact`
+  // at all (google-antigravity issue #40), so clearing is the only lever it has.
+  if (id === 'codex') return '/new'
+  if (id === 'antigravity') return '/clear'
+  const spec = BUILTIN_AGENTS.find((a) => a.id === id)
+  return spec?.bin === 'claude' ? '/clear' : null
 }
 
 /** Between chunks, so the CLI has processed the clear before the prompt arrives. */
@@ -41,6 +79,16 @@ export interface AutoClearAsk {
   steps: string[]
   prompt: string
   seconds: number
+  /**
+   * Clear and type NOTHING: there is no next step, this is context being freed.
+   *
+   * The only thing that may waive the "never clear without a prompt" rule below, and it
+   * has to be said out loud - `noResume: true`, not an absent prompt. Measured 2026-08-26:
+   * `no_open_steps` was the dominant line in ~/.claude/autoclear.log, so sessions with
+   * nothing left to do sat at 185-235k tokens paying to re-read a context nobody was
+   * using. Clearing those costs nothing, because there was nothing to carry.
+   */
+  noResume?: boolean
 }
 
 /**
@@ -56,11 +104,24 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
   if (!o || typeof o !== 'object') return null
   const paneId = typeof o.paneId === 'string' ? o.paneId.trim() : ''
   const prompt = typeof o.prompt === 'string' ? o.prompt.trim() : ''
-  if (!paneId || !prompt) return null
+  // `=== true`, never truthiness: this flag switches off the refusal below, so a payload
+  // from the phone server carrying `noResume: "no"` or `noResume: 1` must land on the old
+  // rule rather than on a prompt-less clear nobody asked for.
+  const noResume = o.noResume === true
+  if (!paneId) return null
+  if (!prompt && !noResume) return null
   const steps = Array.isArray(o.steps)
     ? o.steps.filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 12)
     : []
-  return { paneId, steps, prompt, seconds: clampSeconds(o.seconds) }
+  // Nothing to resume means nothing to list. Steps that arrive anyway are dropped rather
+  // than drawn, or the card would promise to carry on with work the clear is not carrying.
+  return {
+    paneId,
+    steps: noResume ? [] : steps,
+    prompt: noResume ? '' : prompt,
+    seconds: clampSeconds(o.seconds),
+    noResume
+  }
 }
 
 /**
@@ -113,6 +174,65 @@ export function dropWords(why: DropReason): string {
  * still refuses, because a pane holding a question or a pane that has closed will not
  * become clearable by waiting.
  */
+/** The knobs the pane-side watcher runs on. See `main/autoclearWatch.ts`. */
+export interface AutoClearConfig {
+  /** Context size, in tokens, past which an idle pane is cleared. */
+  tokens: number
+  /** How long the countdown card is up before the keystrokes go out. */
+  seconds: number
+  /** Watch codex and antigravity panes at all. Off means only the Stop hook clears. */
+  watchNonClaude: boolean
+}
+
+/**
+ * 150k, the same line the Stop hook draws.
+ *
+ * Measured 2026-08-13 across a week of transcripts: clearing at 150k costs 28% less than
+ * letting a session drift to 300k, because the bill is cache RE-READS of a context nobody
+ * is using rather than the tokens the work needs. 15s is long enough to read the card from
+ * across the desk and press Keep.
+ */
+export const DEFAULT_AUTOCLEAR: AutoClearConfig = {
+  tokens: 150_000,
+  seconds: 15,
+  watchNonClaude: true
+}
+
+/** One arm per pane per half hour. See `watchDecision`. */
+export const WATCH_COOLDOWN_MS = 30 * 60_000
+
+/**
+ * Why the watcher is or is not arming a clear on this pane, decided without touching disk.
+ *
+ * Split out for the same reason `armDecision` was: the bug that killed autoclear for a day
+ * was one word inside a method with a pty on the other end of it, and nothing could test
+ * it. Everything here is a value the caller already has.
+ */
+export type WatchVerdict = 'arm' | 'unknown-cli' | 'busy' | 'under' | 'recent'
+
+export function watchDecision(p: {
+  agent: string | null | undefined
+  status: string
+  tokens: number
+  threshold: number
+  lastArmMs?: number | null
+  now: number
+}): WatchVerdict {
+  // First and hardest: a CLI whose clear command we cannot name is never typed into.
+  if (!clearCommandFor(p.agent)) return 'unknown-cli'
+  // 'working' is the pane mid-turn. 'starting' has no context yet worth clearing and
+  // 'exited' has no pty left to type into, so only a genuinely idle pane is a candidate -
+  // unlike the Stop-hook path, nothing here knows a turn is ending, so there is no reason
+  // to queue against a moving pane rather than look again in a minute.
+  if (p.status !== 'idle') return 'busy'
+  if (!(p.tokens > 0) || p.tokens < p.threshold) return 'under'
+  // The estimator reads a file the CLI writes, and the CLI does not write it the instant a
+  // clear lands. Without this, a pane that has just been cleared reads as oversized for
+  // another minute and gets cleared again - twice more before the file catches up.
+  if (p.lastArmMs && p.now - p.lastArmMs < WATCH_COOLDOWN_MS) return 'recent'
+  return 'arm'
+}
+
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or

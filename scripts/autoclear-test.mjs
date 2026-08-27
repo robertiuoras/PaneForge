@@ -10,10 +10,21 @@
 // nobody compares is exactly how this got lost.
 
 import { buildSync } from 'esbuild'
-import { mkdtempSync, rmSync, writeFileSync as write } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync as write
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { ensure as ensureBridge } from './antigravity-bridge.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = mkdtempSync(join(tmpdir(), 'pf-autoclear-'))
@@ -34,8 +45,9 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, clampSeconds, readAsk, dropFor,
-  armDecision, MIN_SECONDS, MAX_SECONDS } = await import(pathToFileURL(file).href)
+const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
+  watchDecision, WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
+  await import(pathToFileURL(file).href)
 
 console.log('a busy pane WAITS, it is not refused')
 {
@@ -58,6 +70,15 @@ console.log('keystrokes')
   ok('the prompt carries no return of its own', chunks[1] === 'carry on' && !chunks[1].includes('\r'))
   ok('the submit is the third chunk, alone', chunks[2] === '\r' && chunks.length === 3)
 
+  // A clear for cost alone: nothing is open, so nothing is typed after it. Typing a resume
+  // prompt at a session with no next step burns a turn producing nothing.
+  ok('an empty prompt types only the clear', JSON.stringify(clearChunks('')) === JSON.stringify(['/clear\r']))
+  ok('a blank prompt is an empty one', JSON.stringify(clearChunks('  \n ')) === JSON.stringify(['/clear\r']))
+  // Codex has no /clear at all - `/new` starts the fresh conversation. Same three chunks,
+  // same split, different first word.
+  ok('the command is the CLI\'s own', JSON.stringify(clearChunks('carry on', '/new')) === JSON.stringify(['/new\r', 'carry on', '\r']))
+  ok('a promptless codex clear is one chunk', JSON.stringify(clearChunks('', '/new')) === JSON.stringify(['/new\r']))
+
   // PARITY. Two copies of one contract, in two repos, and nothing compared them.
   const hook = await import(pathToFileURL('/Users/robertiuoras/Projects/claude-memory/claude-config/autoclear.mjs').href).catch(() => null)
   if (!hook?.paneChunks) {
@@ -68,7 +89,48 @@ console.log('keystrokes')
       JSON.stringify(hook.paneChunks('carry on')) === JSON.stringify(chunks),
       JSON.stringify(hook.paneChunks('carry on'))
     )
+    // The promptless path is the NEW half and the one that could drift silently: the hook
+    // changed first, and nothing on this side would have noticed.
+    ok(
+      'the promptless clear matches the hook too',
+      JSON.stringify(hook.paneChunks('')) === JSON.stringify(clearChunks('')),
+      JSON.stringify(hook.paneChunks(''))
+    )
   }
+}
+
+console.log('which CLI, and what it calls starting again')
+{
+  ok('claude clears', clearCommandFor('claude') === '/clear')
+  // Claude Code with two environment variables changed. Same binary, same slash commands,
+  // so a new re-skin of it must not have to be added here by hand.
+  ok('a claude re-skin clears', clearCommandFor('openrouter') === '/clear' && clearCommandFor('glm') === '/clear')
+  ok('codex starts a new conversation', clearCommandFor('codex') === '/new')
+  ok('antigravity clears', clearCommandFor('antigravity') === '/clear')
+  // The invariant the whole watcher rests on: a CLI we cannot name is never typed into,
+  // because `/clear` in something that has no such command is a PROMPT sent to a model.
+  ok('an unknown CLI is left alone', clearCommandFor('aider') === null && clearCommandFor('goose') === null)
+  ok('a shell pane is left alone', clearCommandFor('shell') === null)
+  ok('nothing at all is left alone', clearCommandFor(null) === null && clearCommandFor('') === null && clearCommandFor(undefined) === null)
+}
+
+console.log('the pane-side watcher, which drives the CLIs with no Stop hook')
+{
+  const base = { agent: 'codex', status: 'idle', tokens: 200_000, threshold: 150_000, now: 1_000_000 }
+  ok('an oversized idle codex pane is cleared', watchDecision(base) === 'arm')
+  ok('an unknown CLI is never typed into', watchDecision({ ...base, agent: 'aider' }) === 'unknown-cli')
+  ok('a pane mid-turn is left alone', watchDecision({ ...base, status: 'working' }) === 'busy')
+  // Unlike the hook path there is nothing to queue against here - no turn is ending - so a
+  // pane that is starting or has exited is simply looked at again next minute.
+  ok('a starting pane is left alone', watchDecision({ ...base, status: 'starting' }) === 'busy')
+  ok('an exited pane is never typed into', watchDecision({ ...base, status: 'exited' }) === 'busy')
+  ok('under the line, nothing happens', watchDecision({ ...base, tokens: 149_999 }) === 'under')
+  ok('an unreadable size is not a size of zero', watchDecision({ ...base, tokens: 0 }) === 'under')
+  // The CLI writes its token file when it feels like it, so a pane that was just cleared
+  // still reads as oversized for a minute. Without this it is cleared again, and again.
+  ok('one arm per half hour', watchDecision({ ...base, lastArmMs: base.now - 60_000 }) === 'recent')
+  ok('and then it may arm again', watchDecision({ ...base, lastArmMs: base.now - WATCH_COOLDOWN_MS - 1 }) === 'arm')
+  ok('the default line is 150k', DEFAULT_AUTOCLEAR.tokens === 150_000 && DEFAULT_AUTOCLEAR.watchNonClaude === true)
 }
 
 console.log('the payload, which arrives over the phone server')
@@ -82,6 +144,22 @@ console.log('the payload, which arrives over the phone server')
   ok('steps that are not strings are dropped', readAsk({ paneId: 's1', prompt: 'go', steps: [1, 'a', null] })?.steps.length === 1)
   ok('seconds are clamped, not trusted', clampSeconds(99999) === MAX_SECONDS && clampSeconds(-4) === MIN_SECONDS)
   ok('a missing seconds is a default, never zero', clampSeconds(undefined) >= MIN_SECONDS)
+
+  // The one waiver of "no prompt, no clear", and it has to be SAID. Measured 2026-08-26:
+  // `no_open_steps` was the dominant line in the hook's log and those sessions sat at
+  // 185-235k tokens with nothing left to do, paying to re-read a context nobody wanted.
+  ok('a cost clear with nothing to carry reads', readAsk({ paneId: 's1', noResume: true })?.noResume === true)
+  ok('and it carries an empty prompt', readAsk({ paneId: 's1', noResume: true })?.prompt === '')
+  // Nothing to resume means nothing to list, or the card promises work it will not do.
+  ok('steps sent with it are dropped', readAsk({ paneId: 's1', noResume: true, steps: ['a', 'b'] })?.steps.length === 0)
+  ok('a prompt sent with it is dropped', readAsk({ paneId: 's1', noResume: true, prompt: 'go' })?.prompt === '')
+  // `=== true`, never truthiness: this arrives over the phone server, and a payload that
+  // merely looks affirmative must land on the old rule rather than on a promptless clear.
+  ok('a truthy noResume is not a noResume', readAsk({ paneId: 's1', noResume: 1 }) === null)
+  ok('the string "true" is not a noResume', readAsk({ paneId: 's1', noResume: 'true' }) === null)
+  ok('noResume false still needs a prompt', readAsk({ paneId: 's1', noResume: false }) === null)
+  ok('and it still needs a pane', readAsk({ noResume: true }) === null)
+  ok('an ordinary ask is not a noResume', readAsk({ paneId: 's1', prompt: 'go' })?.noResume === false)
 }
 
 console.log('refusals - the whole point of the countdown')
@@ -103,6 +181,71 @@ console.log('refusals - the whole point of the countdown')
   ok('a question still refuses outright', armDecision('asked') === 'refuse')
   ok('a mid-turn pane still queues', armDecision('working') === 'queue')
   ok('nothing wrong still arms', armDecision(null) === 'arm')
+}
+
+console.log('the antigravity statusline tee - somebody else\'s file, on their machine')
+{
+  // Never the real `~/.gemini/antigravity-cli/statusline.sh`: this is the script that draws
+  // Robert's prompt, and a test that edits it is a test that can break it. Copies only.
+  const home = join(out, 'agy')
+  mkdirSync(home, { recursive: true })
+  const sl = join(home, 'statusline.sh')
+  write(sl, '#!/usr/bin/env bash\nread -r line\nprintf "model | %s\\n" "${#line}"\n', 'utf8')
+  chmodSync(sl, 0o755)
+  const original = readFileSync(sl, 'utf8')
+
+  const first = await ensureBridge(home)
+  ok('the tee goes in', first.changed === true && !first.created)
+  ok('the original is backed up once', first.backedUp === true && existsSync(sl + '.pf-backup'))
+  ok('the backup is the file we found', readFileSync(sl + '.pf-backup', 'utf8') === original)
+  const after = readFileSync(sl, 'utf8')
+  ok('the shebang is still the first line', after.startsWith('#!/usr/bin/env bash\n'))
+  ok('the original script is still in there', after.includes('printf "model | %s'))
+
+  // The property the whole design rests on: this runs at EVERY app start.
+  const second = await ensureBridge(home)
+  ok('the second run changes nothing', second.changed === false && second.backedUp === false)
+  ok('and the file is byte-identical', readFileSync(sl, 'utf8') === after)
+
+  // And it has to actually work: stdin teed to the log, then handed back untouched.
+  const feed = JSON.stringify({
+    workspace: { current_dir: '/tmp/demo' },
+    context_window: { context_window_size: 1_000_000, used_percentage: 19, total_input_tokens: 190_000 }
+  })
+  const printed = execFileSync('bash', [sl], { input: feed, encoding: 'utf8' })
+  ok('the original output is untouched', printed === `model | ${feed.length}\n`)
+  const log = join(home, 'pf-context.jsonl')
+  ok('a row landed', existsSync(log))
+  const row = JSON.parse(readFileSync(log, 'utf8').trim().split('\n').pop())
+  ok('with the tokens on it', row.context_window?.total_input_tokens === 190_000)
+  ok('and with the folder, which is how two panes are told apart', row.workspace?.current_dir === '/tmp/demo')
+  ok('and a timestamp of our own', typeof row.pf_ts === 'number' && row.pf_ts > 0)
+  execFileSync('bash', [sl], { input: feed, encoding: 'utf8' })
+  ok('rows accumulate', readFileSync(log, 'utf8').trim().split('\n').length === 2)
+  // An empty object is the one input that would otherwise produce `{"pf_ts":1,}`.
+  execFileSync('bash', [sl], { input: '{}', encoding: 'utf8' })
+  ok('an empty object is still valid JSON', typeof JSON.parse(readFileSync(log, 'utf8').trim().split('\n').pop()).pf_ts === 'number')
+
+  // A machine that has never run the CLI must not get a folder full of state for it.
+  const nowhere = await ensureBridge(join(out, 'not-installed'))
+  ok('a machine without antigravity is left alone', !!nowhere.skipped && nowhere.changed === false)
+
+  // The real hook, copied, because a synthetic one proves nothing about the file that is
+  // actually out there - it reads stdin through a process substitution and 10.5 KB of jq.
+  const real = join(homedir(), '.gemini', 'antigravity-cli', 'statusline.sh')
+  if (!existsSync(real)) {
+    console.log('  SKIP antigravity is not installed here - the real hook is unchecked')
+  } else {
+    const copyDir = join(out, 'agy-real')
+    mkdirSync(copyDir, { recursive: true })
+    copyFileSync(real, join(copyDir, 'statusline.sh'))
+    const a = await ensureBridge(copyDir)
+    const text = readFileSync(join(copyDir, 'statusline.sh'), 'utf8')
+    const b = await ensureBridge(copyDir)
+    ok('the real hook takes the tee', a.changed === true)
+    ok('and does not take it twice', b.changed === false && readFileSync(join(copyDir, 'statusline.sh'), 'utf8') === text)
+    ok('the tee is above the original script', text.indexOf('paneforge autoclear bridge') < text.indexOf('locate jq'))
+  }
 }
 
 rmSync(out, { recursive: true, force: true })

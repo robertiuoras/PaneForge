@@ -30,13 +30,28 @@ export default function AutoClearToast({
   if (!soon?.autoClearAt) return null
   const left = Math.max(0, Math.ceil((soon.autoClearAt - now) / 1000))
   const steps = soon.autoClearSteps ?? []
+  // A clear with nothing to carry is a different event and has to read as one. "Carrying on
+  // from its handoff" over an empty prompt is a promise the clear does not keep: nothing is
+  // typed after the /clear, the fresh session sits at its composer, and somebody who read
+  // that sentence would come back expecting work to have continued. What this one buys is
+  // the context, so the card says the context.
+  const freeing = Math.round((soon.autoClearTokens ?? 0) / 1000)
   return (
     <div className="autoclear-card" role="status">
       <div className="autoclear-top">
         {/* Seconds first and biggest: read from across the desk, or not at all. */}
         <span className="autoclear-left">{left > 0 ? `${left}s` : 'now'}</span>
         <span className="autoclear-word">
-          Clearing <b>{soon.title}</b> and carrying on from its handoff
+          {soon.autoClearNoResume ? (
+            <>
+              Clearing <b>{soon.title}</b> - nothing open
+              {freeing > 0 ? `, freeing about ${freeing}k of context` : ''}
+            </>
+          ) : (
+            <>
+              Clearing <b>{soon.title}</b> and carrying on from its handoff
+            </>
+          )}
         </span>
       </div>
       {/* What it will pick up. A countdown that only says something is about to happen
