@@ -547,6 +547,7 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     // describe one either way - but nothing is REMOVED unless this app or scripts/lane.mjs
     // made it, which is what the branch name says: `lane-a` now, `pf/w2` for the lanes that
     // predate the two schemes being merged.
+    if (!laneBranches(work.lane).includes(work.branch)) continue
     const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
     // Keep clean / merged lane worktrees for at least 1 day (24h) after last activity

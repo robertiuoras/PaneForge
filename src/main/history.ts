@@ -246,7 +246,10 @@ export function list(): HistoryEntry[] {
           e.bytes = existsSync(log) ? statSync(log).size : 0
           // Not stored - a folder can come back, and a stale `gone` in a metadata file
           // would outlive the truth. One stat per row, next to the one already being made.
-          e.gone = !e.cwd || !existsSync(e.cwd)
+          const exists = Boolean(e.cwd && existsSync(e.cwd))
+          const baseRepo = e.cwd ? e.cwd.replace(/-(w\d+|[a-z])$/, '') : ''
+          const baseExists = Boolean(baseRepo && baseRepo !== e.cwd && existsSync(baseRepo))
+          e.gone = !exists && !baseExists
           // A row written with the whole agent SPEC where its id belongs. Two are on this
           // machine; every later reader (the logo, the `a.id === e.agent` lookup) expects a
           // string. Repaired on the way out rather than migrated - the file is a nicety and
