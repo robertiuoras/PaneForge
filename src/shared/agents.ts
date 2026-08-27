@@ -636,6 +636,20 @@ export function findAgent(agents: AgentSpec[], id: string | undefined): AgentSpe
   return agents.find((a) => a.id === id) ?? agents[0]
 }
 
+/**
+ * Does this machine know that agent at all?
+ *
+ * `findAgent` falls back to `agents[0]` - Claude Code - which is right for a LABEL and
+ * catastrophic for a LAUNCH: a pane asked for on another device travels as a bare id, and
+ * a device on an older build (measured 2026-08-27: the PC on 0.8.157, which predates the
+ * Antigravity entry) does not have it. The fallback then spawned `claude` in a pane the
+ * person had asked to run something else, with nothing on screen saying so. A start must
+ * refuse a name it does not know, so the caller can say WHICH machine is missing WHAT.
+ */
+export function hasAgent(agents: AgentSpec[], id: string | undefined): boolean {
+  return !id || agents.some((a) => a.id === id)
+}
+
 /** The install command for this machine, or '' when the agent has no scripted install. */
 export function installCommand(spec: AgentSpec, platform: string = PLATFORM): string {
   if (platform === 'win32') return spec.installWin ?? spec.install ?? ''

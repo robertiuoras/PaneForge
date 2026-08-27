@@ -62,7 +62,7 @@ import {
 } from '../shared/slashTurn'
 import type { DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
-import { buildArgs, resolveEnv } from '../shared/agents'
+import { allAgents, buildArgs, hasAgent, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, type BusyReason } from '../shared/busy'
@@ -511,6 +511,14 @@ export class SessionManager extends EventEmitter {
       : ((asked as { id?: string } | null)?.id ?? 'claude')) as Agent
     // Before the CLI is spawned, not after: it reads .claude.json at startup and would
     // already be sitting on the trust prompt by the time anything here could help.
+    // Refuse a name this machine does not know rather than quietly running Claude Code -
+    // see `hasAgent`. A remote start crosses the device link as a bare id, so this is the
+    // only place that can tell the difference between "no agent asked for" and "an agent
+    // this build has never heard of".
+    if (!hasAgent(allAgents(getConfig().customAgents), agent))
+      throw new Error(
+        `This machine has no agent called "${agent}" - it may be running an older PaneForge, or the agent was removed.`
+      )
     if (agent === 'claude') ensureTrusted(req.cwd)
     // Before the pty exists, because there is no taking it back afterwards: an agent
     // pointed at another provider posts every file it opens to that provider, and this
