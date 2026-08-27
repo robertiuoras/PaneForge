@@ -1227,6 +1227,19 @@ into, exits or disappears drops its countdown. An ask with no open steps is refu
 A PaneForge older than the channel makes the hook REFUSE rather than fall back to the instant
 clear. `npm run test:autoclear`.
 
+- **Nothing open means no clear, and that promise is made to the session in writing.**
+  `blockMessage` tells a session about to write its handoff that `## Next steps` with `None`
+  is respected. For one day it was not - a done session over the line cleared anyway,
+  promptless, on a cache-cost argument - which threw away a scrollback somebody was reading
+  and gave back a pane continuing nothing. A clear exists to CONTINUE work.
+- **The keeper is fed by KEYSTROKES, and nothing this path sends is one.** The countdown
+  writes straight to the pty, so `feedInput` in `TerminalPane` never saw the `/clear` and
+  `keepScrollback` never armed - leaving every automatic clear on the 80%-screen-loss
+  fallback, which Claude Code's paint-the-banner-over-the-turn clear does not trip. So main
+  emits `armclear` -> `pane:armClear` -> the pane's own `keep.arm()`, `ARM_CLEAR_LEAD_MS`
+  (120ms) before the command lands. Measured in a real window: `baseY` 0 -> 6 with the
+  emit, 0 without it, which is the red-proof.
+
 ## The screen stays on while a pane works
 
 `shared/awake.ts` + `main/awake.ts` hold a `powerSaveBlocker` while any pane has an agent
