@@ -136,6 +136,29 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 {
   // The load-bearing positive: a turn that just ended is the ordinary case this exists for.
   check('needsYou with no live question is movable', movable({ state: 'needsYou', asking: false }) === true)
+
+  // What an AGENT left running in the background is a REFUSAL here, not another `job`.
+  // `job` means "worth moving" - a dev server that just started costs nothing yet and is
+  // the pane to move. A background job is the opposite: the move kills the pty and starts
+  // a fresh pane on the other machine, so a build three minutes into twenty dies with it,
+  // and unlike a turn there is no boundary to queue behind. Robert, 2026-08-27: "it
+  // shouldnt close or clear mid build".
+  check(
+    'a pane with a background job is not movable',
+    movable({ state: 'ready', asking: false, backJob: 'npm run build' }) === false
+  )
+  check(
+    '...and it is not queueable either, because nothing will announce that it finished',
+    queueable({ state: 'working', asking: false, backJob: 'npm run build' }) === false
+  )
+  check(
+    'control - the same pane with nothing running is movable',
+    movable({ state: 'ready', asking: false }) === true
+  )
+  check(
+    'control - and queueable',
+    queueable({ state: 'working', asking: false }) === true
+  )
   const panes = [pane({ id: 'a', state: 'needsYou', asking: false, lastKeyboard: NOW - 30 * MIN }), pane({ id: 'keep' })]
   eq('and autoHandoffPlan really moves it', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a')
 }
