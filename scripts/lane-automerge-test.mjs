@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
-import { mergeImportConflicts } from './lane-merge.mjs'
+import { mergeAutoConflicts, mergeImportConflicts, mergeMarkdownConflicts } from './lane-merge.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(tmpdir(), 'paneforge-automerge-test')
@@ -76,6 +76,14 @@ ok(
   ) === null
 )
 ok('a file with no conflict is left alone', mergeImportConflicts('const x = 1\n') === null)
+
+const mdHunk = hunk(['## Section A', '', 'Notes from lane A.'], ['## Section B', '', 'Notes from lane B.'])
+const mdMerged = mergeMarkdownConflicts(mdHunk)
+ok('markdown heading sections on both sides are combined', mdMerged && mdMerged.includes('Section A') && mdMerged.includes('Section B'), mdMerged)
+
+const mdBullets = hunk(['* Note 1 from A', '* Note 2 from A'], ['* Note 3 from B', '* Note 4 from B'])
+const mdBulletsMerged = mergeMarkdownConflicts(mdBullets)
+ok('markdown bullet items on both sides are combined', mdBulletsMerged && mdBulletsMerged.includes('Note 1') && mdBulletsMerged.includes('Note 4'), mdBulletsMerged)
 
 // ------------------------------------------------------------- and end to end, through the CLI
 
