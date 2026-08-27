@@ -130,6 +130,12 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // Reviewed 2026-08-28. `prompt:split` starts an agent CLI on this desk to read one long
+  // ask into a plan. It is the first class in the list - it runs a process here - and it
+  // spends somebody's tokens doing it, so it is gated with `sessions:start` rather than
+  // with the reads. The panes the plan opens go through `sessions:start`, which is gated
+  // in its own right.
+  'prompt:split',
   'autoclear:ask',
   'sessions:start',
   'sessions:startMany',
