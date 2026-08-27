@@ -95,7 +95,7 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
-import { clearCommandFor, readAsk as readAutoClearAsk } from '../shared/autoclear'
+import { clearCommandFor, readAsk as readAutoClearAsk, writeCancels } from '../shared/autoclear'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
@@ -1298,10 +1298,12 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 function writePane(id: string, data: string): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
-  // Somebody is using this pane, so the promise the countdown made is off. Only THIS path
-  // cancels - the clear itself types through `manager.write` inside the manager and never
-  // reaches this handler, so it cannot stand its own countdown down on the way out.
-  manager.cancelAutoClear(id, 'typed')
+  // Somebody is TYPING in this pane, so the promise the countdown made is off. Only THIS
+  // path cancels - the clear itself types through `manager.write` inside the manager and
+  // never reaches this handler, so it cannot stand its own countdown down on the way out.
+  // `writeCancels` is why a click no longer does: a bare click is arrows (`cursorMove.ts`)
+  // and reading the pane a countdown named is not a reason to drop it.
+  if (writeCancels(data)) manager.cancelAutoClear(id, 'typed')
   manager.write(id, data)
 }
 

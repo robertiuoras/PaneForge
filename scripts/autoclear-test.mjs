@@ -46,7 +46,7 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
-  watchDecision, expiryDecision, dropWords,
+  watchDecision, expiryDecision, dropWords, writeCancels,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
 
@@ -59,6 +59,38 @@ console.log('a busy pane WAITS, it is not refused')
   ok('a pending question refuses', armDecision('asked') === 'refuse')
   ok('a closed pane refuses', armDecision('gone') === 'refuse')
   ok('typing refuses', armDecision('typed') === 'refuse')
+}
+
+console.log('a click is not typing')
+{
+  const ESC = '\x1b'
+  // The bug: clicking the pane to READ what was about to be cleared took the card away.
+  // `cursorMove.ts` turns a bare click into the arrows that reach the same cell, and they
+  // go out through the same `pty:write` a person typing uses.
+  ok('an arrow does not cancel', writeCancels(ESC + '[C') === false)
+  ok('a run of arrows does not cancel', writeCancels(ESC + '[D' + ESC + '[D' + ESC + '[D') === false)
+  ok('application-mode arrows do not cancel', writeCancels(ESC + 'OB') === false)
+  ok('an SGR mouse report does not cancel', writeCancels(ESC + '[<0;40;12M') === false)
+  ok('an X10 mouse report does not cancel', writeCancels(ESC + '[M' + ' !!') === false)
+  ok('nothing at all does not cancel', writeCancels('') === false)
+  // The controls: content still stands the countdown down, or a session somebody has gone
+  // back to work in is cleared under them.
+  ok('a character cancels', writeCancels('h') === true)
+  ok('a return cancels', writeCancels('\r') === true)
+  ok('a backspace cancels', writeCancels('\x7f') === true)
+  ok('a paste cancels', writeCancels('carry on with the plan') === true)
+  ok('an arrow with a character after it cancels', writeCancels(ESC + '[Cx') === true)
+  // A tab or an escape on its own is not a caret move we generate - it is a keystroke.
+  ok('a bare escape cancels', writeCancels(ESC) === true)
+  ok('a tab cancels', writeCancels('\t') === true)
+
+  // Source assertion: the rule is worthless if the one caller stops asking it. This is
+  // exactly how the feature was dead for a day the first time.
+  const idx = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  ok(
+    'writePane guards the cancel with it',
+    /if \(writeCancels\(data\)\) manager\.cancelAutoClear\(id, 'typed'\)/.test(idx)
+  )
 }
 
 console.log('keystrokes')

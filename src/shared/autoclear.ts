@@ -268,6 +268,35 @@ export function expiryDecision(p: {
   return 'fire'
 }
 
+/**
+ * Does this pty write mean somebody is USING the pane, and so cancel its countdown?
+ *
+ * A click on a pane is not a keystroke - and it is also not nothing. `cursorMove.ts` turns
+ * one into the arrows that would have reached the same cell, and those go out through the
+ * same `pty:write` a person typing uses, which stood the countdown down on the way past.
+ * So the card vanished the moment Robert clicked the pane to READ what was about to be
+ * cleared, which is the one gesture anybody makes when a countdown appears.
+ *
+ * The reading is therefore on the BYTES, not on the caller: a write made only of cursor
+ * keys and mouse reports moved a caret and changed nothing, so the countdown stands. One
+ * printable character, a return, a backspace or a paste is content and still cancels it -
+ * and `dropFor` still refuses at the moment the timer fires if a draft is sitting in the
+ * box, so nothing typed can be eaten by this being narrower.
+ */
+const MOVE_ONLY = new RegExp(
+  '^(?:' +
+    '\\x1b\\[[ABCD]' + // arrows, normal mode
+    '|\\x1bO[ABCD]' + // arrows, application cursor mode
+    '|\\x1b\\[<[0-9;]*[mM]' + // SGR mouse report
+    '|\\x1b\\[M[\\s\\S]{3}' + // X10 mouse report
+    ')+$'
+)
+
+export function writeCancels(data: string): boolean {
+  if (!data) return false
+  return !MOVE_ONLY.test(data)
+}
+
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or
