@@ -111,6 +111,11 @@ is(
   'and the bell keeps its claim the moment the turn ends'
 )
 is(
+  fleetState(sess({ status: 'working', runSince: 5, asking: true })),
+  'needsYou',
+  'a question on screen DOES outrank a live turn - unlike a bell it goes away with itself'
+)
+is(
   fleetState(sess({ status: 'exited', bell: true })),
   'exited',
   'but nothing outranks the process being gone'
