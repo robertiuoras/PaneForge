@@ -2833,10 +2833,8 @@ export default function App(): JSX.Element {
         e.preventDefault()
         movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
       } else if (k === 'f' && e.shiftKey) {
-        // Shift for the whole Fleet, plain for find inside one pane: same letter, and the
-        // difference between them is the difference between one pane and all of them.
-        e.preventDefault()
-        setByState((v) => !v)
+        // Fleet is always grouped by state; this shortcut is no longer needed.
+        // Shift is reserved in case we need to add another fleet-level command in the future.
       } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
@@ -2950,14 +2948,6 @@ export default function App(): JSX.Element {
 
     out.push(
       { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
-      {
-        id: 'fleet',
-        group: 'Actions',
-        title: 'Sort the sessions list by who needs you',
-        hint: 'or leave it in the order you dragged it into',
-        keys: 'Ctrl Shift F',
-        run: () => setByState((v) => !v)
-      },
       {
         id: 'changes',
         group: 'Actions',
@@ -3947,27 +3937,14 @@ export default function App(): JSX.Element {
    * Whether the list is grouped by who needs a person, or left in the order it was
    * dragged into.
    *
-   * Grouped is the default, and is what replaced the Fleet dialog: the whole point of
-   * that screen was "sorted by whoever needs you first", and it was a screen you had to
-   * remember to open. The arranged order is still one press away (Ctrl Shift F) for a
-   * desk somebody has deliberately laid out. Kept in this window rather than in
-   * config.json - it is a view, not a setting, and two machines have no reason to agree
-   * about it.
+   * Grouped by state is the only view. Sessions are always organized by who needs you
+   * first (Your move), then active work (Running), ready-to-use panes (Ready), and
+   * finished ones (Ended). This replaced the Fleet dialog and the toggle between views.
+   * Kept in this window rather than in config.json - it is a view, not a setting, and
+   * two machines have no reason to agree about how to display the same panes.
    */
-  const [byState, setByState] = useState(() => {
-    try {
-      return window.localStorage.getItem('pf.listByState') !== 'off'
-    } catch {
-      return true
-    }
-  })
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('pf.listByState', byState ? 'on' : 'off')
-    } catch {
-      /* a window with site data blocked still sorts; it just forgets between launches */
-    }
-  }, [byState])
+  // Sessions are always grouped by state; the toggle is removed in favor of permanent grouping.
+  const byState = true
 
   /**
    * Every pane on the desk, this machine's and every paired machine's, as one list.
@@ -4569,25 +4546,18 @@ export default function App(): JSX.Element {
             fourth would not have fitted at all; a fixed-width row has room to grow and
             reads faster once you know it. Every one keeps its full sentence on hover. */}
         <div className="quick">
-          {/* First in the row because it is the one that can be UNREAD: the others open
-              something you went looking for, this one tells you something arrived. */}
-          <button
-            className={'ghost quick-btn' + (needsYou ? ' live' : '') + (byState ? ' on' : '')}
+          {/* Sessions are always grouped by state, so the fleet icon shows waiting panes. */}
+          <span
+            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
             title={
               (needsYou
                 ? `${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you. `
-                : '') +
-              keyLabel(
-                byState
-                  ? 'The list is sorted by who needs you first. Press to put it back in the order you arranged (Ctrl Shift F)'
-                  : 'The list is in the order you arranged. Press to sort it by who needs you first (Ctrl Shift F)'
-              )
+                : '') + 'Sessions are grouped by state in the list below.'
             }
-            onClick={() => setByState((v) => !v)}
           >
             <FleetIcon />
             {needsYou > 0 && <span className="quick-dot" />}
-          </button>
+          </span>
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
