@@ -154,10 +154,14 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     pane({ id: 'b', lastKeyboard: NOW - 3 * HOUR }),
     pane({ id: 'fresh', lastKeyboard: NOW - 30 * 60_000 })
   ]
-  // It ships ON now, at five minutes - the card carries the countdown and the press that
-  // stops it, so the close is visible for the whole wait rather than only in a mascot
-  // bubble in a corner. Zero is still how it is turned off.
-  eq('on by default, at five minutes', DEFAULT_RECLAIM.idleCloseMinutes, IDLE_CLOSE_MINUTES)
+  // It ships ON now - the card carries the countdown and the press that stops it, so the
+  // close is visible for the whole wait rather than only in a mascot bubble in a corner.
+  // Zero is still how it is turned off.
+  eq('on by default', DEFAULT_RECLAIM.idleCloseMinutes, IDLE_CLOSE_MINUTES)
+  // The number itself is asked for by name: it is what the Settings SWITCH writes, so it is
+  // a user-visible duration and not an implementation detail. Robert, 2026-08-27: "the idle
+  // close is 30 minutes and i want 10".
+  eq('...at ten minutes', IDLE_CLOSE_MINUTES, 10)
   eq('off when the number is zero', idleClosePlan(panes, { ...DEFAULT_RECLAIM, idleCloseMinutes: 0 }, NOW).length, 0)
   eq('and off when reclaim itself is off', idleClosePlan(panes, { ...CLOCKED, enabled: false }, NOW).length, 0)
   eq('oldest quiet first, and only past the clock', ids(idleClosePlan(panes, CLOCKED, NOW)), 'a,b')

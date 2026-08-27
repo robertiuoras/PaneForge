@@ -433,7 +433,6 @@ function migrateAutoAnswer(
   if (raw?.holdWhileWatching === undefined)
     merged.holdWhileWatching = DEFAULT_AUTO_ANSWER.holdWhileWatching
   merged.defaultsV2 = true
-  merged.defaultsV3 = true
   return merged
 }
 
@@ -455,7 +454,7 @@ function migrateReclaim(
   raw: ReclaimConfig | undefined
 ): ReclaimConfig {
   const merged: ReclaimConfig = { ...DEFAULT_RECLAIM, ...(base ?? {}), ...(raw ?? {}) }
-  if (raw?.defaultsV2) return merged
+  if (raw?.defaultsV2) return migrateReclaimV3(merged, raw)
   // A zero, and the one number the app itself could have written. The Settings control is
   // a SWITCH, not a field, so the only values that ever reached this key are 0 and the old
   // `IDLE_CLOSE_MINUTES` of 30 - both of them the app's own, and neither of them anybody's
@@ -466,6 +465,25 @@ function migrateReclaim(
     merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
   }
   merged.defaultsV2 = true
+  merged.defaultsV3 = true
+  return merged
+}
+
+/**
+ * The switch's own duration, thirty minutes, becoming ten.
+ *
+ * Separate from V2 and gated on its own flag, because every config in existence already
+ * carries `defaultsV2`. Only the old switch value moves - a zero is somebody having turned
+ * the clock OFF and stays off, and any other number was typed through
+ * `pf-ctl call config:set` and is that person's choice of duration.
+ */
+function migrateReclaimV3(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
+  if (raw?.defaultsV3) return merged
+  const OLD_SWITCH_MINUTES = 30
+  if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
+    merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
+  }
+  merged.defaultsV3 = true
   return merged
 }
 
