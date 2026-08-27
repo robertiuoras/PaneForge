@@ -59,6 +59,7 @@ const TESTS = [
   ['claim', 'transcript-claim-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
+  ['sleep', 'sleep-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
