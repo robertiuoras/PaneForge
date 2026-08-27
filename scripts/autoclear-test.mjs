@@ -46,7 +46,8 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
-  watchDecision, WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
+  watchDecision, expiryDecision, dropWords,
+  WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
 
 console.log('a busy pane WAITS, it is not refused')
@@ -181,6 +182,29 @@ console.log('refusals - the whole point of the countdown')
   ok('a question still refuses outright', armDecision('asked') === 'refuse')
   ok('a mid-turn pane still queues', armDecision('working') === 'queue')
   ok('nothing wrong still arms', armDecision(null) === 'arm')
+}
+
+console.log('what the timer does when it finally fires - the s2 incident (ADDENDUM 2026-08-27)')
+{
+  // Pane s2's countdown reached zero and typed nothing, and the old timer body had three
+  // silent exits so the branch taken could not be proven afterwards. Every branch is now
+  // a named verdict; these pin each one.
+  const base = { exists: true, metaAt: 5000, armedAt: 5000, now: 5000, drop: null }
+  // (b) a clean pane fires - and what it types is the FROZEN chunks, whose exact content
+  // the keystroke checks above already pin against the hook.
+  ok('a clean pane fires', expiryDecision(base) === 'fire')
+  ok('mid-turn still fires - the pty queues it to the turn boundary', expiryDecision({ ...base, drop: 'working' }) === 'fire')
+  // (c) a draft at expiry stands down, with a reason a person can read in the log.
+  ok('a draft at expiry stands down', expiryDecision({ ...base, drop: 'drafting' }) === 'drafting')
+  ok('and the reason has words', dropWords('drafting').includes('unsent'))
+  ok('a question at expiry stands down', expiryDecision({ ...base, drop: 'asked' }) === 'asked')
+  ok('a vanished pane does nothing at all', expiryDecision({ ...base, exists: false, metaAt: undefined, drop: 'gone' }) === 'vanished')
+  // A LATER arm owns the meta: its own timer is live, this one must not touch it.
+  ok('a newer countdown is left alone', expiryDecision({ ...base, metaAt: 9000 }) === 'foreign')
+  // (a) the guard-mismatch path: meta that no live countdown owns is cleaned up rather
+  // than left to hold the toast at 0:00 forever - which is exactly what Robert watched.
+  ok('stale meta is cleaned up, not skipped', expiryDecision({ ...base, metaAt: 1000 }) === 'stale')
+  ok('missing meta reads as stale too', expiryDecision({ ...base, metaAt: undefined }) === 'stale')
 }
 
 console.log('the antigravity statusline tee - somebody else\'s file, on their machine')

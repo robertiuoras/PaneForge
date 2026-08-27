@@ -1577,32 +1577,48 @@ export class SessionManager extends EventEmitter {
     s.meta.autoClearChunks = clearChunks(ask.prompt, ask.command ?? '/clear')
     if (ask.noResume) s.meta.autoClearNoResume = true
     if (ask.tokens) s.meta.autoClearTokens = ask.tokens
+    acLog(`${id} armed: fires at ${new Date(at).toISOString()} (${ask.seconds}s, ${JSON.stringify(s.meta.autoClearChunks[0])})`)
     const timer = setTimeout(() => {
       this.autoClearTimers.delete(id)
       const live = this.sessions.get(id)
-      if (!live || live.meta.autoClearAt !== at) return
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
-      const stop = dropFor({ ...live.meta, typed: live.typed })
-      // 'working' is NOT a refusal at this point, and treating it as one is what made a
-      // countdown everybody watched expire into nothing at all. A blocking Stop gate
-      // (ideas-gate, next-steps-gate, verify-gate) starts another turn inside the window
-      // on almost every arm, so re-queueing on 'working' sent the ask round a
-      // queue -> arm -> expire -> queue loop and the pane was never cleared. Measured
-      // 2026-08-26 in ~/.claude/autoclear.log: 15 countdowns started, 14 queued, and the
-      // panes they were armed on still held their whole context afterwards.
-      //
-      // Typing it anyway is safe, and is exactly what the hook's own fallback path
-      // already does: Claude Code QUEUES pty input that arrives mid-turn and runs it at
-      // the turn boundary, so the clear lands the moment the turn ends rather than never.
-      // Every other reason still refuses, because a pane holding a question, a pane with
-      // an unsent draft and a pane that has closed do not become clearable by being typed
-      // into - they lose something instead.
-      if (stop && stop !== 'working') return this.cancelAutoClear(id, stop)
-      const chunks = live.meta.autoClearChunks ?? clearChunks(live.meta.autoClearPrompt ?? '')
-      this.cancelAutoClear(id, 'cancelled')
+      // 'working' is NOT a refusal at this point - Claude Code QUEUES pty input that
+      // arrives mid-turn and runs it at the turn boundary, so the clear lands the moment
+      // the turn ends rather than never. (Refusing on 'working' is what made a countdown
+      // everybody watched expire into nothing: measured 2026-08-26 in
+      // ~/.claude/autoclear.log, 15 countdowns started, 14 queued, nothing cleared.)
+      // Every branch below is a named verdict and every one of them is LOGGED - the s2
+      // incident could not be diagnosed because three of these exits were silent.
+      const verdict = expiryDecision({
+        exists: !!live,
+        metaAt: live?.meta.autoClearAt,
+        armedAt: at,
+        now: Date.now(),
+        drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone'
+      })
+      acLog(
+        `${id} expiry: ${verdict} (armed ${at}, meta ${live?.meta.autoClearAt ?? 'none'})`
+      )
+      if (verdict === 'vanished' || verdict === 'foreign') return
+      if (verdict === 'stale') {
+        // Meta left behind by an arm this timer no longer owns, with no live countdown
+        // to clean it - exactly the state that froze the toast at 0:00. Clean it up.
+        this.clearAutoClearMeta(live!)
+        this.setAutoClearOutcome(id, 'stood down - the countdown was superseded')
+        this.emitSessions()
+        return
+      }
+      if (verdict !== 'fire') return this.cancelAutoClear(id, verdict)
+      const chunks = live!.meta.autoClearChunks ?? clearChunks(live!.meta.autoClearPrompt ?? '')
+      this.clearAutoClearMeta(live!)
+      this.setAutoClearOutcome(id, 'cleared')
+      this.emitSessions()
       chunks.forEach((c, i) => {
-        const t = setTimeout(() => this.write(id, c), i * CHUNK_GAP_MS)
+        const t = setTimeout(() => {
+          acLog(`${id} chunk ${i + 1}/${chunks.length}: ${JSON.stringify(c)}`)
+          this.write(id, c)
+        }, i * CHUNK_GAP_MS)
         t.unref?.()
       })
     }, ask.seconds * 1000)
@@ -1624,15 +1640,45 @@ export class SessionManager extends EventEmitter {
       this.autoClearTimers.delete(id)
     }
     if (!s?.meta.autoClearAt) return false
+    this.clearAutoClearMeta(s)
+    console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
+    acLog(`${id} stood down - ${dropWords(why)}`)
+    this.setAutoClearOutcome(id, `stood down - ${dropWords(why)}`)
+    this.emitSessions()
+    return true
+  }
+
+  /** The six countdown fields, deleted together - the fire path and every drop share it. */
+  private clearAutoClearMeta(s: { meta: Session }): void {
     delete s.meta.autoClearAt
     delete s.meta.autoClearPrompt
     delete s.meta.autoClearSteps
     delete s.meta.autoClearChunks
     delete s.meta.autoClearNoResume
     delete s.meta.autoClearTokens
-    console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
-    this.emitSessions()
-    return true
+  }
+
+  /**
+   * Say how the countdown ended, on the session, for ~5s.
+   *
+   * ADDENDUM 2026-08-27: a countdown that stood down used to vanish without a word, and
+   * one that went wrong froze at 0:00 - either way nobody watching could tell what the
+   * app decided. The toast draws this instead of silently disappearing.
+   */
+  private setAutoClearOutcome(id: string, text: string): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    s.meta.autoClearOutcome = text
+    s.meta.autoClearOutcomeAt = Date.now()
+    const t = setTimeout(() => {
+      const cur = this.sessions.get(id)
+      // A newer outcome owns the field now - never wipe somebody else's sentence.
+      if (!cur || cur.meta.autoClearOutcome !== text) return
+      delete cur.meta.autoClearOutcome
+      delete cur.meta.autoClearOutcomeAt
+      this.emitSessions()
+    }, 6000)
+    t.unref?.()
   }
 
   setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {

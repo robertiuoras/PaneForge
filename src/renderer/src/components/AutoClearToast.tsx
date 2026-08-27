@@ -27,7 +27,25 @@ export default function AutoClearToast({
   const soon = panes
     .filter((s) => s.autoClearAt)
     .sort((a, b) => (a.autoClearAt ?? 0) - (b.autoClearAt ?? 0))[0]
-  if (!soon?.autoClearAt) return null
+  if (!soon?.autoClearAt) {
+    // No countdown, but one JUST ended: say how. A card that vanishes without a word -
+    // or worse, freezes at 0:00 - leaves whoever watched it guessing what the app
+    // decided (ADDENDUM 2026-08-27, the s2 incident). Main deletes the outcome after
+    // ~6s; the 5s window here is the belt to that brace.
+    const done = panes
+      .filter((s) => s.autoClearOutcome && now - (s.autoClearOutcomeAt ?? 0) < 5000)
+      .sort((a, b) => (b.autoClearOutcomeAt ?? 0) - (a.autoClearOutcomeAt ?? 0))[0]
+    if (!done) return null
+    return (
+      <div className="autoclear-card" role="status">
+        <div className="autoclear-top">
+          <span className="autoclear-word">
+            <b>{done.title}</b> {done.autoClearOutcome}
+          </span>
+        </div>
+      </div>
+    )
+  }
   const left = Math.max(0, Math.ceil((soon.autoClearAt - now) / 1000))
   const steps = soon.autoClearSteps ?? []
   // A clear with nothing to carry is a different event and has to read as one. "Carrying on
