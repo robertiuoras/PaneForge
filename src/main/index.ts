@@ -186,7 +186,7 @@ import { assess, restorePlan, type Pressure } from '../shared/capacity'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
-import { agentsMidTurn, decideInstall } from '../shared/updateHold'
+import { agentsMidTurn, deskBusy, decideInstall } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -2893,9 +2893,11 @@ function autoInstall(): void {
   }
   // The build stopped being installable while we waited - superseded, or already going.
   if (getUpdateState().phase !== 'ready') return
-  const running = agentsMidTurn(manager.list())
+  // `deskBusy`, not `agentsMidTurn`: a turn boundary is not a safe moment to take somebody's
+  // panes away, it is the pause in the middle of their work. See DESK_QUIET_MS.
+  const running = deskBusy(manager.list(), Date.now())
   if (running > 0) {
-    updateLog('install', `auto-restart held: ${running} agent(s) mid-turn - looking again in 60s`)
+    updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
     autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
     autoInstallTimer.unref?.()
     return

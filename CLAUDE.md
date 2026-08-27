@@ -154,6 +154,13 @@ saying "already working on it".
   `shared/pickRelease.ts` walks the list for the newest release whose assets include the one
   `assetFor` asks for; a list where nothing is installable reports "no update" rather than an
   error. `npm run test:pickrelease`.
+- **A restart nobody asked for waits for the DESK, not for the turn.** `agentsMidTurn` was
+  the whole rule and it is too narrow by one case: three panes open, one nine asks into a
+  conversation and BETWEEN turns, so the automatic restart fired and every pty died
+  (2026-08-27 11:41:48). `deskBusy` in `shared/updateHold.ts` also holds an ENGAGED pane
+  until it has been quiet `DESK_QUIET_MS` (10 min), and an engaged pane with no timestamps
+  counts as warm. The CLICKED restart is deliberately unchanged - somebody asked for it.
+  `npm run test:updatehold`.
 - **The recovery may not live inside the thing that can hang.** A transient phase carries
   `phaseAt`, and `busy()` — asked before every restart — drops one past its budget, whatever
   wedged it. `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min, `PROBE_BUDGET_MS` 5min, all

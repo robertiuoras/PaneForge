@@ -28,7 +28,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { agentsMidTurn, decideInstall } = await import(pathToFileURL(outfile).href)
+const { DESK_QUIET_MS, agentsMidTurn, deskBusy, decideInstall } = await import(pathToFileURL(outfile).href)
 
 let failures = 0
 function ok(cond, what) {
@@ -55,6 +55,40 @@ ok(agentsMidTurn([waiting, waiting, starting]) === 0, 'panes waiting for you hol
 ok(agentsMidTurn([working]) === 1, 'one agent mid-turn holds the restart')
 ok(agentsMidTurn([waiting, working, working]) === 2, 'every working pane is counted, not just the first')
 ok(agentsMidTurn([deadMidTurn]) === 0, 'an exited pane with a stale runSince does not hold forever')
+
+// The restart nobody asked for reads a wider rule, because `agentsMidTurn` was too narrow
+// by exactly the case that happened: 2026-08-27 11:41:48, three panes open, one nine asks
+// into a conversation and BETWEEN turns. Nothing was mid-turn, so the automatic restart
+// fired, every pty died, and the pane came back repainted from scratch - "why did you just
+// clear without doing a handoff or anyhitng please fix this issue".
+{
+  const NOW = 1_800_000_000_000
+  const MIN = 60_000
+  const warm = { status: 'idle', engaged: true, lastOutput: NOW - 2 * MIN }
+  const cold = { status: 'idle', engaged: true, lastOutput: NOW - 40 * MIN }
+  const empty = { status: 'idle', engaged: false, lastOutput: NOW - 2 * MIN }
+
+  ok(deskBusy([warm], NOW) === 1, 'a conversation between turns still holds the restart')
+  ok(deskBusy([cold], NOW) === 0, '...and stops holding it once it has been quiet')
+  ok(deskBusy([empty], NOW) === 0, 'a pane with no conversation in it holds nothing')
+  ok(deskBusy([working], NOW) === 1, 'mid-turn still holds it, exactly as before')
+  ok(deskBusy([{ ...deadMidTurn, engaged: true }], NOW) === 0, 'an exited pane never holds it')
+  ok(
+    deskBusy([{ status: 'idle', engaged: true }], NOW) === 1,
+    'an engaged pane with no timestamps is treated as warm, not as free to restart over'
+  )
+  ok(
+    deskBusy([{ status: 'idle', engaged: true, lastKeyboard: NOW - MIN, lastOutput: 0 }], NOW) === 1,
+    'a pane somebody is typing into counts, even with nothing printed'
+  )
+  ok(DESK_QUIET_MS === 10 * 60_000, 'the quiet window is ten minutes')
+
+  // The clicked path is deliberately NOT widened: a person pressing Restart now has decided.
+  ok(
+    decideInstall({ phase: 'ready', installStarted: false, sessions: [warm] }).act === 'install',
+    'a click still restarts over a warm conversation, because somebody asked for it'
+  )
+}
 ok(agentsMidTurn([deadMidTurn, working]) === 1, 'a stale exited pane does not inflate the live count')
 
 // What the button itself decides. Tested here because it cannot be reached in dev at
