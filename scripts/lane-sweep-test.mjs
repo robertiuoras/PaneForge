@@ -79,6 +79,11 @@ function lane(dir, n = 2) {
   return path
 }
 
+// The sweep keeps a lane that holds nothing until it has been untouched for
+// SWEEP_GRACE_MS (a day). Every case below builds its lane a millisecond before sweeping
+// it, so the grace is turned off for them and pinned on its own in the last block.
+process.env.PF_SWEEP_GRACE_MS = '0'
+
 console.log('lane sweep')
 
 // 1. The ordinary case: work committed in the lane, merged into the project, chat gone.
@@ -199,6 +204,28 @@ console.log('lane sweep')
   const swept = await sweepLanes(dir, [])
   check('a lane nothing was ever done in is removed', !existsSync(path) && swept.length === 1)
   check('with its ignored files', !existsSync(join(path, 'node_modules')))
+}
+
+// 9. The grace period itself: a lane that holds nothing is still a folder somebody may be
+//    coming back to, so it is kept until it has been quiet for SWEEP_GRACE_MS. This is the
+//    one block that runs with the grace ON, and it is the assertion the feature arrived
+//    without - it shipped as a bare Date.now() comparison that turned 12 checks red.
+{
+  const dir = repo('fresh')
+  const path = lane(dir)
+  writeFileSync(join(path, 'app.txt'), 'two\n')
+  git(path, 'commit', '-qam', 'lane work')
+  git(dir, 'merge', '-q', '--no-ff', '-m', 'merge lane', 'pf/w2')
+
+  process.env.PF_SWEEP_GRACE_MS = String(24 * 60 * 60 * 1000)
+  const swept = await sweepLanes(dir, [])
+  check('a merged lane that has only just been touched is kept', existsSync(path))
+  check('and it is not reported as swept', swept.length === 0)
+  // The control: the same lane, past its grace, IS removed - or the check above would
+  // pass just as well against a sweep that had stopped working altogether.
+  process.env.PF_SWEEP_GRACE_MS = '0'
+  await sweepLanes(dir, [])
+  check('...and removed once the grace has passed', !existsSync(path))
 }
 
 rmSync(root, { recursive: true, force: true })

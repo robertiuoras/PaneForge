@@ -23,6 +23,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+// sweepLanes keeps an empty lane until it has been quiet for SWEEP_GRACE_MS (a day);
+// every lane here is built a millisecond before it is swept. The grace itself is pinned
+// in scripts/lane-sweep-test.mjs.
+process.env.PF_SWEEP_GRACE_MS = '0'
+
 const repoRoot = resolve(import.meta.dirname, '..')
 // realpath: macOS hands out /var/folders/... for a temp dir that git and the app both
 // spell /private/var/folders/..., and every path assertion below would compare the two.
