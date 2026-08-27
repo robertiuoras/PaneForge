@@ -103,14 +103,18 @@ export interface ReclaimConfig {
    * it was V2's, not this one's.
    */
   defaultsV3?: boolean
+  /** The same again, ten minutes becoming five - see `migrateReclaimV4`. */
+  defaultsV4?: boolean
 }
 
 /**
  * What the Settings switch sets `idleCloseMinutes` to when it is turned on.
  *
- * Ten minutes. It was thirty, and before that two - the two was wrong for the reason below
- * and the thirty was too slow for the desk it runs on: Robert, 2026-08-27, "the idle close
- * is 30 minutes and i want 10". Ten still costs nothing when it is early.
+ * Five minutes. It was ten earlier the same day, thirty before that, and two before that -
+ * the two was wrong for the reason below and the thirty was too slow for the desk it runs
+ * on: Robert, 2026-08-27, "the idle close is 30 minutes and i want 10", then "actually
+ * sorry its 5 min". Being early costs less here than it did, because the clock no longer
+ * starts at all on a pane whose output nobody has read (see `unread`).
  *
  * The original note stands, and is why being early is cheap: it was two, on the reasoning
  * that being early closes a pane somebody was
@@ -121,7 +125,7 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 10
+export const IDLE_CLOSE_MINUTES = 5
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
@@ -129,7 +133,8 @@ export const DEFAULT_RECLAIM: ReclaimConfig = {
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
   defaultsV2: true,
-  defaultsV3: true
+  defaultsV3: true,
+  defaultsV4: true
 }
 
 export interface ReclaimPane {
@@ -252,6 +257,26 @@ export function quietSince(
   return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0)
 }
 
+/**
+ * Has this pane printed something since the keyboard last left it - a turn nobody has read.
+ *
+ * The idle clock counts from the last printed byte, so an agent that finishes a turn while
+ * somebody is in another pane starts its own countdown: the answer is on screen, nobody has
+ * seen it, and ten minutes later the pane is gone with it. Robert, 2026-08-27: "if you havent
+ * read the output then the closes in countdown wont start".
+ *
+ * `lastFocus` is stamped when the keyboard ARRIVES at a pane as well as when it leaves, so
+ * "read" here means the pane has had the keyboard at some point after its last output. A
+ * pane being read right now is `focused` and already exempt; the moment it is left, the
+ * stamp lands after the output and the clock starts from there.
+ *
+ * It holds the idle CLOCK only. `reclaimPlan` fires on real memory pressure, where holding
+ * an unread pane open is the more expensive of the two mistakes.
+ */
+export function unread(p: Pick<ReclaimPane, 'lastOutput' | 'lastFocus'>): boolean {
+  return (p.lastOutput ?? 0) > (p.lastFocus ?? 0)
+}
+
 export interface Reclaim {
   id: string
   /** How long it had been quiet, ms. Goes in the log line so the choice is auditable. */
@@ -327,7 +352,8 @@ export function reclaimPlan(
 export function idleClosePlan(
   panes: ReclaimPane[],
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
-  now = 0
+  now = 0,
+  personHere = true
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
@@ -336,7 +362,7 @@ export function idleClosePlan(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter(onTheClock)
+    .filter((p) => onTheClock(p, personHere))
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
 
@@ -372,8 +398,13 @@ export function reclaimedMb(plan: Reclaim[]): number {
  * which arrives here as `busy`. Robert, 2026-08-23: "its actually stopped not just stopped
  * but shell or something background still running".
  */
-function onTheClock(p: ReclaimPane): boolean {
+function onTheClock(p: ReclaimPane, personHere = true): boolean {
   return (
+    // Only while there is somebody here to have read it. A machine no person has touched
+    // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
+    // is ever read, so an unread refusal would switch the feature off on the one machine
+    // that needs it.
+    !(personHere && unread(p)) &&
     !p.focused &&
     !p.remote &&
     !p.handingOff &&
@@ -402,12 +433,13 @@ function onTheClock(p: ReclaimPane): boolean {
 export function idleCloseAt(
   pane: ReclaimPane,
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
-  now = 0
+  now = 0,
+  personHere = true
 ): number | null {
   if (!cfg.enabled) return null
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
   if (!minutes) return null
-  if (!onTheClock(pane)) return null
+  if (!onTheClock(pane, personHere)) return null
   const at = quietSince(pane) + minutes * 60_000
   // A pane already past its deadline is due NOW, not overdue by four minutes: the sweep
   // runs on a minute timer, so `now` is regularly a little past the moment it was due and

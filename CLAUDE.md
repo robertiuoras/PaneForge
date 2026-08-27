@@ -1462,9 +1462,16 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   to be away, so it behaves exactly as before. **Only the clock pauses** — `reclaimPlan`,
   which fires on real pressure, is untouched, so a laptop left open all night is still
   protected by the reading that was always the honest trigger.
+- **A turn nobody has READ has no countdown in front of it.** `unread` - the pane printed
+  something after the keyboard last left it - refuses `onTheClock`, so the clock starts only
+  once the pane has been looked at since its last output (a pane being read now is `focused`
+  and already exempt). It holds the CLOCK only: `reclaimPlan` fires on real memory pressure,
+  where holding an unread pane open is the more expensive mistake. And it is gated on
+  `Away.sawPerson` - on a desk no person has touched this run nothing is ever read, so the
+  refusal would switch the feature off on the one machine it exists for.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has typed
   into for that long whatever the memory says; 0 is the default. The switch sets
-  `IDLE_CLOSE_MINUTES` = **30 minutes**. It exists for the second machine — a desk driven over the
+  `IDLE_CLOSE_MINUTES` = **5 minutes**. It exists for the second machine — a desk driven over the
   link, which fills with finished panes and has no person to close them. Every refusal above is
   shared verbatim except **visible**, which it cannot keep: on a machine nobody is at, every pane
   in the grid is "on screen". `idleClosePlan`, its own minute timer in `App.tsx`.

@@ -1124,7 +1124,7 @@ manager.on('sessions', () => publishCapacity())
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
 // a CHANGE only - two messages per absence. See src/shared/away.ts.
-startAway((a) => send('system:away', a.awaySince))
+startAway((a) => send('system:away', a))
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))

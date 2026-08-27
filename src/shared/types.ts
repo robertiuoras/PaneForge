@@ -1,4 +1,5 @@
 import type { AutoClearAsk } from './autoclear'
+import type { Away } from './away'
 import type { LinkState } from './linkState'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
@@ -2309,7 +2310,7 @@ export interface Api {
    * also the answer on a machine no person has ever touched, which is the second desk this
    * whole feature exists for and the one place the pause must never fire.
    */
-  onAway(cb: (awaySince: number | null) => void): () => void
+  onAway(cb: (away: Away) => void): () => void
   /**
    * What the panes are costing right now, measured rather than modelled - see
    * src/shared/usage.ts. Pushed every few seconds while a window is on screen.
