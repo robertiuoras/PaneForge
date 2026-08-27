@@ -184,6 +184,19 @@ export interface ReclaimPane {
    */
   job?: string | null
   /**
+   * Something the AGENT left running in the background: a `run_in_background` shell, a
+   * Monitor loop, a build (`shared/paneBackJobs.ts`).
+   *
+   * Separate from `job` on purpose. `job` is a SHELL pane's foreground command and also
+   * feeds `busyOnScreen`, where a false positive is a pane the sweep never closes and a
+   * clock that lies. This one feeds nothing but the refusals below, so being wrong costs a
+   * pane that stays open a little longer - and being right is the difference between a
+   * twenty-minute build finishing and being killed at minute three, which is what the
+   * ladder did before this: the turn ends, the CLI's footer goes quiet, `engaged` drops,
+   * the card reads finished, and the work is still going.
+   */
+  backJob?: string | null
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -260,6 +273,7 @@ export function reclaimPlan(
         !p.asking &&
         !p.busy &&
         !p.job &&
+        !p.backJob &&
         !p.pinned &&
         CLOSEABLE.has(p.state)
     )
@@ -350,6 +364,7 @@ function onTheClock(p: ReclaimPane): boolean {
     !p.asking &&
     !p.busy &&
     !p.job &&
+    !p.backJob &&
     !p.pinned &&
     CLOSEABLE.has(p.state)
   )

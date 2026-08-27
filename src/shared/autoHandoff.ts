@@ -256,6 +256,16 @@ export interface AutoPane {
    * expensive one, and it is the case Robert named.
    */
   job?: string
+  /**
+   * Something the agent left running in the background (`shared/paneBackJobs.ts`).
+   *
+   * A REFUSAL, and deliberately not another `job`. `job` means "worth moving": a dev
+   * server that has just started costs nothing yet and is the pane to move. A background
+   * job is the opposite - moving a pane kills its pty and starts a fresh one on the other
+   * machine, so a build three minutes into twenty dies with it, and unlike a turn there is
+   * nothing to queue behind: the work is not going to announce that it finished.
+   */
+  backJob?: string
 }
 
 export interface AutoHandoff {
@@ -268,8 +278,11 @@ export interface AutoHandoff {
 }
 
 /** States a pane may be moved out of. Everything else is a turn in flight. */
-export function movable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
+export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob'>): boolean {
   if (p.asking) return false
+  // Killing the pty takes the background work with it, and there is no turn boundary to
+  // wait for. See `AutoPane.backJob`.
+  if (p.backJob) return false
   // `exited` is left to reclaim: there is no agent to move, only a row to close.
   return p.state === 'ready' || p.state === 'needsYou'
 }
@@ -287,8 +300,9 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
  * there with nobody asked), a pane that has exited (nothing to move), and one that has
  * not printed yet - `starting` has no transcript to resume from and no screen to carry.
  */
-export function queueable(p: Pick<AutoPane, 'state' | 'asking'>): boolean {
+export function queueable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob'>): boolean {
   if (p.asking) return false
+  if (p.backJob) return false
   return p.state === 'ready' || p.state === 'needsYou' || p.state === 'working' || p.state === 'stalled'
 }
 

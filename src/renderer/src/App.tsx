@@ -214,7 +214,9 @@ function reclaimPaneOf(
   s: Session,
   activeId: string | null,
   lastFocus?: number,
-  pinned?: boolean
+  pinned?: boolean,
+  /** what the sampler saw this pane still running, when it has an answer */
+  backJob?: string | null
 ): ReclaimPane {
   return {
     id: s.id,
@@ -234,6 +236,10 @@ function reclaimPaneOf(
     // ...and the job itself, which is set by a different reading than `runSince` is. See
     // `ReclaimPane.job`: a BACKGROUND command is exactly the case the run clock missed.
     job: s.job ?? null,
+    // ...and what the AGENT left running in the background, which no other reading here
+    // can see: the turn ended, so `busy` is false and `job` refuses to speak about an
+    // agent pane at all. See `ReclaimPane.backJob`.
+    backJob: backJob ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -2235,7 +2241,10 @@ export default function App(): JSX.Element {
         cpuPct: usageRef.current?.panes[s.id]?.cpuPct ?? undefined,
         // A shell pane's live command (`shared/paneJob.ts`): a dev server that has just
         // started holds nothing yet and is still the pane worth moving.
-        job: s.job
+        job: s.job,
+        // ...and what an agent left running, which is the opposite: never move it, because
+        // the move kills the pty and the work with it. See `AutoPane.backJob`.
+        backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label
       })),
     []
   )
@@ -2443,7 +2452,13 @@ export default function App(): JSX.Element {
     const sweep = (): void => {
       const plan = idleClosePlan(
         sessionsRef.current.map((s) =>
-          reclaimPaneOf(s, activeRef.current, focusLeftAt.current[s.id], pinnedRef.current[s.id])
+          reclaimPaneOf(
+            s,
+            activeRef.current,
+            focusLeftAt.current[s.id],
+            pinnedRef.current[s.id],
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+          )
         ),
         cfg,
         // Frozen while nobody is at this machine: the clock counts time a person could
@@ -3758,7 +3773,13 @@ export default function App(): JSX.Element {
         if (s.remote) continue
         live.add(s.id)
         const due = idleCloseAt(
-          reclaimPaneOf(s, activeId, focusLeftAt.current[s.id], pinned[s.id]),
+          reclaimPaneOf(
+            s,
+            activeId,
+            focusLeftAt.current[s.id],
+            pinned[s.id],
+            usage?.panes[s.id]?.jobs?.[0]?.label
+          ),
           cfg,
           now
         )
