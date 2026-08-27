@@ -21,7 +21,7 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
