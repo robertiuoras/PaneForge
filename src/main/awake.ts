@@ -14,41 +14,70 @@ export function startDisplayAwake(opts: {
 }): { keeper: AwakeKeeper; tick(): void; stop(): void } {
   let displayBlockerId: number | null = null
   let appBlockerId: number | null = null
-  let caffeinateProc: ChildProcess | null = null
+  // Two separate holds. `-i` (system) runs whenever a pane is working so background work
+  // keeps going; `-d` (display) runs only while someone is actually at the desk, so an
+  // empty room gets a black screen instead of a drained battery.
+  let systemCaffeinate: ChildProcess | null = null
+  let displayCaffeinate: ChildProcess | null = null
+
+  function kill(which: 'system' | 'display'): void {
+    const proc = which === 'system' ? systemCaffeinate : displayCaffeinate
+    if (!proc) return
+    try {
+      opts.log?.(`caffeinate ${which} PID ${proc.pid} stopping`)
+      proc.kill('SIGTERM')
+    } catch {
+      // ignore
+    }
+    if (which === 'system') systemCaffeinate = null
+    else displayCaffeinate = null
+  }
 
   function killCaffeinate(): void {
-    if (caffeinateProc) {
-      try {
-        opts.log?.(`caffeinate PID ${caffeinateProc.pid} stopping`)
-        caffeinateProc.kill('SIGTERM')
-      } catch {
-        // ignore
-      }
-      caffeinateProc = null
+    kill('system')
+    kill('display')
+  }
+
+  function spawnCaffeinate(which: 'system' | 'display'): void {
+    if (process.platform !== 'darwin') return
+    if ((which === 'system' ? systemCaffeinate : displayCaffeinate) !== null) return
+    // -i prevents idle SYSTEM sleep; -d prevents idle DISPLAY sleep.
+    const flag = which === 'system' ? '-i' : '-d'
+    try {
+      const proc = spawn('caffeinate', [flag], { stdio: 'ignore', detached: false })
+      if (which === 'system') systemCaffeinate = proc
+      else displayCaffeinate = proc
+      opts.log?.(`caffeinate ${which} started PID ${proc.pid}`)
+      proc.on('error', (err) => {
+        opts.log?.(`caffeinate ${which} error: ${err.message}`)
+        if (which === 'system') systemCaffeinate = null
+        else displayCaffeinate = null
+      })
+      proc.on('exit', (code) => {
+        opts.log?.(`caffeinate ${which} exited with code ${code}`)
+        if (which === 'system') systemCaffeinate = null
+        else displayCaffeinate = null
+      })
+    } catch (e) {
+      opts.log?.(`caffeinate ${which} spawn failed: ${e}`)
     }
   }
 
-  function spawnCaffeinate(): void {
-    if (process.platform !== 'darwin' || caffeinateProc) return
-    try {
-      // caffeinate -d prevents display sleep (PreventUserIdleDisplaySleep)
-      // caffeinate -i prevents idle system sleep (PreventUserIdleSystemSleep)
-      caffeinateProc = spawn('caffeinate', ['-d', '-i'], {
-        stdio: 'ignore',
-        detached: false
-      })
-      opts.log?.(`caffeinate started PID ${caffeinateProc.pid}`)
-      caffeinateProc.on('error', (err) => {
-        opts.log?.(`caffeinate error: ${err.message}`)
-        caffeinateProc = null
-      })
-      caffeinateProc.on('exit', (code) => {
-        opts.log?.(`caffeinate exited with code ${code}`)
-        caffeinateProc = null
-      })
-    } catch (e) {
-      opts.log?.(`caffeinate spawn failed: ${e}`)
+  /** Turn the SCREEN hold on or off. Called after every tick, both ways round. */
+  function applyDisplay(hold: boolean): void {
+    if (hold) {
+      if (displayBlockerId === null) {
+        displayBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+      }
+      spawnCaffeinate('display')
+      tickleUserActive()
+      return
     }
+    if (displayBlockerId !== null && powerSaveBlocker.isStarted(displayBlockerId)) {
+      powerSaveBlocker.stop(displayBlockerId)
+    }
+    displayBlockerId = null
+    kill('display')
   }
 
   function tickleUserActive(): void {
@@ -70,24 +99,19 @@ export function startDisplayAwake(opts: {
   const keeper = new AwakeKeeper({
     panes: opts.panes,
     enabled: opts.enabled,
-    // 1. 'prevent-display-sleep' keeps the screen illuminated while the laptop is open,
-    // protecting against macOS 1-minute low-power screen shutoffs while watching or working.
-    // 2. 'prevent-app-suspension' keeps CPU, networking, child processes, and agent turns
-    // executing at full speed in the background when the lid is closed.
-    // 3. On macOS, caffeinate holds PreventUserIdleDisplaySleep directly, and caffeinate -u
-    // tickles the user activity timer so Low Power Mode does not blank the screen after 1 min.
+    // 1. 'prevent-app-suspension' keeps CPU, networking, child processes, and agent turns
+    // executing at full speed in the background when the lid is closed. Paired with
+    // `caffeinate -i`, this is the hold that runs for the whole time a pane is working.
+    // 2. The SCREEN hold ('prevent-display-sleep' + `caffeinate -d` + the `-u` tickle that
+    // beats Low Power Mode's 1-minute blank) is applied separately in applyDisplay(), and
+    // only while someone is at the desk - see awakeDisplayBusy in shared/awake.ts.
     start: () => {
-      displayBlockerId = powerSaveBlocker.start('prevent-display-sleep')
       appBlockerId = powerSaveBlocker.start('prevent-app-suspension')
-      spawnCaffeinate()
-      tickleUserActive()
-      return displayBlockerId
+      spawnCaffeinate('system')
+      return appBlockerId
     },
     stop: () => {
-      if (displayBlockerId !== null && powerSaveBlocker.isStarted(displayBlockerId)) {
-        powerSaveBlocker.stop(displayBlockerId)
-        displayBlockerId = null
-      }
+      applyDisplay(false)
       if (appBlockerId !== null && powerSaveBlocker.isStarted(appBlockerId)) {
         powerSaveBlocker.stop(appBlockerId)
         appBlockerId = null
@@ -97,24 +121,17 @@ export function startDisplayAwake(opts: {
     now: () => Date.now(),
     log: opts.log
   })
-  const timer = setInterval(() => {
+  function run(): void {
     const verdict = keeper.tick()
-    if (verdict.hold) {
-      spawnCaffeinate()
-      tickleUserActive()
-    }
-  }, AWAKE_TICK_MS)
+    if (verdict.hold) spawnCaffeinate('system')
+    applyDisplay(verdict.holdDisplay)
+  }
+  const timer = setInterval(run, AWAKE_TICK_MS)
   timer.unref?.()
-  keeper.tick()
+  run()
   return {
     keeper,
-    tick: () => {
-      const verdict = keeper.tick()
-      if (verdict.hold) {
-        spawnCaffeinate()
-        tickleUserActive()
-      }
-    },
+    tick: run,
     stop: () => {
       clearInterval(timer)
       keeper.release()

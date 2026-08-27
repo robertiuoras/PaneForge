@@ -47,6 +47,8 @@ export interface AwakeInput {
 
 export interface AwakeVerdict {
   hold: boolean
+  /** Whether the SCREEN must stay lit. Narrower than `hold` on purpose - see awakeDisplayBusy. */
+  holdDisplay: boolean
   /** Why, in the words that go in the log line - both ways round. */
   reason: string
   /** How many panes counted as working. 0 whenever a refusal fired first. */
@@ -56,6 +58,13 @@ export interface AwakeVerdict {
 export const DEFAULT_MAX_HOLD_MS = 3 * 60 * 60_000
 /** Keep awake for 5 minutes after recent logs or output so reading logs does not turn off the screen */
 export const RECENT_LOGS_HOLD_MS = 5 * 60_000
+/**
+ * How long after the last KEYPRESS the screen stays lit (2026-08-27, Robert's words:
+ * "screen not turning off after like 5mins of inactivity ... but laptop still should run
+ * in background"). Work running is a reason to keep the MACHINE awake; it is not a reason
+ * to keep the SCREEN lit at an empty desk, which is what was draining the battery.
+ */
+export const RECENT_KEYBOARD_HOLD_MS = 5 * 60_000
 
 /** A pane with an agent mid-turn, one holding a question, a shell running a command, recent log output, or a background job/monitor. */
 export function awakeBusy(panes: readonly AwakePane[], now?: number): number {
@@ -73,16 +82,44 @@ export function awakeBusy(panes: readonly AwakePane[], now?: number): number {
   }).length
 }
 
+/**
+ * Panes that justify keeping the SCREEN on: one sitting on a question he has to answer,
+ * or one he typed into in the last few minutes. Agent turns, shell jobs, dev servers and
+ * log output all keep the SYSTEM awake (awakeBusy) but deliberately do not count here.
+ */
+export function awakeDisplayBusy(panes: readonly AwakePane[], now?: number): number {
+  const currentNow = now ?? Date.now()
+  return panes.filter((p) => {
+    if (p.status === 'exited') return false
+    if (p.asking) return true
+    if (p.lastKeyboard && currentNow - p.lastKeyboard < RECENT_KEYBOARD_HOLD_MS) return true
+    return false
+  }).length
+}
+
 export function awakeVerdict(input: AwakeInput): AwakeVerdict {
-  if (!input.enabled) return { hold: false, reason: 'off', busy: 0 }
+  if (!input.enabled) return { hold: false, holdDisplay: false, reason: 'off', busy: 0 }
   const busy = awakeBusy(input.panes, input.now)
-  if (!busy) return { hold: false, reason: 'nothing running', busy: 0 }
+  if (!busy) return { hold: false, holdDisplay: false, reason: 'nothing running', busy: 0 }
   const cap = input.maxHoldMs ?? DEFAULT_MAX_HOLD_MS
   if (input.busySince !== null && input.now - input.busySince > cap) {
     const hours = Math.round((input.now - input.busySince) / 360_000) / 10
-    return { hold: false, reason: `busy ${hours}h without a break - past the cap`, busy }
+    return {
+      hold: false,
+      holdDisplay: false,
+      reason: `busy ${hours}h without a break - past the cap`,
+      busy
+    }
   }
-  return { hold: true, reason: `${busy} pane${busy === 1 ? '' : 's'} working`, busy }
+  const displayBusy = awakeDisplayBusy(input.panes, input.now)
+  return {
+    hold: true,
+    holdDisplay: displayBusy > 0,
+    reason: displayBusy
+      ? `${busy} pane${busy === 1 ? '' : 's'} working, ${displayBusy} needing the screen`
+      : `${busy} pane${busy === 1 ? '' : 's'} working, screen free to sleep`,
+    busy
+  }
 }
 
 /**

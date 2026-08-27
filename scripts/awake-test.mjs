@@ -25,7 +25,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { awakeVerdict, awakeBusy, nextBusySince, AwakeKeeper, DEFAULT_MAX_HOLD_MS } =
+const { awakeVerdict, awakeBusy, awakeDisplayBusy, nextBusySince, AwakeKeeper, DEFAULT_MAX_HOLD_MS } =
   createRequire(import.meta.url)(outfile)
 
 const NOW = 1_000_000_000
@@ -166,6 +166,43 @@ function keeper(panes, opts = {}) {
   k.release()
   k.release()
   assert.equal(k.holding(), false)
+}
+
+// The display/system split (2026-08-27). Work running keeps the MACHINE awake; only a
+// question on screen or a recent keypress keeps the SCREEN lit, because the screen staying
+// on at an empty desk was the battery drain that prompted this.
+{
+  const lit = (panes) => awakeVerdict({ panes, enabled: true, now: NOW, busySince: NOW - 1000 })
+  for (const [name, pane] of [
+    ['an agent mid-turn', working],
+    ['a shell job', shellJob],
+    ['a background job', backJob],
+    ['a dev server', devServer],
+    ['recent log output', recentLogs],
+    ['a starting pane', starting]
+  ]) {
+    const verdict = lit([pane])
+    assert.equal(verdict.hold, true, `${name} holds the system`)
+    assert.equal(verdict.holdDisplay, false, `${name} must NOT hold the screen`)
+  }
+  assert.equal(lit([asking]).holdDisplay, true, 'a question on screen holds the screen')
+  assert.equal(lit([recentKeys]).holdDisplay, true, 'a recent keypress holds the screen')
+  assert.equal(lit([oldKeys]).holdDisplay, false, 'a 6-minute-old keypress does not')
+  assert.equal(
+    lit([{ ...asking, status: 'exited' }]).holdDisplay,
+    false,
+    'a dead pane holds nothing'
+  )
+  // The refusals cover the screen too - never a lit screen with hold false.
+  assert.equal(awakeVerdict({ panes: [asking], enabled: false, now: NOW, busySince: null }).holdDisplay, false)
+  assert.equal(awakeVerdict({ panes: [quiet], enabled: true, now: NOW, busySince: null }).holdDisplay, false)
+  assert.equal(
+    awakeVerdict({ panes: [asking], enabled: true, now: NOW, busySince: NOW - DEFAULT_MAX_HOLD_MS - 1 }).holdDisplay,
+    false,
+    'past the cap the screen goes off too'
+  )
+  assert.equal(awakeDisplayBusy([asking, working, recentKeys], NOW), 2)
+  assert.equal(awakeBusy([asking, working, recentKeys], NOW), 3)
 }
 
 console.log('awake: ok')
