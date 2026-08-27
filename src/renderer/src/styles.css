@@ -3723,3 +3723,29 @@ button.chip:hover {
    fit addon reads the host's computed height (border-box here, so its own padding is
    already inside it) and subtracts only the terminal element's padding. */
 .xterm-host .xterm { padding-bottom: var(--pane-reserve, 0px); }
+
+
+/* Split an ask into panes (SplitDialog.tsx).
+   No colour of its own: every value here is a theme token, so the dialog follows the
+   accent and the depth slider like every other one. The rows are separated by a hairline
+   rather than by a card with a shadow - a stack of shadowed boxes down a dialog is the
+   generic card grid this app does not draw. */
+.split-ask {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0;
+}
+.split-ask:focus { outline: none; border-color: var(--line-strong); }
+.split-note { margin: 4px 0 2px; }
+.split-error { color: var(--danger); font-size: 12px; margin: 6px 0; }
+.split-row { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+.split-row-head { display: flex; gap: 8px; align-items: center; }
+.split-title { flex: 1 1 auto; min-width: 0; }

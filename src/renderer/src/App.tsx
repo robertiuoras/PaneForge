@@ -133,6 +133,7 @@ import LaneStrip, {
 import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
+import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
 import UpdateToast from './components/UpdateToast'
 import Tips from './components/Tips'
@@ -508,6 +509,8 @@ export default function App(): JSX.Element {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
+  /** The "split one long ask into panes" dialog. Opened from a press, never on its own. */
+  const [splitting, setSplitting] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [devices, setDevices] = useState(false)
@@ -2982,6 +2985,13 @@ export default function App(): JSX.Element {
         run: () => setSwarm(true)
       },
       {
+        id: 'split',
+        group: 'Actions',
+        title: 'Split a long ask into panes',
+        hint: 'one request, one pane per part that can run alone',
+        run: () => setSplitting(true)
+      },
+      {
         id: 'history',
         group: 'Actions',
         title: 'Search past sessions',
@@ -5256,6 +5266,19 @@ export default function App(): JSX.Element {
             setSettings(false)
             setSettingsFrom(null)
           }}
+        />
+      )}
+      {splitting && (
+        <SplitDialog
+          projects={projects}
+          cwd={sessions.find((x) => x.id === activeId)?.cwd}
+          onLaunch={(reqs) => {
+            setSplitting(false)
+            if (!reqs.length) return
+            patchConfig({ grid: true })
+            start(reqs)
+          }}
+          onClose={() => setSplitting(false)}
         />
       )}
       {swarm && config && (
