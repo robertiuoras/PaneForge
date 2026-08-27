@@ -82,6 +82,16 @@ export interface PaneUsage {
    * import the rule.
    */
   jobs?: PaneBackJob[]
+  /**
+   * Why this pane's work cannot follow it to another machine (`shared/paneBound.ts`).
+   *
+   * NOT cosmetic, unlike `jobs`: `shared/autoHandoff.ts` refuses to move a pane carrying
+   * one. It rides here because the process table this needs is already being read every
+   * 4s for the memory chip, and a second ~380ms `ps` for a refusal would be the waste
+   * that reading exists to avoid. Attached by `main/usage.ts` after this summary, so
+   * nothing in this file has to import the rule.
+   */
+  bound?: string
 }
 
 export interface UsageReport {

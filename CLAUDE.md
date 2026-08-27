@@ -1359,6 +1359,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:surfacereach` | that every method the window exposes has a call site under `src/renderer/src`; four are desk-side on purpose and each names who calls it |
 | `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, with all three failed walks kept as controls, and growth past the user's font up to `MAX_FILL_FONT` (28) |
 | `npm run test:panebackjobs` | what an AGENT pane left running: real trees off this machine as fixtures, every permanent MCP server and `caffeinate` refused, the naive descendant count kept as the control, and a last block over this machine's own live table |
+| `npm run test:panebound` | work that may not leave this machine: the permanent MCP prelude kept as the control that must bind NOTHING, a driven browser four processes down, somebody else's browser, and both refusals it feeds |
 | `npm run test:panejob` | what a shell pane is running, its refusals, and a last block asking a REAL pty |
 | `npm run test:desk` | the sessions list with both machines in it, plus a source assertion that every ranked field is forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with, and that one provider's key cannot fill another's variable |
@@ -1555,6 +1556,26 @@ The ladder is four rungs, each firing only where the one above did not solve it:
   `worstPressure`). One runnable thread per core is `warn`, 1.8 is `critical` — NOT a CPU
   percentage. `os.loadavg()` is 0 on Windows, so 0 means "nobody measured" and never "idle".
   `watchPressure` watches the lag BAND too.
+- **Nothing moves without a countdown anybody can see.** The 15s count in front of an automatic
+  move or close used to be the mascot's, and the mascot ARRIVES OFF - so on the commonest desk
+  in the app a pane left the machine with nothing on screen and a `console.info` nobody reads.
+  `MoveSoon.tsx` draws the same `CloseSoon` as a plain corner card whenever there is no sprite,
+  calling the same two actions, so there is one countdown with two faces and never two that can
+  disagree. z-index 45: over the panes, under every dialog, no animation.
+- **Two things are asked BEFORE a pane is picked, not discovered by moving it.**
+  `AutoPane.machineBound` (`shared/paneBound.ts`) is work that would not exist over there - a
+  browser being driven on THIS desk, against this window server and this logged-in profile,
+  with nothing about it in a commit; Robert named it, automated Chrome stays on the MacBook. It
+  may never key on a browser NAME: every `claude` pane here holds `safaridriver --mcp` and
+  `chrome-devtools-mcp` from launch, so the reading is the automation FLAGS a driven browser
+  carries and a person's browser does not (`--remote-debugging-port`/`-pipe`, `--headless`),
+  plus a driver binary that is not an MCP server. Measured on this machine: 3 of 11 live agent
+  CLIs bound, 8 still movable. `AutoPane.shareable` is the other leg - a checkout that is a git
+  repo, under the projects root, with an origin remote (`shareable()` in `main/handoff.ts`,
+  cached 5 min, `remote:handoffReady`). `pushRepo` already refused both, but from INSIDE the
+  move, after a machine had been named and a countdown spent. Only an explicit `false` refuses;
+  `undefined` is "nobody asked" and must not switch the ladder off on a slow first read.
+  `npm run test:panebound`.
 - **Nothing asks any more.** `offloadAsk` defaults off with a one-time `offloadDefaultsV2`
   migration (the `migrateAutoAnswer` shape — read off the SAVED config).
 - **The pressure card OFFERS the move.** `suggestMove` names the dearest movable pane and the

@@ -266,6 +266,31 @@ export interface AutoPane {
    * nothing to queue behind: the work is not going to announce that it finished.
    */
   backJob?: string
+  /**
+   * Why this pane's WORK cannot follow it to another machine (`shared/paneBound.ts`).
+   *
+   * A refusal, and a different one from `backJob`. A background job is work that would be
+   * killed by the move and could have been waited for; this is work that would not exist
+   * over there however long anybody waited - a browser being driven on this desk, against
+   * this machine's window server and this machine's logged-in profile, with nothing about
+   * it in a commit. Robert named the case (2026-08-28): automated Chrome stays here.
+   */
+  machineBound?: string
+  /**
+   * Whether the far end could get this pane's CODE, or undefined for "nobody asked".
+   *
+   * A move only works because the repo travels: the sender commits what is dirty under an
+   * `auto-sync:` subject and pushes, and the receiver pulls that branch. A checkout with
+   * no origin remote, or one outside the projects root, has no such path - and until now
+   * that was discovered by ATTEMPTING the move, which killed nothing but did count the
+   * pane down, name a machine, and fail. Read first instead.
+   *
+   * `undefined` is deliberately permissive, and this is the one place in this file where
+   * an unmeasured reading does not refuse: every caller in the app feeds it, so undefined
+   * only happens in a test that is asking about something else, and treating it as false
+   * there would switch the whole ladder off for a fact nobody was testing.
+   */
+  shareable?: boolean
 }
 
 export interface AutoHandoff {
@@ -278,11 +303,15 @@ export interface AutoHandoff {
 }
 
 /** States a pane may be moved out of. Everything else is a turn in flight. */
-export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob'>): boolean {
+export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable'>): boolean {
   if (p.asking) return false
   // Killing the pty takes the background work with it, and there is no turn boundary to
   // wait for. See `AutoPane.backJob`.
   if (p.backJob) return false
+  // The work itself does not exist on the other machine. See `AutoPane.machineBound`.
+  if (p.machineBound) return false
+  // ...and neither does the code. See `AutoPane.shareable`.
+  if (p.shareable === false) return false
   // `exited` is left to reclaim: there is no agent to move, only a row to close.
   return p.state === 'ready' || p.state === 'needsYou'
 }
@@ -300,9 +329,11 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob'>): bool
  * there with nobody asked), a pane that has exited (nothing to move), and one that has
  * not printed yet - `starting` has no transcript to resume from and no screen to carry.
  */
-export function queueable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob'>): boolean {
+export function queueable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable'>): boolean {
   if (p.asking) return false
   if (p.backJob) return false
+  if (p.machineBound) return false
+  if (p.shareable === false) return false
   return p.state === 'ready' || p.state === 'needsYou' || p.state === 'working' || p.state === 'stalled'
 }
 

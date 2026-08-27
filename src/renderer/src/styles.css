@@ -2518,6 +2518,26 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .ut-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* --------------------------------------------------------------------------
+   The countdown in front of an automatic move or close, drawn when there is no
+   mascot to draw it beside (which is most desks - the mascot arrives off).
+
+   Same corner and the same card shape as `.update-toast`, one step lower in the
+   stack (45) so it sits over the panes and under every dialog: nothing the app
+   decided by itself may cover something somebody opened. No animation of any
+   kind - `test:anim` refuses a looping decoration, and a card that is counting
+   down is already moving. */
+.move-soon {
+  position: fixed; right: 18px; bottom: 18px; z-index: 45; width: 300px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
+}
+.move-soon-say { color: var(--text); font-size: 13px; }
+/* Tabular, or the sentence re-flows every second as the digit narrows. */
+.move-soon-count { font-variant-numeric: tabular-nums; color: var(--acc); }
+.move-soon-why { color: var(--muted); font-size: 12px; }
+.move-soon-acts { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* --------------------------------------------------------------------------
    Quick actions, as icons.
 
    The row used to be three word buttons that wrapped on a narrow sidebar. Fixed

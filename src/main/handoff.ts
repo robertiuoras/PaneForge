@@ -74,6 +74,53 @@ function relUnder(path: string, root: string): string | null {
   return p.slice(r.length + 1)
 }
 
+/**
+ * Could this pane's CODE reach another machine at all - asked BEFORE anything moves.
+ *
+ * `pushRepo` below already refuses a checkout with no origin and one outside the projects
+ * root, but it refuses them from inside the move: by then the app has picked that pane,
+ * named a machine, counted fifteen seconds down at somebody, and the only outcome
+ * available is a failure and a cooldown. Robert, 2026-08-28: it "should've checked first
+ * if the work being done can be done remote or from the shared repo that remote pc should
+ * be synced with".
+ *
+ * So this is the same two questions, read cheaply and up front, and the automatic sweeps
+ * refuse a pane it says no to (`AutoPane.shareable`). It deliberately does NOT ask whether
+ * the work is pushed: dirty and unpushed are what the move itself fixes, by committing
+ * under an `auto-sync:` subject and pushing. Only a repo with nowhere to push TO, or one
+ * that is not a repo at all, is a "no" - those cannot become yes by trying harder.
+ *
+ * Cached for `SHARE_TTL_MS` by folder, because the sweeps ask about every pane on a timer
+ * and `git remote get-url` is two processes.
+ */
+const SHARE_TTL_MS = 5 * 60_000
+const shareCache = new Map<string, { at: number; ok: boolean }>()
+
+export async function shareable(cwd: string, root: string, now = Date.now()): Promise<boolean> {
+  const hit = shareCache.get(cwd)
+  if (hit && now - hit.at < SHARE_TTL_MS) return hit.ok
+  const ok = await readShareable(cwd, root)
+  shareCache.set(cwd, { at: now, ok })
+  return ok
+}
+
+async function readShareable(cwd: string, root: string): Promise<boolean> {
+  let top = ''
+  try {
+    top = await git(cwd, ['rev-parse', '--show-toplevel'], 10_000)
+  } catch {
+    // Not a repo. A shell pane in a scratch folder has nothing to send and nothing to
+    // resume from, and moving it would start an agent over there in an empty directory.
+    return false
+  }
+  if (relUnder(top, root) === null && relUnder(real(top), real(root)) === null) return false
+  try {
+    return !!(await git(cwd, ['remote', 'get-url', 'origin'], 10_000))
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sending
 
