@@ -20,7 +20,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -1631,6 +1631,18 @@ export class SessionManager extends EventEmitter {
       chunks.forEach((c, i) => {
         const t = setTimeout(() => {
           acLog(`${id} chunk ${i + 1}/${chunks.length}: ${JSON.stringify(c)}`)
+          // The keeper that pushes the screen into scrollback ahead of the CLI's clear is
+          // fed by KEYSTROKES (`feedInput` in TerminalPane), and nothing here is a
+          // keystroke: this writes straight to the pty, so the renderer never saw the
+          // `/clear` and never armed. That left every automatic clear relying on the 80%
+          // screen-loss fallback, which Claude Code's banner-over-the-turn clear does not
+          // trip - so the tail of the conversation was gone. Tell the pane first, and
+          // give it a beat to file the rows before the command lands.
+          if (i === 0) {
+            this.emit('armclear', id)
+            setTimeout(() => this.write(id, c), ARM_CLEAR_LEAD_MS)
+            return
+          }
           this.write(id, c)
         }, chunkDelayMs(i))
         t.unref?.()

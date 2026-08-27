@@ -2911,6 +2911,16 @@ function TerminalPane({
      * after this is ordinary streamed output with no prompt echoes in it. That is why the
      * rail was empty on every mirrored pane: nothing here called `seedMarks`.
      */
+    // A clear the APP typed - autoclear's countdown - never passed through `feedInput`,
+    // so nothing armed the keeper and the tail of the conversation was painted over. Main
+    // says so a beat before the command lands. `keep.arm()` is the same call the typed
+    // path makes and files nothing when the screen is already empty.
+    const offArmClear = api.onPaneArmClear((id) => {
+      if (id !== sessionId) return
+      const away = keep.arm()
+      if (away) t.write(away)
+    })
+
     const offReset = api.onPaneReset((id) => {
       if (id !== sessionId) return
       t.reset()
@@ -3252,6 +3262,7 @@ function TerminalPane({
     return () => {
       off()
       offReset()
+      offArmClear()
       coarse.removeEventListener('change', oneComposer)
       ro.disconnect()
       window.clearTimeout(settle)

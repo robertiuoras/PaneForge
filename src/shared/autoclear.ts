@@ -76,6 +76,15 @@ export function chunkDelayMs(i: number): number {
   return CLEAR_SETTLE_MS + (i - 1) * SUBMIT_GAP_MS
 }
 
+/**
+ * Between telling the pane to file its screen and the clear command landing.
+ *
+ * The arm is a round trip - main -> renderer -> xterm write - and the rows have to be in
+ * the scrollback BEFORE the CLI repaints over them. 120ms is a frame or two either way and
+ * costs nothing: the countdown that got here was fifteen seconds long.
+ */
+export const ARM_CLEAR_LEAD_MS = 120
+
 /** How long `/clear` gets to finish restarting the session before the prompt is typed. */
 export const CLEAR_SETTLE_MS = 2500
 

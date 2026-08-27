@@ -980,6 +980,10 @@ remote.on('data', (id: string, data: string) => pump.push(id, data))
 // from scratch rather than append a second copy of what it was already showing.
 // Anything still pending for that pane belongs to the old stream, so it goes out
 // ahead of the reset rather than arriving after it and painting onto the fresh one.
+// The app is about to type a clear into a pane nobody pressed a key in. The screen has to
+// be pushed into the scrollback before the CLI paints over it, and only the renderer can
+// do that - see the arm in sessions.ts.
+manager.on('armclear', (id: string) => send('pane:armClear', id))
 remote.on('reset', (id: string) => {
   pump.flushOne(id)
   send('pane:reset', id)
