@@ -47,6 +47,17 @@ function write(kind: string, err: unknown): void {
 }
 
 /**
+ * The same record, for a problem that is not an exception.
+ *
+ * A wedged renderer throws nothing anywhere - the main process is healthy and the window
+ * is simply not answering - so the one thing the 2026-08-28 freeze left behind was
+ * Activity Monitor. `renderWatch.ts` writes here instead.
+ */
+export function logProblem(kind: string, detail: string): void {
+  write(kind, detail)
+}
+
+/**
  * Called once, as early in the main process as possible - before profile setup, which is
  * itself a thing that has thrown at module scope.
  */

@@ -42,6 +42,7 @@ buildSync({
 const {
   assess,
   trimPlan,
+  TRIM_SETTLE_MS,
   paneCostMb,
   savingMb,
   SESSION_MB,
@@ -189,6 +190,75 @@ ok('nothing to restore is still a no-op', trimPlan(panes, assess(machine({ local
     assess(machine({ localPanes: 3 }))
   )
   ok('only the pane that is short is restored', back.length === 1 && back[0].id === 'short')
+}
+
+// ---------------------------------------------- what a trim may cost a person switching
+//
+// The pair "trim now, re-render from main's log later" is correct and expensive: a regrown
+// pane is `redrawHistory` - `t.reset()`, a resize, and up to BUFFER_LIMIT 400 kB written
+// back through xterm (45-147 ms of parse alone in a headless terminal, before anything is
+// drawn). This desk sits at `over` for hours (load 2.70 per core against LAG_HARD 1.8,
+// 2026-08-28), so without a grace window that pair fired on every PANE SWITCH, for ever.
+{
+  const now = 1_000_000
+  const justLeft = now - 30_000
+  const longAgo = now - 20 * 60_000
+
+  const plan = trimPlan(
+    [
+      { id: 'came-from', focused: false, visible: true, current: FULL_SCROLLBACK, lastFocus: justLeft },
+      { id: 'cold', focused: false, visible: true, current: FULL_SCROLLBACK, lastFocus: longAgo }
+    ],
+    crit,
+    FULL_SCROLLBACK,
+    { now }
+  )
+  ok('the pane the keyboard has just left keeps its lines', at(plan, 'came-from') === undefined,
+    JSON.stringify(plan))
+  ok('...and a pane nobody has read for 20 minutes still gives them up',
+    at(plan, 'cold')?.scrollback === TRIMMED_SCROLLBACK)
+
+  // The grace window restores as well as holds: coming back to a pane that WAS trimmed is
+  // the one redraw worth paying for, and it happens once rather than once per visit.
+  const back = trimPlan(
+    [{ id: 'p', focused: false, visible: false, current: TRIMMED_SCROLLBACK, lastFocus: justLeft }],
+    crit,
+    FULL_SCROLLBACK,
+    { now }
+  )
+  ok('a recently read pane that is short is grown back', back[0]?.scrollback === FULL_SCROLLBACK)
+
+  // The CONTROL: no clock, no grace. Every caller that predates this - and the app on a
+  // desk that has never recorded a focus - gets exactly the plan it always got.
+  const noClock = trimPlan(
+    [{ id: 'came-from', focused: false, visible: true, current: FULL_SCROLLBACK, lastFocus: justLeft }],
+    crit
+  )
+  ok('with no clock the grace window does not exist',
+    noClock[0]?.scrollback === TRIMMED_SCROLLBACK, JSON.stringify(noClock))
+}
+
+// ------------------------------------------------- a verdict that flaps may not delete
+//
+// The level is re-read every 15s and `lagLevel` has bare thresholds, so a load average
+// hovering at LAG_HARD flips over <-> tight indefinitely - and a VISIBLE pane's target
+// differs between those two. Every flip deleted every visible pane's lines and re-rendered
+// them 15 seconds later. A trim therefore waits for the verdict to HOLD; growth does not.
+{
+  const now = 2_000_000
+  const p = [{ id: 'onscreen', focused: false, visible: true, current: FULL_SCROLLBACK }]
+  ok('a trim that has not settled is held back',
+    trimPlan(p, crit, FULL_SCROLLBACK, { now, trimmingSince: now - 10_000 }).length === 0)
+  ok('...and fires once the verdict has held',
+    trimPlan(p, crit, FULL_SCROLLBACK, { now, trimmingSince: now - TRIM_SETTLE_MS - 1 })[0]
+      ?.scrollback === TRIMMED_SCROLLBACK)
+
+  // Growth is never delayed: it is what hands a reader their history back, and it cannot
+  // thrash - a pane already at full depth is not listed again.
+  const short = [{ id: 'onscreen', focused: false, visible: true, current: TRIMMED_SCROLLBACK }]
+  ok('a pane growing back is not made to wait for the settle window',
+    trimPlan(short, thrash, FULL_SCROLLBACK, { now, trimmingSince: now - 10_000 })[0]
+      ?.scrollback === FULL_SCROLLBACK)
 }
 
 // A trim that frees nothing worth having should be visible as such.

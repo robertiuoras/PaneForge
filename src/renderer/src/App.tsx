@@ -74,6 +74,7 @@ import {
   savingMb,
   stickFor,
   trimPlan,
+  TRIM_SETTLE_MS,
   type OffloadCandidate,
   type OffloadStick,
   type Verdict
@@ -2155,17 +2156,45 @@ export default function App(): JSX.Element {
    * trims the rest. See `PaneRef.current`.
    */
   const depths = useRef(new Map<string, number>())
+  /**
+   * When the verdict last BECAME one that trims - the stamp `TRIM_SETTLE_MS` is measured
+   * from. The shape, not the object: `assess` returns a fresh Verdict on every sample, and
+   * what decides a pane's target is the trim flag together with the level (a VISIBLE pane
+   * is kept full at `tight` and trimmed at `over`).
+   */
+  const trimShape = useRef<{ key: string; since: number }>({ key: '', since: 0 })
+  /** Re-runs the sweep once a suppressed trim has settled. Nothing else reads it. */
+  const [settleTick, setSettleTick] = useState(0)
   useEffect(() => {
     if (!capacity) return
+    const now = Date.now()
+    const key = capacity.trim ? `trim:${capacity.level}` : 'off'
+    if (key !== trimShape.current.key) trimShape.current = { key, since: now }
     const refs = sessions.map((s) => ({
       id: s.id,
       focused: s.id === activeId,
       visible: visibleIds.has(s.id),
-      current: depths.current.get(s.id) ?? FULL_SCROLLBACK
+      current: depths.current.get(s.id) ?? FULL_SCROLLBACK,
+      // The same focus reading the idle clock uses - see `ReclaimPane.lastFocus`.
+      lastFocus: focusLeftAt.current[s.id]
     }))
     for (const id of depths.current.keys()) if (!sessions.some((s) => s.id === id)) depths.current.delete(id)
-    const trims = trimPlan(refs, capacity)
-    if (!trims.length) return
+    const trims = trimPlan(refs, capacity, FULL_SCROLLBACK, {
+      now,
+      trimmingSince: trimShape.current.since
+    })
+    if (!trims.length) {
+      // A trim held back by the settle window has to be re-asked for, or a desk that has
+      // been quiet since the verdict changed never trims at all.
+      if (capacity.trim && now - trimShape.current.since < TRIM_SETTLE_MS) {
+        const t = setTimeout(
+          () => setSettleTick((n) => n + 1),
+          TRIM_SETTLE_MS - (now - trimShape.current.since) + 50
+        )
+        return () => clearTimeout(t)
+      }
+      return
+    }
     let applied = 0
     const regrown: string[] = []
     for (const t of trims) {
@@ -2190,21 +2219,25 @@ export default function App(): JSX.Element {
      *
      * The bytes are still in main (`main/history.ts` keeps every pane's raw output), and
      * `redrawHistory` is the path that re-renders a pane from them - so a pane that grows
-     * back is re-rendered rather than merely permitted to be tall. It resets the terminal
-     * and scrolls to the bottom, so the focused pane is left alone: it is never trimmed in
-     * the first place, and a person reading it must not have it repainted under them.
+     * back is re-rendered rather than merely permitted to be tall.
+     *
+     * The focused pane is in this list too, and skipping it was the other half of the same
+     * bug. A focused pane is never trimmed, so it can only be HERE if its lines were
+     * deleted while it was in the background - which is exactly the pane somebody has just
+     * switched to and is about to scroll up in. Measured 2026-08-28 on this desk: load
+     * 2.51-3.17 per core pins `assess` at `over` for hours, so every unfocused pane sits
+     * at TRIMMED_SCROLLBACK, and the pane you switch to got its option back and none of
+     * its lines. Nothing is repainted under a reader by this: the redraw runs on the
+     * transition, and a pane already at full depth never appears in `regrown` again.
      */
-    for (const id of regrown) {
-      if (id === activeId) continue
-      void paneRedraw.get(id)?.()
-    }
+    for (const id of regrown) void paneRedraw.get(id)?.()
     if (applied) {
       console.info(
         `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB` +
           (regrown.length ? `, ${regrown.length} re-rendered from history` : '')
       )
     }
-  }, [capacity, sessions, activeId, visibleIds])
+  }, [capacity, sessions, activeId, visibleIds, settleTick])
 
   /**
    * And giving back the part that scrollback never could: the agent.
