@@ -31,8 +31,63 @@ import {
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 
-/** Only Claude Code keeps per-directory transcripts we can name a session from. */
-const SUPPORTED = new Set(['claude'])
+/** Claude Code and Antigravity keep transcripts we can name a session from. */
+const SUPPORTED = new Set(['claude', 'antigravity'])
+
+function antigravityHistoryFile(): string {
+  return join(homedir(), '.gemini', 'antigravity-cli', 'history.jsonl')
+}
+
+function antigravityTranscriptFile(conversationId: string): string | null {
+  if (!conversationId || /[\\/]/.test(conversationId)) return null
+  const f = join(
+    homedir(),
+    '.gemini',
+    'antigravity-cli',
+    'brain',
+    conversationId,
+    '.system_generated',
+    'logs',
+    'transcript.jsonl'
+  )
+  if (existsSync(f)) return f
+  const db = join(homedir(), '.gemini', 'antigravity-cli', 'conversations', `${conversationId}.db`)
+  if (existsSync(db)) return db
+  return null
+}
+
+function sameCwd(a: string, b: string): boolean {
+  if (a === b) return true
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase()
+  }
+}
+
+function antigravityConversationFor(cwd: string, since: number): string | null {
+  const hFile = antigravityHistoryFile()
+  if (!existsSync(hFile)) return null
+  try {
+    const text = tail(hFile)
+    const lines = text.split('\n').filter(Boolean)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const row = JSON.parse(lines[i]) as { workspace?: string; conversationId?: string; timestamp?: number }
+        if (row.conversationId && row.workspace && sameCwd(row.workspace, cwd)) {
+          if (!since || (row.timestamp && row.timestamp >= since - START_SLACK_MS)) {
+            return row.conversationId
+          }
+        }
+      } catch {
+        continue
+      }
+    }
+  } catch {
+    /* fallback to null */
+  }
+  return null
+}
 
 /** A transcript touched before this much slack around the pane's start is not its own. */
 const START_SLACK_MS = 60_000
