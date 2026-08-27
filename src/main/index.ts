@@ -95,7 +95,7 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff } from './handoff'
-import { clearCommandFor, readAsk as readAutoClearAsk, writeCancels } from '../shared/autoclear'
+import { clearCommandFor, readAsk as readAutoClearAsk } from '../shared/autoclear'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
@@ -1302,12 +1302,14 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 function writePane(id: string, data: string): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
-  // Somebody is TYPING in this pane, so the promise the countdown made is off. Only THIS
-  // path cancels - the clear itself types through `manager.write` inside the manager and
-  // never reaches this handler, so it cannot stand its own countdown down on the way out.
-  // `writeCancels` is why a click no longer does: a bare click is arrows (`cursorMove.ts`)
-  // and reading the pane a countdown named is not a reason to drop it.
-  if (writeCancels(data)) manager.cancelAutoClear(id, 'typed')
+  // Nothing typed here stands a countdown down any more. It used to: a write carrying one
+  // printable character cancelled the pane's own /clear outright, which meant the card
+  // vanished the moment anybody touched the pane it was about - and touching the pane is
+  // what a person does when a countdown appears on it. Robert, 2026-08-27: "it should
+  // continue counting down no matter what for the clear unless i click on keep this
+  // session". The one thing typing must still prevent is being typed OVER, and that is
+  // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
+  // unsent draft, so the timer asks again rather than the countdown disappearing.
   manager.write(id, data)
 }
 

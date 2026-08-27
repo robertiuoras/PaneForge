@@ -160,12 +160,20 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
 /**
  * Why an armed countdown is dropped without clearing anything.
  *
- * A countdown is a promise that nothing happens for N seconds, so anything that makes the
- * session USEFUL again cancels it: somebody typing, or the pane starting another turn. The
- * asymmetry is deliberate - a wrong cancel costs one oversized session, a wrong clear costs
- * a conversation that cannot be got back.
+ * It used to be a longer list. A countdown was read as a promise that nothing happens for
+ * N seconds, so anything making the session useful again stood it down - somebody typing,
+ * a keystroke arriving, a pane starting another turn. Robert, 2026-08-27, having asked for
+ * this twice: "it should continue counting down no matter what for the clear unless i
+ * click on keep this session". A countdown that vanishes when you touch the pane is a
+ * countdown you cannot read, because reading it is what makes it disappear - and the
+ * button under it is the whole reason the card exists.
+ *
+ * So typing no longer appears here at all, and 'drafting' no longer STOPS anything: it
+ * makes the timer wait (`expiryDecision` -> 'wait') so an unsent line is never typed over,
+ * with the card still on screen and still stoppable. What is left are the three facts that
+ * make a clear impossible rather than merely unwelcome, plus the press itself.
  */
-export type DropReason = 'typed' | 'drafting' | 'working' | 'gone' | 'asked' | 'cancelled'
+export type DropReason = 'drafting' | 'working' | 'gone' | 'asked' | 'cancelled'
 
 export function dropFor(
   pane: { runSince?: number | null; ask?: unknown; typed?: string } | null
@@ -177,15 +185,14 @@ export function dropFor(
   if (pane.runSince) return 'working'
   // A half-typed line in the composer is somebody's unsent message. `/clear` is typed into
   // the same pty, so it lands on the END of that line: what runs is `their words/clear`,
-  // the draft is gone, and nothing on screen ever said it was there. `pty:write` cancels a
-  // countdown as it is typed, but a draft left sitting is exactly the state that survives
-  // until the countdown fires. 2026-08-25: a message being typed was destroyed this way.
+  // the draft is gone, and nothing on screen ever said it was there. 2026-08-25: a message
+  // being typed was destroyed this way. Nothing about the countdown is cancelled for it -
+  // the timer WAITS and the card stays up (see `ExpiryVerdict`'s 'wait').
   if (pane.typed && pane.typed.trim()) return 'drafting'
   return null
 }
 
 export function dropWords(why: DropReason): string {
-  if (why === 'typed') return 'you started typing'
   if (why === 'drafting') return 'there is an unsent line in the box'
   if (why === 'working') return 'the pane started another turn'
   if (why === 'asked') return 'the agent is asking something'
@@ -275,7 +282,15 @@ export function watchDecision(p: {
  * the toast at 0:00 ('stale' - meta left behind by an arm this timer no longer owns)
  * cleans the meta up instead of leaving the card on screen forever.
  */
-export type ExpiryVerdict = 'fire' | 'vanished' | 'foreign' | 'stale' | DropReason
+export type ExpiryVerdict = 'fire' | 'wait' | 'vanished' | 'foreign' | 'stale' | DropReason
+
+/**
+ * How long a countdown held off by an unsent draft waits before asking again.
+ *
+ * Short, because the thing it is waiting for is a person pressing return, and the card is
+ * on screen the whole time saying the clear is still coming.
+ */
+export const DRAFT_RETRY_MS = 5000
 
 export function expiryDecision(p: {
   /** The pane still exists in the manager. */
@@ -295,46 +310,20 @@ export function expiryDecision(p: {
     // cleaned up or the toast sits at 0:00 forever, which is exactly what Robert watched.
     return typeof p.metaAt === 'number' && p.metaAt > p.now ? 'foreign' : 'stale'
   }
+  // An unsent line is the one state where typing the clear DESTROYS something, so this is
+  // the one that waits. It is not a stand-down: the countdown, and the button that stops
+  // it, stay exactly where they are and the timer asks again in `DRAFT_RETRY_MS`.
+  if (p.drop === 'drafting') return 'wait'
   // 'working' still types: Claude Code queues pty input arriving mid-turn and runs it at
   // the turn boundary, so the clear lands when the turn ends rather than never.
   if (p.drop && p.drop !== 'working') return p.drop
   return 'fire'
 }
 
-/**
- * Does this pty write mean somebody is USING the pane, and so cancel its countdown?
- *
- * A click on a pane is not a keystroke - and it is also not nothing. `cursorMove.ts` turns
- * one into the arrows that would have reached the same cell, and those go out through the
- * same `pty:write` a person typing uses, which stood the countdown down on the way past.
- * So the card vanished the moment Robert clicked the pane to READ what was about to be
- * cleared, which is the one gesture anybody makes when a countdown appears.
- *
- * The reading is therefore on the BYTES, not on the caller: a write made only of cursor
- * keys and mouse reports moved a caret and changed nothing, so the countdown stands. One
- * printable character, a return, a backspace or a paste is content and still cancels it -
- * and `dropFor` still refuses at the moment the timer fires if a draft is sitting in the
- * box, so nothing typed can be eaten by this being narrower.
- */
-const MOVE_ONLY = new RegExp(
-  '^(?:' +
-    '\\x1b\\[[ABCD]' + // arrows, normal mode
-    '|\\x1bO[ABCD]' + // arrows, application cursor mode
-    '|\\x1b\\[<[0-9;]*[mM]' + // SGR mouse report
-    '|\\x1b\\[M[\\s\\S]{3}' + // X10 mouse report
-    ')+$'
-)
-
-export function writeCancels(data: string): boolean {
-  if (!data) return false
-  return !MOVE_ONLY.test(data)
-}
-
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or
   // abandoned within the turn, so the ask is still good afterwards. Refusing would throw
-  // away a clear that is genuinely due; clearing would eat the draft. 'typed' is the
-  // different fact - a keystroke arriving DURING a countdown - and still drops it outright.
+  // away a clear that is genuinely due; clearing would eat the draft.
   return why === 'working' || why === 'drafting' ? 'queue' : 'refuse'
 }
