@@ -46,12 +46,8 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
-<<<<<<< HEAD
-  watchDecision, expiryDecision, dropWords, writeCancels,
-=======
-  watchDecision, expiryDecision, dropWords, chunkDelayMs,
+  watchDecision, expiryDecision, dropWords, writeCancels, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS,
->>>>>>> lane-b
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
 
