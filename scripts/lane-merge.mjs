@@ -71,3 +71,60 @@ export function mergeImportConflicts(text) {
   }
   return healed ? out.join('\n') : null
 }
+
+/**
+ * Union both sides of a markdown conflict where both sides appended separate sections or items.
+ */
+export function mergeMarkdownConflicts(text) {
+  const lines = text.split('\n')
+  const out = []
+  let healed = 0
+  for (let i = 0; i < lines.length; ) {
+    if (!lines[i].startsWith('<<<<<<<')) {
+      out.push(lines[i])
+      i++
+      continue
+    }
+    let sep = -1
+    let end = -1
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].startsWith('|||||||')) return null
+      if (sep < 0 && lines[j].startsWith('=======')) sep = j
+      else if (lines[j].startsWith('>>>>>>>')) {
+        end = j
+        break
+      }
+    }
+    if (sep < 0 || end < 0) return null
+    const ours = lines.slice(i + 1, sep)
+    const theirs = lines.slice(sep + 1, end)
+    if (!ours.length || !theirs.length) return null
+
+    const hasOursHeadings = ours.some((l) => /^#{1,6}\s+/.test(l.trim()))
+    const hasTheirsHeadings = theirs.some((l) => /^#{1,6}\s+/.test(l.trim()))
+    const hasOursBullets = ours.some((l) => /^[-*]\s+/.test(l.trim()))
+    const hasTheirsBullets = theirs.some((l) => /^[-*]\s+/.test(l.trim()))
+
+    if ((hasOursHeadings && hasTheirsHeadings) || (hasOursBullets && hasTheirsBullets)) {
+      out.push(...ours)
+      if (ours[ours.length - 1]?.trim() && theirs[0]?.trim()) out.push('')
+      out.push(...theirs)
+      healed++
+      i = end + 1
+      continue
+    }
+    return null
+  }
+  return healed ? out.join('\n') : null
+}
+
+/**
+ * Auto-merge non-conflicting additions across imports, markdown sections, and logs.
+ */
+export function mergeAutoConflicts(text, filePath = '') {
+  if (filePath.endsWith('.md')) {
+    const md = mergeMarkdownConflicts(text)
+    if (md !== null) return md
+  }
+  return mergeImportConflicts(text)
+}

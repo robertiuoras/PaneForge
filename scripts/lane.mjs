@@ -59,7 +59,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hostname } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
-import { mergeImportConflicts } from './lane-merge.mjs'
+import { mergeAutoConflicts, mergeImportConflicts } from './lane-merge.mjs'
 import {
   CLAIM_NS,
   LOCK_REF,
@@ -980,7 +980,7 @@ function autoResolve(dir, files) {
     } catch {
       return []
     }
-    const merged = mergeImportConflicts(text)
+    const merged = mergeAutoConflicts(text, f)
     if (merged === null) return []
     writes.push([join(dir, f), merged])
   }
