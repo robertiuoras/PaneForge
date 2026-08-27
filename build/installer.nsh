@@ -21,25 +21,30 @@
   Sleep 400
 !macroend
 
-!macro removePortable
-  ; Only the portable layout: the NSIS install lives under `claude-orchestrator` and is
-  ; handled by the built-in uninstall of the previous version.
+!macro removePortableOnly
+  ; Remove only the portable directory, not the shortcut. This runs during customUnInstall
+  ; (uninstall / update). If we delete the shortcut during uninstall-for-update, it would
+  ; vanish before the new version has a chance to recreate it, leaving the user without a
+  ; shortcut after an update. The app recreates missing shortcuts on launch (src/main/winShortcut.ts).
   ;
-  ; The Delete USED TO SIT OUTSIDE THIS GUARD, and that is a bug worth naming: `IfFileExists
-  ; ... 0 +2` skips exactly one instruction, so it covered the RMDir and nothing else. The
-  ; Desktop shortcut was therefore deleted on every run of this installer, portable copy or
-  ; not - and this macro runs from `customInit` AND from `customUnInstall`, which is the old
-  ; version's uninstaller during an ordinary update. A shortcut that vanishes after an
-  ; update reads as "the app uninstalled itself". Both are inside the block now, and the app
-  ; puts a missing shortcut back on launch anyway (src/main/winShortcut.ts).
-  ; The label is a PLAIN NAME, and the `${__LINE__}` it used to carry is why every Windows
-  ; build since v0.8.105 failed: that token expands to the CURRENT source line, so the jump
-  ; on one line and the label three lines below it generated two different names -
-  ; `could not resolve label "portableGone_239.1.11" in uninstall section`, makensis exit 1,
-  ; no installer and no latest.yml published for four releases while the mac leg looked fine.
-  ; A fixed name is safe because NSIS labels are scoped to the function they are in, and the
-  ; two insertions below land in different ones (`customInit` -> .onInit, `customUnInstall`
-  ; -> the uninstaller). Never insert this macro twice into the SAME function.
+  ; Only the portable layout: the NSIS install lives under `claude-orchestrator` and is
+  ; handled by the built-in uninstall of the previous version. This uses a named label
+  ; (not relative jump like `0 +2`) to ensure clear scope: the label is scoped to the function
+  ; it is in (NSIS design), so the label name can be fixed (never conflicts between insertions
+  ; in different functions).
+  IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableDirGone
+    RMDir /r "$LOCALAPPDATA\Programs\PaneForge"
+  portableDirGone:
+!macroend
+
+!macro removePortableAndShortcut
+  ; Remove portable directory AND desktop shortcut. This runs during customInit (install).
+  ; We can safely delete the shortcut here because the new version will recreate it on launch.
+  ;
+  ; Uses named label (not relative jump like `0 +2`) to ensure the guard covers both
+  ; the RMDir and Delete instructions. Previously, a relative jump `0 +2` would skip only
+  ; the RMDir, causing the Delete to run unconditionally even when the portable copy did
+  ; not exist - the shortcut would vanish on every installer run.
   IfFileExists "$LOCALAPPDATA\Programs\PaneForge\PaneForge.exe" 0 portableGone
     RMDir /r "$LOCALAPPDATA\Programs\PaneForge"
     Delete "$DESKTOP\PaneForge.lnk"
@@ -48,7 +53,7 @@
 
 !macro customInit
   !insertmacro killRunning
-  !insertmacro removePortable
+  !insertmacro removePortableAndShortcut
 !macroend
 
 !macro customUnInit
@@ -56,5 +61,5 @@
 !macroend
 
 !macro customUnInstall
-  !insertmacro removePortable
+  !insertmacro removePortableOnly
 !macroend
