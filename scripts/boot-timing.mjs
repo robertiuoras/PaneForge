@@ -87,7 +87,10 @@ async function findPage() {
   for (let i = 0; i < 400; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
-      const p = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf'))
+      // index.html, not merely "a page": the window is listed as about:blank for a beat
+      // first, and an evaluate against a context that is about to be destroyed by the
+      // navigation never answers at all - which reads as a wedged renderer.
+      const p = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && (t.url ?? '').includes('index.html') && !(t.url ?? '').includes('shelf'))
       if (p) return p
     } catch {
       /* not listening yet */
@@ -141,15 +144,19 @@ const COMPOSER = /for shortcuts|Try "|esc to interrupt|\? for/
 const until = Date.now() + RUN_MS
 while (Date.now() < until) {
   try {
-    const r = await send('Runtime.evaluate', { expression: EXPR, returnByValue: true, awaitPromise: true })
+    const r = await Promise.race([
+      send('Runtime.evaluate', { expression: EXPR, returnByValue: true, awaitPromise: true }),
+      new Promise((res) => setTimeout(() => res({}), 4000))
+    ])
+    if (r.exceptionDetails && !globalThis.__said2) { globalThis.__said2 = 1; console.error('page threw:', JSON.stringify(r.exceptionDetails).slice(0, 300)) }
     for (const p of r.result?.value ?? []) {
       stamp(mounted, p.id, ms())
       if (p.live > 0) stamp(printed, p.id, ms())
       if (COMPOSER.test(p.tail)) stamp(composer, p.id, ms())
     }
     if (composer.size >= specs.length) break
-  } catch {
-    /* the window is busy or gone; keep asking */
+  } catch (e) {
+    if (!globalThis.__said) { globalThis.__said = 1; console.error('probe error:', String(e).slice(0, 300)) }
   }
   await new Promise((r) => setTimeout(r, 250))
 }
