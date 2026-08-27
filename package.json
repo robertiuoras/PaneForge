@@ -143,6 +143,7 @@
     "test:reveal": "node scripts/reveal-test.mjs",
     "test:restore": "node scripts/restore-context-test.mjs",
     "test:consoles": "node scripts/console-sweep-test.mjs",
+    "test:caffeinate": "node scripts/caffeinate-orphan-test.mjs",
     "test:strays": "node scripts/stray-sweep-test.mjs",
     "test:gitpoll": "node scripts/git-poll-test.mjs",
     "test:install": "node scripts/install-stop-test.mjs",
