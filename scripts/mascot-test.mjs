@@ -433,14 +433,23 @@ const desk = [
 }
 
 {
-  // The countdown. It is the answer to "the app closed a pane and the only record was a
+  // The countdown. It is the answer to "the app took a pane and the only record was a
   // console line nobody has open": the sentence names the pane, says how long is left, and
-  // says what closing costs - which here is nothing, because History reopens the
-  // conversation AND the screen.
+  // says what it costs - which here is nothing.
+  //
+  // The two verbs are not decoration. The IDLE clock sleeps: the card, the screen and the
+  // conversation stay and a press wakes it. The PRESSURE sweep still closes, and only that
+  // one may promise History. A countdown that said "closing" while the app was going to
+  // sleep the pane would be the app describing the wrong thing about somebody's work.
   const w = countdownWords(['pane 2 (taskdriver)'], 7400, 'idle')
   check('it counts in whole seconds', /in 8s/.test(w), w)
   check('and names the pane', /pane 2 \(taskdriver\)/.test(w), w)
-  check('and says nothing is lost', /History/.test(w), w)
+  check('the idle clock says it is SLEEPING the pane', /^Sleeping /.test(w), w)
+  check('and that the pane itself stays', /a press wakes it/.test(w), w)
+  check('...and never sends anybody to History for it', !/History/.test(w), w)
+  const shut = countdownWords(['pane 2 (taskdriver)'], 7400, 'pressure')
+  check('out of memory still CLOSES', /^Closing /.test(shut), shut)
+  check('and that one says where the pane went', /History/.test(shut), shut)
   const many = countdownWords(['pane 2 (a)', 'pane 3 (b)'], 1200, 'pressure')
   check('several panes are counted and named', /2 panes/.test(many) && /pane 3 \(b\)/.test(many), many)
   check('and the reason is the one that triggered it', /out of memory/.test(many), many)

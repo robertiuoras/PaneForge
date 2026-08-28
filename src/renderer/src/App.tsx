@@ -339,11 +339,15 @@ function CloseClock({
   // open", the publish took the later of the hold and the idle deadline, and the card
   // then told them the pane had been quiet and was being closed. The number is still
   // worth drawing - it is when the hold runs out - but not under that sentence.
+  // This clock is the IDLE one, and the idle clock SLEEPS: it gives the agent back and
+  // leaves the pane exactly where it is. The pressure sweep, which still closes, arms its
+  // countdown on the spot and publishes no per-card deadline, so there is no second
+  // meaning this chip could be carrying.
   const why = kept
-    ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
+    ? `Kept awake. Nothing will sleep this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hold again.' : ''}`
     : onKeep
-      ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
-      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
+      ? `This pane has been quiet, so its agent is being given back in ${words}. The card, the screen and the conversation all stay, and a press wakes it. Press here to keep it awake for a while.`
+      : `The machine it runs on will put it to sleep in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
@@ -2152,7 +2156,7 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | { what: 'closed' | 'slept' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
     | undefined
   >(undefined)
   /**
@@ -3724,6 +3728,38 @@ export default function App(): JSX.Element {
   )
 
   /**
+   * What the IDLE clock does instead of closing.
+   *
+   * It buys the same thing - the agent, ~190 MB of it - and keeps the card, the screen and
+   * the place in the sidebar, so the pane somebody left for five minutes is still where
+   * they left it and a press starts it again in the same conversation. Closing is kept for
+   * the PRESSURE sweep alone: a machine genuinely out of memory is worth the buffer too.
+   * Robert, 2026-08-28: "we don't need the right click then sleep this pane, that should be
+   * automatically assigned to unused tabs".
+   *
+   * Same refusals as the close it replaces, re-read at the deadline through
+   * `stillCloseable`, because a pane that woke up during the countdown is a pane somebody
+   * came back to.
+   */
+  const doSleep = useCallback(
+    (ids: string[], mb: number) => {
+      setCloseSoon(undefined)
+      const live = ids.filter((id) => stillCloseable(id))
+      if (!live.length) {
+        console.info(`reclaim: nothing left to sleep - ${ids.join(', ')} woke up during the countdown`)
+        return
+      }
+      if (live.length !== ids.length) mb = Math.round((mb * live.length) / ids.length)
+      for (const id of live) {
+        api.logReclaim({ event: 'slept', id, name: paneWordRef.current(id) })
+        void api.sleepSession(id)
+      }
+      setActed({ what: 'slept', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
+    },
+    [stillCloseable]
+  )
+
+  /**
    * The plan a countdown is currently holding, and the cooldown it was armed with.
    *
    * A ref rather than state: the countdown that draws it is `closeSoon`, and holding the
@@ -3809,7 +3845,7 @@ export default function App(): JSX.Element {
     const mb = reclaimedMb(keep)
     for (const p of keep) {
       const line =
-        `${log}: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+        `${log}: ${why === 'idle' ? 'sleeping' : 'closing'} ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
         `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
       console.info(line)
       // ...and on disk. The console line above is a DevTools window nobody has open, so
@@ -3903,11 +3939,13 @@ export default function App(): JSX.Element {
       () =>
         closeSoon.move
           ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-          : doClose(closeSoon.ids, pendingMb.current),
+          : closeSoon.why === 'idle'
+            ? doSleep(closeSoon.ids, pendingMb.current)
+            : doClose(closeSoon.ids, pendingMb.current),
       Math.max(0, closeSoon.deadline - Date.now())
     )
     return () => window.clearTimeout(t)
-  }, [closeSoon, doClose, doMove])
+  }, [closeSoon, doClose, doSleep, doMove])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -4480,13 +4518,13 @@ export default function App(): JSX.Element {
                       <button
                         type="button"
                         className="chip kept"
-                        title="This pane is never closed for being idle. Press to put it back on the clock."
+                        title="This pane is never slept for being idle. Press to put it back on the clock."
                         onClick={(e) => {
                           e.stopPropagation()
                           togglePin(s.id)
                         }}
                       >
-                        kept open
+                        kept awake
                       </button>
                     ) : null}
                     {/* A pane on its way out says so, and says it here for the same reason
@@ -5892,10 +5930,10 @@ export default function App(): JSX.Element {
             items={[
               {
                 key: 'pin',
-                label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
+                label: pinned[s.id] ? 'Let it sleep when idle' : 'Keep this pane awake',
                 hint: pinned[s.id]
-                  ? 'the idle clock may close it again'
-                  : 'the idle clock never closes it'
+                  ? 'the idle clock may take its agent again'
+                  : 'the idle clock never touches it'
                 ,
                 run: () => togglePin(s.id)
               },

@@ -353,6 +353,14 @@ export function reclaimPlan(
  * The clock the sweep above refuses to have, for the machine that has no person: same
  * refusals, one different trigger, and off unless `idleCloseMinutes` says otherwise.
  *
+ * What the CALLER does with this plan is SLEEP the panes, not close them (`doSleep` in
+ * `App.tsx`): the agent - which is the whole ~190 MB - is given back, and the card, the
+ * screen and the conversation stay exactly where they were, so a press starts it again.
+ * Closing is kept for the pressure sweep above, where the machine is genuinely out of
+ * memory and the buffer is worth taking too. The arithmetic here is the same either way,
+ * which is why this function was not renamed: it answers WHICH panes, never what happens
+ * to them.
+ *
  * `visible` is deliberately NOT a refusal here, and it is the only one dropped. It exists
  * up there because closing something on somebody's screen while their machine is busy is
  * theft; down here the clock has already established that nobody has typed into this pane

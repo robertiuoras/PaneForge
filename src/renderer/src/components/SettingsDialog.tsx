@@ -692,12 +692,12 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                       }
                     })
                   }
-                  label="Close a pane nobody has touched for a while"
-                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                  label="Sleep a pane nobody has touched for a while"
+                  hint={`Off, a pane's agent is only ever given back when this machine is genuinely out of memory - which is why a desk with room keeps every pane running for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes goes to sleep whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost and nothing moves: the card stays where it is wearing its old screen, and a press starts the agent again in the same conversation. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
                 />
                 {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
                   <div className="setting">
-                    <label>Close after (minutes)</label>
+                    <label>Sleep after (minutes)</label>
                     <input
                       className="search"
                       type="number"

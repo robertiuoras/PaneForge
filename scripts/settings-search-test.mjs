@@ -65,11 +65,13 @@ const labels = (q) => findSettings(q).map((s) => s.label)
 ok('an empty query hits nothing', findSettings('').length === 0)
 ok('whitespace is not a query', findSettings('   ').length === 0)
 
-const closeHit = findSettings('close a pane')
-ok('"close a pane" finds the idle-close switch', closeHit.length > 0)
+// The idle clock SLEEPS a pane rather than closing it - it gives the agent back and
+// leaves the card, the screen and the conversation where they are.
+const closeHit = findSettings('sleep a pane')
+ok('"sleep a pane" finds the idle switch', closeHit.length > 0)
 ok(
   '...and it is the FIRST hit, because every word is on its label',
-  closeHit[0]?.label.toLowerCase().startsWith('close a pane'),
+  closeHit[0]?.label.toLowerCase().startsWith('sleep a pane'),
   closeHit[0]?.label
 )
 ok('...on the tab it is really drawn on', closeHit[0]?.tab === 'general', closeHit[0]?.tab)
@@ -99,7 +101,7 @@ const wide = findSettings('pane')
 const narrow = findSettings('pane telegram')
 ok('a second word narrows rather than widens', narrow.length < wide.length && narrow.length > 0)
 
-ok('search is case-insensitive', labels('CLOSE A PANE')[0] === closeHit[0]?.label)
+ok('search is case-insensitive', labels('SLEEP A PANE')[0] === closeHit[0]?.label)
 
 // A reading in brackets is not part of a setting's name: the label is "Terminal font size"
 // so that "font" finds it, and so the DOM's "Terminal font size (14px)" still prefix-matches.

@@ -95,7 +95,7 @@ export interface MascotProps {
   /** The automatic handoff is on and has somewhere to move a pane to. */
   willMove: boolean
   /** Something the ladder did by itself, so an invisible action gets a sentence. */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+  acted?: { what: 'closed' | 'slept' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
   /** A close that is about to happen, counted down out loud. */
   closeSoon?: CloseSoon
   /** Stop that close and leave those panes alone for a while. */
@@ -117,7 +117,7 @@ interface Bubble {
    * the words are built at render time against the clock rather than once, when it was
    * said. Everything else the pet says is fixed the moment it is said.
    */
-  acted?: { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+  acted?: { what: 'closed' | 'slept' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
 }
 
 /** Where it stands, as a fraction of the window, so a resize never strands it. */
@@ -605,10 +605,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               </div>
               <div className="mascot-acts">
                 <button className="primary small" onClick={() => props.onKeep(soon.ids)}>
-                  Keep {soon.ids.length > 1 ? 'them' : 'it'} {soon.move ? 'here' : 'open'}
+                  Keep {soon.ids.length > 1 ? 'them' : 'it'}{' '}
+                  {soon.move ? 'here' : soon.why === 'idle' ? 'awake' : 'open'}
                 </button>
                 <button className="ghost small" onClick={() => props.onCloseNow(soon.ids)}>
-                  {soon.move ? 'Move now' : 'Close now'}
+                  {soon.move ? 'Move now' : soon.why === 'idle' ? 'Sleep now' : 'Close now'}
                 </button>
               </div>
             </>
