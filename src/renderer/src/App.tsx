@@ -3619,6 +3619,15 @@ export default function App(): JSX.Element {
   // An automatic /clear is the same fact - this pane needs you NOW or something happens to
   // it - and it was the one alarm the sidebar never drew: the card named a project by title
   // and nothing on the left said WHICH row that was (reported 2026-08-28).
+  /**
+   * The deadline a live countdown card is showing for this pane, if any. The card and the
+   * chip must never print two different numbers for one decision.
+   */
+  const alarmAt = useCallback(
+    (id: string): number | undefined =>
+      closeSoon && closeSoon.ids.includes(id) ? closeSoon.deadline : undefined,
+    [closeSoon]
+  )
   const alarmIds = useMemo(
     () => new Set([...(closeSoon?.ids ?? []), ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)]),
     [closeSoon, sessions]
@@ -4406,8 +4415,13 @@ export default function App(): JSX.Element {
                         anybody: how long is left, and the press that stops it. Never
                         beside a question or a move - a pane holding either is refused by
                         `idleCloseAt` outright, so the three can never be true at once. */}
-                    {s.closingAt ? (
-                      <CloseClock at={s.closingAt} onKeep={() => keepOpen([s.id])} />
+                    {alarmAt(s.id) ?? s.closingAt ? (
+                      // While the 15s countdown card is up, the CHIP shows that card's
+                      // deadline and not the idle clock's. They are two readings of one
+                      // decision and they disagreed on screen - the card counted down
+                      // while the chip sat at `closes 0:01` (reported 2026-08-28). The
+                      // armed countdown is the one that is about to act, so it wins.
+                      <CloseClock at={alarmAt(s.id) ?? (s.closingAt as number)} onKeep={() => keepOpen([s.id])} />
                     ) : pinned[s.id] ? (
                       // A switch with no reading is a switch nobody can tell they pressed:
                       // pinning a pane removes the only thing on the card that was about
