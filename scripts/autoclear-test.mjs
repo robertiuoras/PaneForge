@@ -47,7 +47,7 @@ const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
-  CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS,
+  CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
   await import(pathToFileURL(file).href)
 
@@ -115,14 +115,40 @@ console.log('keystrokes')
   ok('the command is the CLI\'s own', JSON.stringify(clearChunks('carry on', '/new')) === JSON.stringify(['/new\r', 'carry on', '\r']))
   ok('a promptless codex clear is one chunk', JSON.stringify(clearChunks('', '/new')) === JSON.stringify(['/new\r']))
 
-  // The SCHEDULE, not just the split (2026-08-27, s2 again): flat 400ms gaps typed the
-  // prompt fine and lost the submit CR, because /clear restarts the CLI and a CR arriving
-  // mid-redraw is swallowed. The prompt must wait for the clear to settle, the CR follows
-  // the prompt, and the retries land after the whole sequence.
+  // The SCHEDULE the HOOK's own fallback typing path still runs on (2026-08-27, s2): flat
+  // 400ms gaps typed the prompt fine and lost the submit CR, because /clear restarts the
+  // CLI and a CR arriving mid-redraw is swallowed. That path has no reading of the pane,
+  // so it must still guess, and these pin the guess.
   ok('the clear goes out immediately', chunkDelayMs(0) === 0)
   ok('the prompt waits for /clear to settle', chunkDelayMs(1) === CLEAR_SETTLE_MS && CLEAR_SETTLE_MS >= 2000)
   ok('the submit follows the prompt, not the clear', chunkDelayMs(2) === CLEAR_SETTLE_MS + SUBMIT_GAP_MS && SUBMIT_GAP_MS >= 1000)
   ok('submit retries exist and are ordered', SUBMIT_RETRIES_MS.length >= 2 && SUBMIT_RETRIES_MS.every((v, i, a) => v > 0 && (!i || v > a[i - 1])))
+
+  // ...and the APP does not run on it any more. Measured over the 16 clears in
+  // autoclear-app.log on 2026-08-27/28: the blind schedule typed the prompt at a fixed
+  // +2500ms and its submit at +3700ms, then fired two unconditional CRs at +6700ms and
+  // +11700ms - 28 retries across 16 clears, BOTH of them every time, including the
+  // fourteen where the first submit had plainly landed. Nothing read the pane at any
+  // point, so a stray Enter went into a live session on every single clear.
+  //
+  // These are SOURCE assertions because the alternative is a green test over a schedule
+  // nothing calls: the constants above still exist and still export, so importing them
+  // proves nothing about which code path uses them.
+  const src = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const fire = src.slice(src.indexOf('armAutoClear(id: string'), src.indexOf('cancelAutoClear(id: string'))
+  ok('the app fire path no longer schedules chunks blind', !/chunkDelayMs/.test(fire), fire.match(/chunkDelayMs.*/)?.[0])
+  ok('and it fires no blind submit retries', !/SUBMIT_RETRIES_MS/.test(fire), fire.match(/SUBMIT_RETRIES_MS.*/)?.[0])
+  // What it does instead: hand the resume prompt to the machinery that WAITS for an idle
+  // composer, sends the return as its own write, and re-sends only after reading the pane.
+  ok('the resume prompt goes through queuePrompt', /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS\)/.test(fire))
+  ok('the clear itself is still typed first, after the armclear lead', /this\.emit\('armclear', id\)/.test(fire) && /this\.write\(id, clearCmd\)/.test(fire))
+  // The beat before the wait BEGINS, not the wait: it must be short, or the adaptive path
+  // costs exactly what the blind one did.
+  ok('the start beat is short', CLEAR_PROMPT_START_MS > 0 && CLEAR_PROMPT_START_MS < CLEAR_SETTLE_MS / 2)
+  // queuePrompt must actually honour the override, or the 2500ms default is back and this
+  // whole change is a comment.
+  ok('queuePrompt takes the override', /private queuePrompt\(id: string, prompt\?: string, extraDelay = 0, startMs = PROMPT_START_MS\)/.test(src))
+  ok('and starts on it', /setTimeout\(tick, Math\.max\(0, startMs\) \+ Math\.max\(0, extraDelay\)\)/.test(src))
 
   // PARITY. Two copies of one contract, in two repos, and nothing compared them.
   const hook = await import(pathToFileURL('/Users/robertiuoras/Projects/claude-memory/claude-config/autoclear.mjs').href).catch(() => null)

@@ -85,7 +85,13 @@ export function chunkDelayMs(i: number): number {
  */
 export const ARM_CLEAR_LEAD_MS = 120
 
-/** How long `/clear` gets to finish restarting the session before the prompt is typed. */
+/**
+ * How long `/clear` gets to finish restarting the session before the prompt is typed.
+ *
+ * Only the HOOK's own fallback typing path still runs on this clock. The app does not:
+ * `armAutoClear` hands the resume prompt to `queuePrompt`, which waits for an idle
+ * composer instead of guessing at one. See `CLEAR_PROMPT_START_MS`.
+ */
 export const CLEAR_SETTLE_MS = 2500
 
 /** Between the prompt landing in the composer and the CR that submits it. */
@@ -95,8 +101,29 @@ export const SUBMIT_GAP_MS = 1200
  * Re-send the submit CR this long after the last chunk went out, unless somebody has
  * started typing. Enter on an empty composer is a no-op in every CLI we clear, so the
  * retry is free when the first CR landed and a rescue when the CLI swallowed it.
+ *
+ * The APP no longer uses these either, and the measurement is why: over 16 clears on
+ * 2026-08-27/28 the app's own log recorded 28 retries, i.e. BOTH blind CRs fired every
+ * single time, including the fourteen where the first one had plainly landed. A blind
+ * Enter into a session that has already started answering is a stray keystroke at a live
+ * CLI - harmless at an empty composer and not harmless at a chooser. `queuePrompt`
+ * re-sends only after READING the pane and finding it still idle. Kept for the hook's
+ * fallback, which types into the pty with no reading of its own.
  */
 export const SUBMIT_RETRIES_MS = [3000, 8000]
+
+/**
+ * How long the app waits after `/clear` before it starts ASKING whether the composer is
+ * ready for the resume prompt.
+ *
+ * It is short because it is not the wait - it is the beat before the wait begins.
+ * `queuePrompt` then polls for an idle composer (its own quiet window plus `readsBusy`
+ * over what was last painted) and types the moment the CLI has finished redrawing,
+ * which on a `/clear` is well under the 2500ms this used to spend unconditionally.
+ * Measured on this desk: the old path typed the prompt at +2500ms and its submit at
+ * +3700ms, then fired two more CRs at +6700 and +11700 whatever happened.
+ */
+export const CLEAR_PROMPT_START_MS = 400
 
 export const MIN_SECONDS = 5
 export const MAX_SECONDS = 300

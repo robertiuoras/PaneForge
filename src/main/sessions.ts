@@ -22,7 +22,7 @@ import { canSleep } from '../shared/sleep'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, DRAFT_RETRY_MS, SUBMIT_RETRIES_MS, armDecision, chunkDelayMs, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -1769,47 +1769,37 @@ export class SessionManager extends EventEmitter {
       this.clearAutoClearMeta(live!)
       this.setAutoClearOutcome(id, 'cleared')
       this.emitSessions()
-      chunks.forEach((c, i) => {
-        const t = setTimeout(() => {
-          acLog(`${id} chunk ${i + 1}/${chunks.length}: ${JSON.stringify(c)}`)
-          // The keeper that pushes the screen into scrollback ahead of the CLI's clear is
-          // fed by KEYSTROKES (`feedInput` in TerminalPane), and nothing here is a
-          // keystroke: this writes straight to the pty, so the renderer never saw the
-          // `/clear` and never armed. That left every automatic clear relying on the 80%
-          // screen-loss fallback, which Claude Code's banner-over-the-turn clear does not
-          // trip - so the tail of the conversation was gone. Tell the pane first, and
-          // give it a beat to file the rows before the command lands.
-          if (i === 0) {
-            // Logged, because "did the clear keep the screen" was answerable only by
-            // re-reading this function: the log recorded the chunk that wiped the pane
-            // and nothing about the arm that was supposed to file it first.
-            acLog(`${id} armclear emitted, ${ARM_CLEAR_LEAD_MS}ms before chunk 1`)
-            this.emit('armclear', id)
-            setTimeout(() => this.write(id, c), ARM_CLEAR_LEAD_MS)
-            return
-          }
-          this.write(id, c)
-        }, chunkDelayMs(i))
-        t.unref?.()
-      })
-      // Belt and braces on the submit: the CLI can swallow a CR that arrives while it is
-      // still redrawing after /clear (2026-08-27, s2 - the prompt sat unsent in the box).
-      // Enter on an empty composer is a no-op, so re-sending is free when the first one
-      // landed. Skipped the moment somebody starts typing - a retry CR must never submit
-      // a human's half-written line.
-      if (chunks.length > 1) {
-        const lastAt = chunkDelayMs(chunks.length - 1)
-        for (const extra of SUBMIT_RETRIES_MS) {
-          const t = setTimeout(() => {
-            const p = this.sessions.get(id)
-            if (!p) return acLog(`${id} submit retry skipped: pane gone`)
-            if (p.typed && p.typed.trim()) return acLog(`${id} submit retry skipped: somebody is typing`)
-            acLog(`${id} submit retry at +${extra}ms`)
-            this.write(id, '\r')
-          }, lastAt + extra)
-          t.unref?.()
-        }
-      }
+      // The keeper that pushes the screen into scrollback ahead of the CLI's clear is fed
+      // by KEYSTROKES (`feedInput` in TerminalPane), and nothing here is a keystroke: this
+      // writes straight to the pty, so the renderer never saw the `/clear` and never
+      // armed. That left every automatic clear relying on the 80% screen-loss fallback,
+      // which Claude Code's banner-over-the-turn clear does not trip - so the tail of the
+      // conversation was gone. Tell the pane first, and give it a beat to file the rows
+      // before the command lands.
+      acLog(`${id} armclear emitted, ${ARM_CLEAR_LEAD_MS}ms before the clear`)
+      this.emit('armclear', id)
+      const clearCmd = chunks[0]
+      const resume = chunks.length > 1 ? chunks[1] : ''
+      const t = setTimeout(() => {
+        if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
+        acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
+        this.write(id, clearCmd)
+        // Everything after the clear goes through the machinery that already knows how to
+        // put text into a CLI's composer: it waits for the composer to be IDLE rather than
+        // guessing at a settle time, sends the return as its own write a beat later, and
+        // re-sends only after READING the pane and finding it still idle.
+        //
+        // The blind schedule this replaces cost time on every clear and fired stray
+        // returns into live sessions. Measured over the 16 clears in autoclear-app.log on
+        // 2026-08-27/28: the prompt was typed at a fixed +2500ms, its submit at +3700ms,
+        // and then two unconditional CRs went out at +6700ms and +11700ms - 28 retries
+        // across 16 clears, both of them every time, including the fourteen where the
+        // first submit had plainly landed. Nothing read the pane at any point.
+        if (!resume) return acLog(`${id} cleared with no resume prompt`)
+        acLog(`${id} resume prompt queued (idle-composer wait, start +${CLEAR_PROMPT_START_MS}ms)`)
+        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS)
+      }, ARM_CLEAR_LEAD_MS)
+      t.unref?.()
     }
     const timer = setTimeout(() => fire(at), ask.seconds * 1000)
     timer.unref?.()
@@ -2094,7 +2084,7 @@ export class SessionManager extends EventEmitter {
    * return is sent again, up to `PROMPT_ENTER_TRIES`. Every step is capped, so the worst
    * case is a prompt typed late and left on screen for a person, never a hang.
    */
-  private queuePrompt(id: string, prompt?: string, extraDelay = 0): void {
+  private queuePrompt(id: string, prompt?: string, extraDelay = 0, startMs = PROMPT_START_MS): void {
     if (!prompt) return
     const deadline = Date.now() + PROMPT_WAIT_MAX_MS + Math.max(0, extraDelay)
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
@@ -2138,7 +2128,7 @@ export class SessionManager extends EventEmitter {
       this.write(id, prompt)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
-    setTimeout(tick, PROMPT_START_MS + Math.max(0, extraDelay))
+    setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
   }
 
   /**
