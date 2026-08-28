@@ -444,6 +444,15 @@ a channel to a transport; add it there.
   makes macOS drop the whole argument list and exit 0. It is on PATH as `pf` (a symlink from
   `~/.local/bin`), so any session anywhere opens a pane with a brief already in it:
   `pf open <cwd> --prompt "..." [--agent A] [--model M]`, then `pf list` to verify it.
+- **...and that pane can close itself and say so.** `--close-when-done` (with `--report-to`,
+  which defaults to `PF_PANE` - every pane's agent is spawned knowing which card it is), so
+  a pane opened for one job does not sit on the desk for ever once the job is done. WHEN is
+  the whole rule (`shared/closeWhenDone.ts`): printed at least once, out of its turn, no
+  question, no shell command, and no background job the agent left - that last reading comes
+  off a process table sampled every 4s, which is why the pane must then stay finished for
+  `CLOSE_DONE_QUIET_MS` (8s) rather than closing on the turn's own edge. The opener is told
+  through `queuePrompt`, so the line lands between its turns, and it is told BEFORE the
+  kill, because `kill()` deletes the request that names it. `npm run test:closedone`.
 - `npm run test:phone` (server + surface parity). `npm run test:phoneview` needs a running
   copy. A pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).
@@ -1105,6 +1114,16 @@ The terminal's scrollback is renderer memory, so before this every pane reopened
 `test:restore` is a different promise: it hands the agent its `--resume`, which brings back
 the conversation and not one line of the screen.
 
+- **Most of them come back ASLEEP.** Restoring is the one moment N agent CLIs start in one
+  tick, and that is the whole of the restart lag: measured 2026-08-28 with
+  `npm run boot-timing --panes 8`, every pane back on screen with its old output at
+  1.3-2.6s and a composer you can type into at 4.1-14.3s, against 1.4s for one `claude`
+  alone. A pane can be BORN asleep (`Live.proc` is nullable, `start()` takes `asleep`), so
+  the card, its place and its screen arrive with no process behind them and a press wakes
+  it in the conversation it was in. `restoreAsleep` in `shared/restoreTurn.ts` is the rule
+  and the refusals are the feature: the first pane, a pane launched with a prompt, and a
+  pane the restart caught mid-turn all come back running. Measured after: composer median
+  and last both 2948ms, 4 of 8 panes started. `npm run test:restoreturn`.
 - **Nothing new is stored.** `history.ts` has appended every pane's raw output to
   `userData/history/<id>.log` all along; `tail()` reads the last `BUFFER_LIMIT`. The missing
   part was the **id**: a restored pane is a new session, so the desk carries `scrollbackId`
@@ -1503,6 +1522,8 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:devicewatch` | noticing a copied cookie, and the negatives that decide whether the mark is read |
 | `npm run test:projects` | which folders are projects and which are copies of one |
 | `npm run test:cardfit` | that a session card can still be read at 190px |
+| `npm run test:closedone` | when a pane automation opened may close itself - a turn, a question, a shell command and a background job each refusing it, and the source assertions that the opener is told BEFORE the kill |
+| `npm run test:headerfit` | that a pane's header can still be USED at 198px - the close button on the pane, the ⋯ on the line, a name that is still a name - with the old header kept as the control that must NOT fit |
 | `npm run test:confirmfit` | that the yes/no box can still be answered |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn (no window) |
@@ -1545,7 +1566,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing its row |
 | `npm run test:quitwords` | telling a Cmd-Q from an outside kill; the load-bearing case is the false positive |
 | `npm run test:recover` | finishing a turn the transport cut in half, and the refusals |
-| `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
+| `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied - and the rung above it, sleeping an unused pane, with all eleven refusals and the quiet pane that IS slept as the control |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
 | `npm run test:renderwatch` | getting a wedged renderer back: both events, the probe Chromium's own monitor cannot replace, and the four refusals that stop a watchdog reloading for ever |
 | `npm run test:whatsnew` | what a restart onto a new build may say, and the five launches on which it must say nothing (fresh install, ordinary restart, rollback, unreadable notes, no network) |
@@ -1627,7 +1648,11 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   of a working day on a full desk, and a line that is always there is a line nobody reads.
   `.cap-pop` is armed by the verdict CHANGING into something worth saying (`level|why`,
   cleared when the desk goes back to ok) and takes itself away after `CAPACITY_NOTE_MS`
-  (12s), carrying the exact figures with it. The desk TOTAL beside the pane count went with
+  (12s), carrying the exact figures with it. **Only `over` arms it** - the kernel itself
+  objecting - never `tight`, which is the budget line the ladder already acts on with its
+  own countdown; and never more than one card per `CAPACITY_QUIET_MS` (10 min), because
+  this desk sits at `over` for hours with the lag reading crossing its band every few
+  minutes, so the same fact popped a card again and again. The desk TOTAL beside the pane count went with
   it: it is drawn only while `capacity.level !== 'ok'`, because it is a pressure reading.
 - **A press on a pane takes its countdown with it.** `touchPane` drops `closeSoon` when the
   countdown names that pane (and gives `handoffSweeping` back for a move). The "went back to
@@ -1671,6 +1696,16 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   where holding an unread pane open is the more expensive mistake. And it is gated on
   `Away.sawPerson` - on a desk no person has touched this run nothing is ever read, so the
   refusal would switch the feature off on the one machine it exists for.
+- **The rung above closing is SLEEPING, and it is ON.** `idleSleepPlan`
+  (`reclaim.idleSleepMinutes`, 30 min) stops the agent in a pane nobody has used and keeps
+  the card, its place, its screen and its conversation - `shared/sleep.ts`'s machinery,
+  fired by a clock instead of by a menu row, which is why "Sleep this pane" is gone from
+  the card's right-click. It shares `onTheClock` with the close clock verbatim, and drops
+  the two things that are about closing: it keeps no pane back (it empties no window) and
+  it is not capped by `maxPerSweep` (nothing here depends on re-reading the machine). No
+  countdown either - nothing a person would miss is lost, and the card says `asleep 3m`
+  where its clock was. On by default because being wrong costs one press and the CLI's own
+  1.4s boot.
 - **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has typed
   into for that long whatever the memory says; 0 is the default. The switch sets
   `IDLE_CLOSE_MINUTES` = **5 minutes**. It exists for the second machine — a desk driven over the

@@ -85,6 +85,16 @@ export interface ReclaimConfig {
    */
   idleCloseMinutes: number
   /**
+   * Stop the agent in a pane nobody has typed into for this many minutes, and keep the
+   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off.
+   *
+   * A NEW key, so an existing config.json simply does not have it and `?? IDLE_SLEEP_MINUTES`
+   * gives every desk the default: none of the `defaultsVN` machinery is needed, because
+   * that exists for a default that was already WRITTEN as a number somebody could have
+   * chosen. Missing is missing.
+   */
+  idleSleepMinutes?: number
+  /**
    * Marker for the one-time move onto the clock being ON by default.
    *
    * `defaults()` is WRITTEN to config.json at first launch, so every install in existence
@@ -127,11 +137,29 @@ export interface ReclaimConfig {
  */
 export const IDLE_CLOSE_MINUTES = 5
 
+/**
+ * How long a pane may sit unused before its agent is stopped and the CARD is kept.
+ *
+ * On by default, unlike the close clock above, because being wrong costs so much less:
+ * sleeping keeps the pane, its place, its screen and its conversation, and waking it is
+ * one press and the CLI's own 1.4s boot. Closing takes the card off the desk, which is
+ * the thing a pane kept for easy access exists to keep - Robert, 2026-08-27: "i keep
+ * session 2 and 5 kept open just for easy access... maybe to save resources you can sleep
+ * them". Measured on this desk 2026-08-28, eight live `claude` panes: 61, 64, 153, 166,
+ * 174, 177, 231 and 247 MB, 1.27 GB in total, none of it doing anything.
+ *
+ * Half an hour rather than the close clock's five minutes: this fires whether or not the
+ * machine is under pressure, so it has to be long enough that a pane somebody is thinking
+ * about between turns is never in it.
+ */
+export const IDLE_SLEEP_MINUTES = 30
+
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
+  idleSleepMinutes: IDLE_SLEEP_MINUTES,
   defaultsV2: true,
   defaultsV3: true,
   defaultsV4: true
@@ -353,14 +381,6 @@ export function reclaimPlan(
  * The clock the sweep above refuses to have, for the machine that has no person: same
  * refusals, one different trigger, and off unless `idleCloseMinutes` says otherwise.
  *
- * What the CALLER does with this plan is SLEEP the panes, not close them (`doSleep` in
- * `App.tsx`): the agent - which is the whole ~190 MB - is given back, and the card, the
- * screen and the conversation stay exactly where they were, so a press starts it again.
- * Closing is kept for the pressure sweep above, where the machine is genuinely out of
- * memory and the buffer is worth taking too. The arithmetic here is the same either way,
- * which is why this function was not renamed: it answers WHICH panes, never what happens
- * to them.
- *
  * `visible` is deliberately NOT a refusal here, and it is the only one dropped. It exists
  * up there because closing something on somebody's screen while their machine is busy is
  * theft; down here the clock has already established that nobody has typed into this pane
@@ -396,6 +416,43 @@ export function idleClosePlan(
   }))
 }
 
+/**
+ * Which panes have been unused long enough to have their agent stopped and their card kept.
+ *
+ * The rung BELOW closing, and the reason the close clock can stay off on the desk somebody
+ * is sitting at: everything a person would miss survives a sleep, so the refusals can be
+ * the same ones without the price of being wrong. `onTheClock` is shared with
+ * `idleClosePlan` verbatim - never a pane that is focused, unread, working, running a job,
+ * holding a question, mid-handoff, pinned, another machine's, or already asleep.
+ *
+ * Three things `idleClosePlan` does that this deliberately does not:
+ *   - it keeps one pane back, because an app that empties its own window has saved nothing.
+ *     Sleeping empties nothing: every card stays where it is, wearing the screen it had.
+ *   - it caps the sweep at `maxPerSweep`, because a close is worth re-reading the machine
+ *     between. Nothing here depends on a reading of the machine.
+ *   - it counts `visible` as no refusal for the second desk's sake. Here it never was one:
+ *     a sleeping pane looks the same as it did, so being on screen changes nothing.
+ *
+ * And it does not refuse an UNREAD pane, which is the one refusal that is about a pane
+ * disappearing - see `keepable`. Nothing disappears here, and a pane nobody has focused
+ * yet is unread for ever, so keeping it would make this clock inert.
+ */
+export function idleSleepPlan(
+  panes: ReclaimPane[],
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0
+): Reclaim[] {
+  if (!cfg.enabled) return []
+  const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
+  if (!minutes) return []
+  const minIdle = minutes * 60_000
+  return panes
+    .filter(keepable)
+    .filter((p) => now - quietSince(p) >= minIdle)
+    .sort((a, b) => quietSince(a) - quietSince(b))
+    .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
+}
+
 /** MB the plan is expected to return, for the line that says whether it was worth doing. */
 export function reclaimedMb(plan: Reclaim[]): number {
   return plan.reduce((mb, p) => mb + (p.hadAgent ? SESSION_MB : 0), 0)
@@ -422,7 +479,23 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
     // is ever read, so an unread refusal would switch the feature off on the one machine
     // that needs it.
-    !(personHere && unread(p)) &&
+    !(personHere && unread(p)) && keepable(p)
+  )
+}
+
+/**
+ * The refusals that are about the PANE rather than about having read it.
+ *
+ * Split out because sleeping and closing disagree on exactly one of them. `unread` is
+ * there so a turn nobody has seen is not taken off the desk before they see it - which is
+ * a statement about the pane VANISHING. A sleeping pane vanishes nothing: the card, its
+ * place and every row on its screen stay exactly where they are, and a pane never focused
+ * at all reads as unread for ever (`lastFocus` is undefined), so keeping it here would
+ * make the sleep clock inert on the desk it was built for. Measured on this machine: two
+ * eligible panes, quiet 126s against a 60s clock, neither slept.
+ */
+function keepable(p: ReclaimPane): boolean {
+  return (
     !p.focused &&
     !p.remote &&
     !p.handingOff &&

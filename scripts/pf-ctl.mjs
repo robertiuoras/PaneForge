@@ -10,7 +10,7 @@
  *
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P] [--model M] [--agent A]
- *                                        [--close-when-done] [--report-to <pane id>]
+ *                                       [--close-when-done] [--report-to <pane>]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
  *
@@ -133,17 +133,16 @@ if (cmd === 'list') {
   const prompt = flag(rest, '--prompt')
   const model = flag(rest, '--model')
   const agent = flag(rest, '--agent')
-  const cwd = rest[0]
-  // A pane opened by automation with a job to do, closing itself when that job is over -
-  // and telling whoever asked for it. `--report-to` defaults to `$PF_PANE`, which every
-  // pane now carries, so an agent opening a pane from inside another one is told without
-  // having to know its own id. `--close-when-done` is required for either: a pane that
-  // only reports is still a pane nobody closes.
+  // A pane opened by automation has nobody sitting in it to close it when the job is
+  // done, so it can be told to close itself - and to say so in the pane that opened it.
+  // `--report-to` defaults to PF_PANE, which every pane's own agent is spawned with, so a
+  // session opening a helper pane needs to name nothing.
   const closeWhenDone = rest.includes('--close-when-done')
-  const reportTo = flag(rest, '--report-to') ?? (closeWhenDone ? process.env.PF_PANE : undefined)
-  if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P] [--close-when-done] [--report-to ID]')
+  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  const cwd = rest[0]
+  if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const s = await call('sessions:start', [
-    { cwd, title, prompt, model, agent, closeWhenDone, reportTo }
+    { cwd, title, prompt, model, agent, closeWhenDone, reportTo: closeWhenDone ? reportTo : undefined }
   ])
   console.log(`opened ${s?.id ?? '?'} in ${cwd}`)
 } else if (cmd === 'close') {

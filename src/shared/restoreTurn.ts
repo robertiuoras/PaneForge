@@ -74,3 +74,35 @@ export function continueAfterRestore(
   if (req.prompt) return false
   return req.wasWorking === true
 }
+
+/**
+ * Which restored panes come back with their agent already running.
+ *
+ * Restoring is the one moment the app starts N agent CLIs in a single tick, and measured
+ * on this desk 2026-08-28 (`npm run boot-timing --panes 8`) that is the whole of the lag:
+ * every pane was back on screen with its old output in 1.3-2.6s, while a composer you can
+ * type into took 4.1-14.3s, and the app's own main process spent under 0.5s of CPU in the
+ * first 30s. One `claude` alone reaches a composer in 1.4s; seven at once take 4-15s.
+ * Staggering the starts was measured and was WORSE (last composer at 26-29s), so the
+ * answer is not to start them further apart - it is to not start them.
+ *
+ * A pane that comes back ASLEEP is the same card in the same place wearing the same
+ * screen, with no process behind it: `shared/sleep.ts` already had every part of that,
+ * and a press wakes it in the conversation it was in. So the rule is narrow and the
+ * refusals are the feature - a pane is woken on arrival only when leaving it asleep would
+ * lose something or hide work that is already meant to be running:
+ *
+ *   - the FIRST pane, which is the one being looked at;
+ *   - a pane launched with a prompt, which was opened to do that work;
+ *   - a pane the restart caught mid-turn, which `continueAfterRestore` is about to finish.
+ */
+export function restoreAsleep(
+  req: RestoredClock & { prompt?: string },
+  index: number,
+  recoverEnabled: boolean
+): boolean {
+  if (index === 0) return false
+  if (req.prompt) return false
+  if (continueAfterRestore(req, recoverEnabled)) return false
+  return true
+}

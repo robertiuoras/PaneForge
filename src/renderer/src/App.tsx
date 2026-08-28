@@ -92,6 +92,7 @@ import type { RunningDev } from '../../shared/devList'
 import {
   DEFAULT_RECLAIM,
   idleClosePlan,
+  idleSleepPlan,
   idleCloseAt,
   quietSince,
   reclaimPlan,
@@ -113,7 +114,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
-import { canSleep, sleepRefusal, sleepWords, type SleepPane } from '../../shared/sleep'
+import { sleepWords } from '../../shared/sleep'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
@@ -229,21 +230,6 @@ function AsleepChip({ at, id }: { at: number; id: string }): React.ReactElement 
   )
 }
 
-/** One pane as `shared/sleep.ts` reads it - see `reclaimPaneOf` for why this is shared. */
-function sleepPaneOf(s: Session, backJob?: string | null): SleepPane {
-  return {
-    status: s.status,
-    asleep: s.asleep,
-    mirror: !!s.remote,
-    busy: s.runSince !== undefined || s.status === 'working' || s.status === 'starting',
-    asking: !!s.ask,
-    job: s.job,
-    // The one refusal main cannot make for itself: this is a reading of the process
-    // table that rides on the usage sample, and the sampler lives on this side.
-    backJob: backJob ?? undefined
-  }
-}
-
 /**
  * One pane as the reclaim sweeps read it.
  *
@@ -339,15 +325,11 @@ function CloseClock({
   // open", the publish took the later of the hold and the idle deadline, and the card
   // then told them the pane had been quiet and was being closed. The number is still
   // worth drawing - it is when the hold runs out - but not under that sentence.
-  // This clock is the IDLE one, and the idle clock SLEEPS: it gives the agent back and
-  // leaves the pane exactly where it is. The pressure sweep, which still closes, arms its
-  // countdown on the spot and publishes no per-card deadline, so there is no second
-  // meaning this chip could be carrying.
   const why = kept
-    ? `Kept awake. Nothing will sleep this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hold again.' : ''}`
+    ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
     : onKeep
-      ? `This pane has been quiet, so its agent is being given back in ${words}. The card, the screen and the conversation all stay, and a press wakes it. Press here to keep it awake for a while.`
-      : `The machine it runs on will put it to sleep in ${words} for being idle. Its desk decides that, not this one.`
+      ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
+      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
@@ -391,12 +373,13 @@ const VISIBILITY_REFRESH_MS = 30_000
  * becomes furniture - which is the whole complaint the strip it replaces collected.
  */
 const CAPACITY_NOTE_MS = 12_000
-
 /**
- * How long the memory card stays quiet before it may say the same thing again.
+ * The least time between two memory cards.
  *
- * Ten minutes. The card is a READING, not an action anybody is being asked to take, and
- * this desk sits at its worst verdict for hours - Robert, 2026-08-28: it "pops too often".
+ * The card is armed by the reading BECOMING worth saying (`level|why`), and this desk sits
+ * at `over` for hours with the lag reading crossing its band every few minutes - so the
+ * same fact popped a card again and again. A reading that interrupts repeatedly is a
+ * reading nobody reads. Robert, 2026-08-28: "the out of memory card pops too often".
  */
 const CAPACITY_QUIET_MS = 10 * 60_000
 
@@ -578,17 +561,16 @@ export default function App(): JSX.Element {
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
   /**
-   * ...and read back off disk, once, when the config arrives.
-   *
-   * It was `useState({})` and written nowhere else until 2026-08-28, so every restart and
-   * every update quietly put every pinned pane back on the idle clock - the one clock the
-   * press exists to take it off. A restore mints a NEW session id, so the carrying
-   * forward is done in main, where the old id is still in front of it (`restorePanes`).
+   * ...and it is kept in config.json, or the promise lasts until the next restart - which
+   * on an app that updates itself several times a day is not a promise. Read once, when
+   * the config first arrives: after that this state is the truth and every toggle writes
+   * it back, so an echo of our own write cannot fight the press that caused it. Main has
+   * already translated the saved ids onto the panes it restored (`restorePanes`).
    */
-  const readPins = useRef(false)
+  const pinnedLoaded = useRef(false)
   useEffect(() => {
-    if (readPins.current || !config) return
-    readPins.current = true
+    if (pinnedLoaded.current || !config) return
+    pinnedLoaded.current = true
     const saved = config.pinnedPanes ?? []
     if (saved.length) setPinned(Object.fromEntries(saved.map((id) => [id, true as const])))
   }, [config])
@@ -1512,8 +1494,6 @@ export default function App(): JSX.Element {
     } | null
   >(null)
   const capacityShown = useRef('')
-  /** When that card last said anything, so the same verdict cannot repeat itself. */
-  const capacitySaidAt = useRef(0)
   const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onCapacity(setCapacity), [])
 
@@ -2087,6 +2067,8 @@ export default function App(): JSX.Element {
    * is running" rather than "not measured yet".
    */
   const [usage, setUsage] = useState<UsageReport | null>(null)
+  /** When the memory card last appeared - see `CAPACITY_QUIET_MS`. */
+  const capacityLastAt = useRef(0)
 
   /**
    * Put the memory notice on screen when the reading BECOMES worth saying, and take it
@@ -2095,28 +2077,23 @@ export default function App(): JSX.Element {
    * inside a card nobody is looking at is a second reading, not the one being reported.
    */
   useEffect(() => {
-    if (!capacity || capacity.level === 'ok' || !capacity.say) {
+    // `over` only - the kernel itself objecting - and not `tight`, which is the budget
+    // line and a warn-band reading. Those two are policy, they are acted on by the ladder
+    // (which draws its own countdown for anything it moves or closes), and a card about
+    // them is an interruption saying nothing has to be done.
+    if (!capacity || capacity.level !== 'over' || !capacity.say) {
       capacityShown.current = ''
       return
     }
-    // Urgent only, and rarely. This was armed by the verdict CHANGING - `level|why` - and
-    // both halves of that key move on a desk that is merely full: `tight` is the ordinary
-    // state of this machine for hours at a time, and `why` flips between memory, lag and
-    // the pane budget while the level stands still, so the card came back every few
-    // minutes saying the same thing. A notice nobody can act on, arriving repeatedly, is
-    // how a reading gets ignored.
-    //
-    // So `over` alone speaks - the level where something is actually about to be done
-    // about it - the reason is dropped from the key, because a different reason for the
-    // same verdict is the same situation, and a re-arm waits `CAPACITY_QUIET_MS`. A
-    // verdict that drops back to ok still clears the mark above, so a desk that recovers
-    // and fails again is a new event rather than a repeat.
-    if (capacity.level !== 'over') return
-    const key = capacity.level
-    const now = Date.now()
-    if (capacityShown.current === key && now - capacitySaidAt.current < CAPACITY_QUIET_MS) return
+    const key = `${capacity.level}|${capacity.why}`
+    if (capacityShown.current === key) return
     capacityShown.current = key
-    capacitySaidAt.current = now
+    // ...and no more than one card per quiet window, whatever the reading does. Recorded
+    // above the check so a suppressed reading is not shown the moment the window ends: the
+    // next card is for the next thing that becomes true.
+    const since = Date.now() - capacityLastAt.current
+    capacityLastAt.current = Date.now()
+    if (since < CAPACITY_QUIET_MS) return
     const u = usageRef.current
     const numbers = u && u.totalMb > 0
       ? `${formatMb(u.totalMb)} in ${sessionsRef.current.length} pane` +
@@ -2181,7 +2158,7 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    | { what: 'closed' | 'slept' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
     | undefined
   >(undefined)
   /**
@@ -2662,6 +2639,46 @@ export default function App(): JSX.Element {
       // has open since it shipped; now it counts down on the mascot first, and a press
       // stops it.
       if (plan.length) armCloseRef.current(plan, 'idle', 'idle-close')
+    }
+    const timer = window.setInterval(sweep, 60_000)
+    return () => window.clearInterval(timer)
+  }, [config?.reclaim])
+
+  /**
+   * ...and the rung above it, which is ON by default: a pane nobody has used for half an
+   * hour gives its agent back and KEEPS its card.
+   *
+   * This is what "Sleep this pane" was a menu row for, and a menu row is the wrong shape
+   * for it - Robert, 2026-08-28: "we don't need the right click then sleep this pane, that
+   * should be automatically assigned to unused tabs". Nothing a person would miss is lost,
+   * so unlike the close clock there is no countdown in front of it: the card stays exactly
+   * where it is, wearing the screen it had, and says `asleep 3m` where its clock was.
+   *
+   * Its own timer beside the close sweep rather than inside it, because the two answer
+   * different questions at different lengths and one loop doing both would have to agree
+   * with `idleCloseAt` about a deadline this rung does not publish.
+   */
+  useEffect(() => {
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    if (!cfg.enabled) return
+    const sweep = (): void => {
+      const plan = idleSleepPlan(
+        sessionsRef.current.map((s) =>
+          reclaimPaneOf(
+            s,
+            activeRef.current,
+            focusLeftAt.current[s.id],
+            pinnedRef.current[s.id],
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+          )
+        ),
+        cfg,
+        // The same frozen clock every other sweep reads: time somebody could have acted
+        // in, never wall time. No `personHere`: this rung has no unread refusal to gate
+        // on - see `keepable` in shared/reclaim.ts.
+        deskNow(Date.now(), awayRef.current)
+      )
+      for (const p of plan) void api.sleepSession(p.id)
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -3753,38 +3770,6 @@ export default function App(): JSX.Element {
   )
 
   /**
-   * What the IDLE clock does instead of closing.
-   *
-   * It buys the same thing - the agent, ~190 MB of it - and keeps the card, the screen and
-   * the place in the sidebar, so the pane somebody left for five minutes is still where
-   * they left it and a press starts it again in the same conversation. Closing is kept for
-   * the PRESSURE sweep alone: a machine genuinely out of memory is worth the buffer too.
-   * Robert, 2026-08-28: "we don't need the right click then sleep this pane, that should be
-   * automatically assigned to unused tabs".
-   *
-   * Same refusals as the close it replaces, re-read at the deadline through
-   * `stillCloseable`, because a pane that woke up during the countdown is a pane somebody
-   * came back to.
-   */
-  const doSleep = useCallback(
-    (ids: string[], mb: number) => {
-      setCloseSoon(undefined)
-      const live = ids.filter((id) => stillCloseable(id))
-      if (!live.length) {
-        console.info(`reclaim: nothing left to sleep - ${ids.join(', ')} woke up during the countdown`)
-        return
-      }
-      if (live.length !== ids.length) mb = Math.round((mb * live.length) / ids.length)
-      for (const id of live) {
-        api.logReclaim({ event: 'slept', id, name: paneWordRef.current(id) })
-        void api.sleepSession(id)
-      }
-      setActed({ what: 'slept', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
-    },
-    [stillCloseable]
-  )
-
-  /**
    * The plan a countdown is currently holding, and the cooldown it was armed with.
    *
    * A ref rather than state: the countdown that draws it is `closeSoon`, and holding the
@@ -3870,7 +3855,7 @@ export default function App(): JSX.Element {
     const mb = reclaimedMb(keep)
     for (const p of keep) {
       const line =
-        `${log}: ${why === 'idle' ? 'sleeping' : 'closing'} ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
+        `${log}: closing ${p.id} - quiet ${Math.round(p.idleMs / 60000)} min` +
         `${p.hadAgent ? '' : ' (already exited)'}; reopen from History`
       console.info(line)
       // ...and on disk. The console line above is a DevTools window nobody has open, so
@@ -3964,13 +3949,11 @@ export default function App(): JSX.Element {
       () =>
         closeSoon.move
           ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-          : closeSoon.why === 'idle'
-            ? doSleep(closeSoon.ids, pendingMb.current)
-            : doClose(closeSoon.ids, pendingMb.current),
+          : doClose(closeSoon.ids, pendingMb.current),
       Math.max(0, closeSoon.deadline - Date.now())
     )
     return () => window.clearTimeout(t)
-  }, [closeSoon, doClose, doSleep, doMove])
+  }, [closeSoon, doClose, doMove])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -4120,17 +4103,20 @@ export default function App(): JSX.Element {
   }, [])
 
   /** "Keep this pane open" / "Let it close when idle", off the card's right-click. */
-  const togglePin = useCallback((id: string) => {
-    setPinned((was) => {
-      const next = { ...was }
-      if (next[id]) delete next[id]
-      else next[id] = true
-      // On disk in the same breath: this is the one switch in the app whose whole value
-      // is that it outlives the thing that would otherwise close the pane.
-      void api.setConfig({ pinnedPanes: Object.keys(next) })
-      return next
-    })
-  }, [])
+  const togglePin = useCallback(
+    (id: string) => {
+      setPinned((was) => {
+        const next = { ...was }
+        if (next[id]) delete next[id]
+        else next[id] = true
+        // Written from inside the updater so what is saved is what is drawn, rather than a
+        // second reading of state this render has not seen yet.
+        patchConfig({ pinnedPanes: Object.keys(next) })
+        return next
+      })
+    },
+    [patchConfig]
+  )
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -4543,13 +4529,13 @@ export default function App(): JSX.Element {
                       <button
                         type="button"
                         className="chip kept"
-                        title="This pane is never slept for being idle. Press to put it back on the clock."
+                        title="This pane is never closed for being idle. Press to put it back on the clock."
                         onClick={(e) => {
                           e.stopPropagation()
                           togglePin(s.id)
                         }}
                       >
-                        kept awake
+                        kept open
                       </button>
                     ) : null}
                     {/* A pane on its way out says so, and says it here for the same reason
@@ -5955,33 +5941,28 @@ export default function App(): JSX.Element {
             items={[
               {
                 key: 'pin',
-                label: pinned[s.id] ? 'Let it sleep when idle' : 'Keep this pane awake',
+                label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
-                  ? 'the idle clock may take its agent again'
-                  : 'the idle clock never touches it'
+                  ? 'the idle clocks may sleep or close it again'
+                  : 'no idle clock sleeps or closes it'
                 ,
                 run: () => togglePin(s.id)
               },
-              ...(local
+              // Waking is a press and sleeping is not: the idle clock puts an unused pane
+              // to sleep by itself (`idleSleepPlan`), so the row that did it by hand is
+              // gone - Robert, 2026-08-28: "we don't need the right click then sleep this
+              // pane, that should be automatically assigned to unused tabs". The way to
+              // keep a pane's agent is "Keep this pane open" above, which every sweep
+              // refuses. Waking stays, because a sleeping pane has to have a way back and
+              // the card's own chip is the other one.
+              ...(local && s.asleep
                 ? [
-                    s.asleep
-                      ? {
-                          key: 'wake',
-                          label: 'Wake this pane',
-                          hint: 'start its agent again, in the same conversation',
-                          run: () => void api.wakeSession(s.id)
-                        }
-                      : {
-                          key: 'sleep',
-                          label: 'Sleep this pane',
-                          // The refusal is the hint, so a greyed row says which of the six
-                          // reasons it is - see `sleepRefusal`.
-                          hint:
-                            sleepRefusal(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)) ||
-                            'give the agent back, keep the card and the screen',
-                          disabled: !canSleep(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)),
-                          run: () => void api.sleepSession(s.id)
-                        }
+                    {
+                      key: 'wake',
+                      label: 'Wake this pane',
+                      hint: 'start its agent again, in the same conversation',
+                      run: () => void api.wakeSession(s.id)
+                    }
                   ]
                 : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
@@ -5993,10 +5974,11 @@ export default function App(): JSX.Element {
                 ? [
                     {
                       key: 'handoff',
-                      // The pane's own header button was renamed to `Remote` on
-                      // 2026-08-28 and the menus were not, so one press said one word and
-                      // the other said another for the same box. Robert's reasoning for
-                      // the word: mid-turn it is a handoff anyway, so one covers both.
+                      // One word for both halves of it. The pane's own header button was
+                      // renamed on 2026-08-28 and the menus were not, so the same press
+                      // had two names - and Robert's reasoning covers both: mid-turn the
+                      // pane is queued and handed over anyway, so "Remote" is the whole
+                      // decision (WHERE this agent runs) rather than one way of taking it.
                       label: 'Remote…',
                       hint: 'run it on another machine',
                       run: () =>

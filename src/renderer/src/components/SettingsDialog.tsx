@@ -5,7 +5,7 @@ import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
 import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
 import { DEFAULT_TIPS } from '@shared/tips'
 import PetPicker from './PetPicker'
-import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
+import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -594,7 +594,7 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   )}
                 {config.autoHandoff?.enabled !== false && (
                   <Switch
-                    checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}
+                    checked={(config.autoHandoff?.offloadIdleMinutes ?? IDLE_OFFLOAD_MINUTES) > 0}
                     onChange={(v) =>
                       onChange({
                         autoHandoff: {
@@ -605,7 +605,7 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                       })
                     }
                     label="...and move a quiet one over there even when there is still room"
-                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
+                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead, and it is ON: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says - half the time it would take to fall asleep here, so a quiet pane is offered to the machine that can carry on running it before its agent is stopped on this one, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
                   />
                 )}
                 <Switch
@@ -681,6 +681,44 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
                 />
                 <Switch
+                  checked={(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleSleepMinutes: v ? IDLE_SLEEP_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Put a pane nobody has used to sleep"
+                  hint={`On, and on by default. A pane nobody has typed into for ${config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES} minutes has its agent stopped and KEEPS everything else: the card stays where it is, wearing the screen it had, and a press starts the CLI again in the same conversation. Measured on this desk: eight live agents, 1.27 GB, none of them doing anything. The refusals are the close clock's, exactly - never the pane you are in, never one you have not read yet, never one that is working, running a command or holding a question, never another device's, and never one you have said to keep open.`}
+                />
+                {(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0 && (
+                  <div className="setting">
+                    <label>Sleep after (minutes)</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      step={1}
+                      value={config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES}
+                      onChange={(e) =>
+                        onChange({
+                          reclaim: {
+                            ...DEFAULT_RECLAIM,
+                            ...config.reclaim,
+                            enabled: true,
+                            idleSleepMinutes: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                )}
+                <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
                   onChange={(v) =>
                     onChange({
@@ -692,12 +730,12 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                       }
                     })
                   }
-                  label="Sleep a pane nobody has touched for a while"
-                  hint={`Off, a pane's agent is only ever given back when this machine is genuinely out of memory - which is why a desk with room keeps every pane running for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes goes to sleep whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost and nothing moves: the card stays where it is wearing its old screen, and a press starts the agent again in the same conversation. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                  label="Close a pane nobody has touched for a while"
+                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
                 />
                 {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
                   <div className="setting">
-                    <label>Sleep after (minutes)</label>
+                    <label>Close after (minutes)</label>
                     <input
                       className="search"
                       type="number"

@@ -620,20 +620,6 @@ export function offloadPlan(
 export interface RestorePlan {
   /** How many of the saved panes are ticked to start. Never 0 while there is one to offer. */
   fits: number
-  /**
-   * How many of those come back with their AGENT RUNNING. The rest come back asleep -
-   * card, screen and conversation, no process - and a press wakes one.
-   *
-   * This is the number the restore lag was ever about. Measured on this desk 2026-08-28
-   * with `npm run boot-timing --panes 7`: every pane back on screen with its old output
-   * in 1.3-2.6s, but a composer you can type into at 4.1-14.3s, against 1.4s for one
-   * `claude` alone - and the app's own main process spends under 0.5s of CPU in the whole
-   * first 30s. The wait is N agent CLIs starting in one tick, so the fix is to start one.
-   *
-   * Never 0 while there is a pane to offer: an app that comes back with nothing running
-   * at all reads as an app that failed to start.
-   */
-  awake: number
   /** The sentence under the list. Empty when everything fits and nothing needs saying. */
   note: string
 }
@@ -658,7 +644,7 @@ export interface RestorePlan {
  */
 export function restorePlan(saved: number, m: Machine): RestorePlan {
   const offered = Math.max(0, saved)
-  if (offered <= 1) return { fits: offered, awake: offered, note: '' }
+  if (offered <= 1) return { fits: offered, note: '' }
   const v = assess({ ...m, localPanes: m.localPanes })
   const each = v.nextPaneMb
 
@@ -669,15 +655,9 @@ export function restorePlan(saved: number, m: Machine): RestorePlan {
   const rest = (fits: number): string =>
     fits < offered ? ' The rest are in History, one click each.' : ''
 
-  // One agent starts, whatever else is true. Everything below decides how many CARDS come
-  // back; this decides how many PROCESSES, and the answer is the pane about to be looked
-  // at. A sleeping pane costs the machine nothing but the row it sits in.
-  const awake = 1
-
   if (m.pressure === 'critical') {
     return {
       fits: 1,
-      awake,
       note: `This machine is out of memory right now, and each pane brings back an agent costing ~${each} MB. One is ticked.${rest(1)}`,
     }
   }
@@ -685,7 +665,6 @@ export function restorePlan(saved: number, m: Machine): RestorePlan {
     const fits = Math.min(offered, 2)
     return {
       fits,
-      awake,
       note: `Memory is tight - each pane brings back an agent costing ~${each} MB, and starting ${offered} at once is what makes typing lag.${rest(fits)}`,
     }
   }
@@ -693,14 +672,12 @@ export function restorePlan(saved: number, m: Machine): RestorePlan {
   // saved this many panes it will not bite. Said plainly rather than silently applied.
   const room = v.roomFor ?? offered
   const fits = Math.max(1, Math.min(offered, room))
-  const asleep = `The first one starts its agent; the rest come back asleep - the card, the screen and the conversation, with no process behind them. Press one to wake it.`
   return {
     fits,
-    awake,
     note:
       fits < offered
-        ? `${offered} panes would hold about ${offered * each} MB of this machine's ${Math.round(m.totalMb / 1024)} GB. ${fits} are ticked. ${asleep}${rest(fits)}`
-        : asleep,
+        ? `${offered} panes would hold about ${offered * each} MB of this machine's ${Math.round(m.totalMb / 1024)} GB. ${fits} are ticked.${rest(fits)}`
+        : '',
   }
 }
 

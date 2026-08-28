@@ -71,12 +71,10 @@ const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.t
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
 
 check('the starting grid is declared once', /export const START_COLS = \d+/.test(grid))
-// Matched loosely on the REQUEST because the pane's own id is merged into it at the call
-// (`PF_PANE`); the two numbers are the assertion and they are still literally there.
-check(
-  'main spawns the pty on it',
-  /this\.spawn\(\{ \.\.\.req[^)]*\}, agent, START_COLS, START_ROWS\)/.test(sessions)
-)
+// The call carries the pane's own id now (`PF_PANE`), and a pane can be born asleep with
+// no spawn at all, so this looks for the SIZE the pty is opened at rather than the whole
+// call - which is what this line has always been about.
+check('main spawns the pty on it', /this\.spawn\(req, agent, START_COLS, START_ROWS[,)]/.test(sessions))
 check('and records the session at it', sessions.includes('cols: START_COLS'))
 check('the renderer opens its terminal on the same one', pane.includes('cols: START_COLS'))
 check('...rows too', pane.includes('rows: START_ROWS'))

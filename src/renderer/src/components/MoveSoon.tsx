@@ -47,13 +47,7 @@ function secondsLeft(deadline: number, now: number): number {
  */
 export function moveSoonWords(soon: CloseSoon): string {
   const who = soon.names.length === 1 ? soon.names[0] : `${soon.names.length} panes`
-  // Idle sleeps, pressure closes - see `countdownWords`, which this is the plain-card
-  // half of. The verb is the promise, so the two may not share one.
-  return soon.move
-    ? `Moving ${who} to ${soon.move.deviceName}`
-    : soon.why === 'idle'
-      ? `Sleeping ${who}`
-      : `Closing ${who}`
+  return soon.move ? `Moving ${who} to ${soon.move.deviceName}` : `Closing ${who}`
 }
 
 export default function MoveSoon({ soon, onKeep, onNow }: MoveSoonProps): React.JSX.Element | null {
@@ -81,10 +75,10 @@ export default function MoveSoon({ soon, onKeep, onNow }: MoveSoonProps): React.
       </div>
       <div className="move-soon-acts">
         <button type="button" onClick={() => onKeep(soon.ids)}>
-          {soon.move ? 'Keep it here' : soon.why === 'idle' ? 'Keep it awake' : 'Keep it open'}
+          {soon.move ? 'Keep it here' : 'Keep it open'}
         </button>
         <button type="button" className="ghost" onClick={() => onNow(soon.ids)}>
-          {soon.move ? 'Move now' : soon.why === 'idle' ? 'Sleep now' : 'Close now'}
+          {soon.move ? 'Move now' : 'Close now'}
         </button>
       </div>
     </div>

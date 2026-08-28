@@ -10,7 +10,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleCloseAt, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -530,6 +530,106 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // unread one, which is exactly the pane the refusal above was holding.
   eq('a desk with nobody at it closes it anyway', ids(idleClosePlan([fresh, seen], CLOCKED, NOW, false)), 'unread')
   eq('...and its card counts down', idleCloseAt(fresh, CLOCKED, NOW, false), NOW)
+}
+
+// ------------------------------------------------ the rung above closing: sleeping
+// A pane nobody has used gives its agent back and keeps its card. It is ON by default,
+// which is only defensible because being wrong is cheap: the card, its place, its screen
+// and its conversation all survive, so the weight here is that it refuses everything the
+// close clock refuses - and, unlike that one, that it does NOT keep a pane back or cap
+// the sweep, because it empties nothing.
+{
+  const SLEEPY = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
+  eq('on by default', DEFAULT_RECLAIM.idleSleepMinutes, IDLE_SLEEP_MINUTES)
+  eq('...at half an hour', IDLE_SLEEP_MINUTES, 30)
+  // A config written by an older build has no such field at all, and that must read as the
+  // default rather than as "never" (undefined) or "immediately" (0).
+  const older = { ...DEFAULT_RECLAIM }
+  delete older.idleSleepMinutes
+  eq(
+    'a config from before this existed gets the default, not silence',
+    ids(idleSleepPlan([pane({ id: 'old', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], older, NOW)),
+    'old'
+  )
+  eq('off when the number is zero', idleSleepPlan([pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR })], { ...SLEEPY, idleSleepMinutes: 0 }, NOW).length, 0)
+  eq('and off when reclaim itself is off', idleSleepPlan([pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR })], { ...SLEEPY, enabled: false }, NOW).length, 0)
+  eq(
+    'a pane inside the window is left alone',
+    ids(idleSleepPlan([pane({ id: 'fresh', lastKeyboard: NOW - 29 * 60_000 })], SLEEPY, NOW)),
+    ''
+  )
+  // The two the close clock does that this must not.
+  eq(
+    'the LAST pane may sleep - sleeping empties no window',
+    ids(idleSleepPlan([pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })], SLEEPY, NOW)),
+    'only'
+  )
+  eq(
+    'and the sweep is not capped, because nothing here depends on re-reading the machine',
+    idleSleepPlan(
+      [
+        pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR }),
+        pane({ id: 'b', lastKeyboard: NOW - 8 * HOUR }),
+        pane({ id: 'c', lastKeyboard: NOW - 7 * HOUR })
+      ],
+      { ...SLEEPY, maxPerSweep: 1 },
+      NOW
+    ).length,
+    3
+  )
+  // ...and every refusal it shares with the close clock, which is the rest of them.
+  for (const [what, extra] of [
+    ['is working', { state: 'working' }],
+    ['is starting', { state: 'starting' }],
+    ['is stalled', { state: 'stalled' }],
+    ['holds a live question', { state: 'needsYou', asking: true }],
+    ['is the one being looked at', { focused: true }],
+    ['belongs to another machine', { remote: true }],
+    ['is being handed over', { handingOff: true }],
+    ['is running a command', { job: 'npm' }],
+    ['left a background job', { backJob: 'npm' }],
+    ['somebody said to keep open', { pinned: true }],
+    ['is already asleep', { asleep: NOW - HOUR }]
+  ]) {
+    const p = [pane({ id: 'x', lastKeyboard: NOW - 9 * HOUR, ...extra }), pane({ id: 'pad', lastKeyboard: NOW })]
+    check(`never a pane that ${what}`, !idleSleepPlan(p, SLEEPY, NOW).some((r) => r.id === 'x'), ids(idleSleepPlan(p, SLEEPY, NOW)))
+  }
+  // The control: the same pane with none of those true really is slept, or every line
+  // above passes for the wrong reason.
+  eq(
+    'a quiet finished pane IS slept',
+    ids(idleSleepPlan([pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], SLEEPY, NOW)),
+    'x'
+  )
+  // A pane that has printed since the keyboard left it has not been READ yet, and the same
+  // refusal the close clock makes is made here - while there is somebody here to read it.
+  // Quiet for two hours (so it is well past the clock) but it PRINTED after the keyboard
+  // last left it, which is the whole of `unread`.
+  // ...and the ONE refusal it does not share, which is the difference between the two
+  // rungs: `unread` is about a pane VANISHING before somebody has seen its last turn, and
+  // sleeping vanishes nothing. A pane never focused at all is unread for ever
+  // (`lastFocus` undefined), so keeping it would make this clock inert - measured on this
+  // machine at a one-minute setting: two eligible panes, quiet 126s, neither slept.
+  const unreadPane = pane({ id: 'unread', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 2 * HOUR, lastFocus: NOW - 5 * HOUR })
+  check('the close clock refuses a turn nobody has read yet', unread(unreadPane), '')
+  eq('...and the sleep clock takes it, because nothing goes away', ids(idleSleepPlan([unreadPane], SLEEPY, NOW)), 'unread')
+  eq(
+    'a pane nobody has ever focused is not held back either',
+    ids(idleSleepPlan([pane({ id: 'never', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })], SLEEPY, NOW)),
+    'never'
+  )
+}
+
+// The wiring: a plan nothing calls sleeps nothing.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  check('the desk runs the sleep sweep', /idleSleepPlan\(/.test(app), '')
+  check('...and it really sleeps the panes it names', /for \(const p of plan\) void api\.sleepSession\(p\.id\)/.test(app), '')
+  check(
+    'and "Sleep this pane" is gone from the card menu - the clock does it',
+    !/key: 'sleep'/.test(app),
+    ''
+  )
 }
 
 console.log(`reclaim: ${checks} checks passed`)

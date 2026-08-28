@@ -19,6 +19,7 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
+import { doneEnough } from '../shared/closeWhenDone'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -178,48 +179,6 @@ const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, pr
 const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
 /**
- * How long a `--close-when-done` pane is watched after its turn ends before it closes.
- *
- * A turn ending is the weakest of the readings this decision has - an agent that asks a
- * question, starts another turn or leaves a build running goes quiet for a beat first - so
- * the settle is generous rather than tight. Twenty seconds; `PF_FINISH_SETTLE_MS` for a
- * test that cannot wait.
- */
-const FINISH_SETTLE_MS = Number(process.env.PF_FINISH_SETTLE_MS) > 0
-  ? Number(process.env.PF_FINISH_SETTLE_MS)
-  : 20_000
-
-/**
- * The pty of a pane that never started one - a desk restored asleep.
- *
- * `sleep()` leaves a REAPED pty behind and every consumer already copes with that, so the
- * cheapest honest way to open a pane with no process is to hand it something of the same
- * shape. `pid: 0` is the load-bearing field: every path that would signal a pane already
- * refuses a pid that is not `> 0` (`roots()`, the Windows `taskkill` batch, and
- * `killPaneStrays`, whose POSIX branch would otherwise be `process.kill(-1)` - every
- * process this user owns). Nothing here may ever be a number that names a process.
- */
-function deadPty(): pty.IPty {
-  const off = { dispose: (): void => {} }
-  return {
-    pid: 0,
-    cols: START_COLS,
-    rows: START_ROWS,
-    process: '',
-    handleFlowControl: false,
-    onData: () => off,
-    onExit: () => off,
-    on: () => {},
-    resize: () => {},
-    clear: () => {},
-    write: () => {},
-    kill: () => {},
-    pause: () => {},
-    resume: () => {}
-  } as unknown as pty.IPty
-}
-
-/**
  * What a restored pane replays, or '' when there is nothing honest to put back.
  *
  * The bytes are already on disk - `history.ts` has appended every pane's raw output to
@@ -280,9 +239,12 @@ export function setSilenceAlert(minutes: number | undefined): void {
 
 interface Live {
   meta: Session
-  /** The wait between a turn ending and a `--close-when-done` pane being asked again. */
-  finishTimer?: NodeJS.Timeout
-  proc: pty.IPty
+  /**
+   * Null while the pane is ASLEEP - a card with no process behind it. That is a real
+   * state a pane can be BORN in (a restore, see `shared/restoreTurn.ts`), not only one it
+   * is put into, so every sweep that walks the live panes has to expect it.
+   */
+  proc: pty.IPty | null
   buffer: OutBuffer
   req: StartSessionRequest
   cols: number
@@ -479,7 +441,7 @@ export class SessionManager extends EventEmitter {
    */
   roots(): { id: string; pid: number }[] {
     return [...this.sessions.entries()]
-      .map(([id, s]) => ({ id, pid: s.proc.pid }))
+      .map(([id, s]) => ({ id, pid: s.proc?.pid ?? 0 }))
       .filter((p) => typeof p.pid === 'number' && p.pid > 0)
   }
 
@@ -504,9 +466,9 @@ export class SessionManager extends EventEmitter {
   snapshot(): StartSessionRequest[] {
     return [...this.sessions.values()]
       // A SLEEPING pane is `exited` too and is not an ended run - it is a card somebody
-      // is deliberately keeping, so it comes back. It comes back AWAKE: a restart spawns
-      // what it is given, and a request that starts nothing is a pane with no pty that
-      // nothing in `start()` knows how to make. Cheap and honest; see docs/design-notes.
+      // is deliberately keeping, so it comes back, and it comes back ASLEEP: `start()`
+      // takes `asleep` and makes the card without the pty. Waking one that was put to
+      // sleep on purpose would undo the press that saved the memory.
       .filter((s) => s.meta.status !== 'exited' || Boolean(s.meta.asleep))
       .map((s) => ({
         cwd: s.meta.cwd,
@@ -529,6 +491,8 @@ export class SessionManager extends EventEmitter {
         // not one line of the terminal, which is why a pane comes back blank after an
         // update even though it picks the conversation up mid-sentence.
         scrollbackId: s.meta.id,
+        // Put to sleep on purpose, so it comes back that way.
+        asleep: Boolean(s.meta.asleep),
         // The port the pane's dev server was told to use, kept across the restart
         // so a server started before an update comes back on the same one.
         laneEnv: s.req.laneEnv,
@@ -613,19 +577,19 @@ export class SessionManager extends EventEmitter {
       cols: START_COLS,
       rows: START_ROWS
     }
-    // A desk brought back asleep: the card, the screen and the conversation, with no
-    // agent behind them. `status` goes to `exited` alongside `asleep` for the same reason
-    // `sleep()` does it - every guard in this app that asks whether a pane has a live
-    // process reads that word, and this pane genuinely has none.
-    const born = req.asleep === true
+    // A pane the restore is bringing back with no agent in it. The card, its place and
+    // its screen are all built below exactly as an awake pane's are; the only difference
+    // is that nothing is spawned and nothing is attached to. `status` goes to `exited`
+    // beside `asleep` for the same reason `sleep()` does it: every guard in this app that
+    // asks whether a pane has a live process already reads that word.
+    const born = Boolean(req.asleep)
     if (born) {
       meta.status = 'exited'
       meta.asleep = Date.now()
-      meta.engaged = false
     }
     const live: Live = {
       meta,
-      proc: born ? deadPty() : this.spawn({ ...req, paneId: id }, agent, START_COLS, START_ROWS),
+      proc: born ? null : this.spawn(req, agent, START_COLS, START_ROWS, id),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
       cols: START_COLS,
@@ -665,17 +629,10 @@ export class SessionManager extends EventEmitter {
     }
     this.sessions.set(id, live)
     if (born) {
-      // The same seam a slept pane wears, under the screen it came back with, so the
-      // reader is never left wondering why a full pane is printing nothing.
-      live.buffer.push(SLEEP_MARK)
-      // Opened and closed in one breath: the History row is what makes this pane
-      // findable, and a row left OPEN would say a conversation is running when the whole
-      // point is that none is. `wake()` calls `recordStart` again on the same id.
-      recordStart(meta)
-      recordEnd(id, req.resume ? req.resumeId : undefined)
+      // Nothing to attach to, nothing to type at, and no run to record - `wake()` does
+      // all three the moment somebody presses the chip. The gist is still read, because
+      // the card has to be able to say what this pane was doing before it is woken.
       meta.gist = gistFor(id)
-      noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
-      req.wasWorking = false
       this.emitSessions()
       return meta
     }
@@ -753,10 +710,15 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return null
     try {
-      live.proc.kill()
+      live.proc?.kill()
     } catch {
       /* already dead */
     }
+    // A sleeping pane can be restarted rather than woken - it is an `exited` pane and the
+    // menu offers both. Restarting is the louder of the two (a full RESET below), so the
+    // sleep ends here as well, and the request stops asking to arrive asleep.
+    live.meta.asleep = undefined
+    live.req = { ...live.req, asleep: undefined }
     recordEnd(id, resumeIdFor(id))
     // A restart is a new conversation unless the CLI is being asked to resume one, and
     // either way the pane is writing a different file from here.
@@ -766,7 +728,7 @@ export class SessionManager extends EventEmitter {
       live.meta.agent,
       live.req.resume ? live.req.resumeId : undefined
     )
-    live.proc = this.spawn({ ...live.req, paneId: id }, live.meta.agent, live.cols, live.rows)
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
     live.meta.job = undefined
@@ -827,9 +789,9 @@ export class SessionManager extends EventEmitter {
     // Before the pty dies, while its pid still names a group and a tree - the same order
     // `kill()` uses, and for the same reason: what the pane started detached is reachable
     // from neither afterwards.
-    killPaneStrays(id, live.proc.pid)
+    if (live.proc) killPaneStrays(id, live.proc.pid)
     try {
-      live.proc.kill()
+      live.proc?.kill()
     } catch {
       /* already dead */
     }
@@ -866,7 +828,10 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live || !live.meta.asleep) return null
     noteSession(id, live.meta.cwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
-    live.proc = this.spawn({ ...live.req, paneId: id }, live.meta.agent, live.cols, live.rows)
+    // Cleared before anything else reads the request: it is what made this pane arrive
+    // asleep, and a later restart of a pane somebody has woken must not send it back.
+    live.req = { ...live.req, asleep: undefined }
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.status = 'starting'
@@ -1028,7 +993,7 @@ export class SessionManager extends EventEmitter {
 
   write(id: string, data: string): void {
     const live = this.sessions.get(id)
-    if (!live) return
+    if (!live || !live.proc) return
     live.proc.write(data)
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
@@ -1204,44 +1169,37 @@ export class SessionManager extends EventEmitter {
     live.meta.stalledSince = undefined
     // The pane just went quiet, which is the moment a deferred ask has been waiting for.
     this.resumePendingAutoClear(live.meta.id)
-    this.finishIfAsked(live)
     return true
   }
 
   /**
-   * A pane opened by automation, whose work is done, closing itself - and saying so.
+   * Close a pane that was opened to do one thing, once it has done it - and say so.
    *
-   * Only ever a pane whose LAUNCH asked for it (`closeWhenDone`), which is `pf open
-   * --close-when-done` and nothing else; a pane somebody opened by hand is never on this
-   * path. A turn ending is not the same as the work being over, so the decision is taken
-   * again after `FINISH_SETTLE_MS` against a fresh reading, and every refusal is something
-   * that would be LOST: another turn started, a question on screen (`shared/choices.ts`),
-   * a shell command or an agent's background job still running (`shared/paneJob.ts`,
-   * `shared/paneBackJobs.ts` - the same two readings `reclaim.ts` refuses on, because one
-   * of them has been wrong before).
+   * The reading is the sweep's rather than the turn ending, because the expensive failure
+   * is closing a pane with work still in it: an agent that started a build in the
+   * background goes quiet the moment its turn ends (`shared/paneBackJobs.ts`), and that
+   * answer comes off a process table sampled every four seconds. So this asks for the
+   * whole set - printed at least once, out of its turn, no question, nothing running by
+   * either reading - and then for `CLOSE_DONE_QUIET_MS` of quiet on top.
    *
-   * The report is QUEUED into the opener rather than printed onto its screen: the opener is
-   * normally an agent, and an agent cannot read its own terminal.
+   * The opener is told through `queuePrompt`, which waits for an idle composer, so the
+   * line lands between that pane's own turns instead of inside one. It is sent BEFORE the
+   * kill: `kill()` deletes this session, and with it the request that names who to tell.
    */
-  private finishIfAsked(live: Live): void {
-    if (!live.req.closeWhenDone || live.finishTimer) return
-    const id = live.meta.id
-    live.finishTimer = setTimeout(() => {
-      live.finishTimer = undefined
-      const now = this.sessions.get(id)
-      if (!now || now !== live) return
-      const m = now.meta
-      if (m.runSince || m.ask || m.job || m.backJob || now.busyUntil > Date.now()) return
-      const to = live.req.reportTo
-      if (to && this.sessions.has(to)) {
+  private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
+    const { meta } = live
+    if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    const told = live.req.reportTo
+    if (told) {
+      const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
+      if (opener && opener.meta.id !== meta.id)
         this.queuePrompt(
-          to,
-          `pf: the pane you opened in ${m.cwd}${m.title ? ` ("${m.title}")` : ''} has finished and closed itself.`
+          opener.meta.id,
+          `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`
         )
-      }
-      console.info(`pf: closing ${id} - opened with --close-when-done and its work is over`)
-      this.kill(id)
-    }, FINISH_SETTLE_MS)
+    }
+    console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
+    this.kill(meta.id)
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -1375,7 +1333,7 @@ export class SessionManager extends EventEmitter {
     // Showing a pane refits it and lands here; the CLI repaints in response.
     s.repaintUntil = Date.now() + REPAINT_GRACE_MS
     try {
-      s.proc.resize(s.cols, s.rows)
+      s.proc?.resize(s.cols, s.rows)
     } catch {
       // pty already gone between the renderer's measure and this call - harmless.
     }
@@ -1497,10 +1455,10 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
     try {
-      s.proc.resize(Math.max(20, s.cols - 1), s.rows)
+      s.proc?.resize(Math.max(20, s.cols - 1), s.rows)
       setTimeout(() => {
         try {
-          if (this.sessions.get(id) === s) s.proc.resize(s.cols, s.rows)
+          if (this.sessions.get(id) === s) s.proc?.resize(s.cols, s.rows)
         } catch {
           /* pty died between the two halves of the nudge */
         }
@@ -1997,9 +1955,9 @@ export class SessionManager extends EventEmitter {
     if (!s) return
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
-    killPaneStrays(id, s.proc.pid)
+    if (s.proc) killPaneStrays(id, s.proc.pid)
     try {
-      s.proc.kill()
+      s.proc?.kill()
     } catch {
       /* already dead */
     }
@@ -2044,7 +2002,7 @@ export class SessionManager extends EventEmitter {
 
     if (process.platform === 'win32') {
       const args = live
-        .map((s) => s.proc.pid)
+        .map((s) => s.proc?.pid ?? 0)
         .filter((pid) => typeof pid === 'number' && pid > 0)
         .flatMap((pid) => ['/PID', String(pid)])
       if (args.length) {
@@ -2063,14 +2021,21 @@ export class SessionManager extends EventEmitter {
     // path that works off Windows.
     for (const s of live) {
       try {
-        s.proc.kill()
+        s.proc?.kill()
       } catch {
         /* already dead */
       }
     }
   }
 
-  private spawn(req: StartSessionRequest, agent: Agent, cols: number, rows: number): pty.IPty {
+  private spawn(
+    req: StartSessionRequest,
+    agent: Agent,
+    cols: number,
+    rows: number,
+    /** the pane this process IS, so anything it runs can name its own pane to `pf` */
+    id?: string
+  ): pty.IPty {
     // Spawn the agent binary directly (not through cmd.exe): one less process in the
     // tree, so killing the session actually kills the agent instead of orphaning it.
     // shell:true equivalents on Windows also swallow Ctrl-C.
@@ -2092,11 +2057,10 @@ export class SessionManager extends EventEmitter {
       env: {
         ...scrubForeignKeys(agentEnv(), spec),
         ...resolveEnv(spec, agentKeys()),
-        // Which pane this is, so anything running INSIDE it can name itself to the app -
-        // `pf open ... --report-to $PF_PANE` is the whole reason it exists. A pane had no
-        // way to identify itself before this, so a script it started could open a second
-        // pane and had nothing to tell that pane to report back to.
-        ...(req.paneId ? { PF_PANE: req.paneId } : {}),
+        // Which pane this is. `pf open --report-to` defaults to it, so an agent that opens
+        // a pane for a sub-task is told when that pane is done without being able to name
+        // itself any other way - nothing else in the environment says which card this is.
+        ...(id ? { PF_PANE: id } : {}),
         ...(req.laneEnv ?? {})
       }
     })
@@ -2106,6 +2070,8 @@ export class SessionManager extends EventEmitter {
     const { meta } = live
     const id = meta.id
     const proc = live.proc
+    // A pane with no process: `wake()` calls this again once there is one.
+    if (!proc) return
 
     proc.onData((data) => {
       // A late event from the previous process of a restarted session would append
@@ -2386,7 +2352,7 @@ export class SessionManager extends EventEmitter {
       return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
     }
     try {
-      const name = paneJob(live.proc.process, live.runner)
+      const name = live.proc ? paneJob(live.proc.process, live.runner) : ''
       if (name) return { name, since: now }
     } catch {
       // A pane whose pty has just died throws from the tty read, inside a sweep that runs
@@ -2428,7 +2394,7 @@ export class SessionManager extends EventEmitter {
       // find out about.
       if (!WIN) {
         try {
-          if (paneJob(l.proc.process, l.runner)) return false
+          if (l.proc && paneJob(l.proc.process, l.runner)) return false
         } catch {
           // A pty that has just died: let the table have the question.
         }
@@ -2445,7 +2411,7 @@ export class SessionManager extends EventEmitter {
         if (!procs.length) return
         this.tableJobs.clear()
         for (const live of shells) {
-          const found = jobFromTable(procs, live.proc.pid, live.runner)
+          const found = live.proc ? jobFromTable(procs, live.proc.pid, live.runner) : null
           if (found) this.tableJobs.set(live.meta.id, found)
         }
       })
@@ -2581,6 +2547,8 @@ export class SessionManager extends EventEmitter {
       // arrives many times a second while the CLI redraws its chooser, and the wait this
       // needs is measured from when the question settled, not from when it was painted.
       if (live.meta.ask) this.sweepAutoAnswer(live)
+      // A pane automation opened for one job, once that job is really over.
+      if (live.req.closeWhenDone) this.sweepCloseWhenDone(live, now, quiet)
       // Raised once per quiet stretch, never re-raised until output resumes and
       // goes quiet again. A CLI that has only painted its own welcome screen is
       // quiet, not done: `engaged` keeps a fresh pane from claiming to be waiting

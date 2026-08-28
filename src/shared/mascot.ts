@@ -618,7 +618,7 @@ export interface ActedPane {
  * bug this argument exists to close.
  */
 export function actedWords(
-  what: 'closed' | 'slept' | 'moved' | 'trimmed',
+  what: 'closed' | 'moved' | 'trimmed',
   panes: ActedPane[],
   mb?: number,
   agoMs = 0,
@@ -639,9 +639,7 @@ export function actedWords(
       ? `Trimmed ${who} ${when}${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
       : what === 'moved'
         ? `Moved ${who} to ${where || 'the paired device'} ${when} - it is mirrored here, so it is still on screen.`
-        : what === 'slept'
-          ? `Put ${who} to sleep ${when}${back} - the card and the screen are where they were, and a press starts the agent again.`
-          : `Closed ${who} ${when}${back} - reopen from History, nothing is lost.`
+        : `Closed ${who} ${when}${back} - reopen from History, nothing is lost.`
   // Several panes are listed under the sentence rather than folded into it: the whole
   // point is which conversations went, and a comma-joined run of four is unreadable.
   return one ? head : [head, ...panes.map(subject)].join('\n')
@@ -698,14 +696,6 @@ export function countdownWords(
       : 'nobody has typed there in a while'
   if (toDevice) {
     return `Moving ${who} to ${toDevice} in ${secs}s - ${reason}. The conversation and the screen go too, and it comes straight back as a mirror. A pane mid-turn travels when its turn ends.`
-  }
-  // The idle clock SLEEPS rather than closes, and the two are different promises: a slept
-  // pane keeps its place, its screen and its conversation and a press brings its agent
-  // back, where a closed one leaves the desk and has to be found in History. Only the
-  // pressure sweep still closes - out of memory, a card and its buffer are worth taking
-  // too. `why` is the whole distinction, so there is no second flag to disagree with it.
-  if (why === 'idle') {
-    return `Sleeping ${who} in ${secs}s - ${reason}. The card, the screen and the conversation all stay; a press wakes it.`
   }
   return `Closing ${who} in ${secs}s - ${reason}. Nothing is lost: History reopens the conversation and the screen.`
 }

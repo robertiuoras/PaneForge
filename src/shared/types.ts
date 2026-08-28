@@ -381,6 +381,37 @@ export interface StartSessionRequest {
    */
   scrollbackId?: string
   /**
+   * Open this pane with no process behind it: the card, its place and its screen, and
+   * nothing running. A press wakes it in the conversation `resumeId` names - the same
+   * path `sleep()`/`wake()` already use, see `shared/sleep.ts`.
+   *
+   * Set by a restore (`shared/restoreTurn.ts`'s `restoreAsleep`) and by a pane that was
+   * asleep when the app went down. Never by a fresh launch: somebody who opened a pane
+   * asked for the agent in it.
+   */
+  asleep?: boolean
+  /**
+   * Close this pane once the work it was opened for is finished.
+   *
+   * For a pane opened by AUTOMATION (`pf open --close-when-done`): a brief is typed in, the
+   * agent does it, and the card then sits on the desk for ever because nobody was watching
+   * to close it. Never set by a person opening a pane - somebody who opens a pane is in it.
+   *
+   * "Finished" is the sweep's reading and not the turn ending, deliberately: the pane must
+   * have printed, be out of its turn, hold no question, and be running nothing - including
+   * a background job an agent left behind, which is sampled every four seconds and so is
+   * not known at the moment the turn ends. See `CLOSE_DONE_QUIET_MS`.
+   */
+  closeWhenDone?: boolean
+  /**
+   * The pane to tell when that happens - an id or a title, resolved when it is needed
+   * rather than when the pane opens, because the opener may have gone by then.
+   *
+   * The message goes through `queuePrompt`, which waits for an idle composer, so it lands
+   * between the opener's own turns rather than inside one.
+   */
+  reportTo?: string
+  /**
    * The device this pane was handed over FROM. Set only by `receiveHandoff`.
    *
    * It exists for one refusal: the local-pane budget may not hand a pane straight back to
@@ -409,46 +440,6 @@ export interface StartSessionRequest {
   lastRunMs?: number
   engaged?: boolean
   wasWorking?: boolean
-  /**
-   * Bring the pane back with its card, its screen and its conversation - and WITHOUT its
-   * agent. A restore is the one moment the app starts N agent CLIs in one tick (~190 MB
-   * and real CPU each; measured on this desk 2026-08-28, eight panes reached a composer
-   * in 4.1-14.3s against 1.4s for one alone), and most of those panes are not the one
-   * being looked at. So the desk comes back whole and only the panes that need to be
-   * running are running; a press on the `asleep` chip wakes the rest, in the same
-   * conversation, with the same screen. See `shared/sleep.ts`. Only the desk sets it.
-   */
-  asleep?: boolean
-  /**
-   * Close this pane once the work it was opened for is finished.
-   *
-   * For a pane nobody is sitting in front of: `pf open <cwd> --prompt "..."` is how a
-   * script or another agent hands a job to a fresh pane, and until now every one of those
-   * panes sat on the desk for ever after it had answered. Robert, 2026-08-28, of a pane
-   * that had finished hours earlier and was still there.
-   *
-   * It fires on the turn ENDING and then asks again after a settle, because a turn ending
-   * is not the same as the work being over: a pane holding a question, mid-turn again, or
-   * with a background job still running is left exactly where it is. Only a launch that
-   * asked for this is ever closed - a pane somebody opened by hand is never on this path.
-   */
-  closeWhenDone?: boolean
-  /**
-   * The pane to tell when that happens - a session id, usually the opener's own, which it
-   * reads out of `PF_PANE` in its environment.
-   *
-   * The line is QUEUED as a prompt rather than printed into the pane's screen: the opener
-   * is normally an agent, and an agent cannot read its own terminal. `queuePrompt` waits
-   * for an idle composer and confirms the return took, so a busy opener is told when its
-   * own turn ends rather than typed over.
-   */
-  reportTo?: string
-  /**
-   * This pane's own session id, put into the agent's environment as `PF_PANE`. Set by the
-   * main process at spawn time and never by a caller - a request that carried one would be
-   * naming somebody else's pane.
-   */
-  paneId?: string
 }
 
 /** One saved project inside a workspace. */
@@ -1397,20 +1388,6 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
-  /**
-   * Panes taken off the idle clock by hand - "Keep this pane open" on a card's
-   * right-click (`ReclaimPane.pinned`).
-   *
-   * On disk rather than in the renderer's own state, because it was `useState({})` until
-   * 2026-08-28 and so every restart and every update quietly put every pinned pane back
-   * on the clock.
-   *
-   * A restored pane is a NEW session with a NEW id - measured, and the opposite of what
-   * this comment first claimed - so the id is carried forward in `restorePanes`, which is
-   * the one place holding the old id (`scrollbackId`) and the new one at the same time.
-   * Ids for panes that no longer exist are dropped there too.
-   */
-  pinnedPanes?: string[]
   /** folder scanned for projects */
   root: string
   presets: Preset[]
@@ -1659,6 +1636,15 @@ export interface Config {
    */
   offloadDefaultsV2?: boolean
   /**
+   * The one-time move onto the idle-offload clock being ON, at `IDLE_OFFLOAD_MINUTES`.
+   *
+   * Same shape and same reason as the two below it: `defaults()` is WRITTEN at first
+   * launch, so every config in existence carries `offloadIdleMinutes: 0` explicitly and a
+   * changed default alone would read as somebody's own choice. It moves ONLY an exact 0 -
+   * any other number is a value somebody typed, and this has no licence over it.
+   */
+  offloadDefaultsV4?: boolean
+  /**
    * The marker for the move BACK onto asking, which supersedes `offloadDefaultsV2`.
    *
    * A second key rather than clearing the first: V2 is on every config written since it
@@ -1696,6 +1682,20 @@ export interface Config {
    */
   tips?: TipsConfig
   reclaim?: ReclaimConfig
+  /**
+   * Panes somebody has said are never to be closed for being idle - "Keep this pane open"
+   * on the card's right-click, `ReclaimPane.pinned`.
+   *
+   * On the CONFIG rather than in the renderer, because it was renderer state and so every
+   * restart and every update put every pinned pane back on the idle clock - a promise that
+   * lasted until the next automatic restart, which on this app is several times a day.
+   *
+   * These are session ids, and a restored pane is issued a NEW one, so `restorePanes` in
+   * main translates each id through the pane's `scrollbackId` (which IS the old id) as the
+   * panes come back, and drops the ids nothing came back for. Without that the list only
+   * ever grows and every entry in it is stale after one restart.
+   */
+  pinnedPanes?: string[]
   /**
    * Move finished panes to a paired device when this machine runs out of memory, rather
    * than closing them - see shared/autoHandoff.ts. Sits above `reclaim` on the same
@@ -1794,8 +1794,6 @@ export interface RestoreOffer {
    * is what "six panes came back and I cannot type" was. A preselect, never a cap.
    */
   fits: number
-  /** How many of the ticked panes start their AGENT. The rest come back asleep. */
-  awake: number
   /** Why fewer than all are ticked. Empty when everything fits. */
   memoryNote: string
 }

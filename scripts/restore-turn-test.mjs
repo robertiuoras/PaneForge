@@ -36,7 +36,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { restoredClock, continueAfterRestore } = createRequire(import.meta.url)(outfile)
+const { restoredClock, continueAfterRestore, restoreAsleep } = createRequire(import.meta.url)(outfile)
 
 let n = 0
 const ok = (what, cond) => {
@@ -88,6 +88,31 @@ ok(
   continueAfterRestore({ wasWorking: true }, false) === false
 )
 
+// ------------------------------------------------- which panes come back running
+// The whole point is that MOST of them do not: eight agent CLIs in one tick is the
+// restore lag (measured 4.1-14.3s to a composer against 1.4s for one alone), and a
+// sleeping pane keeps its card, its place and its screen for nothing.
+ok('the pane being looked at comes back running', restoreAsleep({}, 0, true) === false)
+ok('every other pane comes back asleep', restoreAsleep({}, 1, true) === true)
+ok('...however many there are', restoreAsleep({}, 7, true) === true)
+// The refusals, which are the feature: a pane asleep must not be one with work in it.
+ok(
+  'a pane the restart caught mid-turn is woken, because the turn is about to be finished',
+  restoreAsleep({ wasWorking: true }, 3, true) === false
+)
+ok(
+  '...and sleeps again when finishing a cut-off turn is switched off, since nothing will run',
+  restoreAsleep({ wasWorking: true }, 3, false) === true
+)
+ok(
+  'a pane launched with a prompt is woken - it was opened to do that work',
+  restoreAsleep({ prompt: 'build X' }, 2, true) === false
+)
+ok(
+  'and being engaged is NOT work in flight - a finished conversation sleeps',
+  restoreAsleep({ engaged: true }, 2, true) === true
+)
+
 // ------------------------------------------------------- the wiring itself
 // A green pure test over a function nothing calls is the exact shape of false confidence
 // this repo keeps getting bitten by, so the call sites are asserted as source.
@@ -110,6 +135,37 @@ ok(
   /this\.queuePrompt\(id, text, RESTORE_CONTINUE_MS\)/.test(sessions)
 )
 ok('and the flag is cleared, so a manual restart later does not continue an old turn', /req\.wasWorking = false/.test(sessions))
+
+ok('start() can make a pane with no process at all', /proc: born \? null : this\.spawn\(/.test(sessions))
+ok(
+  'a born-asleep pane wears the two fields every guard in the app already reads',
+  /meta\.status = 'exited'\s*\n\s*meta\.asleep = Date\.now\(\)/.test(sessions)
+)
+ok('and nothing is attached to it, so no run is recorded', /if \(born\) \{/.test(sessions))
+ok(
+  'waking clears the flag, so a later restart does not put the pane back to sleep',
+  /live\.req = \{ \.\.\.live\.req, asleep: undefined \}/.test(sessions)
+)
+ok('a pane slept on purpose comes back asleep', /asleep: Boolean\(s\.meta\.asleep\)/.test(sessions))
+
+const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+ok('the restore asks restoreAsleep, per pane, in order', /restoreAsleep\(req, i, recoverOn\)/.test(index))
+// "Keep this pane open" is a promise about a pane, and a restored pane is a NEW session
+// with a new id - so the promise is carried across by the one field that names the pane
+// being replaced. Without this the pin was renderer state and every restart dropped it.
+ok('the pin list is read from config at restore', /getConfig\(\)\.pinnedPanes \?\? \[\]/.test(index))
+ok(
+  '...and each pin follows its pane onto the new id, through scrollbackId',
+  /wasPinned\.has\(req\.scrollbackId\)\) nowPinned\.push\(meta\.id\)/.test(index)
+)
+ok(
+  '...and is written back, so ids nothing came back for are dropped',
+  /setConfig\(\{ pinnedPanes: nowPinned \}\)/.test(index)
+)
+
+const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+ok('the desk reads its pins off the config it is handed', /config\.pinnedPanes \?\? \[\]/.test(app))
+ok('and every press writes them back', /patchConfig\(\{ pinnedPanes: Object\.keys\(next\) \}\)/.test(app))
 
 const info = readFileSync(join(root, 'src/renderer/src/components/SessionInfo.tsx'), 'utf8')
 ok('"Open for" counts from when the pane opened, not from this process', /s\.openedAt \?\? s\.createdAt/.test(info))

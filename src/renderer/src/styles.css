@@ -1384,7 +1384,22 @@ body.sizing * { user-select: none !important; }
   border-bottom: 1px solid var(--line);
   background: linear-gradient(90deg, color-mix(in srgb, var(--agent) 12%, var(--surface-2)), var(--surface-2) 42%);
 }
-.pt-name { color: var(--text); white-space: nowrap; font-weight: 550; }
+/* The name SHRINKS. It was `nowrap` with nothing to give, so in a pane narrower than the
+   row wanted it kept its full width and pushed the actions off the right-hand edge - and
+   the control that went first is `×`, which is the one a person is reaching for when a
+   pane is in the way. Measured 2026-08-28, seven panes in a 900px window: each pane 198px,
+   the header wanting 297-357px of it, and `.pt-close` drawn 100-160px PAST the pane's own
+   right edge. An ellipsised name is a name; a close button off the edge cannot be pressed
+   and nothing says it is there. */
+.pt-name {
+  color: var(--text);
+  white-space: nowrap;
+  font-weight: 550;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
 /* The row of controls on the right of the pane's header. 24px tall and 2px apart, off
    linear.app.md's own toolbar (`--button-height: 24px`, `--button-gap: 4px`, 12px icons):
@@ -1419,18 +1434,10 @@ body.sizing * { user-select: none !important; }
   .pane-title .chip.res { display: none }
   .pane-title .pt-open { display: none }
 }
-@container pane (max-width: 560px) {
+@container pane (max-width: 520px) {
   .pane-title .git-badge { display: none }
   .pane-title .pt-handoff { display: none }
 }
-/* The name gives way before any button does, at every width. `white-space: nowrap` with
-   no `min-width: 0` is a flex item that can NEVER shrink, so a long project name pushed
-   the row of controls off the pane's right edge instead of ellipsising - measured in a
-   real window at 1900px with seven panes: a 531px pane whose header wanted 603px, and a
-   218px pane whose `.pt-close` was drawn 126px outside it. A truncated title still says
-   which pane this is; a button drawn off the edge cannot be pressed and nothing says it
-   is there. Same order the handheld block above already keeps. */
-.pt-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto }
 /* Below this the row stops fitting however tightly it is packed, so the tail of it goes
    behind the ⋯ the phone already uses. What stays on the line is what somebody reaches
    for without thinking - find, which agent runs here, and close - and everything that
@@ -1438,7 +1445,7 @@ body.sizing * { user-select: none !important; }
    drawn off the edge of the pane is worse than one in a menu: it cannot be pressed and
    nothing says it is there. */
 .pt-actions .pt-more { display: none }
-@container pane (max-width: 560px) {
+@container pane (max-width: 460px) {
   .pane-title .pt-clear,
   .pane-title .pt-restart,
   .pane-title .icon.fix,
@@ -1447,19 +1454,22 @@ body.sizing * { user-select: none !important; }
   .pane-title .pt-zoom { display: none }
   .pt-actions .pt-more { display: inline-flex }
 }
-/* ...and 460 was not the bottom. Measured in a real window, seven panes in the grid at
-   960px: each pane was 218px wide and its header wanted 334-357px, so `.pt-close` was
-   drawn 117-126px PAST the pane's own right edge - the one control that ends something,
-   unreachable, on every pane. Two things were paying for that: the agent picker, 118px
-   of the 196px `.pt-actions` had left, and `.pt-name`, which is `white-space: nowrap`
-   with no `min-width: 0`, so a flex item that can never shrink pushed the buttons off
-   rather than ellipsising.
-   Which runner a pane is on is on its card and in the ⋯ menu; the turn clock is a
-   reading, not a control. Both go, and the name gives way before any button does - the
-   same order the phone block above already keeps, and for the same reason. */
+/* And one step below that, the agent picker - which is the fat control on this row and
+   not a control at all in a pane this size. Measured at a 198px pane with the 460px rules
+   already applied: find 24 + picker 118 + ⋯ 24 + × 24 is 190px of a 196px line before the
+   dot, the agent's mark, the name and the clock have had a pixel, so the row still wanted
+   297px. Nothing is lost - the picker is the ⋯ sheet's `extra`, drawn full width there,
+   which is where the other six controls already went. What stays is what says WHICH pane
+   this is and the three presses a person makes without thinking: find, ⋯, close. */
 @container pane (max-width: 380px) {
-  .pane-title .agent-pick,
-  .pane-title .pt-clock { display: none }
+  .pane-title .agent-pick { display: none }
+}
+/* Narrower again, and the last thing with any width in it that is not a control or the
+   name is the agent's mark - which the ⋯ sheet says in words. Measured at a 198px pane
+   with the step above applied: the name had 18.5px, which draws one letter and an
+   ellipsis, so the pane could not say which pane it was. */
+@container pane (max-width: 300px) {
+  .pane-title .agent-logo { display: none }
 }
 
 .pt-actions .icon.pt-close {

@@ -187,6 +187,8 @@ import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
+import { restoreAsleep } from '../shared/restoreTurn'
+import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
@@ -1057,7 +1059,10 @@ function publishCapacity(): void {
       pressure: lastPressure,
       // What a person calls lagging, and it moves minutes before the memory verdict does.
       load: loadPerCore(),
-      localPanes: manager.list().length,
+      // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
+      // process back, so counting it says this machine is running work it is not - which
+      // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
+      localPanes: manager.list().filter((s) => !s.asleep).length,
       remotePanes: mirrored,
       peerAvailable: peers > 0,
       // How many agents this desk agreed to run itself. Read live rather than captured:
@@ -3306,43 +3311,23 @@ function restoreStaggerMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-/**
- * How many of a restored desk start their agent. See `RestorePlan.awake`.
- *
- * Read here rather than trusted from the dialog, because two of the four callers below
- * never open one (`PANEFORGE_RESTORE=always`, `restoreAfterRestart: 'always'`) and a
- * silent path is exactly where a desk of eight agents comes back all at once.
- */
-function restoreAwake(saved: number): number {
-  return restorePlan(saved, {
-    totalMb: totalMb(),
-    pressure: readPressure(),
-    localPanes: manager.list().length
-  }).awake
-}
-
-function restorePanes(specs: StartSessionRequest[], awake = restoreAwake(specs.length)): void {
+function restorePanes(specs: StartSessionRequest[]): void {
   // One restore per launch. A second answer from a dialog that somehow sent twice
   // would otherwise open every pane again beside the first set.
   if (restoredThisRun) return
   clearDesk()
   restoredThisRun = true
   const gap = restoreStaggerMs()
-  // "Keep this pane open" survives the restart it exists for. A restored pane is a NEW
-  // session with a NEW id, so the pin has to be moved from the pane it was put on - which
-  // is `scrollbackId`, the only place the old id is still written down - onto the pane
-  // coming back in its place. Ids that name nothing being restored are dropped: the pin
-  // is about a pane on the desk, and a list that only ever grows is a slow leak.
-  const wasPinned = new Set(getConfig().pinnedPanes ?? [])
-  const carried: string[] = []
   // Started in order whatever the gap is: a pane's number is its place in this list, so
   // starting one out of turn renumbers the desk and every Ctrl+N with it.
+  const recoverOn = (getConfig().recover ?? DEFAULT_RECOVER).enabled
+  // "Keep this pane open" is a promise about a PANE, and a restored pane is a new session
+  // with a new id - so the promise has to be carried across, by the one thing that names
+  // the pane it is replacing. Ids nothing came back for are dropped rather than kept: the
+  // list is rewritten from what actually restored, so it cannot grow stale entries.
+  const wasPinned = new Set(getConfig().pinnedPanes ?? [])
+  const nowPinned: string[] = []
   specs.slice(0, MAX_RESTORE).forEach((req, i) => {
-    // Asleep unless this is one of the first `awake` panes, or the pane was mid-turn when
-    // the app went down - that one has an answer still owed to it, and `start()` is where
-    // the turn is continued from (`continueAfterRestore`). A sleeping pane has its card,
-    // its screen and its conversation and costs nothing; a press wakes it.
-    const asleep = i >= awake && !req.wasWorking
     const open = (): void => {
       try {
         // Reopen the conversation this pane was in BY NAME, or open nothing.
@@ -3362,28 +3347,30 @@ function restorePanes(specs: StartSessionRequest[], awake = restoreAwake(specs.l
         // id is checked the same way a fresh claim now is, not trusted for being saved.
         const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
         const named = Boolean(file && !heldElsewhere(file, req.cwd))
-        const back = manager.start({
+        const meta = manager.start({
           ...req,
           resume: named,
           resumeId: named ? req.resumeId : undefined,
           prompt: undefined,
-          asleep
+          // Everything but the pane being looked at comes back with no agent in it. The
+          // card, its place and its screen are all there; a press starts the CLI in the
+          // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
+          asleep: req.asleep || restoreAsleep(req, i, recoverOn)
         })
-        if (req.scrollbackId && wasPinned.has(req.scrollbackId)) carried.push(back.id)
+        if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }
     }
-    // Whatever happened above, the list is REWRITTEN rather than added to, so pins for
-    // panes that are not coming back go with it. Written after the last pane has been
-    // started, which with the default gap of 0 is this same tick.
-    const run = (): void => {
-      open()
-      if (i === Math.min(specs.length, MAX_RESTORE) - 1) setConfig({ pinnedPanes: carried })
-    }
-    if (gap) setTimeout(run, i * gap)
-    else run()
+    if (gap) setTimeout(open, i * gap)
+    else open()
   })
+  // After the panes, and only when the answer really changed: this writes config.json, and
+  // a desk with nothing pinned must not rewrite it on every launch.
+  if (wasPinned.size || nowPinned.length) {
+    const before = [...wasPinned].join(',')
+    if (before !== nowPinned.join(',')) setConfig({ pinnedPanes: nowPinned })
+  }
 }
 
 /**
@@ -3485,7 +3472,8 @@ function offerRestore(): void {
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
     pressure: readPressure(),
-    localPanes: manager.list().length
+    // Same reading as `publishCapacity`: a sleeping pane is not an agent.
+    localPanes: manager.list().filter((s) => !s.asleep).length
   })
   offer = {
     panes,
@@ -3493,7 +3481,6 @@ function offerRestore(): void {
     at: desk.at,
     clean: desk.clean,
     fits: plan.fits,
-    awake: plan.awake,
     memoryNote: plan.note
   }
   // Until the question is answered the desk stands, even though the app currently
@@ -3529,7 +3516,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
     }))
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
-  restorePanes(specs, pending.awake)
+  restorePanes(specs)
 })
 
 /**

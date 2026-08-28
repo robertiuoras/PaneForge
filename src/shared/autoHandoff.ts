@@ -113,20 +113,8 @@ export interface AutoHandoffConfig {
    * under every threshold here is left alone however far over the budget the desk is, and
    * the desk simply stays over - there is nothing to save by moving it.
    *
-   * 180 MB, and it was 500 until 2026-08-28. 500 was chosen to sit ABOVE an ordinary agent
-   * pane, which made the budget rung dead: measured on this desk the same day, eight live
-   * `claude` panes held 61, 64, 153, 166, 174, 177, 231 and 247 MB, so nothing on a normal
-   * desk was ever expensive and no pane has ever been moved by this rule. Robert wants most
-   * work running on the PC's 64 GB rather than the MacBook, and a threshold no pane reaches
-   * is a policy that only exists in the settings screen.
-   *
-   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB),
-   * so the rung moves agents and still leaves a cheap pane alone. What makes that safe is
-   * unchanged and is the whole reason the number can move: `machineBound` refuses work that
-   * would not exist over there, `shareable` refuses a checkout that is dirty, unpushed or
-   * has no origin, a pane mid-turn is QUEUED rather than killed, a live question is refused
-   * outright, `keepHere` refuses by project, and nothing is ever handed back to the machine
-   * it arrived from.
+   * 500 MB, because a fresh agent pane measures ~190 MB here and a Codex one 16-17 MB: the
+   * floor has to sit above an ordinary pane doing nothing and below a pane running a build.
    */
   budgetMinMb: number
   /** ...or this much of one core, which is what a build or a dev server looks like. */
@@ -146,12 +134,25 @@ export interface AutoHandoffConfig {
    * pressure card - so there is one answer to "may this leave", not three.
    */
   keepHere: string[]
-  /**
-   * Marker for the one-time move of `budgetMinMb` from 500 to 180 - see `migrateHandoff`.
-   * A changed default cannot reach an existing desk on its own.
-   */
-  budgetDefaultsV2?: boolean
 }
+
+/**
+ * How long a pane must be idle before it is offered to the other machine - and, since
+ * 2026-08-28, the DEFAULT rather than an opt-in.
+ *
+ * Robert wants the work on the PC (64 GB, always on) rather than on the MacBook, and this
+ * is the rung that does it. Fifteen minutes is deliberately HALF `IDLE_SLEEP_MINUTES`: a
+ * pane that has gone quiet is offered to the machine that can carry on running it, and
+ * only if nothing takes it does the sleep clock stop its agent here half an hour in.
+ * Ordered the other way round the feature is dead on arrival - a sleeping pane is refused
+ * by every handoff rung and costs nothing to keep, so it would never be moved.
+ *
+ * It cannot fire on a machine with nowhere to send work: the rung needs an ONLINE paired
+ * device, a checkout that is a git repo under the projects root with an origin remote
+ * (`shareable`), and work that is not bound to this desk (`shared/paneBound.ts`). On a
+ * laptop with no peer this is exactly as quiet as the 0 it replaces.
+ */
+export const IDLE_OFFLOAD_MINUTES = 15
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   // On by default, because the refusals above are what make it safe and they hold whether
@@ -162,29 +163,20 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   maxPerSweep: 2,
   cooldownMinutes: 30,
   waitMinutes: 30,
-  offloadIdleMinutes: 0,
+  offloadIdleMinutes: IDLE_OFFLOAD_MINUTES,
   // Two. It cannot fire without a paired device that is online and holds the same project,
   // so on a laptop with nothing paired this is the behaviour it always had; on a desk with
   // the other machine up it is the answer to opening a third pane. Everything moved comes
   // straight back as a mirror, so the number is about where agents RUN, never about how
   // many sessions can be watched from here.
   keepLocal: 2,
-  budgetMinMb: 180,
-  budgetDefaultsV2: true,
+  budgetMinMb: 500,
   budgetMinCpu: 50,
   // Empty: nothing is Mac-only until somebody says so, and the only thing that says so is
   // "Keep it here" on the pressure card.
   keepHere: []
 }
 
-/**
- * What the switch sets `offloadIdleMinutes` to when it is turned on.
- *
- * Three times `minIdleMinutes`, on purpose. That one runs while the machine is falling
- * over, where being a few minutes early costs a reopen; this runs while there is still
- * room, where being early moves work somebody was about to come back to.
- */
-export const IDLE_OFFLOAD_MINUTES = 30
 
 /**
  * How long the clock waits, or 0 for off. The ONE reader of `offloadIdleMinutes`.
