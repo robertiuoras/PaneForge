@@ -29,7 +29,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { describePlace, isTrunk, paneRef, projectOf, samePlace } = createRequire(import.meta.url)(out)
+const { describePlace, isTrunk, laneOfCheckout, paneRef, projectOf, samePlace } = createRequire(import.meta.url)(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -170,6 +170,27 @@ is(paneRef(3), 'pane 3', 'a chat with a pane on screen is named by its switch ke
 is(paneRef(undefined, 'abcdef1234'), 'chat abcdef', 'and by a short id only when it has no pane')
 is(paneRef(undefined, null), 'another chat', 'and by nothing at all when it has neither')
 is(paneRef(2, 'abcdef1234'), 'pane 2', 'the pane number always wins over the hex')
+
+// ---------------------------------------------------------------------------
+// The lane a checkout is in, read off its branch
+//
+// The load-bearing half is the negatives: a project whose NAME ends in a letter suffix
+// must never be filed as a lane of something shorter.
+
+is(laneOfCheckout(`${W}\\taskdriver.ai-c`, 'lane-c'), 'c', 'folder and branch agree - that is a lane')
+is(laneOfCheckout(`${W}\\PaneForge-w2`, 'pf/w2'), 'w2', 'and the old worktree shape still reads')
+is(laneOfCheckout('/home/r/service-a', 'lane-a'), 'a', 'a real name ending in -a IS a lane when the branch says so')
+is(laneOfCheckout('/home/r/service-a', 'main'), undefined, 'the same folder on the trunk is a project called service-a')
+is(laneOfCheckout('/home/r/service-a', 'feature/login'), undefined, 'a branch somebody made says nothing about lanes')
+is(laneOfCheckout(`${W}\\PaneForge`, 'lane-a'), undefined, 'a branch with no matching folder suffix is not proof')
+is(laneOfCheckout(`${W}\\PaneForge-b`, 'lane-a'), undefined, 'and the suffix must be the SAME lane')
+is(laneOfCheckout(`${W}\\PaneForge-a`, undefined), undefined, 'no branch read yet, no answer')
+is(laneOfCheckout(`${W}\\PaneForge-a`, 'LANE-A\n'), 'a', 'git output is trimmed and case-folded')
+is(
+  describePlace({ cwd: `${W}\\taskdriver.ai-c`, lane: laneOfCheckout(`${W}\\taskdriver.ai-c`, 'lane-c') }).project,
+  'taskdriver.ai',
+  'and the strip then names the project instead of the folder'
+)
 
 rmSync(work, { recursive: true, force: true })
 console.log(`PASS place: ${checks} assertions`)

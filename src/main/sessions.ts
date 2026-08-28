@@ -4,7 +4,7 @@
 // Everything here runs in the Electron MAIN process. The renderer never touches a
 // pty directly - it sends keystrokes over IPC and receives output events back.
 
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
@@ -19,6 +19,7 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
+import { laneOfCheckout } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -634,9 +635,38 @@ export class SessionManager extends EventEmitter {
       this.queuePrompt(id, text, RESTORE_CONTINUE_MS)
     }
     req.wasWorking = false
+    // A pane opened straight into a lane worktree this app did not create carries no
+    // lane, so every strip that names it printed the folder - `taskdriver.ai-c` where
+    // the answer is `taskdriver.ai lane c`. The branch is the proof and it is one git
+    // read, async because a blocked main process is the Windows busy cursor. It cannot
+    // be done in `place.ts`: half the callers draw the strip with no branch in hand.
+    this.stampLane(id)
 
     this.emitSessions()
     return meta
+  }
+
+  /**
+   * Fill in a pane's lane from the branch its folder is on, when nothing else knew.
+   *
+   * Only ever ADDS one: a lane this app handed out is already right, and a folder whose
+   * branch does not name a lane is left alone rather than guessed at (`laneOfCheckout`).
+   * The stamp lands on `meta`, so it goes out with the next session list and survives a
+   * restart through `snapshot()`.
+   */
+  private stampLane(id: string): void {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.lane) return
+    const cwd = live.meta.cwd
+    execFile('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 4000 }, (err, out) => {
+      if (err) return
+      const lane = laneOfCheckout(cwd, String(out))
+      const now = this.sessions.get(id)
+      if (!lane || !now || now.meta.lane) return
+      now.meta.lane = lane
+      now.req = { ...now.req, lane }
+      this.emitSessions()
+    })
   }
 
   /**

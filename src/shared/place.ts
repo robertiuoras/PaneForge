@@ -203,3 +203,27 @@ export function paneRef(pane?: number, session?: string | null): string {
   if (session) return `chat ${session.slice(0, 6)}`
   return 'another chat'
 }
+
+/**
+ * The lane a checkout is in, when its BRANCH proves it rather than its name.
+ *
+ * `place.ts` refuses to guess a lane off a folder suffix, and it is right to: `-a` is a
+ * legitimate ending for a project name, and `service-a` must not be listed as `service`.
+ * So the lane arrives from the caller - `Session.lane`, set by `main/lanes.ts` when THIS
+ * app made the folder. A pane opened straight into a lane worktree that already existed
+ * (a lane hook assigned it, `pf open` was pointed at it, somebody picked the folder) never
+ * had one, and drew the raw folder name: `taskdriver.ai-c` where the answer is
+ * `taskdriver.ai lane c`. Measured on this desk 2026-08-28: 2 of 8 saved panes.
+ *
+ * Both legs are required, which is what makes this evidence rather than the guess above.
+ * The branch must be one a lane tool made (`lane-c`, `pf/w2`) AND the folder must carry
+ * that same suffix. `service-a` on `main` is still a project called `service-a`; the same
+ * folder on `lane-a` IS the a lane of `service`, and saying so is the whole point.
+ */
+export function laneOfCheckout(cwd: string, branch: string | undefined): string | undefined {
+  const b = (branch ?? '').trim().toLowerCase()
+  const m = /^(?:lane-([a-z])|pf\/(w\d+))$/.exec(b)
+  if (!m) return undefined
+  const slot = m[1] ?? m[2]
+  return folderName(cwd).toLowerCase().endsWith('-' + slot) ? slot : undefined
+}
