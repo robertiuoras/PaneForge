@@ -565,6 +565,20 @@ export default function App(): JSX.Element {
   const [pinned, setPinned] = useState<Record<string, true>>({})
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
+  /**
+   * ...and it is kept in config.json, or the promise lasts until the next restart - which
+   * on an app that updates itself several times a day is not a promise. Read once, when
+   * the config first arrives: after that this state is the truth and every toggle writes
+   * it back, so an echo of our own write cannot fight the press that caused it. Main has
+   * already translated the saved ids onto the panes it restored (`restorePanes`).
+   */
+  const pinnedLoaded = useRef(false)
+  useEffect(() => {
+    if (pinnedLoaded.current || !config) return
+    pinnedLoaded.current = true
+    const saved = config.pinnedPanes ?? []
+    if (saved.length) setPinned(Object.fromEntries(saved.map((id) => [id, true as const])))
+  }, [config])
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
   // Which page Settings should open on, when a button somewhere IS about one page - the
@@ -4042,14 +4056,20 @@ export default function App(): JSX.Element {
   }, [])
 
   /** "Keep this pane open" / "Let it close when idle", off the card's right-click. */
-  const togglePin = useCallback((id: string) => {
-    setPinned((was) => {
-      const next = { ...was }
-      if (next[id]) delete next[id]
-      else next[id] = true
-      return next
-    })
-  }, [])
+  const togglePin = useCallback(
+    (id: string) => {
+      setPinned((was) => {
+        const next = { ...was }
+        if (next[id]) delete next[id]
+        else next[id] = true
+        // Written from inside the updater so what is saved is what is drawn, rather than a
+        // second reading of state this render has not seen yet.
+        patchConfig({ pinnedPanes: Object.keys(next) })
+        return next
+      })
+    },
+    [patchConfig]
+  )
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process

@@ -3318,6 +3318,12 @@ function restorePanes(specs: StartSessionRequest[]): void {
   // Started in order whatever the gap is: a pane's number is its place in this list, so
   // starting one out of turn renumbers the desk and every Ctrl+N with it.
   const recoverOn = (getConfig().recover ?? DEFAULT_RECOVER).enabled
+  // "Keep this pane open" is a promise about a PANE, and a restored pane is a new session
+  // with a new id - so the promise has to be carried across, by the one thing that names
+  // the pane it is replacing. Ids nothing came back for are dropped rather than kept: the
+  // list is rewritten from what actually restored, so it cannot grow stale entries.
+  const wasPinned = new Set(getConfig().pinnedPanes ?? [])
+  const nowPinned: string[] = []
   specs.slice(0, MAX_RESTORE).forEach((req, i) => {
     const open = (): void => {
       try {
@@ -3338,7 +3344,7 @@ function restorePanes(specs: StartSessionRequest[]): void {
         // id is checked the same way a fresh claim now is, not trusted for being saved.
         const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
         const named = Boolean(file && !heldElsewhere(file, req.cwd))
-        manager.start({
+        const meta = manager.start({
           ...req,
           resume: named,
           resumeId: named ? req.resumeId : undefined,
@@ -3348,6 +3354,7 @@ function restorePanes(specs: StartSessionRequest[]): void {
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
           asleep: req.asleep || restoreAsleep(req, i, recoverOn)
         })
+        if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }
@@ -3355,6 +3362,12 @@ function restorePanes(specs: StartSessionRequest[]): void {
     if (gap) setTimeout(open, i * gap)
     else open()
   })
+  // After the panes, and only when the answer really changed: this writes config.json, and
+  // a desk with nothing pinned must not rewrite it on every launch.
+  if (wasPinned.size || nowPinned.length) {
+    const before = [...wasPinned].join(',')
+    if (before !== nowPinned.join(',')) setConfig({ pinnedPanes: nowPinned })
+  }
 }
 
 /**

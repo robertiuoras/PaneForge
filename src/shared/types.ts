@@ -1367,16 +1367,6 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
-  /**
-   * Panes taken off the idle clock by hand - "Keep this pane open" on a card's
-   * right-click (`ReclaimPane.pinned`).
-   *
-   * On disk rather than in the renderer's own state, because it was `useState({})` until
-   * 2026-08-28 and so every restart and every update quietly put every pinned pane back
-   * on the clock. A pane keeps its id across a restore, which is what makes an id the
-   * right key; ids for panes that no longer exist are dropped when the list is written.
-   */
-  pinnedPanes?: string[]
   /** folder scanned for projects */
   root: string
   presets: Preset[]
@@ -1662,6 +1652,20 @@ export interface Config {
    */
   tips?: TipsConfig
   reclaim?: ReclaimConfig
+  /**
+   * Panes somebody has said are never to be closed for being idle - "Keep this pane open"
+   * on the card's right-click, `ReclaimPane.pinned`.
+   *
+   * On the CONFIG rather than in the renderer, because it was renderer state and so every
+   * restart and every update put every pinned pane back on the idle clock - a promise that
+   * lasted until the next automatic restart, which on this app is several times a day.
+   *
+   * These are session ids, and a restored pane is issued a NEW one, so `restorePanes` in
+   * main translates each id through the pane's `scrollbackId` (which IS the old id) as the
+   * panes come back, and drops the ids nothing came back for. Without that the list only
+   * ever grows and every entry in it is stale after one restart.
+   */
+  pinnedPanes?: string[]
   /**
    * Move finished panes to a paired device when this machine runs out of memory, rather
    * than closing them - see shared/autoHandoff.ts. Sits above `reclaim` on the same
