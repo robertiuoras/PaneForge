@@ -152,7 +152,15 @@ if (cmd === 'list') {
   if (!ref || !text) fail(1, 'type needs a pane and text: pf-ctl type <title-or-id> <text...>')
   const s = resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
-  await send('pty:write', [s.id, `${text}\r`])
+  // The submit RETURN has to arrive as its OWN pty read. Claude Code treats a chunk
+  // that lands in one read as a PASTE, and a CR inside a paste is a newline, not a
+  // submit - so `${text}\r` in a single write leaves anything long sitting unsent in
+  // the target composer. Measured 2026-08-28: a 470-character FYI typed from the
+  // assistant pane into the clients pane was still in the composer an hour later,
+  // while short lines had always worked, which is why this went unnoticed.
+  await send('pty:write', [s.id, text])
+  await new Promise((r) => setTimeout(r, 800))
+  await send('pty:write', [s.id, '\r'])
   console.log(`typed into ${s.id} (${s.title})`)
 } else if (cmd === 'call') {
   // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
