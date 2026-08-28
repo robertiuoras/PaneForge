@@ -5217,24 +5217,32 @@ export default function App(): JSX.Element {
                   <button
                     className="ghost small desk-only pt-handoff"
                     title={
-                      s.lane
-                        ? `Hand off lane ${s.lane}: its pane moves to your paired PC, then that PC closes when this lane exits and it has no other local pane.`
-                        : `Hand off ${s.title} to your paired PC. The PC closes only after this pane exits and it has no other local pane.`
+                      s.status === 'working' || s.status === 'starting'
+                        ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is mid-turn, so the move is queued until the turn ends - never killed.`
+                        : 'Where this agent runs: your paired machines, and what each of them is doing.'
                     }
                     onClick={(e) => {
                       e.stopPropagation()
+                      // Robert, 2026-08-28: "instead of handoff button in header it should
+                      // be remote, which if session is not started then normal remote, if
+                      // session mid turn then just asks like handoff". A pane between turns
+                      // has nothing to queue, so the question the button used to ask is one
+                      // nobody needed - it goes straight to Devices. Mid-turn is the one
+                      // case where the answer matters, and that keeps today's ask.
+                      const busy = s.status === 'working' || s.status === 'starting'
+                      if (!busy && !s.ask) return setDevices(true)
                       const ids = s.lane
                         ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
                         : [s.id]
                       setHandoff({
                         ids,
                         title: s.lane ? `lane ${s.lane}` : s.title,
-                        busy: s.status === 'working' || s.status === 'starting',
+                        busy,
                         asking: Boolean(s.ask)
                       })
                     }}
                   >
-                    Hand off
+                    Remote
                   </button>
                 )}
                 {/* The same question from the other side of it. Drawn in the same slot as
