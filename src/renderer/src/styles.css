@@ -1464,6 +1464,13 @@ body.sizing * { user-select: none !important; }
 @container pane (max-width: 380px) {
   .pane-title .agent-pick { display: none }
 }
+/* Narrower again, and the last thing with any width in it that is not a control or the
+   name is the agent's mark - which the ⋯ sheet says in words. Measured at a 198px pane
+   with the step above applied: the name had 18.5px, which draws one letter and an
+   ellipsis, so the pane could not say which pane it was. */
+@container pane (max-width: 300px) {
+  .pane-title .agent-logo { display: none }
+}
 
 .pt-actions .icon.pt-close {
   color: var(--danger); opacity: 0.8; font-size: 15px;
