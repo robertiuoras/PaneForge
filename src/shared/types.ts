@@ -1357,6 +1357,16 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
+  /**
+   * Panes taken off the idle clock by hand - "Keep this pane open" on a card's
+   * right-click (`ReclaimPane.pinned`).
+   *
+   * On disk rather than in the renderer's own state, because it was `useState({})` until
+   * 2026-08-28 and so every restart and every update quietly put every pinned pane back
+   * on the clock. A pane keeps its id across a restore, which is what makes an id the
+   * right key; ids for panes that no longer exist are dropped when the list is written.
+   */
+  pinnedPanes?: string[]
   /** folder scanned for projects */
   root: string
   presets: Preset[]

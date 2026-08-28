@@ -125,6 +125,27 @@ const send = (method, params) => {
 }
 await new Promise((r) => ws.addEventListener('open', r, { once: true }))
 
+// How long the UI thread is BLOCKED during the restore, which is the half "it is super
+// laggy after a restart" is about and the one a composer clock cannot see. `longtask`
+// is observed rather than a frame-drift timer on purpose: this window is launched
+// minimized and a minimized window has rAF and setInterval throttled, while the tasks
+// themselves still run at full cost.
+await send('Runtime.evaluate', {
+  expression: `(() => {
+    if (window.__pfLag) return 'already'
+    const lag = (window.__pfLag = { total: 0, worst: 0, n: 0, at: performance.now() })
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        lag.n++
+        lag.total += e.duration
+        if (e.duration > lag.worst) lag.worst = e.duration
+      }
+    }).observe({ entryTypes: ['longtask'] })
+    return 'on'
+  })()`,
+  returnByValue: true
+})
+
 // Read every pane's terminal, not the DOM: a pane's text is in xterm's buffer.
 // `mark` is the dim caption restoredTail puts between the old screen and the new
 // process, so anything below it is this launch's own output.
@@ -188,6 +209,11 @@ console.log(
   `\npanes=${specs.length} stagger=${STAGGER < 0 ? 'default' : STAGGER}  ` +
     `composer: median ${done[Math.floor(done.length / 2)] ?? '-'}ms  last ${done[done.length - 1] ?? '-'}ms  (${done.length}/${specs.length} reached one)`
 )
+const lag = (await send('Runtime.evaluate', { expression: 'JSON.stringify(window.__pfLag||null)', returnByValue: true })).result?.value
+if (lag && lag !== 'null') {
+  const l = JSON.parse(lag)
+  console.log(`ui thread blocked: ${Math.round(l.total)}ms over ${l.n} long tasks, worst ${Math.round(l.worst)}ms`)
+}
 console.log('\n--- "Starting…" lines on screen')
 for (const n of notes.filter((n, i) => i === 0 || n.split(' ')[1] !== notes[i - 1].split(' ')[1])) console.log(n)
 console.log('\n--- main process')
