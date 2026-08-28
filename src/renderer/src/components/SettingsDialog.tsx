@@ -5,7 +5,7 @@ import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
 import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
 import { DEFAULT_TIPS } from '@shared/tips'
 import PetPicker from './PetPicker'
-import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES } from '@shared/reclaim'
+import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } from '@shared/reclaim'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -680,6 +680,44 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   label="Show the occasional tip about what this app can do"
                   hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
                 />
+                <Switch
+                  checked={(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleSleepMinutes: v ? IDLE_SLEEP_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Put a pane nobody has used to sleep"
+                  hint={`On, and on by default. A pane nobody has typed into for ${config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES} minutes has its agent stopped and KEEPS everything else: the card stays where it is, wearing the screen it had, and a press starts the CLI again in the same conversation. Measured on this desk: eight live agents, 1.27 GB, none of them doing anything. The refusals are the close clock's, exactly - never the pane you are in, never one you have not read yet, never one that is working, running a command or holding a question, never another device's, and never one you have said to keep open.`}
+                />
+                {(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0 && (
+                  <div className="setting">
+                    <label>Sleep after (minutes)</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      step={1}
+                      value={config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES}
+                      onChange={(e) =>
+                        onChange({
+                          reclaim: {
+                            ...DEFAULT_RECLAIM,
+                            ...config.reclaim,
+                            enabled: true,
+                            idleSleepMinutes: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                )}
                 <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
                   onChange={(v) =>

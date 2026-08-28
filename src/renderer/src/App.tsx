@@ -92,6 +92,7 @@ import type { RunningDev } from '../../shared/devList'
 import {
   DEFAULT_RECLAIM,
   idleClosePlan,
+  idleSleepPlan,
   idleCloseAt,
   quietSince,
   reclaimPlan,
@@ -113,7 +114,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
-import { canSleep, sleepRefusal, sleepWords, type SleepPane } from '../../shared/sleep'
+import { sleepWords } from '../../shared/sleep'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
@@ -227,21 +228,6 @@ function AsleepChip({ at, id }: { at: number; id: string }): React.ReactElement 
       {sleepWords(at, now)}
     </button>
   )
-}
-
-/** One pane as `shared/sleep.ts` reads it - see `reclaimPaneOf` for why this is shared. */
-function sleepPaneOf(s: Session, backJob?: string | null): SleepPane {
-  return {
-    status: s.status,
-    asleep: s.asleep,
-    mirror: !!s.remote,
-    busy: s.runSince !== undefined || s.status === 'working' || s.status === 'starting',
-    asking: !!s.ask,
-    job: s.job,
-    // The one refusal main cannot make for itself: this is a reading of the process
-    // table that rides on the usage sample, and the sampler lives on this side.
-    backJob: backJob ?? undefined
-  }
 }
 
 /**
@@ -2632,6 +2618,46 @@ export default function App(): JSX.Element {
       // has open since it shipped; now it counts down on the mascot first, and a press
       // stops it.
       if (plan.length) armCloseRef.current(plan, 'idle', 'idle-close')
+    }
+    const timer = window.setInterval(sweep, 60_000)
+    return () => window.clearInterval(timer)
+  }, [config?.reclaim])
+
+  /**
+   * ...and the rung above it, which is ON by default: a pane nobody has used for half an
+   * hour gives its agent back and KEEPS its card.
+   *
+   * This is what "Sleep this pane" was a menu row for, and a menu row is the wrong shape
+   * for it - Robert, 2026-08-28: "we don't need the right click then sleep this pane, that
+   * should be automatically assigned to unused tabs". Nothing a person would miss is lost,
+   * so unlike the close clock there is no countdown in front of it: the card stays exactly
+   * where it is, wearing the screen it had, and says `asleep 3m` where its clock was.
+   *
+   * Its own timer beside the close sweep rather than inside it, because the two answer
+   * different questions at different lengths and one loop doing both would have to agree
+   * with `idleCloseAt` about a deadline this rung does not publish.
+   */
+  useEffect(() => {
+    const cfg = config?.reclaim ?? DEFAULT_RECLAIM
+    if (!cfg.enabled) return
+    const sweep = (): void => {
+      const plan = idleSleepPlan(
+        sessionsRef.current.map((s) =>
+          reclaimPaneOf(
+            s,
+            activeRef.current,
+            focusLeftAt.current[s.id],
+            pinnedRef.current[s.id],
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+          )
+        ),
+        cfg,
+        // The same frozen clock every other sweep reads: time somebody could have acted
+        // in, never wall time.
+        deskNow(Date.now(), awayRef.current),
+        personRef.current
+      )
+      for (const p of plan) void api.sleepSession(p.id)
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -5896,31 +5922,26 @@ export default function App(): JSX.Element {
                 key: 'pin',
                 label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
-                  ? 'the idle clock may close it again'
-                  : 'the idle clock never closes it'
+                  ? 'the idle clocks may sleep or close it again'
+                  : 'no idle clock sleeps or closes it'
                 ,
                 run: () => togglePin(s.id)
               },
-              ...(local
+              // Waking is a press and sleeping is not: the idle clock puts an unused pane
+              // to sleep by itself (`idleSleepPlan`), so the row that did it by hand is
+              // gone - Robert, 2026-08-28: "we don't need the right click then sleep this
+              // pane, that should be automatically assigned to unused tabs". The way to
+              // keep a pane's agent is "Keep this pane open" above, which every sweep
+              // refuses. Waking stays, because a sleeping pane has to have a way back and
+              // the card's own chip is the other one.
+              ...(local && s.asleep
                 ? [
-                    s.asleep
-                      ? {
-                          key: 'wake',
-                          label: 'Wake this pane',
-                          hint: 'start its agent again, in the same conversation',
-                          run: () => void api.wakeSession(s.id)
-                        }
-                      : {
-                          key: 'sleep',
-                          label: 'Sleep this pane',
-                          // The refusal is the hint, so a greyed row says which of the six
-                          // reasons it is - see `sleepRefusal`.
-                          hint:
-                            sleepRefusal(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)) ||
-                            'give the agent back, keep the card and the screen',
-                          disabled: !canSleep(sleepPaneOf(s, usage?.panes[s.id]?.jobs?.[0]?.label)),
-                          run: () => void api.sleepSession(s.id)
-                        }
+                    {
+                      key: 'wake',
+                      label: 'Wake this pane',
+                      hint: 'start its agent again, in the same conversation',
+                      run: () => void api.wakeSession(s.id)
+                    }
                   ]
                 : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
