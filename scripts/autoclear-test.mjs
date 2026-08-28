@@ -237,7 +237,12 @@ console.log('what the timer does when it finally fires - the s2 incident (ADDEND
   // (b) a clean pane fires - and what it types is the FROZEN chunks, whose exact content
   // the keystroke checks above already pin against the hook.
   ok('a clean pane fires', expiryDecision(base) === 'fire')
-  ok('mid-turn still fires - the pty queues it to the turn boundary', expiryDecision({ ...base, drop: 'working' }) === 'fire')
+  // Mid-turn WAITS, and this is the control that must not go back to 'fire'. Firing typed
+  // `/clear` into a running turn, where Claude Code put it in its queued-messages list and
+  // ran nothing - while the resume prompt and its CR went out on `chunkDelayMs`'s wall
+  // clock into the composer of the turn that had not cleared. Robert saw the queued
+  // `/clear` sitting on pane 5 (2026-08-28).
+  ok('mid-turn waits - a clear typed into a running turn is only QUEUED', expiryDecision({ ...base, drop: 'working' }) === 'wait')
   // (c) a draft at expiry WAITS - it does not stand down. Typing over somebody's unsent
   // line is the one damage a clear can do that cannot be undone, and the countdown staying
   // on screen is what keeps the promise that only the button stops it.

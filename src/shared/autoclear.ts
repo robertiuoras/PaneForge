@@ -314,9 +314,18 @@ export function expiryDecision(p: {
   // the one that waits. It is not a stand-down: the countdown, and the button that stops
   // it, stay exactly where they are and the timer asks again in `DRAFT_RETRY_MS`.
   if (p.drop === 'drafting') return 'wait'
-  // 'working' still types: Claude Code queues pty input arriving mid-turn and runs it at
-  // the turn boundary, so the clear lands when the turn ends rather than never.
-  if (p.drop && p.drop !== 'working') return p.drop
+  // 'working' WAITS too, and this is the 2026-08-28 correction. It used to fire on the
+  // argument that "Claude Code queues pty input arriving mid-turn and runs it at the turn
+  // boundary" - and it does queue it, which is exactly the failure: the `/clear` sat in
+  // the CLI's own queued-messages list, visible to nobody who was not looking for it,
+  // while the two chunks AFTER it went out on a wall clock (`chunkDelayMs`: +2500ms, then
+  // +1200ms) against a session that had not cleared. So the resume prompt was typed into
+  // the running turn's composer and the CR submitted it there. A clear must be typed at a
+  // pane that is genuinely idle; a queued one is neither cancelled nor performed, which is
+  // the empty-as-success shape. Waiting keeps the card and its button on screen and asks
+  // again every `DRAFT_RETRY_MS` until the turn really ends.
+  if (p.drop === 'working') return 'wait'
+  if (p.drop) return p.drop
   return 'fire'
 }
 

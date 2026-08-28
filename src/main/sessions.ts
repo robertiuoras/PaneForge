@@ -1712,11 +1712,9 @@ export class SessionManager extends EventEmitter {
       const live = this.sessions.get(id)
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
-      // 'working' is NOT a refusal at this point - Claude Code QUEUES pty input that
-      // arrives mid-turn and runs it at the turn boundary, so the clear lands the moment
-      // the turn ends rather than never. (Refusing on 'working' is what made a countdown
-      // everybody watched expire into nothing: measured 2026-08-26 in
-      // ~/.claude/autoclear.log, 15 countdowns started, 14 queued, nothing cleared.)
+      // 'working' is not a refusal either - it WAITS (`expiryDecision`), because a clear
+      // typed into a running turn lands in Claude Code's queued-messages list and the two
+      // chunks after it are typed into the turn that never cleared.
       // Every branch below is a named verdict and every one of them is LOGGED - the s2
       // incident could not be diagnosed because three of these exits were silent.
       const verdict = expiryDecision({
@@ -1736,7 +1734,11 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'wait') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        acLog(`${id} waiting: ${dropWords('drafting')} - asking again at ${new Date(next).toISOString()}`)
+        // The REASON, not a hardcoded 'drafting': 'working' waits too now, and a log that
+        // says "there is an unsent line in the box" about a pane mid-turn is a log that
+        // sends the next reader after the wrong bug.
+        const waitWhy = dropFor({ ...live!.meta, typed: live!.typed }) ?? 'drafting'
+        acLog(`${id} waiting: ${dropWords(waitWhy)} - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
