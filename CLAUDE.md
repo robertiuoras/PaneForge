@@ -1286,7 +1286,7 @@ their entire output used to be a `console.info`. `shared/mascot.ts` is the mouth
 - **Nothing decides and then reports: it counts down first.** Both sweeps hand their plan to
   `armCloseRef` and the mascot draws `CLOSE_COUNTDOWN_MS` (15s) with the pane named, `Keep it open`
   and `Close now`. Doing nothing still closes it. `Keep it open` holds those panes for
-  `KEEP_MINUTES` (60). With the mascot hidden there is nowhere to draw a count, so it closes.
+  `KEEP_MINUTES` (10). With the mascot hidden there is nowhere to draw a count, so it closes.
 - **It speaks unasked once per situation**, and only where the app is otherwise silent: two or more
   finished panes, quiet over an hour, over 1.2 GB, with the idle-close clock OFF.
 - **There are TEN of them and they cost the same** (`src/shared/pets.ts`). The animation is keyed

@@ -2163,7 +2163,7 @@ draws it. `npm run test:mascot`.
   `CLOSE_COUNTDOWN_MS` (15s) of seconds with the pane named, `Keep it open` and `Close now`
   beside it. Doing nothing still closes the pane - it is a sentence with a clock in it, not
   a dialog, because nothing this app decides by itself may take the screen. `Keep it open`
-  holds those panes for `KEEP_MINUTES` (60), since the sweeps run every minute and without
+  holds those panes for `KEEP_MINUTES` (10), since the sweeps run every minute and without
   that "keep it" is the same question a minute later for ever. With the mascot hidden there
   is nowhere to draw a count, so the old behaviour stands and it closes on the spot.
 - **The sprite is a ROBOT and it does not float.** The fox bobbed on a 4.2s `translateY`
