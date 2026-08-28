@@ -187,6 +187,8 @@ import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, restorePlan, type Pressure } from '../shared/capacity'
+import { restoreAsleep } from '../shared/restoreTurn'
+import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
@@ -3315,6 +3317,7 @@ function restorePanes(specs: StartSessionRequest[]): void {
   const gap = restoreStaggerMs()
   // Started in order whatever the gap is: a pane's number is its place in this list, so
   // starting one out of turn renumbers the desk and every Ctrl+N with it.
+  const recoverOn = (getConfig().recover ?? DEFAULT_RECOVER).enabled
   specs.slice(0, MAX_RESTORE).forEach((req, i) => {
     const open = (): void => {
       try {
@@ -3339,7 +3342,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
           ...req,
           resume: named,
           resumeId: named ? req.resumeId : undefined,
-          prompt: undefined
+          prompt: undefined,
+          // Everything but the pane being looked at comes back with no agent in it. The
+          // card, its place and its screen are all there; a press starts the CLI in the
+          // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
+          asleep: req.asleep || restoreAsleep(req, i, recoverOn)
         })
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.

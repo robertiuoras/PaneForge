@@ -381,6 +381,16 @@ export interface StartSessionRequest {
    */
   scrollbackId?: string
   /**
+   * Open this pane with no process behind it: the card, its place and its screen, and
+   * nothing running. A press wakes it in the conversation `resumeId` names - the same
+   * path `sleep()`/`wake()` already use, see `shared/sleep.ts`.
+   *
+   * Set by a restore (`shared/restoreTurn.ts`'s `restoreAsleep`) and by a pane that was
+   * asleep when the app went down. Never by a fresh launch: somebody who opened a pane
+   * asked for the agent in it.
+   */
+  asleep?: boolean
+  /**
    * The device this pane was handed over FROM. Set only by `receiveHandoff`.
    *
    * It exists for one refusal: the local-pane budget may not hand a pane straight back to
