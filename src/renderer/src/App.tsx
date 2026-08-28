@@ -5953,8 +5953,13 @@ export default function App(): JSX.Element {
                 ? [
                     {
                       key: 'handoff',
-                      label: 'Hand off…',
-                      hint: 'move it to another machine',
+                      // One word for both halves of it. The pane's own header button was
+                      // renamed on 2026-08-28 and the menus were not, so the same press
+                      // had two names - and Robert's reasoning covers both: mid-turn the
+                      // pane is queued and handed over anyway, so "Remote" is the whole
+                      // decision (WHERE this agent runs) rather than one way of taking it.
+                      label: 'Remote…',
+                      hint: 'run it on another machine',
                       run: () =>
                         setHandoff({
                           ids: s.lane
