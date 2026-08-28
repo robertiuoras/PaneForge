@@ -55,7 +55,7 @@ function lane(repo, ...args) {
 
 const ledger = (repo) => JSON.parse(readFileSync(join(repo, '.git', 'paneforge-lanes.json'), 'utf8'))
 
-function project(name) {
+function project(name, release = 'merge') {
   const origin = join(work, `${name}.git`)
   const repo = join(work, name)
   mkdirSync(repo, { recursive: true })
@@ -64,7 +64,7 @@ function project(name) {
   git(repo, 'config', 'user.email', 'test@example.com')
   git(repo, 'config', 'user.name', 'test')
   writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
-  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release: 'merge' }, null, 2) + '\n')
+  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release }, null, 2) + '\n')
   git(repo, 'add', '-A')
   git(repo, 'commit', '-qm', 'init')
   git(repo, 'remote', 'add', 'origin', origin)
@@ -148,7 +148,9 @@ function laneWithWork(repo, session, file) {
 // ------------------------------------------------- a lane passed over says so, rather than vanishing
 
 {
-  const { repo } = project('already')
+  // a repo that cuts no release merges a ready lane on the spot (master e70c94f), so the
+  // "still waiting" premise this case needs only exists where a release IS cut
+  const { repo } = project('already', 'version')
   laneWithWork(repo, 'hold-main', 'held.js')
 
   // One lane goes out first, which starts the release cooldown - so the NEXT lane's `ready`
@@ -158,20 +160,21 @@ function laneWithWork(repo, session, file) {
   lane(repo, 'ready', '--session', 'chat-1')
 
   const held = laneWithWork(repo, 'chat-2', 'feature.js')
+
+  // The same diff, arriving on the branch by another road, before this lane is ever shipped.
+  // `git cherry` compares PATCH IDS, so an identical change is an identical patch however it
+  // got there - and that is exactly the state where a lane has nothing left to merge, which
+  // used to drop it out of `ready` with nothing whatever said about it.
+  writeFileSync(join(repo, 'feature.js'), 'export const x = 1\n')
+  git(repo, 'add', '-A')
+  git(repo, 'commit', '-qm', 'feat: feature.js, by another road')
+
   lane(repo, 'ready', '--session', 'chat-2')
   ok(
     `lane ${held.lane} is marked ready and waiting on the cooldown`,
     !!ledger(repo).ready?.[held.lane],
     JSON.stringify(ledger(repo).ready)
   )
-
-  // The same diff, arriving on the branch by another road. `git cherry` compares PATCH IDS,
-  // so an identical change is an identical patch however it got there - and that is exactly
-  // the state where a lane has nothing left to merge, which used to drop it out of `ready`
-  // with nothing whatever said about it.
-  writeFileSync(join(repo, 'feature.js'), 'export const x = 1\n')
-  git(repo, 'add', '-A')
-  git(repo, 'commit', '-qm', 'feat: feature.js, by another road')
   lane(repo, 'ship')
 
   const note = ledger(repo).passed?.[held.lane]

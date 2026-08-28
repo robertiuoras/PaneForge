@@ -2254,9 +2254,27 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   if (busy.length) return { shipped: false, reason: `waiting on chats still working: ${busy.map(busyDetail).join(', ')}` }
   if (!shippable(state)) return { shipped: false, reason: 'nothing to release' }
   const since = state.lastShip ? now() - state.lastShip.at : Infinity
-  const small = smallOnly(MAIN)
-  const window_ = small ? SMALL_HOLD_MS : COOLDOWN_MS
+  // The hold below is a RELEASE cadence device, and its entire cost model is a build to
+  // install, a restart to take it and a version number somebody has to read - the note on
+  // COOLDOWN_MS says so in as many words. A repo in `merge` mode cuts none of those:
+  // shipping is `git merge && git push`, nobody installs the result, and no update prompt
+  // appears anywhere. There is therefore nothing for finished work to wait for COMPANY
+  // for, and the wait is pure latency.
+  //
+  // Measured 2026-08-28 on taskdriver.ai: a verified lane was told "went out 115m ago -
+  // it merges and goes out with the next release (about 5m)", and then sat on its lane
+  // for another 45 minutes, because on this machine nothing calls autoship on a clock
+  // unless a chat is mid-turn (the in-app timer is per open pane; lane-cron.mjs is
+  // installed on the PC only). The same shape wedged four ready lanes for 576 minutes
+  // eight days earlier. Both times a person had to ask why their work had not landed.
+  //
+  // Repos that deploy on push already govern cadence at the layer that can see the
+  // change - taskdriver's Vercel `ignoreCommand` reads the commit SUBJECT, so `auto-sync:`
+  // work batches and a descriptive subject ships. A second, blind, two-hour timer on top
+  // of that cannot batch anything it understands; it only ever loses work.
+  const window_ = RELEASE === 'version' ? (smallOnly(MAIN) ? SMALL_HOLD_MS : COOLDOWN_MS) : 0
   if (since < window_) {
+    const small = smallOnly(MAIN)
     const wait = Math.ceil((window_ - since) / 60000)
     return {
       shipped: false,
