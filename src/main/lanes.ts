@@ -906,3 +906,31 @@ export function ensureLaneFolder(cwd: string): void {
   if (!run(['worktree', 'add', cwd, branch]) && !run(['worktree', 'add', '-b', branch, cwd])) return
   seedLane(repo, cwd)
 }
+
+/**
+ * The lane a folder ALREADY is, for a pane opened in a worktree this app did not create.
+ *
+ * `resolveLane` only ever labels a pane it moved itself, so a chat started by hand in
+ * `taskdriver.ai-c` - by the lane hook, by a terminal, by a restored desk - arrived with
+ * `Session.lane` unset. `place.ts` then had no lane id to strip the suffix with and drew
+ * the raw folder `taskdriver.ai-c` beside another card saying `assistant` + `lane a`, for
+ * the same kind of folder. `projectOf` is deliberately not allowed to guess (`service-a`
+ * is a real project name), so the answer has to be PROVED here instead.
+ *
+ * The proof is git's, not the name's: the folder is a lane only when a sibling by the
+ * un-suffixed name is a repo AND this folder is a worktree of exactly that repo. A real
+ * project called `service-a` is its own main checkout, so `mainRepo` answers itself and it
+ * is refused - which is the same identity test `resolveLane` uses before reusing a folder.
+ *
+ * Deliberately NOT read from `<repo>/.git/paneforge-lanes.json`: that ledger's lane IDS
+ * are slots and do not have to match the folder they hold. On this machine right now it
+ * files `taskdriver.ai-a` under lane `b` and `taskdriver.ai-c` under lane `d`, so taking
+ * the id from there would strip nothing and print a letter that contradicts the folder.
+ */
+export async function detectLane(cwd: string): Promise<string | undefined> {
+  const m = new RegExp(`^(.+)-(${LANE_LABELS.join('|')}|w\\d+)$`).exec(basename(cwd))
+  if (!m) return undefined
+  const repo = join(dirname(cwd), m[1])
+  if (!existsSync(join(repo, '.git'))) return undefined
+  return (await isWorktreeOf(cwd, repo)) ? m[2] : undefined
+}

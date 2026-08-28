@@ -46,7 +46,7 @@ import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import type { DiffScope, PhoneState, ShelfEdge } from '../shared/types'
-import { laneExtras, resolveLane } from './lanes'
+import { detectLane, laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry } from './laneBoard'
 import type { LanePane } from './laneBoard'
@@ -1160,7 +1160,14 @@ async function laneFor(
   req: StartSessionRequest,
   extraTaken: string[] = []
 ): Promise<StartSessionRequest> {
-  if (!getConfig().autoLane) return req
+  // A pane opened by hand in a lane folder - the lane hook, a terminal, a restored desk -
+  // never went through resolveLane, so it carried no lane id and its card printed the raw
+  // `taskdriver.ai-c` while a pane the app had moved itself said `assistant` + `lane a`.
+  // The label is a reading of the folder, not a lane being created, so it is filled in
+  // whether or not auto-laning is on. See detectLane: git proves it, the name never does.
+  const known = async (r: StartSessionRequest): Promise<StartSessionRequest> =>
+    r.lane ? r : { ...r, lane: await detectLane(r.cwd) }
+  if (!getConfig().autoLane) return known(req)
   const taken = [
     ...manager
       .list()
@@ -1190,7 +1197,7 @@ async function laneFor(
     // update): nothing to move, but it still needs its port and its shared memory.
     if (req.lane)
       return { ...req, laneEnv: req.laneEnv ?? (await laneExtras(req.cwd, req.lane)).env }
-    return lane.note ? { ...req, laneNote: lane.note } : req
+    return known(lane.note ? { ...req, laneNote: lane.note } : req)
   }
   const memory = lane.sharedMemory ? ', sharing this project’s Claude memory' : ''
   return {
