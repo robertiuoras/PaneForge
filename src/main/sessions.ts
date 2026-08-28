@@ -19,6 +19,7 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
+import { doneEnough } from '../shared/closeWhenDone'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -174,16 +175,6 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
  * `RESTORE_MARK`: dim, one line, attributes reset first because the pane is cut mid-frame.
  * Nothing else marks the seam - the screen above it is genuinely the screen it had.
  */
-/**
- * How long a pane opened with `closeWhenDone` must sit finished before it closes itself.
- *
- * Not zero, and not the turn ending: an agent that started something in the background
- * (`shared/paneBackJobs.ts`) is read off the process table every four seconds, so a pane
- * closing the instant its turn ended would take a running build with it. Eight seconds is
- * two of those samples plus the sweep's own second.
- */
-const CLOSE_DONE_QUIET_MS = 8_000
-
 const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, press to wake it ---\x1b[0m\r\n'
 const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
@@ -1197,11 +1188,7 @@ export class SessionManager extends EventEmitter {
    */
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
-    if (!meta.printed) return
-    if (meta.status === 'exited' || meta.asleep) return
-    if (meta.runSince || live.busyUntil > now) return
-    if (meta.ask || meta.job || meta.backJob) return
-    if (quiet < CLOSE_DONE_QUIET_MS) return
+    if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo
     if (told) {
       const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
