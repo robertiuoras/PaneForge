@@ -53,6 +53,23 @@ node scripts/lane.mjs status --repo <dir>      # who holds what
   this window's panes, because a lane the app made itself (`main/lanes.ts`) has no ledger
   row. `laneDoing` in `renderer/src/laneWords.ts` is the words; a lane with neither commits
   nor edits says nothing rather than inventing a sentence about somebody else's work.
+- **A lane is reported as shipped only once it is PROVED to be out.** `landedOnOrigin` asks
+  origin for the branch and checks the lane's own commit is an ancestor of it; a lane that
+  fails that is left out of `lastShip.lanes`, KEEPS its ready mark, and is named. `null` -
+  no origin, no network, a commit git does not know - is "nobody could check" and changes
+  nothing, because none of this may block a chat. Recording the intent to merge is the
+  empty-as-success shape, and on 2026-08-28 it cost a production fix: a ship named four
+  lanes, three had merged, and the fourth read as gone out to every other chat.
+- **A lane passed over leaves a note.** A ready mark for work the branch already has is
+  still dropped - there is nothing left to merge - but `state.passed[id]` records why and
+  `doctor` says it, because a silent drop and a successful merge look identical from
+  outside. The note clears when that lane marks ready again.
+- **A lane that holds nothing is kept until it has been quiet for a day.** `SWEEP_GRACE_MS`
+  in `main/laneWork.ts` (24h, `PF_SWEEP_GRACE_MS` for tests, read at call time): a chat
+  between turns and a lane whose work has just been merged look identical to the sweep, so
+  the folder waits rather than vanishing under somebody. It arrived as a bare `Date.now()`
+  comparison with no name and no test and turned 12 sweep assertions red; the grace is now
+  pinned ON in `lane-sweep-test.mjs`, with the same lane past its grace as the control.
 - `npm run test:lanes` (which includes `visitor-park-test.mjs`) covers the engine, the
   worktree sweep, ownership, and the any-repo contract (a repo that never asked for releases must never cut a version).
 
@@ -963,7 +980,24 @@ default wait (Settings → "Answer an agent's question for me when the answer is
 ~4.2s cold. Six panes started in one burst all had their first byte by 1.9s, and staggering
 them by 400ms made it worse (4.7s), so `restorePanes` starting the desk in one tick stays.
 
-What was missing is that nothing said any of it. `PaneBooting` in `TerminalPane.tsx` draws one
+What was missing is that nothing said any of it - and `blank` stopped being the reading the
+day scrollback came back: a RESTORED pane opens wearing the screen it had before the
+restart, so it is never blank and said nothing at all while its CLI booted.
+`Session.printed` (main, `sessions.ts`) is the epoch of the FIRST byte out of THIS process -
+undefined until then, cleared by restart and wake - because only main can tell the replayed
+bytes from the new process's own. The pane draws the same line while `booting`, at the
+BOTTOM (`.pane-booting.over`) where the composer will be, on the pane's own background.
+
+Measured on this desk 2026-08-28 with `npm run boot-timing --panes 7` (dev copy, seeded
+from the live desk): every pane back on screen with its old output at **1.3-2.6s**, first
+byte per pane **2.6-8.8s**, a composer you can type into **4.1-14.3s** depending on machine
+load - and the app's own main process spends **under 0.5s of CPU in the whole first 30s**.
+The wait is the agent CLIs: one `claude` alone reaches a composer in **1.4s**, seven at once
+in 4-15s. **Staggering the restore was measured and is WORSE** - 300ms apart put the last
+composer at 26-29s against 4-16s for one tick, twice, interleaved - so they still all start
+in one tick.
+
+ `PaneBooting` in `TerminalPane.tsx` draws one
 dim line until the first byte: **it names the RUNNER** (`Starting Claude Code…`, off the agent's
 own `label`) and adds a seconds count once past `COUNT_AFTER_MS` (1.2s). Measured again
 2026-08-27: `sessions:start` returns in 46ms, the first byte lands at 1257-2139ms, of which the
@@ -1328,6 +1362,16 @@ The cap is the load-bearing part: it is on the BUSY STRETCH, not on the hold, so
 cannot keep a laptop lit all night and cannot re-arm the hold by ticking.
 `config.keepDisplayAwake` turns it off. `npm run test:awake`.
 
+**Holding the MACHINE awake never justified lighting the PANEL.** The lid guard sets
+`pmset -a disablesleep 1` so a working pane survives a lid-close, and that flag makes the
+kernel ignore the lid OUTRIGHT, backlight included - so a shut MacBook ran its OLED at full
+brightness for the whole session. `screenUnseen` (`main/awake.ts`) drops the screen hold
+alone: the system hold, the panes and the turn in flight are untouched. It is narrower than
+"the lid is shut" on purpose - clamshell driving an external monitor reports the lid shut
+too, and blanking THAT is a desk going black mid-use, so Electron's own display list has to
+say the builtin is the only screen. A reading that FAILED counts as false, and the control
+in `test:awake` is the same desk with the lid up, still lit.
+
 ## A pane's two ends open at the same width
 
 Everything an agent CLI prints is absolute column moves, and a terminal CLAMPS a column it cannot
@@ -1370,6 +1414,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |
 | `npm run test:install` | quitting takes the install pty's whole process tree |
 | `npm run test:lanes` | lane engine, worktree sweep, ownership, the any-repo release contract |
+| `npm run test:laneproof` | that a ship names only lanes whose commits are really on origin, and that a lane passed over leaves a note - a `post-receive` hook takes the push and rewinds the branch, with the landing push kept as the control |
 | `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
 | `npm run test:laneforeign` | a foreign clone at a lane's path: named and refused, commits untouched (control: it passes the old `--is-inside-work-tree` test) |
 | `npm run test:lanepeers` | the other desk's claim arithmetic and its negatives |

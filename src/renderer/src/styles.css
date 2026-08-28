@@ -1531,6 +1531,15 @@ body.sizing * { user-select: none !important; }
   color: var(--muted); font-size: 12px; letter-spacing: 0.2px;
   pointer-events: none;
 }
+/* The same line over a RESTORED pane, which is not empty: it opens with the screen it had
+   before the restart, so the line goes at the BOTTOM - where the composer it is waiting for
+   will draw - and carries the pane's own background, or it reads as one more row of the old
+   output it is sitting on top of. */
+.pane-booting.over {
+  top: auto; bottom: 10px;
+  padding: 3px 8px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--line);
+}
 
 /* One turn's two copy icons: the prompt, and the answer it got. Drawn for every prompt on
    screen at the row it was sent on, in the gutter left of the marker rail, so reaching for

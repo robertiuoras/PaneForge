@@ -114,6 +114,16 @@ interface Props {
    */
   replayCols?: number
   /**
+   * This pane's process has not printed a byte yet.
+   *
+   * `blank` below is the renderer's own version of the same question and it stopped being
+   * true the day scrollback came back: a restored pane opens with a full screen of
+   * yesterday's output, so it is never blank and said nothing at all while its CLI spent
+   * four to fifteen seconds booting. Read off `Session.printed` in main, because only main
+   * can tell the replayed bytes from the new process's first ones.
+   */
+  booting?: boolean
+  /**
    * The four colours the terminal's own chrome is drawn in, from the app's theme.
    *
    * Handed over as strings because xterm renders to a canvas and cannot read a CSS
@@ -177,13 +187,13 @@ interface Props {
  */
 const COUNT_AFTER_MS = 1200
 
-function PaneBooting({ agent }: { agent?: string }): React.JSX.Element {
+function PaneBooting({ agent, over }: { agent?: string; over?: boolean }): React.JSX.Element {
   const [since] = useState(() => Date.now())
   const now = useNow(1000, since)
   const secs = Math.floor((now - since) / 1000)
   const spec = agent ? allAgents().find((a) => a.id === agent) : undefined
   return (
-    <div className="pane-booting">
+    <div className={over ? 'pane-booting over' : 'pane-booting'}>
       Starting {spec?.label ?? 'session'}…
       {now - since >= COUNT_AFTER_MS && <span className="pane-booting-secs">{secs}s</span>}
     </div>
@@ -763,6 +773,7 @@ function TerminalPane({
   grid = null,
   pty = null,
   replayCols,
+  booting,
   termTheme,
   ask = null,
   autoAnswerAt,
@@ -3824,7 +3835,7 @@ function TerminalPane({
           pane that would otherwise be an empty black box for the seconds the CLI spends
           starting up. It goes on the first byte, whether that byte is the agent's banner
           or a replayed transcript. */}
-      {blank && !mirror && <PaneBooting agent={agent} />}
+      {(blank || booting) && !mirror && <PaneBooting agent={agent} over={!blank} />}
       {finding && (
         <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
           <input
@@ -4151,6 +4162,7 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.autoAnswerN === b.autoAnswerN &&
     a.autoAnswerHeld === b.autoAnswerHeld &&
     a.replayCols === b.replayCols &&
+    a.booting === b.booting &&
     sameAsk(a.ask, b.ask) &&
     sameGrid(a.mirror, b.mirror) &&
     sameGrid(a.grid, b.grid) &&

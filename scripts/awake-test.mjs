@@ -201,6 +201,27 @@ function keeper(panes, opts = {}) {
     false,
     'past the cap the screen goes off too'
   )
+  // A shut lid with no external screen: the machine keeps working, the panel goes dark.
+  // `pmset -a disablesleep 1` makes the kernel ignore the lid, backlight included, so
+  // without this an OLED runs at full brightness all night behind a closed MacBook. The
+  // CONTROL is the same desk with the lid up, which must still hold the screen - a fix
+  // that blanked it either way would pass a bare "holdDisplay went false" check.
+  const shut = (panes) =>
+    awakeVerdict({ panes, enabled: true, now: NOW, busySince: NOW - 1000, screenUnseen: true })
+  assert.equal(lit([asking]).holdDisplay, true, 'CONTROL: lid up, a question still lights it')
+  assert.equal(shut([asking]).holdDisplay, false, 'lid shut, the screen may sleep')
+  assert.equal(shut([recentKeys]).holdDisplay, false, 'a keypress before the lid shut does not hold it')
+  assert.equal(shut([asking]).hold, true, 'the MACHINE is still held awake behind a shut lid')
+  assert.match(shut([asking]).reason, /lid shut/, 'and the log line says why')
+  // An unread lid - the probe failed, or this is not a Mac - is the behaviour we shipped.
+  assert.equal(
+    awakeVerdict({ panes: [asking], enabled: true, now: NOW, busySince: null, screenUnseen: false })
+      .holdDisplay,
+    true,
+    'a reading that failed must never blank a screen somebody is reading'
+  )
+  assert.equal(shut([quiet]).hold, false, 'a shut lid does not hold a quiet desk awake')
+
   assert.equal(awakeDisplayBusy([asking, working, recentKeys], NOW), 2)
   assert.equal(awakeBusy([asking, working, recentKeys], NOW), 3)
 }

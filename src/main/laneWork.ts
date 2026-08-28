@@ -531,6 +531,21 @@ async function heldLanes(repo: string): Promise<Set<string>> {
  * Removal is async: a lane's `node_modules` is tens of thousands of hardlinks, and
  * unlinking them on the main thread would freeze every pane in the window.
  */
+/**
+ * How long a lane that holds nothing is kept before it is deleted (24h).
+ *
+ * It arrived unnamed and untested, and being a bare `Date.now()` comparison it made every
+ * removal assertion in scripts/lane-sweep-test.mjs and scripts/lane-work-test.mjs fail:
+ * a test builds its lane a millisecond before it sweeps. `PF_SWEEP_GRACE_MS` is how those
+ * tests ask for the behaviour without waiting a day, and is read at CALL time so a test
+ * can set it either side of the sweep.
+ */
+export const SWEEP_GRACE_MS = 24 * 60 * 60 * 1000
+const sweepGrace = (): number => {
+  const raw = Number(process.env.PF_SWEEP_GRACE_MS)
+  return Number.isFinite(raw) && raw >= 0 ? raw : SWEEP_GRACE_MS
+}
+
 export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
   const removed: string[] = []
   const held = await heldLanes(repo)
@@ -550,10 +565,14 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     if (!laneBranches(work.lane).includes(work.branch)) continue
     const how = work.empty ? 'history' : await absorbed(repo, work)
     if (!how) continue
-    // Keep clean / merged lane worktrees for at least 1 day (24h) after last activity
+    // A lane that holds nothing TODAY may still be a folder somebody is coming back to:
+    // a chat between turns has no uncommitted file and no unmerged commit, and neither
+    // does one whose work has just been merged back. So a lane is kept until it has been
+    // untouched for SWEEP_GRACE_MS. `work.at` is the lane's own last activity and the
+    // folder's mtime is the fallback for a lane that never recorded one.
     const mtime = existsSync(dir) ? statSync(dir).mtimeMs : 0
     const lastActive = Math.max(work.at || 0, mtime)
-    if (Date.now() - lastActive < 24 * 60 * 60 * 1000) continue
+    if (Date.now() - lastActive < sweepGrace()) continue
     // A paused CLI session is invisible to `busy`: its PaneForge pane can remain in the
     // main checkout while the agent process is rooted here. POSIX permits deleting that
     // cwd, but the agent cannot start its next turn afterwards.
