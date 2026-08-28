@@ -409,7 +409,9 @@ a channel to a transport; add it there.
   being a field on a coarse pointer, and the typing bar autocorrects. `isPhoneClient()` gates
   AUTHORITY only, never layout.
 - **Automation opens a pane through `scripts/pf-ctl.mjs`**, never `open --args`: one em dash
-  makes macOS drop the whole argument list and exit 0.
+  makes macOS drop the whole argument list and exit 0. It is on PATH as `pf` (a symlink from
+  `~/.local/bin`), so any session anywhere opens a pane with a brief already in it:
+  `pf open <cwd> --prompt "..." [--agent A] [--model M]`, then `pf list` to verify it.
 - `npm run test:phone` (server + surface parity). `npm run test:phoneview` needs a running
   copy. A pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).

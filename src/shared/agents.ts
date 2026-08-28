@@ -778,7 +778,17 @@ export function providerLabel(id: string): string | undefined {
 /** The friendly model name for a pane card, without ever changing what reaches the CLI. */
 export function agentModelLabel(agent: Pick<AgentSpec, 'models'> | undefined, value: string): string {
   const choice = agent?.models?.find((m) => modelValue(m) === value)
-  return choice ? modelLabel(choice) : value
+  if (choice) return modelLabel(choice)
+  // An id this build's catalogue does not have is not a model NAME anybody can act on: a
+  // pane saved before a rename kept `builtin` on it for months and drew it as a chip beside
+  // Claude Code, which defines no such id. So a runner that HAS a catalogue answers ''
+  // - the card draws no chip - and the raw value stays on the hover, where it is evidence
+  // rather than a label.
+  //
+  // A runner with NO catalogue is the opposite case and must still print it: Antigravity
+  // ships no model list on purpose (Google publishes the names in prose and the ids
+  // nowhere), so whatever was typed there is the only thing that says which model this is.
+  return agent?.models?.length ? '' : value
 }
 
 /**

@@ -4525,11 +4525,18 @@ export default function App(): JSX.Element {
                   <span className="row-agent">
                     {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
                   </span>
-                  {s.model ? (
-                    <span className="chip" title={s.model}>
-                      {agentModelLabel(agents.find((a) => a.id === s.agent), s.model)}
-                    </span>
-                  ) : null}
+                  {/* No chip for a model id this build does not know - see
+                      agentModelLabel. The id itself is still on the row's own hover. */}
+                  {(() => {
+                    const label = s.model
+                      ? agentModelLabel(agents.find((a) => a.id === s.agent), s.model)
+                      : ''
+                    return label ? (
+                      <span className="chip" title={s.model}>
+                        {label}
+                      </span>
+                    ) : null
+                  })()}
                   {/* Which project this pane is in, which the card never said.
                       The title is whatever the pane was named - `basename(cwd)` by
                       default, which for a worktree copy is `PaneForge-w2`, and anything

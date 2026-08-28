@@ -37,6 +37,7 @@ const {
   KEY_PROVIDERS,
   OPENROUTER_BASE,
   OPENROUTER_KEY_VAR,
+  agentModelLabel,
   buildArgs,
   siblingModels,
   findAgent,
@@ -252,6 +253,23 @@ ok(
 ok(
   siblingModels({ id: 'z', label: 'z', bin: 'claude', color: '#fff' }, BUILTIN_AGENTS, () => true).length === 0,
   'a runner with no model flag is left alone'
+)
+
+// ---------------------------------------------------------------- an unknown model id
+//
+// A pane saved before a rename kept `builtin` on it and drew that as a chip beside Claude
+// Code, which defines no such id. A chip is a NAME somebody can act on, so a runner that
+// has a catalogue answers nothing for an id that is not in it - and a runner with no
+// catalogue at all (Antigravity publishes no ids) must still print whatever was typed,
+// which is the control.
+
+const claude = findAgent(BUILTIN_AGENTS, 'claude')
+ok(agentModelLabel(claude, 'claude-opus-5') === 'Opus 5', 'a known id reads as its label')
+ok(agentModelLabel(claude, 'builtin') === '', 'an id this build does not know draws no chip')
+ok(
+  agentModelLabel({ id: 'agy', label: 'Antigravity', bin: 'agy', color: '#fff' }, 'gemini-3.1-pro') ===
+    'gemini-3.1-pro',
+  'a runner with no catalogue still prints what was typed'
 )
 
 console.log(`agent env: ${checks} checks OK`)
