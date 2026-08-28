@@ -392,6 +392,14 @@ const VISIBILITY_REFRESH_MS = 30_000
  */
 const CAPACITY_NOTE_MS = 12_000
 
+/**
+ * How long the memory card stays quiet before it may say the same thing again.
+ *
+ * Ten minutes. The card is a READING, not an action anybody is being asked to take, and
+ * this desk sits at its worst verdict for hours - Robert, 2026-08-28: it "pops too often".
+ */
+const CAPACITY_QUIET_MS = 10 * 60_000
+
 /* One pass of `doneGlow` (1.9s in styles.css) plus a beat, and nothing more: the class has
    to come off when the flash ends or the card keeps the last frame's tint for another
    three seconds. Was 5200, which was three passes - a card that flickers while you read
@@ -1504,6 +1512,8 @@ export default function App(): JSX.Element {
     } | null
   >(null)
   const capacityShown = useRef('')
+  /** When that card last said anything, so the same verdict cannot repeat itself. */
+  const capacitySaidAt = useRef(0)
   const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onCapacity(setCapacity), [])
 
@@ -2089,9 +2099,24 @@ export default function App(): JSX.Element {
       capacityShown.current = ''
       return
     }
-    const key = `${capacity.level}|${capacity.why}`
-    if (capacityShown.current === key) return
+    // Urgent only, and rarely. This was armed by the verdict CHANGING - `level|why` - and
+    // both halves of that key move on a desk that is merely full: `tight` is the ordinary
+    // state of this machine for hours at a time, and `why` flips between memory, lag and
+    // the pane budget while the level stands still, so the card came back every few
+    // minutes saying the same thing. A notice nobody can act on, arriving repeatedly, is
+    // how a reading gets ignored.
+    //
+    // So `over` alone speaks - the level where something is actually about to be done
+    // about it - the reason is dropped from the key, because a different reason for the
+    // same verdict is the same situation, and a re-arm waits `CAPACITY_QUIET_MS`. A
+    // verdict that drops back to ok still clears the mark above, so a desk that recovers
+    // and fails again is a new event rather than a repeat.
+    if (capacity.level !== 'over') return
+    const key = capacity.level
+    const now = Date.now()
+    if (capacityShown.current === key && now - capacitySaidAt.current < CAPACITY_QUIET_MS) return
     capacityShown.current = key
+    capacitySaidAt.current = now
     const u = usageRef.current
     const numbers = u && u.totalMb > 0
       ? `${formatMb(u.totalMb)} in ${sessionsRef.current.length} pane` +
@@ -5968,8 +5993,12 @@ export default function App(): JSX.Element {
                 ? [
                     {
                       key: 'handoff',
-                      label: 'Hand off…',
-                      hint: 'move it to another machine',
+                      // The pane's own header button was renamed to `Remote` on
+                      // 2026-08-28 and the menus were not, so one press said one word and
+                      // the other said another for the same box. Robert's reasoning for
+                      // the word: mid-turn it is a handoff anyway, so one covers both.
+                      label: 'Remote…',
+                      hint: 'run it on another machine',
                       run: () =>
                         setHandoff({
                           ids: s.lane
