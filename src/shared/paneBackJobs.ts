@@ -125,6 +125,53 @@ const HOUSEKEEPING = new Set([
 const PREFIX = new Set(['eval', 'env', 'exec', 'command', 'builtin', 'nohup', 'time', 'nice', 'sudo'])
 
 /**
+ * Shell grammar, which is never the name of anything.
+ *
+ * `eval` is a PREFIX, so the word after it is taken as the job - and when the thing being
+ * evaluated is a loop rather than a command, that word is the loop. Measured live
+ * 2026-08-29 against a real background poller in a pane on this desk, the card read
+ * `'for`: the quote survived the strip and the loop word was in no list. Both halves
+ * are fixed here - the quote comes off with the braces, and a keyword is stepped OVER
+ * rather than owning its segment the way a housekeeping word does, because the job is
+ * further along the same line.
+ */
+/**
+ * A keyword that HEADS a control structure, and so owns the rest of its line.
+ *
+ * `for i in $(seq 1 120)` names a counter and a range; there is no job anywhere in it, and
+ * stepping over the keyword answers `i`, which is what this printed before the split.
+ */
+const KEYWORD_HEADS = new Set([
+  'for',
+  'while',
+  'until',
+  'if',
+  'case',
+  'select',
+  'function'
+])
+
+/**
+ * A keyword that is only punctuation between the header and the work.
+ *
+ * `do bash <script>` is the job with a marker in front of it, so this half is stepped over
+ * the way a PREFIX word is.
+ */
+const KEYWORD_MARKS = new Set([
+  'do',
+  'done',
+  'then',
+  'else',
+  'elif',
+  'fi',
+  'esac',
+  'in',
+  'return',
+  'break',
+  'continue'
+])
+
+/**
  * Runtimes whose own name says nothing about the work.
  *
  * `node /Users/.../next dev -p 3009` printed as `node` is the same non-answer as printing
@@ -164,7 +211,10 @@ export function jobLabel(rows: JobRow[], shell: JobRow): string {
   const at = cmd.search(/(?:^|\s)(?:-c|\/c|\/k|-Command|-EncodedCommand)(?:\s|$)/i)
   if (at >= 0) {
     const script = cmd.slice(at).replace(/^\s*\S+\s*/, '')
-    for (const seg of script.split(/&&|\|\||;/)) {
+    // A newline separates statements exactly as `;` does - and `ps` prints one as the four
+    // characters `\012`, which is the shape this reading actually arrives in. An `eval` of a shell
+    // script is routinely several lines - without this the whole body is one segment.
+    for (const seg of script.split(/&&|\|\||;|\n|\\012/)) {
       // `env FOO=1 cmd` and a bare assignment are the two shapes that lead with something
       // that is not the program.
       // Walk the segment's words rather than taking only the first: a PREFIX word is
@@ -174,7 +224,7 @@ export function jobLabel(rows: JobRow[], shell: JobRow): string {
       const words = seg
         .trim()
         .split(/\s+/)
-        .map((w) => w.replace(/^[\\{}(]+/, ''))
+        .map((w) => w.replace(/^[\\{}('"]+/, '').replace(/['"]+$/, ''))
         // A redirection is not a program. `} >/dev/null 2>&1` is a whole segment of the
         // measured prelude and `programName('>/dev/null')` is the word `null` - which is
         // what a live card actually printed before this filter existed.
@@ -197,6 +247,11 @@ export function jobLabel(rows: JobRow[], shell: JobRow): string {
         if (SHELLS.has(low) || HOUSEKEEPING.has(low)) break
         // A prefix word is in front of the job. Keep reading the same segment.
         if (PREFIX.has(low)) continue
+        // A keyword heading a control structure owns its line - a loop header names a
+        // counter and a range, never a program.
+        if (KEYWORD_HEADS.has(low)) break
+        // A marker is punctuation between the header and the work, like a PREFIX word.
+        if (KEYWORD_MARKS.has(low)) continue
         hit = name
         break
       }

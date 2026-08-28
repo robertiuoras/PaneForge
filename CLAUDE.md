@@ -861,6 +861,12 @@ reading, so their `state` moving from `needsYou` to `working` changes no decisio
   Bash call is a shell subtree too, and this repo fires several per prompt - measured at
   00:00 and 00:02 against the real one's 39:10. A shell subtree is never walked INTO, so a
   `npm run dev` that spawned its own sub-shell is one job and not two.
+- **Shell grammar is not a name, and the two halves of it are read differently.** A keyword
+  that HEADS a control structure owns its line (`for i in $(seq 1 120)` names a counter and a
+  range, and stepping over it answers `i`); a marker between the header and the work (`do`,
+  `then`) is stepped over like a PREFIX word. `ps` prints a newline as the four characters
+  `\012`, so that is what a multi-line `eval` is split on - without it the whole body is one
+  segment. Measured live 2026-08-29 against a real poller: `'for` -> `i` -> `run.sh`.
 - **The name comes off the `-c` string, first segment that is not housekeeping.** The leaf
   is regularly a runtime: `npm run dev` is `node .../next dev` three processes down, which
   prints as `node`. Taking the LAST segment reads correctly against the measured prelude
