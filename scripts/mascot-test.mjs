@@ -450,7 +450,16 @@ const desk = [
   // front of it, and a "keep it open" that expires in a minute is the same question again
   // sixty seconds later, for ever - which is what gets a feature switched off.
   check('the count is long enough to read and reach', CLOSE_COUNTDOWN_MS >= 10_000, CLOSE_COUNTDOWN_MS)
-  check('and keeping a pane holds for an hour', KEEP_MINUTES >= 30, KEEP_MINUTES)
+  // A keep is measured against the clock it silences: comfortably longer than
+  // `IDLE_CLOSE_MINUTES` (5 - written out here because this file loads its subject through
+  // esbuild and cannot import a second shared module), and short enough that the card is
+  // still a clock somebody can act on. An hour beside a five-minute deadline drew
+  // `closes 60m` on a pane whose real deadline was five.
+  check(
+    'and keeping a pane holds well past the idle clock, without becoming an afternoon',
+    KEEP_MINUTES >= 10 && KEEP_MINUTES <= 15,
+    KEEP_MINUTES
+  )
 
   // The other thing the ladder does by itself, and the one that had no countdown at all:
   // a pane MOVED to the other machine. `runHandoffs` reported into a console nobody has

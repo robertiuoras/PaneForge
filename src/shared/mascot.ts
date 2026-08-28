@@ -663,9 +663,15 @@ export const CLOSE_COUNTDOWN_MS = 15_000
  *
  * The sweeps run every minute, so without this the answer to "keep it" is the same
  * question sixty seconds later, for ever - which is the exact behaviour that gets a
- * feature switched off. An hour, and the clock starts again from there.
+ * feature switched off.
+ *
+ * Ten minutes, twice `IDLE_CLOSE_MINUTES`. It was an hour, and an hour is the wrong
+ * shape beside a five-minute idle clock: the card then reads `closes 60m` for a pane
+ * whose real deadline is five, which is not a clock anybody can act on - Robert,
+ * 2026-08-28, "why does it show closes 60m ... should be like max 10min". A keep is
+ * "not now", not "leave it until teatime"; the clock starts again from there.
  */
-export const KEEP_MINUTES = 60
+export const KEEP_MINUTES = 10
 
 /**
  * The countdown, in words. `names` are already `paneWord` strings.
