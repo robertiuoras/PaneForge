@@ -374,7 +374,23 @@ ok('a nameless path is not a match', projectNameOf('/') === '')
 const COLD = (pressure) => ({ totalMb: 16 * GB, pressure, localPanes: 0 })
 
 ok('a healthy machine gets its whole desk back', restorePlan(6, COLD('normal')).fits === 6)
-ok('and is told nothing, because there is nothing to say', restorePlan(6, COLD('normal')).note === '')
+ok(
+  'and is told what a desk that comes back quiet is doing',
+  /asleep/.test(restorePlan(6, COLD('normal')).note),
+  restorePlan(6, COLD('normal')).note
+)
+
+// The number the restore lag was ever about. Cards are cheap and agents are not: measured
+// on this desk 2026-08-28, seven panes were back on screen in 1.3-2.6s and reached a
+// composer in 4.1-14.3s, against 1.4s for one `claude` alone. So the desk comes back whole
+// and ONE agent starts. The controls are the two ends: never zero (an app that comes back
+// running nothing reads as one that failed to start), and never more than were saved.
+ok('one agent starts, however many cards come back', restorePlan(6, COLD('normal')).awake === 1)
+ok('and the pressure levels do not start more than that', restorePlan(6, COLD('warn')).awake === 1 && restorePlan(6, COLD('critical')).awake === 1)
+ok('never zero awake while there is a pane to offer', restorePlan(4, COLD('critical')).awake >= 1)
+ok('an empty desk wakes nothing', restorePlan(0, COLD('normal')).awake === 0)
+ok('one saved pane is one awake pane', restorePlan(1, COLD('critical')).awake === 1)
+ok('waking is never more than was offered', restorePlan(1, COLD('normal')).awake <= restorePlan(1, COLD('normal')).fits)
 ok('at warn the desk comes back two at a time', restorePlan(6, COLD('warn')).fits === 2)
 ok('at critical, one', restorePlan(6, COLD('critical')).fits === 1)
 ok(

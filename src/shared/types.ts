@@ -409,6 +409,16 @@ export interface StartSessionRequest {
   lastRunMs?: number
   engaged?: boolean
   wasWorking?: boolean
+  /**
+   * Bring the pane back with its card, its screen and its conversation - and WITHOUT its
+   * agent. A restore is the one moment the app starts N agent CLIs in one tick (~190 MB
+   * and real CPU each; measured on this desk 2026-08-28, eight panes reached a composer
+   * in 4.1-14.3s against 1.4s for one alone), and most of those panes are not the one
+   * being looked at. So the desk comes back whole and only the panes that need to be
+   * running are running; a press on the `asleep` chip wakes the rest, in the same
+   * conversation, with the same screen. See `shared/sleep.ts`. Only the desk sets it.
+   */
+  asleep?: boolean
 }
 
 /** One saved project inside a workspace. */
@@ -1750,6 +1760,8 @@ export interface RestoreOffer {
    * is what "six panes came back and I cannot type" was. A preselect, never a cap.
    */
   fits: number
+  /** How many of the ticked panes start their AGENT. The rest come back asleep. */
+  awake: number
   /** Why fewer than all are ticked. Empty when everything fits. */
   memoryNote: string
 }

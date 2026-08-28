@@ -3306,7 +3306,22 @@ function restoreStaggerMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-function restorePanes(specs: StartSessionRequest[]): void {
+/**
+ * How many of a restored desk start their agent. See `RestorePlan.awake`.
+ *
+ * Read here rather than trusted from the dialog, because two of the four callers below
+ * never open one (`PANEFORGE_RESTORE=always`, `restoreAfterRestart: 'always'`) and a
+ * silent path is exactly where a desk of eight agents comes back all at once.
+ */
+function restoreAwake(saved: number): number {
+  return restorePlan(saved, {
+    totalMb: totalMb(),
+    pressure: readPressure(),
+    localPanes: manager.list().length
+  }).awake
+}
+
+function restorePanes(specs: StartSessionRequest[], awake = restoreAwake(specs.length)): void {
   // One restore per launch. A second answer from a dialog that somehow sent twice
   // would otherwise open every pane again beside the first set.
   if (restoredThisRun) return
@@ -3316,6 +3331,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
   // Started in order whatever the gap is: a pane's number is its place in this list, so
   // starting one out of turn renumbers the desk and every Ctrl+N with it.
   specs.slice(0, MAX_RESTORE).forEach((req, i) => {
+    // Asleep unless this is one of the first `awake` panes, or the pane was mid-turn when
+    // the app went down - that one has an answer still owed to it, and `start()` is where
+    // the turn is continued from (`continueAfterRestore`). A sleeping pane has its card,
+    // its screen and its conversation and costs nothing; a press wakes it.
+    const asleep = i >= awake && !req.wasWorking
     const open = (): void => {
       try {
         // Reopen the conversation this pane was in BY NAME, or open nothing.
@@ -3339,7 +3359,8 @@ function restorePanes(specs: StartSessionRequest[]): void {
           ...req,
           resume: named,
           resumeId: named ? req.resumeId : undefined,
-          prompt: undefined
+          prompt: undefined,
+          asleep
         })
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
@@ -3457,6 +3478,7 @@ function offerRestore(): void {
     at: desk.at,
     clean: desk.clean,
     fits: plan.fits,
+    awake: plan.awake,
     memoryNote: plan.note
   }
   // Until the question is answered the desk stands, even though the app currently
@@ -3492,7 +3514,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
     }))
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
-  restorePanes(specs)
+  restorePanes(specs, pending.awake)
 })
 
 /**

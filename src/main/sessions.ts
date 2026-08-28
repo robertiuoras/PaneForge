@@ -178,6 +178,36 @@ const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, pr
 const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
 /**
+ * The pty of a pane that never started one - a desk restored asleep.
+ *
+ * `sleep()` leaves a REAPED pty behind and every consumer already copes with that, so the
+ * cheapest honest way to open a pane with no process is to hand it something of the same
+ * shape. `pid: 0` is the load-bearing field: every path that would signal a pane already
+ * refuses a pid that is not `> 0` (`roots()`, the Windows `taskkill` batch, and
+ * `killPaneStrays`, whose POSIX branch would otherwise be `process.kill(-1)` - every
+ * process this user owns). Nothing here may ever be a number that names a process.
+ */
+function deadPty(): pty.IPty {
+  const off = { dispose: (): void => {} }
+  return {
+    pid: 0,
+    cols: START_COLS,
+    rows: START_ROWS,
+    process: '',
+    handleFlowControl: false,
+    onData: () => off,
+    onExit: () => off,
+    on: () => {},
+    resize: () => {},
+    clear: () => {},
+    write: () => {},
+    kill: () => {},
+    pause: () => {},
+    resume: () => {}
+  } as unknown as pty.IPty
+}
+
+/**
  * What a restored pane replays, or '' when there is nothing honest to put back.
  *
  * The bytes are already on disk - `history.ts` has appended every pane's raw output to
@@ -569,9 +599,19 @@ export class SessionManager extends EventEmitter {
       cols: START_COLS,
       rows: START_ROWS
     }
+    // A desk brought back asleep: the card, the screen and the conversation, with no
+    // agent behind them. `status` goes to `exited` alongside `asleep` for the same reason
+    // `sleep()` does it - every guard in this app that asks whether a pane has a live
+    // process reads that word, and this pane genuinely has none.
+    const born = req.asleep === true
+    if (born) {
+      meta.status = 'exited'
+      meta.asleep = Date.now()
+      meta.engaged = false
+    }
     const live: Live = {
       meta,
-      proc: this.spawn(req, agent, START_COLS, START_ROWS),
+      proc: born ? deadPty() : this.spawn(req, agent, START_COLS, START_ROWS),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
       cols: START_COLS,
@@ -610,6 +650,21 @@ export class SessionManager extends EventEmitter {
       if (back.cols > 0) meta.replayCols = back.cols
     }
     this.sessions.set(id, live)
+    if (born) {
+      // The same seam a slept pane wears, under the screen it came back with, so the
+      // reader is never left wondering why a full pane is printing nothing.
+      live.buffer.push(SLEEP_MARK)
+      // Opened and closed in one breath: the History row is what makes this pane
+      // findable, and a row left OPEN would say a conversation is running when the whole
+      // point is that none is. `wake()` calls `recordStart` again on the same id.
+      recordStart(meta)
+      recordEnd(id, req.resume ? req.resumeId : undefined)
+      meta.gist = gistFor(id)
+      noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
+      req.wasWorking = false
+      this.emitSessions()
+      return meta
+    }
     this.attach(live)
     recordStart(meta)
     // A reopened pane keeps its id, so History already knows what it was asked to do -
