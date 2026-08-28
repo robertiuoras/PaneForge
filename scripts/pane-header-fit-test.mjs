@@ -62,7 +62,7 @@ function page(width, undo = '') {
     <div class="pane" style="width:${width}px">
       <div class="pane-title">
         <span class="dot idle"></span>
-        <span class="agent-logo" style="width:14px;height:14px;display:inline-block"></span>
+        <span class="agent-logo"><svg viewBox="0 0 14 14" width="14" height="14"></svg></span>
         <span class="pt-name">manic-s-auction-house</span>
         <button class="git-badge pressable">master</button>
         <span class="elapsed pt-open">20h 44m</span>
@@ -102,7 +102,7 @@ const CASES = [
     width: 198,
     control: true,
     undo: `@container pane (max-width: 380px) { .pane-title .agent-pick { display: flex } }
-           @container pane (max-width: 300px) { .pane-title .agent-logo { display: inline-block } }
+           @container pane (max-width: 300px) { .pane-title .agent-logo { display: inline-flex } }
            .pt-name { flex: none; overflow: visible; text-overflow: clip; min-width: auto }`
   }
 ]

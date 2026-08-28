@@ -1503,6 +1503,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:devicewatch` | noticing a copied cookie, and the negatives that decide whether the mark is read |
 | `npm run test:projects` | which folders are projects and which are copies of one |
 | `npm run test:cardfit` | that a session card can still be read at 190px |
+| `npm run test:headerfit` | that a pane's header can still be USED at 198px - the close button on the pane, the ⋯ on the line, a name that is still a name - with the old header kept as the control that must NOT fit |
 | `npm run test:confirmfit` | that the yes/no box can still be answered |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn (no window) |
