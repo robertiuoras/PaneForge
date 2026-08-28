@@ -51,8 +51,8 @@ git(root, 'init', '-q', '--bare', '-b', 'master', origin)
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
 writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
-// `release: "none"` keeps this test about the PUSH gate, not about cutting a version.
-writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a'], release: 'none' }, null, 2) + '\n')
+// `release: "merge"` is taskdriver.ai’s own setting: lanes merge and push, no version cut.
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a'], release: 'merge' }, null, 2) + '\n')
 installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')
@@ -91,13 +91,15 @@ const lane = (...args) => {
   }
 }
 
-lane('ready', '--session', 'worker', '--lane', 'a')
-
 // ------------------------------------------------------------------ behind, not broken
 
-const behind = Number(git(repo, 'rev-list', '--count', 'master..origin/master'))
+// Read BEFORE `ready`, which ships as a side effect - after it the trunk is level and
+// the state this test is about no longer exists to assert.
+git(repo, 'fetch', '-q', 'origin', 'master')
+const behind = Number(git(repo, 'rev-list', '--count', 'master..FETCH_HEAD'))
 ok('the trunk really is behind origin before the release', behind === 1, `behind=${behind}`)
 
+lane('ready', '--session', 'worker', '--lane', 'a')
 const shipped = lane('autoship')
 ok(
   'the release does not refuse over a trunk it can simply fast-forward',
@@ -124,6 +126,7 @@ ok(
 
 // A commit on each side of the same trunk: no fast-forward exists, so this is the case
 // that needs a person and must keep refusing rather than inventing a merge under a lock.
+git(other, 'pull', '-q', '--ff-only', 'origin', 'master')
 writeFileSync(join(other, 'second-from-pc.js'), 'export const pc2 = 1\n')
 git(other, 'add', '-A')
 git(other, 'commit', '-qm', 'feat: second on the other machine')
