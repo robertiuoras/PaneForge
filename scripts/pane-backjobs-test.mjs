@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-panebackjobs-test')
+
 rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
@@ -34,7 +35,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { JOB_MIN_SECONDS, isCommandShell, jobWords, paneBackJobs } = require(out)
+const { JOB_MIN_SECONDS, isCommandShell, jobLabel, jobWords, paneBackJobs } = require(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -213,4 +214,39 @@ if (process.platform !== 'win32') {
 }
 
 rmSync(work, { recursive: true, force: true })
+// The shell prelude Claude Code writes on this desk, verbatim off the live process table
+// 2026-08-28. It cost a real card the words `running builtin`: `\builtin` was in neither
+// word list and won, and `eval` was housekeeping, which threw away the one segment naming
+// the job. Both halves are asserted, and the prelude's own words are the controls - a rule
+// that answers `snapshot-zsh-...sh` or `setopt` is as wrong as one that answers `builtin`.
+{
+  const prelude =
+    "/bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-1787917632728-up6ytj.sh 2>/dev/null || true" +
+    " && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true" +
+    " && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true" +
+    " && eval /private/tmp/claude-501/scratchpad/wait-site.sh < /dev/null" +
+    " && pwd -P >| /tmp/claude-6c72-cwd"
+  const shell = { pid: 1792, ppid: 34498, elapsed: 900, cmd: prelude }
+  const label = jobLabel([shell], shell)
+  ok(label === 'wait-site.sh', `the real prelude names the script, not the prelude (got "${label}")`)
+  for (const wrong of ['builtin', 'eval', 'setopt', 'source', 'true', 'unalias'])
+    ok(label !== wrong, `and never "${wrong}"`)
+
+  // `source <snapshot>` must still own its whole segment: skipping the WORD rather than
+  // the segment answers the snapshot's filename, which names nothing anybody ran.
+  const onlyPrelude = {
+    pid: 2,
+    ppid: 1,
+    elapsed: 900,
+    cmd: "/bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-9.sh 2>/dev/null || true"
+  }
+  const bare = jobLabel([onlyPrelude], onlyPrelude)
+  ok(!/snapshot/.test(bare), `a prelude with no command names no snapshot file (got "${bare}")`)
+
+  // A prefix word in front of a real command, one level less nested than the live shape.
+  const envRun = { pid: 3, ppid: 1, elapsed: 900, cmd: '/bin/sh -c env FOO=1 nohup ./deploy.sh' }
+  ok(jobLabel([envRun], envRun) === 'deploy.sh', 'env/nohup are in front of the job, not instead of it')
+}
+
+
 console.log(`pane-backjobs: ${checks} checks passed`)

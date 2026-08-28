@@ -217,7 +217,9 @@
     "test:cwdgone": "node scripts/cwd-gone-test.mjs",
     "test:panetrust": "node scripts/pane-trust-test.mjs",
     "test:shrinkfirst": "node scripts/shrink-first-test.mjs",
-    "test:laneproof": "node scripts/lane-proof-test.mjs"
+    "test:laneproof": "node scripts/lane-proof-test.mjs",
+    "main-latency": "node scripts/main-latency.mjs",
+    "pane-frames": "node scripts/pane-frames.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

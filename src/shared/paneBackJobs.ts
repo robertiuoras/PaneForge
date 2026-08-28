@@ -86,7 +86,43 @@ export function isCommandShell(cmd: string | undefined): boolean {
  * The measured prelude is `source <snapshot> 2>/dev/null || true && <command>`; without
  * this list the answer is `source`.
  */
-const HOUSEKEEPING = new Set(['source', '.', 'true', ':', 'export', 'cd', 'set', 'setopt', 'unset', 'shopt', 'alias', 'eval'])
+const HOUSEKEEPING = new Set([
+  'source',
+  '.',
+  'true',
+  ':',
+  'export',
+  'cd',
+  'set',
+  'setopt',
+  'unset',
+  'unalias',
+  'shopt',
+  'alias'
+])
+
+/**
+ * Words that stand IN FRONT of the job rather than instead of it.
+ *
+ * These are the other half of HOUSEKEEPING and they must not be treated the same way. A
+ * housekeeping word owns its whole segment - `source <snapshot>` is followed by the
+ * snapshot path, and skipping the word instead of the segment answers
+ * `snapshot-zsh-<n>.sh`. A PREFIX word is followed by the real command, so skipping the
+ * segment throws away the one thing being looked for.
+ *
+ * Measured on this desk 2026-08-28, a live pane's card read `running builtin`. Claude
+ * Code's shell prelude here is
+ *
+ *     source <snapshot> 2>/dev/null || true
+ *       && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true
+ *       && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true
+ *       && eval <the actual script> < /dev/null
+ *       && pwd -P >| /tmp/claude-<n>-cwd
+ *
+ * so two defects compounded: `\builtin` was in neither set and won, and `eval` was
+ * housekeeping, which discarded the only segment naming the job.
+ */
+const PREFIX = new Set(['eval', 'env', 'exec', 'command', 'builtin', 'nohup', 'time', 'nice', 'sudo'])
 
 /**
  * Runtimes whose own name says nothing about the work.
@@ -131,14 +167,41 @@ export function jobLabel(rows: JobRow[], shell: JobRow): string {
     for (const seg of script.split(/&&|\|\||;/)) {
       // `env FOO=1 cmd` and a bare assignment are the two shapes that lead with something
       // that is not the program.
-      const word = seg
+      // Walk the segment's words rather than taking only the first: a PREFIX word is
+      // followed by the job, so stopping at the first word answers `eval`. A leading
+      // backslash is a shell asking for the builtin rather than a function of the same
+      // name (`\builtin`), and a brace is grouping, not a program.
+      const words = seg
         .trim()
         .split(/\s+/)
-        .find((w) => w && !w.startsWith('-') && !/^\d/.test(w) && /[A-Za-z]/.test(w) && !w.includes('='))
-      if (!word) continue
-      const name = programName(word)
-      if (!name || SHELLS.has(name.toLowerCase()) || HOUSEKEEPING.has(name.toLowerCase())) continue
-      return name
+        .map((w) => w.replace(/^[\\{}(]+/, ''))
+        // A redirection is not a program. `} >/dev/null 2>&1` is a whole segment of the
+        // measured prelude and `programName('>/dev/null')` is the word `null` - which is
+        // what a live card actually printed before this filter existed.
+        .filter(
+          (w) =>
+            w &&
+            !w.startsWith('-') &&
+            !/^\d/.test(w) &&
+            /[A-Za-z]/.test(w) &&
+            !w.includes('=') &&
+            !/[<>|&]/.test(w)
+        )
+      let hit = ''
+      for (const word of words) {
+        const name = programName(word)
+        if (!name) continue
+        const low = name.toLowerCase()
+        // A shell or a housekeeping word owns the rest of its segment: whatever follows
+        // is that word's argument, not the job.
+        if (SHELLS.has(low) || HOUSEKEEPING.has(low)) break
+        // A prefix word is in front of the job. Keep reading the same segment.
+        if (PREFIX.has(low)) continue
+        hit = name
+        break
+      }
+      if (!hit) continue
+      return hit
     }
   }
   const byParent = new Map<number, JobRow[]>()
