@@ -26,6 +26,7 @@ import {
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import type { InputRow } from '../../../shared/cursorMove'
 import { cellAt, keysAlongLine, keysForClick, keysForRows, keysToPoint } from '../../../shared/cursorMove'
+import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
@@ -1127,6 +1128,12 @@ function TerminalPane({
    * saying it is starting costs nothing and turns dead into pending.
    */
   const [blank, setBlank] = useState(true)
+  // Read by the replay queue when it picks the next pane, so a pane switched to while it
+  // is still waiting jumps the rest of the queue. See `replayQueue.ts`.
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   // How many buffer lines this pane spans (scrollback + screen). It is the denominator that
   // turns a marker's absolute line into a height on the rail, so it has to follow the buffer.
   const [total, setTotal] = useState(1)
@@ -2451,7 +2458,14 @@ function TerminalPane({
           // Within a column of the far edge counts as FULL, deliberately: a boundary
           // counted as a separator that was not one deletes a character nobody
           // highlighted, and one counted the other way only leaves a character behind.
-          rows.push({ start, end, full: end >= comp.width - start - 1 })
+          //
+          // `end` and `comp.width` are both COLUMNS, so the indent may not be subtracted
+          // from the edge. It was until 2026-08-28, which moved the threshold in by the
+          // composer's own indent - two columns for Claude Code, more for a framed box -
+          // so every row that stopped one or two columns short of the edge was called
+          // full, its wrap counted as worth nothing, and one character per crossed row
+          // survived the delete. That is "it doesn't delete all of it".
+          rows.push({ start, end, full: end >= comp.width - 1 })
         }
         return { top: comp.top, rows }
       }
@@ -2763,14 +2777,31 @@ function TerminalPane({
 
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
-    api.getBuffer(sessionId).then((b) => {
-      if (!b) return
+    // The replay is queued rather than started: every pane on a restored desk mounts in
+    // one tick, and eight 400 kB parses at once is the whole of "after a restart it is
+    // super laggy". See `replayQueue.ts`.
+    let gone = false
+    queueReplay({
+      id: sessionId,
+      priority: () => (activeRef.current ? 0 : visibleRef.current ? 1 : 2),
+      run: () =>
+        new Promise<void>((settle) => {
+          if (gone) return settle()
+          void api.getBuffer(sessionId).then((b) => {
+            if (gone || !b) return settle()
+            replayBuffer(b, settle)
+          })
+        })
+    })
+
+    const replayBuffer = (b: string, settle: () => void): void => {
       sawOutput = true
       // There is history on this pane, so it was drawn somewhere else first. See
       // `needRestoreFix`.
       needRestoreFix.current = true
       armRestoreFix()
       const done = (): void => {
+        settle()
         // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
         t.scrollToBottom()
         // Held until here rather than dropped before the write: a staged replay resizes
@@ -2807,7 +2838,7 @@ function TerminalPane({
         if (split.after) t.write(keep(split.after), done)
         else done()
       })
-    })
+    }
 
     /**
      * Whether the agent's own footer still says it is running. The main process cannot
@@ -3338,6 +3369,9 @@ function TerminalPane({
       copy.current = null
       // A closed pane cannot be typed into, and leaving its id in the group would send
       // every keystroke to a session that is gone.
+      // A pane that goes away before its replay is picked must not hold the queue up.
+      gone = true
+      dropReplay(sessionId)
       syncedPanes.delete(sessionId)
       paneTerms.delete(sessionId)
       paneInsert.delete(sessionId)
