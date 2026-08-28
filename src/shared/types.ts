@@ -419,6 +419,36 @@ export interface StartSessionRequest {
    * conversation, with the same screen. See `shared/sleep.ts`. Only the desk sets it.
    */
   asleep?: boolean
+  /**
+   * Close this pane once the work it was opened for is finished.
+   *
+   * For a pane nobody is sitting in front of: `pf open <cwd> --prompt "..."` is how a
+   * script or another agent hands a job to a fresh pane, and until now every one of those
+   * panes sat on the desk for ever after it had answered. Robert, 2026-08-28, of a pane
+   * that had finished hours earlier and was still there.
+   *
+   * It fires on the turn ENDING and then asks again after a settle, because a turn ending
+   * is not the same as the work being over: a pane holding a question, mid-turn again, or
+   * with a background job still running is left exactly where it is. Only a launch that
+   * asked for this is ever closed - a pane somebody opened by hand is never on this path.
+   */
+  closeWhenDone?: boolean
+  /**
+   * The pane to tell when that happens - a session id, usually the opener's own, which it
+   * reads out of `PF_PANE` in its environment.
+   *
+   * The line is QUEUED as a prompt rather than printed into the pane's screen: the opener
+   * is normally an agent, and an agent cannot read its own terminal. `queuePrompt` waits
+   * for an idle composer and confirms the return took, so a busy opener is told when its
+   * own turn ends rather than typed over.
+   */
+  reportTo?: string
+  /**
+   * This pane's own session id, put into the agent's environment as `PF_PANE`. Set by the
+   * main process at spawn time and never by a caller - a request that carried one would be
+   * naming somebody else's pane.
+   */
+  paneId?: string
 }
 
 /** One saved project inside a workspace. */

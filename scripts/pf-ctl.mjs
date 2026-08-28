@@ -10,6 +10,7 @@
  *
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P] [--model M] [--agent A]
+ *                                        [--close-when-done] [--report-to <pane id>]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
  *
@@ -133,8 +134,17 @@ if (cmd === 'list') {
   const model = flag(rest, '--model')
   const agent = flag(rest, '--agent')
   const cwd = rest[0]
-  if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
-  const s = await call('sessions:start', [{ cwd, title, prompt, model, agent }])
+  // A pane opened by automation with a job to do, closing itself when that job is over -
+  // and telling whoever asked for it. `--report-to` defaults to `$PF_PANE`, which every
+  // pane now carries, so an agent opening a pane from inside another one is told without
+  // having to know its own id. `--close-when-done` is required for either: a pane that
+  // only reports is still a pane nobody closes.
+  const closeWhenDone = rest.includes('--close-when-done')
+  const reportTo = flag(rest, '--report-to') ?? (closeWhenDone ? process.env.PF_PANE : undefined)
+  if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P] [--close-when-done] [--report-to ID]')
+  const s = await call('sessions:start', [
+    { cwd, title, prompt, model, agent, closeWhenDone, reportTo }
+  ])
   console.log(`opened ${s?.id ?? '?'} in ${cwd}`)
 } else if (cmd === 'close') {
   const ref = rest[0]

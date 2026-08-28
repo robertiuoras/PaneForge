@@ -178,6 +178,18 @@ const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, pr
 const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
 /**
+ * How long a `--close-when-done` pane is watched after its turn ends before it closes.
+ *
+ * A turn ending is the weakest of the readings this decision has - an agent that asks a
+ * question, starts another turn or leaves a build running goes quiet for a beat first - so
+ * the settle is generous rather than tight. Twenty seconds; `PF_FINISH_SETTLE_MS` for a
+ * test that cannot wait.
+ */
+const FINISH_SETTLE_MS = Number(process.env.PF_FINISH_SETTLE_MS) > 0
+  ? Number(process.env.PF_FINISH_SETTLE_MS)
+  : 20_000
+
+/**
  * The pty of a pane that never started one - a desk restored asleep.
  *
  * `sleep()` leaves a REAPED pty behind and every consumer already copes with that, so the
@@ -268,6 +280,8 @@ export function setSilenceAlert(minutes: number | undefined): void {
 
 interface Live {
   meta: Session
+  /** The wait between a turn ending and a `--close-when-done` pane being asked again. */
+  finishTimer?: NodeJS.Timeout
   proc: pty.IPty
   buffer: OutBuffer
   req: StartSessionRequest
@@ -611,7 +625,7 @@ export class SessionManager extends EventEmitter {
     }
     const live: Live = {
       meta,
-      proc: born ? deadPty() : this.spawn(req, agent, START_COLS, START_ROWS),
+      proc: born ? deadPty() : this.spawn({ ...req, paneId: id }, agent, START_COLS, START_ROWS),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
       cols: START_COLS,
@@ -752,7 +766,7 @@ export class SessionManager extends EventEmitter {
       live.meta.agent,
       live.req.resume ? live.req.resumeId : undefined
     )
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.proc = this.spawn({ ...live.req, paneId: id }, live.meta.agent, live.cols, live.rows)
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
     live.meta.job = undefined
@@ -852,7 +866,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live || !live.meta.asleep) return null
     noteSession(id, live.meta.cwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.proc = this.spawn({ ...live.req, paneId: id }, live.meta.agent, live.cols, live.rows)
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.status = 'starting'
@@ -1190,7 +1204,44 @@ export class SessionManager extends EventEmitter {
     live.meta.stalledSince = undefined
     // The pane just went quiet, which is the moment a deferred ask has been waiting for.
     this.resumePendingAutoClear(live.meta.id)
+    this.finishIfAsked(live)
     return true
+  }
+
+  /**
+   * A pane opened by automation, whose work is done, closing itself - and saying so.
+   *
+   * Only ever a pane whose LAUNCH asked for it (`closeWhenDone`), which is `pf open
+   * --close-when-done` and nothing else; a pane somebody opened by hand is never on this
+   * path. A turn ending is not the same as the work being over, so the decision is taken
+   * again after `FINISH_SETTLE_MS` against a fresh reading, and every refusal is something
+   * that would be LOST: another turn started, a question on screen (`shared/choices.ts`),
+   * a shell command or an agent's background job still running (`shared/paneJob.ts`,
+   * `shared/paneBackJobs.ts` - the same two readings `reclaim.ts` refuses on, because one
+   * of them has been wrong before).
+   *
+   * The report is QUEUED into the opener rather than printed onto its screen: the opener is
+   * normally an agent, and an agent cannot read its own terminal.
+   */
+  private finishIfAsked(live: Live): void {
+    if (!live.req.closeWhenDone || live.finishTimer) return
+    const id = live.meta.id
+    live.finishTimer = setTimeout(() => {
+      live.finishTimer = undefined
+      const now = this.sessions.get(id)
+      if (!now || now !== live) return
+      const m = now.meta
+      if (m.runSince || m.ask || m.job || m.backJob || now.busyUntil > Date.now()) return
+      const to = live.req.reportTo
+      if (to && this.sessions.has(to)) {
+        this.queuePrompt(
+          to,
+          `pf: the pane you opened in ${m.cwd}${m.title ? ` ("${m.title}")` : ''} has finished and closed itself.`
+        )
+      }
+      console.info(`pf: closing ${id} - opened with --close-when-done and its work is over`)
+      this.kill(id)
+    }, FINISH_SETTLE_MS)
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -2038,7 +2089,16 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: { ...scrubForeignKeys(agentEnv(), spec), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
+      env: {
+        ...scrubForeignKeys(agentEnv(), spec),
+        ...resolveEnv(spec, agentKeys()),
+        // Which pane this is, so anything running INSIDE it can name itself to the app -
+        // `pf open ... --report-to $PF_PANE` is the whole reason it exists. A pane had no
+        // way to identify itself before this, so a script it started could open a second
+        // pane and had nothing to tell that pane to report back to.
+        ...(req.paneId ? { PF_PANE: req.paneId } : {}),
+        ...(req.laneEnv ?? {})
+      }
     })
   }
 
