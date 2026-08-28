@@ -692,7 +692,12 @@ export default function App(): JSX.Element {
     // somebody wants back is a conversation. Same words the mascot uses everywhere else.
     const place = describePlace({ cwd: s.cwd, lane: s.lane })
     return paneWord({
-      name: projectNameOf(s.cwd) || s.title,
+      // The NAME on the card in the sidebar, ahead of the folder the pane happens to sit
+      // in. A pane renamed `Sonia` because that is whose work it is was still announced as
+      // `clients-a` by every countdown, which is the one sentence where the pane has to be
+      // recognised in a hurry. `s.title` IS the project name until somebody renames it, so
+      // this changes nothing on a pane nobody has named.
+      name: s.title || projectNameOf(s.cwd),
       pane: i + 1,
       // Only a lane earns the extra words: `place.ts`'s rule is that a trunk checkout is
       // what a bare project name already means.
@@ -5223,19 +5228,11 @@ export default function App(): JSX.Element {
                     Bring here
                   </button>
                 )}
-                <button
-                  className="icon"
-                  title="Copy this pane's complete terminal output"
-                  aria-label={`Copy ${s.title} output`}
-                  onClick={() => copyPaneOutput(s)}
-                >
-                  Copy
-                </button>
                 {/* Clears the agent's context and keeps the run. Where the mic used to
                     be, which is why the mic moved down to the prompt it dictates into:
                     the two got clicked for each other up here. */}
                 <button
-                  className="icon danger"
+                  className="icon danger pt-clear"
                   title={`Clear ${s.title}: runs /clear in this pane. The run keeps going; its memory of this conversation does not.`}
                   aria-label="Clear this session"
                   onClick={(e) => {
@@ -5250,7 +5247,7 @@ export default function App(): JSX.Element {
                     a window with no way back out of it except a shortcut. */}
                 {grid && (
                   <button
-                    className={'icon' + (zoom === s.id ? ' on' : '')}
+                    className={'icon pt-zoom' + (zoom === s.id ? ' on' : '')}
                     title={keyLabel(
                       zoom === s.id
                         ? 'Back to the grid (Ctrl Shift Z)'
@@ -5266,7 +5263,7 @@ export default function App(): JSX.Element {
                   </button>
                 )}
                 <button
-                  className="icon"
+                  className="icon pt-restart"
                   title={keyLabel('Restart agent (Ctrl Shift R)')}
                   onClick={() => api.restartSession(s.id)}
                 >
@@ -5287,7 +5284,7 @@ export default function App(): JSX.Element {
                     you are not holding. Dropping them is what lets Close fit on screen. */}
                 {!s.remote && (
                   <button
-                    className="icon desk-only"
+                    className="icon desk-only pt-reveal"
                     title={
                       /* A lane is a worktree and its untracked files are swept with it,
                          so this opens the PROJECT. Dropping a file where the agent can
@@ -5306,12 +5303,18 @@ export default function App(): JSX.Element {
                     className="icon desk-only"
                     title="Open in editor"
                     onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
+                    data-pt="editor"
                   >
                     ✎
                   </button>
                 )}
-                <button className="icon" title={keyLabel('Close (Ctrl W)')} onClick={() => close(s.id)}>
-                  x
+                <button
+                  className="icon pt-close"
+                  title={keyLabel('Close (Ctrl W)')}
+                  aria-label={`Close ${s.title}`}
+                  onClick={() => close(s.id)}
+                >
+                  ×
                 </button>
               </span>
             </div>

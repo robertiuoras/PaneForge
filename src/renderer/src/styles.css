@@ -1292,9 +1292,13 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .version.accent .v-state { color: var(--accent); border-color: #8b9dff33; background: var(--accent-dim); }
 
 /* ---- panes ---- */
-.panes { position: relative; min-width: 0; height: 100vh; padding: 9px; }
-.panes.grid { display: grid; grid-auto-rows: 1fr; gap: 9px; }
-.panes:not(.grid) .pane { position: absolute; inset: 9px; }
+/* 6px, not 9. In grid the outer padding and the gutter are paid TWICE across the window
+   and once per row, and at four panes in a 678px column that was 27px of the width and
+   27px of the height spent on air - about one column and two rows of terminal per pane.
+   6px still separates two panes that both have a 1px border and a focus ring. */
+.panes { position: relative; min-width: 0; height: 100vh; padding: 6px; }
+.panes.grid { display: grid; grid-auto-rows: 1fr; gap: 6px; }
+.panes:not(.grid) .pane { position: absolute; inset: 6px; }
 .pane {
   display: flex;
   flex-direction: column;
@@ -1367,15 +1371,73 @@ body.sizing * { user-select: none !important; }
 .pane.synced.focused {
   box-shadow: 0 0 0 2px #d99a2b, 0 0 0 1px color-mix(in srgb, var(--agent) 22%, transparent);
 }
+/* Measured 2026-08-28 in a real window, four panes in a 960px window: this line was
+   40.9px tall and wanted 734px of layout in the 323.5px a grid pane gives it (dot 8,
+   logo 14, name 58, the memory chip 37, the git badge 106, the clock 53, the actions
+   402, plus seven 8px gaps) - so everything right of the name was clipped. The density
+   follows design-vault/linear.app.md, which is the same shape of problem: 24px controls,
+   4-5px gaps, hairlines rather than padding. Height is now driven by the tallest control
+   rather than by its own padding. */
 .pane-title {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 7px 6px 11px; color: var(--muted); font-size: 11px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 5px 3px 8px; color: var(--muted); font-size: 11px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(90deg, color-mix(in srgb, var(--agent) 12%, var(--surface-2)), var(--surface-2) 42%);
 }
 .pt-name { color: var(--text); white-space: nowrap; font-weight: 550; }
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
-.pt-actions { display: flex; gap: 1px; flex: none; align-items: center; }
+/* The row of controls on the right of the pane's header. 24px tall and 2px apart, off
+   linear.app.md's own toolbar (`--button-height: 24px`, `--button-gap: 4px`, 12px icons):
+   at 11px type these were 28px boxes with 7px of side padding each, which is 9 controls
+   worth of padding on a line that had none to give. */
+.pt-actions { display: flex; gap: 2px; flex: none; align-items: center; }
+.pt-actions .icon { padding: 0 5px; min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; }
+/* Close is the one control in this row that ends something, and it was a lowercase `x`
+   in the same grey as the six icons beside it - the same reading `.icon.danger` already
+   gives the clear button. Red at rest so it is found without hunting, a filled red on
+   hover so the press is unmistakable, and a `×` rather than an `x` because the letter
+   sits off the optical centre of a 24px box. Same two durations as everything else. */
+/* The ORDER of this row is Robert's, 2026-08-28, and it is set here rather than by moving
+   the JSX: find, then which agent runs here, then the three that act on the run (clear,
+   restart, fix), then the two that open a window somewhere else, then zoom, then where
+   this pane RUNS, and close last on its own. `order` on a flex row is the cheap half of
+   that; the JSX order (and so the tab order) still follows the file, which is the part
+   left to do. */
+.pt-actions .pt-find { order: 1 }
+.pt-actions .agent-pick { order: 2 }
+.pt-actions .pt-clear { order: 3 }
+.pt-actions .pt-restart { order: 4 }
+.pt-actions .icon.fix { order: 5 }
+.pt-actions .pt-reveal { order: 6 }
+.pt-actions [data-pt='editor'] { order: 7 }
+.pt-actions .pt-zoom { order: 8 }
+.pt-actions .pt-handoff { order: 9 }
+.pt-actions .pt-more { order: 10 }
+.pt-actions .pt-close { order: 11 }
+
+/* A pane is its own container, so a header in a 328px grid pane can drop what a 900px one
+   keeps. Measured 2026-08-28: that line wanted 888px of layout in 328px, so everything
+   right of the name was clipped - which is not "compact", it is a header with no readable
+   right-hand end. What goes first is what is repeated elsewhere or merely nice to know:
+   the folder path (the name says it), the memory chip (the sidebar totals it), the git
+   badge and the pane's own age. The run's own clock, the agent, and every control stay. */
+.pane { container-type: inline-size; container-name: pane }
+@container pane (max-width: 640px) {
+  .pane-title .pt-path { display: none }
+  .pane-title .chip.res { display: none }
+  .pane-title .pt-open { display: none }
+}
+@container pane (max-width: 520px) {
+  .pane-title .git-badge { display: none }
+  .pane-title .pt-handoff { display: none }
+}
+
+.pt-actions .icon.pt-close {
+  color: var(--danger); opacity: 0.8; font-size: 15px;
+}
+.pt-actions .icon.pt-close:hover {
+  opacity: 1; color: var(--danger-on); background: var(--danger);
+}
 /* The turn clock on the pane's own border. `flex: none` so it is the path that gets
    squeezed in a narrow pane, never the digits - a clock ellipsised to "1m…" is worse
    than no clock. */
