@@ -79,6 +79,7 @@ import {
   startMode,
   titleSuffix
 } from './profile'
+import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
@@ -383,8 +384,18 @@ function createWindow(): void {
   // The size goes in the constructor, not a setBounds() after: sizing a window that has
   // never been shown makes Windows show and activate it, which measured as a focus steal
   // even with no maximize() left in the path.
-  pseudoMax = cfg.window.maximized && mode !== 'normal'
-  const area = pseudoMax ? workAreaFor(cfg) : null
+  // Two copies of the app on one desk take a half of the external screen each - the live
+  // app left, `npm run try` right - so a change can be looked at beside the thing it
+  // changed without anybody dragging windows. Nothing happens on the laptop's own screen,
+  // which is the common case: see shared/deskSnap.ts, where every rule is a refusal.
+  const snap = snapPlan(
+    screen.getAllDisplays().map((d) => ({ id: d.id, internal: d.internal, workArea: d.workArea })),
+    profileName()
+  )
+  if (snap) updateLog('window', `snapped ${snap.side} half of the external screen`)
+  // A snapped window is a placed window, so it must not also open filling a display.
+  pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap
+  const area = snap?.bounds ?? (pseudoMax ? workAreaFor(cfg) : null)
   win = new BrowserWindow({
     width: area?.width ?? cfg.window.width,
     height: area?.height ?? cfg.window.height,
@@ -420,7 +431,7 @@ function createWindow(): void {
     })
   }
 
-  if (cfg.window.maximized && !pseudoMax) win.maximize()
+  if (cfg.window.maximized && !pseudoMax && !snap) win.maximize()
   // Clicking it is permission to behave like a normal maximized window.
   if (pseudoMax)
     win.once('focus', () => {
