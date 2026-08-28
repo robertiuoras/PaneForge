@@ -1712,9 +1712,10 @@ export class SessionManager extends EventEmitter {
       const live = this.sessions.get(id)
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
-      // 'working' is not a refusal either - it WAITS (`expiryDecision`), because a clear
-      // typed into a running turn lands in Claude Code's queued-messages list and the two
-      // chunks after it are typed into the turn that never cleared.
+      // 'working' is neither a fire nor a refusal - it goes back on the pending queue
+      // below. (Refusing outright is what made a countdown everybody watched expire into
+      // nothing: measured 2026-08-26 in ~/.claude/autoclear.log, 15 countdowns started,
+      // 14 queued, nothing cleared - so the ask is KEPT either way.)
       // Every branch below is a named verdict and every one of them is LOGGED - the s2
       // incident could not be diagnosed because three of these exits were silent.
       const verdict = expiryDecision({
@@ -1734,11 +1735,7 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'wait') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        // The REASON, not a hardcoded 'drafting': 'working' waits too now, and a log that
-        // says "there is an unsent line in the box" about a pane mid-turn is a log that
-        // sends the next reader after the wrong bug.
-        const waitWhy = dropFor({ ...live!.meta, typed: live!.typed }) ?? 'drafting'
-        acLog(`${id} waiting: ${dropWords(waitWhy)} - asking again at ${new Date(next).toISOString()}`)
+        acLog(`${id} waiting: ${dropWords('drafting')} - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -1751,6 +1748,17 @@ export class SessionManager extends EventEmitter {
         this.clearAutoClearMeta(live!)
         this.setAutoClearOutcome(id, 'stood down - the countdown was superseded')
         this.emitSessions()
+        return
+      }
+      // A turn started under the countdown. Typing anyway put `/clear`, the resume prompt
+      // and its submit into Claude Code's mid-turn queue, where the clear ran first and
+      // took the other two with it: the pane was cleared and continued nothing (2026-08-28,
+      // s11-mtck156b). Waiting for the turn is the arm path's own behaviour, so use it -
+      // `cancelAutoClear` leaves a 'working' pending entry alone, and `endRun` re-arms.
+      if (verdict === 'working') {
+        this.autoClearPending.set(id, ask)
+        this.cancelAutoClear(id, 'working')
+        acLog(`${id} requeued at expiry - ${dropWords('working')}`)
         return
       }
       if (verdict !== 'fire') {

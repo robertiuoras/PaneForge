@@ -314,17 +314,15 @@ export function expiryDecision(p: {
   // the one that waits. It is not a stand-down: the countdown, and the button that stops
   // it, stay exactly where they are and the timer asks again in `DRAFT_RETRY_MS`.
   if (p.drop === 'drafting') return 'wait'
-  // 'working' WAITS too, and this is the 2026-08-28 correction. It used to fire on the
-  // argument that "Claude Code queues pty input arriving mid-turn and runs it at the turn
-  // boundary" - and it does queue it, which is exactly the failure: the `/clear` sat in
-  // the CLI's own queued-messages list, visible to nobody who was not looking for it,
-  // while the two chunks AFTER it went out on a wall clock (`chunkDelayMs`: +2500ms, then
-  // +1200ms) against a session that had not cleared. So the resume prompt was typed into
-  // the running turn's composer and the CR submitted it there. A clear must be typed at a
-  // pane that is genuinely idle; a queued one is neither cancelled nor performed, which is
-  // the empty-as-success shape. Waiting keeps the card and its button on screen and asks
-  // again every `DRAFT_RETRY_MS` until the turn really ends.
-  if (p.drop === 'working') return 'wait'
+  // 'working' does NOT type. Claude Code queues pty input arriving mid-turn, and this
+  // sequence is THREE chunks: `/clear`, the resume prompt, the submit CR. All three land
+  // in that queue, the `/clear` runs first at the turn boundary, and a clear throws the
+  // rest of the queue away with the conversation - so the pane is cleared and continues
+  // nothing, which is the one outcome `readAsk` refuses to arrange on purpose. Measured
+  // 2026-08-28 on s11-mtck156b: fired 09:52:03 into a 20-minute turn, the screen read
+  // `> /clear` then `Press up to edit queued messages`, and the fresh session sat idle
+  // with its handoff never asked for. It is not a refusal either - the caller puts the
+  // ask back on the queue the arm path already uses and re-arms when the turn ends.
   if (p.drop) return p.drop
   return 'fire'
 }
