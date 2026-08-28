@@ -71,7 +71,12 @@ const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.t
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
 
 check('the starting grid is declared once', /export const START_COLS = \d+/.test(grid))
-check('main spawns the pty on it', sessions.includes('this.spawn(req, agent, START_COLS, START_ROWS)'))
+// Matched loosely on the REQUEST because the pane's own id is merged into it at the call
+// (`PF_PANE`); the two numbers are the assertion and they are still literally there.
+check(
+  'main spawns the pty on it',
+  /this\.spawn\(\{ \.\.\.req[^)]*\}, agent, START_COLS, START_ROWS\)/.test(sessions)
+)
 check('and records the session at it', sessions.includes('cols: START_COLS'))
 check('the renderer opens its terminal on the same one', pane.includes('cols: START_COLS'))
 check('...rows too', pane.includes('rows: START_ROWS'))

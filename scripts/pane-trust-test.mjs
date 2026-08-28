@@ -139,7 +139,7 @@ is(expandRoot('/abs', HOME), '/abs', 'an absolute root is left alone')
 // The wiring, again: a decision nothing calls is the shape that ships dead.
 ok(/allowsCwd\(specFor\(agent\), req\.cwd/.test(spawnSrc), 'sessions.start() asks before the pty exists')
 ok(
-  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('proc: this.spawn(req'),
+  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('proc: born ? deadPty() : this.spawn('),
   '...and refuses BEFORE the spawn, which cannot be taken back'
 )
 
