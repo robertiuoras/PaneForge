@@ -328,10 +328,21 @@ function watched(): boolean {
  * have no renderer report to read. Empty until the first sample, which reads as "nothing
  * running": a refusal that has not measured anything yet must not block a clear for ever.
  */
-const lastJobs = new Map<string, string | null>()
+const lastJobs = new Map<string, { label: string; since: number } | null>()
 
 /** The label of something this pane is still running, or null. */
 export function backJobOf(id: string): string | null {
+  return lastJobs.get(id)?.label ?? null
+}
+
+/**
+ * The same reading with the moment it started, for the row's clock.
+ *
+ * `elapsed` is seconds alive at the moment of the sample, so the epoch is derived once
+ * here rather than in every reader - a subtraction done at draw time against a clock that
+ * has moved on gives a different answer each render.
+ */
+export function backJobInfo(id: string): { label: string; since: number } | null {
   return lastJobs.get(id) ?? null
 }
 
@@ -390,7 +401,10 @@ export function trackUsage(
         // ...and whether this pane's work is pinned to this machine. Same sample, same
         // tree, no extra read - see `PaneUsage.bound`.
         pane.bound = machineBound(tree, pid)
-        lastJobs.set(id, pane.jobs[0]?.label ?? null)
+        // The list is sorted oldest first, so [0] is the longest-running - the one worth
+        // naming and the one whose clock says how long this pane has been busy.
+        const top = pane.jobs[0]
+        lastJobs.set(id, top ? { label: top.label, since: at - (top.elapsed ?? 0) * 1000 } : null)
       }
       for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)
       previous = cpuNow

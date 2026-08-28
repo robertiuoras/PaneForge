@@ -16,6 +16,7 @@ import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
+import { backJobInfo } from './usage'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
@@ -2372,6 +2373,18 @@ export class SessionManager extends EventEmitter {
         // never set by anything, and a pane sorted into Running with no clock on it is
         // half an answer: it says something is happening and not for how long.
         if (job) meta.runSince = meta.runSince ?? job.since
+        changed = true
+      }
+      // ...and what an AGENT pane left running in the BACKGROUND, which is the other half
+      // of the same question and is believed by a different amount. `shared/paneBackJobs.ts`
+      // is a heuristic over the process table (a shell subtree under the pty, older than
+      // its floor), so it deliberately does NOT reach `busyOnScreen` below: a false job
+      // there is a pane the idle sweep never closes and a budget that never moves. It
+      // reaches the sessions list and nothing else, where being wrong costs a heading.
+      const back = meta.status === 'exited' ? null : backJobInfo(meta.id)
+      if ((back?.label ?? null) !== (meta.backJob ?? null)) {
+        meta.backJob = back?.label
+        meta.backJobSince = back?.since
         changed = true
       }
       const busyOnScreen = live.busyUntil > now || jobName !== null

@@ -34,13 +34,13 @@ mkdirSync(work, { recursive: true })
 const out = join(work, 'desk.bundle.cjs')
 buildSync({
   absWorkingDir: root,
-  entryPoints: ['src/shared/desk.ts'],
+  entryPoints: ['scripts/_desk-entry.ts'],
   bundle: true,
   format: 'cjs',
   platform: 'node',
   outfile: out
 })
-const { deskGroups, deskRows } = createRequire(import.meta.url)(out)
+const { deskGroups, deskRows, fleetRow, fleetState } = createRequire(import.meta.url)(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -193,6 +193,41 @@ const peer = (over = {}) => ({
     'in exactly the order it was given, whatever the panes are doing'
   )
   is(deskGroups(rows, true)[0].key, 'yourMove', 'the grouped view re-sorts the same rows')
+}
+
+{
+  // The reported bug: `taskdriver.ai 2 - done 6:29 PM - 1 shell still running` sat under
+  // `Your move`. Every reading the list had was about the agent's TURN, and the turn was
+  // over; the background shell was drawn in a chip and ranked nothing.
+  const s = sess({ status: 'idle', engaged: true, lastOutput: 10, backJob: 'npm', backJobSince: 5 })
+  const groups = deskGroups(deskRows([s], [s], [], 'all'), true)
+  is(groups[0].key, 'running', 'a finished turn with a background job is Running, not Your move')
+  const row = fleetRow({ status: 'idle', engaged: true, lastOutput: 10, backJob: 'npm', backJobSince: 5 })
+  is(row.label, 'running npm', 'and the row names it, exactly as a shell pane\u2019s job does')
+  is(row.since, 5, 'the clock counts the JOB, never the silence since the last byte')
+}
+
+{
+  // The refusal that keeps it honest: a live question is still the loudest thing on the
+  // desk, whatever is running underneath it.
+  const s = sess({ status: 'idle', ask: { question: 'q', options: [] }, backJob: 'npm' })
+  is(fleetState({ status: 'idle', asking: true, backJob: 'npm' }), 'needsYou', 'a question outranks a background job')
+  const groups = deskGroups(deskRows([s], [s], [], 'all'), true)
+  is(groups[0].key, 'yourMove', 'and the row stays under Your move')
+}
+
+{
+  // The control: the same pane with nothing running is exactly where it was.
+  const s = sess({ status: 'idle', engaged: true, lastOutput: 10 })
+  is(deskGroups(deskRows([s], [s], [], 'all'), true)[0].key, 'yourMove', 'a finished turn with no job is still Your move')
+}
+
+{
+  // ...and a pane on the OTHER machine is ranked by it too, or the field would sort every
+  // remote pane wrong in silence.
+  const p = peer({ panes: [pane({ status: 'idle', engaged: true, lastOutput: 10, backJob: 'tail' })] })
+  const groups = deskGroups(deskRows([], [], [p], 'all'), true)
+  is(groups[0].key, 'running', 'a listed pane with a background job is Running as well')
 }
 
 // ---------------------------------------------------------------------------

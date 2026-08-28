@@ -46,6 +46,24 @@ export interface FleetPane {
    * nothing, and `running npm` is the reason somebody looked at the list.
    */
   job?: string
+  /**
+   * What this pane is still RUNNING with its turn over - `shared/paneBackJobs.ts`.
+   *
+   * The reported bug: a card reading `done 6:29 PM · 1 shell still running` sat under
+   * `Your move`, because every reading this file had was about the agent's TURN and the
+   * turn was over. A background shell, a Monitor loop or a build outlives it, and a pane
+   * with one is not waiting for anybody - it is running, which is the plain meaning of
+   * the heading it was missing from.
+   *
+   * Kept apart from `job` because the two are believed by different amounts. `job` is a
+   * shell pane's own tty answering which process is in its foreground, and it feeds
+   * `busyOnScreen`; this is a heuristic over a process table and reaches nothing but the
+   * grouping. It is outranked by a live question, and by a bell it is not - a stale bell
+   * already loses to a running turn (see `fleetState`), and this is one.
+   */
+  backJob?: string
+  /** epoch ms that job started, so a `working` row's clock counts it */
+  backJobSince?: number
 }
 
 export type FleetState =
@@ -159,6 +177,9 @@ export function fleetState(s: FleetPane): FleetState {
   // asks, and the bell keeps its claim the moment the turn ends.
   if (s.status === 'working') return 'working'
   if (s.status === 'starting') return 'starting'
+  // A pane whose turn ended but whose background work has not. The card already said so
+  // in a chip; the list said `waiting for you` about a machine that was busy.
+  if (s.backJob) return 'working'
   if (s.bell) return 'needsYou'
   return s.engaged ? 'needsYou' : 'ready'
 }
@@ -169,7 +190,7 @@ export function fleetRow(s: FleetPane): FleetRow {
     state === 'stalled'
       ? s.stalledSince
       : state === 'working'
-        ? (s.runSince ?? s.lastOutput)
+        ? (s.runSince ?? s.backJobSince ?? s.lastOutput)
         : state === 'needsYou'
           ? s.lastOutput
           : state === 'starting'
@@ -180,8 +201,8 @@ export function fleetRow(s: FleetPane): FleetRow {
     label:
       state === 'exited' && s.exitCode
         ? `exited (${s.exitCode})`
-        : state === 'working' && s.job
-          ? `running ${s.job}`
+        : state === 'working' && (s.job ?? s.backJob)
+          ? `running ${s.job ?? s.backJob}`
           : LABEL[state],
     motion: MOTION[state],
     since,
