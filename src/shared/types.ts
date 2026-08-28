@@ -1373,8 +1373,12 @@ export interface Config {
    *
    * On disk rather than in the renderer's own state, because it was `useState({})` until
    * 2026-08-28 and so every restart and every update quietly put every pinned pane back
-   * on the clock. A pane keeps its id across a restore, which is what makes an id the
-   * right key; ids for panes that no longer exist are dropped when the list is written.
+   * on the clock.
+   *
+   * A restored pane is a NEW session with a NEW id - measured, and the opposite of what
+   * this comment first claimed - so the id is carried forward in `restorePanes`, which is
+   * the one place holding the old id (`scrollbackId`) and the new one at the same time.
+   * Ids for panes that no longer exist are dropped there too.
    */
   pinnedPanes?: string[]
   /** folder scanned for projects */

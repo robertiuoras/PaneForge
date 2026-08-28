@@ -565,6 +565,21 @@ export default function App(): JSX.Element {
   const [pinned, setPinned] = useState<Record<string, true>>({})
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
+  /**
+   * ...and read back off disk, once, when the config arrives.
+   *
+   * It was `useState({})` and written nowhere else until 2026-08-28, so every restart and
+   * every update quietly put every pinned pane back on the idle clock - the one clock the
+   * press exists to take it off. A restore mints a NEW session id, so the carrying
+   * forward is done in main, where the old id is still in front of it (`restorePanes`).
+   */
+  const readPins = useRef(false)
+  useEffect(() => {
+    if (readPins.current || !config) return
+    readPins.current = true
+    const saved = config.pinnedPanes ?? []
+    if (saved.length) setPinned(Object.fromEntries(saved.map((id) => [id, true as const])))
+  }, [config])
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
   // Which page Settings should open on, when a button somewhere IS about one page - the
@@ -4047,6 +4062,9 @@ export default function App(): JSX.Element {
       const next = { ...was }
       if (next[id]) delete next[id]
       else next[id] = true
+      // On disk in the same breath: this is the one switch in the app whose whole value
+      // is that it outlives the thing that would otherwise close the pane.
+      void api.setConfig({ pinnedPanes: Object.keys(next) })
       return next
     })
   }, [])

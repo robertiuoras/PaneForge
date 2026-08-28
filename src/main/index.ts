@@ -3328,6 +3328,13 @@ function restorePanes(specs: StartSessionRequest[], awake = restoreAwake(specs.l
   clearDesk()
   restoredThisRun = true
   const gap = restoreStaggerMs()
+  // "Keep this pane open" survives the restart it exists for. A restored pane is a NEW
+  // session with a NEW id, so the pin has to be moved from the pane it was put on - which
+  // is `scrollbackId`, the only place the old id is still written down - onto the pane
+  // coming back in its place. Ids that name nothing being restored are dropped: the pin
+  // is about a pane on the desk, and a list that only ever grows is a slow leak.
+  const wasPinned = new Set(getConfig().pinnedPanes ?? [])
+  const carried: string[] = []
   // Started in order whatever the gap is: a pane's number is its place in this list, so
   // starting one out of turn renumbers the desk and every Ctrl+N with it.
   specs.slice(0, MAX_RESTORE).forEach((req, i) => {
@@ -3355,19 +3362,27 @@ function restorePanes(specs: StartSessionRequest[], awake = restoreAwake(specs.l
         // id is checked the same way a fresh claim now is, not trusted for being saved.
         const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
         const named = Boolean(file && !heldElsewhere(file, req.cwd))
-        manager.start({
+        const back = manager.start({
           ...req,
           resume: named,
           resumeId: named ? req.resumeId : undefined,
           prompt: undefined,
           asleep
         })
+        if (req.scrollbackId && wasPinned.has(req.scrollbackId)) carried.push(back.id)
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }
     }
-    if (gap) setTimeout(open, i * gap)
-    else open()
+    // Whatever happened above, the list is REWRITTEN rather than added to, so pins for
+    // panes that are not coming back go with it. Written after the last pane has been
+    // started, which with the default gap of 0 is this same tick.
+    const run = (): void => {
+      open()
+      if (i === Math.min(specs.length, MAX_RESTORE) - 1) setConfig({ pinnedPanes: carried })
+    }
+    if (gap) setTimeout(run, i * gap)
+    else run()
   })
 }
 
