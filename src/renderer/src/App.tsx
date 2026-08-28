@@ -5174,7 +5174,11 @@ export default function App(): JSX.Element {
                 )}
                 {/* One target instead of six. Everything below is still rendered on a
                     desktop window; on a phone the sheet is the only way to any of it. */}
-                {handheld.handheld && (
+                {/* Always rendered now, not only on a phone: a grid pane is 328px wide and
+                    this row wants 369px of it, so the desk needs the same escape hatch a
+                    phone has. CSS keeps it out of the way until the pane is actually
+                    narrow (`@container pane`), which is the one reading that knows. */}
+                {(
                   <button
                     className="icon pt-more"
                     aria-label={`Actions for ${s.title}`}

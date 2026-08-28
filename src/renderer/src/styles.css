@@ -1431,6 +1431,22 @@ body.sizing * { user-select: none !important; }
   .pane-title .git-badge { display: none }
   .pane-title .pt-handoff { display: none }
 }
+/* Below this the row stops fitting however tightly it is packed, so the tail of it goes
+   behind the ⋯ the phone already uses. What stays on the line is what somebody reaches
+   for without thinking - find, which agent runs here, and close - and everything that
+   opens a window elsewhere or restarts something goes one press away. A control that is
+   drawn off the edge of the pane is worse than one in a menu: it cannot be pressed and
+   nothing says it is there. */
+.pt-actions .pt-more { display: none }
+@container pane (max-width: 460px) {
+  .pane-title .pt-clear,
+  .pane-title .pt-restart,
+  .pane-title .icon.fix,
+  .pane-title .pt-reveal,
+  .pane-title [data-pt='editor'],
+  .pane-title .pt-zoom { display: none }
+  .pt-actions .pt-more { display: inline-flex; order: 10 }
+}
 
 .pt-actions .icon.pt-close {
   color: var(--danger); opacity: 0.8; font-size: 15px;
