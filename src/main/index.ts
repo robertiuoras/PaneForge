@@ -1059,7 +1059,10 @@ function publishCapacity(): void {
       pressure: lastPressure,
       // What a person calls lagging, and it moves minutes before the memory verdict does.
       load: loadPerCore(),
-      localPanes: manager.list().length,
+      // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
+      // process back, so counting it says this machine is running work it is not - which
+      // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
+      localPanes: manager.list().filter((s) => !s.asleep).length,
       remotePanes: mirrored,
       peerAvailable: peers > 0,
       // How many agents this desk agreed to run itself. Read live rather than captured:
@@ -3469,7 +3472,8 @@ function offerRestore(): void {
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
     pressure: readPressure(),
-    localPanes: manager.list().length
+    // Same reading as `publishCapacity`: a sleeping pane is not an agent.
+    localPanes: manager.list().filter((s) => !s.asleep).length
   })
   offer = {
     panes,
