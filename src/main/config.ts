@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
-import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
+import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '../shared/autoHandoff'
 import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
@@ -333,6 +333,7 @@ export function getConfig(): Config {
       ...(raw.offloadDefaultsV3
         ? {}
         : { offloadAsk: true, offloadDefaultsV2: true, offloadDefaultsV3: true }),
+      ...(raw.offloadDefaultsV4 ? {} : { offloadDefaultsV4: true }),
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
@@ -345,17 +346,13 @@ export function getConfig(): Config {
         ...DEFAULT_AUTO_HANDOFF,
         ...(base.autoHandoff ?? {}),
         ...(raw.autoHandoff ?? {}),
-        // The one-time move onto the idle-offload clock being on - read off the SAVED
-        // config, like every migration here, and applied ONLY to an exact 0, which is the
-        // number `defaults()` wrote. Anything else is a duration somebody chose.
-        ...(raw.autoHandoff?.offloadDefaultsV4
+        // The one-time move onto the idle-offload clock being ON. The MARKER is top-level
+        // (`offloadDefaultsV4`, beside V2 and V3), read off the SAVED config; the number it
+        // moves lives in here. Only an exact 0 is touched - that is what `defaults()` wrote,
+        // and anything else is a duration somebody chose.
+        ...(raw.offloadDefaultsV4 || (raw.autoHandoff?.offloadIdleMinutes ?? 0) !== 0
           ? {}
-          : {
-              offloadDefaultsV4: true,
-              ...((raw.autoHandoff?.offloadIdleMinutes ?? 0) === 0
-                ? { offloadIdleMinutes: IDLE_OFFLOAD_MINUTES }
-                : {})
-            })
+          : { offloadIdleMinutes: IDLE_OFFLOAD_MINUTES })
       },
       // Merged for the usual reason: a config written before this existed has no key at
       // all, and the watcher would then read `undefined.tokens` as its threshold.

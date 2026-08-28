@@ -215,9 +215,17 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   const on = { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: IDLE_OFFLOAD_MINUTES }
   const quiet = NOW - (IDLE_OFFLOAD_MINUTES + 5) * MIN
 
+  // ON by default since 2026-08-28 - Robert wants the work on the PC - so the default is
+  // now asserted as firing, and the OFF case is the zero somebody sets by hand.
   eq(
-    'off by default: a desk that never asked keeps its panes whatever the clock says',
-    idleOffloadPlan([pane({ id: 'x', lastKeyboard: quiet }), pane({ id: 'y' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length,
+    'on by default, at half the sleep clock, so a quiet pane is offered before it sleeps here',
+    ids(idleOffloadPlan([pane({ id: 'x', lastKeyboard: quiet }), pane({ id: 'y' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW)),
+    'x'
+  )
+  eq('...at fifteen minutes', IDLE_OFFLOAD_MINUTES, 15)
+  eq(
+    'zero is how it is turned off, and it beats the clock',
+    idleOffloadPlan([pane({ id: 'x', lastKeyboard: quiet }), pane({ id: 'y' })], peers, { ...on, offloadIdleMinutes: 0 }, {}, NOW).length,
     0
   )
   eq(
@@ -293,7 +301,9 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   {
     // No peer holding this project is not a reason to close anything - the clock simply
     // finds nowhere to put it and does nothing.
-    const panes = [pane({ id: 'x', lastKeyboard: quiet, projectName: 'other', visible: true }), pane({ id: 'keep' })]
+    // `keep` is typed into NOW: the clock is 15 minutes and the fixture's default idle is
+    // 20, so a bare `keep` would itself be due and this case would measure the wrong pane.
+    const panes = [pane({ id: 'x', lastKeyboard: quiet, projectName: 'other', visible: true }), pane({ id: 'keep', lastKeyboard: NOW })]
     eq('nowhere to send it: nothing happens', idleOffloadPlan(panes, peers, on, {}, NOW).length, 0)
   }
 
