@@ -139,7 +139,9 @@ is(expandRoot('/abs', HOME), '/abs', 'an absolute root is left alone')
 // The wiring, again: a decision nothing calls is the shape that ships dead.
 ok(/allowsCwd\(specFor\(agent\), req\.cwd/.test(spawnSrc), 'sessions.start() asks before the pty exists')
 ok(
-  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('proc: this.spawn(req'),
+  // The spawn is now conditional - a pane can be born asleep, with no process at all
+  // (`shared/restoreTurn.ts`) - so this looks for the CALL, not the property it sits in.
+  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('this.spawn(req, agent, START_COLS'),
   '...and refuses BEFORE the spawn, which cannot be taken back'
 )
 
