@@ -65,6 +65,20 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
     { value: CUSTOM, label: 'Other...' }
   ]
 
+  // The pane header has room for ONE control, so there the two lists are merged: the
+  // closed control still reads the AGENT (that is what the header is naming) with the
+  // current model as its hint, and the model rows carry an `m:` prefix so one onChange
+  // can tell which list a press came from.
+  const currentModel = model
+    ? (models.find((m) => modelValue(m) === model) ? modelLabel(models.find((m) => modelValue(m) === model)!) : model)
+    : 'Default model'
+  const mergedOptions: SelectOption[] = [
+    ...agentOptions.map((o) => (o.value === agent ? { ...o, hint: currentModel } : o)),
+    ...(supportsModel(spec)
+      ? modelOptions.map((o) => ({ ...o, value: 'm:' + o.value, group: o.group ?? 'Model' }))
+      : [])
+  ]
+
   const pickModel = (value: string): void => {
     // A model borrowed from a sibling runner switches the runner with it - picking
     // `z-ai/glm-5.2` while the card says "Claude Code" would be a 401 in a healthy
@@ -77,24 +91,37 @@ export default function AgentPicker({ agents, agent, model, onChange, small, onI
   return (
     <>
       <span className={'agent-pick' + (small ? ' small' : '')}>
-      <Select
-        size={small ? 'sm' : 'md'}
-        value={agent}
-        options={agentOptions}
-        onChange={(v) => onChange(v, '')}
-        title="The program that runs in this pane. The model it talks to is the box beside it."
-        menuWidth={300}
-      />
-      {supportsModel(spec) && (
+      {small ? (
         <Select
-          size={small ? 'sm' : 'md'}
-          value={model}
-          options={modelOptions}
-          onChange={pickModel}
-          title="Which model this program talks to. A model under a provider's heading switches the program with it."
-          placeholder="Default model"
-          menuWidth={260}
+          size="sm"
+          value={agent}
+          options={mergedOptions}
+          onChange={(v) => (v.startsWith('m:') ? pickModel(v.slice(2)) : onChange(v, ''))}
+          title="The program that runs in this pane, and the model it talks to."
+          menuWidth={300}
         />
+      ) : (
+        <>
+          <Select
+            size="md"
+            value={agent}
+            options={agentOptions}
+            onChange={(v) => onChange(v, '')}
+            title="The program that runs in this pane. The model it talks to is the box beside it."
+            menuWidth={300}
+          />
+          {supportsModel(spec) && (
+            <Select
+              size="md"
+              value={model}
+              options={modelOptions}
+              onChange={pickModel}
+              title="Which model this program talks to. A model under a provider's heading switches the program with it."
+              placeholder="Default model"
+              menuWidth={260}
+            />
+          )}
+        </>
       )}
       </span>
       {installing && (
