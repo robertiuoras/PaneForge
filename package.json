@@ -59,6 +59,7 @@
     "test:devicewatch": "node scripts/device-watch-test.mjs",
     "test:projects": "node scripts/projects-test.mjs",
     "test:cardfit": "node scripts/card-fit-test.mjs",
+    "test:closedone": "node scripts/close-done-test.mjs",
     "test:headerfit": "node scripts/pane-header-fit-test.mjs",
     "test:handofffit": "node scripts/handoff-fit-test.mjs",
     "test:versions": "node scripts/version-sync-test.mjs",

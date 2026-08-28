@@ -94,6 +94,7 @@ const TESTS = [
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
+  ['closedone', 'close-done-test.mjs'],
   ['headerfit', 'pane-header-fit-test.mjs'],
   ['handofffit', 'handoff-fit-test.mjs'],
   ['versions', 'version-sync-test.mjs'],

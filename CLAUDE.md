@@ -444,6 +444,15 @@ a channel to a transport; add it there.
   makes macOS drop the whole argument list and exit 0. It is on PATH as `pf` (a symlink from
   `~/.local/bin`), so any session anywhere opens a pane with a brief already in it:
   `pf open <cwd> --prompt "..." [--agent A] [--model M]`, then `pf list` to verify it.
+- **...and that pane can close itself and say so.** `--close-when-done` (with `--report-to`,
+  which defaults to `PF_PANE` - every pane's agent is spawned knowing which card it is), so
+  a pane opened for one job does not sit on the desk for ever once the job is done. WHEN is
+  the whole rule (`shared/closeWhenDone.ts`): printed at least once, out of its turn, no
+  question, no shell command, and no background job the agent left - that last reading comes
+  off a process table sampled every 4s, which is why the pane must then stay finished for
+  `CLOSE_DONE_QUIET_MS` (8s) rather than closing on the turn's own edge. The opener is told
+  through `queuePrompt`, so the line lands between its turns, and it is told BEFORE the
+  kill, because `kill()` deletes the request that names it. `npm run test:closedone`.
 - `npm run test:phone` (server + surface parity). `npm run test:phoneview` needs a running
   copy. A pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).
@@ -1513,6 +1522,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:devicewatch` | noticing a copied cookie, and the negatives that decide whether the mark is read |
 | `npm run test:projects` | which folders are projects and which are copies of one |
 | `npm run test:cardfit` | that a session card can still be read at 190px |
+| `npm run test:closedone` | when a pane automation opened may close itself - a turn, a question, a shell command and a background job each refusing it, and the source assertions that the opener is told BEFORE the kill |
 | `npm run test:headerfit` | that a pane's header can still be USED at 198px - the close button on the pane, the ⋯ on the line, a name that is still a name - with the old header kept as the control that must NOT fit |
 | `npm run test:confirmfit` | that the yes/no box can still be answered |
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
