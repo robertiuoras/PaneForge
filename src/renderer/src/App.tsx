@@ -3616,7 +3616,13 @@ export default function App(): JSX.Element {
    * The panes a live countdown names. A Set because the sidebar asks this per row, and the
    * list is redrawn on every session broadcast.
    */
-  const alarmIds = useMemo(() => new Set(closeSoon?.ids ?? []), [closeSoon])
+  // An automatic /clear is the same fact - this pane needs you NOW or something happens to
+  // it - and it was the one alarm the sidebar never drew: the card named a project by title
+  // and nothing on the left said WHICH row that was (reported 2026-08-28).
+  const alarmIds = useMemo(
+    () => new Set([...(closeSoon?.ids ?? []), ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)]),
+    [closeSoon, sessions]
+  )
   /** What the pending close is expected to give back, for the sentence afterwards. */
   const pendingMb = useRef(0)
   /**
@@ -6046,7 +6052,11 @@ export default function App(): JSX.Element {
       {/* A session about to clear itself. Drawn for the window rather than per pane: the
           countdown is about a CONVERSATION, and the pane it belongs to is very often not
           the one on screen - which is the whole reason the silent version was a bug. */}
-      <AutoClearToast panes={sessions} onKeep={(id) => void api.cancelAutoClear(id)} />
+      <AutoClearToast
+        panes={sessions}
+        numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
+        onKeep={(id) => void api.cancelAutoClear(id)}
+      />
       <UpdateToast />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
           thing here that talks about the app rather than about the work, so every other

@@ -3793,6 +3793,21 @@ button.chip:hover {
   color: var(--text);
   line-height: 1.35;
 }
+/* The pane's number, in front of its name. Same accent the sidebar lights that pane's
+   key with, so the card and the row are read as one thing. */
+.autoclear-num {
+  display: inline-block;
+  min-width: 17px;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-variant-numeric: tabular-nums;
+  font-weight: 590;
+  font-size: 12px;
+  text-align: center;
+}
 .autoclear-steps {
   margin: 0;
   padding-left: 16px;

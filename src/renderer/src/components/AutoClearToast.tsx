@@ -16,9 +16,12 @@ import { useNow } from './Elapsed'
  */
 export default function AutoClearToast({
   panes,
+  numberOf,
   onKeep
 }: {
   panes: Session[]
+  /** the pane's number in the sidebar - also its Ctrl key */
+  numberOf: (id: string) => number
   onKeep: (id: string) => void
 }): React.JSX.Element | null {
   const now = useNow()
@@ -40,6 +43,7 @@ export default function AutoClearToast({
       <div className="autoclear-card" role="status">
         <div className="autoclear-top">
           <span className="autoclear-word">
+            <PaneNum n={numberOf(done.id)} />
             <b>{done.title}</b> {done.autoClearOutcome}
           </span>
         </div>
@@ -62,12 +66,14 @@ export default function AutoClearToast({
         <span className="autoclear-word">
           {soon.autoClearNoResume ? (
             <>
-              Clearing <b>{soon.title}</b> - nothing open
+              Clearing <PaneNum n={numberOf(soon.id)} />
+              <b>{soon.title}</b> - nothing open
               {freeing > 0 ? `, freeing about ${freeing}k of context` : ''}
             </>
           ) : (
             <>
-              Clearing <b>{soon.title}</b> and carrying on from its handoff
+              Clearing <PaneNum n={numberOf(soon.id)} />
+              <b>{soon.title}</b> and carrying on from its handoff
             </>
           )}
         </span>
@@ -85,5 +91,20 @@ export default function AutoClearToast({
         Keep this session
       </button>
     </div>
+  )
+}
+
+/**
+ * The pane's number, in the accent, in front of its name. A card naming a project by
+ * TITLE left nobody able to find the row it meant on a desk holding two checkouts of it
+ * (reported 2026-08-28); the number is also the Ctrl key that reaches the pane, so it is
+ * the one label that is never ambiguous.
+ */
+function PaneNum({ n }: { n: number }): React.JSX.Element | null {
+  if (n < 1) return null
+  return (
+    <span className="autoclear-num" title={`Ctrl ${n} reaches this pane`}>
+      {n}
+    </span>
   )
 }
