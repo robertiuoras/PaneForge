@@ -1870,6 +1870,15 @@ function lastTouched(dir, porcelain, branch) {
   // threshold this feeds.
   for (const line of porcelain.split('\n').slice(0, 200)) {
     // `XY path` or `XY old -> new` for a rename; git quotes a path with odd bytes in it.
+    // Matched, never sliced at a fixed offset: `git()` trims its output, so the FIRST
+    // line of `XY` codes whose X is a space - ` M path`, the commonest state there is -
+    // arrives one character short. `slice(3)` then ate the path's first letter, every
+    // stat threw, `touchedAt` came back 0, and `busyLanes` reads a 0 as "age unknown, be
+    // careful" - so one uncommitted edit in a lane held every other lane's release for
+    // as long as the file sat there. Measured on taskdriver.ai 2026-08-28: lane c dirty
+    // with `scratchpad/current-run.txt` untouched for 131 minutes still printed
+    // "waiting on chats still working in: c" with no age beside it, 188 minutes after
+    // the last merge, with two finished lanes queued behind it.
     let rel = line.slice(3).trim()
     if (!rel) continue
     if (rel.includes(' -> ')) rel = rel.split(' -> ').pop()

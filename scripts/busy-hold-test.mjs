@@ -170,5 +170,36 @@ ok(
 )
 unlinkSync(wip)
 
+// ------------------------------------------- a TRACKED file, which is where this broke
+
+// Every check above edits an UNTRACKED file, and `git status --porcelain` writes those as
+// `?? path` - two characters then a space, so a fixed `slice(3)` lands on the path. A file
+// git already knows is written ` M path`, with a LEADING SPACE, and `git()` trims its
+// output: the first line arrives one character short, `slice(3)` ate the path's first
+// letter, every stat threw, and `lastTouched` returned 0 - which `busyLanes` reads as
+// "age unknown, be careful" and waits on for ever. Measured on taskdriver.ai 2026-08-28:
+// lane c, one edit to `scratchpad/current-run.txt` untouched for 131 minutes, still held
+// two finished lanes 188 minutes after the last merge.
+held()
+const tracked = join(repo, 'app.js')
+writeFileSync(tracked, 'console.log(2)\n')
+ok('a tracked file just edited holds the release', blocked().includes('main'), JSON.stringify(blocked()))
+
+untouchedFor(tracked, 2 * HOUR)
+ok(
+  'the same tracked edit, untouched for two hours, does not',
+  !blocked().includes('main'),
+  JSON.stringify(blocked())
+)
+
+untouchedFor(tracked, 12 * 60 * 1000)
+const trackedDoctor = lane('doctor')
+ok(
+  'and its age is readable, not blank',
+  /main \(uncommitted edits, last touched 1[12]m ago\)/.test(trackedDoctor),
+  trackedDoctor.split('\n').find((l) => l.includes('Waiting on')) ?? trackedDoctor
+)
+git(repo, 'checkout', '--', 'app.js')
+
 console.log(failed ? `\n${failed} failed` : '\nall busy-hold checks passed')
 process.exit(failed ? 1 : 0)
