@@ -50,6 +50,13 @@ export interface PairFromText {
   name?: string
 }
 
+/**
+ * How long a mirrored pane's row may stay hidden on the strength of a close nobody has
+ * answered. Long enough for a healthy link's round trip, short enough that a press which
+ * achieved nothing is visibly given back rather than pressed again.
+ */
+const CLOSE_ACK_MS = 3000
+
 export class Remote extends EventEmitter {
   private discovery: Discovery
   private host: RemoteHost
@@ -117,11 +124,46 @@ export class Remote extends EventEmitter {
   // -------------------------------------------------------------------------
   // What the rest of the app asks
 
+  /**
+   * Panes this device has asked the far end to close, and the moment it asked.
+   *
+   * A close is a frame with no answer of its own, so the row went only when the far
+   * end's next pane list arrived. The row is taken off this screen the moment the frame
+   * is on a live link, and given back if the pane is still there CLOSE_ACK_MS later - a
+   * refusal may not wear the shape of a close.
+   */
+  private closing = new Map<string, number>()
+
   /** Every mirrored pane, from every connected device. */
   sessions(): Session[] {
     const out: Session[] = []
     for (const c of this.clients.values()) out.push(...c.list())
-    return out
+    return this.closing.size ? out.filter((s) => !this.closing.has(s.id)) : out
+  }
+
+  /**
+   * Close a pane on the machine that owns it, and take its row off this screen at once.
+   *
+   * Answers false only when the frame could not be put on a live link - the one case
+   * where nothing whatever happened and somebody has to be told.
+   */
+  closeOn(id: string): boolean {
+    const cut = splitId(id)
+    const client = cut ? this.clients.get(cut.peer) : undefined
+    if (!cut || !client || !client.send({ t: 'kill', id: cut.local })) return false
+    const at = Date.now()
+    this.closing.set(id, at)
+    this.emit('sessions')
+    const t = setTimeout(() => {
+      if (this.closing.get(id) !== at) return
+      this.closing.delete(id)
+      // Nothing heard since the press is a dead link rather than a refusal: proving it
+      // here starts the reconnect now instead of at DEAD_MS.
+      client.proveAlive(at)
+      this.emit('sessions')
+    }, CLOSE_ACK_MS)
+    t.unref()
+    return true
   }
 
   /** Does this id belong to another device? */
@@ -677,9 +719,20 @@ export class Remote extends EventEmitter {
     return client
   }
 
+  /** Every mirrored pane as the clients really report it, hidden closes included. */
+  private sessionsRaw(): Session[] {
+    const out: Session[] = []
+    for (const c of this.clients.values()) out.push(...c.list())
+    return out
+  }
+
   private hold(id: string, client: RemoteClient): void {
     this.clients.set(id, client)
     client.on('sessions', () => {
+      if (this.closing.size) {
+        const live = new Set(this.sessionsRaw().map((s) => s.id))
+        for (const closed of [...this.closing.keys()]) if (!live.has(closed)) this.closing.delete(closed)
+      }
       this.emit('sessions')
       this.changed()
     })

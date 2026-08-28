@@ -519,6 +519,21 @@ async function main() {
     be.api.handBack = saved
   }
 
+  // ------------------------------------------------- a press that got no answer
+  // A pane close is the one frame somebody is WATCHING for: the row goes only when the
+  // far end's next pane list arrives, so a link that died silently made the button look
+  // ignored until DEAD_MS (45s). `send` now answers whether the frame really went onto a
+  // live link, and `proveAlive` turns an unanswered press into the liveness probe.
+  ok('a frame on a live link says it went', client.send({ t: 'ping' }) === true)
+  // The CONTROL, and the load-bearing half: a link that has spoken since the press is
+  // alive and must NOT be torn down - the press really did fail over there.
+  ok('a link that has answered since the press is left alone', client.proveAlive(Date.now() - 60_000) === true)
+  ok('and it is still up', client.list().length > 0)
+  // Nothing heard at all since the press: dead, torn down here rather than at DEAD_MS.
+  ok('a link silent since the press is torn down', client.proveAlive(Date.now() + 1000) === false)
+  ok('so the mirror empties at once', await until(() => client.list().length === 0))
+  ok('and a frame is refused rather than dropped in silence', client.send({ t: 'ping' }) === false)
+
   // ---------------------------------------------------------------- disconnect
   client.disconnect()
   ok('disconnecting empties the mirror', client.list().length === 0)
