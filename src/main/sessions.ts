@@ -1767,6 +1767,10 @@ export class SessionManager extends EventEmitter {
           // trip - so the tail of the conversation was gone. Tell the pane first, and
           // give it a beat to file the rows before the command lands.
           if (i === 0) {
+            // Logged, because "did the clear keep the screen" was answerable only by
+            // re-reading this function: the log recorded the chunk that wiped the pane
+            // and nothing about the arm that was supposed to file it first.
+            acLog(`${id} armclear emitted, ${ARM_CLEAR_LEAD_MS}ms before chunk 1`)
             this.emit('armclear', id)
             setTimeout(() => this.write(id, c), ARM_CLEAR_LEAD_MS)
             return

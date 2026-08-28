@@ -4365,7 +4365,9 @@ export default function App(): JSX.Element {
                           s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
                           (s.autoAnswerAt
                             ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
-                            : '\n\nNothing runs until this is answered. Open the pane and press one.')
+                            : s.autoAnswerHeld
+                              ? '\n\nThis would be answered for you, and nothing is pressed while you are looking at this window. Look away and the wait starts. Settings -> Answer an agent’s question for me.'
+                              : '\n\nNothing runs until this is answered. Open the pane and press one.')
                         }
                       >
                         asks you
@@ -4373,7 +4375,20 @@ export default function App(): JSX.Element {
                             left - INSIDE this box rather than in a second one beside it.
                             "asks you" and the seconds are one fact a step apart, and two
                             red boxes on a 190px title line read as two readings. */}
-                        {s.autoAnswerAt ? <AskClock at={s.autoAnswerAt} /> : null}
+                        {s.autoAnswerAt ? (
+                          <AskClock at={s.autoAnswerAt} />
+                        ) : s.autoAnswerHeld ? (
+                          // A held question has no deadline to draw - `refreshAutoPlan`
+                          // writes `autoAnswerAt = 0` while the desk has focus, and
+                          // leaving the window starts the whole wait again - so a number
+                          // here would be a second that never arrives. But the card is
+                          // only ever LOOKED at from this window, which is exactly when
+                          // the hold is on, so "asks you" with an empty box beside it was
+                          // the only state Robert ever saw and it read as a broken timer.
+                          // The word goes in the same box the seconds use, not in a
+                          // second chip: two red boxes on the title line are two readings.
+                          <span className="asks-in">hold</span>
+                        ) : null}
                       </span>
                     )}
                     {/* ...and when this pane is on its way OUT rather than waiting for

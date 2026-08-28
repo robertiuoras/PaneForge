@@ -634,8 +634,23 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    key is a 16px pill of 10px type and the name is 13px type, and on a shared baseline the
    pill's centre rode 2.45px above the name's (measured). Centring the two boxes puts them
    on one line to the eye; the name keeps its own ellipsis as a flex item that may shrink. */
-.row-title.has-key { display: flex; align-items: center; min-width: 0; }
-.row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ...and it WRAPS, for the reason the sub-line does. A card carrying `asks you`, `kept
+   open` and the clock left the NAME as the only shrinkable item on the line, and flex
+   divides shrink by base width, so a 13px name was given one character: Robert's card
+   read `3  p  asks you  kept open  6m 32s`. The chips drop to a second line instead,
+   which costs 15px on the cards that need one and nothing at all on the cards that do
+   not - the same trade `.row-sub` above already made, and the only arrangement where the
+   session's NAME cannot be destroyed by a chip that is 11px of fixed text.
+   `row-gap` matches the sub-line's so a card with both wrapped lines is evenly set. */
+.row-title.has-key {
+  display: flex; align-items: center; min-width: 0;
+  flex-wrap: wrap; row-gap: 2px;
+}
+/* The floor under the name, mirroring `.row-agent`'s below. 6em of 13px type is ~78px,
+   about nine characters plus an ellipsis - enough that a truncated name still identifies
+   the pane, where `min-width: 0` let it reach a single letter. Wrapping is decided before
+   shrinking, so on a card whose chips DO fit this changes nothing. */
+.row-name { min-width: 6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* "This pane's agent is on the other machine." `flex: none` for the same reason the clock
    has it: it is 13px wide and shrinking it to 9 says nothing, where the name beside it has
    an ellipsis and loses a character honestly. The accent is what separates it at a glance

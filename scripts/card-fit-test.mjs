@@ -48,7 +48,7 @@ if (!CHROME) {
 }
 
 /** The sidebar, at the width it really has, holding one card. */
-function page(rowSub, remote = false) {
+function page(rowSub, remote = false, titleChips = '') {
   const mark = remote
     ? '<span class="row-remote"><svg viewBox="0 0 16 16" width="13" height="13"></svg></span>'
     : ''
@@ -59,7 +59,7 @@ function page(rowSub, remote = false) {
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">PaneForge</span><span class="elapsed">1m 20s</span></div>
+        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">PaneForge</span>${titleChips}<span class="elapsed">1m 20s</span></div>
         <div class="row-sub">${rowSub}</div>
       </div>
       <button class="x">x</button>
@@ -76,6 +76,11 @@ const PLACE = '<button class="chip place">PaneForge · lane a</button>'
 const LANE_PLACE = '<button class="chip place lane-chip busy">lane a</button>'
 const LANE = '<span class="chip pf-lane">Toolstash · lane c</span>'
 const CLOCK = ''
+// The title line's own chips. `asks you` and `kept open` are fixed text with `flex: none`,
+// so on one line the NAME is the only thing that can give way - which is the bug this pair
+// of cases pins. The seconds inside the ask chip are its widest state.
+const ASKS = '<span class="chip asks">asks you<span class="asks-in">hold</span></span>'
+const KEPT = '<button class="chip kept">kept open</button>'
 
 const CASES = [
   { name: 'a plain card', sub: LOGO + AGENT + CLOCK },
@@ -94,7 +99,11 @@ const CASES = [
     name: "mirrored, holding another project's lane",
     sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK,
     remote: true
-  }
+  },
+  // Robert's own card, 2026-08-28: pane 3, project `clients`, title `pizzasrus`, with a
+  // question standing and the pane pinned. The name was drawn as a single letter `p`.
+  { name: 'asking and pinned', sub: LOGO + AGENT + CLOCK, title: ASKS + KEPT, shortName: true },
+  { name: 'asking', sub: LOGO + AGENT + CLOCK, title: ASKS }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
@@ -214,7 +223,11 @@ try {
   for (const c of CASES) {
     await send(
       'Page.navigate',
-      { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(page(c.sub, c.remote)) },
+      {
+        url:
+          'data:text/html;charset=utf-8,' +
+          encodeURIComponent(page(c.sub, c.remote, c.title ?? ''))
+      },
       sessionId
     )
     // A navigate resolves before the document is laid out; the fonts are system ones, so
@@ -232,6 +245,10 @@ try {
         lane: cut(document.querySelector('.chip.pf-lane')),
         clock: cut(document.querySelector('.elapsed')),
         name: cut(document.querySelector('.row-name')),
+        title: (() => {
+          const t = document.querySelector('.row-title')
+          return { w: t.getBoundingClientRect().width, h: t.getBoundingClientRect().height }
+        })(),
         // The remote mark, if the card carries one. Its width rather than a cut() reading:
         // it has no text, and the only way it can fail is by being squeezed to nothing.
         remote: (() => {
@@ -254,6 +271,16 @@ try {
     )
     ok(fits(m.clock), `${c.name}: the clock is not cut off`, `${m.clock.w.toFixed(1)}px of ${m.clock.want}px`)
     ok(fits(m.name), `${c.name}: the pane's name is whole`, `${m.name.w.toFixed(1)}px of ${m.name.want}px`)
+    if (c.title)
+      // The whole point of the wrap: the chips take a second line rather than the name.
+      // One row measures 19.2px here, so the threshold is well clear of it: with the
+      // floor and the wrap removed the line stays at 19.2 and the name goes to 0.0px,
+      // which is the red-proof and must not pass this assertion.
+      ok(
+        m.title.h > 30,
+        `${c.name}: the title line wrapped rather than squeezing the name`,
+        `${m.title.h.toFixed(1)}px tall`
+      )
     ok(fits(m.place), `${c.name}: the place chip is whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
     if (c.remote)
       ok(
