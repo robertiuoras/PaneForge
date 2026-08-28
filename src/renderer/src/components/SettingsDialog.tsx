@@ -594,7 +594,7 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   )}
                 {config.autoHandoff?.enabled !== false && (
                   <Switch
-                    checked={(config.autoHandoff?.offloadIdleMinutes ?? 0) > 0}
+                    checked={(config.autoHandoff?.offloadIdleMinutes ?? IDLE_OFFLOAD_MINUTES) > 0}
                     onChange={(v) =>
                       onChange({
                         autoHandoff: {
@@ -605,7 +605,7 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                       })
                     }
                     label="...and move a quiet one over there even when there is still room"
-                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
+                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead, and it is ON: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says - half the time it would take to fall asleep here, so a quiet pane is offered to the machine that can carry on running it before its agent is stopped on this one, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
                   />
                 )}
                 <Switch
