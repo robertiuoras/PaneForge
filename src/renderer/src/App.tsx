@@ -313,7 +313,15 @@ function reclaimPaneOf(
  * decision, and a button here that cannot reach it would be a promise this window cannot
  * keep. The number is still worth drawing - it is why the pane will be gone.
  */
-function CloseClock({ at, onKeep }: { at: number; onKeep?: () => void }): React.JSX.Element | null {
+function CloseClock({
+  at,
+  onKeep,
+  kept
+}: {
+  at: number
+  onKeep?: () => void
+  kept?: boolean
+}): React.JSX.Element | null {
   const now = useNow()
   const left = Math.max(0, Math.ceil((at - now) / 1000))
   const mins = Math.floor(left / 60)
@@ -326,14 +334,22 @@ function CloseClock({ at, onKeep }: { at: number; onKeep?: () => void }): React.
   // the honest word for it.
   const words =
     left === 0 ? 'now' : mins >= 10 ? `${mins}m` : `${mins}:${String(left % 60).padStart(2, '0')}`
-  const why = onKeep
-    ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
-    : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
+  // A HELD pane is the opposite fact wearing the same chip: somebody pressed "keep it
+  // open", the publish took the later of the hold and the idle deadline, and the card
+  // then told them the pane had been quiet and was being closed. The number is still
+  // worth drawing - it is when the hold runs out - but not under that sentence.
+  const why = kept
+    ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
+    : onKeep
+      ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
+      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
-  const cls = 'chip closing' + (left <= 60 ? ' soon' : '')
-  if (!onKeep) return <span className={cls} title={why}>{`closes ${words}`}</span>
+  // Never the red last-minute alert for a hold: nothing is about to happen to that pane.
+  const cls = 'chip closing' + (!kept && left <= 60 ? ' soon' : '') + (kept ? ' kept' : '')
+  const word = kept ? 'kept' : 'closes'
+  if (!onKeep) return <span className={cls} title={why}>{`${word} ${words}`}</span>
   return (
     <button
       type="button"
@@ -346,7 +362,7 @@ function CloseClock({ at, onKeep }: { at: number; onKeep?: () => void }): React.
         onKeep()
       }}
     >
-      {`closes ${words}`}
+      {`${word} ${words}`}
     </button>
   )
 }
@@ -3909,6 +3925,7 @@ export default function App(): JSX.Element {
    * `setClosingAt` emits one when the number moves.
    */
   const closingRef = useRef<Record<string, number | undefined>>({})
+  const keptRef = useRef<Record<string, boolean>>({})
   const publishClosingRef = useRef<() => void>(() => {})
   useEffect(() => {
     const run = (): void => {
@@ -3937,11 +3954,20 @@ export default function App(): JSX.Element {
         // happen for another hour.
         const kept = keptUntil.current[s.id] ?? 0
         const at = due === null ? undefined : Math.max(due, kept)
-        if (closingRef.current[s.id] === at) continue
+        // ...and the card is told WHICH of the two numbers it got. A held pane counted
+        // down under `closes 55m` and a sentence saying it had been quiet and was being
+        // closed - the opposite of what the press it came from promised.
+        const held = at !== undefined && kept > (due ?? 0)
+        if (closingRef.current[s.id] === at && keptRef.current[s.id] === held) continue
         closingRef.current[s.id] = at
-        api.setClosing(s.id, at ?? null)
+        keptRef.current[s.id] = held
+        api.setClosing(s.id, at ?? null, held)
       }
-      for (const id of Object.keys(closingRef.current)) if (!live.has(id)) delete closingRef.current[id]
+      for (const id of Object.keys(closingRef.current))
+        if (!live.has(id)) {
+          delete closingRef.current[id]
+          delete keptRef.current[id]
+        }
     }
     publishClosingRef.current = run
     run()
@@ -4184,7 +4210,7 @@ export default function App(): JSX.Element {
             ) : null}
             {/* That desk's own number, forwarded. No press: this window does not own the
                 pty and cannot call the close off. */}
-            {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
+            {row.closingAt ? <CloseClock at={row.closingAt} kept={row.closeKept} /> : null}
           </div>
           <div className="row-sub">
             <AgentLogo id={pane.agent} spec={agent} size={12} />
@@ -4421,7 +4447,13 @@ export default function App(): JSX.Element {
                       // decision and they disagreed on screen - the card counted down
                       // while the chip sat at `closes 0:01` (reported 2026-08-28). The
                       // armed countdown is the one that is about to act, so it wins.
-                      <CloseClock at={alarmAt(s.id) ?? (s.closingAt as number)} onKeep={() => keepOpen([s.id])} />
+                      <CloseClock
+                        at={alarmAt(s.id) ?? (s.closingAt as number)}
+                        // A countdown card naming this pane is a live plan to close it,
+                        // whatever hold the publish had on it a moment ago.
+                        kept={alarmAt(s.id) === undefined && s.closeKept}
+                        onKeep={() => keepOpen([s.id])}
+                      />
                     ) : pinned[s.id] ? (
                       // A switch with no reading is a switch nobody can tell they pressed:
                       // pinning a pane removes the only thing on the card that was about

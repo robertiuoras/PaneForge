@@ -156,6 +156,15 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
+  /**
+   * The deadline above is a HOLD, not the idle clock.
+   *
+   * "Keep it open" parks a pane for an hour, and the publish takes the later of the two
+   * numbers - so a held pane drew `closes 55m` under a sentence saying it had been quiet
+   * and was being closed to give its memory back. Same chip, opposite fact. The card says
+   * `kept 55m` for this and explains the hold instead.
+   */
+  closeKept?: boolean
   autoAnswerN?: number
   /**
    * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
@@ -1005,6 +1014,8 @@ export interface RemotePaneInfo {
   backJobSince?: number
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
+  /** ...and whether that number is a "keep it open" hold rather than the idle clock */
+  closeKept?: boolean
 }
 
 /** Live state of one paired device. */
@@ -1924,7 +1935,7 @@ export interface Api {
    * decides it (it holds the focus and the config); the session carries it, so this
    * desk's card and every paired device's listing draw the same number.
    */
-  setClosing(id: string, at: number | null): void
+  setClosing(id: string, at: number | null, kept?: boolean): void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**
