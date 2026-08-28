@@ -1879,7 +1879,9 @@ function lastTouched(dir, porcelain, branch) {
     // with `scratchpad/current-run.txt` untouched for 131 minutes still printed
     // "waiting on chats still working in: c" with no age beside it, 188 minutes after
     // the last merge, with two finished lanes queued behind it.
-    let rel = line.slice(3).trim()
+    const m = /^([ MADRCU?!]{1,2})[ \t]+(.*)$/.exec(line)
+    if (!m) continue
+    let rel = m[2].trim()
     if (!rel) continue
     if (rel.includes(' -> ')) rel = rel.split(' -> ').pop()
     if (rel.startsWith('"') && rel.endsWith('"')) rel = rel.slice(1, -1)
