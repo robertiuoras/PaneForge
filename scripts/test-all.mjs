@@ -121,6 +121,9 @@ const TESTS = [
   // The lane a folder already IS, for a pane the app did not move itself - with the
   // standalone `service-a` repo as the control a name-only guess gets wrong.
   ['lanedetect', 'lane-detect-test.mjs'],
+  // Which screen the two copies of the app may take a half of, and the four desks where
+  // nothing may move at all.
+  ['desksnap', 'desk-snap-test.mjs'],
   // A ship may only report a lane it can prove went out, and a lane passed over leaves a
   // note. Real repos, and a post-receive hook that takes the push and rewinds the branch.
   ['laneproof', 'lane-proof-test.mjs'],
