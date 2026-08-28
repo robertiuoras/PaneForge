@@ -113,8 +113,20 @@ export interface AutoHandoffConfig {
    * under every threshold here is left alone however far over the budget the desk is, and
    * the desk simply stays over - there is nothing to save by moving it.
    *
-   * 500 MB, because a fresh agent pane measures ~190 MB here and a Codex one 16-17 MB: the
-   * floor has to sit above an ordinary pane doing nothing and below a pane running a build.
+   * 180 MB, and it was 500 until 2026-08-28. 500 was chosen to sit ABOVE an ordinary agent
+   * pane, which made the budget rung dead: measured on this desk the same day, eight live
+   * `claude` panes held 61, 64, 153, 166, 174, 177, 231 and 247 MB, so nothing on a normal
+   * desk was ever expensive and no pane has ever been moved by this rule. Robert wants most
+   * work running on the PC's 64 GB rather than the MacBook, and a threshold no pane reaches
+   * is a policy that only exists in the settings screen.
+   *
+   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB),
+   * so the rung moves agents and still leaves a cheap pane alone. What makes that safe is
+   * unchanged and is the whole reason the number can move: `machineBound` refuses work that
+   * would not exist over there, `shareable` refuses a checkout that is dirty, unpushed or
+   * has no origin, a pane mid-turn is QUEUED rather than killed, a live question is refused
+   * outright, `keepHere` refuses by project, and nothing is ever handed back to the machine
+   * it arrived from.
    */
   budgetMinMb: number
   /** ...or this much of one core, which is what a build or a dev server looks like. */
@@ -134,6 +146,11 @@ export interface AutoHandoffConfig {
    * pressure card - so there is one answer to "may this leave", not three.
    */
   keepHere: string[]
+  /**
+   * Marker for the one-time move of `budgetMinMb` from 500 to 180 - see `migrateHandoff`.
+   * A changed default cannot reach an existing desk on its own.
+   */
+  budgetDefaultsV2?: boolean
 }
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
@@ -152,7 +169,8 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   // straight back as a mirror, so the number is about where agents RUN, never about how
   // many sessions can be watched from here.
   keepLocal: 2,
-  budgetMinMb: 500,
+  budgetMinMb: 180,
+  budgetDefaultsV2: true,
   budgetMinCpu: 50,
   // Empty: nothing is Mac-only until somebody says so, and the only thing that says so is
   // "Keep it here" on the pressure card.

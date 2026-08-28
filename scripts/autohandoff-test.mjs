@@ -452,13 +452,20 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // is what happened on 2026-08-23 ("randomly 2 sessions moved"). The load-bearing half is
   // the FIRST case: it must be possible to be far over budget and move nothing.
   {
-    const cheap = [pane({ id: 'a', memMb: 190 }), pane({ id: 'b', memMb: 190 }), pane({ id: 'c', memMb: 12 })]
+    // The floor moved from 500 MB to 180 on 2026-08-28, because at 500 NO agent pane on a
+    // normal desk was ever expensive and this rung had therefore never moved anything -
+    // measured here, eight live `claude` panes at 61-247 MB. So a Codex-sized pane is what
+    // "cheap" means now, and an ordinary Claude Code pane is what the rung is FOR.
+    const cheap = [pane({ id: 'a', memMb: 17 }), pane({ id: 'b', memMb: 16 }), pane({ id: 'c', memMb: 12 })]
     eq('three panes over budget, none of them expensive: nothing moves', autoHandoffPlan(cheap, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+
+    const agents = [pane({ id: 'a', memMb: 190 }), pane({ id: 'b', memMb: 247 }), pane({ id: 'c', memMb: 12 })]
+    eq('...but an ordinary agent pane IS expensive, which is the whole point of the rung', ids(autoHandoffPlan(agents, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'b,a')
 
     const unmeasured = [pane({ id: 'a' }), pane({ id: 'b' }), pane({ id: 'c' })]
     eq('and an UNMEASURED pane is not expensive - a hidden window samples nothing', autoHandoffPlan(unmeasured, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
 
-    const mixed = [pane({ id: 'small', memMb: 190 }), pane({ id: 'heavy', memMb: 1400 }), pane({ id: 'keep', memMb: 100 })]
+    const mixed = [pane({ id: 'small', memMb: 60 }), pane({ id: 'heavy', memMb: 1400 }), pane({ id: 'keep', memMb: 100 })]
     eq('the heavy one goes and the small ones stay', ids(autoHandoffPlan(mixed, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'heavy')
 
     const cpu = [pane({ id: 'hot', memMb: 120, cpuPct: 90 }), pane({ id: 'keep', memMb: 120 })]
@@ -479,7 +486,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     eq('and the dearest goes first', ids(autoHandoffPlan(order, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'top,mid,low')
 
     // The floor is configurable, and the control that the gate is really what decided.
-    const loose = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 100 }
+    const loose = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 10 }
     eq('with the floor lowered the same cheap panes DO move', autoHandoffPlan(cheap, budget, peers, loose, {}, NOW).length > 0, true)
 
     check('expensive() refuses a pane with no reading at all', !expensive({}, DEFAULT_AUTO_HANDOFF))
@@ -501,7 +508,13 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       'a NEGATIVE threshold is clamped at 0, not honoured as a floor below zero',
       expensive({ memMb: 0, cpuPct: 0 }, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: -5 })
     )
-    check('the floor sits above an ordinary agent pane and below a build', DEFAULT_AUTO_HANDOFF.budgetMinMb > 197 && DEFAULT_AUTO_HANDOFF.budgetMinMb < 1024)
+    // The floor sits UNDER an ordinary Claude Code pane (measured here 2026-08-28: 61, 64,
+    // 153, 166, 174, 177, 231, 247 MB) and above a Codex one (16-17 MB). It was above the
+    // agent pane until that date, which is why this rung had never moved anything.
+    check(
+      'the floor sits under an ordinary agent pane and above a cheap one',
+      DEFAULT_AUTO_HANDOFF.budgetMinMb > 20 && DEFAULT_AUTO_HANDOFF.budgetMinMb < 190
+    )
   }
 
   // The PRESSURE sweep is unchanged: when the kernel is objecting, every pane is worth

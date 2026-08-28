@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
 import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
-import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
+import { DEFAULT_AUTO_HANDOFF, type AutoHandoffConfig } from '../shared/autoHandoff'
 import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
@@ -341,11 +341,7 @@ export function getConfig(): Config {
       mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
       tips: { ...DEFAULT_TIPS, ...(base.tips ?? {}), ...(raw.tips ?? {}) },
       reclaim: migrateReclaim(base.reclaim, raw.reclaim),
-      autoHandoff: {
-        ...DEFAULT_AUTO_HANDOFF,
-        ...(base.autoHandoff ?? {}),
-        ...(raw.autoHandoff ?? {})
-      },
+      autoHandoff: migrateHandoff(base.autoHandoff, raw.autoHandoff),
       // Merged for the usual reason: a config written before this existed has no key at
       // all, and the watcher would then read `undefined.tokens` as its threshold.
       autoClear: { ...DEFAULT_AUTOCLEAR, ...(base.autoClear ?? {}), ...(raw.autoClear ?? {}) },
@@ -449,6 +445,34 @@ function migrateAutoAnswer(
  * so asking the merged object answers yes for every config in existence and the migration
  * runs on nothing.
  */
+/**
+ * The budget rung's memory floor dropping from 500 MB to 180 - see `budgetMinMb`.
+ *
+ * `defaults()` is WRITTEN to config.json at first launch, so every desk in existence
+ * carries 500 explicitly and a change to `DEFAULT_AUTO_HANDOFF` alone would be read as
+ * somebody's own choice and never applied. Same shape as `migrateReclaim` and read off the
+ * SAVED config for the same reason.
+ *
+ * Only the OLD DEFAULT moves. Any other number was typed through `pf-ctl call config:set`
+ * or the Settings field and is that person's answer, not the app's.
+ */
+function migrateHandoff(
+  base: AutoHandoffConfig | undefined,
+  raw: AutoHandoffConfig | undefined
+): AutoHandoffConfig {
+  const merged: AutoHandoffConfig = {
+    ...DEFAULT_AUTO_HANDOFF,
+    ...(base ?? {}),
+    ...(raw ?? {})
+  }
+  const OLD_FLOOR_MB = 500
+  if (!raw?.budgetDefaultsV2) {
+    if (merged.budgetMinMb === OLD_FLOOR_MB) merged.budgetMinMb = DEFAULT_AUTO_HANDOFF.budgetMinMb
+    merged.budgetDefaultsV2 = true
+  }
+  return merged
+}
+
 function migrateReclaim(
   base: ReclaimConfig | undefined,
   raw: ReclaimConfig | undefined
