@@ -303,6 +303,23 @@ export interface Session {
    */
   job?: string
   /**
+   * What this pane is still RUNNING with its turn over, when the app can name one.
+   *
+   * `shared/paneBackJobs.ts`'s reading, forwarded onto the session so the sessions list
+   * can sort by it. An agent that starts work in the background - a `run_in_background`
+   * shell, a Monitor loop, a build - goes quiet the moment the turn ends: the CLI's
+   * footer stops, `engaged` drops, and the pane sorted into `Your move` while a shell
+   * subtree under it was still going. That is a pane nobody has to act on.
+   *
+   * It reaches `fleetState` and NOTHING else. It is deliberately not `job`, which feeds
+   * `busyOnScreen`: a false reading there is a pane the idle sweep never closes, a budget
+   * that never moves and a clock that lies, and this one is a heuristic over a process
+   * table. Being wrong here costs a heading.
+   */
+  backJob?: string
+  /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
+  backJobSince?: number
+  /**
    * Epoch ms this pane was put to sleep: the pty is gone and the card is not.
    *
    * A sleeping pane carries `status: 'exited'` as well, deliberately - every guard in
@@ -983,6 +1000,9 @@ export interface RemotePaneInfo {
   createdAt?: number
   /** the command running in that pane's foreground, when it is a shell pane running one */
   job?: string
+  /** what that pane is still running with its turn over - see `Session.backJob` */
+  backJob?: string
+  backJobSince?: number
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
 }
