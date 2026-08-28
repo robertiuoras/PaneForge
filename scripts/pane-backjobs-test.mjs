@@ -243,6 +243,25 @@ rmSync(work, { recursive: true, force: true })
   const bare = jobLabel([onlyPrelude], onlyPrelude)
   ok(!/snapshot/.test(bare), `a prelude with no command names no snapshot file (got "${bare}")`)
 
+  // A LOOP, measured live 2026-08-29 on this desk: a background poller in a real pane,
+  // running through the same prelude. It is the shape that made the card read "'for" -
+  // the quote survived the strip, and the loop's own grammar was in no list. There is no
+  // job in a loop HEADER (stepping over the keyword answers the counter, `i`), and the
+  // work is on the line after it, behind a marker.
+  //
+  // It also carries a newline, which `ps` prints as the four characters \012 - so without
+  // splitting on that the whole body is one segment and none of this is reachable.
+  const poller = {
+    pid: 4,
+    ppid: 1,
+    elapsed: 900,
+    cmd: '/bin/zsh -c source /Users/robertiuoras/.claude/shell-snapshots/snapshot-zsh-1787917628119-ouky4v.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- \'unsetenv\'; \\builtin unset -f -- \'unsetenv\'; } >/dev/null 2>&1 || true && eval \'for i in $(seq 1 120); do\\012 S=$(bash /Users/robertiuoras/Projects/taskdriver.ai-a/scratchpad/run.sh "id=eq.5e1057ff-651b-441d-bea6-38cab571ab16" 2>/dev/null | python3 -c "import json,sys;t=sys.stdin.read();i=t.find(\'"\'"\'{\'"\'"\');print(json.loads(t[i:t.rfind(\'"\'"\'}\'"\'"\')+1])[\'"\'"\'status\'"\'"\'])" 2>/dev/null)\\012 if [ "$S" = "done" ] || [ "$S" = "failed" ] || [ "$S" = "error" ]; then break; fi\\012 sleep 30\\012done\\012bash /Users/robertiuoras/Projects/taskdriver.ai-a/scratchpad/run.sh "id=eq.5e1057ff-651b-441d-bea6-38cab571ab16"\' < /dev/null && pwd -P >| /tmp/claude-0234-cwd'
+  }
+  const loop = jobLabel([poller], poller)
+  ok(loop === 'run.sh', `a poller is named by the work in it, not its grammar (got "${loop}")`)
+  for (const wrong of ["'for", 'for', 'i', 'eval', 'seq'])
+    ok(loop !== wrong, `and never "${wrong}"`)
+
   // A prefix word in front of a real command, one level less nested than the live shape.
   const envRun = { pid: 3, ppid: 1, elapsed: 900, cmd: '/bin/sh -c env FOO=1 nohup ./deploy.sh' }
   ok(jobLabel([envRun], envRun) === 'deploy.sh', 'env/nohup are in front of the job, not instead of it')
