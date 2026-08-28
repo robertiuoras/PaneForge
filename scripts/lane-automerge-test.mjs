@@ -152,5 +152,106 @@ const stuck = lane('ready', '--session', 'sess-c')
 ok('a real disagreement is still a conflict', stuck.code !== 0 && /index\.ts/.test(stuck.err), stuck.err)
 ok('and it is recorded against that lane', laneOf(other.lane).conflicted === true)
 
+// ------------------------------------------- the list conflicts, which are most of them
+
+// Measured on taskdriver.ai for the fortnight to 2026-08-28: 10 of 92 lane merges needed a
+// human, and the commit subjects say what for - "keep both sides of the test script list",
+// "union of both sides' test scripts", "keep both test scripts", and a .gitignore where one
+// lane ignored a scratch file while the other ignored the logs beside it. Two lanes each
+// appending to one list is the commonest lane conflict there is, and there is nothing in it
+// to decide.
+
+const gitignoreHunk = [
+  '# generated',
+  '<<<<<<< HEAD',
+  '',
+  '# a per-run id, rewritten by every run',
+  'scratchpad/current-run.txt',
+  '=======',
+  'scratchpad/*.log',
+  '>>>>>>> main',
+  ''
+].join('\n')
+const gitignoreMerged = mergeAutoConflicts(gitignoreHunk, '.gitignore')
+ok(
+  'two lanes ignoring different files keep both patterns',
+  gitignoreMerged?.includes('scratchpad/current-run.txt') && gitignoreMerged?.includes('scratchpad/*.log'),
+  gitignoreMerged
+)
+ok('and no marker survives', !/[<>=]{7}/.test(gitignoreMerged ?? ''), gitignoreMerged)
+
+// `!pattern` un-ignores something ignored ABOVE it: where the line sits IS the meaning.
+const negated = [
+  '<<<<<<< HEAD',
+  'build/',
+  '=======',
+  '!build/keep.js',
+  '>>>>>>> main'
+].join('\n')
+ok('a negation makes order meaningful, so it stays a human conflict', mergeAutoConflicts(negated, '.gitignore') === null)
+
+const scriptsHunk = [
+  '  "scripts": {',
+  '    "build": "next build",',
+  '<<<<<<< HEAD',
+  '    "test:demo-eager-images": "node scripts/site-settle-eager-images.test.mjs",',
+  '=======',
+  '    "test:approach-motion": "node scripts/approach-motion.test.mjs",',
+  '>>>>>>> main',
+  '    "verify": "npm run typecheck"',
+  '  }'
+].join('\n')
+const scriptsMerged = mergeAutoConflicts(scriptsHunk, 'package.json')
+ok(
+  'two lanes each adding a test script keep both',
+  scriptsMerged?.includes('test:demo-eager-images') && scriptsMerged?.includes('test:approach-motion'),
+  scriptsMerged
+)
+ok(
+  'and the JSON is still valid - every member but the last carries its comma',
+  (() => {
+    try {
+      JSON.parse('{' + scriptsMerged + '}')
+      return true
+    } catch (e) {
+      return false
+    }
+  })(),
+  scriptsMerged
+)
+
+// One key, two values, is two answers to one question.
+const sameKey = [
+  '<<<<<<< HEAD',
+  '    "test:x": "node scripts/x.mjs",',
+  '=======',
+  '    "test:x": "node scripts/x-renamed.mjs",',
+  '>>>>>>> main'
+].join('\n')
+ok('the same key with two values is still a human conflict', mergeAutoConflicts(sameKey, 'package.json') === null)
+
+// A version bump is not an addition.
+const version = [
+  '<<<<<<< HEAD',
+  '  "version": "0.8.160",',
+  '=======',
+  '  "version": "0.8.161",',
+  '>>>>>>> main'
+].join('\n')
+ok('two version bumps still stop and ask', mergeAutoConflicts(version, 'package.json') === null)
+
+// A JSON file is not a licence to union anything shaped like text.
+const notMembers = [
+  '<<<<<<< HEAD',
+  '  some prose that is not a member',
+  '=======',
+  '  other prose',
+  '>>>>>>> main'
+].join('\n')
+ok('anything that is not an object member refuses the file', mergeAutoConflicts(notMembers, 'package.json') === null)
+
+// The rule is scoped: a .ts file full of ignore-looking lines is not an ignore file.
+ok('a source file is not treated as a list', mergeAutoConflicts(gitignoreHunk, 'lib/thing.ts') === null)
+
 console.log(failed ? `\n${failed} failed` : '\nall good')
 process.exit(failed ? 1 : 0)
