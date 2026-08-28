@@ -120,6 +120,24 @@ export interface AutoHandoffConfig {
   /** ...or this much of one core, which is what a build or a dev server looks like. */
   budgetMinCpu: number
   /**
+ * How long a pane must be idle before it is offered to the other machine - and, since
+ * 2026-08-28, the DEFAULT rather than an opt-in.
+ *
+ * Robert wants the work on the PC (64 GB, always on) rather than on the MacBook, and this
+ * is the rung that does it. Fifteen minutes is deliberately HALF `IDLE_SLEEP_MINUTES`: a
+ * pane that has gone quiet is offered to the machine that can carry on running it, and
+ * only if nothing takes it does the sleep clock stop its agent here half an hour in.
+ * Ordered the other way round the feature is dead on arrival - a sleeping pane is refused
+ * by every handoff rung and costs nothing to keep, so it would never be moved.
+ *
+ * It cannot fire on a machine with nowhere to send work: the rung needs an ONLINE paired
+ * device, a checkout that is a git repo under the projects root with an origin remote
+ * (`shareable`), and work that is not bound to this desk (`shared/paneBound.ts`). On a
+ * laptop with no peer this is exactly as quiet as the 0 it replaces.
+ */
+export const IDLE_OFFLOAD_MINUTES = 15
+
+/**
    * Projects that never leave this machine, by name.
    *
    * Robert, 2026-08-26: "automated windows need to keep on this laptop though since pc
@@ -145,7 +163,7 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   maxPerSweep: 2,
   cooldownMinutes: 30,
   waitMinutes: 30,
-  offloadIdleMinutes: 0,
+  offloadIdleMinutes: IDLE_OFFLOAD_MINUTES,
   // Two. It cannot fire without a paired device that is online and holds the same project,
   // so on a laptop with nothing paired this is the behaviour it always had; on a desk with
   // the other machine up it is the answer to opening a third pane. Everything moved comes
@@ -159,14 +177,6 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   keepHere: []
 }
 
-/**
- * What the switch sets `offloadIdleMinutes` to when it is turned on.
- *
- * Three times `minIdleMinutes`, on purpose. That one runs while the machine is falling
- * over, where being a few minutes early costs a reopen; this runs while there is still
- * room, where being early moves work somebody was about to come back to.
- */
-export const IDLE_OFFLOAD_MINUTES = 30
 
 /**
  * How long the clock waits, or 0 for off. The ONE reader of `offloadIdleMinutes`.
