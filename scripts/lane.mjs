@@ -2244,7 +2244,7 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // change - taskdriver's Vercel `ignoreCommand` reads the commit SUBJECT, so `auto-sync:`
   // work batches and a descriptive subject ships. A second, blind, two-hour timer on top
   // of that cannot batch anything it understands; it only ever loses work.
-  const window_ = smallOnly(MAIN) ? SMALL_HOLD_MS : COOLDOWN_MS
+  const window_ = RELEASE === 'version' ? (smallOnly(MAIN) ? SMALL_HOLD_MS : COOLDOWN_MS) : 0
   if (since < window_) {
     const small = smallOnly(MAIN)
     const wait = Math.ceil((window_ - since) / 60000)
