@@ -85,6 +85,16 @@ export interface ReclaimConfig {
    */
   idleCloseMinutes: number
   /**
+   * Stop the agent in a pane nobody has typed into for this many minutes, and keep the
+   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off.
+   *
+   * A NEW key, so an existing config.json simply does not have it and `?? IDLE_SLEEP_MINUTES`
+   * gives every desk the default: none of the `defaultsVN` machinery is needed, because
+   * that exists for a default that was already WRITTEN as a number somebody could have
+   * chosen. Missing is missing.
+   */
+  idleSleepMinutes?: number
+  /**
    * Marker for the one-time move onto the clock being ON by default.
    *
    * `defaults()` is WRITTEN to config.json at first launch, so every install in existence
@@ -127,11 +137,29 @@ export interface ReclaimConfig {
  */
 export const IDLE_CLOSE_MINUTES = 5
 
+/**
+ * How long a pane may sit unused before its agent is stopped and the CARD is kept.
+ *
+ * On by default, unlike the close clock above, because being wrong costs so much less:
+ * sleeping keeps the pane, its place, its screen and its conversation, and waking it is
+ * one press and the CLI's own 1.4s boot. Closing takes the card off the desk, which is
+ * the thing a pane kept for easy access exists to keep - Robert, 2026-08-27: "i keep
+ * session 2 and 5 kept open just for easy access... maybe to save resources you can sleep
+ * them". Measured on this desk 2026-08-28, eight live `claude` panes: 61, 64, 153, 166,
+ * 174, 177, 231 and 247 MB, 1.27 GB in total, none of it doing anything.
+ *
+ * Half an hour rather than the close clock's five minutes: this fires whether or not the
+ * machine is under pressure, so it has to be long enough that a pane somebody is thinking
+ * about between turns is never in it.
+ */
+export const IDLE_SLEEP_MINUTES = 30
+
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
+  idleSleepMinutes: IDLE_SLEEP_MINUTES,
   defaultsV2: true,
   defaultsV3: true,
   defaultsV4: true
@@ -386,6 +414,40 @@ export function idleClosePlan(
     idleMs: now - quietSince(p),
     hadAgent: p.state !== 'exited'
   }))
+}
+
+/**
+ * Which panes have been unused long enough to have their agent stopped and their card kept.
+ *
+ * The rung BELOW closing, and the reason the close clock can stay off on the desk somebody
+ * is sitting at: everything a person would miss survives a sleep, so the refusals can be
+ * the same ones without the price of being wrong. `onTheClock` is shared with
+ * `idleClosePlan` verbatim - never a pane that is focused, unread, working, running a job,
+ * holding a question, mid-handoff, pinned, another machine's, or already asleep.
+ *
+ * Three things `idleClosePlan` does that this deliberately does not:
+ *   - it keeps one pane back, because an app that empties its own window has saved nothing.
+ *     Sleeping empties nothing: every card stays where it is, wearing the screen it had.
+ *   - it caps the sweep at `maxPerSweep`, because a close is worth re-reading the machine
+ *     between. Nothing here depends on a reading of the machine.
+ *   - it counts `visible` as no refusal for the second desk's sake. Here it never was one:
+ *     a sleeping pane looks the same as it did, so being on screen changes nothing.
+ */
+export function idleSleepPlan(
+  panes: ReclaimPane[],
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0,
+  personHere = true
+): Reclaim[] {
+  if (!cfg.enabled) return []
+  const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
+  if (!minutes) return []
+  const minIdle = minutes * 60_000
+  return panes
+    .filter((p) => onTheClock(p, personHere))
+    .filter((p) => now - quietSince(p) >= minIdle)
+    .sort((a, b) => quietSince(a) - quietSince(b))
+    .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
 }
 
 /** MB the plan is expected to return, for the line that says whether it was worth doing. */
