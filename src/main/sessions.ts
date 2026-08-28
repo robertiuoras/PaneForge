@@ -1712,11 +1712,10 @@ export class SessionManager extends EventEmitter {
       const live = this.sessions.get(id)
       // Asked again at the last moment: the pane may have started a turn during the
       // countdown, and a snapshot taken when it was armed is not a licence to clear now.
-      // 'working' is NOT a refusal at this point - Claude Code QUEUES pty input that
-      // arrives mid-turn and runs it at the turn boundary, so the clear lands the moment
-      // the turn ends rather than never. (Refusing on 'working' is what made a countdown
-      // everybody watched expire into nothing: measured 2026-08-26 in
-      // ~/.claude/autoclear.log, 15 countdowns started, 14 queued, nothing cleared.)
+      // 'working' is neither a fire nor a refusal - it goes back on the pending queue
+      // below. (Refusing outright is what made a countdown everybody watched expire into
+      // nothing: measured 2026-08-26 in ~/.claude/autoclear.log, 15 countdowns started,
+      // 14 queued, nothing cleared - so the ask is KEPT either way.)
       // Every branch below is a named verdict and every one of them is LOGGED - the s2
       // incident could not be diagnosed because three of these exits were silent.
       const verdict = expiryDecision({
@@ -1749,6 +1748,17 @@ export class SessionManager extends EventEmitter {
         this.clearAutoClearMeta(live!)
         this.setAutoClearOutcome(id, 'stood down - the countdown was superseded')
         this.emitSessions()
+        return
+      }
+      // A turn started under the countdown. Typing anyway put `/clear`, the resume prompt
+      // and its submit into Claude Code's mid-turn queue, where the clear ran first and
+      // took the other two with it: the pane was cleared and continued nothing (2026-08-28,
+      // s11-mtck156b). Waiting for the turn is the arm path's own behaviour, so use it -
+      // `cancelAutoClear` leaves a 'working' pending entry alone, and `endRun` re-arms.
+      if (verdict === 'working') {
+        this.autoClearPending.set(id, ask)
+        this.cancelAutoClear(id, 'working')
+        acLog(`${id} requeued at expiry - ${dropWords('working')}`)
         return
       }
       if (verdict !== 'fire') {

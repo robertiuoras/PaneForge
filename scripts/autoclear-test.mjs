@@ -237,7 +237,10 @@ console.log('what the timer does when it finally fires - the s2 incident (ADDEND
   // (b) a clean pane fires - and what it types is the FROZEN chunks, whose exact content
   // the keystroke checks above already pin against the hook.
   ok('a clean pane fires', expiryDecision(base) === 'fire')
-  ok('mid-turn still fires - the pty queues it to the turn boundary', expiryDecision({ ...base, drop: 'working' }) === 'fire')
+  // The control for the 2026-08-28 bug: firing mid-turn queued /clear + prompt + CR
+  // together, the clear ran first at the turn boundary and discarded the rest, so the
+  // pane cleared and continued nothing. It must wait for the turn, never type into it.
+  ok('mid-turn never types - it goes back on the queue', expiryDecision({ ...base, drop: 'working' }) === 'working')
   // (c) a draft at expiry WAITS - it does not stand down. Typing over somebody's unsent
   // line is the one damage a clear can do that cannot be undone, and the countdown staying
   // on screen is what keeps the promise that only the button stops it.
