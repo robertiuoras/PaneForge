@@ -190,8 +190,28 @@ export class RemoteClient extends EventEmitter {
     this.teardown('off', '')
   }
 
-  send(m: Msg): void {
-    this.conn?.send(m)
+  send(m: Msg): boolean {
+    if (!this.conn?.ready) return false
+    this.conn.send(m)
+    return true
+  }
+
+  /**
+   * A message somebody is WATCHING for went out and nothing came back: is this link alive?
+   *
+   * Closing a pane is that message - the row only goes when the far end's next pane list
+   * arrives - and a socket that dies silently is not noticed until DEAD_MS (45s), so the
+   * press looked ignored for three quarters of a minute and got pressed again. Nothing
+   * heard at all since the action went out is a dead link, torn down here so the reconnect
+   * starts now; a link that has spoken since is alive, and the action really did fail over
+   * there. Answers whether it is alive.
+   */
+  proveAlive(since: number): boolean {
+    if (!this.conn) return false
+    if (this.heard >= since) return true
+    this.teardown('error', 'That device stopped answering')
+    this.retry()
+    return false
   }
 
   /**

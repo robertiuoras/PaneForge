@@ -1262,7 +1262,12 @@ ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
-  if (remote.owns(id)) return remote.send(id, { t: 'kill' })
+  if (remote.owns(id)) {
+    // The row goes at once on a live link; a link that could not carry the frame is said
+    // out loud, because silence here is a button that looks broken and gets pressed again.
+    if (!remote.closeOn(id)) send('app:error', 'That device is not connected - the pane was not closed.')
+    return
+  }
   // A client asking to close a pane this desk does not have is a client holding a STALE
   // list - a phone whose event stream was down while the pane was closed. `kill` on an
   // unknown id changes nothing, so nothing was broadcast, so the row it was pressing

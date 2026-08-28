@@ -277,6 +277,17 @@ decisions not to re-litigate:
   a clock; its borrow ends with the connection. And a desk resize under a borrow sweeps
   first: "remembered, not obeyed" made a stuck borrow unrecoverable by construction, so
   dragging the window could not repair it either. `npm run test:panesize`.
+- **A close takes the row at once, and a link that could not carry it says so.** `kill` is
+  a frame with no answer of its own, so the row went only when the far end's next pane list
+  arrived - and a socket that dies silently is not noticed until `DEAD_MS` (45s, three
+  `PING_MS`), so the button looked ignored for three quarters of a minute and got pressed
+  again. `Remote.closeOn` hides the row the moment the frame is on a live link and gives it
+  back after `CLOSE_ACK_MS` (3s) if the pane is still there - a refusal may not wear the
+  shape of a close. `RemoteClient.send` answers whether it went, so a link that is not ready
+  is reported (`app:error`) rather than dropped in silence, and `proveAlive` turns the
+  unanswered press into the liveness probe: nothing heard since it went out is torn down
+  here rather than at `DEAD_MS`. A link that HAS spoken since is left alone - that is the
+  control in `test:remote`.
 - **A mirror never reports the busy footer**, and **frames are decoded where they are
   consumed**, never where they arrive (the last handshake frame and the first encrypted one
   routinely land in one TCP segment).
