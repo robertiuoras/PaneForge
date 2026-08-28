@@ -2674,9 +2674,9 @@ export default function App(): JSX.Element {
         ),
         cfg,
         // The same frozen clock every other sweep reads: time somebody could have acted
-        // in, never wall time.
-        deskNow(Date.now(), awayRef.current),
-        personRef.current
+        // in, never wall time. No `personHere`: this rung has no unread refusal to gate
+        // on - see `keepable` in shared/reclaim.ts.
+        deskNow(Date.now(), awayRef.current)
       )
       for (const p of plan) void api.sleepSession(p.id)
     }

@@ -605,9 +605,19 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // refusal the close clock makes is made here - while there is somebody here to read it.
   // Quiet for two hours (so it is well past the clock) but it PRINTED after the keyboard
   // last left it, which is the whole of `unread`.
+  // ...and the ONE refusal it does not share, which is the difference between the two
+  // rungs: `unread` is about a pane VANISHING before somebody has seen its last turn, and
+  // sleeping vanishes nothing. A pane never focused at all is unread for ever
+  // (`lastFocus` undefined), so keeping it would make this clock inert - measured on this
+  // machine at a one-minute setting: two eligible panes, quiet 126s, neither slept.
   const unreadPane = pane({ id: 'unread', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 2 * HOUR, lastFocus: NOW - 5 * HOUR })
-  eq('never a turn nobody has read yet', ids(idleSleepPlan([unreadPane], SLEEPY, NOW)), '')
-  eq('...unless no person has touched this desk at all', ids(idleSleepPlan([unreadPane], SLEEPY, NOW, false)), 'unread')
+  check('the close clock refuses a turn nobody has read yet', unread(unreadPane), '')
+  eq('...and the sleep clock takes it, because nothing goes away', ids(idleSleepPlan([unreadPane], SLEEPY, NOW)), 'unread')
+  eq(
+    'a pane nobody has ever focused is not held back either',
+    ids(idleSleepPlan([pane({ id: 'never', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })], SLEEPY, NOW)),
+    'never'
+  )
 }
 
 // The wiring: a plan nothing calls sleeps nothing.

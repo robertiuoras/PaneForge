@@ -432,19 +432,22 @@ export function idleClosePlan(
  *     between. Nothing here depends on a reading of the machine.
  *   - it counts `visible` as no refusal for the second desk's sake. Here it never was one:
  *     a sleeping pane looks the same as it did, so being on screen changes nothing.
+ *
+ * And it does not refuse an UNREAD pane, which is the one refusal that is about a pane
+ * disappearing - see `keepable`. Nothing disappears here, and a pane nobody has focused
+ * yet is unread for ever, so keeping it would make this clock inert.
  */
 export function idleSleepPlan(
   panes: ReclaimPane[],
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
-  now = 0,
-  personHere = true
+  now = 0
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
   if (!minutes) return []
   const minIdle = minutes * 60_000
   return panes
-    .filter((p) => onTheClock(p, personHere))
+    .filter(keepable)
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
@@ -476,7 +479,23 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
     // is ever read, so an unread refusal would switch the feature off on the one machine
     // that needs it.
-    !(personHere && unread(p)) &&
+    !(personHere && unread(p)) && keepable(p)
+  )
+}
+
+/**
+ * The refusals that are about the PANE rather than about having read it.
+ *
+ * Split out because sleeping and closing disagree on exactly one of them. `unread` is
+ * there so a turn nobody has seen is not taken off the desk before they see it - which is
+ * a statement about the pane VANISHING. A sleeping pane vanishes nothing: the card, its
+ * place and every row on its screen stay exactly where they are, and a pane never focused
+ * at all reads as unread for ever (`lastFocus` is undefined), so keeping it here would
+ * make the sleep clock inert on the desk it was built for. Measured on this machine: two
+ * eligible panes, quiet 126s against a 60s clock, neither slept.
+ */
+function keepable(p: ReclaimPane): boolean {
+  return (
     !p.focused &&
     !p.remote &&
     !p.handingOff &&
