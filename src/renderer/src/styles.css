@@ -1403,17 +1403,9 @@ body.sizing * { user-select: none !important; }
    this pane RUNS, and close last on its own. `order` on a flex row is the cheap half of
    that; the JSX order (and so the tab order) still follows the file, which is the part
    left to do. */
-.pt-actions .pt-find { order: 1 }
-.pt-actions .agent-pick { order: 2 }
-.pt-actions .pt-clear { order: 3 }
-.pt-actions .pt-restart { order: 4 }
-.pt-actions .icon.fix { order: 5 }
-.pt-actions .pt-reveal { order: 6 }
-.pt-actions [data-pt='editor'] { order: 7 }
-.pt-actions .pt-zoom { order: 8 }
-.pt-actions .pt-handoff { order: 9 }
-.pt-actions .pt-more { order: 10 }
-.pt-actions .pt-close { order: 11 }
+/* No `order` here on purpose: these controls are written in App.tsx in the order they
+   are drawn, so the keyboard walks the row the way the eye does. A CSS `order` moves the
+   picture and leaves tab order behind it, which is a row nobody can tab through. */
 
 /* A pane is its own container, so a header in a 328px grid pane can drop what a 900px one
    keeps. Measured 2026-08-28: that line wanted 888px of layout in 328px, so everything
@@ -1445,7 +1437,7 @@ body.sizing * { user-select: none !important; }
   .pane-title .pt-reveal,
   .pane-title [data-pt='editor'],
   .pane-title .pt-zoom { display: none }
-  .pt-actions .pt-more { display: inline-flex; order: 10 }
+  .pt-actions .pt-more { display: inline-flex }
 }
 
 .pt-actions .icon.pt-close {

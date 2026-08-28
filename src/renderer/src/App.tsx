@@ -5155,20 +5155,6 @@ export default function App(): JSX.Element {
               ) : null}
               <span className="pt-path">{s.cwd}</span>
               <span className="pt-actions">
-                {/* The header is 404px on a phone and this picker alone is ~150 of it, so
-                    on a touch-sized screen it moves into the ⋯ sheet with the actions -
-                    where it is a labelled control rather than the reason Close is drawn
-                    off the edge of the screen. */}
-                {!handheld.handheld && (
-                  <AgentPicker
-                    small
-                    agents={agents}
-                    agent={s.agent}
-                    model={s.model ?? ''}
-                    onInstalled={() => void api.listAgents().then(setAgents)}
-                    onChange={(a, m) => switchAgent(s, a, m)}
-                  />
-                )}
                 {/* Search has been Ctrl/Cmd+F since it shipped, and a shortcut with nothing
                     on screen is a feature only the person who built it knows about. The
                     icon is the discoverable half of the same thing - it opens the pane's
@@ -5192,22 +5178,98 @@ export default function App(): JSX.Element {
                     <SearchIcon size={13} />
                   </button>
                 )}
-                {/* One target instead of six. Everything below is still rendered on a
-                    desktop window; on a phone the sheet is the only way to any of it. */}
-                {/* Always rendered now, not only on a phone: a grid pane is 328px wide and
-                    this row wants 369px of it, so the desk needs the same escape hatch a
-                    phone has. CSS keeps it out of the way until the pane is actually
-                    narrow (`@container pane`), which is the one reading that knows. */}
-                {(
+                {/* The header is 404px on a phone and this picker alone is ~150 of it, so
+                    on a touch-sized screen it moves into the ⋯ sheet with the actions -
+                    where it is a labelled control rather than the reason Close is drawn
+                    off the edge of the screen. */}
+                {!handheld.handheld && (
+                  <AgentPicker
+                    small
+                    agents={agents}
+                    agent={s.agent}
+                    model={s.model ?? ''}
+                    onInstalled={() => void api.listAgents().then(setAgents)}
+                    onChange={(a, m) => switchAgent(s, a, m)}
+                  />
+                )}
+                {/* Clears the agent's context and keeps the run. Where the mic used to
+                    be, which is why the mic moved down to the prompt it dictates into:
+                    the two got clicked for each other up here. */}
+                <button
+                  className="icon danger pt-clear"
+                  title={`Clear ${s.title}: runs /clear in this pane. The run keeps going; its memory of this conversation does not.`}
+                  aria-label="Clear this session"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    clearPane(s)
+                  }}
+                >
+                  <TrashIcon size={13} />
+                </button>
+                <button
+                  className="icon pt-restart"
+                  title={keyLabel('Restart agent (Ctrl Shift R)')}
+                  onClick={() => api.restartSession(s.id)}
+                >
+                  ⟳
+                </button>
+                <button
+                  className="icon fix"
+                  title={keyLabel('Fix the display: refit and repaint, keeping the run (Ctrl Shift L)')}
+                  onClick={() => fixUi(s.id)}
+                >
+                  Fix
+                </button>
+                {/* Both of these open something on THIS machine. For a mirrored pane
+                    the folder is on the other one, so they would open the wrong thing
+                    or nothing at all - better absent than quietly wrong. */}
+                {/* `desk-only` because they are also useless at phone width, for the same
+                    reason they are absent on a mirror: they open a window on the machine
+                    you are not holding. Dropping them is what lets Close fit on screen. */}
+                {!s.remote && (
                   <button
-                    className="icon pt-more"
-                    aria-label={`Actions for ${s.title}`}
+                    className="icon desk-only pt-reveal"
+                    title={
+                      /* A lane is a worktree and its untracked files are swept with it,
+                         so this opens the PROJECT. Dropping a file where the agent can
+                         read it is what dragging onto the pane is for. */
+                      `Open this project in Explorer - to reach the agent, drag files onto this pane`
+                    }
+                    onClick={() =>
+                      void api.revealProject(s.cwd).then((p) => p || flash('That folder is gone.'))
+                    }
+                  >
+                    📁
+                  </button>
+                )}
+                {!s.remote && (
+                  <button
+                    className="icon desk-only"
+                    title="Open in editor"
+                    onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
+                    data-pt="editor"
+                  >
+                    ✎
+                  </button>
+                )}
+                {/* Only in the grid, where it means something - and it stays on screen
+                    while zoomed, because a button that vanishes once it has been used is
+                    a window with no way back out of it except a shortcut. */}
+                {grid && (
+                  <button
+                    className={'icon pt-zoom' + (zoom === s.id ? ' on' : '')}
+                    title={keyLabel(
+                      zoom === s.id
+                        ? 'Back to the grid (Ctrl Shift Z)'
+                        : 'Zoom this pane to the whole window (Ctrl Shift Z)'
+                    )}
+                    aria-label={zoom === s.id ? 'Back to the grid' : 'Zoom this pane'}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setPaneMenu(s.id)
+                      toggleZoom(s.id)
                     }}
                   >
-                    ⋯
+                    {zoom === s.id ? '⤡' : '⤢'}
                   </button>
                 )}
                 {/* Beside the runner and its model, because it is the same question asked
@@ -5260,84 +5322,22 @@ export default function App(): JSX.Element {
                     Bring here
                   </button>
                 )}
-                {/* Clears the agent's context and keeps the run. Where the mic used to
-                    be, which is why the mic moved down to the prompt it dictates into:
-                    the two got clicked for each other up here. */}
-                <button
-                  className="icon danger pt-clear"
-                  title={`Clear ${s.title}: runs /clear in this pane. The run keeps going; its memory of this conversation does not.`}
-                  aria-label="Clear this session"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    clearPane(s)
-                  }}
-                >
-                  <TrashIcon size={13} />
-                </button>
-                {/* Only in the grid, where it means something - and it stays on screen
-                    while zoomed, because a button that vanishes once it has been used is
-                    a window with no way back out of it except a shortcut. */}
-                {grid && (
+                {/* One target instead of six. Everything below is still rendered on a
+                    desktop window; on a phone the sheet is the only way to any of it. */}
+                {/* Always rendered now, not only on a phone: a grid pane is 328px wide and
+                    this row wants 369px of it, so the desk needs the same escape hatch a
+                    phone has. CSS keeps it out of the way until the pane is actually
+                    narrow (`@container pane`), which is the one reading that knows. */}
+                {(
                   <button
-                    className={'icon pt-zoom' + (zoom === s.id ? ' on' : '')}
-                    title={keyLabel(
-                      zoom === s.id
-                        ? 'Back to the grid (Ctrl Shift Z)'
-                        : 'Zoom this pane to the whole window (Ctrl Shift Z)'
-                    )}
-                    aria-label={zoom === s.id ? 'Back to the grid' : 'Zoom this pane'}
+                    className="icon pt-more"
+                    aria-label={`Actions for ${s.title}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      toggleZoom(s.id)
+                      setPaneMenu(s.id)
                     }}
                   >
-                    {zoom === s.id ? '⤡' : '⤢'}
-                  </button>
-                )}
-                <button
-                  className="icon pt-restart"
-                  title={keyLabel('Restart agent (Ctrl Shift R)')}
-                  onClick={() => api.restartSession(s.id)}
-                >
-                  ⟳
-                </button>
-                <button
-                  className="icon fix"
-                  title={keyLabel('Fix the display: refit and repaint, keeping the run (Ctrl Shift L)')}
-                  onClick={() => fixUi(s.id)}
-                >
-                  Fix
-                </button>
-                {/* Both of these open something on THIS machine. For a mirrored pane
-                    the folder is on the other one, so they would open the wrong thing
-                    or nothing at all - better absent than quietly wrong. */}
-                {/* `desk-only` because they are also useless at phone width, for the same
-                    reason they are absent on a mirror: they open a window on the machine
-                    you are not holding. Dropping them is what lets Close fit on screen. */}
-                {!s.remote && (
-                  <button
-                    className="icon desk-only pt-reveal"
-                    title={
-                      /* A lane is a worktree and its untracked files are swept with it,
-                         so this opens the PROJECT. Dropping a file where the agent can
-                         read it is what dragging onto the pane is for. */
-                      `Open this project in Explorer - to reach the agent, drag files onto this pane`
-                    }
-                    onClick={() =>
-                      void api.revealProject(s.cwd).then((p) => p || flash('That folder is gone.'))
-                    }
-                  >
-                    📁
-                  </button>
-                )}
-                {!s.remote && (
-                  <button
-                    className="icon desk-only"
-                    title="Open in editor"
-                    onClick={() => api.openInEditor(s.cwd).then((err) => err && flash(err))}
-                    data-pt="editor"
-                  >
-                    ✎
+                    ⋯
                   </button>
                 )}
                 <button
