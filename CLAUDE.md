@@ -224,6 +224,27 @@ killing PaneForge by hand (~14 min of renderer CPU, main thread parked in `mach_
 - `npm run test:renderwatch` is the arithmetic and the source assertions;
   `PF_PORT=9334 npm run test:renderwatchlive` spins a real window (needs a copy running).
 
+## A restart onto a new build says what changed
+
+One card, bottom-right, in the same shape as the update prompt it answers and a step below
+it (z-index 59): if a newer build is already downloaded, the offer to take it outranks a
+summary of the one before. `shared/whatsNew.ts` is the arithmetic, `main/whatsNew.ts` the
+one request, `WhatsNewCard.tsx` the card. `npm run test:whatsnew`.
+
+- **The bullets are the release's own notes**, which `scripts/release-notes.mjs` already
+  writes out of Conventional Commit subjects - with the machine half of each subject
+  stripped (`fix(panes):`, `**feat:**`, a trailing sha or PR link), capped at 6 sentences
+  of 120 characters.
+- **The refusals are the feature.** A FRESH INSTALL says nothing (no previous build to
+  have changed from). An ordinary restart says nothing, and costs one IPC round trip that
+  returns null. A ROLLBACK says nothing - "what's new" over a downgrade is a lie. A body
+  with no readable bullets says nothing, because an empty card is worse than no card.
+- **No network says nothing AND does not remember the version**, so the card appears on
+  the next launch that can reach GitHub rather than being lost. The two silent paths that
+  DO remember are the ones with nothing to come back for.
+- It is not a dialog, takes no focus and has no animation - "Never take the screen" below
+  applies to it exactly as it does to `UpdateToast`.
+
 ## Never take the screen
 
 The app runs all day beside real work. Nothing it does on its own may take focus, raise a
@@ -1358,6 +1379,18 @@ the phone server (`pane-clear.mjs` → `autoclear:ask`). The desk draws a countd
 would be continued, how long is left, **Keep this session** and **Clear now**. Nobody at the desk
 means it still happens by itself.
 
+**The clear is typed; everything after it is TALKED to.** `/clear` goes out after the
+arm lead, and the resume prompt then goes through `queuePrompt` - the same machinery a
+launch prompt uses, which waits for an IDLE COMPOSER rather than a stopwatch, sends the
+return as its own write, and re-sends only after READING the pane and finding it still
+idle. The blind schedule it replaces typed the prompt at a fixed +2500ms, its submit at
++3700ms, then fired two unconditional CRs at +6700 and +11700: measured over 16 clears on
+2026-08-27/28, **28 retries, both of them every time**, including the fourteen where the
+first submit had plainly landed - a stray Enter into a live CLI on every clear.
+`clearChunks` is unchanged, so parity with the hook's `paneChunks` holds; `CLEAR_SETTLE_MS`
+and `SUBMIT_RETRIES_MS` stay exported for the hook's own fallback, which types with no
+reading of its own.
+
 `shared/autoclear.ts` holds every refusal and `main/autoclear.ts` the clock; both are
 re-evaluated against a FRESH pane reading each tick, so a pane that starts another turn, is typed
 into, exits or disappears drops its countdown. An ask with no open steps is refused at both ends.
@@ -1515,6 +1548,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied |
 | `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
 | `npm run test:renderwatch` | getting a wedged renderer back: both events, the probe Chromium's own monitor cannot replace, and the four refusals that stop a watchdog reloading for ever |
+| `npm run test:whatsnew` | what a restart onto a new build may say, and the five launches on which it must say nothing (fresh install, ordinary restart, rollback, unreadable notes, no network) |
 | `npm run test:trimloss` | that lowering xterm's `scrollback` DELETES lines and raising it back restores none, which is why a trimmed pane is re-rendered from main's log |
 | `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
 | `npm run test:autohandoff` | moving a finished pane instead of closing it, and what the BUDGET rung may move at all (red-proofed) |
@@ -1568,7 +1602,7 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
 - **A trim is a DELETE, so the two things that made it fire repeatedly had to stop.** Lowering
   xterm's `scrollback` discards lines and raising it back restores none, so the recovery is a
   re-render from main's raw log (`paneRedraw` -> `redrawHistory`): `t.reset()`, a resize, and up
-  to `BUFFER_LIMIT` 400 kB written back through xterm - **45-147 ms of parse alone** in a
+  to `REDRAW_BYTES` 4 MB of the pane's own LOG written back through xterm - **45-147 ms of parse alone** in a
   headless terminal, on the UI thread, before anything is drawn. It was fired by both of the
   readings that move: **a PANE SWITCH** (the focused pane is never trimmed, so arriving regrew it
   and leaving trimmed it again - and this desk sits at `over` for hours, load 2.70 per core
