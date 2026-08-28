@@ -373,6 +373,15 @@ const VISIBILITY_REFRESH_MS = 30_000
  * becomes furniture - which is the whole complaint the strip it replaces collected.
  */
 const CAPACITY_NOTE_MS = 12_000
+/**
+ * The least time between two memory cards.
+ *
+ * The card is armed by the reading BECOMING worth saying (`level|why`), and this desk sits
+ * at `over` for hours with the lag reading crossing its band every few minutes - so the
+ * same fact popped a card again and again. A reading that interrupts repeatedly is a
+ * reading nobody reads. Robert, 2026-08-28: "the out of memory card pops too often".
+ */
+const CAPACITY_QUIET_MS = 10 * 60_000
 
 /* One pass of `doneGlow` (1.9s in styles.css) plus a beat, and nothing more: the class has
    to come off when the flash ends or the card keeps the last frame's tint for another
@@ -2058,6 +2067,8 @@ export default function App(): JSX.Element {
    * is running" rather than "not measured yet".
    */
   const [usage, setUsage] = useState<UsageReport | null>(null)
+  /** When the memory card last appeared - see `CAPACITY_QUIET_MS`. */
+  const capacityLastAt = useRef(0)
 
   /**
    * Put the memory notice on screen when the reading BECOMES worth saying, and take it
@@ -2066,13 +2077,23 @@ export default function App(): JSX.Element {
    * inside a card nobody is looking at is a second reading, not the one being reported.
    */
   useEffect(() => {
-    if (!capacity || capacity.level === 'ok' || !capacity.say) {
+    // `over` only - the kernel itself objecting - and not `tight`, which is the budget
+    // line and a warn-band reading. Those two are policy, they are acted on by the ladder
+    // (which draws its own countdown for anything it moves or closes), and a card about
+    // them is an interruption saying nothing has to be done.
+    if (!capacity || capacity.level !== 'over' || !capacity.say) {
       capacityShown.current = ''
       return
     }
     const key = `${capacity.level}|${capacity.why}`
     if (capacityShown.current === key) return
     capacityShown.current = key
+    // ...and no more than one card per quiet window, whatever the reading does. Recorded
+    // above the check so a suppressed reading is not shown the moment the window ends: the
+    // next card is for the next thing that becomes true.
+    const since = Date.now() - capacityLastAt.current
+    capacityLastAt.current = Date.now()
+    if (since < CAPACITY_QUIET_MS) return
     const u = usageRef.current
     const numbers = u && u.totalMb > 0
       ? `${formatMb(u.totalMb)} in ${sessionsRef.current.length} pane` +
