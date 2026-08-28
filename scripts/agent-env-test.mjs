@@ -263,9 +263,9 @@ ok(
 // catalogue at all (Antigravity publishes no ids) must still print whatever was typed,
 // which is the control.
 
-const claude = findAgent(BUILTIN_AGENTS, 'claude')
-ok(agentModelLabel(claude, 'claude-opus-5') === 'Opus 5', 'a known id reads as its label')
-ok(agentModelLabel(claude, 'builtin') === '', 'an id this build does not know draws no chip')
+const cc = findAgent(BUILTIN_AGENTS, 'claude')
+ok(agentModelLabel(cc, 'claude-opus-5') === 'Opus 5', 'a known id reads as its label')
+ok(agentModelLabel(cc, 'builtin') === '', 'an id this build does not know draws no chip')
 ok(
   agentModelLabel({ id: 'agy', label: 'Antigravity', bin: 'agy', color: '#fff' }, 'gemini-3.1-pro') ===
     'gemini-3.1-pro',
