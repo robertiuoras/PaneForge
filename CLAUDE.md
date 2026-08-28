@@ -1590,6 +1590,14 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   clicking the pane restarted its idle clock and published a new deadline on its card while
   the 15s count ran on underneath. Other panes in the same plan are re-decided by the next
   sweep: nobody arrived at those.
+- **A HOLD is not a countdown, and the chip must not wear the same word.** The publish takes
+  the later of the idle deadline and `keptUntil`, so a pane somebody had just pressed
+  `Keep it open` on drew `closes 55m` under a sentence saying it had been quiet and was
+  being closed - the opposite of what that press promised. `Session.closeKept` says which of
+  the two numbers it is (set beside `closingAt` in `setClosingAt`, forwarded through
+  `RemotePaneInfo` and `desk.ts` so a listed row agrees), and the card says `kept 10m` with
+  the hold's own sentence and no red last-minute alert - nothing is about to happen to it.
+  A countdown card naming the pane still wins: that is a live plan to close it.
 - **A pane can be taken off the clock for good.** `ReclaimPane.pinned` - "Keep this pane
   open" on the card's right-click, `kept open` where its countdown would have been - is
   refused by `onTheClock` AND by `reclaimPlan`'s filter: somebody who said keep this one did
