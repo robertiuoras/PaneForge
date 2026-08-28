@@ -1384,7 +1384,22 @@ body.sizing * { user-select: none !important; }
   border-bottom: 1px solid var(--line);
   background: linear-gradient(90deg, color-mix(in srgb, var(--agent) 12%, var(--surface-2)), var(--surface-2) 42%);
 }
-.pt-name { color: var(--text); white-space: nowrap; font-weight: 550; }
+/* The name SHRINKS. It was `nowrap` with nothing to give, so in a pane narrower than the
+   row wanted it kept its full width and pushed the actions off the right-hand edge - and
+   the control that went first is `×`, which is the one a person is reaching for when a
+   pane is in the way. Measured 2026-08-28, seven panes in a 900px window: each pane 198px,
+   the header wanting 297-357px of it, and `.pt-close` drawn 100-160px PAST the pane's own
+   right edge. An ellipsised name is a name; a close button off the edge cannot be pressed
+   and nothing says it is there. */
+.pt-name {
+  color: var(--text);
+  white-space: nowrap;
+  font-weight: 550;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pt-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.55; direction: rtl; text-align: left; }
 /* The row of controls on the right of the pane's header. 24px tall and 2px apart, off
    linear.app.md's own toolbar (`--button-height: 24px`, `--button-gap: 4px`, 12px icons):
@@ -1438,6 +1453,16 @@ body.sizing * { user-select: none !important; }
   .pane-title [data-pt='editor'],
   .pane-title .pt-zoom { display: none }
   .pt-actions .pt-more { display: inline-flex }
+}
+/* And one step below that, the agent picker - which is the fat control on this row and
+   not a control at all in a pane this size. Measured at a 198px pane with the 460px rules
+   already applied: find 24 + picker 118 + ⋯ 24 + × 24 is 190px of a 196px line before the
+   dot, the agent's mark, the name and the clock have had a pixel, so the row still wanted
+   297px. Nothing is lost - the picker is the ⋯ sheet's `extra`, drawn full width there,
+   which is where the other six controls already went. What stays is what says WHICH pane
+   this is and the three presses a person makes without thinking: find, ⋯, close. */
+@container pane (max-width: 380px) {
+  .pane-title .agent-pick { display: none }
 }
 
 .pt-actions .icon.pt-close {
