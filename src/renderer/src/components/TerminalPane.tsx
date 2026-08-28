@@ -454,9 +454,19 @@ export const paneSearch = new Map<string, SearchAddon>()
  * drops that pane to the DOM renderer for good. Keeping our own count below the browser's
  * means the fallback stays something that happens to a driver, not something we cause by
  * opening one pane too many.
+ *
+ * The number is MEASURED, and the first guess at it was four times too low. Asking this
+ * renderer for contexts until one was lost put Chromium's own cap at 32 here - 16 held by
+ * panes plus 24 raw ones asked for, of which 8 were refused while every pane kept what it
+ * had - so a budget of 8 left a desk of twelve panes with four of them on xterm's DOM
+ * renderer for the life of the session. That fallback is not the cheap option it reads as:
+ * at twelve printing panes the DOM path cost MORE, not less - renderer 34-36% of a core
+ * and 237-244 MB resident at a budget of 8, against 33.5% and 181 MB at 16, with the GPU
+ * helper 22% and 91 MB against 24% and 80 MB. Sixteen leaves half the measured cap spare,
+ * and eighteen panes ran with all sixteen contexts live and no loss reported.
  */
 const glLive = new Set<string>()
-const GL_BUDGET = 8
+const GL_BUDGET = 16
 
 /**
  * How long a restored pane's output must be quiet before it repairs itself. Long enough
