@@ -1636,6 +1636,15 @@ export interface Config {
    */
   offloadDefaultsV2?: boolean
   /**
+   * The one-time move onto the idle-offload clock being ON, at `IDLE_OFFLOAD_MINUTES`.
+   *
+   * Same shape and same reason as the two below it: `defaults()` is WRITTEN at first
+   * launch, so every config in existence carries `offloadIdleMinutes: 0` explicitly and a
+   * changed default alone would read as somebody's own choice. It moves ONLY an exact 0 -
+   * any other number is a value somebody typed, and this has no licence over it.
+   */
+  offloadDefaultsV4?: boolean
+  /**
    * The marker for the move BACK onto asking, which supersedes `offloadDefaultsV2`.
    *
    * A second key rather than clearing the first: V2 is on every config written since it

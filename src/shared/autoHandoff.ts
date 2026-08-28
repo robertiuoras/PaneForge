@@ -120,6 +120,23 @@ export interface AutoHandoffConfig {
   /** ...or this much of one core, which is what a build or a dev server looks like. */
   budgetMinCpu: number
   /**
+   * Projects that never leave this machine, by name.
+   *
+   * Robert, 2026-08-26: "automated windows need to keep on this laptop though since pc
+   * cant do it". Some work is only correct HERE - a pane driving the Mac's own Keychain,
+   * a browser probe against a local display, anything wired to this device's launchd - and
+   * a move that is otherwise perfect breaks it silently, because the far end starts a
+   * healthy-looking pane that cannot do the job.
+   *
+   * By PROJECT and not by session id, deliberately: a pane's id dies with the pane and this
+   * has to survive a restart, and "this project's work is Mac-only" is the fact somebody
+   * actually holds. Read by every rung - the two automatic sweeps and the suggestion on the
+   * pressure card - so there is one answer to "may this leave", not three.
+   */
+  keepHere: string[]
+}
+
+/**
  * How long a pane must be idle before it is offered to the other machine - and, since
  * 2026-08-28, the DEFAULT rather than an opt-in.
  *
@@ -136,23 +153,6 @@ export interface AutoHandoffConfig {
  * laptop with no peer this is exactly as quiet as the 0 it replaces.
  */
 export const IDLE_OFFLOAD_MINUTES = 15
-
-/**
-   * Projects that never leave this machine, by name.
-   *
-   * Robert, 2026-08-26: "automated windows need to keep on this laptop though since pc
-   * cant do it". Some work is only correct HERE - a pane driving the Mac's own Keychain,
-   * a browser probe against a local display, anything wired to this device's launchd - and
-   * a move that is otherwise perfect breaks it silently, because the far end starts a
-   * healthy-looking pane that cannot do the job.
-   *
-   * By PROJECT and not by session id, deliberately: a pane's id dies with the pane and this
-   * has to survive a restart, and "this project's work is Mac-only" is the fact somebody
-   * actually holds. Read by every rung - the two automatic sweeps and the suggestion on the
-   * pressure card - so there is one answer to "may this leave", not three.
-   */
-  keepHere: string[]
-}
 
 export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   // On by default, because the refusals above are what make it safe and they hold whether

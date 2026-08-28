@@ -344,7 +344,18 @@ export function getConfig(): Config {
       autoHandoff: {
         ...DEFAULT_AUTO_HANDOFF,
         ...(base.autoHandoff ?? {}),
-        ...(raw.autoHandoff ?? {})
+        ...(raw.autoHandoff ?? {}),
+        // The one-time move onto the idle-offload clock being on - read off the SAVED
+        // config, like every migration here, and applied ONLY to an exact 0, which is the
+        // number `defaults()` wrote. Anything else is a duration somebody chose.
+        ...(raw.autoHandoff?.offloadDefaultsV4
+          ? {}
+          : {
+              offloadDefaultsV4: true,
+              ...((raw.autoHandoff?.offloadIdleMinutes ?? 0) === 0
+                ? { offloadIdleMinutes: IDLE_OFFLOAD_MINUTES }
+                : {})
+            })
       },
       // Merged for the usual reason: a config written before this existed has no key at
       // all, and the watcher would then read `undefined.tokens` as its threshold.
