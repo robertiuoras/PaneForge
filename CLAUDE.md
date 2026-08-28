@@ -613,7 +613,9 @@ carries everything `FleetPane` reads, so a PC pane sorts into `Your move` beside
   carries), but it ranks the row exactly as a local question does.
 - **A group is only worth a heading while its name is TRUE.** `Running` is `runSince` — a turn
   started by the submit keystroke, by the agent's busy footer, or by a shell pane's live
-  command, ended by `endRun` — never `status === 'working'`, which any output at an `engaged`
+  command, ended by `endRun` — **or a background job the turn left behind**
+  (`FleetPane.backJob`, see "an agent pane says what it left running") — never
+  `status === 'working'`, which any output at an `engaged`
   pane set, so the CLI echoing the prompt being TYPED moved that pane to Running. And `Ready`
   is not `!engaged`, which no pane could get back to: `/clear` drops `engaged`
   (`clearsConversation` in `shared/slashTurn.ts`, partial forms included). `/compact` and
@@ -790,7 +792,16 @@ budget never moves and whose clock is a lie that ticks. But an agent that starts
 BACKGROUND (a `run_in_background` shell, a Monitor loop, a build) goes quiet the moment the
 turn ends: the footer stops, `engaged` drops, the card reads finished, and the work is still
 going. `shared/paneBackJobs.ts` is the cosmetic half - a chip on the card's clock line and a
-sentence on its hover - and feeds NOTHING. `npm run test:panebackjobs`.
+sentence on its hover - and feeds no BUSY reading. `npm run test:panebackjobs`.
+
+**It does rank the row, and only that.** The reported card said `done 6:29 PM · 1 shell
+still running` and sat under `Your move`: every reading the sessions list had was about the
+agent's TURN, and the turn was over. `Session.backJob`/`backJobSince` carry the sampler's
+answer (`backJobInfo` in `main/usage.ts`, set in the `sessions.ts` sweep) to `fleetState`,
+where a pane holding one is `working` with the row saying `running npm` and its clock
+counting the JOB. It stays out of `busyOnScreen`; a live question still outranks it, a stale
+bell does not, and `reclaim`/`autoHandoff` already refused a pane with one by their own
+reading, so their `state` moving from `needsYou` to `working` changes no decision.
 
 - **A count of the pty's descendants is not the reading, and the measurement is why.**
   Every `claude` pane here holds, permanently and from launch: `safaridriver --mcp`,

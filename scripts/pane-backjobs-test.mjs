@@ -13,7 +13,7 @@
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -184,6 +184,32 @@ if (process.platform !== 'win32') {
     )
   }
   console.log(`  (${clis.length} live agent CLIs on this machine, ${clis.reduce((n, c) => n + paneBackJobs(rows, c.pid).length, 0)} background jobs between them)`)
+}
+
+// ---------------------------------------------------------------------------
+// The silent one: the reading that stops reaching the list
+//
+// The sampler only reads the process table while a window is on screen, so the wiring
+// from it to the sessions list cannot be exercised from a minimised test copy. It is
+// three assignments and each one is silent when it goes: the pane keeps its chip and
+// sorts under `Your move` exactly as it did before this existed.
+
+{
+  const usage = readFileSync(join(root, 'src/main/usage.ts'), 'utf8')
+  ok(/export function backJobInfo/.test(usage), 'usage.ts publishes the job WITH the moment it started')
+  ok(/lastJobs\.set\([^)]*since:/s.test(usage), 'and the epoch is derived at the sample, not at draw time')
+
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  ok(/backJobInfo\(/.test(sessions), 'the sweep asks for it')
+  ok(/meta\.backJob = /.test(sessions), 'and puts it on the session, which is what the sidebar reads')
+  ok(
+    !/busyOnScreen\s*=\s*[^\n]*backJob/.test(sessions),
+    'and it stays OUT of busyOnScreen - a false job there is a pane the idle sweep never closes'
+  )
+
+  const fleet = readFileSync(join(root, 'src/shared/fleet.ts'), 'utf8')
+  const state = fleet.slice(fleet.indexOf('export function fleetState'))
+  ok(/backJob\) return 'working'/.test(state.slice(0, state.indexOf('\n}'))), 'and fleetState ranks a pane by it')
 }
 
 rmSync(work, { recursive: true, force: true })
