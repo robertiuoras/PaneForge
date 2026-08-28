@@ -11,6 +11,11 @@
  * past the context budget a pane silently falls back to xterm's DOM renderer and stays
  * there, and a desk in grid view always has some panes on the slow path.
  *
+ * `window.__pf` is NOT a list of panes - it is the renderer's debug handle map, and it
+ * carries `draft` and `marks` alongside the sessions. Counting its keys is what made a desk
+ * where every pane held a context report "8 of 10", and sent a whole session after a cap
+ * that was never being hit. Only an entry with a `term` is a pane.
+ *
  * Needs a copy running with a debugging port, and it opens panes in THAT copy - never the
  * one you are reading this in:
  *
@@ -45,7 +50,7 @@ console.log('armed:', await ev(`(()=>{window.__frames={};for(const [id,p] of Obj
 const t0 = Date.now()
 await new Promise((r) => setTimeout(r, 10000))
 const secs = (Date.now() - t0) / 1000
-const out = JSON.parse(await ev(`JSON.stringify({f:window.__frames,gl:Object.fromEntries(Object.entries(window.__pf).map(([k,v])=>[k,!!v.hasWebgl?.()]))})`))
+const out = JSON.parse(await ev(`JSON.stringify({f:window.__frames,gl:Object.fromEntries(Object.entries(window.__pf).filter(([,v])=>v.term).map(([k,v])=>[k,!!v.hasWebgl?.()]))})`))
 let vis = 0, hid = 0
 for (const [k, v] of Object.entries(out.f)) {
   const r = v / secs
