@@ -391,6 +391,27 @@ export interface StartSessionRequest {
    */
   asleep?: boolean
   /**
+   * Close this pane once the work it was opened for is finished.
+   *
+   * For a pane opened by AUTOMATION (`pf open --close-when-done`): a brief is typed in, the
+   * agent does it, and the card then sits on the desk for ever because nobody was watching
+   * to close it. Never set by a person opening a pane - somebody who opens a pane is in it.
+   *
+   * "Finished" is the sweep's reading and not the turn ending, deliberately: the pane must
+   * have printed, be out of its turn, hold no question, and be running nothing - including
+   * a background job an agent left behind, which is sampled every four seconds and so is
+   * not known at the moment the turn ends. See `CLOSE_DONE_QUIET_MS`.
+   */
+  closeWhenDone?: boolean
+  /**
+   * The pane to tell when that happens - an id or a title, resolved when it is needed
+   * rather than when the pane opens, because the opener may have gone by then.
+   *
+   * The message goes through `queuePrompt`, which waits for an idle composer, so it lands
+   * between the opener's own turns rather than inside one.
+   */
+  reportTo?: string
+  /**
    * The device this pane was handed over FROM. Set only by `receiveHandoff`.
    *
    * It exists for one refusal: the local-pane budget may not hand a pane straight back to

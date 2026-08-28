@@ -174,6 +174,16 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
  * `RESTORE_MARK`: dim, one line, attributes reset first because the pane is cut mid-frame.
  * Nothing else marks the seam - the screen above it is genuinely the screen it had.
  */
+/**
+ * How long a pane opened with `closeWhenDone` must sit finished before it closes itself.
+ *
+ * Not zero, and not the turn ending: an agent that started something in the background
+ * (`shared/paneBackJobs.ts`) is read off the process table every four seconds, so a pane
+ * closing the instant its turn ended would take a running build with it. Eight seconds is
+ * two of those samples plus the sweep's own second.
+ */
+const CLOSE_DONE_QUIET_MS = 8_000
+
 const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, press to wake it ---\x1b[0m\r\n'
 const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
 
@@ -588,7 +598,7 @@ export class SessionManager extends EventEmitter {
     }
     const live: Live = {
       meta,
-      proc: born ? null : this.spawn(req, agent, START_COLS, START_ROWS),
+      proc: born ? null : this.spawn(req, agent, START_COLS, START_ROWS, id),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
       cols: START_COLS,
@@ -727,7 +737,7 @@ export class SessionManager extends EventEmitter {
       live.meta.agent,
       live.req.resume ? live.req.resumeId : undefined
     )
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
     live.meta.job = undefined
@@ -830,7 +840,7 @@ export class SessionManager extends EventEmitter {
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows)
+    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.status = 'starting'
@@ -1169,6 +1179,40 @@ export class SessionManager extends EventEmitter {
     // The pane just went quiet, which is the moment a deferred ask has been waiting for.
     this.resumePendingAutoClear(live.meta.id)
     return true
+  }
+
+  /**
+   * Close a pane that was opened to do one thing, once it has done it - and say so.
+   *
+   * The reading is the sweep's rather than the turn ending, because the expensive failure
+   * is closing a pane with work still in it: an agent that started a build in the
+   * background goes quiet the moment its turn ends (`shared/paneBackJobs.ts`), and that
+   * answer comes off a process table sampled every four seconds. So this asks for the
+   * whole set - printed at least once, out of its turn, no question, nothing running by
+   * either reading - and then for `CLOSE_DONE_QUIET_MS` of quiet on top.
+   *
+   * The opener is told through `queuePrompt`, which waits for an idle composer, so the
+   * line lands between that pane's own turns instead of inside one. It is sent BEFORE the
+   * kill: `kill()` deletes this session, and with it the request that names who to tell.
+   */
+  private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
+    const { meta } = live
+    if (!meta.printed) return
+    if (meta.status === 'exited' || meta.asleep) return
+    if (meta.runSince || live.busyUntil > now) return
+    if (meta.ask || meta.job || meta.backJob) return
+    if (quiet < CLOSE_DONE_QUIET_MS) return
+    const told = live.req.reportTo
+    if (told) {
+      const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
+      if (opener && opener.meta.id !== meta.id)
+        this.queuePrompt(
+          opener.meta.id,
+          `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`
+        )
+    }
+    console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
+    this.kill(meta.id)
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -1997,7 +2041,14 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private spawn(req: StartSessionRequest, agent: Agent, cols: number, rows: number): pty.IPty {
+  private spawn(
+    req: StartSessionRequest,
+    agent: Agent,
+    cols: number,
+    rows: number,
+    /** the pane this process IS, so anything it runs can name its own pane to `pf` */
+    id?: string
+  ): pty.IPty {
     // Spawn the agent binary directly (not through cmd.exe): one less process in the
     // tree, so killing the session actually kills the agent instead of orphaning it.
     // shell:true equivalents on Windows also swallow Ctrl-C.
@@ -2016,7 +2067,15 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: { ...scrubForeignKeys(agentEnv(), spec), ...resolveEnv(spec, agentKeys()), ...(req.laneEnv ?? {}) }
+      env: {
+        ...scrubForeignKeys(agentEnv(), spec),
+        ...resolveEnv(spec, agentKeys()),
+        // Which pane this is. `pf open --report-to` defaults to it, so an agent that opens
+        // a pane for a sub-task is told when that pane is done without being able to name
+        // itself any other way - nothing else in the environment says which card this is.
+        ...(id ? { PF_PANE: id } : {}),
+        ...(req.laneEnv ?? {})
+      }
     })
   }
 
@@ -2501,6 +2560,8 @@ export class SessionManager extends EventEmitter {
       // arrives many times a second while the CLI redraws its chooser, and the wait this
       // needs is measured from when the question settled, not from when it was painted.
       if (live.meta.ask) this.sweepAutoAnswer(live)
+      // A pane automation opened for one job, once that job is really over.
+      if (live.req.closeWhenDone) this.sweepCloseWhenDone(live, now, quiet)
       // Raised once per quiet stretch, never re-raised until output resumes and
       // goes quiet again. A CLI that has only painted its own welcome screen is
       // quiet, not done: `engaged` keeps a fresh pane from claiming to be waiting
