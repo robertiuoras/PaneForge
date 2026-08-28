@@ -352,7 +352,24 @@ export function getConfig(): Config {
         // and anything else is a duration somebody chose.
         ...(raw.offloadDefaultsV4 || (raw.autoHandoff?.offloadIdleMinutes ?? 0) !== 0
           ? {}
-          : { offloadIdleMinutes: IDLE_OFFLOAD_MINUTES })
+          : { offloadIdleMinutes: IDLE_OFFLOAD_MINUTES }),
+        // The budget rung's memory floor dropping from 500 MB to 180 - see `budgetMinMb`.
+        // `defaults()` is WRITTEN to config.json at first launch, so every desk in existence
+        // carries 500 explicitly and a change to `DEFAULT_AUTO_HANDOFF` alone would be read
+        // as somebody's own choice and never applied. Only the OLD DEFAULT moves: any other
+        // number was typed through `pf-ctl call config:set` or the Settings field and is
+        // that person's answer, not the app's. The marker sits INSIDE autoHandoff, unlike
+        // `offloadDefaultsV4` above, because that is where lane b put it.
+        ...(raw.autoHandoff?.budgetDefaultsV2
+          ? {}
+          : {
+              budgetDefaultsV2: true,
+              ...((raw.autoHandoff?.budgetMinMb ??
+                base.autoHandoff?.budgetMinMb ??
+                DEFAULT_AUTO_HANDOFF.budgetMinMb) === 500
+                ? { budgetMinMb: DEFAULT_AUTO_HANDOFF.budgetMinMb }
+                : {})
+            })
       },
       // Merged for the usual reason: a config written before this existed has no key at
       // all, and the watcher would then read `undefined.tokens` as its threshold.
