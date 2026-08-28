@@ -139,6 +139,7 @@ import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
 import UpdateToast from './components/UpdateToast'
+import WhatsNewCard from './components/WhatsNewCard'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 
@@ -6119,6 +6120,7 @@ export default function App(): JSX.Element {
         onKeep={(id) => void api.cancelAutoClear(id)}
       />
       <UpdateToast />
+      <WhatsNewCard />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
           thing here that talks about the app rather than about the work, so every other
           card in this corner - and every dialog, and any pane holding a question - stands

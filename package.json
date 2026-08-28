@@ -182,6 +182,7 @@
     "test:panesize": "node scripts/pane-size-test.mjs",
     "test:borrowask": "node scripts/borrowask-test.mjs",
     "test:linkstate": "node scripts/link-state-test.mjs",
+    "test:whatsnew": "node scripts/whatsnew-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",
     "test:renderwatch": "node scripts/renderwatch-test.mjs",
     "test:renderwatchlive": "node scripts/renderwatch-live.mjs",

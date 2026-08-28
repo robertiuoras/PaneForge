@@ -628,6 +628,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
   const REVIEWED_SAFE = new Set([
     'autoclear:cancel',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
+    // Read-only, and the answer is a public release page's own notes.
+    'app:whatsNew',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',

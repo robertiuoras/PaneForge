@@ -71,5 +71,50 @@ if (trimPlan) {
   ok('a focused pane that was trimmed in the background is given every line back', plan.length === 1 && plan[0].scrollback === 20000, JSON.stringify(plan))
 }
 
+// ...and WHERE those bytes come from, which is the half that was still wrong.
+//
+// The re-render read `getBuffer` - main's live replay, capped at 400 KB because it is
+// held in memory for every pane. An agent CLI's output is almost all repaint frames, so
+// 400 KB of it is worth almost no scrollback: measured 2026-08-28 against this desk's own
+// s13-mtcp8yry.log (3.67 MB) through a headless xterm at 120 cols, the last 400 KB gave
+// 102 rows back and the last 4 MB gave 4,096, for 51 ms more. A pane handed a hundred
+// lines of a four-thousand-line conversation is a pane you still cannot scroll up in,
+// which is what Robert reported a second time on 2026-08-28.
+const pane = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
+const rd = /const redrawHistory = async[\s\S]{0,600}/.exec(pane)?.[0] ?? ''
+ok('the re-render reads the log on disk, not the 400 KB live replay', /api\.paneLog\(sessionId, REDRAW_BYTES\)/.test(rd), JSON.stringify(rd.slice(0, 140)))
+ok('...with getBuffer kept only as the fallback', /paneLog\([^)]*\)\)\s*\|\|\s*\(await api\.getBuffer/.test(rd))
+ok('the budget is big enough to be worth the round trip', /REDRAW_BYTES = 4_000_000/.test(pane))
+
+// The measurement itself, against the REAL artifact when this machine has one - a
+// hand-written fixture cannot show this, because the whole effect is that a CLI's bytes
+// are mostly repaints. Skips out loud rather than passing vacuously.
+const { homedir } = await import('node:os')
+const { join } = await import('node:path')
+const { existsSync, readdirSync, statSync } = await import('node:fs')
+const hist = join(homedir(), 'Library/Application Support/claude-orchestrator/history')
+const big = existsSync(hist)
+  ? readdirSync(hist)
+      .filter((f) => f.endsWith('.log'))
+      .map((f) => ({ f: join(hist, f), size: statSync(join(hist, f)).size }))
+      .filter((x) => x.size > 2_000_000)
+      .sort((a, b) => b.size - a.size)[0]
+  : null
+if (!big) {
+  console.log('  SKIP no pane log over 2 MB on this machine - the byte budget is unmeasured here')
+} else {
+  const log = readFileSync(big.f)
+  const rows = async (bytes) => {
+    const term = new Terminal({ cols: 120, rows: 40, scrollback: 20000, allowProposedApi: true })
+    await new Promise((r) => term.write(log.subarray(-bytes), r))
+    const n = term.buffer.active.length - 40
+    term.dispose()
+    return n
+  }
+  const small = await rows(400_000)
+  const full = await rows(4_000_000)
+  ok(`4 MB gives materially more history than 400 KB - ${small} rows -> ${full} rows`, full > small * 4)
+}
+
 console.log(failed ? `\n${failed} failed` : '\ntrim loss: all good')
 process.exit(failed ? 1 : 0)

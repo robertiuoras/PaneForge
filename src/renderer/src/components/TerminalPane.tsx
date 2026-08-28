@@ -282,6 +282,12 @@ export const paneRepair = new Map<string, () => void>()
  * cheap and runs on its own (a restore, a font change), this one rewrites the whole buffer
  * and only ever runs because somebody pressed Fix. See `redrawHistory`.
  */
+/**
+ * How much of a pane's own log a re-render reads back. See `redrawHistory` for the table
+ * this number came off; 4 MB is where the rows-recovered curve goes flat on a real pane.
+ */
+export const REDRAW_BYTES = 4_000_000
+
 export const paneRedraw = new Map<string, () => Promise<boolean>>()
 
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
@@ -3042,12 +3048,29 @@ function TerminalPane({
      * any terminal at least N wide, and the terminal is put back afterwards - xterm
      * re-wraps what is in its buffer, so nothing is lost to the second resize.
      *
-     * User-initiated only. It reads the capped buffer, so scrollback older than that cap
-     * does not come back, and paying that to un-break a pane is a person's call.
+     * It reads the pane's LOG ON DISK, not `getBuffer`, and the measurement is the whole
+     * reason. `getBuffer` is main's live replay, capped at 400 KB because it is held in
+     * memory for every pane - and an agent CLI's output is almost entirely repaint frames,
+     * so those 400 KB are worth almost no scrollback. Measured 2026-08-28 against this
+     * desk's own `s13-mtcp8yry.log` (3.67 MB) fed through a headless xterm at 120 cols:
+     *
+     *     last 0.4 MB  ->    102 rows back,  67 ms
+     *     last 1.0 MB  ->    366 rows back,  41 ms
+     *     last 2.0 MB  ->  1,526 rows back,  56 ms
+     *     last 4.0 MB  ->  4,096 rows back, 118 ms
+     *
+     * So the recovery a regrow ran was giving a pane back about a HUNDRED lines of a
+     * conversation with four thousand in it, which reads from the outside as "I still
+     * cannot scroll up" - and 40x more history costs 51 ms once. `REDRAW_BYTES` is 4 MB
+     * rather than the log's own 8 MB cap because the curve is flat past the file's real
+     * size and this runs on the UI thread.
+     *
+     * `paneLog` falls back to main's buffer by itself when there is no log on disk (a
+     * mirrored pane, a fresh install), so there is no second path to keep in step.
      */
     const redrawHistory = async (): Promise<boolean> => {
       if (mirrorRef.current) return false
-      const b = await api.getBuffer(sessionId)
+      const b = (await api.paneLog(sessionId, REDRAW_BYTES)) || (await api.getBuffer(sessionId))
       if (!b) return false
       const back = t.cols
       const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
