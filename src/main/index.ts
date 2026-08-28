@@ -28,6 +28,7 @@ import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
+import { whatsNew } from './whatsNew'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
@@ -1289,6 +1290,7 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  * with the buffer rather than with an error: the caller wants as much of this pane as can
  * be had, and "as much as exists here" is the honest answer to that.
  */
+ipcMain.handle('app:whatsNew', () => whatsNew())
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
   remote.owns(id)
     ? remote.buffer(id)

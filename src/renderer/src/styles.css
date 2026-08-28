@@ -2611,6 +2611,14 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .ut-text { display: flex; flex-direction: column; gap: 3px; }
 .ut-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
+/* What changed in the build that has just started, in the same card shape as the
+   update prompt it answers. A step BELOW it (59): if a newer build is already
+   downloaded, the offer to take it outranks the summary of the one before. Wider,
+   because a bullet list at 330px wraps every line. */
+.update-toast.whatsnew { z-index: 59; width: 370px; }
+.wn-list { margin: 5px 0 2px; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; }
+.wn-list li { color: var(--muted); font-size: 12px; line-height: 1.45; }
+
 /* --------------------------------------------------------------------------
    The countdown in front of an automatic move or close, drawn when there is no
    mascot to draw it beside (which is most desks - the mascot arrives off).

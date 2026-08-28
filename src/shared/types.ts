@@ -1349,6 +1349,14 @@ export interface RemoteConfig {
 }
 
 export interface Config {
+  /**
+   * The build this machine last showed a "what changed" card for.
+   *
+   * Absent means a fresh install, which is deliberately NOT a card - see
+   * `shared/whatsNew.ts`'s `shouldSpeak`. Written on the first launch either way, so the
+   * first card anybody ever sees is a real one.
+   */
+  seenVersion?: string
   /** folder scanned for projects */
   root: string
   presets: Preset[]
@@ -1936,6 +1944,14 @@ export interface Api {
    * desk's card and every paired device's listing draw the same number.
    */
   setClosing(id: string, at: number | null, kept?: boolean): void
+  /**
+   * What changed in the build now running, or null for "say nothing".
+   *
+   * Asked ONCE by the renderer on mount. It answers null on every launch that is not the
+   * first one on a newer build, and also on a launch that could not reach GitHub - the
+   * card is never an error and never empty. See `shared/whatsNew.ts`.
+   */
+  whatsNew(): Promise<import('./whatsNew').WhatsNew | null>
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**
