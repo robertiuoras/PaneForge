@@ -1987,6 +1987,23 @@ function syncTags() {
   gitSafe(MAIN, 'fetch', '--tags', 'origin')
 }
 
+/**
+ * Take origin's commits on the trunk when they are a straight fast-forward.
+ *
+ * Never a merge and never a rebase: this runs with a release lock held and a clean main
+ * checkout, and the only state it is allowed to fix is the boring one - this machine has
+ * nothing origin does not, origin has commits this machine lacks. Anything else (diverged
+ * trunks, no origin, a fetch that fails) is left exactly as it was for the dry-run push
+ * to refuse on, which is the behaviour that existed before.
+ */
+function fastForwardMain() {
+  if (!hasOrigin()) return
+  if (!gitSafe(MAIN, 'fetch', 'origin', MB).ok) return
+  const ahead = gitSafe(MAIN, 'rev-list', '--count', `origin/${MB}..${MB}`)
+  if (!ahead.ok || ahead.out.trim() !== '0') return
+  gitSafe(MAIN, 'merge', '--ff-only', `origin/${MB}`)
+}
+
 /** Anything a release would actually put out. */
 function shippable(state) {
   if (unreleasedOnMaster() > 0) return true
@@ -2568,6 +2585,16 @@ function ship(kind, session) {
     // and transfers nothing, so a release that cannot be pushed never gets cut.
     // A repo configured to push nothing is not asked to prove it can push.
     if (RELEASE !== 'none') {
+      // Behind origin is the normal state of a two-machine repo, not a broken one. The
+      // other desk pushes to the trunk all day; the dry-run then reports `! [rejected]
+      // (fetch first)` and the release refuses, so finished lanes sit until a person
+      // happens to pull. Measured on taskdriver.ai 2026-08-28: two lanes finished, the
+      // last merge 192 minutes earlier, main three commits behind origin, and every
+      // `autoship` answered "origin will not take a push, releasing would strand".
+      // A fast-forward is the whole fix, and it is only ever taken when it is a
+      // fast-forward: a genuinely DIVERGED trunk still falls through to the refusal
+      // below, because that one does need a person.
+      fastForwardMain()
       const origin = gitSafe(MAIN, 'push', '--dry-run')
       if (!origin.ok)
         throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
