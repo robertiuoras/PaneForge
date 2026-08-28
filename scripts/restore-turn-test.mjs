@@ -150,6 +150,22 @@ ok('a pane slept on purpose comes back asleep', /asleep: Boolean\(s\.meta\.aslee
 
 const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 ok('the restore asks restoreAsleep, per pane, in order', /restoreAsleep\(req, i, recoverOn\)/.test(index))
+// "Keep this pane open" is a promise about a pane, and a restored pane is a NEW session
+// with a new id - so the promise is carried across by the one field that names the pane
+// being replaced. Without this the pin was renderer state and every restart dropped it.
+ok('the pin list is read from config at restore', /getConfig\(\)\.pinnedPanes \?\? \[\]/.test(index))
+ok(
+  '...and each pin follows its pane onto the new id, through scrollbackId',
+  /wasPinned\.has\(req\.scrollbackId\)\) nowPinned\.push\(meta\.id\)/.test(index)
+)
+ok(
+  '...and is written back, so ids nothing came back for are dropped',
+  /setConfig\(\{ pinnedPanes: nowPinned \}\)/.test(index)
+)
+
+const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+ok('the desk reads its pins off the config it is handed', /config\.pinnedPanes \?\? \[\]/.test(app))
+ok('and every press writes them back', /patchConfig\(\{ pinnedPanes: Object\.keys\(next\) \}\)/.test(app))
 
 const info = readFileSync(join(root, 'src/renderer/src/components/SessionInfo.tsx'), 'utf8')
 ok('"Open for" counts from when the pane opened, not from this process', /s\.openedAt \?\? s\.createdAt/.test(info))
