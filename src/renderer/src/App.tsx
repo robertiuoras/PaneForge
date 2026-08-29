@@ -3309,7 +3309,7 @@ export default function App(): JSX.Element {
           title: 'Open folder in Explorer',
           hint: 'the project folder - to reach the agent, drag files onto the pane',
           run: () =>
-            void api.revealProject(active.cwd).then((p) => p || flash('That folder is gone.'))
+            void api.revealProject(active.cwd, active.title).then((p) => p || flash('That folder is gone.'))
         },
         {
           id: 'board',
@@ -4080,6 +4080,18 @@ export default function App(): JSX.Element {
    */
   const touchPane = useCallback((id: string) => {
     focusLeftAt.current[id] = Date.now()
+    // Arriving at a SLEEPING pane is the press that wakes it. The chip has always been
+    // the way back, but a sleeping pane is a pane somebody kept for easy access - and
+    // "click it, then find the small chip and click that as well" is two presses for one
+    // intention. Robert, 2026-08-29: "when i click on a sleep session it should just
+    // automatically restart instead of myself having to press on the refresh button."
+    //
+    // Only from a person's own press: `touchPane` is called from the card, the sidebar
+    // row and the pane itself, never by a sweep. A mirror is refused because its pty is
+    // on the other machine (`shared/sleep.ts`), and waking is idempotent in main, so a
+    // second press while the CLI boots costs nothing.
+    const asleepPane = sessionsRef.current.find((x) => x.id === id)
+    if (asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
     // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
     // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
     // on `stillCloseable`, which a click does not change - so clicking the pane restarted
@@ -4266,19 +4278,22 @@ export default function App(): JSX.Element {
               <RemoteIcon size={13} />
             </span>
             <span className="row-name">{pane.title}</span>
-            {pane.asking ? (
-              <span
-                className="chip asks"
-                title="The CLI over there is sitting on a question. Open the pane to see it and press an answer."
-              >
-                asks you
-              </span>
-            ) : state.since !== undefined ? (
-              <Elapsed since={state.since} title={state.label} />
-            ) : null}
-            {/* That desk's own number, forwarded. No press: this window does not own the
-                pty and cannot call the close off. */}
-            {row.closingAt ? <CloseClock at={row.closingAt} kept={row.closeKept} /> : null}
+            {/* One box, for the reason a local card has one - see `.row-tags`. */}
+            <span className="row-tags">
+              {pane.asking ? (
+                <span
+                  className="chip asks"
+                  title="The CLI over there is sitting on a question. Open the pane to see it and press an answer."
+                >
+                  asks you
+                </span>
+              ) : state.since !== undefined ? (
+                <Elapsed since={state.since} title={state.label} />
+              ) : null}
+              {/* That desk's own number, forwarded. No press: this window does not own the
+                  pty and cannot call the close off. */}
+              {row.closingAt ? <CloseClock at={row.closingAt} kept={row.closeKept} /> : null}
+            </span>
           </div>
           <div className="row-sub">
             <AgentLogo id={pane.agent} spec={agent} size={12} />
@@ -4471,149 +4486,158 @@ export default function App(): JSX.Element {
                         On the TITLE line, not the sub-line: the sub-line already wanted
                         214px of 190px on a lane card (card-fit-test.mjs) and this line has
                         room to spare. */}
-                    {s.ask && (
-                      <span
-                        className="chip asks"
-                        title={
-                          `${s.ask.question}\n\n` +
-                          s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
-                          (s.autoAnswerAt
-                            ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
-                            : s.autoAnswerHeld
-                              ? '\n\nThis would be answered for you, and nothing is pressed while you are looking at this window. Look away and the wait starts. Settings -> Answer an agent’s question for me.'
-                              : '\n\nNothing runs until this is answered. Open the pane and press one.')
-                        }
-                      >
-                        asks you
-                        {/* ...and, when it is about to be answered for you, how long is
-                            left - INSIDE this box rather than in a second one beside it.
-                            "asks you" and the seconds are one fact a step apart, and two
-                            red boxes on a 190px title line read as two readings. */}
-                        {s.autoAnswerAt ? (
-                          <AskClock at={s.autoAnswerAt} />
-                        ) : s.autoAnswerHeld ? (
-                          // A held question has no deadline to draw - `refreshAutoPlan`
-                          // writes `autoAnswerAt = 0` while the desk has focus, and
-                          // leaving the window starts the whole wait again - so a number
-                          // here would be a second that never arrives. But the card is
-                          // only ever LOOKED at from this window, which is exactly when
-                          // the hold is on, so "asks you" with an empty box beside it was
-                          // the only state Robert ever saw and it read as a broken timer.
-                          // The word goes in the same box the seconds use, not in a
-                          // second chip: two red boxes on the title line are two readings.
-                          <span className="asks-in">hold</span>
-                        ) : null}
-                      </span>
-                    )}
-                    {/* ...and when this pane is on its way OUT rather than waiting for
-                        anybody: how long is left, and the press that stops it. Never
-                        beside a question or a move - a pane holding either is refused by
-                        `idleCloseAt` outright, so the three can never be true at once. */}
-                    {alarmAt(s.id) ?? s.closingAt ? (
-                      // While the 15s countdown card is up, the CHIP shows that card's
-                      // deadline and not the idle clock's. They are two readings of one
-                      // decision and they disagreed on screen - the card counted down
-                      // while the chip sat at `closes 0:01` (reported 2026-08-28). The
-                      // armed countdown is the one that is about to act, so it wins.
-                      <CloseClock
-                        at={alarmAt(s.id) ?? (s.closingAt as number)}
-                        // A countdown card naming this pane is a live plan to close it,
-                        // whatever hold the publish had on it a moment ago.
-                        kept={alarmAt(s.id) === undefined && s.closeKept}
-                        onKeep={() => keepOpen([s.id])}
-                      />
-                    ) : pinned[s.id] ? (
-                      // A switch with no reading is a switch nobody can tell they pressed:
-                      // pinning a pane removes the only thing on the card that was about
-                      // the idle clock, so it takes that place rather than leaving a gap.
-                      <button
-                        type="button"
-                        className="chip kept"
-                        title="This pane is never closed for being idle. Press to put it back on the clock."
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          togglePin(s.id)
-                        }}
-                      >
-                        kept open
-                      </button>
-                    ) : null}
-                    {/* A pane on its way out says so, and says it here for the same reason
-                        the chip above is here: the sub-line has no room and this is
-                        transient - it takes the clock's place for the few seconds a move
-                        lasts, or for as long as a queued pane's turn runs. It cannot appear
-                        beside "asks you": a pane holding a question is never moved. */}
-                    {s.handingOff ? (
-                      s.handoffQueuedAt ? (
-                        // Waiting for its own turn to end, which is as long as the agent
-                        // takes. Drawn as a clock rather than as the word `moving`: a
-                        // ten-minute build under a chip that says moving reads as a broken
-                        // handoff, which is exactly how three of these were reported.
-                        // ...and it is the control that undoes it. The wait is minutes
-                        // long by construction, so the chip that reports it is the one
-                        // place somebody is already looking when they change their mind.
-                        <button
-                          type="button"
-                          className="chip"
-                          title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting. Press to keep it here."
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            stopMove(s)
-                          }}
-                        >
-                          waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
-                        </button>
-                      ) : (
+                    {/* Everything the title line says about STATE, in one box.
+                        They were separate flex items each taking `margin-left: auto`, so a
+                        line that wrapped stranded the clock alone at the far right with
+                        135px of nothing to its left (measured 2026-08-29, card-fit-test:
+                        `kept open` ending at 163px and the clock at 135-190 on a second
+                        row). One box wraps whole, keeps its chips together, and is the
+                        only thing on the line that may be pushed to the right. */}
+                    <span className="row-tags">
+                      {s.ask && (
                         <span
-                          className="chip"
-                          title="Moving to a paired device now."
-                        >
-                          moving
-                        </span>
-                      )
-                    ) : s.asleep ? (
-                      // Before the exited chip, and a BUTTON: a sleeping pane wears
-                      // `status: 'exited'` (see `Session.asleep`), and the one thing
-                      // anybody wants to do to it is the press that gives it back.
-                      <AsleepChip at={s.asleep} id={s.id} />
-                    ) : s.status === 'exited' ? (
-                      <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                    ) : s.runSince ? (
-                      <Elapsed since={s.runSince} title="This turn" />
-                    ) : s.lastRunMs !== undefined ? (
-                      <span className="elapsed done" title="Last turn">
-                        {formatElapsed(s.lastRunMs)}
-                      </span>
-                    ) : null}
-                    {/* What the pane is still RUNNING with its turn over. This is the one
-                        card state Robert reported as a lie: an agent that started work in
-                        the background goes quiet, the clock stops, and the card reads
-                        finished while a build or a tail is going. It sits on the clock's
-                        own line rather than in `.row-sub`, which is already three chips
-                        deep at 190px (see the notes there) - and it is drawn only when
-                        there IS something, which on an ordinary card is never.
-                        Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
-                    {(() => {
-                      const jobs = usage?.panes[s.id]?.jobs
-                      if (!jobs?.length) return null
-                      return (
-                        <span
-                          className="chip jobs"
+                          className="chip asks"
                           title={
-                            'Still running with the turn over:\n' +
-                            jobs
-                              .map(
-                                (j) =>
-                                  `  ${j.label}` +
-                                  (j.elapsed ? `, ${formatElapsed(j.elapsed * 1000)}` : '')
-                              )
-                              .join('\n')
+                            `${s.ask.question}\n\n` +
+                            s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
+                            (s.autoAnswerAt
+                              ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
+                              : s.autoAnswerHeld
+                                ? '\n\nThis would be answered for you, and nothing is pressed while you are looking at this window. Look away and the wait starts. Settings -> Answer an agent’s question for me.'
+                                : '\n\nNothing runs until this is answered. Open the pane and press one.')
                           }
                         >
-                          {jobWords(jobs)}
+                          asks you
+                          {/* ...and, when it is about to be answered for you, how long is
+                              left - INSIDE this box rather than in a second one beside it.
+                              "asks you" and the seconds are one fact a step apart, and two
+                              red boxes on a 190px title line read as two readings. */}
+                          {s.autoAnswerAt ? (
+                            <AskClock at={s.autoAnswerAt} />
+                          ) : s.autoAnswerHeld ? (
+                            // A held question has no deadline to draw - `refreshAutoPlan`
+                            // writes `autoAnswerAt = 0` while the desk has focus, and
+                            // leaving the window starts the whole wait again - so a number
+                            // here would be a second that never arrives. But the card is
+                            // only ever LOOKED at from this window, which is exactly when
+                            // the hold is on, so "asks you" with an empty box beside it was
+                            // the only state Robert ever saw and it read as a broken timer.
+                            // The word goes in the same box the seconds use, not in a
+                            // second chip: two red boxes on the title line are two readings.
+                            <span className="asks-in">hold</span>
+                          ) : null}
                         </span>
-                      )
-                    })()}
+                      )}
+                      {/* ...and when this pane is on its way OUT rather than waiting for
+                          anybody: how long is left, and the press that stops it. Never
+                          beside a question or a move - a pane holding either is refused by
+                          `idleCloseAt` outright, so the three can never be true at once. */}
+                      {alarmAt(s.id) ?? s.closingAt ? (
+                        // While the 15s countdown card is up, the CHIP shows that card's
+                        // deadline and not the idle clock's. They are two readings of one
+                        // decision and they disagreed on screen - the card counted down
+                        // while the chip sat at `closes 0:01` (reported 2026-08-28). The
+                        // armed countdown is the one that is about to act, so it wins.
+                        <CloseClock
+                          at={alarmAt(s.id) ?? (s.closingAt as number)}
+                          // A countdown card naming this pane is a live plan to close it,
+                          // whatever hold the publish had on it a moment ago.
+                          kept={alarmAt(s.id) === undefined && s.closeKept}
+                          onKeep={() => keepOpen([s.id])}
+                        />
+                      ) : pinned[s.id] ? (
+                        // A switch with no reading is a switch nobody can tell they pressed:
+                        // pinning a pane removes the only thing on the card that was about
+                        // the idle clock, so it takes that place rather than leaving a gap.
+                        <button
+                          type="button"
+                          className="chip kept"
+                          title="This pane is never closed for being idle. Press to put it back on the clock."
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            togglePin(s.id)
+                          }}
+                        >
+                          kept open
+                        </button>
+                      ) : null}
+                      {/* A pane on its way out says so, and says it here for the same reason
+                          the chip above is here: the sub-line has no room and this is
+                          transient - it takes the clock's place for the few seconds a move
+                          lasts, or for as long as a queued pane's turn runs. It cannot appear
+                          beside "asks you": a pane holding a question is never moved. */}
+                      {s.handingOff ? (
+                        s.handoffQueuedAt ? (
+                          // Waiting for its own turn to end, which is as long as the agent
+                          // takes. Drawn as a clock rather than as the word `moving`: a
+                          // ten-minute build under a chip that says moving reads as a broken
+                          // handoff, which is exactly how three of these were reported.
+                          // ...and it is the control that undoes it. The wait is minutes
+                          // long by construction, so the chip that reports it is the one
+                          // place somebody is already looking when they change their mind.
+                          <button
+                            type="button"
+                            className="chip"
+                            title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting. Press to keep it here."
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              stopMove(s)
+                            }}
+                          >
+                            waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                          </button>
+                        ) : (
+                          <span
+                            className="chip"
+                            title="Moving to a paired device now."
+                          >
+                            moving
+                          </span>
+                        )
+                      ) : s.asleep ? (
+                        // Before the exited chip, and a BUTTON: a sleeping pane wears
+                        // `status: 'exited'` (see `Session.asleep`), and the one thing
+                        // anybody wants to do to it is the press that gives it back.
+                        <AsleepChip at={s.asleep} id={s.id} />
+                      ) : s.status === 'exited' ? (
+                        <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                      ) : s.runSince ? (
+                        <Elapsed since={s.runSince} title="This turn" />
+                      ) : s.lastRunMs !== undefined ? (
+                        <span className="elapsed done" title="Last turn">
+                          {formatElapsed(s.lastRunMs)}
+                        </span>
+                      ) : null}
+                      {/* What the pane is still RUNNING with its turn over. This is the one
+                          card state Robert reported as a lie: an agent that started work in
+                          the background goes quiet, the clock stops, and the card reads
+                          finished while a build or a tail is going. It sits on the clock's
+                          own line rather than in `.row-sub`, which is already three chips
+                          deep at 190px (see the notes there) - and it is drawn only when
+                          there IS something, which on an ordinary card is never.
+                          Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
+                      {(() => {
+                        const jobs = usage?.panes[s.id]?.jobs
+                        if (!jobs?.length) return null
+                        return (
+                          <span
+                            className="chip jobs"
+                            title={
+                              'Still running with the turn over:\n' +
+                              jobs
+                                .map(
+                                  (j) =>
+                                    `  ${j.label}` +
+                                    (j.elapsed ? `, ${formatElapsed(j.elapsed * 1000)}` : '')
+                                )
+                                .join('\n')
+                            }
+                          >
+                            {jobWords(jobs)}
+                          </span>
+                        )
+                      })()}
+                    </span>
                   </div>
                 )}
                 <div className="row-sub">
@@ -5343,7 +5367,7 @@ export default function App(): JSX.Element {
                       `Open this project in Explorer - to reach the agent, drag files onto this pane`
                     }
                     onClick={() =>
-                      void api.revealProject(s.cwd).then((p) => p || flash('That folder is gone.'))
+                      void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
                     }
                   >
                     📁

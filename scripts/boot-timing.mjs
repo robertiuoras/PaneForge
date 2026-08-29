@@ -161,7 +161,11 @@ const EXPR = `(() => {
     for (let y = len - 1; y >= 0 && y > len - 4000; y--) if (line(t, y).includes('above: this pane before the restart')) { markAt = y; break }
     let tail = ''
     for (let y = Math.max(0, len - 25); y < len; y++) tail += line(t, y) + '\\n'
-    return { id, rows: len, cols: t.cols, live: markAt < 0 ? -1 : len - markAt - 1, tail, notes, over }
+    let pty = null
+    try { const q = pf[id].pty && pf[id].pty(); if (q) pty = q.cols + 'x' + q.rows } catch {}
+    let want = null
+    try { const d = pf[id].fit && pf[id].fit.proposeDimensions(); if (d && d.cols > 0) want = d.cols + 'x' + d.rows } catch {}
+    return { id, rows: len, cols: t.cols, grid: t.cols + 'x' + t.rows, want, pty, live: markAt < 0 ? -1 : len - markAt - 1, tail, notes, over }
   })
 })()`
 
@@ -209,6 +213,17 @@ console.log(
   `\npanes=${specs.length} stagger=${STAGGER < 0 ? 'default' : STAGGER}  ` +
     `composer: median ${done[Math.floor(done.length / 2)] ?? '-'}ms  last ${done[done.length - 1] ?? '-'}ms  (${done.length}/${specs.length} reached one)`
 )
+// The width every pane settled at, against the width its own box has room for. A pane
+// that comes back narrower than its window draws every absolute column move into a grid
+// the CLI is not painting for - see shared/paneGrid.ts.
+{
+  const r = await send('Runtime.evaluate', { expression: EXPR, returnByValue: true })
+  const rows = r.result?.value ?? []
+  console.log('\n--- final grid vs room')
+  console.log('pane                  grid      room       pty     ok')
+  for (const p of rows)
+    console.log(p.id.padEnd(18), String(p.grid).padStart(9), String(p.want ?? '-').padStart(9), String(p.pty ?? '-').padStart(9), (p.want === p.grid && p.pty === p.grid ? '  yes' : '  NO'))
+}
 const lag = (await send('Runtime.evaluate', { expression: 'JSON.stringify(window.__pfLag||null)', returnByValue: true })).result?.value
 if (lag && lag !== 'null') {
   const l = JSON.parse(lag)

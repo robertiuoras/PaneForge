@@ -1126,7 +1126,16 @@ the conversation and not one line of the screen.
   1.3-2.6s and a composer you can type into at 4.1-14.3s, against 1.4s for one `claude`
   alone. A pane can be BORN asleep (`Live.proc` is nullable, `start()` takes `asleep`), so
   the card, its place and its screen arrive with no process behind them and a press wakes
-  it in the conversation it was in. `restoreAsleep` in `shared/restoreTurn.ts` is the rule
+  it in the conversation it was in. **A sleeping pane still has a SHAPE.** `sleep()` gives
+  it `status: 'exited'` and `resize()` dropped every call for an exited session, so its
+  grid froze at `START_COLS` while the renderer fitted the terminal to its own box, and
+  `wake()` spawned the CLI at the frozen number - absolute column moves into a narrower
+  grid, one word clamped over the last. Measured 2026-08-29 with
+  `npm run boot-timing --panes 8`: 4 of 7 restored panes at terminal 26x17 against a pty
+  recorded at 120x30, 7 of 7 agreeing after. Only a genuinely DEAD pane is dropped now; a
+  pane with no pty simply records the size, and `s.proc?.resize` was always null-safe.
+  `boot-timing` prints the pair and `test:reclaim` holds the guard.
+  `restoreAsleep` in `shared/restoreTurn.ts` is the rule
   and the refusals are the feature: the first pane, a pane launched with a prompt, and a
   pane the restart caught mid-turn all come back running. Measured after: composer median
   and last both 2948ms, 4 of 8 panes started. `npm run test:restoreturn`.

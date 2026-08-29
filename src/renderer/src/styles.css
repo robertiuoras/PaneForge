@@ -606,7 +606,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 .chip.asks {
   color: var(--danger); border-color: #ff8f8f45; background: #ff8f8f1c;
-  flex: none; margin-left: auto;
+  flex: none;
   display: inline-flex; align-items: center; gap: 5px;
 }
 /* How long is left before that question is answered for you, drawn INSIDE the red box
@@ -624,9 +624,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   color: var(--danger-on); background: var(--danger);
   font-variant-numeric: tabular-nums; font-weight: 600;
 }
-/* The clock takes `margin-left: auto` too, so when both are on the line the chip sits
-   beside it rather than pushing it off the end. */
-.row-title .chip.asks + .elapsed, .row-title .chip.asks + .chip.dead { margin-left: 6px; }
+/* `.row-tags` gaps them now. */
 .row.preset { background: #ffffff07; }
 .row-text { flex: 1; min-width: 0; }
 .row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -646,25 +644,42 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   display: flex; align-items: center; min-width: 0;
   flex-wrap: wrap; row-gap: 2px;
 }
-/* The floor under the name, mirroring `.row-agent`'s below. 6em of 13px type is ~78px,
-   about nine characters plus an ellipsis - enough that a truncated name still identifies
-   the pane, where `min-width: 0` let it reach a single letter. Wrapping is decided before
-   shrinking, so on a card whose chips DO fit this changes nothing. */
-.row-name { min-width: 6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* "This pane's agent is on the other machine." `flex: none` for the same reason the clock
-   has it: it is 13px wide and shrinking it to 9 says nothing, where the name beside it has
-   an ellipsis and loses a character honestly. The accent is what separates it at a glance
-   from the key on its left, which is the same size and the same weight. */
+/* No floor under the name any more. `min-width: 6em` was here to stop a chip squeezing it
+   to one character, and it did that by making the name's BOX 78px whatever the name was -
+   so a pane called `Sonia` (38px of text) drew 40px of nothing before the chip beside it,
+   and the card read as broken while every card-fit assertion passed (measured 2026-08-29).
+   The name is protected by `.row-tags` instead. */
+.row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Everything the title line says about this pane's STATE, in one box: the question, the
+   close countdown, the pin, a move, the turn clock, a background job.
+
+   One flex item rather than five, so the line has exactly two things on it - a name that
+   may shrink and a tag box that may not. Before this each chip took `margin-left: auto`
+   for itself, so a line that wrapped stranded the clock alone at the far right with 135px
+   of empty card to its left, under a `kept open` that ended at 163px. Now the whole box
+   moves down together, and it is the only thing on the line allowed that auto margin.
+
+   It wraps INSIDE itself as well: a card carrying a question, a pin and a clock wants
+   207px of the 190px it has, and on its own line it breaks into two rows of chips rather
+   than running off the edge. `min-width: min-content` was tried as its floor and is wrong
+   here - Chromium answers a wrapping flex container's min-content with the SUM of its
+   items, so the box asked for 206px inside 190px and was clipped. */
+.row-tags {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: 5px; row-gap: 2px;
+  flex: 0 1 auto; min-width: 0; margin-left: auto;
+}
 .row-remote { flex: none; display: inline-flex; align-items: center; margin-right: 5px; color: var(--accent); opacity: 0.85; }
-/* Pushed to the far end of the title line, and never squeezed: the name beside it has an
-   ellipsis and this does not - "1m 2" is a wrong number, where "PaneFo…" is a short name. */
-.row-title .elapsed, .row-title .chip.dead { margin-left: auto; flex: none; }
+/* Never squeezed: the name beside it has an ellipsis and this does not - "1m 2" is a wrong
+   number, where "PaneFo…" is a short name. The push to the far end belongs to `.row-tags`,
+   which carries this and every other state chip as one box. */
+.row-title .elapsed, .row-title .chip.dead { flex: none; }
 /* A pane on its way out. It takes the clock's place on the right of the title line - the
    two are never both worth drawing, and a pane about to be closed is the more urgent of
    them. Warn rather than danger: nothing is lost by it happening, which is the whole
    reason the app is allowed to do it at all. */
 .row-title .chip.closing {
-  margin-left: auto; flex: none;
+  flex: none;
   color: var(--warn); border-color: #f0b42933; background: #f0b4291a;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }

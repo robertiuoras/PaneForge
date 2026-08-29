@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   app,
@@ -23,6 +23,7 @@ import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
+import { revealTarget, within } from '../shared/reveal'
 import { listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
@@ -1681,15 +1682,28 @@ ipcMain.handle('shell:pathKind', (_e, cwd: string, token: string) =>
  *
  * Returns the folder actually opened, so the caller can say which one that was.
  */
-ipcMain.handle('shell:revealProject', async (_e, cwd: string) => {
+ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) => {
   const root = await projectRoot(cwd ?? '')
   try {
     if (!statSync(root).isDirectory()) return null
   } catch {
     return null /* gone: pointing Explorer at it would just raise an error dialog */
   }
-  shell.openPath(root)
-  return root
+  // ...and then DOWN again, to the folder this pane is actually about - its own cwd, or
+  // one named after it. See `shared/reveal.ts` for why a title only counts when a real
+  // directory carries the name.
+  const base = cwd && within(root, cwd, sep) ? cwd : root
+  let subdirs: string[] = []
+  try {
+    subdirs = readdirSync(base, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+  } catch {
+    /* unreadable: the title matches nothing and the answer is `base` */
+  }
+  const target = revealTarget({ root, cwd: cwd ?? '', title, subdirs, sep })
+  shell.openPath(target)
+  return target
 })
 ipcMain.handle('shell:editor', (_e, path: string) => {
   // VS Code / Cursor ship a `code`-style launcher on PATH; without one, fall back to
@@ -3398,7 +3412,11 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
     model: spec.model,
     resumeId,
     lastPrompt: lastPrompt(spec.cwd, resumeId),
-    gone: paneMissing(spec) ? 'folder' : installed ? undefined : 'agent'
+    gone: paneMissing(spec) ? 'folder' : installed ? undefined : 'agent',
+    // Carried through the dialog so the ANSWERED restore is the same restore the silent
+    // one is - see `RestorePane.scrollbackId`.
+    scrollbackId: spec.scrollbackId,
+    asleep: spec.asleep
   }
 }
 
@@ -3512,7 +3530,11 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
       title: p.title,
       agent: p.agent,
       model: p.model,
-      resumeId: p.resumeId
+      resumeId: p.resumeId,
+      // The two fields that only the desk knows and only this map can lose: the pane's
+      // screen and its pin both hang off the id it is coming back as.
+      scrollbackId: p.scrollbackId,
+      asleep: p.asleep
     }))
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
