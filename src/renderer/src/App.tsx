@@ -3069,7 +3069,17 @@ export default function App(): JSX.Element {
       } else if (k === 'f' && e.shiftKey) {
         // Fleet is always grouped by state; this shortcut is no longer needed.
         // Shift is reserved in case we need to add another fleet-level command in the future.
-      } else if (k === 'f' &&(!typing || (e.target as HTMLElement)?.classList.contains('find-input'))) {
+      } else if (
+        k === 'f' &&
+        (!typing ||
+          // xterm's own helper is a TEXTAREA, and it is focused for as long as a pane is,
+          // so `!typing` refused this chord in the ONE place find is for: measured in the
+          // real window, Ctrl/Cmd+F at a pane did nothing at all. The refusal is meant for
+          // a real text field - a rename box, a search input, the ask box - and the helper
+          // is not one of those.
+          (e.target as HTMLElement)?.classList.contains('xterm-helper-textarea') ||
+          (e.target as HTMLElement)?.classList.contains('find-input'))
+      ) {
         // Find inside the pane's scrollback. Claimed from the terminal deliberately -
         // Ctrl+F is readline's "forward one character", which nobody has ever pressed on
         // purpose, and it is where every other program on the machine puts search.

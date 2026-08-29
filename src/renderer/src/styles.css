@@ -3314,7 +3314,15 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
   display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   border-radius: var(--r-sm); border: 1px solid transparent; min-width: 0;
 }
-.tp-row.on { background: var(--accent-dim); border-color: var(--accent); }
+.tp-row.on { background: var(--accent-dim); border-color: var(--accent); position: relative; }
+/* A rail in the full accent, the same one the real sidebar draws beside a pane that wants
+   you. `--accent-dim` alone is the colour at 15% over a near-black background, which is a
+   correct tint and reads as grey. */
+.tp-row.on::before {
+  content: ''; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+}
+.tp-row.on .tp-title { color: var(--accent-text); }
 .tp-num {
   min-width: 14px; text-align: center; font-size: 9px; border-radius: 4px; flex: none;
   border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--muted);
@@ -3325,7 +3333,12 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .tp-main { padding: 12px; display: flex; flex-direction: column; gap: 7px; background: var(--surface); }
 .tp-line { height: 6px; border-radius: 3px; background: var(--surface-3); }
 .tp-line.accent { background: var(--accent-text); }
-.tp-buttons { display: flex; gap: 6px; margin-top: auto; }
+.tp-buttons { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+/* The one thing in the preview that is the accent and nothing else. */
+.tp-swatch {
+  width: 16px; height: 16px; border-radius: 4px; margin-left: auto; flex: none;
+  background: var(--accent); box-shadow: inset 0 0 0 1px var(--line-strong);
+}
 .tp-btn {
   font-size: 10px; padding: 4px 10px; border-radius: var(--r-sm);
   border: 1px solid var(--line-strong); color: var(--muted);

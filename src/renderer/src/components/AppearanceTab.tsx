@@ -110,6 +110,53 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
       </div>
 
       <div className="setting">
+        <label>Preview</label>
+        {/* A real sidebar row, drawn with the theme being edited rather than the one that
+            is live - so the effect of a slider is visible without applying it to the
+            window you are reading the slider in. The variables are scoped to this box. */}
+        <div className="theme-preview" style={vars as React.CSSProperties}>
+          <div className="tp-side">
+            <div className="tp-brand">
+              <span className="tp-logo" />
+              PaneForge
+            </div>
+            <div className="tp-row on">
+              <span className="tp-num">1</span>
+              <span className="tp-text">
+                <span className="tp-title">PaneForge</span>
+                <span className="tp-sub">claude · main checkout</span>
+              </span>
+            </div>
+            <div className="tp-row">
+              <span className="tp-num">2</span>
+              <span className="tp-text">
+                <span className="tp-title">taskdriver</span>
+                <span className="tp-sub">codex · #2</span>
+              </span>
+            </div>
+          </div>
+          <div className="tp-main">
+            <div className="tp-line" style={{ width: '72%' }} />
+            <div className="tp-line accent" style={{ width: '46%' }} />
+            <div className="tp-line" style={{ width: '61%' }} />
+            <div className="tp-buttons">
+              <span className="tp-btn primary">Run</span>
+              <span className="tp-btn">Cancel</span>
+              {/* The colour itself, at full strength and named. Everything else in this
+                  box is the accent at 10-25% alpha over a near-black - correct, and the
+                  reason the preview read as "it doesn't show the colour": nothing in it
+                  was ever the colour. */}
+              <span className="tp-swatch" title="Your colour, at full strength" />
+            </div>
+          </div>
+        </div>
+        <div className={'contrast-note' + (audit.ok ? '' : ' bad')}>
+          {audit.ok
+            ? `Readable: body text ${audit.textOnBg.toFixed(1)}:1, second lines ${audit.mutedOnBg.toFixed(1)}:1.`
+            : audit.warning}
+        </div>
+      </div>
+      <div className="setting">
         <label>Colour in the greys ({Math.round(theme.tint * 100)}%)</label>
         <input
           type="range"
@@ -182,48 +229,6 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
         />
       </div>
 
-      <div className="setting">
-        <label>Preview</label>
-        {/* A real sidebar row, drawn with the theme being edited rather than the one that
-            is live - so the effect of a slider is visible without applying it to the
-            window you are reading the slider in. The variables are scoped to this box. */}
-        <div className="theme-preview" style={vars as React.CSSProperties}>
-          <div className="tp-side">
-            <div className="tp-brand">
-              <span className="tp-logo" />
-              PaneForge
-            </div>
-            <div className="tp-row on">
-              <span className="tp-num">1</span>
-              <span className="tp-text">
-                <span className="tp-title">PaneForge</span>
-                <span className="tp-sub">claude · main checkout</span>
-              </span>
-            </div>
-            <div className="tp-row">
-              <span className="tp-num">2</span>
-              <span className="tp-text">
-                <span className="tp-title">taskdriver</span>
-                <span className="tp-sub">codex · #2</span>
-              </span>
-            </div>
-          </div>
-          <div className="tp-main">
-            <div className="tp-line" style={{ width: '72%' }} />
-            <div className="tp-line accent" style={{ width: '46%' }} />
-            <div className="tp-line" style={{ width: '61%' }} />
-            <div className="tp-buttons">
-              <span className="tp-btn primary">Run</span>
-              <span className="tp-btn">Cancel</span>
-            </div>
-          </div>
-        </div>
-        <div className={'contrast-note' + (audit.ok ? '' : ' bad')}>
-          {audit.ok
-            ? `Readable: body text ${audit.textOnBg.toFixed(1)}:1, second lines ${audit.mutedOnBg.toFixed(1)}:1.`
-            : audit.warning}
-        </div>
-      </div>
     </>
   )
 }
