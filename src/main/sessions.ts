@@ -1280,7 +1280,24 @@ export class SessionManager extends EventEmitter {
     record = true
   ): void {
     const s = this.sessions.get(id)
-    if (!s || s.meta.status === 'exited') return
+    // An ASLEEP pane is not a dead one, and this guard could not tell them apart.
+    //
+    // A sleeping pane wears `status: 'exited'` on purpose (see `sleep()`), so every resize
+    // for one was dropped here: `s.cols` stayed at whatever it was spawned with, `meta.cols`
+    // never moved, and `wake()` then spawned the CLI at THAT grid - into a terminal the
+    // renderer had long since fitted to its own box. Everything an agent prints is absolute
+    // column moves and a terminal clamps a column it cannot reach, so the woken CLI painted
+    // one word over the last down the right-hand edge. That is the reported screen after an
+    // update restart, and it is the common case rather than a corner: `restoreAsleep` brings
+    // most of a restored desk back asleep, which is the launch every update gets.
+    //
+    // Measured 2026-08-29 with `npm run boot-timing --panes 8`: 4 of 7 restored panes ended
+    // with the terminal at 26x17 and the pty still recorded at 120x30 (`START_COLS`).
+    //
+    // A pane with no pty has nothing to resize, and `s.proc?.resize` below is already
+    // null-safe - so all this does is let the size be RECORDED, which is the half that was
+    // missing. A genuinely dead pane still records nothing.
+    if (!s || (s.meta.status === 'exited' && !s.meta.asleep)) return
     // Several screens may be borrowing this pane at once, so a borrow is RECORDED against
     // whoever asked and the pty is then set to the one grid they can all draw - never to
     // the last number that arrived. Without this two viewers flip the pty between their
