@@ -632,4 +632,26 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   )
 }
 
+// A slept pane still has a SHAPE, and the pane it wakes into must be that shape.
+//
+// `sleep()` gives a pane `status: 'exited'`, and `resize()` used to drop every call for an
+// exited session - so a sleeping pane's grid froze at whatever it was spawned with while
+// the renderer went on fitting the terminal to its own box, and `wake()` spawned the CLI
+// at the frozen number. Everything an agent prints is absolute column moves and a terminal
+// clamps a column it cannot reach, so the woken pane painted one word over the last down
+// its right-hand edge. Measured 2026-08-29 with `npm run boot-timing --panes 8`: 4 of 7
+// restored panes ended with the terminal at 26x17 and the pty recorded at 120x30, and 7 of
+// 7 agree with the guard below. Red-proof it by putting `s.meta.status === 'exited'` back
+// on its own.
+{
+  const src = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const guard = /if \(!s \|\| \(s\.meta\.status === 'exited' && !s\.meta\.asleep\)\) return/.test(src)
+  check('a resize is recorded for an asleep pane, and only a dead one is dropped', guard, '')
+  check(
+    '...and waking one spawns at the grid it was kept at',
+    /live\.proc = this\.spawn\(live\.req, live\.meta\.agent, live\.cols, live\.rows/.test(src),
+    ''
+  )
+}
+
 console.log(`reclaim: ${checks} checks passed`)
