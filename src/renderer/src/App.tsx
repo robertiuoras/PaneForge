@@ -485,8 +485,8 @@ function AutoTick({ at, tick }: { at: number; tick: () => void }): null {
 }
 
 /** Whole-window render counter, exposed for probes. See the component body. */
-const deskRenders = { n: 0 }
-;(window as unknown as { __pfDeskRenders?: { n: number } }).__pfDeskRenders = deskRenders
+const deskRenders = { n: 0, ms: 0 }
+;(window as unknown as { __pfDeskRenders?: { n: number; ms: number } }).__pfDeskRenders = deskRenders
 
 export default function App(): JSX.Element {
   // How many times the WHOLE window has re-rendered, for probes. The sidebar, every card
@@ -494,6 +494,13 @@ export default function App(): JSX.Element {
   // of the desk - which is how a one-second clock read at the top of App turned into the
   // most expensive timer in the app. `scripts/desk-render-test.mjs` reads it.
   deskRenders.n++
+  const deskRenderStart = performance.now()
+  // What that render COST, not only that it happened. A passive effect with no dep array
+  // runs after every commit, so this is render + commit for the whole window - the number
+  // `scripts/type-profile.mjs` needs to tell React's share from xterm's.
+  useEffect(() => {
+    deskRenders.ms += performance.now() - deskRenderStart
+  })
   const [rawSessions, setSessions] = useState<Session[]>([])
   /** Which device's panes the sidebar is showing. `all` remains the default desk view. */
   const [deviceFilter, setDeviceFilter] = useState('all')
