@@ -332,9 +332,18 @@ export function paneBackJobs(
  *
  * One job is named, several are counted: `tail` says which, and `3 jobs` on a card 190px
  * wide is the only shape three names fit into.
+ *
+ * **The verb is not decoration.** The words were the bare program name, so a card whose
+ * turn had finished carried a chip reading `build` next to a stopped clock, and it was
+ * reported twice as "I still don't know what it's for" - a word with no verb beside it
+ * reads as a label for the pane, not as something happening now. `running <name>` is the
+ * sentence a SHELL pane's own row already uses for the same fact (`paneJob`), so the two
+ * readings of "this pane is running something" say it the same way rather than inventing
+ * a second vocabulary. The hover carries the rest, and this stays short because the card
+ * is 190px: two words for one job, two for many.
  */
 export function jobWords(jobs: PaneBackJob[]): string {
   if (!jobs.length) return ''
-  if (jobs.length === 1) return jobs[0].label || '1 job'
-  return `${jobs.length} jobs`
+  if (jobs.length === 1) return `running ${jobs[0].label || 'a job'}`
+  return `running ${jobs.length}`
 }

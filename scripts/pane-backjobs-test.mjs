@@ -141,8 +141,12 @@ is(paneBackJobs([], 22457), [], 'an empty table is a failed read, never a busy p
 // The words
 
 is(jobWords([]), '', 'nothing to say is said as nothing')
-is(jobWords([{ pid: 1, label: 'tail' }]), 'tail', 'one job is named')
-is(jobWords([{ pid: 1, label: 'tail' }, { pid: 2, label: 'node' }]), '2 jobs', 'several are counted - two names do not fit a 190px card')
+is(jobWords([{ pid: 1, label: 'tail' }]), 'running tail', 'one job is named, with the verb that says it is happening now')
+is(jobWords([{ pid: 1, label: 'tail' }, { pid: 2, label: 'node' }]), 'running 2', 'several are counted - two names do not fit a 190px card')
+// The reported failure: a bare program name beside a stopped clock says nothing about
+// what it is. Every non-empty answer carries the verb.
+is(jobWords([{ pid: 1, label: 'build' }]).startsWith('running '), true, 'a named job says it is RUNNING, not just what it is')
+is(jobWords([{ pid: 1, label: '' }]), 'running a job', 'a job whose name could not be read still says what is true')
 
 // ---------------------------------------------------------------------------
 // This machine's real table, which is the half no fixture can check: the rule has to

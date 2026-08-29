@@ -81,6 +81,11 @@ const CLOCK = ''
 // of cases pins. The seconds inside the ask chip are its widest state.
 const ASKS = '<span class="chip asks">asks you<span class="asks-in">hold</span></span>'
 const KEPT = '<button class="chip kept">kept open</button>'
+// A pane whose turn is over with something still running in the background: the finished
+// turn's clock, and beside it what is still going. The longest thing this chip draws is
+// `running` plus a script name.
+const TURN_DONE = '<span class="elapsed done">4m 12s</span>'
+const JOB = '<span class="chip jobs">running build</span>'
 
 const CASES = [
   { name: 'a plain card', sub: LOGO + AGENT + CLOCK },
@@ -107,7 +112,14 @@ const CASES = [
   // Robert's own card, 2026-08-29: pane 1, project `clients`, title `Sonia`, pinned, in a
   // lane. Nothing is cut off and it still read as broken - three ragged lines with the
   // clock alone on the second, and a hole between a short name and the chip beside it.
-  { name: 'pinned, short name, in a lane', sub: LOGO + AGENT + LANE_PLACE, title: KEPT, shortName: true }
+  { name: 'pinned, short name, in a lane', sub: LOGO + AGENT + LANE_PLACE, title: KEPT, shortName: true },
+  // The background-job chip beside a FINISHED turn's clock - the state that reads as a lie
+  // if the words are wrong and as ragged if they do not fit. `running build` is the widest
+  // ordinary label, and this is the pair that has to share one 190px title line.
+  { name: 'a finished turn with a job still running', sub: LOGO + AGENT + LANE_PLACE, title: TURN_DONE + JOB },
+  // Three state chips is 207px of chrome on a 190px line (measured 2026-08-29), so this
+  // one CANNOT be one row and is not asked to be: what it must do is wrap as a box.
+  { name: 'pinned, with a job still running', sub: LOGO + AGENT + LANE_PLACE, title: KEPT + TURN_DONE + JOB, shortName: true, wraps: true }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
@@ -329,11 +341,21 @@ try {
     // The card Robert reported: a short name, a pin and a clock is 118px of chrome on a
     // 190px line and has no business taking three rows. It measured 40px tall over two
     // rows with the chips as separate items (2026-08-29), and 19px in one row now.
-    if (c.shortName && !c.title.includes('asks'))
+    if (c.shortName && !c.title.includes('asks') && !c.wraps)
       ok(
         m.title.h < 25,
         `${c.name}: the title line is ONE row`,
         `${m.title.h.toFixed(1)}px tall`
+      )
+    // ...and a card whose chips genuinely do not fit one row wraps to TWO, never three.
+    // That is what `.row-tags` wrapping inside itself buys, and the failure it replaces is
+    // a chip running off the edge - which the assertion above already refuses. A third row
+    // means the box has stopped wrapping as a unit and is stacking one chip per line.
+    if (c.wraps)
+      ok(
+        m.gaps.rows === 2,
+        `${c.name}: the chips wrap to two rows, not one per chip`,
+        `${m.gaps.rows} rows, ${m.title.h.toFixed(1)}px tall`
       )
     ok(fits(m.place), `${c.name}: the place chip is whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
     if (c.remote)
