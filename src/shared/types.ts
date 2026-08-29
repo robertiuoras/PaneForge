@@ -1747,6 +1747,15 @@ export interface Config {
    */
   theme?: ThemeConfig
   /**
+   * Rebound keyboard shortcuts: action id -> chord (`"g"`, `"shift+g"`).
+   *
+   * Only what has been CHANGED is stored, so a default that moves in a later build moves
+   * for everybody who never touched it - which is the whole reason this is not a full map
+   * written out at first launch. `shared/keymap.ts` owns the ids and the parsing, and
+   * drops anything it cannot read rather than leaving a shortcut with a hole in it.
+   */
+  keys?: Record<string, string>
+  /**
    * Panes to reopen on next launch, written just before an update restart.
    *
    * Superseded by userData/desk.json and only still read on the first launch after

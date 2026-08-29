@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
+import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
   Config,
@@ -750,6 +751,8 @@ export default function App(): JSX.Element {
     el.addEventListener('pointerup', up)
     el.addEventListener('pointercancel', up)
   }
+  /** Every rebindable chord, defaults with the saved overrides on top. */
+  const keymap = useMemo(() => resolveKeymap(config?.keys), [config?.keys])
   const [shelfPeek, setShelfPeek] = useState(false)
   // The in-window Stash open for a search, which is the one thing the floating overlay
   // cannot do for itself: it is unfocusable by design, so there is no keyboard in it.
@@ -2982,22 +2985,34 @@ export default function App(): JSX.Element {
       }
       if (!modKey(e) || e.altKey) return
       const k = e.key.toLowerCase()
+      /**
+       * Is this keystroke that action? One question asked of `shared/keymap.ts`, which is
+       * the list the help sheet draws and the list somebody can edit - before this, the
+       * chord was spelled here as a literal and in the sheet as a STRING, so the two could
+       * (and did) disagree and nothing could be rebound at all.
+       *
+       * The Shift half comes from the map too, which is why the old `k === 'g'` /
+       * `k === 'g' && e.shiftKey` pair still resolves correctly: they are two actions with
+       * two chords, not one chord tested twice.
+       */
+      const chord = chordOf(e)
+      const hit = (id: string): boolean => !!chord && sameChord(chord, keymap[id])
 
-      if (k === 't') {
+      if (hit('newSession')) {
         e.preventDefault()
         setPicking(true)
-      } else if ((k === 'k' && !e.shiftKey) || (k === 'p' && e.shiftKey)) {
+      } else if (hit('palette') || (k === 'p' && e.shiftKey)) {
         e.preventDefault()
         setPalette((p) => !p)
-      } else if (k === 's' && e.shiftKey) {
+      } else if (hit('swarm')) {
         e.preventDefault()
         setSwarm(true)
-      } else if (k === 'k' && e.shiftKey) {
+      } else if (hit('board')) {
         e.preventDefault()
         const s = sessions.find((x) => x.id === activeId)
         if (s) setBoard(s.cwd)
         else flash('Open a pane first - the board belongs to its folder.')
-      } else if (k === 'v' && e.shiftKey) {
+      } else if (hit('stash')) {
         // Claimed here, and stopped from going any further: the pane's own handler
         // treats every Ctrl+V as a paste, so without stopPropagation this would open
         // the shelf and paste the clipboard into the agent at the same time.
@@ -3013,22 +3028,22 @@ export default function App(): JSX.Element {
             setShelfSearching(false)
           } else setShelfPinned(true)
         } else api.toggleStash()
-      } else if (k === 'd' && e.shiftKey) {
+      } else if (hit('devices')) {
         e.preventDefault()
         setDevices(true)
-      } else if (k === 'h' && !typing) {
+      } else if (hit('history') && !typing) {
         e.preventDefault()
         setHistory(true)
-      } else if (k === 'w' && activeId && !typing) {
+      } else if (hit('closePane') && activeId && !typing) {
         e.preventDefault()
         close(activeId)
-      } else if (k === 'l' && e.shiftKey) {
+      } else if (hit('fixUi')) {
         e.preventDefault()
         fixUi(activeId)
-      } else if (k === 'r' && e.shiftKey && activeId) {
+      } else if (hit('restart') && activeId) {
         e.preventDefault()
         api.restartSession(activeId)
-      } else if (k === 'a' && e.shiftKey && activeId) {
+      } else if (hit('switchAgent') && activeId) {
         // Cycle the focused pane through the CLIs that are actually installed.
         e.preventDefault()
         const s = sessions.find((x) => x.id === activeId)
@@ -3036,19 +3051,19 @@ export default function App(): JSX.Element {
         if (!s || usable.length < 2) return
         const next = usable[(usable.findIndex((a) => a.id === s.agent) + 1) % usable.length]
         switchAgent(s, next.id, config?.defaultModels[next.id] ?? '')
-      } else if (k === 'g' && e.shiftKey) {
+      } else if (hit('gridLayout')) {
         // Shift is the grid's own arrangement: same key as the grid, one level in.
         e.preventDefault()
         cycleLayout()
-      } else if (k === 'g') {
+      } else if (hit('grid')) {
         e.preventDefault()
         patchConfig({ grid: !grid })
-      } else if (k === 'z' && e.shiftKey) {
+      } else if (hit('zoom')) {
         // Not a bare Ctrl+Z: that is SIGTSTP in a shell and undo in every agent's
         // prompt, and this app does not get to take either of them.
         e.preventDefault()
         toggleZoom()
-      } else if (k === 'u' && e.shiftKey) {
+      } else if (hit('copyMode')) {
         // U for "up the scrollback". C is copy, and tmux's own `[` needs a modifier this
         // app cannot claim on every keyboard layout - on a German one it is AltGr+8.
         e.preventDefault()
@@ -3056,7 +3071,7 @@ export default function App(): JSX.Element {
         const enter = activeId ? paneCopyMode.get(activeId) : null
         if (enter) enter()
         else flash('Open a pane first - there is nothing to copy from.')
-      } else if (k === 'y' && e.shiftKey) {
+      } else if (hit('syncTyping')) {
         // Y for sYnc: B (broadcast) is tmux's own prefix key and the one chord people
         // press by muscle memory expecting nothing to happen here.
         e.preventDefault()
@@ -3066,11 +3081,8 @@ export default function App(): JSX.Element {
         // which walks the focus and leaves the grid alone.
         e.preventDefault()
         movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
-      } else if (k === 'f' && e.shiftKey) {
-        // Fleet is always grouped by state; this shortcut is no longer needed.
-        // Shift is reserved in case we need to add another fleet-level command in the future.
       } else if (
-        k === 'f' &&
+        hit('find') &&
         (!typing ||
           // xterm's own helper is a TEXTAREA, and it is focused for as long as a pane is,
           // so `!typing` refused this chord in the ONE place find is for: measured in the
