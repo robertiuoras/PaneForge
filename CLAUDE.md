@@ -224,6 +224,41 @@ killing PaneForge by hand (~14 min of renderer CPU, main thread parked in `mach_
 - `npm run test:renderwatch` is the arithmetic and the source assertions;
   `PF_PORT=9334 npm run test:renderwatchlive` spins a real window (needs a copy running).
 
+## A fault the app survived is a fault nobody hears about
+
+`crash.ts` catches every uncaught exception and rejection so Electron cannot open a modal
+message box mid-sentence, and `renderWatch.ts` kills and reloads a wedged renderer without
+saying a word. Both are right, and together they mean the entire record of a fault is a
+line in `paneforge-errors.log` - a file nobody opens until something has gone wrong twice.
+The window's toast does not cover it either: the two faults worth hearing about are a
+window that stopped answering and a crash on a machine driven over the link, and both of
+those are the case with nobody in front of the screen. `shared/faultNotify.ts` is the
+decision, `main/faultNotify.ts` the one POST, on the channel `askNotify.ts` already opened.
+`npm run test:faultnotify`.
+
+- **Every rule is a REFUSAL**, because the expensive failure is not a missed fault - the
+  log still has it - but a phone buzzing forty times while a loop throws every frame.
+  A **test copy pages nobody** (`profileName()`, which is why `startFaultNotify()` runs
+  after `initProfile()`); the crash-guard **drill** names itself and is not a fault; a kind
+  nobody registered is not sent; and `MAX_PER_RUN` (5) is the whole run's budget, with the
+  last message saying it is the last - a silence that is not announced reads as "it stopped
+  happening".
+- **Only an ACT is news, never the reading that led to it.** `renderWatch` writes eight or
+  nine lines around one recovery - the cpu time, the unresponsive event, the unanswered
+  probe, the act, then "answering again" - and only `reload`, `recreate` and `still wedged`
+  leave the machine. The evidence stays in the log; the message exists to get somebody TO
+  the log.
+- **The signature blanks the digits.** A wedge's line carries the pid, the cpu time and how
+  long the probe waited, so two reports of ONE recurring wedge never match on raw text and
+  `QUIET_MS` (30 min) never fires. That is the control in the test.
+- **It is a LISTENER on `crash.ts`, not a call inside it.** That module loads before the
+  profile, before config and before the window, and it is the thing that catches faults in
+  all of them, so it may not import any of them. `write()` appends the log line first and
+  unconditionally, then tells whoever is listening inside a `try` - the record may never
+  depend on the alarm, which is a source assertion in the test.
+- Silent with no `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, exactly as `askNotify` is, and
+  never awaited: a fault report may not hold up the log line, the toast or a quit.
+
 ## A restart onto a new build says what changed
 
 One card, bottom-right, in the same shape as the update prompt it answers and a step below
