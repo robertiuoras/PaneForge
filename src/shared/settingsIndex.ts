@@ -93,11 +93,12 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'system', label: "Right now", find: "Right now" },
   { tab: 'appearance', label: "Theme", find: "Theme" },
   { tab: 'appearance', label: "Your colour", find: "Your colour" },
+  { tab: 'appearance', label: "Preview", find: "Preview" },
   { tab: 'appearance', label: "Colour in the greys", find: "Colour in the greys" },
   { tab: 'appearance', label: "How dark", find: "How dark" },
+  { tab: 'appearance', label: "Sidebar glass", find: "Sidebar glass" },
   { tab: 'appearance', label: "Corners", find: "Corners" },
   { tab: 'appearance', label: "Density", find: "Density" },
-  { tab: 'appearance', label: "Preview", find: "Preview" },
   { tab: 'sounds', label: "Volume", find: "Volume" },
   { tab: 'sounds', label: "Your own sounds", find: "Your own sounds" }
 ]

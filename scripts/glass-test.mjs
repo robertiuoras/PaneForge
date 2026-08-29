@@ -75,6 +75,19 @@ ok(
   (pkg.build.asarUnpack || []).some((p) => p.includes('electron-liquid-glass')),
   'glass: the native module is unpacked from the asar'
 )
-ok(!!pkg.dependencies['electron-liquid-glass'], 'glass: the addon is a runtime dependency')
+// A RUNTIME dependency, and specifically an OPTIONAL one. In `dependencies` it is a
+// darwin-only package that `npm ci` REFUSES on the Windows runner ("wanted os:darwin"),
+// which took the 0.8.173 Windows leg down; in `devDependencies` it would not be in the
+// installed app at all. Optional is the one place that is true on both machines - npm
+// skips it where the platform does not match, and `main/glass.ts` already loads it by
+// lazy require and falls through to no glass when it is absent.
+ok(
+  !!(pkg.optionalDependencies?.['electron-liquid-glass'] ?? pkg.dependencies?.['electron-liquid-glass']),
+  'glass: the addon is a runtime dependency'
+)
+ok(
+  !pkg.devDependencies?.['electron-liquid-glass'],
+  'glass: ...and never a dev one - it has to ship inside the app'
+)
 
 console.log(`glass: ${checks} checks passed`)
