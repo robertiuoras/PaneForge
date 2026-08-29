@@ -84,6 +84,7 @@ import {
 } from './profile'
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
   rememberAppPid,
@@ -241,6 +242,10 @@ onCrashReport((message) => send('app:error', message))
 // the Windows app id, which ties notifications and the taskbar entry to this app -
 // without it the toasts show up as "electron.app.Electron".
 const profile = initProfile()
+
+// After the profile, never before it: a fault in a `npm run try` copy is a fault in a
+// test copy, and paging a phone about one is how a useful alarm gets switched off.
+startFaultNotify()
 
 // A second launch (double-clicked shortcut) should raise the window we already have,
 // not start a second app with its own set of agents.
