@@ -186,6 +186,12 @@ const walkIn = (rootSel) => `(() => {
     // The terminal draws the agent's own colours over --term-bg; paletteFor guards that
     // pair, and a CLI's red-on-black is not this app's decision.
     if (node.classList.contains('xterm') || node.closest?.('.xterm')) return
+    // A LOGOTYPE is exempt, and only a logotype. WCAG 1.4.3 says so, and this app draws
+    // each runner's mark as its vendor's own letter in its vendor's own colour: holding
+    // Claude's purple to 4.5:1 against a Paper background means not drawing Claude's
+    // purple. It is one class, named here rather than a pattern, so a component cannot
+    // opt itself out of being read by picking a class name.
+    if (node.classList.contains('agent-logo')) return
     const cs = getComputedStyle(node)
     if (cs.display === 'none' || cs.visibility === 'hidden') return
     // The rect that gets sampled is the TEXT NODE's own line boxes, never the element's
@@ -308,16 +314,21 @@ function worstUnder(img, scale, rect, textLum) {
   if (x1 <= x0 || y1 <= y0) return null
   const stepX = Math.max(1, Math.floor((x1 - x0) / 24))
   const stepY = Math.max(1, Math.floor((y1 - y0) / 12))
-  let worst = null
+  const seen = []
   for (let y = y0; y < y1; y += stepY) {
     for (let x = x0; x < x1; x += stepX) {
       const i = (y * img.w + x) * img.bpp
       const px = [img.px[i], img.px[i + 1], img.px[i + 2]]
-      const l = lum(px[0], px[1], px[2])
-      if (worst === null || Math.abs(l - textLum) < Math.abs(worst.l - textLum)) worst = { l, px }
+      seen.push({ l: lum(px[0], px[1], px[2]), px })
     }
   }
-  return worst
+  if (!seen.length) return null
+  // The worst pixel, minus the worst 5% of them. A gradient that fails at one end fails
+  // across dozens of pixels and survives the trim; a switch knob whose accent grazes the
+  // edge of a line box is one or two, and reported 1.01:1 for a sentence sitting on the
+  // panel like every other sentence.
+  seen.sort((a, b) => Math.abs(a.l - textLum) - Math.abs(b.l - textLum))
+  return seen[Math.min(seen.length - 1, Math.floor(seen.length * 0.05))]
 }
 
 /* ------------------------------------------------------------- the screens */
