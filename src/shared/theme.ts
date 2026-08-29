@@ -28,6 +28,18 @@ export interface ThemeConfig {
   depth: number
   /** corner rounding multiplier, 0..1 (0 = square, 1 = pill-ish) */
   round: number
+  /**
+   * How much of the real macOS glass the SIDEBAR lets through, 0..1. Only ever read on a
+   * window drawing `NSGlassEffectView` (`main/glass.ts`); everywhere else the sidebar is
+   * opaque already and this changes nothing.
+   *
+   * It defaults NEAR the solid end rather than at the material's own look, because the
+   * sidebar is a column of small text over whatever wallpaper is behind the window - the
+   * same argument that keeps `.panes` opaque - and a person who wants the glass can ask
+   * for it here. Optional so a preset, and a config written by an older build, keep the
+   * default without carrying the field.
+   */
+  glass?: number
   /** row height and padding */
   density: Density
 }
@@ -42,6 +54,7 @@ export const DEFAULT_THEME: ThemeConfig = {
   tint: 0.22,
   depth: 0.3,
   round: 0.5,
+  glass: 0.2,
   density: 'cozy'
 }
 
@@ -288,6 +301,18 @@ const BASE_MIN = 0.06
 const BASE_SPAN = 0.88
 const BASE_CURVE = 1.93
 
+/** The glass slider, defaulted for a preset or an older config that has no field. */
+export function glassAmount(theme: ThemeConfig): number {
+  return clamp01(theme.glass ?? DEFAULT_THEME.glass ?? 0.2)
+}
+
+/** 0..1 as the two hex digits a `#rrggbbaa` needs. */
+function alphaHex(a: number): string {
+  return Math.round(clamp01(a) * 255)
+    .toString(16)
+    .padStart(2, '0')
+}
+
 function baseLightness(depth: number): number {
   return BASE_MIN + BASE_SPAN * Math.pow(clamp01(depth), BASE_CURVE)
 }
@@ -388,6 +413,14 @@ export function paletteFor(theme: ThemeConfig): Vars {
     '--glass': (light ? '#ffffff' : '#ffffff') + (light ? '8c' : '0a'),
     '--glass-line': (light ? '#000000' : '#ffffff') + (light ? '14' : '16'),
     '--glass-hi': '#ffffff' + (light ? 'cc' : '12'),
+    /**
+     * The sidebar's own opaque backing, drawn UNDER the tint above on a glass window and
+     * ignored everywhere else. It is `--bg` at the alpha the glass slider did not spend,
+     * so 0 glass is the painted sidebar this app has always had and 1 is the bare
+     * material. A literal would be wrong on one of the two themes - this is the same
+     * derived background the rest of the window sits on.
+     */
+    '--sidebar-veil': inGamut(bg, grey, hue) + alphaHex(1 - glassAmount(theme)),
     '--text': inGamut(textL, grey * 0.4, hue),
     '--muted': inGamut(mutedL, grey * 1.6, hue),
     '--accent': accent,

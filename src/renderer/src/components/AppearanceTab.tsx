@@ -9,6 +9,16 @@ import {
 } from '@shared/theme'
 import { Segmented } from './Controls'
 
+/**
+ * Whether THIS window is the one drawing real macOS glass. `main.tsx` reads the same flag
+ * off the preload bridge to put `.glass` on <html>; the class is the thing every rule is
+ * scoped to, so it is what the slider is asked about - a phone client and a Mac that
+ * could not load the addon both have nothing for this setting to change.
+ */
+function glassWindow(): boolean {
+  return document.documentElement.classList.contains('glass')
+}
+
 interface Props {
   theme: ThemeConfig
   onChange: (theme: ThemeConfig) => void
@@ -129,6 +139,25 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
           about 75% the window goes light and the text turns over with it.
         </div>
       </div>
+
+      {glassWindow() && (
+        <div className="setting">
+          <label>Sidebar glass ({Math.round((theme.glass ?? 0.2) * 100)}%)</label>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round((theme.glass ?? 0.2) * 100)}
+            onChange={(e) => set({ glass: Number(e.target.value) / 100 })}
+          />
+          <div className="hint">
+            This Mac draws real glass behind the window. 0% keeps the sidebar painted, the
+            way every other machine gets it; 100% is the bare material, with your desktop
+            showing through the rows. The panes never go clear - a terminal over a
+            wallpaper is unreadable at any tint.
+          </div>
+        </div>
+      )}
 
       <div className="setting">
         <label>Corners ({Math.round(theme.round * 100)}%)</label>

@@ -20,6 +20,7 @@
   --glass: #ffffff0a;
   --glass-line: #ffffff16;
   --glass-hi: #ffffff12;
+  --sidebar-veil: #101014cc;
   --text: #ececf1;
   --muted: #9797a6;
   --accent: #f0a868;
@@ -443,7 +444,11 @@ html.glass .panes { background: var(--bg); }
    light one), and there is no `light` class on <html> in this window to branch on - that
    one belongs to the Stash. So the tint is the token, and a new preset gets this right
    without touching the stylesheet. */
-html.glass .sidebar { background: linear-gradient(180deg, var(--glass), transparent 220px); }
+html.glass .sidebar {
+  background:
+    linear-gradient(180deg, var(--glass), transparent 220px),
+    var(--sidebar-veil);
+}
 /* On glass a control's own fill competes with the material behind it, so the hover keeps
    the rim and drops the fill a step - the surface is doing most of the work already. */
 html.glass .icon:hover { background: var(--glass-hi); }
