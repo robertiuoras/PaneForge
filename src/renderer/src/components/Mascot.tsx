@@ -319,6 +319,31 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
    * deadline of its own and two named answers, and taking it away would take the press
    * that stops the close with it.
    */
+  /**
+   * A press anywhere else takes it away.
+   *
+   * The bubble already goes on its own timer, and until now that timer was the ONLY way
+   * out short of pressing the sprite again - so a reading left on screen had to be
+   * dismissed by going back to the thing that opened it, which is the one place a person
+   * is not looking. Pointerdown and not click, so it closes on the way to whatever was
+   * pressed rather than after it.
+   *
+   * A COUNTDOWN is exempt for the same reason it is exempt from the hide timer: it is a
+   * plan to close somebody's pane and its two buttons are the only way to answer it. A
+   * press inside the layer is exempt too - that is the sprite, the ask box and the tools.
+   */
+  useEffect(() => {
+    if ((!bubble && !open) || soon) return
+    const off = (e: PointerEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest('.mascot-layer')) return
+      setBubble(null)
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', off, true)
+    return () => document.removeEventListener('pointerdown', off, true)
+  }, [bubble, open, soon])
+
   useEffect(() => {
     const ms = hideAfterMs(cfg)
     if (!ms || soon) return
@@ -530,30 +555,6 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   const secs = Math.max(0, Math.ceil(left / 1000))
   const showBubble = counting || !!bubble || open
 
-  /**
-   * A press anywhere else takes it away.
-   *
-   * The bubble already goes on its own timer, and until now that timer was the ONLY way
-   * out short of pressing the sprite again - so a reading left on screen had to be
-   * dismissed by going back to the thing that opened it, which is the one place a person
-   * is not looking. Pointerdown and not click, so it closes on the way to whatever was
-   * pressed rather than after it.
-   *
-   * A COUNTDOWN is exempt for the same reason it is exempt from the hide timer: it is a
-   * plan to close somebody's pane and its two buttons are the only way to answer it. A
-   * press inside the layer is exempt too - that is the sprite, the ask box and the tools.
-   */
-  useEffect(() => {
-    if (!showBubble || soon) return
-    const off = (e: PointerEvent): void => {
-      const t = e.target as HTMLElement | null
-      if (t?.closest('.mascot-layer')) return
-      setBubble(null)
-      setOpen(false)
-    }
-    document.addEventListener('pointerdown', off, true)
-    return () => document.removeEventListener('pointerdown', off, true)
-  }, [showBubble, soon])
 
 
   /**
