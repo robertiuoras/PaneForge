@@ -194,8 +194,8 @@ check(
 // timer counting down"), so the card carries the seconds too.
 const card = await evalIn(`(() => {
   const row = document.querySelector('.row[data-id=' + JSON.stringify(${JSON.stringify(ids[0])}) + ']')
-  // The seconds are a span INSIDE the `asks you` chip (`AskClock` -> `.asks-in`), not a
-  // chip of their own: `.chip.asks-in` matched nothing and reported the countdown missing.
+  // The seconds are a span INSIDE the 'asks you' chip (AskClock -> .asks-in), not a chip
+  // of their own: '.chip.asks-in' matched nothing and reported the countdown missing.
   const chip = row && row.querySelector('.chip.asks .asks-in')
   const r = chip && chip.getBoundingClientRect()
   return { text: chip ? chip.textContent : null, w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0 }
