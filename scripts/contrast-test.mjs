@@ -234,6 +234,23 @@ const HIDE_TEXT = `(() => {
   document.head.appendChild(s)
   return true
 })()`
+// A MINIMIZED window does not advance animations, and this app opens every panel with
+// one (`.overlay { animation: fade }`, `.dialog { animation: pop }`, both keyed from
+// `opacity: 0`). So a test copy launched the only way this repo allows - minimized,
+// never `--show`, so it cannot steal the desk - reports the dialog's computed opacity as
+// 0 and every word inside it as having no ink. It is on screen; the animation is parked
+// on its first frame. Killing animation and transition outright puts each element back on
+// its BASE value, which is the state it settles at anyway, and makes the sweep the same
+// measurement whether the window is minimized, occluded or in front.
+const FREEZE = `(() => {
+  const s = document.createElement('style')
+  s.id = '__pf_contrast_freeze'
+  s.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }'
+  document.head.appendChild(s)
+  return true
+})()`
+const UNFREEZE = `(() => { document.getElementById('__pf_contrast_freeze')?.remove(); return true })()`
+
 const SHOW_TEXT = `(() => { document.getElementById('__pf_contrast_hide')?.remove(); return true })()`
 
 async function backdrop() {
@@ -333,6 +350,7 @@ try {
       // A dialog is walked ON ITS OWN. The desk stays drawn behind it, so walking the
       // whole body reports the sidebar's failures once per screen and buries whichever
       // ones belong to the panel that was opened.
+      await evalIn(FREEZE)
       const nodes = await evalIn(walkIn(s.open ? '.dialog' : null))
       const { img, scale } = await backdrop()
       let n = 0
@@ -362,6 +380,7 @@ try {
 } finally {
   if (before) await setTheme(before)
   await evalIn(SHOW_TEXT)
+  await evalIn(UNFREEZE)
 }
 
 check(total >= MIN_SAMPLES, 'the sweep saw the window', `${total} text runs`)
