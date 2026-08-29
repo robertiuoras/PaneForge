@@ -1951,3 +1951,26 @@ flag. `--height`/`--width` drive Chromium's device metrics override and put the 
 afterwards. The expression is evaluated in the renderer with `awaitPromise`, so an async arrow that
 clicks through a dialog and then measures works as one argument. `window.__pf[sessionId]` gives a
 pane's live `term` and `fit`.
+
+## An iPhone is not a Mac, and a phone control is 44px
+
+Two readings the phone client got wrong, both measured in Chrome at 390x844 under a real
+iPhone user agent (2026-08-29). `npm run test:phonetouch`.
+
+- **`navigator.userAgent.includes('Mac')` is TRUE on an iPhone** - iOS says `(iPhone; CPU
+  iPhone OS 18_5 like Mac OS X)` and an iPad says `(Macintosh; ...)` outright - so every
+  shortcut this app prints went out as `⌘ T` to a device with no ⌘ key. `isMac` refuses an
+  iOS agent AND a touch device with no fine pointer, which is the half the user agent
+  cannot give. The hints are hidden on a handheld outright: a label for something the
+  reader cannot do, taking width from the button it is printed on.
+- **The coarse block had only ever been written for a PANE**, and on a handset the sessions
+  list is the home screen: 31 controls under 44px there, the worst being close-all at
+  21x17, and all three of the pane screen's own (Back 73x34, the ⋯ every action lives
+  behind 36x36, the microphone 28x28). Now 1 and 0 - the survivor is a row's close at
+  40x40, which that block chose deliberately. The terminal is 47x42 either way, and
+  nothing a pointer sees changed.
+- **Two specificity ties decided it, which is why the test reads the BUILT stylesheet.**
+  `html.handheld .pt-more` (0,2,0) loses to the header's own later `.pane-title .icon`
+  (0,2,0) - so the `font-size: 19px` in that block had never applied to anything. And
+  `.icon.help` carries its own `min-width` at equal specificity and later ON PURPOSE, to
+  keep the two brand buttons the same size, so it has to be named separately.
