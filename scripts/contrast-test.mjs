@@ -168,7 +168,9 @@ const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 // Returns one record per element that draws its own text, with the colour it draws in
 // and the rect to sample the backdrop from. Nothing here reads a background: that is
 // what the screenshot is for.
-const WALK = `(() => {
+const walkIn = (rootSel) => `(() => {
+  const root = ${JSON.stringify(rootSel)} ? document.querySelector(${JSON.stringify(rootSel)}) : document.body
+  if (!root) return []
   const out = []
   const seen = new Set()
   const vw = innerWidth, vh = innerHeight
@@ -218,7 +220,7 @@ const WALK = `(() => {
     for (const c of node.children) walk(c)
     if (node.shadowRoot) for (const c of node.shadowRoot.children) walk(c)
   }
-  walk(document.body)
+  walk(root)
   return out
 })()`
 
@@ -328,7 +330,10 @@ try {
           continue
         }
       }
-      const nodes = await evalIn(WALK)
+      // A dialog is walked ON ITS OWN. The desk stays drawn behind it, so walking the
+      // whole body reports the sidebar's failures once per screen and buries whichever
+      // ones belong to the panel that was opened.
+      const nodes = await evalIn(walkIn(s.open ? '.dialog' : null))
       const { img, scale } = await backdrop()
       let n = 0
       for (const el of nodes) {
