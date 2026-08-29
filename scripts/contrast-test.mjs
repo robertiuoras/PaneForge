@@ -181,41 +181,39 @@ const walkIn = (rootSel) => `(() => {
     if (node.classList.contains('xterm') || node.closest?.('.xterm')) return
     const cs = getComputedStyle(node)
     if (cs.display === 'none' || cs.visibility === 'hidden') return
-    const text = [...node.childNodes]
-      .filter((n) => n.nodeType === 3)
-      .map((n) => n.nodeValue)
-      .join('')
-      .trim()
-    if (text) {
-      const r = node.getBoundingClientRect()
-      const m = /rgba?\\(([^)]+)\\)/.exec(cs.color)
+    // The rect that gets sampled is the TEXT NODE's own line boxes, never the element's
+    // box. An element rect is as wide as its row, so the worst pixel under a sidebar
+    // heading was the accent-filled button sitting beside it - 1.39:1 against a backdrop
+    // no glyph is on. A Range over the text node gives the line boxes the glyphs are
+    // actually painted into.
+    for (const n of node.childNodes) {
+      if (n.nodeType !== 3) continue
+      const text = (n.nodeValue ?? '').trim()
+      if (!text) continue
+      const range = document.createRange()
+      range.selectNodeContents(n)
+      const boxes = [...range.getClientRects()]
+        .filter((r) => r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh)
+        .map((r) => ({ x: Math.max(0, r.x), y: Math.max(0, r.y), w: Math.min(r.width, vw - r.x), h: Math.min(r.height, vh - r.y) }))
+      if (!boxes.length) continue
+      const m = /rgba?\(([^)]+)\)/.exec(cs.color)
       const p = m ? m[1].split(',').map((s) => parseFloat(s)) : [0, 0, 0, 1]
       // The element's own opacity is not the whole story: a faint chip inside a faded
       // panel is faded twice, and it is the PRODUCT somebody has to read.
-      let alpha = (p[3] ?? 1)
+      let alpha = p[3] ?? 1
       for (let e = node; e && e !== document.documentElement; e = e.parentElement) {
         const o = parseFloat(getComputedStyle(e).opacity)
         if (!Number.isNaN(o)) alpha *= o
       }
+      if (!(alpha > 0.02)) continue
       const size = parseFloat(cs.fontSize) || 16
       const weight = parseInt(cs.fontWeight, 10) || 400
-      if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh && alpha > 0.02) {
-        let path = node.tagName.toLowerCase()
-        if (node.className && typeof node.className === 'string') path += '.' + node.className.trim().split(/\\s+/).join('.')
-        const key = path + '|' + Math.round(r.x) + ',' + Math.round(r.y)
-        if (!seen.has(key)) {
-          seen.add(key)
-          out.push({
-            path,
-            text: text.slice(0, 40),
-            rgb: [p[0] | 0, p[1] | 0, p[2] | 0],
-            alpha,
-            size,
-            weight,
-            rect: { x: Math.max(0, r.x), y: Math.max(0, r.y), w: Math.min(r.width, vw - r.x), h: Math.min(r.height, vh - r.y) }
-          })
-        }
-      }
+      let path = node.tagName.toLowerCase()
+      if (node.className && typeof node.className === 'string') path += '.' + node.className.trim().split(/\s+/).join('.')
+      const key = path + '|' + text.slice(0, 24) + '|' + Math.round(boxes[0].x) + ',' + Math.round(boxes[0].y)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ path, text: text.slice(0, 40), rgb: [p[0] | 0, p[1] | 0, p[2] | 0], alpha, size, weight, boxes })
     }
     for (const c of node.children) walk(c)
     if (node.shadowRoot) for (const c of node.shadowRoot.children) walk(c)
@@ -358,7 +356,11 @@ try {
         const large = el.size >= 24 || (el.size >= 18.66 && el.weight >= 700)
         const want = large ? 3 : 4.5
         const tl = lum(el.rgb[0], el.rgb[1], el.rgb[2])
-        const w = worstUnder(img, scale, el.rect, tl)
+        let w = null
+        for (const b of el.boxes) {
+          const cand = worstUnder(img, scale, b, tl)
+          if (cand && (!w || Math.abs(cand.l - tl) < Math.abs(w.l - tl))) w = cand
+        }
         if (!w) continue
         // Text alpha is composited over the pixel it actually sits on, so a 60% muted
         // grey is judged as the colour a person sees rather than as the one in the rule.
