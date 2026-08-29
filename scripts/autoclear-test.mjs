@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor,
+const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
@@ -59,6 +59,22 @@ console.log('a busy pane WAITS, it is not refused')
   ok('idle arms', armDecision(null) === 'arm')
   ok('a pending question refuses', armDecision('asked') === 'refuse')
   ok('a closed pane refuses', armDecision('gone') === 'refuse')
+
+  // The quiet floor in FRONT of the countdown. `dropFor` drops `runSince` when the agent's
+  // footer goes quiet, which is before the turn is over: Claude Code's Stop hooks run after
+  // the reply is drawn and a hook that BLOCKS makes the model write another reply into the
+  // same pane. Robert watched a countdown start in exactly that gap on 2026-08-30.
+  ok('a pane that has only just printed is not armed over', quietEnoughToArm(0) === false)
+  ok('...nor one printing a second ago', quietEnoughToArm(1000) === false)
+  ok('...nor one a hook chain ago', quietEnoughToArm(ARM_QUIET_MS - 1) === false)
+  // The control: the whole feature is a countdown that DOES appear, so a genuinely settled
+  // pane has to arm - a floor that never lets go is the same bug the other way round.
+  ok('a settled pane arms', quietEnoughToArm(ARM_QUIET_MS) === true)
+  ok('and a long-idle one certainly does', quietEnoughToArm(10 * 60_000) === true)
+  // The floor is a WAIT, never a refusal: `armDecision` still says arm, and the caller
+  // re-asks after the remainder. If this ever returned 'refuse' the ask would be thrown
+  // away for being too fresh, which is the failure this replaces.
+  ok('the floor never turns into a refusal', armDecision(null) === 'arm')
 }
 
 console.log('nothing but the button stands a countdown down')
