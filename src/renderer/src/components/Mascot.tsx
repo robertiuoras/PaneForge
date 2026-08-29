@@ -53,6 +53,71 @@ import type { RunningDev } from '@shared/devList'
 import { appVisible, onAppVisible } from '../appVisible'
 import { setMascotRect } from '../mascotSpot'
 
+/* ---- the card's own icons ---------------------------------------------------
+   These were emoji - ⧉ 🔊 🔇 📍 ✕ - and an emoji is the one glyph in this window that
+   cannot be themed: it arrives at the font's own weight, in the font's own colours, at a
+   size the row cannot control, and it renders differently on every machine that opens the
+   app. Everything else this app draws is a stroked path in `currentColor` at 1.5 (the
+   sidebar's search, the quick row, the pane header), so these are too - which is also the
+   only way the row can go quiet at 0.55 opacity and light up on hover. 13px on a 24px
+   button, the same ratio the sidebar's icons use. */
+function Ico(props: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="13"
+      height="13"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {props.children}
+    </svg>
+  )
+}
+const IconCopy = (): React.JSX.Element => (
+  <Ico>
+    <rect x="5.6" y="5.6" width="8" height="8" rx="2" />
+    <path d="M10.7 3.4a2 2 0 0 0-1.8-1.1H4.3a2 2 0 0 0-2 2v4.6a2 2 0 0 0 1.1 1.8" />
+  </Ico>
+)
+const IconTick = (): React.JSX.Element => (
+  <Ico>
+    <path d="M3 8.6 6.3 12 13 4.6" />
+  </Ico>
+)
+const IconSpeak = (): React.JSX.Element => (
+  <Ico>
+    <path d="M8.4 2.6 4.9 5.5H2.4v5h2.5l3.5 2.9z" />
+    <path d="M11.2 5.9a3 3 0 0 1 0 4.2M13.2 3.9a5.8 5.8 0 0 1 0 8.2" />
+  </Ico>
+)
+const IconMute = (): React.JSX.Element => (
+  <Ico>
+    <path d="M8.4 2.6 4.9 5.5H2.4v5h2.5l3.5 2.9z" />
+    <path d="m11.4 6.3 3.2 3.4M14.6 6.3l-3.2 3.4" />
+  </Ico>
+)
+const IconWalk = (): React.JSX.Element => (
+  <Ico>
+    <path d="M8 14.2s4.6-4 4.6-7.2a4.6 4.6 0 1 0-9.2 0c0 3.2 4.6 7.2 4.6 7.2z" />
+    <circle cx="8" cy="6.9" r="1.6" />
+  </Ico>
+)
+const IconClose = (): React.JSX.Element => (
+  <Ico>
+    <path d="m4 4 8 8M12 4l-8 8" />
+  </Ico>
+)
+const IconSend = (): React.JSX.Element => (
+  <Ico>
+    <path d="M2.6 8h9.6M8.4 4.2 12.2 8l-3.8 3.8" />
+  </Ico>
+)
+
 /** A close the app has decided on and has not done yet. The person gets the seconds. */
 export interface CloseSoon {
   ids: string[]
@@ -658,6 +723,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             </div>
           )}
           {open && (
+            /* One field, not a field beside a button: the send is INSIDE the box, which is
+               what every composer in this app and outside it looks like, and it lights up
+               only once there is something to send - a button that is always live on an
+               empty box is a button that does nothing most of the time it is looked at.
+               Return still sends, and is what nearly everybody uses. */
             <div className="mascot-ask">
               <input
                 ref={input}
@@ -669,8 +739,12 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
                   if (e.key === 'Escape') setOpen(false)
                 }}
               />
-              <button className="ghost small" onClick={submit}>
-                Ask
+              <button
+                className={'mascot-send' + (typing.trim() ? ' live' : '')}
+                title="Ask (Return)"
+                onClick={submit}
+              >
+                <IconSend />
               </button>
             </div>
           )}
@@ -688,7 +762,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
                 window.setTimeout(() => setCopied(false), 1200)
               }}
             >
-              {copied ? '✓' : '⧉'}
+              {copied ? <IconTick /> : <IconCopy />}
             </button>
             {/* The speaker is the only way a voice is ever turned on: nothing this app
                 decided by itself may make a noise into somebody's room. */}
@@ -697,7 +771,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               title={cfg.voice ? 'Stop talking out loud' : 'Say it out loud'}
               onClick={() => props.onConfig({ voice: !cfg.voice })}
             >
-              {cfg.voice ? '🔊' : '🔇'}
+              {cfg.voice ? <IconSpeak /> : <IconMute />}
             </button>
             {pinned && (
               <button
@@ -705,7 +779,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
                 title="Let it walk to the pane it is talking about again"
                 onClick={() => props.onConfig({ spot: null })}
               >
-                📍
+                <IconWalk />
               </button>
             )}
             <button
@@ -713,7 +787,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
               title="Hide the mascot (Settings brings it back)"
               onClick={() => props.onConfig({ enabled: false })}
             >
-              ✕
+              <IconClose />
             </button>
           </div>
         </div>

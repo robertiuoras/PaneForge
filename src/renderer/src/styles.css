@@ -468,6 +468,25 @@ html.glass .sidebar {
 /* On glass a control's own fill competes with the material behind it, so the hover keeps
    the rim and drops the fill a step - the surface is doing most of the work already. */
 html.glass .icon:hover { background: var(--glass-hi); }
+/* ---- the mascot's card, in the sidebar's material ---------------------------
+   Same tokens as `html.glass .sidebar` above, and for the same reason: two floating
+   surfaces in one window that are built out of different materials read as two apps. What
+   this is NOT is a backdrop filter - `scripts/overlay-filter-test.mjs` refuses one
+   anywhere in this stylesheet, because what sits under this card is a grid of xterm WebGL
+   canvases repainting on every printed line, and making a live GPU surface the input to a
+   full-window filter strobed the window for as long as it was open. The native
+   `NSGlassEffectView` is BEHIND the web contents, so a card drawn over an opaque pane can
+   only wear the material, never see through to the desktop. That is the honest half, and
+   it is the half that was missing: the veil, the white wash, the hairline. */
+html.glass .mascot-bubble,
+html.glass .mascot-dock-open {
+  background:
+    linear-gradient(180deg, var(--glass), transparent 120px),
+    var(--sidebar-veil);
+  border-color: var(--glass-line);
+}
+html.glass .mascot-ask { background: color-mix(in oklab, var(--text) 5%, transparent); }
+html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .mac-chrome .brand {
   padding-left: 74px; min-height: 30px;
   -webkit-app-region: drag;
@@ -512,6 +531,29 @@ html.glass .icon:hover { background: var(--glass-hi); }
    rather than merely hovered, because "which pane am I zoomed into" has to be readable
    without moving the mouse. */
 .icon.on { background: var(--surface-3); color: var(--accent); }
+
+/* ---- a sidebar too narrow for words -----------------------------------------
+   `SIDE_NARROW` (App.tsx) writes `.narrow` on. Every rule here takes a LABEL away and
+   never a control: the class exists because the two buttons that fell off the edge at the
+   190px floor were Settings and the shortcut sheet, so nothing in this block may hide one.
+   Measured before: 249px of content in a 189px box, with `.icons` ending at x=249.
+
+   The wordmark goes first and is the least missed - the mark beside it is the same logo,
+   and on macOS the traffic lights have already taken 74 of the row's 167px. The shortcut
+   chips go next: a hint for a key is the cheapest pixel in a sidebar this size. Nothing is
+   centred and nothing gains a row, so the list below keeps every pixel it had. */
+.sidebar.narrow .brand-word { display: none; }
+.sidebar.narrow .kbd { display: none; }
+.sidebar.narrow .wide-word { display: none; }
+.sidebar.narrow .primary { padding-left: 10px; padding-right: 10px; }
+/* Five icons in 167px: the gap halves and the buttons give up their side padding, which
+   they can - `.quick .ghost` is already `flex: 1`, so the row divides what is left. */
+.sidebar.narrow .quick { gap: 4px; }
+.sidebar.narrow .quick-btn { padding-left: 0; padding-right: 0; min-width: 0; }
+/* Two rows rather than one squeezed one: Focus/Grid is a choice made by reading BOTH
+   words, so it is the one thing here that may not shrink. */
+.sidebar.narrow .foot { flex-wrap: wrap; }
+.sidebar.narrow .foot > * { flex: 1 1 100%; }
 .section {
   color: var(--muted); font-size: 10.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.7px; padding: 4px 2px 0;
@@ -3797,8 +3839,8 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
     var(--surface-2)
   );
   border: 1px solid color-mix(in oklab, var(--text) 13%, transparent);
-  border-radius: 12px;
-  padding: 11px 12px 9px; font-size: 12px; line-height: 1.5;
+  border-radius: 16px;
+  padding: 12px 13px 10px; font-size: 12px; line-height: 1.5;
   /* Two shadows, not one: a 1px contact edge so it sits ON the window, and a wide soft
      one so it reads as lifted. A single mid shadow is the generic card look. */
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 14px 34px -14px rgba(0, 0, 0, 0.45);
@@ -3857,17 +3899,51 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   user-select: text; -webkit-user-select: text; cursor: text;
 }
 .mascot-acts { display: flex; gap: 6px; }
-.mascot-ask { display: flex; gap: 6px; }
-.mascot-ask input {
-  flex: 1; min-width: 0; background: var(--surface); color: var(--text);
-  border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: 12px;
+/* ---- the composer -----------------------------------------------------------
+   One field with the send INSIDE it, rather than a box beside a button labelled "Ask":
+   the button was as tall as the field, as wide as its word, and pushed the field into
+   about two thirds of a card that is already only 330px. A composer is the one shape in a
+   window like this that everybody already knows, so it is drawn as one - a pill, the
+   accent ring on focus, and an arrow that lights only once there is something to send. */
+.mascot-ask {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 3px 2px 4px;
+  transition: border-color 0.1s ease, box-shadow 0.1s ease;
 }
-.mascot-tools { display: flex; gap: 4px; justify-content: flex-end; }
+.mascot-ask:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.mascot-ask input {
+  flex: 1; min-width: 0; background: none; color: var(--text);
+  border: 0; border-radius: 999px; padding: 6px 4px 6px 8px; font-size: 12px;
+}
+.mascot-ask input:focus { outline: none; }
+.mascot-ask input::placeholder { color: var(--muted); }
+.mascot-send {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: none; border: 0; cursor: pointer;
+  color: var(--muted); opacity: 0.65;
+  transition: color 0.1s ease, background 0.1s ease, opacity 0.1s ease;
+}
+.mascot-send.live { opacity: 1; color: var(--accent-text); background: var(--accent); }
+.mascot-send.live:hover { filter: brightness(1.08); }
+.mascot-tools { display: flex; gap: 2px; justify-content: flex-end; }
+/* Icons now, not emoji, so the row can be quiet until it is pointed at - and a square
+   press target rather than a glyph with padding round it. */
 .mascot-icon {
   pointer-events: auto; background: none; border: 0; cursor: pointer;
-  font-size: 12px; opacity: 0.6; padding: 2px 4px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 7px;
+  /* 0.65, not the 0.55 a quiet row wants: measured against the card's real composited
+     background (`--sidebar-veil` at 0.7 over the pane) 0.55 is 2.8:1, under the 3:1 a
+     control that is only an icon has to clear. */
+  color: var(--muted); opacity: 0.65; padding: 0; line-height: 1;
+  transition: color 0.1s ease, background 0.1s ease, opacity 0.1s ease;
 }
-.mascot-icon:hover { opacity: 1; }
+.mascot-icon:hover { opacity: 1; color: var(--text); background: var(--surface-3); }
 /* A phone has no room for something walking over the one pane it can show. */
 @media (max-width: 720px) { .mascot-layer { display: none; } }
 

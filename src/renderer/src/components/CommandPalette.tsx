@@ -17,6 +17,9 @@ interface Props {
   onClose: () => void
 }
 
+/** How many rows a group may spend before anything has been typed. */
+const FIRST_PER_GROUP = 6
+
 /**
  * Ctrl K: one box that reaches every session, workspace and action. It exists because
  * the sidebar stops being scannable past about eight sessions, and because switching
@@ -39,7 +42,20 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    if (!needle) return commands.slice(0, 60)
+    // Nothing typed yet: a few of EACH group rather than the first 60 in build order.
+    // The projects list alone is capped at 40, so on a desk with a handful of panes open
+    // the flat slice spent most of its 60 rows on folders and the whole `Actions` group -
+    // the half of this box the placeholder promises - was below the cut until you typed.
+    // A cap per group is what makes the empty box an INDEX of what is in here.
+    if (!needle) {
+      const seen = new Map<string, number>()
+      return commands.filter((c) => {
+        const k = c.group ?? ''
+        const n = (seen.get(k) ?? 0) + 1
+        seen.set(k, n)
+        return n <= FIRST_PER_GROUP
+      })
+    }
     return commands
       .map((c) => ({ c, s: score(`${c.title} ${c.hint ?? ''} ${c.group ?? ''}`.toLowerCase(), needle) }))
       .filter((r) => r.s > 0)

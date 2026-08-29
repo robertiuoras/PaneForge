@@ -409,6 +409,14 @@ const TAP_SLOP = 6
 const SIDE_DEFAULT = 282
 const SIDE_MIN = 190
 const SIDE_MAX = 460
+/** Below this the sidebar stops printing words it has no room for and becomes its icons.
+ *  Measured at the minimum: on macOS the traffic lights reserve the first 74px of a 167px
+ *  content box, so the brand row's wordmark plus its two buttons (⚙ and ?) ended 59px off
+ *  the right edge - the two controls that must be reachable at every width were the two
+ *  that fell off it. The wordmark goes and the buttons stay, which is the right way round:
+ *  the logo already says which app this is, and nothing else in the window opens Settings.
+ *  222 rather than the 190 floor because the row is already tight several pixels above it. */
+const SIDE_NARROW = 222
 
 const HOLD_CURSOR_MS = 220
 
@@ -3177,13 +3185,18 @@ export default function App(): JSX.Element {
         run: () => launchPreset(p)
       })
 
+    // The title carries the VERB. These rows were the bare project name over its path,
+    // which is the same shape as an `Open sessions` row above them - so a folder already
+    // open showed up twice, identically, meaning two different things, and one of them
+    // silently started a second agent. A project already open says so instead of the path,
+    // because that is the fact that decides whether you wanted this row at all.
     const dflt = config?.defaultAgent ?? 'claude'
     for (const p of projects.slice(0, 40))
       out.push({
         id: `start:${p.path}`,
         group: 'Start a project',
-        title: p.name,
-        hint: p.path,
+        title: `Start ${p.name}`,
+        hint: sessions.some((s) => s.cwd === p.path) ? 'already open - starts another' : p.path,
         icon: logo(dflt),
         run: () =>
           start([
@@ -3202,8 +3215,12 @@ export default function App(): JSX.Element {
           run: () => switchAgent(active, a.id, config?.defaultModels[a.id] ?? '')
         })
 
+    // There is deliberately no bare `New session` row. It opened the picker DIALOG, so the
+    // one thing a palette is for - finish the job on Return - was the one thing it did not
+    // do; and the button it duplicates is 40px above the box you typed into, with the same
+    // shortcut printed on it. What replaced it is the `Start a project` group above, which
+    // gets you the same session and names WHICH one.
     out.push(
-      { id: 'new', group: 'Actions', title: 'New session', keys: 'Ctrl T', run: () => setPicking(true) },
       {
         id: 'changes',
         group: 'Actions',
@@ -4872,12 +4889,12 @@ export default function App(): JSX.Element {
     <BlurbContext.Provider value={blurbs}>
     <AutoTick at={soonestAuto} tick={autoTick} />
     <div className="app">
-      <aside className="sidebar">
+      <aside className={'sidebar' + (sideW < SIDE_NARROW ? ' narrow' : '')}>
         <LinkBanner />
         <div className="brand">
           <span className="brand-name">
             <AppLogo size={17} />
-            PaneForge
+            <span className="brand-word">PaneForge</span>
           </span>
           <span className="icons">
             <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
@@ -4901,7 +4918,8 @@ export default function App(): JSX.Element {
             <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Search sessions and actions <span className="kbd">{keyLabel('Ctrl K')}</span>
+          Search<span className="wide-word"> sessions and actions</span>{' '}
+          <span className="kbd">{keyLabel('Ctrl K')}</span>
         </button>
 
         {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
@@ -5090,7 +5108,7 @@ export default function App(): JSX.Element {
             ]}
           />
           <button className="ghost small" onClick={saveRunningAsWorkspace} disabled={!sessions.length}>
-            Save workspace
+            Save<span className="wide-word"> workspace</span>
           </button>
         </div>
         <VersionBadge />
