@@ -225,7 +225,12 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
   return (
     <>
       <div className="section">
-        <span className="section-title">Lanes elsewhere ({orphans.length})</span>
+        {/* The middle word is the first thing a narrow sidebar gives up: the heading was
+            ellipsed to `LANES ELSEWHERE …` with the count - the one number on the line -
+            inside the part that got cut. */}
+        <span className="section-title">
+          Lanes<span className="wide-word"> elsewhere</span> ({orphans.length})
+        </span>
         {stuck > 0 && (
           <span
             className="badge stuck"

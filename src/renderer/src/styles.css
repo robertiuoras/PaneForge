@@ -559,6 +559,13 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
    words, so it is the one thing here that may not shrink. */
 .sidebar.narrow .foot { flex-wrap: wrap; }
 .sidebar.narrow .foot > * { flex: 1 1 100%; }
+.sidebar.narrow .foot .ghost.small { text-align: center; justify-content: center; }
+/* The machine's name is the widest thing on a lane row and the least urgent: which
+   PROJECT the lane is in is the whole reason the row is drawn, and at 167px the device
+   chip left the name showing one letter (`P`). It stays on the row's hover, which already
+   spells the machine out in full. */
+.sidebar.narrow .lane-device { display: none; }
+.sidebar.narrow .lane-row .row-title { font-size: 12.5px; }
 .section {
   color: var(--muted); font-size: 10.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.7px; padding: 4px 2px 0;
@@ -1411,11 +1418,26 @@ html.app-blurred .lane-row.stuck::before { animation: none; opacity: 1; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
+/* DERIVED, not picked. This was `linear-gradient(180deg, #2b2f52, #21243c)` - a navy
+   literal - under `color: var(--text)`, which is the one combination that cannot survive
+   the depth slider: past ~0.9 `--text` becomes near-black and the button was black text on
+   navy, measured at 1.2:1 on Paper. Every colour in this window comes out of `paletteFor`
+   (`shared/theme.ts`) for exactly this reason, and a component is not allowed its own.
+
+   The shape is kept - a raised, tinted surface with the accent on the `+` rather than a
+   flooded accent button - because the accent belongs to the pane that wants you, and a
+   sidebar with a solid accent block at the top of it competes with every one of those.
+   Following `design-vault/linear.app.md`: surfaces step up off the page by a small
+   lightness step, and the separation is a hairline rather than a shadow. */
 button.primary {
   display: flex; align-items: center; gap: 8px;
-  background: linear-gradient(180deg, #2b2f52, #21243c);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 14%, var(--surface-3)),
+    var(--surface-3)
+  );
   color: var(--text);
-  border: 1px solid #4b53884d;
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
   border-radius: var(--r);
   padding: 9px 11px;
   cursor: pointer;
@@ -1423,7 +1445,14 @@ button.primary {
   font-weight: 550;
   transition: background var(--fast), border-color var(--fast), transform var(--fast);
 }
-button.primary:hover { background: linear-gradient(180deg, #343a66, #272b48); border-color: #6a73b366; }
+button.primary:hover {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 22%, var(--surface-3)),
+    color-mix(in oklab, var(--accent) 8%, var(--surface-3))
+  );
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+}
 button.primary:active { transform: translateY(1px); }
 .plus { color: var(--accent); font-weight: 700; }
 button.ghost {
@@ -1437,7 +1466,12 @@ button.ghost:hover:not(:disabled) {
   background: #ffffff12; border-color: var(--line-strong);
   box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 2px #00000038;
 }
-button:disabled { opacity: 0.4; cursor: default; }
+/* Off by COLOUR, mostly-faded second. 0.4 is legible on a near-black theme and gone on a
+   light one - `Save workspace` with no session open was the report - because opacity fades
+   toward whatever is behind it and the depth slider is what changes that. `--muted` says
+   "not now" on both, and 0.78 keeps the control looking switched off without erasing it -
+   0.62 measured 2.6:1 on the light theme, which is the complaint again one step quieter. */
+button:disabled { opacity: 0.78; color: var(--muted); cursor: default; }
 button.small { padding: 5px 9px; font-size: 11px; }
 .search-btn { color: var(--muted); font-size: 12px; padding: 7px 10px; }
 .search-btn svg { flex: none; }
