@@ -3930,10 +3930,10 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: 50%;
   background: none; border: 0; cursor: pointer;
-  color: var(--muted); opacity: 0.65;
-  transition: color 0.1s ease, background 0.1s ease, opacity 0.1s ease;
+  color: var(--muted);
+  transition: color 0.1s ease, background 0.1s ease;
 }
-.mascot-send.live { opacity: 1; color: var(--accent-text); background: var(--accent); }
+.mascot-send.live { color: var(--accent-text); background: var(--accent); }
 .mascot-send.live:hover { filter: brightness(1.08); }
 .mascot-tools { display: flex; gap: 2px; justify-content: flex-end; }
 /* Icons now, not emoji, so the row can be quiet until it is pointed at - and a square
@@ -3942,13 +3942,15 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   pointer-events: auto; background: none; border: 0; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: 7px;
-  /* 0.65, not the 0.55 a quiet row wants: measured against the card's real composited
-     background (`--sidebar-veil` at 0.7 over the pane) 0.55 is 2.8:1, under the 3:1 a
-     control that is only an icon has to clear. */
-  color: var(--muted); opacity: 0.65; padding: 0; line-height: 1;
-  transition: color 0.1s ease, background 0.1s ease, opacity 0.1s ease;
+  /* Quiet by COLOUR, never by opacity. The emoji row was 0.6 and the first draft of this
+     one 0.55, which measured 2.8:1 against the card - and raising it to 0.65 fixed the
+     dark theme (3.47:1) and left the light one at 2.64:1, because opacity fades toward a
+     background whose lightness is the thing that changed. `--muted` is the token
+     `shared/theme.ts` already derives to clear 3:1 on every preset, so it is used whole. */
+  color: var(--muted); padding: 0; line-height: 1;
+  transition: color 0.1s ease, background 0.1s ease;
 }
-.mascot-icon:hover { opacity: 1; color: var(--text); background: var(--surface-3); }
+.mascot-icon:hover { color: var(--text); background: var(--surface-3); }
 /* A phone has no room for something walking over the one pane it can show. */
 @media (max-width: 720px) { .mascot-layer { display: none; } }
 
