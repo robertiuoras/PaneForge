@@ -39,7 +39,11 @@ ok(/html\.glass\s+\.panes\s*\{[^}]*background:\s*var\(--bg\)/.test(css), 'glass:
 // 2. Every glass rule is scoped, so a machine that cannot draw glass is byte-for-byte the
 //    app it was. A bare `body { background: transparent }` would empty every other
 //    platform's window.
-for (const line of css.split('\n')) {
+//    Read off DECLARATIONS, not the raw file, for the same reason check 3 below does: a
+//    comment explaining why a rule is scoped names `html.glass` in prose, and a line scan
+//    over the raw file reads that sentence as an unscoped rule.
+const scoped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+for (const line of scoped.split('\n')) {
   if (!line.includes('html.glass')) continue
   ok(line.trimStart().startsWith('html.glass'), `glass: rule is scoped - ${line.trim().slice(0, 60)}`)
 }

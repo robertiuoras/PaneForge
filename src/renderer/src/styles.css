@@ -468,8 +468,13 @@ html.glass .sidebar {
 /* On glass a control's own fill competes with the material behind it, so the hover keeps
    the rim and drops the fill a step - the surface is doing most of the work already. */
 html.glass .icon:hover { background: var(--glass-hi); }
-/* ---- the mascot's card, in the sidebar's material ---------------------------
-   Same tokens as `html.glass .sidebar` above, and for the same reason: two floating
+/* ---- the pet's card, in the sidebar's material ------------------------------
+   The heading says "pet" and may not say the other word for it: `scripts/mascot-test.mjs`
+   slices this stylesheet from the FIRST heading carrying that word to check the sprite has
+   no vertical loop in it, and a second one up here handed that check most of the file -
+   which is why this sentence does not spell it either.
+
+   Same tokens as the sidebar's glass rule above, and for the same reason: two floating
    surfaces in one window that are built out of different materials read as two apps. What
    this is NOT is a backdrop filter - `scripts/overlay-filter-test.mjs` refuses one
    anywhere in this stylesheet, because what sits under this card is a grid of xterm WebGL
