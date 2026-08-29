@@ -20,6 +20,7 @@ const MAX_REPORTS = 50
 
 let reports = 0
 let notify: ((message: string) => void) | null = null
+let problem: ((kind: string, detail: string) => void) | null = null
 
 /** Where the log goes. Deliberately does not trust getPath: this runs when paths break. */
 function logPath(): string {
@@ -44,6 +45,11 @@ function write(kind: string, err: unknown): void {
   } catch {
     /* the console line above is the fallback */
   }
+  try {
+    problem?.(kind, detail)
+  } catch {
+    /* a listener must never cost the record */
+  }
 }
 
 /**
@@ -55,6 +61,19 @@ function write(kind: string, err: unknown): void {
  */
 export function logProblem(kind: string, detail: string): void {
   write(kind, detail)
+}
+
+/**
+ * Somebody who wants to hear about every fault, exceptions included.
+ *
+ * `faultNotify.ts` is the one caller. It is a listener rather than a call inside `write`
+ * for the same reason `notify` above is: this module is loaded before the profile, before
+ * config and before the window, and it is the thing that catches faults in all of those -
+ * so it may not import any of them. The log line is written FIRST and unconditionally; a
+ * listener that throws must not lose it.
+ */
+export function onProblem(fn: (kind: string, detail: string) => void): void {
+  problem = fn
 }
 
 /**
