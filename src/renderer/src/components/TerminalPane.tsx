@@ -1876,6 +1876,11 @@ function TerminalPane({
         // probe cannot press a button, and repairing torn scrollback is only checkable by
         // reading the buffer back afterwards.
         redraw: () => paneRedraw.get(sessionId)?.(),
+        // The grid main has CONFIRMED the pty is at. The tear this pane exists to avoid is
+        // the pty and the terminal disagreeing, and a probe that can only read `term.cols`
+        // sees half of that pair - so it reads a pane fitted to its own box as healthy
+        // while the CLI is still painting at another width.
+        pty: () => ptyRef.current,
         dropWebgl: () => {
           glRef.current?.dispose()
           glRef.current = null
