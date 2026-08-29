@@ -123,7 +123,11 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 ::-webkit-scrollbar-thumb:hover { background: #ffffff33; background-clip: content-box; }
 ::selection { background: #8b9dff44; }
 
-.app { display: grid; grid-template-columns: 282px 1fr; height: 100vh; }
+/* The sidebar's width is a VIEW, like the dragged order beside it - it lives in
+   localStorage and never in config.json, so it does not travel to a phone whose screen is
+   a different shape. `--side-w` is written onto <html> by App.tsx; the literal here is the
+   width the app shipped with and the width a client that never sets it keeps. */
+.app { position: relative; display: grid; grid-template-columns: var(--side-w, 282px) 1fr; height: 100vh; }
 
 /* ---- a phone, or any window under 720px -------------------------------------
    The sidebar is 282px of a 414px screen, which leaves a pane 16 columns wide: not a
@@ -387,6 +391,18 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
 }
 
 /* ---- sidebar ---- */
+/* The grab handle on the sidebar's right edge. 5px of pointer target sitting ON the
+   hairline, so nothing moves when it appears; it is invisible until hovered and never
+   drawn on a phone, where the sidebar is the whole screen. */
+.side-grip {
+  position: absolute; top: 0; bottom: 0; left: var(--side-w, 282px); width: 5px;
+  margin-left: -3px;
+  cursor: col-resize; z-index: 5; background: transparent;
+  transition: background var(--fast);
+}
+.side-grip:hover, .side-grip.dragging { background: var(--accent); opacity: 0.55; }
+html.handheld .side-grip { display: none; }
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -737,7 +753,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    so a pane called `Sonia` (38px of text) drew 40px of nothing before the chip beside it,
    and the card read as broken while every card-fit assertion passed (measured 2026-08-29).
    The name is protected by `.row-tags` instead. */
-.row-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Everything the title line says about this pane's STATE, in one box: the question, the
    close countdown, the pin, a move, the turn clock, a background job.
 
@@ -752,10 +768,17 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
    than running off the edge. `min-width: min-content` was tried as its floor and is wrong
    here - Chromium answers a wrapping flex container's min-content with the SUM of its
    items, so the box asked for 206px inside 190px and was clipped. */
+/* ...and when it DOES wrap it lands on the left, under the name, rather than alone at the
+   far right of an empty line. `margin-left: auto` is an item margin, not a per-line one,
+   so it pushed the box right on the second line as well: Robert's card drew `3  Cheap
+   Trip` and then `asleep 2h 08m` floating at the right edge, above `Claude Code` on the
+   left - three facts on three different alignments and nothing connecting them. The push
+   to the right on line one is done by the NAME growing instead, which is the same layout
+   while the line fits and a readable one once it does not. */
 .row-tags {
-  display: flex; align-items: center; justify-content: flex-end;
+  display: flex; align-items: center; justify-content: flex-start;
   flex-wrap: wrap; gap: 5px; row-gap: 2px;
-  flex: 0 1 auto; min-width: 0; margin-left: auto;
+  flex: 0 1 auto; min-width: 0;
 }
 .row-remote { flex: none; display: inline-flex; align-items: center; margin-right: 5px; color: var(--accent); opacity: 0.85; }
 /* Never squeezed: the name beside it has an ellipsis and this does not - "1m 2" is a wrong

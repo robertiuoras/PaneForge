@@ -54,7 +54,7 @@ export const DEFAULT_THEME: ThemeConfig = {
   tint: 0.22,
   depth: 0.3,
   round: 0.5,
-  glass: 0.2,
+  glass: 0.3,
   density: 'cozy'
 }
 
@@ -303,7 +303,7 @@ const BASE_CURVE = 1.93
 
 /** The glass slider, defaulted for a preset or an older config that has no field. */
 export function glassAmount(theme: ThemeConfig): number {
-  return clamp01(theme.glass ?? DEFAULT_THEME.glass ?? 0.2)
+  return clamp01(theme.glass ?? DEFAULT_THEME.glass ?? 0.3)
 }
 
 /** 0..1 as the two hex digits a `#rrggbbaa` needs. */

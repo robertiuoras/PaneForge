@@ -127,7 +127,7 @@ export interface Place {
   onTrunk: boolean
   /** the chip: at most three words, project first, always */
   short: string
-  /** what this checkout IS, for a second line: "main checkout" or "lane a" */
+  /** what this checkout IS, for a second line: "main checkout" or "copy a" */
   role: string
   /** the tooltip: every fact, spelled out */
   full: string
@@ -152,14 +152,20 @@ export function describePlace(input: PlaceInput): Place {
   // something no folder is called.
   const slot = kind === 'lane' ? (input.lane ?? '') : ''
 
-  const role = kind === 'lane' ? `lane ${slot}` : 'main checkout'
+  const role = kind === 'lane' ? `copy ${slot}` : 'main checkout'
 
   // The branch earns its place on the chip by disagreeing with something. On the trunk it
   // does not, and "PaneForge · master" is two words to say one - the Vercel rule. Nor does
   // the branch a tool generated to hold this lane, which repeats the lane's own label.
   const machinery = isGeneratedBranch(branch, slot)
-  const tail = [kind === 'lane' ? `lane ${slot}` : '', onTrunk || machinery ? '' : branch].filter(Boolean)
-  const short = [project, ...tail].join(' · ')
+  // A lane is named the way the FOLDER is named, and that is the whole change: the chip
+  // used to read `clients · lane b` for a folder called `clients-b`, which is three words
+  // for one fact and two of them are jargon - "lane" is this app's word, "b" is a letter
+  // with no meaning next to it, and neither appears anywhere the person can look. The
+  // folder name is the fact, it is already unique, and it is what `cd` takes.
+  const tail = [onTrunk || machinery ? '' : branch].filter(Boolean)
+  const head = kind === 'lane' ? `${project}-${slot}` : project
+  const short = [head, ...tail].join(' · ')
 
   // No branch line at all when there is no branch to state.
   //
