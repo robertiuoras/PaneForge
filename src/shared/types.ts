@@ -1777,6 +1777,21 @@ export interface RestorePane {
   lastPrompt?: string
   /** why this one cannot be reopened: shown greyed and never started */
   gone?: 'folder' | 'agent'
+  /**
+   * The pane this row would come back AS - the old session's id, carried straight off the
+   * saved desk (`StartSessionRequest.scrollbackId`).
+   *
+   * It is on the dialog's own row because the answer is rebuilt from these rows, not from
+   * the desk: without it the ASKED restore path silently dropped both of the things that
+   * id carries - the pane's scrollback (`restoredTail` reads the log under the OLD id) and
+   * its "Keep this pane open" (`restorePanes` translates `config.pinnedPanes` through it).
+   * The silent update restart passed the desk specs whole and kept both, so the two paths
+   * disagreed and only the one Robert's config actually uses (`restoreAfterRestart: 'ask'`)
+   * lost them.
+   */
+  scrollbackId?: string
+  /** it was asleep when the app went down, and comes back that way */
+  asleep?: boolean
 }
 
 /** The "restore your last session?" question, as the renderer receives it. */
@@ -2053,7 +2068,7 @@ export interface Api {
    * Anything that is not a worktree opens unchanged. Answers with the folder that was
    * opened, or null when it is not there any more.
    */
-  revealProject(cwd: string): Promise<string | null>
+  revealProject(cwd: string, title?: string): Promise<string | null>
   /**
    * Resolve a path an agent printed, relative to the pane it was printed in.
    *

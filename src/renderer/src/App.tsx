@@ -3309,7 +3309,7 @@ export default function App(): JSX.Element {
           title: 'Open folder in Explorer',
           hint: 'the project folder - to reach the agent, drag files onto the pane',
           run: () =>
-            void api.revealProject(active.cwd).then((p) => p || flash('That folder is gone.'))
+            void api.revealProject(active.cwd, active.title).then((p) => p || flash('That folder is gone.'))
         },
         {
           id: 'board',
@@ -4080,6 +4080,18 @@ export default function App(): JSX.Element {
    */
   const touchPane = useCallback((id: string) => {
     focusLeftAt.current[id] = Date.now()
+    // Arriving at a SLEEPING pane is the press that wakes it. The chip has always been
+    // the way back, but a sleeping pane is a pane somebody kept for easy access - and
+    // "click it, then find the small chip and click that as well" is two presses for one
+    // intention. Robert, 2026-08-29: "when i click on a sleep session it should just
+    // automatically restart instead of myself having to press on the refresh button."
+    //
+    // Only from a person's own press: `touchPane` is called from the card, the sidebar
+    // row and the pane itself, never by a sweep. A mirror is refused because its pty is
+    // on the other machine (`shared/sleep.ts`), and waking is idempotent in main, so a
+    // second press while the CLI boots costs nothing.
+    const asleepPane = sessionsRef.current.find((x) => x.id === id)
+    if (asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
     // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
     // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
     // on `stillCloseable`, which a click does not change - so clicking the pane restarted
@@ -5343,7 +5355,7 @@ export default function App(): JSX.Element {
                       `Open this project in Explorer - to reach the agent, drag files onto this pane`
                     }
                     onClick={() =>
-                      void api.revealProject(s.cwd).then((p) => p || flash('That folder is gone.'))
+                      void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
                     }
                   >
                     📁

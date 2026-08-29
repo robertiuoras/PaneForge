@@ -1352,9 +1352,32 @@ function TerminalPane({
    * "attached to the output" costs.
    */
   const syncGeom = (): void => {
-    const box = cellBox()
-    if (!box) return
-    const off = screenOffset()
+    // Nothing is drawn off this reading for a pane nobody can see - the copy pairs and the
+    // rail are both inside the pane - and the reading itself is two forced layouts. This
+    // fires from `onRender`, so on a desk where seven panes are printing and one is on
+    // screen it was seven wasted layout flushes per frame each: measured over 30s of eight
+    // shells at full blast, `getBoundingClientRect` was 21.8% of the renderer's whole
+    // profile (6.6s of 30.4s) with `cellBox` and `screenOffset` on top of it, while a
+    // keystroke into the visible pane took 553ms to reach a frame. The visibility effect
+    // below calls `syncTotal` when a pane comes back, so nothing is left stale.
+    if (!visibleRef.current) return
+    const t = term.current
+    if (!t) return
+    let cached = geomCache.current
+    // The grid is the second half of the invalidation, and it is free to check: a reshape
+    // that somehow reached the terminal without going through `syncTotal` still changes
+    // these two numbers, and a box measured at the old grid would place every copy icon
+    // against rows that are no longer that tall.
+    if (cached && (cached.cols !== t.cols || cached.rows !== t.rows)) cached = null
+    if (!cached) {
+      const measured = cellBox()
+      if (!measured) return
+      cached = { box: measured, off: screenOffset(), cols: t.cols, rows: t.rows }
+      geomCache.current = cached
+    }
+    // The one part that really does move with the output, and it costs no layout.
+    const box = { ...cached.box, viewportY: t.buffer.active.viewportY }
+    const off = cached.off
     setGeom((p) =>
       p &&
       p.viewportY === box.viewportY &&
@@ -1383,6 +1406,53 @@ function TerminalPane({
   }
 
   /**
+   * `.xterm-screen`, looked up once.
+   *
+   * It is created when the terminal opens and lives as long as the pane, but the two
+   * readings above asked the DOM for it on every rendered frame - 1.5% of the profile in
+   * `querySelector` alone with eight panes printing. Re-read when it is missing or has
+   * been replaced, so a `reset()` or a re-open cannot leave a stale node behind.
+   */
+  const screen = useRef<HTMLElement | null>(null)
+  const screenEl = (): HTMLElement | null => {
+    const h = host.current
+    if (!h) return null
+    if (!screen.current || !h.contains(screen.current))
+      screen.current = h.querySelector('.xterm-screen') as HTMLElement | null
+    return screen.current
+  }
+
+  /**
+   * The screen's box and its offset in the pane, cached until something can have moved it.
+   *
+   * This is the fix for the number that dominated the profile: `getBoundingClientRect` was
+   * 45.6% of the renderer (8.1s of 17.8s) with eight panes printing, because `cellBox` and
+   * `screenOffset` were called from `onRender` - once per drawn frame, per pane - and each
+   * one forces a layout flush on a document every one of those panes has just dirtied.
+   *
+   * A box is a LEVEL, not a delta. `.xterm-screen` moves when the pane is resized, the font
+   * changes, the grid changes or the terminal is reshaped - all of which already run
+   * through `syncTotal`, the resize observer or the visibility effect - and never because
+   * a line was printed. Only `viewportY` moves with the output, and that is a buffer read
+   * with no layout in it. So the measurement is taken when something invalidates it and
+   * reused in between.
+   *
+   * `bumpGeom()` is the invalidation, and it must be called by anything that can change the
+   * pane's shape: a stale box draws the copy icons a few pixels out, which is the failure
+   * this cache can have and the reason it is invalidated generously rather than cleverly.
+   */
+  const geomCache = useRef<{
+    box: ChipBox
+    off: { x: number; y: number }
+    cols: number
+    rows: number
+  } | null>(null)
+  const bumpGeom = (): void => {
+    geomCache.current = null
+  }
+
+  /**
+   * One cell in pixels, measured rather than derived from the font size.  /**
    * One cell in pixels, measured rather than derived from the font size.
    *
    * xterm rounds a cell to whole device pixels and the host is inset, so a number worked
@@ -1392,7 +1462,7 @@ function TerminalPane({
    */
   const cellBox = (): ChipBox | null => {
     const t = term.current
-    const screen = host.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const screen = screenEl()
     const w = wrap.current
     if (!t || !screen || !w) return null
     const r = screen.getBoundingClientRect()
@@ -1410,7 +1480,7 @@ function TerminalPane({
 
   /** The pane offset of the screen box, so a chip drawn on the wrap lands on the right cell. */
   const screenOffset = (): { x: number; y: number } => {
-    const screen = host.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const screen = screenEl()
     const w = wrap.current
     if (!screen || !w) return { x: 0, y: 0 }
     const a = screen.getBoundingClientRect()
@@ -1447,8 +1517,18 @@ function TerminalPane({
    */
   const refreshSelChip = (): void => {
     const t = term.current
+    // The selection is asked about BEFORE the pane is measured. This is called from every
+    // scroll, and a printing pane scrolls on every line: measuring first meant eight panes
+    // forcing a layout flush per printed line to decide there was no highlight to move.
+    // `cellBox` was 23.9% of the renderer's whole profile (5.5s of 17.5s) and every call
+    // came from here. A pane with no selection - which is nearly always - now costs one
+    // string compare.
+    if (!t || !t.getSelection()) {
+      setSelChip((p) => (p === null ? p : null))
+      return
+    }
     const box = cellBox()
-    if (!t || !box || !t.getSelection()) {
+    if (!box) {
       setSelChip(null)
       return
     }
@@ -3279,6 +3359,11 @@ function TerminalPane({
       const wasCols = t.cols
       try {
         changed = reshape(t, f)
+        // The pane's box has just moved, so the cached screen geometry is gone. NOT done
+        // inside `syncTotal`: that is also called from `bumpTotal` on every write, which
+        // dropped the cache once per burst and put `getBoundingClientRect` straight back
+        // at the top of the profile.
+        bumpGeom()
         // The rail is measured against the scrollbar, so it has to be re-measured with it.
         // Unconditional: a pane coming back on screen has the same rows but not necessarily
         // the same track geometry, and measuring costs nothing.
@@ -3498,6 +3583,7 @@ function TerminalPane({
     if (!derived) t.options.fontSize = fontSize
     try {
       if (fit.current) reshape(t, fit.current)
+      bumpGeom()
       // Fewer or more rows means a different scale for the rail.
       syncTotal()
     } catch {
@@ -3536,6 +3622,7 @@ function TerminalPane({
               // Same rule as the observer: only a pane that really changed shape while it
               // was away gets to disturb the pty. Coming back unchanged must be silent.
               reshape(t, f)
+              bumpGeom()
               // The buffer kept growing while this pane was hidden, so the rail is stale.
               syncTotal()
               // A restored pane that was hidden until now could not be measured, so its
