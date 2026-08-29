@@ -17,6 +17,9 @@
   --surface-3: #1e1e27;
   --line: #ffffff10;
   --line-strong: #ffffff1f;
+  --glass: #ffffff0a;
+  --glass-line: #ffffff16;
+  --glass-hi: #ffffff12;
   --text: #ececf1;
   --muted: #9797a6;
   --accent: #f0a868;
@@ -378,6 +381,31 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   border-right: 1px solid var(--line);
   min-height: 0;
 }
+
+/* ---- macOS: the app owns the title strip ------------------------------------
+   `titleBarStyle: 'hiddenInset'` (src/main/index.ts) hands the window's title strip to
+   this document, so the sidebar now starts at y=0 with the traffic lights floating over
+   it. Two things follow, and both are here rather than in main because they are layout.
+
+   The brand row moves BESIDE the lights rather than under them, which is the whole point:
+   pushing it down would have bought a strip of nothing 46px tall and left the app exactly
+   as many bars as it had. The lights are placed at (14, 15) and are three 12px circles
+   8px apart, so they end at x≈66 and the row clears them at 74. That leaves 208px of the
+   282px sidebar for the name and its two buttons, which measure ~185px together.
+
+   The ROW is the drag handle, not a bar across the window: the main column's first row is
+   a pane header full of buttons and a drag region over a button swallows the click. A
+   window you can move by its title row is worth more than a pane header nobody can press.
+   Children inherit the region, so the two buttons have to opt back out by name.
+
+   `.mac-chrome` is written onto <html> by main.tsx and only in this window - an iPad
+   reports "Mac" too and a phone has no traffic lights to avoid. */
+.mac-chrome .sidebar { padding-top: 10px; }
+.mac-chrome .brand {
+  padding-left: 74px; min-height: 30px;
+  -webkit-app-region: drag;
+}
+.mac-chrome .brand .icon { -webkit-app-region: no-drag; }
 .brand {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 14px; font-weight: 650; letter-spacing: 0.2px; padding: 2px 2px 4px;
@@ -403,7 +431,16 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   padding: 4px 7px; border-radius: var(--r-sm); font-size: 13px; line-height: 1;
   transition: background var(--fast), color var(--fast);
 }
-.icon:hover { background: var(--surface-3); color: var(--text); }
+/* The glass recipe, and every control below wears the same three lines: a fill that lets
+   the surface through, a hairline edge drawn as an INSET SHADOW rather than a border, and
+   a one-pixel highlight along the top that reads as a lit rim. Inset rather than a real
+   border on purpose - `.icon` is measured at 30x30 by test:headerfit and 190px cards by
+   test:cardfit, and a border added here would grow every one of them by 2px. */
+.icon:hover {
+  background: var(--glass);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--glass-line), inset 0 1px 0 var(--glass-hi);
+}
 /* A toggle that is on - the zoom button of the pane currently filling the window. Lit
    rather than merely hovered, because "which pane am I zoomed into" has to be readable
    without moving the mouse. */
@@ -720,8 +757,9 @@ button.chip.closing:hover { filter: brightness(1.3); }
    width, which is what makes the big factor the FIRST to go. */
 .row-agent { flex: 0 1 auto; min-width: 4.2em; overflow: hidden; text-overflow: ellipsis; }
 .chip {
-  background: #ffffff0f; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--glass); border: 1px solid var(--glass-line); border-radius: 5px;
   padding: 0 5px; font-size: 10px; color: var(--muted);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 .row-sub .chip { flex: 0 9 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The widest thing on the line and the most repeated, so it is the first to be asked. */
@@ -1269,11 +1307,15 @@ button.primary:active { transform: translateY(1px); }
 .plus { color: var(--accent); font-weight: 700; }
 button.ghost {
   display: flex; align-items: center; gap: 8px;
-  background: #ffffff08; color: var(--text); border: 1px solid var(--line);
+  background: var(--glass); color: var(--text); border: 1px solid var(--glass-line);
   border-radius: var(--r); padding: 7px 10px; cursor: pointer;
-  transition: background var(--fast), border-color var(--fast);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  transition: background var(--fast), border-color var(--fast), box-shadow var(--fast);
 }
-button.ghost:hover:not(:disabled) { background: #ffffff12; border-color: var(--line-strong); }
+button.ghost:hover:not(:disabled) {
+  background: #ffffff12; border-color: var(--line-strong);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 2px #00000038;
+}
 button:disabled { opacity: 0.4; cursor: default; }
 button.small { padding: 5px 9px; font-size: 11px; }
 .search-btn { color: var(--muted); font-size: 12px; padding: 7px 10px; }
