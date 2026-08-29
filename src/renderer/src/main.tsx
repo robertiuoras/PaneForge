@@ -27,6 +27,18 @@ async function start(): Promise<void> {
   if (desk && navigator.userAgent.includes('Mac')) {
     document.documentElement.classList.add('mac-chrome')
   }
+  /**
+   * ...and on macOS 26+ that strip, the sidebar and the chrome controls sit on a real
+   * `NSGlassEffectView` rather than a painted surface (`src/main/glass.ts`). The class is
+   * on before the first paint because main answered it with a process argument; if the
+   * native view then failed to attach, main says so and the class comes off, which puts
+   * every surface back to the colour it has always been.
+   */
+  const g = (window as { __pfGlass?: { on: boolean; onOff(fn: () => void): void } }).__pfGlass
+  if (desk && g?.on) {
+    document.documentElement.classList.add('glass')
+    g.onOff(() => document.documentElement.classList.remove('glass'))
+  }
   const { default: App } = await import('./App')
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

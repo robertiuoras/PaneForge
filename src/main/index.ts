@@ -43,6 +43,7 @@ import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
+import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
@@ -400,6 +401,9 @@ function createWindow(): void {
   // A snapped window is a placed window, so it must not also open filling a display.
   pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap
   const area = snap?.bounds ?? (pseudoMax ? workAreaFor(cfg) : null)
+  // Asked BEFORE the window exists: `transparent` is a constructor option and cannot be
+  // set afterwards, so a machine that cannot draw glass has to be known by now.
+  const glass = glassSupported()
   win = new BrowserWindow({
     width: area?.width ?? cfg.window.width,
     height: area?.height ?? cfg.window.height,
@@ -408,7 +412,12 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: '#101014',
+    // A window drawing real glass has to let the glass through, and `backgroundColor` is
+    // painted UNDER the document: an opaque one here hides the native view completely.
+    // Everywhere else this stays exactly as it was - the colour is what the window shows
+    // in the ~40ms before the first paint, and a transparent one there is a hole.
+    backgroundColor: glass ? '#00000000' : '#101014',
+    ...(glass ? { transparent: true as const } : {}),
     // The suffix is the only thing separating two identical windows on the taskbar
     // when a test build is running next to the live one.
     title: `PaneForge${titleSuffix()}`,
@@ -418,10 +427,11 @@ function createWindow(): void {
     // "PaneForge". `hiddenInset` hands that strip to the renderer and leaves the traffic
     // lights floating over it, so the window has ONE bar and gains ~28px of height.
     //
-    // No `frame: false`, no `transparent`, no `vibrancy`: a frameless window has to
-    // reimplement resize edges and the zoom double-click, and vibrancy needs a non-opaque
-    // window, which would put a live blur under a grid of xterm WebGL canvases - the exact
-    // construct `scripts/overlay-filter-test.mjs` exists to refuse. The lights are placed
+    // Still no `frame: false` and still no `vibrancy`: a frameless window has to
+    // reimplement resize edges and the zoom double-click, and vibrancy is the OLD material
+    // - per-window, with no sidebar variant. `transparent` is now set on a Mac that can
+    // draw real glass, and only there; `main/glass.ts` says why that is not the thing
+    // `scripts/overlay-filter-test.mjs` refuses. The lights are placed
     // level with the sidebar's own first row rather than left at the default; `.mac-chrome`
     // in styles.css keeps that row clear of them and makes the strip beside them the drag
     // handle. Windows and Linux are untouched and keep their ordinary frame.
@@ -432,6 +442,11 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
+      // The renderer has to know before its FIRST PAINT whether the surfaces behind it
+      // are glass or a painted colour, or the sidebar draws opaque and then goes clear a
+      // frame later. An argument is the only channel that is already there when the
+      // preload runs; an IPC round trip is not.
+      additionalArguments: glass ? ['--pf-glass'] : [],
       // Chromium slows a hidden window's timers to about once a minute. Here that is the
       // timer that keeps saying "this agent is still running", and minimised is exactly
       // when the app is deciding whether to interrupt you - so the one state where the
@@ -561,6 +576,22 @@ function createWindow(): void {
   win.on('show', pushVisible)
   win.on('hide', pushVisible)
   win.webContents.on('did-finish-load', pushVisible)
+  if (glass) {
+    // The addon's own requirement: before the document has loaded there is no content
+    // view for the glass to sit under. It is idempotent per window and this fires again
+    // on a reload - which the renderer watchdog does on purpose - so the attach is done
+    // once and the result kept.
+    let glassOn = false
+    win.webContents.on('did-finish-load', () => {
+      if (glassOn || !win) return
+      glassOn = attachGlass(win)
+      // A window created transparent whose glass then failed to attach would draw the
+      // sidebar over nothing at all - worse than never having tried - so the renderer is
+      // told the truth and falls back to its painted surfaces.
+      if (!glassOn) win.webContents.send('glass:off')
+      else win.setWindowButtonVisibility?.(true)
+    })
+  }
   // A test copy nobody ever looked at closes itself.
   //
   // An agent starts one minimized, measures something, and does not always get to run

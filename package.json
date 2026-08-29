@@ -120,6 +120,7 @@
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:turncopy": "node scripts/turncopy-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
+    "test:glass": "node scripts/glass-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
@@ -254,6 +255,9 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "**/electron-liquid-glass/**"
     ],
     "extraResources": [
       {

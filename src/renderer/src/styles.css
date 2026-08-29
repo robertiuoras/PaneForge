@@ -401,6 +401,38 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
    `.mac-chrome` is written onto <html> by main.tsx and only in this window - an iPad
    reports "Mac" too and a phone has no traffic lights to avoid. */
 .mac-chrome .sidebar { padding-top: 10px; }
+
+/* ---- ...and on macOS 26+ the surface behind it is real glass -----------------
+   `src/main/glass.ts` puts an `NSGlassEffectView` behind the web contents and main writes
+   `.glass` onto <html> before the first paint. Nothing here is a `backdrop-filter` and
+   nothing here filters a canvas: these rules only stop PAINTING over a native view that
+   is already there, which is why `test:overlayfilter` is untouched.
+
+   The line this draws is the whole design decision: **glass on the chrome, opaque under
+   the text.** A terminal is small light glyphs, and a desktop wallpaper showing through
+   the rows an agent is printing is unreadable at any tint - so `.panes` is given the
+   background `body` just gave up, and the panes themselves already paint their own. What
+   goes clear is the sidebar and the strip beside the traffic lights, which is the part
+   that was two flat bars and is what this was asked for.
+
+   Every rule is scoped to `.glass`, so a Mac that could not load the addon, an older
+   macOS, Windows, Linux and the phone client all keep the painted surfaces verbatim. */
+html.glass body { background: transparent; }
+/* The document no longer paints, so the terminal side has to. */
+html.glass .panes { background: var(--bg); }
+/* The gradient was doing the sidebar's depth; the glass does it now, and a tint any
+   heavier than this reads as a grey panel rather than as glass. The right edge stays - a
+   hairline is what separates two materials, and it is the one linear.app keeps.
+
+   A literal here would be wrong on one of the two themes: `paletteFor` already resolves
+   the tint that reads on this depth (`--glass` is 4% white on a dark theme and 55% on a
+   light one), and there is no `light` class on <html> in this window to branch on - that
+   one belongs to the Stash. So the tint is the token, and a new preset gets this right
+   without touching the stylesheet. */
+html.glass .sidebar { background: linear-gradient(180deg, var(--glass), transparent 220px); }
+/* On glass a control's own fill competes with the material behind it, so the hover keeps
+   the rim and drops the fill a step - the surface is doing most of the work already. */
+html.glass .icon:hover { background: var(--glass-hi); }
 .mac-chrome .brand {
   padding-left: 74px; min-height: 30px;
   -webkit-app-region: drag;

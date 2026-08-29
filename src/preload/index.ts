@@ -36,3 +36,12 @@ const api = buildApi(transport, {
 })
 
 contextBridge.exposeInMainWorld('api', api)
+
+// Whether the window behind this document is real macOS glass, answered before the first
+// paint. Deliberately NOT a method on `api`: `surface.ts` is the list of things the phone
+// must be able to do too, and a phone is never the window this describes. `glass:off` is
+// main correcting itself when the native view failed to attach after all.
+contextBridge.exposeInMainWorld('__pfGlass', {
+  on: process.argv.includes('--pf-glass'),
+  onOff: (fn: () => void) => ipcRenderer.once('glass:off', () => fn())
+})
