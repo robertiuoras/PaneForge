@@ -354,6 +354,35 @@ export function expiryDecision(p: {
   return 'fire'
 }
 
+/**
+ * How quiet a pane has to be before a countdown may APPEAR.
+ *
+ * `dropFor` reads `runSince`, and `runSince` is dropped the moment the agent's footer goes
+ * quiet - which is BEFORE the turn is really over. Claude Code's Stop hooks run after the
+ * reply is on screen, and a hook that blocks makes the model write a SECOND reply into the
+ * same pane. So the ask arrives in the gap between those two, `dropFor` says nothing is
+ * running, and the card counts down over a session that is still working: 2026-08-30,
+ * Robert watched the countdown start while the gates were still going, and it then had to
+ * requeue itself when the next reply began.
+ *
+ * A quiet floor is the reading that covers it, and it is the same shape `closeWhenDone`
+ * already uses for the same reason (`CLOSE_DONE_QUIET_MS`): a pane is finished when it has
+ * been finished for a moment, not at the instant its last byte landed. 10s, because the
+ * hook chain on this desk runs 2-6s and a countdown that starts a few seconds late costs
+ * nothing - the card is 15s long and nobody is waiting on it.
+ */
+export const ARM_QUIET_MS = Number(process.env.PF_ARM_QUIET_MS ?? 10_000)
+
+/**
+ * Whether a pane that looks idle has been idle long ENOUGH to draw a countdown over.
+ *
+ * Separate from `armDecision` so the caller can say how long to wait rather than being
+ * told yes or no: the arm path re-asks after the remainder instead of dropping the ask.
+ */
+export function quietEnoughToArm(quietMs: number): boolean {
+  return quietMs >= ARM_QUIET_MS
+}
+
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or

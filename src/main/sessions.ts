@@ -24,7 +24,7 @@ import { laneOfCheckout } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, type DropReason } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, quietEnoughToArm, type DropReason } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -401,6 +401,12 @@ export class SessionManager extends EventEmitter {
   private tableJobs = new Map<string, { name: string; elapsed?: number }>()
   /** One armed /clear per pane, cleared by every path that stands one down. */
   private autoClearTimers = new Map<string, NodeJS.Timeout>()
+  /**
+   * The wait in FRONT of a countdown, one per pane. Separate from `autoClearTimers`, which
+   * is the countdown itself: this one has not drawn anything yet and cancelling a countdown
+   * must not cancel it, nor the other way round.
+   */
+  private autoClearArmTimers = new Map<string, NodeJS.Timeout>()
   /**
    * Asks that arrived while the pane was mid-turn, waiting for it to go quiet.
    *
@@ -1801,6 +1807,26 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} refused: ${dropWords(why as DropReason)}`)
       return { ok: false, reason: dropWords(why as DropReason) }
     }
+    // Idle, but only just. See `ARM_QUIET_MS`: the Stop hook that asks for this runs after
+    // the reply is on screen and before the turn is really over, and a hook that BLOCKS
+    // makes the model write another reply into the same pane. Rather than drawing a
+    // countdown over that and requeueing it a second later, the arm waits out the
+    // remainder and asks again - by which time `dropFor` sees the new turn and queues it
+    // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
+    const quiet = Date.now() - s.meta.lastOutput
+    if (!quietEnoughToArm(quiet)) {
+      const wait = Math.max(250, ARM_QUIET_MS - quiet)
+      const prev = this.autoClearArmTimers.get(id)
+      if (prev) clearTimeout(prev)
+      acLog(`${id} holding ${wait}ms: the pane printed ${quiet}ms ago and may not be finished`)
+      const t = setTimeout(() => {
+        this.autoClearArmTimers.delete(id)
+        this.armAutoClear(id, ask)
+      }, wait)
+      t.unref?.()
+      this.autoClearArmTimers.set(id, t)
+      return { ok: true, reason: 'waiting for the pane to settle' }
+    }
     this.cancelAutoClear(id, 'cancelled')
     const at = Date.now() + ask.seconds * 1000
     s.meta.autoClearAt = at
@@ -1924,6 +1950,16 @@ export class SessionManager extends EventEmitter {
     // Somebody using the pane means the whole idea is off, queue included. A 'working'
     // cancel is the internal re-queue above and must leave the pending ask alone.
     if (why !== 'working') this.autoClearPending.delete(id)
+    // ...and the wait in FRONT of the countdown, or pressing Keep on a card is undone a
+    // few seconds later by an arm nobody can see. A 'working' cancel is this class's own
+    // re-queue and leaves it alone, exactly as it leaves the pending ask alone.
+    if (why !== 'working') {
+      const arming = this.autoClearArmTimers.get(id)
+      if (arming) {
+        clearTimeout(arming)
+        this.autoClearArmTimers.delete(id)
+      }
+    }
     const s = this.sessions.get(id)
     const timer = this.autoClearTimers.get(id)
     if (timer) {
