@@ -214,8 +214,18 @@ const walkIn = (rootSel) => `(() => {
         // box answers what is actually painted there, and takes covered-by-a-dialog with
         // it for free.
         .filter((r) => {
-          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
-          return !!hit && (hit === node || node.contains(hit))
+          // Five points, not one. The middle of a line box being uncovered says nothing
+          // about its ends, and the pet walks over this window - it stood across the
+          // right half of a Devices heading and its accent-orange body was reported as
+          // that sentence's backdrop at 1.37:1. A box anything else is painted over is
+          // not measurable, so it is dropped rather than guessed at.
+          const y = r.y + r.height / 2
+          for (const f of [0.04, 0.27, 0.5, 0.73, 0.96]) {
+            const x = Math.min(r.x + r.width * f, r.right - 1)
+            const hit = document.elementFromPoint(x, y)
+            if (!hit || !(hit === node || node.contains(hit))) return false
+          }
+          return true
         })
         // ...and the line box is inset before it is sampled. A box carries the leading
         // above and below the glyphs, so a hint sitting under an accent-coloured switch
