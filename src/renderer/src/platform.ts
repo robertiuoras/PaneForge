@@ -6,7 +6,22 @@
 // two modifiers are NOT interchangeable - accepting Ctrl+T on a Mac "as well" would eat
 // a keystroke the terminal wants. On Windows and Linux it is Ctrl, as it has always been.
 
-export const isMac = navigator.userAgent.includes('Mac')
+/**
+ * ...and an iPhone is not a Mac, however its user agent reads.
+ *
+ * Safari on iOS announces itself as `(iPhone; CPU iPhone OS 18_5 like Mac OS X)` and an
+ * iPad as `(Macintosh; ...)` outright, so `includes('Mac')` is TRUE on both - and every
+ * shortcut this app prints went out as `⌘ T` to a device with no ⌘ key and, usually, no
+ * keyboard at all. Measured 2026-08-29 against the phone client at 390x844 under a real
+ * iPhone user agent: the home screen drew `⌘ T` and `⌘ K`.
+ *
+ * The touch test is what separates the two, because the UA cannot: a Mac never reports a
+ * coarse pointer and an iPad always does, whichever name it gives itself.
+ */
+export const isMac =
+  navigator.userAgent.includes('Mac') &&
+  !/iPhone|iPad|iPod/.test(navigator.userAgent) &&
+  !(navigator.maxTouchPoints > 1 && !window.matchMedia('(pointer: fine)').matches)
 // Read off the UA like `isMac`, so a phone looking at a Windows desk reports its own
 // platform and hides a switch that only means something at the desk. That is the right
 // way round for a Desktop shortcut, and the wrong way round for anything a phone should

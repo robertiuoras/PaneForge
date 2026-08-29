@@ -78,6 +78,7 @@ const TESTS = [
   ['turncopy', 'turncopy-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],
   ['glass', 'glass-test.mjs'],
+  ['phonetouch', 'phone-touch-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],

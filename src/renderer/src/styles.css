@@ -170,9 +170,11 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
     display: flex;
     align-items: center;
     gap: 5px;
-    /* 34px tall plus the padding above it clears the 44px Apple minimum for a target
-       this close to the top edge, without eating a line of the terminal. */
-    min-height: 34px;
+    /* This said 34px "plus the padding above it" cleared the 44px minimum. Space around
+       a control is not part of its hit area, and the button measured 73x34 in Chrome at
+       390x844 on 2026-08-29. It is the only way back to the list, so it is a real target;
+       the terminal gives back a row rather than the reader losing the gesture. */
+    min-height: 44px;
     padding: 0 13px 0 9px;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -306,7 +308,19 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
      this is, and every action goes behind the one ⋯ button into `.pane-menu`.
      Carried on `.pane-title` so it out-specifies the 36px sizing rule above. */
   html.handheld .pane-title .pt-actions > *:not(.pt-more) { display: none; }
-  html.handheld .pt-more { font-size: 19px; line-height: 1; }
+  /* Every action on this screen is behind this one button, so it is the single most
+     important target in the phone client - and it measured 36x36. */
+  /* On `.pane-title`, not on `.pt-more` alone. The pane header sizes its buttons with a
+     `.pane-title .icon` rule that is (0,2,0) and LATER in the file, so a bare
+     `html.handheld .pt-more` ties it and loses - which is why the 19px font size sitting
+     here since this block was written never applied either: measured 14px and 36x36. */
+  html.handheld .pane-title .pt-more {
+    font-size: 19px; line-height: 1;
+    min-width: 44px; min-height: 44px;
+  }
+  /* The dictate button is drawn over the terminal and was 28x28, which is the smallest
+     control in the app on the device the microphone exists for. */
+  html.handheld .mic-float { width: 44px; height: 44px; opacity: 0.9; }
 
   /* The sheet itself: the ordinary phone action sheet, which is what a hand expects. Rows
      are the full width with a word on them, because the thing being fixed is a column of
@@ -1727,6 +1741,45 @@ body.sizing * { user-select: none !important; }
      desk can read the CLI's own question beside the card; a handset is showing one pane
      at a time and has nothing to read beside it. */
   .pane-ask { left: 8px; right: 8px; width: auto; max-height: 60%; }
+
+  /* ---- ...and the HOME screen is what a phone sees first ---------------------
+     Everything above this was written for a pane: the answer card, and the close button
+     on a row. But on a handset the sessions list IS the home screen, and none of its
+     chrome had ever been sized for a thumb. Measured 2026-08-29 in Chrome at 390x844
+     under a real iPhone user agent, 31 controls came back under 44px, and the worst of
+     them was the one that closes every pane on the desk at 21x17.
+
+     44px is Apple's own minimum and WCAG 2.2 AA's 24x24 with room to spare. Nothing here
+     changes a pointer's layout - a mouse keeps the dense chrome, which is the whole
+     reason these are separate rules rather than a bigger default. */
+  /* `.icon.help` carries its own `min-width` at equal specificity and LATER in the file
+     (that is deliberate - it is what keeps the two brand buttons the same size), so it
+     has to be named here or the help button alone stays 30px wide while its sibling
+     grows. Measured: 30x44, which is a tall sliver rather than a target. */
+  .brand .icon,
+  .brand .icon.help { min-width: 44px; height: 44px; font-size: 18px; }
+  .primary, .search-btn { min-height: 44px; }
+  .quick-btn { min-height: 44px; padding-inline: 10px; }
+  /* A destructive control may never be the smallest thing on the screen. It keeps its
+     place at the end of the section heading and stops being a 21x17 glyph. */
+  .section-btn { min-width: 44px; min-height: 44px; font-size: 15px; }
+  .lane-what { min-width: 40px; min-height: 40px; }
+  /* Focus / Grid is a two-state switch a thumb has to hit exactly, and it was 24px tall.
+     `.ghost.small` is Save workspace, which is the only way to keep a layout. */
+  .seg-btn { min-width: 44px; min-height: 44px; padding-inline: 12px; }
+  .ghost.small { min-height: 44px; }
+  /* It reads as a label and it is a button - it opens what changed. 366x21. */
+  .version { min-height: 44px; }
+  /* iOS zooms the page when a control's text is under 16px and it is focused, and a
+     select is the one control here a finger opens. The height is the target; the font
+     size is what stops the whole layout jumping when it is tapped. */
+  .sidebar select { min-height: 44px; font-size: 16px; }
+
+  /* A phone has no ⌘ and usually no keyboard, so a shortcut hint is a label for
+     something the reader cannot do - taking width from the name of the button it is
+     printed on. `isMac` no longer believes an iPhone's user agent either; this is the
+     other half, and it is the one that matters on an Android handset too. */
+  html.handheld .kbd { display: none; }
 }
 
 /* A pane whose pty has not printed anything yet. No animation: this sits on screen for

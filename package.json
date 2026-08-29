@@ -121,6 +121,7 @@
     "test:turncopy": "node scripts/turncopy-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
     "test:glass": "node scripts/glass-test.mjs",
+    "test:phonetouch": "node scripts/phone-touch-test.mjs",
     "test:drag": "node scripts/drag-release-test.mjs",
     "test:holdcursor": "node scripts/hold-cursor-test.mjs",
     "test:stash": "node scripts/stash-test.mjs",
