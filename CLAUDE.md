@@ -577,6 +577,40 @@ Default accent `#f0a868`; the sidebar mark is the icon's own geometry in `curren
 `npm run test:theme` is 358 assertions whose load-bearing half is contrast: 4.5:1 body and
 3:1 secondary, for every preset and hue at full tint.
 
+**A token that passes is not a component that passes.** `test:theme` proves `paletteFor`;
+`npm run test:contrast` proves the RENDERED window, in both themes, over the desk and the
+Settings, Devices and History panels. Five things make it a measurement rather than an
+opinion, and each was a wrong answer first:
+
+- **The backdrop is SAMPLED, never walked.** Every glyph is made transparent at once
+  (`-webkit-text-fill-color`, which leaves backgrounds and layout alone) and ONE screenshot
+  is the backdrop, whatever drew it - this stylesheet has twenty gradients, and an ancestor
+  walk answers `background-color` and reports white-on-gradient as white-on-white.
+- **The rect is the TEXT NODE's own line boxes**, inset, and the worst pixel under them
+  minus the worst 5%. An element rect is as wide as its row, so the worst pixel under a
+  sidebar heading was the accent button beside it, at 1.39:1 against a backdrop no glyph
+  is on.
+- **A rect inside the viewport is not a rect anybody can see.** Five points across each box
+  are hit-tested: a row scrolled past a dialog's list still has a rect, and the pixels there
+  are the near-black scrim. The pet is hidden for the sweep for the same reason - it stands
+  wherever it likes and its accent body was reported as a heading's backdrop.
+- **A minimized window parks its animations on the first frame**, and this app opens every
+  panel with one from `opacity: 0` - so the only launch this repo allows reported every word
+  in every dialog as having no ink. Animation and transition are killed for the sweep, which
+  puts each element on the base value it settles at anyway.
+- **Secondary text is held to 3:1** - decided by the element's own computed colour matching
+  `--muted`, the contract that token already carries - and a LOGOTYPE is exempt, because
+  holding Claude's purple to 4.5:1 on Paper means not drawing Claude's purple.
+
+It found four classes of bug on its first run, all shipped, all invisible to whoever picked
+the colour: an accent drawn as text through `--accent` (the FILL token) at 3.62-4.02:1, the
+semantic colours picked against the ground and reused on `--surface-2`/`-3` chips
+(4.06:1 green, 4.39:1 red), and a close button at `opacity: 0.55` of `--muted` (2.32:1).
+`readableOn` in `theme.ts` now sweeps each semantic lightness away from ALL FOUR surfaces
+**and from each surface tinted 16% with the colour itself**, because every one of them is
+drawn on a chip washed with its own colour - 4.5:1 on the bare surfaces still measured
+4.32:1 in the window.
+
 **A `var()` naming a token that does not exist never errors** — in a `color` it inherits
 something plausible. Before trusting any colour, resolve it in a real window, and check every
 `var(--x)` in the stylesheets against the keys `paletteFor` returns. Only `--agent`,
@@ -1547,6 +1581,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals |
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:contrast` | that every word DRAWN in the window reaches its ratio, in both themes - the backdrop sampled out of a screenshot rather than walked, so a gradient cannot report as the solid colour three ancestors up |
 | `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, and that Cancel types NOTHING |
 | `npm run test:awake` | holding the display awake, letting go, and the CAP on one busy stretch |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own and asks the theme, not the OS |
@@ -1627,8 +1662,8 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 Needing a real window (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view`, `test:stashdrag`, `test:activate`,
 `test:turncopyview` (happy minimized), `test:restorefix` (two launches), `test:askclick`,
-`test:askrender`, `test:devicesfit`, `test:phoneview`, `test:renderwatchlive` (spins the
-renderer on purpose, ~25s).
+`test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast` (~90s, both themes),
+`test:renderwatchlive` (spins the renderer on purpose, ~25s).
 
 `test:devicesfit` measures the Devices panel in the running app: two columns on a wide window,
 the shell never scrolling, nothing reaching the Close button. Red-proofed by putting the single
