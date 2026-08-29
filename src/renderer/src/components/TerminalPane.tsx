@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useQuietState } from '../quietState'
 import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
@@ -938,7 +939,7 @@ function TerminalPane({
   // need it too, and it must survive without re-running the effect that owns the terminal.
   const pinned = useRef(true)
   // Only for the "back to newest" pill: the scroll position itself lives in xterm.
-  const [scrolledUp, setScrolledUp] = useState(false)
+  const [scrolledUp, setScrolledUp] = useQuietState(false)
 
   /**
    * Give this pane its shape. A local pane fits its own window and tells the pty about
@@ -1217,8 +1218,8 @@ function TerminalPane({
    * where the pointer is. The cost is arithmetic on every scroll, which `syncTotal` was
    * already doing for the rail.
    */
-  const [selChip, setSelChip] = useState<{ left: number; top: number } | null>(null)
-  const [geom, setGeom] = useState<{
+  const [selChip, setSelChip] = useQuietState<{ left: number; top: number } | null>(null)
+  const [geom, setGeom] = useQuietState<{
     viewportY: number
     cellH: number
     offY: number
