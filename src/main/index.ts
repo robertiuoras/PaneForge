@@ -413,6 +413,21 @@ function createWindow(): void {
     // when a test build is running next to the live one.
     title: `PaneForge${titleSuffix()}`,
     autoHideMenuBar: true,
+    // macOS draws a full-width title strip above the window's content, and PaneForge's own
+    // chrome starts under it - two stacked bars, the top one holding nothing but the word
+    // "PaneForge". `hiddenInset` hands that strip to the renderer and leaves the traffic
+    // lights floating over it, so the window has ONE bar and gains ~28px of height.
+    //
+    // No `frame: false`, no `transparent`, no `vibrancy`: a frameless window has to
+    // reimplement resize edges and the zoom double-click, and vibrancy needs a non-opaque
+    // window, which would put a live blur under a grid of xterm WebGL canvases - the exact
+    // construct `scripts/overlay-filter-test.mjs` exists to refuse. The lights are placed
+    // level with the sidebar's own first row rather than left at the default; `.mac-chrome`
+    // in styles.css keeps that row clear of them and makes the strip beside them the drag
+    // handle. Windows and Linux are untouched and keep their ordinary frame.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 15 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

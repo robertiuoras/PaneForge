@@ -372,6 +372,22 @@ export function paletteFor(theme: ThemeConfig): Vars {
     '--surface-3': inGamut(s3, grey * 1.7, hue),
     '--line': (light ? '#000000' : '#ffffff') + lineAlpha[0],
     '--line-strong': (light ? '#000000' : '#ffffff') + lineAlpha[1],
+    /**
+     * The three values a "glass" control is made of, and there is no fourth: this app
+     * declares no `backdrop-filter` anywhere (`scripts/overlay-filter-test.mjs` refuses
+     * one, because a live xterm WebGL canvas as the INPUT to a full-window filter makes
+     * the window strobe). So the glass here is OPTICAL and costs the compositor nothing:
+     * a fill that lets the surface under it through, a hairline edge instead of a shadow,
+     * and a one-pixel inset highlight along the top that reads as a lit rim.
+     *
+     * They are alphas on white for a dark theme and on white-then-black for a light one,
+     * rather than derived lightnesses, because a control has to sit on FOUR different
+     * surfaces (`--bg` through `--surface-3`) and a fixed colour picked against one of
+     * them is wrong on the other three. An alpha is right on all four by construction.
+     */
+    '--glass': (light ? '#ffffff' : '#ffffff') + (light ? '8c' : '0a'),
+    '--glass-line': (light ? '#000000' : '#ffffff') + (light ? '14' : '16'),
+    '--glass-hi': '#ffffff' + (light ? 'cc' : '12'),
     '--text': inGamut(textL, grey * 0.4, hue),
     '--muted': inGamut(mutedL, grey * 1.6, hue),
     '--accent': accent,
