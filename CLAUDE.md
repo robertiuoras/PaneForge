@@ -1619,6 +1619,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:anim` | what a looping decoration may cost: `transform` and `opacity` only |
 | `npm run test:attach` | bytes landing on the machine owning the pty, the extension off magic bytes, an oversized batch writing nothing, and no escape from the folder |
 | `npm run test:asknotify` | a question on its way to Telegram, silent with no credentials, never asking for updates |
+| `npm run test:faultnotify` | a fault that reaches a phone, and the readings, drills, repeats and test copies that must NOT - plus the real `crash.ts` seam, where the log line is written before the alarm |
 | `npm run test:settingsearch` | that a setting is findable by what it DOES (the index is generated from the dialog's source) |
 | `npm run test:onestash` | that there is one Stash |
 | `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |

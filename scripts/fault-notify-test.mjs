@@ -147,6 +147,40 @@ ok(
   'a silence that is not announced reads as "it stopped happening"'
 )
 
+// ---- the listener really fires, out of the real crash guard ---------------------------
+//
+// Everything above is arithmetic. This is the seam: `write()` in crash.ts has to call the
+// listener for any of it to happen at all, and a pure test cannot see that.
+
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/crash.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  external: ['electron'],
+  outfile: join(work, 'crash.cjs')
+})
+{
+  const req = createRequire(join(work, 'x.cjs'))
+  const Module = req('node:module')
+  const load = Module._load
+  // The real module needs `app.getPath`; crash.ts is written to survive it throwing.
+  Module._load = (name, ...rest) =>
+    name === 'electron'
+      ? { app: { getPath: () => join(work, 'ud'), isPackaged: false } }
+      : load(name, ...rest)
+  const C = req('./crash.cjs')
+  const heard = []
+  C.onProblem((kind, detail) => heard.push([kind, detail]))
+  C.logProblem('renderer', 'reload (unresponsive for 20481ms) - 12% 900MB')
+  Module._load = load
+  ok('crash.ts really calls the listener', heard.length === 1, JSON.stringify(heard))
+  ok('...with the kind and detail unchanged', heard[0] && heard[0][0] === 'renderer' && /^reload \(/.test(heard[0][1]))
+  const logged = readFileSync(join(work, 'ud', 'paneforge-errors.log'), 'utf8')
+  ok('...and the log line was written all the same', /renderer: reload \(/.test(logged), logged.slice(0, 120))
+}
+
 // ---- source assertions: the wiring a pure test cannot reach ---------------------------
 
 const crashSrc = readFileSync(join(root, 'src/main/crash.ts'), 'utf8')
