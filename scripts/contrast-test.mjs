@@ -194,6 +194,16 @@ const walkIn = (rootSel) => `(() => {
       range.selectNodeContents(n)
       const boxes = [...range.getClientRects()]
         .filter((r) => r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh)
+        // A rect inside the viewport is not the same as a rect a person can see. A row
+        // scrolled past the bottom of a dialog's list still has a rect on screen, and
+        // the pixels there belong to the near-black overlay scrim - which reported the
+        // light theme's own rows as black-on-black. Hit-testing the middle of each line
+        // box answers what is actually painted there, and takes covered-by-a-dialog with
+        // it for free.
+        .filter((r) => {
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
+          return !!hit && (hit === node || node.contains(hit))
+        })
         .map((r) => ({ x: Math.max(0, r.x), y: Math.max(0, r.y), w: Math.min(r.width, vw - r.x), h: Math.min(r.height, vh - r.y) }))
       if (!boxes.length) continue
       // No regex here on purpose: this whole walker is a template literal, and a lone
