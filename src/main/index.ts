@@ -588,8 +588,14 @@ function createWindow(): void {
       // A window created transparent whose glass then failed to attach would draw the
       // sidebar over nothing at all - worse than never having tried - so the renderer is
       // told the truth and falls back to its painted surfaces.
-      if (!glassOn) win.webContents.send('glass:off')
-      else win.setWindowButtonVisibility?.(true)
+      // Removing the class directly rather than over a channel: the preload may not name
+      // one of its own (`npm run test:phone`), and a correction this rare does not earn a
+      // line in `surface.ts`, which is the list of what a PHONE can do.
+      if (!glassOn) {
+        void win.webContents.executeJavaScript(
+          "document.documentElement.classList.remove('glass')"
+        )
+      } else win.setWindowButtonVisibility?.(true)
     })
   }
   // A test copy nobody ever looked at closes itself.

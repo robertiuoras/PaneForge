@@ -38,10 +38,12 @@ const api = buildApi(transport, {
 contextBridge.exposeInMainWorld('api', api)
 
 // Whether the window behind this document is real macOS glass, answered before the first
-// paint. Deliberately NOT a method on `api`: `surface.ts` is the list of things the phone
-// must be able to do too, and a phone is never the window this describes. `glass:off` is
-// main correcting itself when the native view failed to attach after all.
-contextBridge.exposeInMainWorld('__pfGlass', {
-  on: process.argv.includes('--pf-glass'),
-  onOff: (fn: () => void) => ipcRenderer.once('glass:off', () => fn())
-})
+// paint and read once by `main.tsx`. Deliberately NOT a method on `api`: `surface.ts` is
+// the list of things the PHONE must be able to do too, and a phone is never the window
+// this describes.
+//
+// It is a plain value and not a subscription, because a channel here would be a second
+// list beside `surface.ts` - the exact bug `npm run test:phone` exists to refuse. Main
+// corrects a failed attach by removing the class itself (`executeJavaScript` in
+// `main/index.ts`), which needs no channel at all.
+contextBridge.exposeInMainWorld('__pfGlass', { on: process.argv.includes('--pf-glass') })
