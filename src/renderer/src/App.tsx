@@ -404,6 +404,11 @@ const TAP_SLOP = 6
  *  cursor - the drag itself still starts on DRAG_SLOP of movement, so a fast grab is
  *  never delayed. A click is a press of ~80-120ms, so anything under ~150ms would still
  *  flash a hand on every selection; 220ms reads as "I am holding this". */
+/** The sidebar's width, and the two ends of what a sidebar may be. */
+const SIDE_DEFAULT = 282
+const SIDE_MIN = 190
+const SIDE_MAX = 460
+
 const HOLD_CURSOR_MS = 220
 
 
@@ -702,6 +707,49 @@ export default function App(): JSX.Element {
       /* the shelf just forgets it was open */
     }
   }, [shelfPinned])
+  /**
+   * How wide the sidebar is, in pixels, dragged by the grip on its right edge.
+   *
+   * `localStorage` and not config.json, for the reason the dragged card order is there
+   * too: it is a VIEW of this screen, and a phone client reading the desk's config would
+   * inherit a width measured against a monitor. The clamp is the honest part - past about
+   * 460px the list is a column of mostly empty cards, and under 190px `card-fit-test`
+   * stops being able to fit a name, a key and a clock on one line.
+   */
+  const [sideW, setSideW] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem('pf.sideW'))
+      return Number.isFinite(v) && v >= SIDE_MIN && v <= SIDE_MAX ? v : SIDE_DEFAULT
+    } catch {
+      return SIDE_DEFAULT
+    }
+  })
+  useEffect(() => {
+    document.documentElement.style.setProperty('--side-w', sideW + 'px')
+    try {
+      localStorage.setItem('pf.sideW', String(sideW))
+    } catch {
+      /* the width goes back to the default next launch, and nothing else breaks */
+    }
+  }, [sideW])
+  const [sideDrag, setSideDrag] = useState(false)
+  const startSideDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
+    e.preventDefault()
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    setSideDrag(true)
+    const move = (ev: PointerEvent): void =>
+      setSideW(Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(ev.clientX))))
+    const up = (): void => {
+      setSideDrag(false)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+  }
   const [shelfPeek, setShelfPeek] = useState(false)
   // The in-window Stash open for a search, which is the one thing the floating overlay
   // cannot do for itself: it is unfocusable by design, so there is no keyboard in it.
@@ -5025,6 +5073,14 @@ export default function App(): JSX.Element {
         </div>
         <VersionBadge />
       </aside>
+      {/* Drag to resize. A double-click puts it back, because a grip with no way home is
+          how a sidebar ends up 190px wide with nobody remembering what it was. */}
+      <div
+        className={'side-grip' + (sideDrag ? ' dragging' : '')}
+        onPointerDown={startSideDrag}
+        onDoubleClick={() => setSideW(SIDE_DEFAULT)}
+        title="Drag to resize the sidebar. Double-click to put it back."
+      />
 
       <main
         ref={panesRef}

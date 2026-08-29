@@ -109,9 +109,9 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
   // itself - as the folder it actually is, never renamed in the UI to something no
   // folder is called.
   const p = describePlace({ cwd: `${W}\\PaneForge-w2`, branch: 'pf/w2', lane: 'w2', pane: 3 })
-  is(p.short, 'PaneForge · lane w2', 'an old lane says which lane it is')
+  is(p.short, 'PaneForge-w2', 'an old lane is named the way its FOLDER is named')
   is(p.slot, 'w2', '')
-  is(p.role, 'lane w2', '')
+  is(p.role, 'copy w2', '')
   ok(!p.short.includes('#'), 'and never a bare # that could be read as a switch key')
   is(p.project, 'PaneForge', 'a lane is still the same project - that was the whole complaint')
   ok(!p.short.includes('pf/w2'), "a lane's own generated branch says nothing a person needs")
@@ -119,9 +119,10 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 
 {
   const p = describePlace({ cwd: `${W}\\PaneForge-a`, branch: 'lane-a', lane: 'a' })
-  is(p.short, 'PaneForge · lane a', 'a development lane names the project before the lane')
-  is(p.role, 'lane a', '')
+  is(p.short, 'PaneForge-a', 'a development lane is named the way its folder is')
+  is(p.role, 'copy a', '')
   ok(!p.short.startsWith('lane'), 'never "lane a" on its own - that is the string being fixed')
+  ok(!/ lane /.test(p.short), 'and never the word "lane" at all - the folder name is the fact')
 }
 
 {
