@@ -386,6 +386,39 @@ export function paletteFor(theme: ThemeConfig): Vars {
     rawSelL > 0.52 && rawSelL < 0.68 ? (termL > 0.5 ? 0.5 : 0.7) : rawSelL
   const selHex = inGamut(selL, 0.1, hue)
 
+  /**
+   * A colour that can be READ on any of the four surfaces, not just on the ground.
+   *
+   * Every semantic colour here is drawn as TEXT somewhere - the danger red on History's
+   * `closed 5h ago` chip, the ok green on a device's `Reachable`, the accent on the
+   * Settings nav label - and each of those chips sits on `--surface-2` or `--surface-3`,
+   * not on `--bg`. Picking a lightness against the ground and reusing it on the ladder is
+   * what `test:contrast` caught in the window: 4.06:1, 4.39:1, 3.62:1, all shipped, all
+   * invisible to whoever picked the colour. So the lightness is swept away from the
+   * surfaces until it clears `want` against ALL FOUR, keeping hue and chroma.
+   */
+  const surfaces = [
+    inGamut(bg, grey, hue),
+    inGamut(s1, grey * 1.15, hue),
+    inGamut(s2, grey * 1.4, hue),
+    inGamut(s3, grey * 1.7, hue)
+  ]
+  const readableOn = (l: number, c: number, h: number, want: number): string => {
+    const dir = light ? -1 : 1
+    let cur = clamp01(l)
+    for (let i = 0; i <= 100; i++) {
+      const hex = inGamut(cur, c, h)
+      if (surfaces.every((s) => contrast(hex, s) >= want)) return hex
+      const next = cur + dir * 0.01
+      if (next < 0 || next > 1) return hex
+      cur = next
+    }
+    return inGamut(cur, c, h)
+  }
+  const warn = readableOn(light ? 0.54 : 0.78, 0.15, 78, 4.5)
+  const danger = readableOn(light ? 0.54 : 0.72, 0.16, 24, 4.5)
+  const ok = readableOn(light ? 0.54 : 0.78, 0.16, 152, 4.5)
+
   // 4 + 10 puts the middle of the slider on the 6px / 9px / 13px the app shipped with.
   const r = 4 + clamp01(theme.round) * 10
   const lineAlpha = light ? ['0d', '1c'] : ['10', '1f']
@@ -426,7 +459,7 @@ export function paletteFor(theme: ThemeConfig): Vars {
     '--accent': accent,
     // The accent lifted to a lightness that survives on any of the four surfaces. A
     // preset picked against near-black is illegible on the Paper preset otherwise.
-    '--accent-text': inGamut(light ? Math.min(acc.l, 0.55) : Math.max(acc.l, 0.72), acc.c, hue),
+    '--accent-text': readableOn(light ? Math.min(acc.l, 0.55) : Math.max(acc.l, 0.72), acc.c, hue, 4.5),
     '--accent-dim': accent + (light ? '1f' : '26'),
     '--accent-soft': accent + (light ? '12' : '17'),
     '--accent-on': onColor(accent),
@@ -440,8 +473,8 @@ export function paletteFor(theme: ThemeConfig): Vars {
     // whoever picked the colour, exactly like the accent contrast this file already guards.
     // Green is the worst of the four (a light green is barely darker than white however
     // much chroma it has), so it sets the number and the others sit with it.
-    '--warn': inGamut(light ? 0.54 : 0.78, 0.15, 78),
-    '--danger': inGamut(light ? 0.54 : 0.72, 0.16, 24),
+    '--warn': warn,
+    '--danger': danger,
     /**
      * Text ON a filled danger pill - the auto-answer countdown, the `auto` badge.
      *
@@ -451,8 +484,8 @@ export function paletteFor(theme: ThemeConfig): Vars {
      * exactly how a light-theme contrast bug ships. Same helper, same reason, as
      * `--accent-on`: ask the contrast question rather than pick a side.
      */
-    '--danger-on': onColor(inGamut(light ? 0.54 : 0.72, 0.16, 24)),
-    '--ok': inGamut(light ? 0.54 : 0.78, 0.16, 152),
+    '--danger-on': onColor(danger),
+    '--ok': ok,
     // Blue is "happening somewhere else, on its own". It exists because green was already
     // spoken for twice - a working pane's dot and a lane whose work is FINISHED - and a
     // release only cares about the difference between those two. It was a literal

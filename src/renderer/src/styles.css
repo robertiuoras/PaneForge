@@ -1454,7 +1454,7 @@ button.primary:hover {
   border-color: color-mix(in oklab, var(--accent) 50%, transparent);
 }
 button.primary:active { transform: translateY(1px); }
-.plus { color: var(--accent); font-weight: 700; }
+.plus { color: var(--accent-text); font-weight: 700; }
 button.ghost {
   display: flex; align-items: center; gap: 8px;
   background: var(--glass); color: var(--text); border: 1px solid var(--glass-line);
@@ -1501,7 +1501,7 @@ button.small { padding: 5px 9px; font-size: 11px; }
 }
 .version.ok .v-state { color: var(--ok); border-color: #35d07f2e; background: #35d07f14; }
 .version.warn .v-state { color: var(--warn); border-color: #f0b42933; background: #f0b4291a; }
-.version.accent .v-state { color: var(--accent); border-color: #8b9dff33; background: var(--accent-dim); }
+.version.accent .v-state { color: var(--accent-text); border-color: #8b9dff33; background: var(--accent-dim); }
 
 /* ---- panes ---- */
 /* 6px, not 9. In grid the outer padding and the gutter are paid TWICE across the window
@@ -2425,10 +2425,12 @@ button.ghost.danger:hover { background: #ff8f8f1f; border-color: #ff8f8f99; }
 .blurb-x {
   flex: none; margin: -2px -3px 0 0; padding: 0 4px;
   background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 14px; line-height: 1.2; opacity: 0.55;
-  transition: opacity var(--fast), color var(--fast);
+  /* No resting opacity. --muted carries a 3:1 promise at FULL strength, and 0.55 of it
+     measured 2.32:1 - a close button nobody can see is not a subtle close button. */
+  color: var(--muted); font-size: 14px; line-height: 1.2;
+  transition: color var(--fast);
 }
-.blurb-x:hover { opacity: 1; color: var(--text); }
+.blurb-x:hover { color: var(--text); }
 
 .setting { display: flex; flex-direction: column; gap: 7px; }
 .setting > label {
@@ -2512,7 +2514,9 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 }
 /* The way in for anyone who never presses F1: the only accented button in the brand row. */
 .icon.help {
-  color: var(--accent); background: var(--accent-dim);
+  /* --accent-text, not --accent: this is a LETTER, and the raw accent is the fill
+     colour. On Paper it measured 3.69:1 against the header it sits on. */
+  color: var(--accent-text); background: var(--accent-dim);
   /* Equal specificity to `.brand .icon` and later in the file, so its own min-width would
      otherwise win and leave the two brand buttons different sizes. */
   border: 1px solid #8b9dff3d; font-weight: 700; min-width: 30px;

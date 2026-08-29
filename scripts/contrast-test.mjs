@@ -290,7 +290,12 @@ const HIDE_TEXT = `(() => {
 const FREEZE = `(() => {
   const s = document.createElement('style')
   s.id = '__pf_contrast_freeze'
-  s.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }'
+  // The pet walks over this window and stands wherever it likes, so with it drawn the
+  // sweep measures a different set of words every run and reports its accent-orange body
+  // as the backdrop of whatever it is standing on. It is a decoration in its own layer,
+  // and the app already gives a pane BOTTOM PADDING to keep it off the last line
+  // (spriteReserve), so the readability question it raises is answered elsewhere.
+  s.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; } .mascot-layer { display: none !important; }'
   document.head.appendChild(s)
   return true
 })()`
