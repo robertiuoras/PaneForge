@@ -1498,10 +1498,18 @@ function TerminalPane({
     for (let i = from; i <= to; i++) {
       const line = buf.getLine(i)
       if (!line) continue
-      // `true` keeps a wrapped line joined to the one it wrapped from, which is what makes
-      // a copied paragraph paste as a paragraph instead of as terminal-width fragments.
-      out.push(line.translateToString(true).replace(/\s+$/, ''))
+      // A wrapped line is SEVERAL buffer rows, and `translateToString`'s argument is
+      // trimRight - not "join what was wrapped", which is what the comment here used to
+      // claim. So one long answer came back as terminal-width fragments with a newline at
+      // every wrap: 492 characters for a 486-character line, and no run of it longer than
+      // the pane. The join is `isWrapped` on the row that FOLLOWS, and a row that is
+      // continued is taken at full width - trimming it would eat the space the wrap fell on.
+      const more = i < to && buf.getLine(i + 1)?.isWrapped === true
+      const text = line.translateToString(!more)
+      if (line.isWrapped && out.length) out[out.length - 1] += text
+      else out.push(text)
     }
+    for (let i = 0; i < out.length; i++) out[i] = out[i].replace(/\s+$/, '')
     while (out.length && !out[out.length - 1]) out.pop()
     while (out.length && !out[0]) out.shift()
     return out.join('\n')
