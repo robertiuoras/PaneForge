@@ -256,6 +256,12 @@ const SHOW_TEXT = `(() => { document.getElementById('__pf_contrast_hide')?.remov
 async function backdrop() {
   await evalIn(HIDE_TEXT)
   await new Promise((r) => setTimeout(r, 120))
+  // A minimized window composites lazily, so the FIRST frame back after a repaint is
+  // routinely the one before it - which put the dark theme's own pixels underneath the
+  // light theme's text and reported black-on-black rows that nobody has ever seen. The
+  // throwaway capture forces the frame; the second one is the one that is read.
+  await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+  await new Promise((r) => setTimeout(r, 200))
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
   await evalIn(SHOW_TEXT)
   const img = decodePng(Buffer.from(shot.data, 'base64'))
@@ -338,7 +344,7 @@ const failures = []
 try {
   for (const t of THEMES) {
     await setTheme(t.theme)
-    await new Promise((r) => setTimeout(r, 500))
+    await new Promise((r) => setTimeout(r, 900))
     for (const s of SCREENS) {
       if (s.open) {
         const r = await evalIn(openScreen(s.open))
