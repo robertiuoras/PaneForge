@@ -109,6 +109,7 @@ const TESTS = [
   ['crlf', 'crlf-test.mjs'],
   ['desk', 'desk-test.mjs'],
   ['panejob', 'panejob-test.mjs'],
+  ['quietstate', 'quiet-state-test.mjs'],
   ['panebackjobs', 'pane-backjobs-test.mjs'],
   ['panebound', 'panebound-test.mjs'],
   ['surfacereach', 'surface-reach-test.mjs'],

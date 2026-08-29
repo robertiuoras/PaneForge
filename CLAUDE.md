@@ -976,6 +976,34 @@ arrow moves went from 34 renders of every pane to 5 on the question's pane and 0
 - A prop added to `Props` without a line in `samePaneProps` is a pane that stops updating for
   it, which is why that function lists them out instead of looping over keys.
 
+## ...and a pane that is only PRINTING may not talk to React at all
+
+A memo stops the re-render; it does not stop the dispatch. `setState` with the value the
+state already holds still costs `requestUpdateLane`, an update object and (for a functional
+updater) the eager evaluation before React bails out - and a pane writes three of those
+from `onRender` and `onScroll`, which fire on every painted frame and every printed line,
+in every pane on the desk. Measured 2026-08-29 with `npm run type-profile` over eight
+shells at full blast, the desk's own React work - render plus commit for the whole window -
+was **37ms of a 3-second run over 17 renders**, while `requestUpdateLane` ALONE was
+**18-22%** of the profile with the garbage collector on top of it. The sidebar rebuilding
+was the obvious hypothesis and the measurement refused it.
+
+- `useQuietState` (`renderer/src/quietState.ts`) mirrors the current value in a ref and
+  compares in FRONT of the dispatcher, so an equal value never reaches React. `geom`,
+  `selChip` and `scrolledUp` in `TerminalPane` are written from those handlers and are all
+  quiet. The updater form is kept - it is how a caller says "the same object when nothing
+  moved" (`syncGeom`) - and is evaluated against the ref.
+- Same protocol, same fresh copy, before and after: keystroke to frame median
+  **297/49/423ms -> 40/34/34ms**, p90 **420/420/819ms -> 220/42/39ms**, GC **26-38% -> 4-5%**,
+  and `requestUpdateLane` off the top 25 entirely.
+- **The guard is a SOURCE test**, `npm run test:quietstate`, because the fault looks correct
+  from every other angle: React bails out, the desk renders 17 times, and nothing but a
+  profile says anything is wrong. `npm run type-profile -- --blame yi` is the measurement,
+  and it asserts nothing.
+- `window.__pfDeskRenders` now carries `ms` as well as `n` - what the window's renders COST,
+  accumulated in a passive effect - so the next reading of this can tell React's share from
+  xterm's without a second profile.
+
 ## ...and a question with an obvious answer is answered
 
 `shared/autoAnswer.ts` presses return instead — **on by default**, with a **thirty second**
@@ -1530,6 +1558,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, with all three failed walks kept as controls, and growth past the user's font up to `MAX_FILL_FONT` (28) |
 | `npm run test:panebackjobs` | what an AGENT pane left running: real trees off this machine as fixtures, every permanent MCP server and `caffeinate` refused, the naive descendant count kept as the control, and a last block over this machine's own live table |
 | `npm run test:panebound` | work that may not leave this machine: the permanent MCP prelude kept as the control that must bind NOTHING, a driven browser four processes down, somebody else's browser, and both refusals it feeds |
+| `npm run test:quietstate` | that a pane printing at full blast never dispatches a no-op update: the hook compares before React does, and the three states written from `onRender`/`onScroll` use it |
 | `npm run test:panejob` | what a shell pane is running, its refusals, and a last block asking a REAL pty |
 | `npm run test:desk` | the sessions list with both machines in it, plus a source assertion that every ranked field is forwarded from the peer |
 | `npm run test:agentenv` | the environment a pane's agent starts with, and that one provider's key cannot fill another's variable |
