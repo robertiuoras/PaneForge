@@ -403,12 +403,22 @@ export function paletteFor(theme: ThemeConfig): Vars {
     inGamut(s2, grey * 1.4, hue),
     inGamut(s3, grey * 1.7, hue)
   ]
+  /** sRGB blend, so a chip's own tint can be asked about rather than assumed away. */
+  const mix = (a: string, b: string, t: number): string => {
+    const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16))
+    const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16))
+    return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')
+  }
   const readableOn = (l: number, c: number, h: number, want: number): string => {
     const dir = light ? -1 : 1
     let cur = clamp01(l)
     for (let i = 0; i <= 100; i++) {
       const hex = inGamut(cur, c, h)
-      if (surfaces.every((s) => contrast(hex, s) >= want)) return hex
+      // ...and every one of these is drawn on a CHIP tinted with its own colour - the
+      // amber `dev` badge on a 12% amber wash, the accent `?` on --accent-dim. A wash
+      // pulls the backdrop towards the text, so the four bare surfaces are not the
+      // hardest case: 4.5:1 on all of them still measured 4.32-4.39:1 in the window.
+      if (surfaces.every((s) => contrast(hex, s) >= want && contrast(hex, mix(s, hex, 0.16)) >= want)) return hex
       const next = cur + dir * 0.01
       if (next < 0 || next > 1) return hex
       cur = next
