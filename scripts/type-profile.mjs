@@ -154,19 +154,23 @@ for (const [where, n] of rows)
 // Self time names the DOM call; it never names who asked for it, and a layout flush is
 // always attributed to the same builtin. So the callers are printed too, or every profile
 // of this app ends at `getBoundingClientRect` and stops being actionable.
+// Any frame can be blamed, not only the layout flush: `--blame yi` names who SCHEDULED
+// React's updates, which is the reading that separates "the desk re-rendered" from
+// "something asked it to, thousands of times, and React bailed out".
+const blameName = flag('--blame', 'getBoundingClientRect')
 const parent = new Map()
 for (const n of profile.nodes) for (const c of n.children ?? []) parent.set(c, n.id)
 const blame = new Map()
 for (const id of profile.samples) {
   const n = byId.get(id)
-  if (!n || n.callFrame.functionName !== 'getBoundingClientRect') continue
+  if (!n || n.callFrame.functionName !== blameName) continue
   const p = byId.get(parent.get(id))
   const f = p?.callFrame
   const where = f ? `${f.functionName || '(anonymous)'}  ${(f.url || '').split('/').pop()}:${f.lineNumber + 1}` : '(root)'
   blame.set(where, (blame.get(where) ?? 0) + 1)
 }
 if (blame.size) {
-  console.log('\nwho called getBoundingClientRect:')
+  console.log(`\nwho called ${blameName}:`)
   for (const [where, n] of [...blame.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10))
     console.log(`  ${((n / total) * 100).toFixed(1).padStart(5)}%  ${((n / total) * span).toFixed(0).padStart(6)}ms  ${where}`)
 }
