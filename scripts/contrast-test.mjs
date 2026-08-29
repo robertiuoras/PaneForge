@@ -174,6 +174,13 @@ const walkIn = (rootSel) => `(() => {
   const out = []
   const seen = new Set()
   const vw = innerWidth, vh = innerHeight
+  // The muted token as a resolved rgb() string, so an element's own computed colour can
+  // be compared to it without re-deriving the palette here.
+  const probe = document.createElement('span')
+  probe.style.cssText = 'position:fixed;left:-9999px;color:var(--muted)'
+  document.body.appendChild(probe)
+  const MUTED = getComputedStyle(probe).color
+  probe.remove()
   const walk = (node) => {
     if (!(node instanceof Element)) return
     // The terminal draws the agent's own colours over --term-bg; paletteFor guards that
@@ -204,7 +211,15 @@ const walkIn = (rootSel) => `(() => {
           const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
           return !!hit && (hit === node || node.contains(hit))
         })
-        .map((r) => ({ x: Math.max(0, r.x), y: Math.max(0, r.y), w: Math.min(r.width, vw - r.x), h: Math.min(r.height, vh - r.y) }))
+        // ...and the line box is inset before it is sampled. A box carries the leading
+        // above and below the glyphs, so a hint sitting under an accent-coloured switch
+        // grazed it by a pixel and reported 1.01:1 against a backdrop no letter touches.
+        .map((r) => {
+          const pad = Math.min(r.height * 0.22, 4)
+          const x = Math.max(0, r.x + 1)
+          const y = Math.max(0, r.y + pad)
+          return { x, y, w: Math.max(1, Math.min(r.width - 2, vw - x)), h: Math.max(1, Math.min(r.height - pad * 2, vh - y)) }
+        })
       if (!boxes.length) continue
       // No regex here on purpose: this whole walker is a template literal, and a lone
       // backslash in one is an escape the page never sees: a backslash-s became a plain
@@ -225,7 +240,11 @@ const walkIn = (rootSel) => `(() => {
       const key = path + '|' + text.slice(0, 24) + '|' + Math.round(boxes[0].x) + ',' + Math.round(boxes[0].y)
       if (seen.has(key)) continue
       seen.add(key)
-      out.push({ path, text: text.slice(0, 40), rgb: [p[0] | 0, p[1] | 0, p[2] | 0], alpha, size, weight, boxes })
+      // SECONDARY text is held to 3:1, the same promise paletteFor makes for --muted
+      // and the same one test:theme asserts. It is decided by the colour the element
+      // actually draws in, not by a class name, so a component that reaches for --muted
+      // is judged by the contract that token carries.
+      out.push({ path, text: text.slice(0, 40), rgb: [p[0] | 0, p[1] | 0, p[2] | 0], alpha, size, weight, boxes, muted: cs.color === MUTED })
     }
     for (const c of node.children) walk(c)
     if (node.shadowRoot) for (const c of node.shadowRoot.children) walk(c)
@@ -372,7 +391,7 @@ try {
       let n = 0
       for (const el of nodes) {
         const large = el.size >= 24 || (el.size >= 18.66 && el.weight >= 700)
-        const want = large ? 3 : 4.5
+        const want = large || el.muted ? 3 : 4.5
         const tl = lum(el.rgb[0], el.rgb[1], el.rgb[2])
         let w = null
         for (const b of el.boxes) {
