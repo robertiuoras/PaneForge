@@ -226,6 +226,7 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@lydell/node-pty": "1.2.0-beta.12",
+    "electron-liquid-glass": "^1.1.1",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
