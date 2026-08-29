@@ -15,9 +15,87 @@ import MicIcon from './MicIcon'
 // The rows below are written with Ctrl because that is what Windows and Linux use; on a
 // Mac the same shortcuts are on Cmd, so every key is printed through `keyLabel`.
 import { isMac, keyLabel, MOD } from '../platform'
+import {
+  KEY_ACTIONS,
+  chordId,
+  chordOf,
+  chordWords,
+  conflictsWith,
+  defaultKeymap,
+  resolveKeymap,
+  sameChord,
+  type Chord
+} from '@shared/keymap'
 
 interface Props {
   onClose: () => void
+  /** What is saved: action id -> chord. Only what has been changed. */
+  keys?: Record<string, string>
+  onKeys: (next: Record<string, string>) => void
+}
+
+/**
+ * One editable shortcut.
+ *
+ * The row IS the control: a click on the chord, or on the pencil, puts it in "listening"
+ * and the next chord it hears is the binding. Listening rather than a text field, because
+ * a chord typed as WORDS is a second spelling of the same fact and this file already
+ * carries the scars of two spellings that disagreed.
+ *
+ * Escape leaves without changing anything and Backspace puts the default back - both are
+ * ways OUT, which a control that swallows every keystroke has to have before it has
+ * anything else.
+ */
+function KeyEdit(props: {
+  id: string
+  label: string
+  chord: Chord
+  changed: boolean
+  taken: string[]
+  onSet: (c: Chord | null) => void
+}): JSX.Element {
+  const [listening, setListening] = useState(false)
+  return (
+    <div className={'key-row edit' + (listening ? ' listening' : '')}>
+      <button
+        className={'kbd-box as-button' + (props.changed ? ' changed' : '')}
+        title={
+          listening
+            ? 'Press the new chord. Escape to leave it alone, Backspace for the default.'
+            : 'Click to change this shortcut'
+        }
+        onClick={() => setListening((v) => !v)}
+        onKeyDown={(e) => {
+          if (!listening) return
+          e.preventDefault()
+          e.stopPropagation()
+          if (e.key === 'Escape') return setListening(false)
+          if (e.key === 'Backspace' || e.key === 'Delete') {
+            props.onSet(null)
+            return setListening(false)
+          }
+          // The modifier is not part of what is chosen - every shortcut here is on it - so
+          // a bare letter is a complete answer and a lone modifier press is not an answer
+          // at all. Without that second half, holding Shift to type the chord committed
+          // "Shift" as the binding before the letter arrived.
+          if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Meta' || e.key === 'Alt') return
+          const c = chordOf(e)
+          if (!c) return
+          props.onSet(c)
+          setListening(false)
+        }}
+        onBlur={() => setListening(false)}
+      >
+        {listening ? 'press a key…' : chordWords(props.chord, isMac)}
+      </button>
+      <span>
+        {props.label}
+        {props.taken.length > 0 && (
+          <span className="key-clash"> also {props.taken.join(', ')} - the first one wins</span>
+        )}
+      </span>
+    </div>
+  )
 }
 
 /** The one that opens this list. Kept out of KEYS so it can lead, highlighted. */
@@ -332,7 +410,7 @@ const TOPICS: Topic[] = [
   }
 ]
 
-export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
+export default function ShortcutsDialog({ onClose, keys, onKeys }: Props): JSX.Element {
   const [q, setQ] = useState('')
   const [tab, setTab] = useState<'keys' | 'guide'>('keys')
   const needle = q.trim().toLowerCase()
@@ -352,6 +430,32 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
   // While filtering, both halves are shown together: someone typing "lane" wants the
   // explanation and would not think to look for a tab first.
   const showKeys = !needle ? tab === 'keys' : keyRows.length > 0
+  const map = useMemo(() => resolveKeymap(keys), [keys])
+  const defaults = useMemo(() => defaultKeymap(), [])
+  const label = (id: string): string => KEY_ACTIONS.find((a) => a.id === id)?.label ?? id
+  const setChord = (id: string, c: Chord | null): void => {
+    const next = { ...(keys ?? {}) }
+    // Back to the default is a DELETION, not a copy of the default written out: a saved
+    // value that happens to equal today's default would pin this action to it for ever,
+    // through every later build that moves it.
+    if (!c || sameChord(c, defaults[id])) delete next[id]
+    else next[id] = chordId(c)
+    onKeys(next)
+  }
+  /**
+   * The editable rows, filtered by the same box as everything else - and the static rows
+   * they replace, dropped by CHORD rather than by position: `KEYS` spells its chords as
+   * text ("Ctrl Shift G"), so a row is the same row when it parses to the same chord, and
+   * a row that does not parse (`Ctrl 1 - 9`, `Ctrl Tab`) is not rebindable and stays.
+   */
+  const editRows = KEY_ACTIONS.filter(
+    (a) => !needle || a.label.toLowerCase().includes(needle) || chordWords(map[a.id], isMac).toLowerCase().includes(needle)
+  )
+  const bound = new Set(KEY_ACTIONS.map((a) => chordId(defaults[a.id])))
+  const staticChord = (text: string): string | null => {
+    const m = /^ctrl\s+(shift\s+)?([a-z0-9])$/i.exec(text.trim())
+    return m ? (m[1] ? 'shift+' : '') + m[2].toLowerCase() : null
+  }
   const showGuide = !needle ? tab === 'guide' : topics.length > 0
 
   return (
@@ -385,7 +489,24 @@ export default function ShortcutsDialog({ onClose }: Props): JSX.Element {
         />
         <div className="keys">
           {showKeys &&
-            keyRows.map(([k, what, hot]) => (
+            editRows.map((a) => (
+              <KeyEdit
+                key={a.id}
+                id={a.id}
+                label={a.label}
+                chord={map[a.id]}
+                changed={!sameChord(map[a.id], defaults[a.id])}
+                taken={conflictsWith(map, a.id, map[a.id]).map(label)}
+                onSet={(c) => setChord(a.id, c)}
+              />
+            ))}
+          {showKeys &&
+            keyRows
+              .filter(([k]) => {
+                const c = staticChord(k)
+                return !c || !bound.has(c)
+              })
+              .map(([k, what, hot]) => (
               <div className={'key-row' + (hot ? ' hot' : '')} key={k}>
                 <span className="kbd-box">{keyLabel(k)}</span>
                 <span>

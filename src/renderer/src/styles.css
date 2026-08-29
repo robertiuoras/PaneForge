@@ -4113,3 +4113,18 @@ button.chip:hover {
 .split-row { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
 .split-row-head { display: flex; gap: 8px; align-items: center; }
 .split-title { flex: 1 1 auto; min-width: 0; }
+
+/* An editable shortcut row. The chord IS the button - there is no separate pencil, because
+   a 12px icon beside a 60px pill that does the same thing is two targets for one action. */
+.key-row.edit .kbd-box.as-button {
+  cursor: pointer; font: inherit; font-size: 11px; color: var(--text);
+  border: 1px solid var(--line-strong); background: var(--glass);
+}
+.key-row.edit .kbd-box.as-button:hover { border-color: var(--accent); }
+.key-row.edit .kbd-box.as-button.changed { color: var(--accent-text); border-color: var(--accent); }
+.key-row.edit.listening .kbd-box.as-button {
+  color: var(--accent-on); background: var(--accent); border-color: var(--accent);
+}
+/* Two actions on one chord is a real state - the handler's first match wins - so it is
+   said at the moment of choosing rather than discovered by pressing the key. */
+.key-clash { color: var(--warn); font-size: 10.5px; }

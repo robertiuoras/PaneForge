@@ -6210,7 +6210,13 @@ export default function App(): JSX.Element {
           it cannot be read as a hang. On a wide desktop with the model already there,
           the pane's own mic button is the whole UI, exactly as before. */}
       {config?.voice.enabled && bigVoice && <VoiceOverlay voice={voice} where={voiceWhere} />}
-      {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
+      {help && (
+        <ShortcutsDialog
+          onClose={() => setHelp(false)}
+          keys={config?.keys}
+          onKeys={(keys) => patchConfig({ keys })}
+        />
+      )}
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
       {/* A device asking to pair arrives while somebody is at the OTHER machine, so this
           is here rather than inside the Devices dialog - that dialog is almost never the
