@@ -196,8 +196,10 @@ const walkIn = (rootSel) => `(() => {
         .filter((r) => r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh)
         .map((r) => ({ x: Math.max(0, r.x), y: Math.max(0, r.y), w: Math.min(r.width, vw - r.x), h: Math.min(r.height, vh - r.y) }))
       if (!boxes.length) continue
-      const m = /rgba?\(([^)]+)\)/.exec(cs.color)
-      const p = m ? m[1].split(',').map((s) => parseFloat(s)) : [0, 0, 0, 1]
+      // No regex here on purpose: this whole walker is a template literal, and a lone
+      // backslash in one is an escape the page never sees: a backslash-s became a plain
+      // s and split the class list on the letter S, and an escaped paren became a bare one, so every colour read as rgb(0, ...). Both look like measurements.
+      const p = cs.color.slice(cs.color.indexOf('(') + 1, cs.color.lastIndexOf(')')).split(',').map((v) => parseFloat(v))
       // The element's own opacity is not the whole story: a faint chip inside a faded
       // panel is faded twice, and it is the PRODUCT somebody has to read.
       let alpha = p[3] ?? 1
@@ -209,7 +211,7 @@ const walkIn = (rootSel) => `(() => {
       const size = parseFloat(cs.fontSize) || 16
       const weight = parseInt(cs.fontWeight, 10) || 400
       let path = node.tagName.toLowerCase()
-      if (node.className && typeof node.className === 'string') path += '.' + node.className.trim().split(/\s+/).join('.')
+      if (node.className && typeof node.className === 'string') path += '.' + node.className.trim().split(' ').filter(Boolean).join('.')
       const key = path + '|' + text.slice(0, 24) + '|' + Math.round(boxes[0].x) + ',' + Math.round(boxes[0].y)
       if (seen.has(key)) continue
       seen.add(key)
