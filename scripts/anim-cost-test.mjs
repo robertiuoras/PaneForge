@@ -28,7 +28,15 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const files = ['src/renderer/src/styles.css', 'src/renderer/src/shelf.css']
+// TerminalPane.css was missing until 2026-08-30, so every animation on the pane itself -
+// the surface that is on screen the most and the one running a terminal underneath - was
+// unguarded. The handover curtain's rail was written against `background-position` and
+// this file reported ok.
+const files = [
+  'src/renderer/src/styles.css',
+  'src/renderer/src/shelf.css',
+  'src/renderer/src/components/TerminalPane.css'
+]
 
 /** Properties a compositor can animate without repainting anything. */
 const CHEAP = new Set(['transform', 'opacity', 'translate', 'rotate', 'scale', 'visibility'])

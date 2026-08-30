@@ -238,22 +238,34 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* The whole animation: one element, one keyframe, 1.4s. A vertical rail rather than a
-   spinner - it reads as "a thing is moving through" instead of "a thing is loading", and
-   it costs one composited transform. */
+/* The whole animation: one keyframe, 1.4s, TRANSFORM ONLY. A vertical rail rather than a
+   spinner - it reads as "a thing is moving through" instead of "a thing is loading".
+   The gradient lives on a child taller than its window and is translated, rather than the
+   rail animating its own `background-position`: that version repaints the element every
+   frame, over a live terminal, and `scripts/anim-cost-test.mjs` is the gate that says so. */
 .handover-rail {
+  position: relative;
   flex: 0 0 auto;
   width: 2px;
   align-self: stretch;
   min-height: 34px;
   border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+.handover-rail::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 300%;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.06) 0%,
-    #e4f222 45%,
-    rgba(255, 255, 255, 0.06) 100%
+    rgba(228, 242, 34, 0) 0%,
+    #e4f222 50%,
+    rgba(228, 242, 34, 0) 100%
   );
-  background-size: 100% 220%;
   animation: handover-sweep 1.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
 }
 
@@ -307,10 +319,10 @@
 }
 @keyframes handover-sweep {
   from {
-    background-position: 0 -120%;
+    transform: translateY(-66.7%);
   }
   to {
-    background-position: 0 120%;
+    transform: translateY(0%);
   }
 }
 
@@ -318,7 +330,7 @@
    The rail keeps its colour and stops moving; nothing else here animates. */
 @media (prefers-reduced-motion: reduce) {
   .handover,
-  .handover-rail {
+  .handover-rail::after {
     animation: none;
   }
 }
