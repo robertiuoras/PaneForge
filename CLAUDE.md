@@ -190,6 +190,41 @@ saying "already working on it".
   `updater.log` is evidence: three days without a good check logs `health STALE`.
 - `npm run test:updater` (second half `npm run test:wedge`) hangs the stub on purpose.
 
+## ...and a pane that says it is working, on a frame nobody repainted
+
+The busy read is taken off the bottom of the pane's own screen (`shared/busy.ts`), which
+is right until the screen goes wrong. A CLI torn mid-paint leaves its working line on a
+row nothing overwrites, and every read from then on says the agent is running: the card
+says Running, the turn clock counts, the idle sweep never touches it, and the only way
+out was somebody noticing and pressing Fix. Reported 2026-08-30 against pane 7.
+`shared/staleFrame.ts` is the reading; `npm run test:staleframe`.
+
+- **The pane's own SILENCE is not the tell.** `busyUntil` in main is a three-minute
+  deadline the renderer keeps renewing, and `checkBusy` runs on a 4s tick as well as on
+  output - so a stale pane goes on re-stating a `true` for ever without printing a byte.
+  What separates a stuck frame from a slow one is the evidence not CHANGING: a live
+  footer ticks every second (`(8s · ↓ 282 tokens)`, `Esc to interrupt · 12s`) and the
+  spinner glyph cycles under it.
+- **The signature is the EVIDENCE, never the read window.** `busyEvidence` returns the
+  line the winning rule matched, and `staleSignature` signs that plus the rule. Signing
+  the whole window would be reset by any other traffic in those rows - which is exactly
+  the pane that needs this most, a working line stranded above output that is still
+  moving. For the weakest rule, `counter`, the signature IS the number, because the
+  number is the thing that moves.
+- **The recovery is the one Fix already runs**: `sessions.redraw`, a SIGWINCH nudge with
+  no keystrokes in it, so it can never type into somebody's conversation.
+- **The refusals are the feature**, because the expensive mistake is not a late repair
+  but a needless poke - a full-screen CLI redraws its whole frame on SIGWINCH.
+  `STALE_AFTER_MS` is four minutes of a byte-identical working line, `MAX_NUDGES` is
+  **2 per stretch** (a CLI that redraws the same frame back believes it, and a watchdog
+  that keeps asking turns one stuck pane into a pane poked for ever), `NUDGE_EVERY_MS` is
+  a minute, a mirror judges nothing (the owning machine repairs its own pane), and
+  `autoFixUi` off means no. The load-bearing test case is the CONTROL: a real 20-minute
+  Claude Code turn, its counter ticking once a second, must be nudged **zero** times.
+- Measured in a live window 2026-08-30: a stranded `✢ Smooshing… (8s · ↓ 282 tokens)`
+  read `busy` with its stale clock at 15,999 ms and then 23,999 ms, `tries: 0`.
+  `window.__paneBusy[id].stale` is that reading, beside the frame the pane read.
+
 ## A window that stops answering comes back on its own
 
 The main process, every pty and the whole desk survive a renderer that wedges - so on
