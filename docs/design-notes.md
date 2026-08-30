@@ -2985,3 +2985,128 @@ runs) stays there.
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
 | `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back, and the three refusals |
 | `npm run test:winfeed` | which release the Windows dev channel may pin its feed at |
+
+## A full machine gets its panes back — the evidence
+
+Moved verbatim out of `CLAUDE.md` on 2026-08-31; the rules stay there, this is the
+measurement and the incident behind each one.
+
+## A full machine gets its panes back
+
+`capacity.ts` gives back scrollback, ~5% of the bill (twelve panes: ~74 MB of ~1.5 GB), because
+the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Codex).
+`shared/reclaim.ts` returns the agent, by closing the pane. `npm run test:reclaim`.
+
+- **A trim is a DELETE, so the two things that made it fire repeatedly had to stop.** Lowering
+  xterm's `scrollback` discards lines and raising it back restores none, so the recovery is a
+  re-render from main's raw log (`paneRedraw` -> `redrawHistory`): `t.reset()`, a resize, and up
+  to `REDRAW_BYTES` 4 MB of the pane's own LOG written back through xterm - **45-147 ms of parse alone** in a
+  headless terminal, on the UI thread, before anything is drawn. It was fired by both of the
+  readings that move: **a PANE SWITCH** (the focused pane is never trimmed, so arriving regrew it
+  and leaving trimmed it again - and this desk sits at `over` for hours, load 2.70 per core
+  against `LAG_HARD` 1.8, measured 2026-08-28), and **a verdict that flaps** (the level is
+  re-read every 15s, `lagLevel` has bare thresholds, and a VISIBLE pane's target differs between
+  `over` and `tight`). So `trimPlan` takes a clock: `TRIM_GRACE_MS` (5 min) keeps the lines of a
+  pane the keyboard has only just left, and `TRIM_SETTLE_MS` (60s, longer than the 15s poll)
+  makes a trim wait for its verdict to HOLD. **Growth is never delayed** - it is what hands a
+  reader their history back, and a pane already at full depth is never listed twice. Both are
+  optional: a caller with no clock gets the plan this always made, which is the control in
+  `test:capacity`.
+- **What makes that defensible here**: `kill()` calls `recordEnd`, so a closed pane keeps its
+  History row, its `resumeId` and its `scrollbackId`. A closed pane in this app is a minimised
+  pane in any other.
+- **Pressure is the trigger, never a clock.** Idle time only breaks ties once the kernel is
+  already objecting.
+- **A pane waiting for a person is never closed.** `needsYou` is quiet BECAUSE it is owed an
+  answer. Nor is the focused pane, one on screen, one working or starting or stalled, or a mirror.
+- **The window is never emptied.**
+- **The reading of the machine is a card that ARRIVES and LEAVES, never a strip.** The
+  sidebar's `.capacity` line was on screen for as long as the reading held, which is most
+  of a working day on a full desk, and a line that is always there is a line nobody reads.
+  `.cap-pop` is armed by the verdict CHANGING into something worth saying (`level|why`,
+  cleared when the desk goes back to ok) and takes itself away after `CAPACITY_NOTE_MS`
+  (12s), carrying the exact figures with it. **Only `over` arms it** - the kernel itself
+  objecting - never `tight`, which is the budget line the ladder already acts on with its
+  own countdown; and never more than one card per `CAPACITY_QUIET_MS` (10 min), because
+  this desk sits at `over` for hours with the lag reading crossing its band every few
+  minutes, so the same fact popped a card again and again. The desk TOTAL beside the pane count went with
+  it: it is drawn only while `capacity.level !== 'ok'`, because it is a pressure reading.
+- **A press on a pane takes its countdown with it.** `touchPane` drops `closeSoon` when the
+  countdown names that pane (and gives `handoffSweeping` back for a move). The "went back to
+  work" effect keys on `stillCloseable`, which a click does not change - so before this,
+  clicking the pane restarted its idle clock and published a new deadline on its card while
+  the 15s count ran on underneath. Other panes in the same plan are re-decided by the next
+  sweep: nobody arrived at those.
+- **A HOLD is not a countdown, and the chip must not wear the same word.** The publish takes
+  the later of the idle deadline and `keptUntil`, so a pane somebody had just pressed
+  `Keep it open` on drew `closes 55m` under a sentence saying it had been quiet and was
+  being closed - the opposite of what that press promised. `Session.closeKept` says which of
+  the two numbers it is (set beside `closingAt` in `setClosingAt`, forwarded through
+  `RemotePaneInfo` and `desk.ts` so a listed row agrees), and the card says `kept 10m` with
+  the hold's own sentence and no red last-minute alert - nothing is about to happen to it.
+  A countdown card naming the pane still wins: that is a live plan to close it.
+- **A deadline in the past is a STATE, not a number.** `idleCloseAt` clamps an overdue pane
+  to `now` so its chip cannot count up from zero, and the renderer publishes that number
+  onto the session with `api.setClosing` from an effect that has `sessions` in its
+  dependency array - so `now` moved, the number moved, `setClosingAt` emitted a session
+  list because it had moved, and that list re-ran the publisher. Measured in a real window
+  with three overdue panes: **3138 `setClosing` writes and 2061 whole-window React renders
+  in five seconds**, each write a broadcast to this window and every paired phone, against
+  **0 and 0** with `sameDeadline` (`shared/reclaim.ts`) comparing them - two deadlines both
+  in the past are the same fact and are not republished. It is also why the chip could sit
+  at `0:01`: `at` was being dragged forward to real `now` while `CloseClock`'s own `now` is
+  the last one-second tick, so `ceil((at - now) / 1000)` never reached 0.
+  `window.__pfClosePublish` counts the writes.
+- **A pane can be taken off the clock for good.** `ReclaimPane.pinned` - "Keep this pane
+  open" on the card's right-click, `kept open` where its countdown would have been - is
+  refused by `onTheClock` AND by `reclaimPlan`'s filter: somebody who said keep this one did
+  not mean unless memory is tight. `keptUntil` stays the answer for "not now" (an hour).
+- **Looking at a pane is USING it, at BOTH ends of the visit.** `quietSince` is the latest of a keystroke, a printed byte and
+  the moment the KEYBOARD LEFT (`ReclaimPane.lastFocus`, threaded in from the renderer, which is
+  the only side that knows which pane is focused) - stamped when focus LEAVES and when it
+  ARRIVES, plus `touchPane` on the press itself, or a pane picked up while its chip said
+  `closes 1:12` kept that deadline for the whole visit and went straight back to it. Without it a pane read for ten minutes was
+  already past a five-minute deadline the instant it was switched away from, and its card's first
+  word about it was a red `closes 0:01` — a countdown nobody can act on. One reading, so the sweep
+  and the card cannot disagree.
+- **The clock counts time a person could have acted in, not wall time.** `shared/away.ts`
+  freezes it at the moment the machine's last input happened while
+  `powerMonitor.getSystemIdleTime()` says nobody is here (`AWAY_AFTER_MS`, 60s), and it
+  carries on from there when they come back — ten minutes away costs a pane nothing.
+  `main/away.ts` polls every 15s and pushes `system:away` on a CHANGE. The second desk is
+  refused by `sawPerson`, not by a setting: a machine no person has ever touched has nobody
+  to be away, so it behaves exactly as before. **Only the clock pauses** — `reclaimPlan`,
+  which fires on real pressure, is untouched, so a laptop left open all night is still
+  protected by the reading that was always the honest trigger.
+- **A turn nobody has READ has no countdown in front of it.** `unread` - the pane printed
+  something after the keyboard last left it - refuses `onTheClock`, so the clock starts only
+  once the pane has been looked at since its last output (a pane being read now is `focused`
+  and already exempt). It holds the CLOCK only: `reclaimPlan` fires on real memory pressure,
+  where holding an unread pane open is the more expensive mistake. And it is gated on
+  `Away.sawPerson` - on a desk no person has touched this run nothing is ever read, so the
+  refusal would switch the feature off on the one machine it exists for.
+- **The rung above closing is SLEEPING, and it is ON.** `idleSleepPlan`
+  (`reclaim.idleSleepMinutes`, 30 min) stops the agent in a pane nobody has used and keeps
+  the card, its place, its screen and its conversation - `shared/sleep.ts`'s machinery,
+  fired by a clock instead of by a menu row, which is why "Sleep this pane" is gone from
+  the card's right-click. It shares `onTheClock` with the close clock verbatim, and drops
+  the two things that are about closing: it keeps no pane back (it empties no window) and
+  it is not capped by `maxPerSweep` (nothing here depends on re-reading the machine). No
+  countdown either - nothing a person would miss is lost, and the card says `asleep 3m`
+  where its clock was. On by default because being wrong costs one press and the CLI's own
+  1.4s boot.
+- **There IS a clock, and it is off.** `reclaim.idleCloseMinutes` closes a pane nobody has typed
+  into for that long whatever the memory says; 0 is the default. The switch sets
+  `IDLE_CLOSE_MINUTES` = **5 minutes**. It exists for the second machine — a desk driven over the
+  link, which fills with finished panes and has no person to close them. Every refusal above is
+  shared verbatim except **visible**, which it cannot keep: on a machine nobody is at, every pane
+  in the grid is "on screen". `idleClosePlan`, its own minute timer in `App.tsx`.
+
+**And a restore is the one moment N agents start in a single tick.** `restorePlan` in
+`shared/capacity.ts` decides how many start ticked: everything at normal pressure, **two** at
+warn, **one** at critical, and never zero while there is a pane to offer. That is safe only
+because nothing is lost — an unticked pane keeps its conversation and its screen. It is a
+**preselect, never a cap**. The reading comes from `readPressure()` at the moment the offer is
+built, not from `lastPressure`, which on a cold launch may not have sampled. The silent paths (an
+update restart, `restoreAfterRestart: 'always'`) are deliberately untouched.
+`npm run test:capacity`, red-proofed against the warn branch.
