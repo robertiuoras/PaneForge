@@ -202,7 +202,8 @@ const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
  * of a pane refusing keys rather than a pane that has to be closed. The renderer enforces
  * it too, off the deadline it was handed - see `setHandover`.
  */
-const HANDOVER_MAX_MS = PROMPT_WAIT_MAX_MS + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES + 5_000
+const handoverMaxMs = (budgetMs = PROMPT_WAIT_MAX_MS): number =>
+  budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES + 5_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
 const RESET = '\x1bc'
 /**
@@ -2002,7 +2003,7 @@ export class SessionManager extends EventEmitter {
         // turn (2026-08-30, s4-mtednh9i). The prompt is now dropped when that happens,
         // which stops the collision but still costs the handoff. So the pane says out
         // loud that it is mid-handover and swallows keys until it is not, with a way out.
-        this.setHandover(id, Date.now() + HANDOVER_MAX_MS)
+        this.setHandover(id, Date.now() + handoverMaxMs(CLEAR_RESUME_BUDGET_MS))
         this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0), CLEAR_RESUME_BUDGET_MS)
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
