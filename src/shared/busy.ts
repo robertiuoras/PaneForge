@@ -97,13 +97,47 @@ function hasTurnCounter(text: string): boolean {
  */
 export type BusyReason = 'interrupt' | 'spin' | 'gerund' | 'task' | 'counter'
 
-export function busyReason(text: string): BusyReason | null {
+/**
+ * The rule that matched, and the LINE it matched on.
+ *
+ * The line is what `shared/staleFrame.ts` signs: a working line moves every second (the
+ * spinner glyph cycles, the counter ticks), and one left behind by a torn repaint does
+ * not, which is the whole of "is this pane really working, or only still showing that it
+ * was". Signing the read window instead would be reset by any other traffic in those
+ * rows - and a stranded working line above live output is exactly the case.
+ */
+export interface BusyEvidence {
+  reason: BusyReason
+  line: string
+}
+
+export function busyEvidence(text: string): BusyEvidence | null {
   if (ASK_PROMPT.test(text)) return null
-  if (SAYS_INTERRUPT.test(text)) return 'interrupt'
-  if (SPINNING.test(text)) return 'spin'
-  if (LONE_GERUND.test(text)) return 'gerund'
-  if (RUNNING_TASK.test(text)) return 'task'
-  return hasTurnCounter(text) ? 'counter' : null
+  for (const [reason, re] of [
+    ['interrupt', SAYS_INTERRUPT],
+    ['spin', SPINNING],
+    ['gerund', LONE_GERUND],
+    ['task', RUNNING_TASK]
+  ] as [BusyReason, RegExp][]) {
+    const m = re.exec(text)
+    if (m) return { reason, line: lineAt(text, m.index) }
+  }
+  const clock = scanDuration(text)
+  // The counter has no line of its own worth quoting - it is a number inside a bracket
+  // somewhere in the footer - and the number IS the thing that moves, so it is the
+  // signature. A stale frame keeps the same one; a running turn does not.
+  return clock?.footer ? { reason: 'counter', line: String(clock.ms) } : null
+}
+
+/** The whole line `at` falls on, newlines excluded. */
+function lineAt(text: string, at: number): string {
+  const start = text.lastIndexOf('\n', at) + 1
+  const end = text.indexOf('\n', start)
+  return text.slice(start, end === -1 ? undefined : end)
+}
+
+export function busyReason(text: string): BusyReason | null {
+  return busyEvidence(text)?.reason ?? null
 }
 
 /** True while the frame says an agent is running and is not waiting on an answer. */
