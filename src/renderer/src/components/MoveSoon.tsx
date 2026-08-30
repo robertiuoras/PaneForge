@@ -24,6 +24,7 @@
 
 import React, { useEffect, useState } from 'react'
 import type { CloseSoon } from './Mascot'
+import { nextTickMs } from '../../../shared/elapsed'
 
 export interface MoveSoonProps {
   soon?: CloseSoon
@@ -57,9 +58,14 @@ export default function MoveSoon({ soon, onKeep, onNow }: MoveSoonProps): React.
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!soon) return
-    setNow(Date.now())
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
+    const deadline = soon.deadline
+    let t = 0
+    const tick = (): void => {
+      setNow(Date.now())
+      t = window.setTimeout(tick, nextTickMs(deadline, Date.now()))
+    }
+    tick()
+    return () => window.clearTimeout(t)
   }, [soon?.deadline])
   if (!soon) return null
   const left = secondsLeft(soon.deadline, now)

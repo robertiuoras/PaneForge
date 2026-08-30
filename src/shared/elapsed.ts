@@ -47,6 +47,28 @@ export function bucketOf(now: number, step: number, offset = 0): number {
   return Math.floor((now - offset) / step)
 }
 
+/**
+ * How long until the number a COUNTDOWN draws turns over.
+ *
+ * A countdown card is not the same clock as an elapsed one. `Elapsed` counts up from a
+ * start and may bucket against that start; a countdown counts DOWN to a deadline, and the
+ * boundary its displayed second turns over on belongs to the DEADLINE, not to the wall
+ * clock. `MoveSoon` used a plain `setInterval(1000)` armed at mount, so every displayed
+ * number was up to 999 ms stale and the card died on `1s` without ever reaching zero -
+ * the pane vanished while the card still said there was a second left, which reads as the
+ * countdown having done nothing at all. Reported 2026-08-30 against an assistant pane;
+ * `reclaim.log` proved the ENGINE exact (arm to close 14.98-15.00s every time), so the lag
+ * was only ever the drawing.
+ *
+ * Returns the ms to the next turnover, clamped to (0, step]. At the deadline it returns
+ * `step` rather than 0, because a timer of 0 is a spin.
+ */
+export function nextTickMs(deadline: number, now: number, step = 1000): number {
+  const left = deadline - now
+  const rem = ((left % step) + step) % step
+  return rem === 0 ? step : rem
+}
+
 export const DAY_MS = 86_400_000
 
 /**
