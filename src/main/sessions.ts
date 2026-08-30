@@ -171,7 +171,29 @@ const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
 /** How much of the pane's tail the busy read looks at, and the confirm-and-retry. */
 const PROMPT_TAIL_CHARS = 2000
 const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
-const PROMPT_ENTER_TRIES = 3
+/**
+ * How many returns may be sent before the prompt is left for a person.
+ *
+ * A return at an empty composer is a no-op in every CLI this types into, so the cost of
+ * one more try is nothing and the cost of running out is the whole handoff. Three was
+ * measured running out: on 2026-08-30 pane s6-mtfk52fr was cleared, the resume prompt was
+ * typed, and every return went in while Claude Code was still running its SessionStart
+ * hook chain - which on this desk paints in bursts with second-long gaps, so `idle()` reads
+ * ready and the CLI eats the key. The budget was gone in ~12s, the exit was silent, and
+ * Robert found the prompt sitting in the box and submitted it himself.
+ */
+const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
+/**
+ * The wait budget for the resume prompt after an automatic `/clear`, which is not the
+ * budget an ordinary launch prompt gets.
+ *
+ * `/clear` RESTARTS the CLI: banner, MCP servers, then this desk's whole SessionStart hook
+ * chain. 45s is a fair ceiling on a CLI that is merely booting and is not one on a CLI
+ * that is booting and then running hooks - and the failure at the end of it is the worst
+ * one this function has, a prompt typed and never sent, with the context already thrown
+ * away. Nothing waits on this timer: the pane is usable throughout.
+ */
+const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
 /**
  * The hard ceiling on the handover curtain.
  *
@@ -1973,7 +1995,7 @@ export class SessionManager extends EventEmitter {
         // across 16 clears, both of them every time, including the fourteen where the
         // first submit had plainly landed. Nothing read the pane at any point.
         if (!resume) return acLog(`${id} cleared with no resume prompt`)
-        acLog(`${id} resume prompt queued (idle-composer wait, start +${CLEAR_PROMPT_START_MS}ms)`)
+        acLog(`${id} resume prompt queued (idle-composer wait, start +${CLEAR_PROMPT_START_MS}ms, budget ${CLEAR_RESUME_BUDGET_MS}ms)`)
         // The window this feature kept losing. Between the `/clear` above and the resume
         // prompt going in, the pane looks like an ordinary fresh session - so somebody
         // reads it, types their own question, and the queued prompt lands inside THEIR
@@ -1981,7 +2003,7 @@ export class SessionManager extends EventEmitter {
         // which stops the collision but still costs the handoff. So the pane says out
         // loud that it is mid-handover and swallows keys until it is not, with a way out.
         this.setHandover(id, Date.now() + HANDOVER_MAX_MS)
-        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0))
+        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0), CLEAR_RESUME_BUDGET_MS)
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
     }
@@ -2334,7 +2356,8 @@ export class SessionManager extends EventEmitter {
     prompt?: string,
     extraDelay = 0,
     startMs = PROMPT_START_MS,
-    onSettled?: () => void
+    onSettled?: () => void,
+    budgetMs = PROMPT_WAIT_MAX_MS
   ): void {
     if (!prompt) return onSettled?.()
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
@@ -2346,7 +2369,7 @@ export class SessionManager extends EventEmitter {
       settled = true
       onSettled?.()
     }
-    const deadline = Date.now() + PROMPT_WAIT_MAX_MS + Math.max(0, extraDelay)
+    const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
     // an autoclear's own `/clear\r` goes through `write` and bumps it. Anything later is a
     // person submitting into the pane, and `queuedPromptDecision` drops the queued prompt
@@ -2390,10 +2413,11 @@ export class SessionManager extends EventEmitter {
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
       if ((live.meta.lastKeyboard ?? 0) > mark) {
-        console.info(`queuePrompt: ${id} submit dropped - the pane was used by hand`)
+        acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
         return settle()
       }
       ourWrite('\r')
+      acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
       const confirm = (): void => {
         setTimeout(() => {
@@ -2402,8 +2426,14 @@ export class SessionManager extends EventEmitter {
           // A TURN is the only proof the return went in. `runSince` is set when one starts
           // - by this submit or by the agent's own busy footer - so a value newer than the
           // return is the answer being written.
-          if ((still.meta.runSince ?? 0) >= typedAt) return settle()
-          if ((still.meta.lastKeyboard ?? 0) > mark) return settle()
+          if ((still.meta.runSince ?? 0) >= typedAt) {
+            acLog(`${id} prompt submitted - a turn started`)
+            return settle()
+          }
+          if ((still.meta.lastKeyboard ?? 0) > mark) {
+            acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
+            return settle()
+          }
           if (!idle(still)) {
             // PAINTING IS NOT PROGRESS, and reading it as progress is what stranded pane
             // s7-mtfk52fv on 2026-08-30: `/clear` restarts the CLI, its banner and hook
@@ -2413,11 +2443,17 @@ export class SessionManager extends EventEmitter {
             // nobody had sent, with the app's own log ending at that write. So a busy pane
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
-            if (Date.now() >= deadline) return settle()
+            if (Date.now() >= deadline) {
+              acLog(`${id} prompt left UNSENT: still painting when the ${budgetMs}ms budget ran out`)
+              return settle()
+            }
             return confirm()
           }
           // Idle at the composer with no turn behind it: the return was eaten. Send another.
-          if (tries + 1 >= PROMPT_ENTER_TRIES) return settle()
+          if (tries + 1 >= PROMPT_ENTER_TRIES) {
+            acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
+            return settle()
+          }
           submit(tries + 1)
         }, PROMPT_CONFIRM_MS)
       }
@@ -2433,14 +2469,15 @@ export class SessionManager extends EventEmitter {
         return
       }
       if (what === 'abandon') {
-        console.info(
-          `queuePrompt: ${id} queued prompt dropped - ${
+        acLog(
+          `${id} queued prompt dropped - ${
             (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
           }`
         )
         return settle()
       }
       ourWrite(prompt)
+      acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
