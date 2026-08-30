@@ -223,7 +223,9 @@ out was somebody noticing and pressing Fix. Reported 2026-08-30 against pane 7.
   Claude Code turn, its counter ticking once a second, must be nudged **zero** times.
 - Measured in a live window 2026-08-30: a stranded `✢ Smooshing… (8s · ↓ 282 tokens)`
   read `busy` with its stale clock at 15,999 ms and then 23,999 ms, `tries: 0`.
-  `window.__paneBusy[id].stale` is that reading, beside the frame the pane read.
+  It asked for its own repaint at `ms: 241013`, `tries: 1`, with the terminal's grid
+  unchanged at 96 columns. `window.__paneBusy[id].stale` is that reading, beside the
+  frame the pane read.
 
 ## A window that stops answering comes back on its own
 
