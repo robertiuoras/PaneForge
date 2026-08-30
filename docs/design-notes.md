@@ -2867,3 +2867,121 @@ The held row is the one branch no window test reaches (`test:askrender` turns th
 or it would pass or fail on whether the probe's window happened to be focused), so its shape
 is pinned by source assertions in `test:autoanswer` instead - early return, no seconds, no
 tick subscription, and the option still named.
+
+## Checks — what each suite pins
+
+Moved out of `CLAUDE.md` on 2026-08-30: it was 136 lines of a file measured at
+~44,000 est tokens, re-read on every request of every turn in this repo, and it
+is reference rather than a rule. The rule (run `npm run typecheck` and `npm test`
+before committing; a new cheap test goes in `scripts/test-all.mjs` or it never
+runs) stays there.
+
+| Command | Covers |
+|---|---|
+| `npm run smoke` | the pty layer |
+| `npm run test:restore` | which conversation a reopened pane goes back into |
+| `npm run test:scrollback` | and what is on its screen when it gets there |
+| `npm run test:replaywidth` | ...drawn at the width it was drawn at, with the shipped behaviour kept as the control that must FAIL |
+| `npm run test:panegrid` | that the pty and the terminal open on the SAME width (the old 80-column default is the control that must still tear), and that Fix re-renders from raw bytes |
+| `npm run test:claim` | which conversation a pane may claim when three lanes share one project folder: somebody else's launch refused, the pane's own taken, and the pane following its own `/clear` kept as the control |
+| `npm run test:restoreturn` | the display clock, the engaged flag, continuing a cut-off turn, plus source assertions so a green test over a function nothing calls cannot pass |
+| `npm run test:promptecho` | rebuilding prompt tags from the `❯` echo, and the four things that must NOT become tags |
+| `npm run test:consoles` | sweeping console hosts left behind |
+| `npm run test:strays` | what a PANE left running (real orphans, ~25s) |
+| `npm run test:gitpoll` | the badge's `git status` cache, over a fake clock |
+| `npm run test:install` | quitting takes the install pty's whole process tree |
+| `npm run test:lanes` | lane engine, worktree sweep, ownership, the any-repo release contract |
+| `npm run test:laneproof` | that a ship names only lanes whose commits are really on origin, and that a lane passed over leaves a note - a `post-receive` hook takes the push and rewinds the branch, with the landing push kept as the control |
+| `npm run test:laneargs` | what `runSafe` hands a program, through a real cmd.exe |
+| `npm run test:laneforeign` | a foreign clone at a lane's path: named and refused, commits untouched (control: it passes the old `--is-inside-work-tree` test) |
+| `npm run test:lanepeers` | the other desk's claim arithmetic and its negatives |
+| `npm run test:lanedevice` | the same with real plumbing, and the two locks that looked right and were not |
+| `npm run test:gate` | what stops an automatic release, and that the refusal is CACHED on the commit |
+| `npm run test:notes` | release-note ranges and both template shapes |
+| `npm run test:pickrelease` | the newest release carrying an asset THIS platform can install |
+| `npm run test:promote` | a soaked dev build promoting with a younger one on top of it |
+| `npm run test:remote` | the device link end to end over a real loopback socket, including the size BORROW and its refusals |
+| `npm run test:pairask` | six digits that agree between two ends, and DISAGREE through a real relay |
+| `npm run test:handoff` | a pane moved whole over a real link and real git, and the refusals |
+| `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it |
+| `npm run test:theme` | palette derivation + contrast (358 assertions) |
+| `npm run test:contrast` | that every word DRAWN in the window reaches its ratio, in both themes - the backdrop sampled out of a screenshot rather than walked, so a gradient cannot report as the solid colour three ancestors up |
+| `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, and that Cancel types NOTHING |
+| `npm run test:awake` | holding the display awake, letting go, and the CAP on one busy stretch |
+| `npm run test:stashtheme` | that the Stash picks no colour of its own and asks the theme, not the OS |
+| `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
+| `npm run test:blurbs` | the "what this is" note on each feature, and that each is rendered |
+| `npm run test:place` | the words a pane's strip prints (56 assertions) |
+| `npm run test:elapsed` | what a clock prints, and how rarely it may wake the app to print it - with the wall-clock bucket kept as the control that must FAIL |
+| `npm run test:surfacereach` | that every method the window exposes has a call site under `src/renderer/src`; four are desk-side on purpose and each names who calls it |
+| `npm run test:mirrorfit` | how a mirrored pane draws somebody else's grid, with all three failed walks kept as controls, and growth past the user's font up to `MAX_FILL_FONT` (28) |
+| `npm run test:panebackjobs` | what an AGENT pane left running: real trees off this machine as fixtures, every permanent MCP server and `caffeinate` refused, the naive descendant count kept as the control, and a last block over this machine's own live table |
+| `npm run test:panebound` | work that may not leave this machine: the permanent MCP prelude kept as the control that must bind NOTHING, a driven browser four processes down, somebody else's browser, and both refusals it feeds |
+| `npm run test:quietstate` | that a pane printing at full blast never dispatches a no-op update: the hook compares before React does, and the three states written from `onRender`/`onScroll` use it |
+| `npm run test:panejob` | what a shell pane is running, its refusals, and a last block asking a REAL pty |
+| `npm run test:desk` | the sessions list with both machines in it, plus a source assertion that every ranked field is forwarded from the peer |
+| `npm run test:agentenv` | the environment a pane's agent starts with, and that one provider's key cannot fill another's variable |
+| `npm run test:orcatalogue` | the live model list: no tool calling never reaches the menu, a broken answer changes nothing, nothing is capped, both prices, and the stealth warning |
+| `npm run test:devicewatch` | noticing a copied cookie, and the negatives that decide whether the mark is read |
+| `npm run test:projects` | which folders are projects and which are copies of one |
+| `npm run test:cardfit` | that a session card can still be read at 190px |
+| `npm run test:closedone` | when a pane automation opened may close itself - a turn, a question, a shell command and a background job each refusing it, and the source assertions that the opener is told BEFORE the kill |
+| `npm run test:headerfit` | that a pane's header can still be USED at 198px - the close button on the pane, the ⋯ on the line, a name that is still a name - with the old header kept as the control that must NOT fit |
+| `npm run test:confirmfit` | that the yes/no box can still be answered |
+| `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
+| `npm run test:railplace` | where a prompt tag is drawn (no window) |
+| `npm run test:grid` | layout arithmetic, no window needed |
+| `npm run test:turncopy` | where a turn's two copy icons go, and the reply range that is off by one |
+| `npm run test:cursorclick` | the keys a click sends, the clicks refused, and that a BARE click emits no vertical arrow |
+| `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go |
+| `npm run test:promptbox` | telling a CLI's drawn input box from a zsh prompt, a diff and a markdown table |
+| `npm run test:handoffsteps` | what a pane's handoff says is left, its two refusals, and PARITY with the hook that decides the same thing inside the session |
+| `npm run test:promptsubmit` | that a pane opened WITH a prompt sends it, and never once working |
+| `npm run test:staleframe` | when a pane may ask its CLI to repaint itself: a stranded working line recovered, with a real 20-minute ticking footer kept as the control that must be nudged ZERO times |
+| `npm run test:choices` | reading a live question off a frame, two real shapes, the negatives, and that the arrows really are escape bytes |
+| `npm run test:askclick` | that a click on a pane holding a question types NOTHING (needs a window) |
+| `npm run test:askrender` | the countdown drawn in the pane, on the card, ticking — and what arrowing costs every OTHER pane (needs a window) |
+| `npm run test:autoanswer` | which questions may be answered for you, the timing over a fake clock, and source assertions on the state the guards read |
+| `npm run test:anim` | what a looping decoration may cost: `transform` and `opacity` only |
+| `npm run test:attach` | bytes landing on the machine owning the pty, the extension off magic bytes, an oversized batch writing nothing, and no escape from the folder |
+| `npm run test:asknotify` | a question on its way to Telegram, silent with no credentials, never asking for updates |
+| `npm run test:faultnotify` | a fault that reaches a phone, and the readings, drills, repeats and test copies that must NOT - plus the real `crash.ts` seam, where the log line is written before the alarm |
+| `npm run test:settingsearch` | that a setting is findable by what it DOES (the index is generated from the dialog's source) |
+| `npm run test:onestash` | that there is one Stash |
+| `npm run test:stashsummon` | that it is not on screen until asked for, and opens at the pointer's own display |
+| `npm run test:panesize` | who owns a pane's shape when several screens borrow one pty, and that a borrow whose screen went quiet expires - with a mirror's leaseless borrow, and a desk resize under a LIVE borrow, kept as the controls |
+| `npm run test:linkstate` | what a phone says when the desk stops answering, and the ordinary reconnects it must stay quiet through |
+| `npm run test:tunnel` | a URL never called up before it resolves, a hanging cloudflared settling anyway, per-platform asset names |
+| `npm run test:funnel` | which machine can be funnelled, which refusals mean "quietly use cloudflared", and that stopping SAYS so |
+| `npm run test:splitplan` | reading a plan out of whatever a headless CLI printed, and the refusals that keep a bad answer from opening panes |
+| `npm run test:gist` | the one line History puts under a closed session |
+| `npm run test:qr` | the pairing QR, by DECODING it — every version at every mask |
+| `npm run test:stash` | what the Stash may cost, search in main, an edit keeping its row |
+| `npm run test:conceal` | what the Stash may not remember: markers only, never a guess at secret SHAPES |
+| `npm run test:pipe` | the live tee; ANSI stripping across chunk boundaries |
+| `npm run test:copymode` | keyboard copy mode arithmetic |
+| `npm run test:silence` | the quiet-turn alert; an idle pane is NOT stalled |
+| `npm run test:discord` | Rich Presence against a fake Discord over a real named pipe |
+| `npm run test:voice` | dictation: which transcriber, and a spoken clip through it |
+| `npm run test:recall` | "you have asked this before", and PARITY with the canonical fingerprint |
+| `npm run test:rename` | the folder rename, on a throwaway repo |
+| `npm run test:dock` | the macOS Dock icon |
+| `npm run test:macupdate` / `test:macdownload` / `test:wedge` | replacing our own bundle, every way a download can end, and that no hung promise needs a person |
+| `npm run test:history` | what transcripts may cost |
+| `npm run test:scrollclear` | all three byte shapes of an agent's `/clear`, a sequence torn across chunks, and a control per shape |
+| `npm run test:markanchor` | that a prompt tag survives the CLI erasing its row |
+| `npm run test:quitwords` | telling a Cmd-Q from an outside kill; the load-bearing case is the false positive |
+| `npm run test:recover` | finishing a turn the transport cut in half, and the refusals |
+| `npm run test:reclaim` | closing idle panes: pressure is the trigger, a pane waiting for a person is never closed, the window is never emptied - and the rung above it, sleeping an unused pane, with all eleven refusals and the quiet pane that IS slept as the control |
+| `npm run test:capacity` | how many panes a restore starts ticked, red-proofed against the warn branch |
+| `npm run test:renderwatch` | getting a wedged renderer back: both events, the probe Chromium's own monitor cannot replace, and the four refusals that stop a watchdog reloading for ever |
+| `npm run test:whatsnew` | what a restart onto a new build may say, and the five launches on which it must say nothing (fresh install, ordinary restart, rollback, unreadable notes, no network) |
+| `npm run test:trimloss` | that lowering xterm's `scrollback` DELETES lines and raising it back restores none, which is why a trimmed pane is re-rendered from main's log |
+| `npm run test:mascot` | what the mascot may do to somebody's panes, its four silences, and that every pose it defines is drawn |
+| `npm run test:autohandoff` | moving a finished pane instead of closing it, and what the BUDGET rung may move at all (red-proofed) |
+| `npm run test:devlist` | what is serving now and which one a sentence names |
+| `npm run test:backjobs` | what a machine runs with no pane on it, plus a last block reading THIS machine's real process table |
+| `npm run test:devservers` | turning a running server back into the package.json script that starts it, and the drops |
+| `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
+| `npm run test:winshortcut` | whether a launch puts the Desktop shortcut back, and the three refusals |
+| `npm run test:winfeed` | which release the Windows dev channel may pin its feed at |
