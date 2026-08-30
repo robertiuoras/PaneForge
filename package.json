@@ -24,6 +24,7 @@
     "test:updatehold": "node scripts/update-hold-test.mjs",
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
+    "test:staleframe": "node scripts/stale-frame-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
     "test:desksnap": "node scripts/desk-snap-test.mjs",

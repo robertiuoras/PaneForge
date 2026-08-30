@@ -49,6 +49,7 @@ const TESTS = [
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
   ['choices', 'choices-test.mjs'],
+  ['staleframe', 'stale-frame-test.mjs'],
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
