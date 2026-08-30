@@ -810,6 +810,19 @@ function TerminalPane({
   renderCount.set(sessionId, (renderCount.get(sessionId) ?? 0) + 1)
   const host = useRef<HTMLDivElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
+  /**
+   * Epoch ms until which this pane is mid-autoclear handover, or 0.
+   *
+   * The window between the app typing `/clear` and the resume prompt landing. It reads as
+   * an ordinary fresh session, so on 2026-08-30 Robert typed his own question into one and
+   * the queued prompt arrived inside his turn. Main drops the prompt now; the curtain is
+   * the other half - it says what is happening and stops the keystroke being sent at all.
+   */
+  const [handoverUntil, setHandoverUntil] = useState(0)
+  // The keystroke path is attached once per session and cannot see the state, so it reads
+  // the deadline here. Same trick as `copyOnSelectRef` above.
+  const handoverRef = useRef(0)
+  handoverRef.current = handoverUntil
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
   // Null whenever this pane is drawing itself as DOM: off screen, over the context budget,
@@ -2213,6 +2226,15 @@ function TerminalPane({
     })
 
     t.onData((d) => {
+      // The curtain is up: the app is mid-handover and the resume prompt has not landed.
+      // A keystroke here is the collision this whole thing exists to stop - it would be
+      // typed into a session that is about to be handed a prompt, and it moves
+      // `lastKeyboard`, which makes main drop that prompt. So it is swallowed rather than
+      // sent, and Escape is the way out (the curtain's button does the same thing).
+      if (handoverRef.current > Date.now()) {
+        if (d === '\x1b') void api.takeOverPane(sessionId)
+        return
+      }
       pinned.current = true
       setScrolledUp(false)
       feedInput(d)
@@ -3098,6 +3120,11 @@ function TerminalPane({
       if (away) t.write(away)
     })
 
+    const offHandover = api.onPaneHandover((id, until) => {
+      if (id !== sessionId) return
+      setHandoverUntil(until > Date.now() ? until : 0)
+    })
+
     const offReset = api.onPaneReset((id) => {
       if (id !== sessionId) return
       t.reset()
@@ -3462,6 +3489,7 @@ function TerminalPane({
       off()
       offReset()
       offArmClear()
+      offHandover()
       coarse.removeEventListener('change', oneComposer)
       ro.disconnect()
       window.clearTimeout(settle)
@@ -4004,6 +4032,16 @@ function TerminalPane({
           starting up. It goes on the first byte, whether that byte is the agent's banner
           or a replayed transcript. */}
       {(blank || booting) && !mirror && <PaneBooting agent={agent} over={!blank} />}
+      {handoverUntil > 0 && (
+        <HandoverCurtain
+          until={handoverUntil}
+          onExpire={() => setHandoverUntil(0)}
+          onTakeOver={() => {
+            setHandoverUntil(0)
+            void api.takeOverPane(sessionId)
+          }}
+        />
+      )}
       {finding && (
         <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
           <input
