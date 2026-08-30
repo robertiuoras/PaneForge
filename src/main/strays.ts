@@ -46,6 +46,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { spawnDetachedNoWindow } from './consoles'
+import { spawnQuiet } from './spawnQuiet'
 
 /** How often the live tree is written down. */
 export const SAMPLE_MS = 30_000
@@ -356,15 +357,15 @@ export function trackStrays(livePanes: () => Array<{ id: string; pid: number }>)
  */
 export function reapDetached(records: StrayRecord[], delayMs: number): void {
   if (!records.length) return
-  try {
-    if (WIN) {
-      const encoded = Buffer.from(reapStraysScript(records, delayMs), 'utf16le').toString('base64')
-      spawnDetachedNoWindow('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded])
-    } else {
-      spawn('sh', ['-c', reapStraysSh(records, delayMs)], { detached: true, stdio: 'ignore' }).unref()
-    }
-  } catch {
-    /* no shell to run it in - the leak is a tidy-up, not a correctness problem */
+  if (WIN) {
+    const encoded = Buffer.from(reapStraysScript(records, delayMs), 'utf16le').toString('base64')
+    spawnDetachedNoWindow('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded])
+  } else {
+    // No shell to run it in, or no process slots left to run it with: the leak is a
+    // tidy-up, not a correctness problem. It reaches `spawnQuiet` because that failure
+    // arrives as an EVENT and the try/catch this replaces could never see it - measured
+    // 2026-08-30 as two `spawn sh EAGAIN` uncaught exceptions out of this line.
+    spawnQuiet('sh', ['-c', reapStraysSh(records, delayMs)], { detached: true, stdio: 'ignore' }, 'reap strays')
   }
 }
 

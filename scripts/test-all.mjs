@@ -53,6 +53,7 @@ const TESTS = [
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
   ['faultnotify', 'fault-notify-test.mjs'],
+  ['spawnguard', 'spawn-guard-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],

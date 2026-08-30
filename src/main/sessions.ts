@@ -79,6 +79,7 @@ import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
 import { getConfig } from './config'
+import { spawnQuiet } from './spawnQuiet'
 import type {
   Agent,
   PipeInfo,
@@ -2105,15 +2106,15 @@ export class SessionManager extends EventEmitter {
         .filter((pid) => typeof pid === 'number' && pid > 0)
         .flatMap((pid) => ['/PID', String(pid)])
       if (args.length) {
-        try {
-          spawn('taskkill', ['/F', '/T', ...args], {
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true
-          }).unref()
-        } catch {
-          /* no taskkill on PATH - the pty kill below is still the real one */
-        }
+        // No taskkill on PATH - the pty kill below is still the real one. `spawnQuiet`
+        // for the same reason as everywhere else: the failure this comment names is an
+        // EVENT, and an unlistened one takes the main process down on the way out.
+        spawnQuiet(
+          'taskkill',
+          ['/F', '/T', ...args],
+          { detached: true, stdio: 'ignore', windowsHide: true },
+          'shutdown taskkill'
+        )
       }
     }
     // Still ask node-pty: it is what releases the ConPTY handles, and it is the only

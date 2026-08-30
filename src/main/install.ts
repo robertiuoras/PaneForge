@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import * as pty from '@lydell/node-pty'
 import { which } from './which'
 import { prereqDocs, prereqFor, prereqInstall } from '../shared/agents'
+import { spawnQuiet } from './spawnQuiet'
 
 export interface RunHandle {
   /** kill the running install */
@@ -114,15 +115,15 @@ export function stopInstalls(): void {
       .filter((pid) => typeof pid === 'number' && pid > 0)
       .flatMap((pid) => ['/PID', String(pid)])
     if (args.length) {
-      try {
-        spawn('taskkill', ['/F', '/T', ...args], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        }).unref()
-      } catch {
-        /* no taskkill on PATH - the kill below is still the real one */
-      }
+      // No taskkill on PATH - the kill below is still the real one. It is `spawnQuiet`
+      // because a spawn that cannot start says so with an EVENT, so the try/catch this
+      // replaces caught nothing and the miss it named would have crashed main.
+      spawnQuiet(
+        'taskkill',
+        ['/F', '/T', ...args],
+        { detached: true, stdio: 'ignore', windowsHide: true },
+        'install taskkill'
+      )
     }
   }
   for (const p of live) {

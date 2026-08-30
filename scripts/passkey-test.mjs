@@ -625,8 +625,13 @@ ok(!server.running, 'the gate test server stopped cleanly')
   //
   // `autoclear:cancel` only ever stands a countdown DOWN. Gating it would be a lock that
   // can stop somebody keeping their own session, which is the wrong way round.
+  // `autoclear:takeover` is the same fact one step later: it stands a handover DOWN and
+  // moves `lastKeyboard`, which is what cancels the queued resume prompt. It types
+  // nothing, starts nothing and cannot reach a pty. It is also fired from the renderer by
+  // an ESC in a pane mid-handover, and that renderer IS the phone - so gating it would
+  // 423 somebody taking their own pane back from the only screen they have.
   const REVIEWED_SAFE = new Set([
-    'autoclear:cancel',
+    'autoclear:cancel', 'autoclear:takeover',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',

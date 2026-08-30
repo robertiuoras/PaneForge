@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { spawnQuiet } from './spawnQuiet'
 
 /** Enough history to cover the runs a crash loop leaves behind, and no more. */
 export const MAX_REMEMBERED = 24
@@ -101,11 +102,12 @@ function hiddenLauncher(): string {
  */
 export function spawnDetachedNoWindow(bin: string, args: string[]): void {
   const win = process.platform === 'win32'
-  spawn(win ? 'wscript.exe' : bin, win ? ['//B', '//Nologo', hiddenLauncher(), bin, ...args] : args, {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true
-  }).unref()
+  spawnQuiet(
+    win ? 'wscript.exe' : bin,
+    win ? ['//B', '//Nologo', hiddenLauncher(), bin, ...args] : args,
+    { detached: true, stdio: 'ignore', windowsHide: true },
+    'detached no-window'
+  )
 }
 
 function file(): string {

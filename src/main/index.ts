@@ -83,7 +83,7 @@ import {
   titleSuffix
 } from './profile'
 import { snapPlan } from '../shared/deskSnap'
-import { crashTestHook, installCrashGuard, onCrashReport } from './crash'
+import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
@@ -659,7 +659,10 @@ function createWindow(): void {
     createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    // A rejected openExternal is an UNHANDLED REJECTION, which crash.ts then records as a
+    // fault: four `Failed to open URL` lines in paneforge-errors.log came from these two
+    // calls. There is nothing to do about a link the OS would not open.
+    void shell.openExternal(url).catch((err) => logProblem('open url', String(err)))
     return { action: 'deny' }
   })
   // The menu is gone, so devtools needs its own key.
@@ -2751,7 +2754,9 @@ function applyShelfHotkey(cfg: Config): void {
 ipcMain.on('shell:external', (_e, url: string) => {
   // Only ever open real web links: a file:// or custom scheme from the renderer
   // would be a way to launch arbitrary local programs.
-  if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+  if (/^https?:\/\//i.test(url)) {
+    void shell.openExternal(url).catch((err) => logProblem('open url', String(err)))
+  }
 })
 
 // --- elevation -------------------------------------------------------------

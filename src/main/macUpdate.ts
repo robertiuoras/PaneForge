@@ -38,6 +38,7 @@ import {
 import { get } from 'node:https'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { spawnQuiet } from './spawnQuiet'
 
 const OWNER = 'robertiuoras'
 const REPO = 'PaneForge'
@@ -446,8 +447,10 @@ ${relaunch ? `open -g -a ${q(target)}` : 'exit 0'}
 `,
     { mode: 0o755 }
   )
-  const child = spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' })
-  child.unref()
+  // A swap that cannot even start must not become an uncaught exception on the way out of
+  // the app - the quit is already in flight and there is nothing left to show a person.
+  const child = spawnQuiet('/bin/sh', [script], { detached: true, stdio: 'ignore' }, 'mac swap')
+  if (!child) return false
   log('mac swap started', stagedFor, `pid ${child.pid}`)
   return true
 }
