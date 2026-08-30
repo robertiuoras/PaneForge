@@ -116,7 +116,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
-import { sleepWords } from '../../shared/sleep'
+import { keptWords, sleepWords } from '../../shared/sleep'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
@@ -4659,13 +4659,17 @@ export default function App(): JSX.Element {
                         <button
                           type="button"
                           className="chip kept"
-                          title="This pane is never closed for being idle. Press to put it back on the clock."
+                          title={
+                            s.asleep
+                              ? 'This pane is never closed for being idle - its card stays even while it sleeps. Press to put it back on the clock.'
+                              : 'This pane is never closed for being idle. Press to put it back on the clock.'
+                          }
                           onClick={(e) => {
                             e.stopPropagation()
                             togglePin(s.id)
                           }}
                         >
-                          kept open
+                          {keptWords(Boolean(s.asleep))}
                         </button>
                       ) : null}
                       {/* A pane on its way out says so, and says it here for the same reason

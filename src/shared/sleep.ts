@@ -79,6 +79,24 @@ export function sleepRefusal(p: SleepPane): string {
   return ''
 }
 
+/**
+ * What the PIN says, given what else the card is already saying.
+ *
+ * `kept open` is the reading for a pane that is running: it is the only thing left on the
+ * card about the idle clock, and it means "this one is never closed for being idle". On a
+ * SLEEPING pane it reads as a flat contradiction - the card said `kept open` on one line
+ * and `asleep 2h 36m` on the next (reported 2026-08-30), and the word people take out of
+ * `open` is "still running", which is the one thing a slept pane is not.
+ *
+ * The pin still does something there - the pressure sweep and the idle clock both refuse a
+ * pinned pane, so the CARD is never taken away - so the chip stays and only the word
+ * narrows. `kept` beside `asleep 2h 36m` is two facts; `kept open` beside it was two
+ * readings that disagree.
+ */
+export function keptWords(asleep: boolean): string {
+  return asleep ? 'kept' : 'kept open'
+}
+
 /** What the card says where its clock would be. */
 export function sleepWords(asleep: number, now: number): string {
   const mins = Math.max(0, Math.floor((now - asleep) / 60_000))

@@ -35,7 +35,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { canSleep, sleepRefusal, sleepWords } = require(out)
+const { canSleep, keptWords, sleepRefusal, sleepWords } = require(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -119,5 +119,24 @@ ok(
 const wake = sessions.slice(sessions.indexOf('  wake(id: string)'), sessions.indexOf('   * A pane\'s folder no longer exists'))
 ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
+
+// ---------------------------------------------------------------------------
+// The pin, on a card that is already saying something
+
+// `kept open` above `asleep 2h 36m` was two readings that disagree: the word people take
+// out of `open` is "still running", and a slept pane is exactly not that (reported
+// 2026-08-30). The pin still means something there - both sweeps refuse a pinned pane, so
+// the CARD never goes - so only the word narrows.
+is(keptWords(false), 'kept open', 'a running pinned pane says what the pin does')
+is(keptWords(true), 'kept', 'a sleeping one does not claim to be open')
+ok(!keptWords(true).includes('open'), 'the contradiction itself is the assertion')
+
+const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+ok(/\{keptWords\(Boolean\(s\.asleep\)\)\}/.test(app), 'the card asks keptWords rather than spelling it')
+is(
+  /^\s+kept open$/m.test(app),
+  false,
+  'and no literal `kept open` is left behind to go stale beside it'
+)
 
 console.log(`sleep: ${checks} checks passed`)
