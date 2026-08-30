@@ -34,6 +34,9 @@ process.env.PF_PROMPT_POLL_MS ??= '40'
 process.env.PF_PROMPT_ENTER_MS ??= '60'
 process.env.PF_PROMPT_CONFIRM_MS ??= '200'
 process.env.PF_PROMPT_WAIT_MAX_MS ??= '5000'
+// Pinned here rather than read from the module: the SHIPPED budget is 6, and the cap
+// assertion below is about the cap existing at all, not about the number.
+process.env.PF_PROMPT_ENTER_TRIES ??= '3'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-prompt-submit-'))
@@ -302,9 +305,40 @@ rmSync(work, { recursive: true, force: true })
   const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
-  ok(/Date\.now\(\) >= deadline\) return settle\(\)/.test(fn), 'and the wait must still be bounded')
+  ok(/Date\.now\(\) >= deadline\)/.test(fn), 'and the wait must still be bounded')
   ok(!/if \(still && idle\(still\)\) submit\(tries \+ 1\)\s*\n\s*else settle\(\)/.test(fn),
     'the old settle-on-busy branch is the bug and must be gone')
+
+  // SOURCE: every exit is written DOWN.
+  //
+  // 2026-08-30, pane s6-mtfk52fr: an autoclear typed its resume prompt and it was never
+  // submitted. Which of the five exits took it could not be established, because all of
+  // them reported through `console.info` - a stdout nobody keeps when the app is launched
+  // from the dock. This is the third incident in this function whose cause had to be
+  // guessed at; `acLog` is the durable record the arm path already writes to.
+  const qp = src.slice(src.indexOf('private queuePrompt('), src.indexOf('private sweepRecover('))
+  ok(!/console\.info/.test(qp), 'no exit from queuePrompt reports to a stdout nobody keeps')
+  ok((qp.match(/acLog\(/g) || []).length >= 6, 'every branch leaves a line in the durable log',
+    String((qp.match(/acLog\(/g) || []).length))
+  ok(/UNSENT/.test(qp), 'and a prompt left in the box says so in those words')
+
+  // SOURCE: a `/clear` restarts the CLI, so the resume prompt gets its own budget.
+  //
+  // 45s is a fair ceiling on a CLI that is merely booting. It is not one on a CLI that
+  // boots and then runs this desk's whole SessionStart hook chain, which is what a clear
+  // produces - and the failure at the end of that budget is the worst one here: the
+  // context is already gone and the prompt that would have carried the work forward is
+  // sitting unsent in the box.
+  ok(/CLEAR_RESUME_BUDGET_MS = ms\('PF_CLEAR_RESUME_BUDGET_MS', (\d[\d_]*)\)/.test(src),
+    'the clear resume has a budget of its own')
+  const clearBudget = Number(RegExp.$1.replace(/_/g, ''))
+  const launchBudget = Number((src.match(/PROMPT_WAIT_MAX_MS = ms\('PF_PROMPT_WAIT_MAX_MS', (\d[\d_]*)\)/) || [])[1]?.replace(/_/g, '') || 0)
+  ok(clearBudget > launchBudget, 'and it is longer than a launch prompt gets',
+    `${clearBudget} vs ${launchBudget}`)
+  ok(/queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS,[\s\S]{0,80}?CLEAR_RESUME_BUDGET_MS\)/.test(src),
+    'the autoclear resume is the call that uses it')
+  ok(/setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(src),
+    'and the curtain outlives that wait, so the pane says a prompt is still coming')
 }
 
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
