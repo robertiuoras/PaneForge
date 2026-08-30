@@ -24,7 +24,7 @@ import { laneOfCheckout } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, quietEnoughToArm, type DropReason } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -2251,6 +2251,26 @@ export class SessionManager extends EventEmitter {
   private queuePrompt(id: string, prompt?: string, extraDelay = 0, startMs = PROMPT_START_MS): void {
     if (!prompt) return
     const deadline = Date.now() + PROMPT_WAIT_MAX_MS + Math.max(0, extraDelay)
+    // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
+    // an autoclear's own `/clear\r` goes through `write` and bumps it. Anything later is a
+    // person submitting into the pane, and `queuedPromptDecision` drops the queued prompt
+    // rather than delivering it into the turn that person just started. Our own writes
+    // re-stamp the mark so the confirm returns never read as somebody else.
+    let mark = this.sessions.get(id)?.meta.lastKeyboard ?? Date.now()
+    const ourWrite = (data: string): void => {
+      this.write(id, data)
+      const after = this.sessions.get(id)
+      if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
+    }
+    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict =>
+      queuedPromptDecision({
+        exists: true,
+        lastKeyboard: live.meta.lastKeyboard,
+        mark,
+        drafting: !!live.typed && !!live.typed.trim(),
+        composerIdle,
+        expired: Date.now() >= deadline
+      })
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
     // fixed tail reports a pane as working long after it went quiet at its composer
@@ -2271,7 +2291,13 @@ export class SessionManager extends EventEmitter {
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return
-      this.write(id, '\r')
+      // A confirm return is still a keystroke into a live CLI. If somebody has sent their
+      // own message since the prompt went in, that return would land on THEIR turn.
+      if ((live.meta.lastKeyboard ?? 0) > mark) {
+        console.info(`queuePrompt: ${id} submit dropped - the pane was used by hand`)
+        return
+      }
+      ourWrite('\r')
       if (tries + 1 >= PROMPT_ENTER_TRIES) return
       setTimeout(() => {
         const still = this.sessions.get(id)
@@ -2285,11 +2311,20 @@ export class SessionManager extends EventEmitter {
     const tick = (): void => {
       const live = this.sessions.get(id)
       if (!live) return
-      if (!idle(live) && Date.now() < deadline) {
+      const what = verdict(live, idle(live))
+      if (what === 'wait') {
         setTimeout(tick, PROMPT_POLL_MS)
         return
       }
-      this.write(id, prompt)
+      if (what === 'abandon') {
+        console.info(
+          `queuePrompt: ${id} queued prompt dropped - ${
+            (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
+          }`
+        )
+        return
+      }
+      ourWrite(prompt)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))

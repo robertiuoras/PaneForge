@@ -48,8 +48,40 @@ buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: '
 const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
-  WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS } =
+  WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
   await import(pathToFileURL(file).href)
+
+console.log('a queued resume prompt never lands in somebody ELSE\'s turn')
+{
+  // 2026-08-30, pane s4-mtednh9i: the 02:12 autoclear cleared correctly, the SessionStart
+  // hook chain kept the pane painting for seconds, Robert typed his own question into the
+  // fresh session, and the resume prompt was then delivered INTO that turn. `mark` is
+  // lastKeyboard as it stood when the prompt was queued; anything later is a person.
+  const base = { exists: true, mark: 1000, drafting: false, composerIdle: true, expired: false }
+  ok('an idle composer gets the prompt', queuedPromptDecision({ ...base, lastKeyboard: 1000 }) === 'type')
+  ok('our own writes do not read as a person', queuedPromptDecision({ ...base, lastKeyboard: 999 }) === 'type')
+  ok(
+    'a human submit since the queue DROPS the prompt',
+    queuedPromptDecision({ ...base, lastKeyboard: 1001 }) === 'abandon'
+  )
+  ok(
+    'and the deadline does not override that',
+    queuedPromptDecision({ ...base, lastKeyboard: 1001, expired: true, composerIdle: false }) === 'abandon'
+  )
+  ok('a pane that went away is dropped', queuedPromptDecision({ ...base, exists: false, lastKeyboard: 1000 }) === 'abandon')
+  // An unsent line waits, then is abandoned - never pasted onto the end of it.
+  ok('an unsent draft waits', queuedPromptDecision({ ...base, lastKeyboard: 1000, drafting: true }) === 'wait')
+  ok(
+    'and is abandoned at the deadline, not typed over',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, drafting: true, expired: true }) === 'abandon'
+  )
+  // The long-standing rescue: a CLI whose footer never goes quiet still gets the prompt.
+  ok('a busy pane waits', queuedPromptDecision({ ...base, lastKeyboard: 1000, composerIdle: false }) === 'wait')
+  ok(
+    'and is typed into at the deadline',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, composerIdle: false, expired: true }) === 'type'
+  )
+}
 
 console.log('a busy pane WAITS, it is not refused')
 {

@@ -4119,8 +4119,14 @@ export default function App(): JSX.Element {
         // every time this runs - so an exact comparison republished on every session
         // broadcast, and `setClosingAt` emitting one in response made that a loop with no
         // floor under it. See shared/reclaim.ts.
-        if (sameDeadline(closingRef.current[s.id], at, now) && keptRef.current[s.id] === held)
-          continue
+        const unchanged = (window as unknown as { __pfDeadlineExact?: boolean }).__pfDeadlineExact
+          ? closingRef.current[s.id] === at
+          : sameDeadline(closingRef.current[s.id], at, now)
+        if (unchanged && keptRef.current[s.id] === held) continue
+        // What this publisher actually costs. Every write here is a main-process session
+        // broadcast, so a number that climbs while nothing changes is the loop above.
+        const w = window as unknown as { __pfClosePublish?: number }
+        w.__pfClosePublish = (w.__pfClosePublish ?? 0) + 1
         closingRef.current[s.id] = at
         keptRef.current[s.id] = held
         api.setClosing(s.id, at ?? null, held)

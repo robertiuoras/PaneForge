@@ -390,3 +390,55 @@ export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' 
   // away a clear that is genuinely due; clearing would eat the draft.
   return why === 'working' || why === 'drafting' ? 'queue' : 'refuse'
 }
+
+/**
+ * What a QUEUED prompt should do on this poll: type it, wait, or give up on it.
+ *
+ * `queuePrompt` waits for an idle composer before typing, and until 2026-08-30 that was
+ * the ONLY thing it read. It could not tell a composer that is idle because the CLI has
+ * finished booting from one that is idle because a PERSON has just sent their own
+ * message into the fresh session - so the resume prompt was typed anyway, arriving as a
+ * second message in the middle of somebody else's turn.
+ *
+ * Measured that morning on pane s4-mtednh9i (assistant): the 02:12 autoclear armed
+ * correctly, `/clear` landed, the SessionStart hook chain (memory symlinks, handoff
+ * injection, superpowers) kept the pane painting for several seconds, Robert read the
+ * screen and typed his own question, and `Continue the handoff: ...` was then delivered
+ * INTO that turn. From the desk it reads as "autoclear broke again": the clear worked
+ * and the resume prompt hijacked the next turn instead of owning the first one.
+ *
+ * `mark` is `lastKeyboard` as it stood when the prompt was queued - after the app's own
+ * `/clear` write, which bumps it. Anything later is a human submit, and a human submit
+ * means the fresh session already has work: the queued prompt is stale and is dropped,
+ * not typed. The handoff is still injected at SessionStart, so nothing is lost by
+ * dropping it.
+ *
+ * `drafting` is a half-typed line in the composer, the same state `dropFor` refuses to
+ * type over. It waits while there is time left and is ABANDONED at the deadline rather
+ * than pasted onto the end of somebody's unsent sentence.
+ */
+export type QueuedPromptVerdict = 'type' | 'wait' | 'abandon'
+
+export function queuedPromptDecision(p: {
+  /** The pane still exists. */
+  exists: boolean
+  /** `meta.lastKeyboard` right now. */
+  lastKeyboard: number | null | undefined
+  /** `meta.lastKeyboard` as it stood when this prompt was queued. */
+  mark: number
+  /** There is an unsent line in the composer. */
+  drafting: boolean
+  /** The pane has been quiet long enough and is not painting a busy footer. */
+  composerIdle: boolean
+  /** The wait budget has run out. */
+  expired: boolean
+}): QueuedPromptVerdict {
+  if (!p.exists) return 'abandon'
+  if (typeof p.lastKeyboard === 'number' && p.lastKeyboard > p.mark) return 'abandon'
+  if (p.drafting) return p.expired ? 'abandon' : 'wait'
+  if (p.composerIdle) return 'type'
+  // Expiry still types into a merely-busy pane: that is the long-standing rescue for a
+  // CLI whose footer never goes quiet, and the pty queues it. It is only the two cases
+  // above - a person's message, a person's draft - that the deadline must not override.
+  return p.expired ? 'type' : 'wait'
+}
