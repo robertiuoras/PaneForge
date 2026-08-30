@@ -73,3 +73,53 @@ export function stepsWord(open: number): string | null {
   if (!open) return null
   return open === 1 ? '1 step open' : `${open} steps open`
 }
+
+/** A project directory as `~/.claude/projects` names it. */
+export function slugFor(cwd: string): string {
+  return String(cwd || '').replace(/[^A-Za-z0-9-]/g, '-')
+}
+
+/** A pane's own handoff slot. A pane id that is not a plain name gets none, never a path. */
+export function paneSlot(id: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(String(id || '')) ? `.pane-${id}` : ''
+}
+
+/**
+ * Every place this pane's handoff could be, in the order the hook looks.
+ *
+ * `symlinked` answers whether a project directory is a symlink - lane worktrees share ONE
+ * memory folder through one, so `App-a` and `App` write into the same directory and need a
+ * `.<checkout>` slot to tell their handoffs apart. It is injected because this file may not
+ * touch the disk: the renderer imports it for `stepsWord`.
+ */
+export function handoffCandidates(
+  cwd: string,
+  paneId: string,
+  home: string,
+  symlinked: (path: string) => boolean
+): string[] {
+  const dir = String(cwd || '')
+  const parts = dir.split(/[\\/]/)
+  const base = parts[parts.length - 1] ?? ''
+  const out: string[] = []
+  const add = (proj: string, name: string): void => {
+    const p = `${home}/.claude/projects/${proj}/memory/${name}`
+    if (!out.includes(p)) out.push(p)
+  }
+  const cwdSlot = (d: string): string =>
+    symlinked(`${home}/.claude/projects/${slugFor(d)}`)
+      ? '.' + (d.split(/[\\/]/).pop() ?? '')
+      : ''
+  const proj = slugFor(dir)
+  const cslot = cwdSlot(dir)
+  add(proj, `session-handoff${paneSlot(paneId) || cslot}.md`)
+  if (cslot) add(proj, `session-handoff${cslot}.md`)
+  add(proj, 'session-handoff.md')
+  const main = dir.replace(/-[a-z]$/, '')
+  if (main !== dir) {
+    if (paneSlot(paneId)) add(slugFor(main), `session-handoff${paneSlot(paneId)}.md`)
+    add(slugFor(main), `session-handoff.${base}.md`)
+    add(slugFor(main), 'session-handoff.md')
+  }
+  return out
+}

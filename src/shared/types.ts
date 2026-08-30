@@ -337,6 +337,19 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * How many steps this pane's handoff still lists as open, or undefined when it has no
+   * handoff at all.
+   *
+   * `0` and `undefined` are DIFFERENT answers and the difference is the whole point: `0`
+   * is a session that wrote `## Next steps` / `None` and is finished, `undefined` is a
+   * pane that has never written one and about which nothing is known. A chip that read
+   * them the same would mark every ordinary pane as done.
+   *
+   * Like `backJob` it ranks and decorates and reaches no BUSY reading - a handoff is a
+   * file somebody wrote minutes ago, never evidence about what the pty is doing now.
+   */
+  handoffOpen?: number
+  /**
    * Epoch ms this pane was put to sleep: the pty is gone and the card is not.
    *
    * A sleeping pane carries `status: 'exited'` as well, deliberately - every guard in

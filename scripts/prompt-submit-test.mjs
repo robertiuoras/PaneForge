@@ -17,6 +17,7 @@
 //
 //   node scripts/prompt-submit-test.mjs
 
+import { readFileSync } from 'node:fs'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
@@ -287,5 +288,24 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 
 manager.killAll?.()
 rmSync(work, { recursive: true, force: true })
+
+// ---------------------------------------------------------------------------
+// SOURCE: a busy pane is waited out, never counted as a submit.
+//
+// 2026-08-30, pane s7-mtfk52fv: an autoclear typed its resume prompt, sent one return
+// while the freshly restarted CLI was still painting its banner and hook chain, and the
+// confirm branch read that paint as "it went in" and settled. The pane sat at a composer
+// holding a fully typed prompt nobody had sent, and the app's own history log ended at
+// that write. The proof a return landed is a TURN, not output.
+{
+  const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
+  const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+  ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
+  ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
+  ok(/Date\.now\(\) >= deadline\) return settle\(\)/.test(fn), 'and the wait must still be bounded')
+  ok(!/if \(still && idle\(still\)\) submit\(tries \+ 1\)\s*\n\s*else settle\(\)/.test(fn),
+    'the old settle-on-busy branch is the bug and must be gone')
+}
+
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
 process.exit(fail.length ? 1 : 0)

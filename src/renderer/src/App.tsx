@@ -120,6 +120,7 @@ import { keptWords, sleepWords } from '../../shared/sleep'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
+import { stepsWord } from '../../shared/handoffSteps'
 import { describePlace } from '@shared/place'
 import { applyTheme, terminalTheme } from './theme'
 import { keyLabel, modKey, isMac } from './platform'
@@ -4772,6 +4773,23 @@ export default function App(): JSX.Element {
                       </span>
                     ) : null
                   })()}
+                  {/* What this pane's HANDOFF says is left, which nothing on the desk said.
+                      A pane past the context line writes one, and its `## Next steps` is
+                      the only place that answers "is there work left in there" - the
+                      screen cannot, and neither can the busy read. It is drawn ONLY for a
+                      pane with steps open: `handoffOpen === 0` is a finished session that
+                      wrote `None`, and `undefined` is a pane that never wrote a handoff at
+                      all, and a chip for either is a chip on almost every card. Static,
+                      unpressable, no clock - the number changes when a session rewrites
+                      the file, which is minutes apart. */}
+                  {s.handoffOpen ? (
+                    <span
+                      className="chip"
+                      title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on. An automatic /clear fires only while that is true - a handoff saying None is left alone.`}
+                    >
+                      {stepsWord(s.handoffOpen)}
+                    </span>
+                  ) : null}
                   {/* Which project this pane is in, which the card never said.
                       The title is whatever the pane was named - `basename(cwd)` by
                       default, which for a worktree copy is `PaneForge-w2`, and anything

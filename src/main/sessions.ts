@@ -17,6 +17,16 @@ import { memoryPrelude } from './board'
 import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
+import { forgetHandoff, handoffFor } from './handoffSteps'
+
+/**
+ * The refusal a caller must NOT override.
+ *
+ * `pane-clear.mjs` treats an unknown refusal as overridable and types the clear itself, so
+ * this string is a contract with it: it is in that script's `overridable` deny-list beside
+ * a human saying no.
+ */
+export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
@@ -1837,20 +1847,40 @@ export class SessionManager extends EventEmitter {
       this.autoClearArmTimers.set(id, t)
       return { ok: true, reason: 'waiting for the pane to settle' }
     }
+    // The steps that reached here are a PHOTOGRAPH, and everything above this line is a
+    // delay: the Stop hook decides inside the turn it ends, `armDecision` queues a mid-turn
+    // pane into `autoClearPending`, and the quiet wait above re-enters minutes later. The
+    // session works through all of it and routinely finishes the very steps this clear
+    // exists to continue - measured 2026-08-30, `clear ... steps=3` armed a countdown 2.5
+    // minutes after the session had done all three and rewritten its handoff to `None`.
+    // So the file is re-read at the LAST moment, and the card lists what it says now.
+    //
+    // A `--no-resume` cost clear is exempt: it carries no steps by design. And only a
+    // handoff that EXISTS may refuse - `path: null` is a pane that never wrote one, which
+    // is not evidence the work is done.
+    const plan = { ...ask }
+    if (!plan.noResume) {
+      const hand = handoffFor(s.meta.cwd, id)
+      if (hand.path && hand.open === 0) {
+        acLog(`${id} refused: ${NOTHING_OPEN} (${hand.path})`)
+        return { ok: false, reason: NOTHING_OPEN }
+      }
+      if (hand.path && hand.steps.length) plan.steps = hand.steps
+    }
     this.cancelAutoClear(id, 'cancelled')
-    const at = Date.now() + ask.seconds * 1000
+    const at = Date.now() + plan.seconds * 1000
     s.meta.autoClearAt = at
-    s.meta.autoClearPrompt = ask.prompt
-    s.meta.autoClearSteps = ask.steps
+    s.meta.autoClearPrompt = plan.prompt
+    s.meta.autoClearSteps = plan.steps
     // Decided HERE, once, and typed verbatim when the timer fires. The command is the
     // CLI's own (`/new` in Codex), and a pane's agent cannot change under an armed
     // countdown, so there is nothing to gain from re-deriving it at the last moment - and
     // one thing to lose, which is the two copies of one contract this feature was buried
     // by the first time.
-    s.meta.autoClearChunks = clearChunks(ask.prompt, ask.command ?? '/clear')
+    s.meta.autoClearChunks = clearChunks(plan.prompt, plan.command ?? '/clear')
     if (ask.noResume) s.meta.autoClearNoResume = true
     if (ask.tokens) s.meta.autoClearTokens = ask.tokens
-    acLog(`${id} armed: fires at ${new Date(at).toISOString()} (${ask.seconds}s, ${JSON.stringify(s.meta.autoClearChunks[0])})`)
+    acLog(`${id} armed: fires at ${new Date(at).toISOString()} (${plan.seconds}s, ${JSON.stringify(s.meta.autoClearChunks[0])})`)
     // The timer body is a named function rather than an inline closure because it can now
     // re-arm ITSELF: an unsent line in the box makes the clear wait instead of standing
     // down, and waiting means another timer against a deadline that has moved on.
@@ -1955,7 +1985,7 @@ export class SessionManager extends EventEmitter {
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
     }
-    const timer = setTimeout(() => fire(at), ask.seconds * 1000)
+    const timer = setTimeout(() => fire(at), plan.seconds * 1000)
     timer.unref?.()
     this.autoClearTimers.set(id, timer)
     this.emitSessions()
@@ -2065,6 +2095,7 @@ export class SessionManager extends EventEmitter {
     recordEnd(id, resumeIdFor(id))
     forgetSession(id)
     this.sessions.delete(id)
+    forgetHandoff(id)
     this.emitSessions()
   }
 
@@ -2363,15 +2394,34 @@ export class SessionManager extends EventEmitter {
         return settle()
       }
       ourWrite('\r')
-      if (tries + 1 >= PROMPT_ENTER_TRIES) return settle()
-      setTimeout(() => {
-        const still = this.sessions.get(id)
-        // Work of any kind means it went in: the agent is answering, or the CLI is at
-        // least painting something back. A pane still sitting at an idle composer has
-        // eaten the return, so send another one.
-        if (still && idle(still)) submit(tries + 1)
-        else settle()
-      }, PROMPT_CONFIRM_MS)
+      const typedAt = Date.now()
+      const confirm = (): void => {
+        setTimeout(() => {
+          const still = this.sessions.get(id)
+          if (!still) return settle()
+          // A TURN is the only proof the return went in. `runSince` is set when one starts
+          // - by this submit or by the agent's own busy footer - so a value newer than the
+          // return is the answer being written.
+          if ((still.meta.runSince ?? 0) >= typedAt) return settle()
+          if ((still.meta.lastKeyboard ?? 0) > mark) return settle()
+          if (!idle(still)) {
+            // PAINTING IS NOT PROGRESS, and reading it as progress is what stranded pane
+            // s7-mtfk52fv on 2026-08-30: `/clear` restarts the CLI, its banner and hook
+            // chain paint for seconds, and the one return this sent during that window was
+            // swallowed. The old branch settled here - "something came back, so it must
+            // have gone in" - and the pane sat at a composer holding a fully typed prompt
+            // nobody had sent, with the app's own log ending at that write. So a busy pane
+            // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
+            // the deadline ends this.
+            if (Date.now() >= deadline) return settle()
+            return confirm()
+          }
+          // Idle at the composer with no turn behind it: the return was eaten. Send another.
+          if (tries + 1 >= PROMPT_ENTER_TRIES) return settle()
+          submit(tries + 1)
+        }, PROMPT_CONFIRM_MS)
+      }
+      confirm()
     }
 
     const tick = (): void => {
@@ -2657,6 +2707,16 @@ export class SessionManager extends EventEmitter {
       if ((back?.label ?? null) !== (meta.backJob ?? null)) {
         meta.backJob = back?.label
         meta.backJobSince = back?.since
+        changed = true
+      }
+      // ...and what this pane's HANDOFF says is left. Same seam and the same contract as
+      // `backJob`: it decorates and ranks nothing that could close a pane. It is cached for
+      // CACHE_MS inside `handoffFor`, so the sweep is a Map lookup on all but one tick in
+      // thirty. A pane with no handoff answers `undefined`, which is not `0`.
+      const hand = handoffFor(meta.cwd, meta.id, now)
+      const open = hand.path ? hand.open : undefined
+      if (open !== meta.handoffOpen) {
+        meta.handoffOpen = open
         changed = true
       }
       const busyOnScreen = live.busyUntil > now || jobName !== null
