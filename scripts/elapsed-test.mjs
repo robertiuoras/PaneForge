@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 
 // The real source, through node's type stripping - see usage-test.mjs for why.
-const { formatElapsed, stepFor, bucketOf, kb, whenWords, DAY_MS } = await import(
+const { formatElapsed, stepFor, bucketOf, kb, whenWords, nextTickMs, DAY_MS } = await import(
   'file://' + join(root, 'src', 'shared', 'elapsed.ts').replace(/\\/g, '/')
 )
 
@@ -145,8 +145,6 @@ const opened = Date.UTC(2026, 7, 24, 9, 0, 30) // :30 past, on purpose
   eq('and so does a timestamp from the future', whenWords(NOW + 60_000, NOW), new Date(NOW + 60_000).toLocaleString())
 }
 
-console.log(failed ? `\n${failed} failed` : '\nall passed')
-process.exit(failed ? 1 : 0)
 
 // ---- nextTickMs: a countdown's second belongs to the DEADLINE ------------------
 // The bug this pins: MoveSoon armed a plain setInterval(1000) at mount, so every
@@ -165,5 +163,8 @@ process.exit(failed ? 1 : 0)
   // A timer of 0 is a spin: at and past the deadline it must be the full step.
   eq('at the deadline it returns a step, never 0', nextTickMs(D, D), 1000)
   eq('past the deadline it still returns a positive step', nextTickMs(D, D + 2_500), 500)
-  eq(nextTickMs(D, D - 60_000, 60_000), 60_000, 'a minute step works the same way')
+  eq('a minute step works the same way', nextTickMs(D, D - 60_000, 60_000), 60_000)
 }
+
+console.log(failed ? `\n${failed} failed` : '\nall passed')
+process.exit(failed ? 1 : 0)
