@@ -4119,12 +4119,13 @@ export default function App(): JSX.Element {
         // every time this runs - so an exact comparison republished on every session
         // broadcast, and `setClosingAt` emitting one in response made that a loop with no
         // floor under it. See shared/reclaim.ts.
-        const unchanged = (window as unknown as { __pfDeadlineExact?: boolean }).__pfDeadlineExact
-          ? closingRef.current[s.id] === at
-          : sameDeadline(closingRef.current[s.id], at, now)
-        if (unchanged && keptRef.current[s.id] === held) continue
-        // What this publisher actually costs. Every write here is a main-process session
-        // broadcast, so a number that climbs while nothing changes is the loop above.
+        if (sameDeadline(closingRef.current[s.id], at, now) && keptRef.current[s.id] === held)
+          continue
+        // What this publisher actually costs, because nothing else could say. Every write
+        // below is a main-process session broadcast to this window and every paired phone,
+        // so a number that climbs while the desk is quiet IS the loop `sameDeadline`
+        // exists to stop: measured 3138 writes and 2061 whole-window renders in five
+        // seconds with an `===` here, against 0 and 0 with it.
         const w = window as unknown as { __pfClosePublish?: number }
         w.__pfClosePublish = (w.__pfClosePublish ?? 0) + 1
         closingRef.current[s.id] = at
