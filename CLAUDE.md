@@ -1682,6 +1682,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go |
 | `npm run test:promptbox` | telling a CLI's drawn input box from a zsh prompt, a diff and a markdown table |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt sends it, and never once working |
+| `npm run test:staleframe` | when a pane may ask its CLI to repaint itself: a stranded working line recovered, with a real 20-minute ticking footer kept as the control that must be nudged ZERO times |
 | `npm run test:choices` | reading a live question off a frame, two real shapes, the negatives, and that the arrows really are escape bytes |
 | `npm run test:askclick` | that a click on a pane holding a question types NOTHING (needs a window) |
 | `npm run test:askrender` | the countdown drawn in the pane, on the card, ticking — and what arrowing costs every OTHER pane (needs a window) |
