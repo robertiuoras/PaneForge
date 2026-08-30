@@ -434,6 +434,7 @@ export function queuedPromptDecision(p: {
   expired: boolean
 }): QueuedPromptVerdict {
   if (!p.exists) return 'abandon'
+  if (typeof p.lastKeyboard === 'number' && p.lastKeyboard > p.mark) return 'abandon'
   if (p.drafting) return p.expired ? 'abandon' : 'wait'
   if (p.composerIdle) return 'type'
   // Expiry still types into a merely-busy pane: that is the long-standing rescue for a
