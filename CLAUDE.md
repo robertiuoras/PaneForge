@@ -1168,6 +1168,45 @@ default wait (Settings → "Answer an agent's question for me when the answer is
   the new defaults once, read off the **saved** config, never off the merge.
 - `npm run test:autoanswer` (weight in the negatives) and `npm run test:askrender`.
 
+## A pane says what its handoff has left
+
+A pane past the context line writes a handoff, and its `## Next steps` is the only place
+that answers "is there work left in there" - the screen cannot, the busy read cannot, and
+until now neither could the app. `shared/handoffSteps.ts` is the reading (a MIRROR of the
+judgement in `claude-memory/claude-config/autoclear.mjs`, the way `promptKey.ts` mirrors the
+prompt fingerprint), `main/handoffSteps.ts` is the disk and the cache.
+`npm run test:handoffsteps`, whose parity half SKIPS OUT LOUD when the canonical file is not
+on the machine.
+
+- **`0` and `undefined` are different answers.** `0` is a session that wrote `None` and is
+  finished; `undefined` is a pane that never wrote a handoff and about which nothing is
+  known. The card's chip is drawn for neither - a chip for both is a chip on every card.
+- **It decorates and it REFUSES; it reaches no busy reading.** Same contract as
+  `Session.backJob`: a handoff is a file somebody wrote minutes ago, never evidence about
+  what the pty is doing now.
+- **The countdown re-reads it at the last moment.** Everything in front of `armAutoClear`
+  is a delay - the Stop hook decides inside the turn it ends, `armDecision` queues a
+  mid-turn pane, and the quiet wait re-enters minutes later - and the session works through
+  all of it. Measured 2026-08-30: a clear armed a countdown carrying three steps 2.5 minutes
+  after the session had finished all three and rewritten its handoff to `None`. So the file
+  is read again at the arm, the card lists what it says NOW, and a handoff with nothing open
+  refuses with `NOTHING_OPEN` - a string `pane-clear.mjs` carries in its non-overridable
+  list beside a human saying no, or its fallback would type the clear the app just refused.
+  A `--no-resume` cost clear is exempt, and only a handoff that EXISTS may refuse.
+- Cached 30s per pane, so the sessions sweep is a Map lookup on all but one tick in thirty.
+
+## ...and the return that submits a queued prompt is not given up on
+
+`queuePrompt` waits for an idle composer, types, and sends the return as its own write. The
+proof that return LANDED is a TURN (`runSince` newer than the write), never output: a
+`/clear` restarts the CLI, and its banner and hook chain paint for seconds. The old confirm
+branch read that paint as a submit and settled, so pane `s7-mtfk52fv` sat at a composer
+holding a fully typed `Continue the handoff: ...` that nobody had sent, with the pane's own
+history log ending at that write (2026-08-30 09:48:03). A busy pane is now WAITED OUT to the
+same deadline rather than counted as a submit; an idle composer with no turn behind it still
+gets another return, up to `PROMPT_ENTER_TRIES`. Source-asserted in
+`npm run test:promptsubmit`, with the old settle-on-busy branch named as the bug.
+
 ## A pane that is still starting says so
 
 `sessions:start` returns in 16-40ms; the first byte out of the pty arrives at ~0.5s warm and
@@ -1683,6 +1722,7 @@ Each row says what its test PINS; the reasoning is in `docs/design-notes.md`.
 | `npm run test:cursorclick` | the keys a click sends, the clicks refused, and that a BARE click emits no vertical arrow |
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go |
 | `npm run test:promptbox` | telling a CLI's drawn input box from a zsh prompt, a diff and a markdown table |
+| `npm run test:handoffsteps` | what a pane's handoff says is left, its two refusals, and PARITY with the hook that decides the same thing inside the session |
 | `npm run test:promptsubmit` | that a pane opened WITH a prompt sends it, and never once working |
 | `npm run test:staleframe` | when a pane may ask its CLI to repaint itself: a stranded working line recovered, with a real 20-minute ticking footer kept as the control that must be nudged ZERO times |
 | `npm run test:choices` | reading a live question off a frame, two real shapes, the negatives, and that the arrows really are escape bytes |
