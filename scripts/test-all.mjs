@@ -36,6 +36,7 @@ const TESTS = [
   ['cwdgone', 'cwd-gone-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
   ['trimloss', 'trim-loss-test.mjs'],
+  ['unwrapcopy', 'unwrap-copy-test.mjs'],
   ['whatsnew', 'whatsnew-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],

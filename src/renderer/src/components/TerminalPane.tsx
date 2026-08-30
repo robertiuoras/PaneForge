@@ -9,6 +9,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { allAgents, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
+import { unwrapForClipboard } from '../unwrapCopy'
 import { pasteImageDrop, splitDropUris, type AttachIn } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
@@ -1581,12 +1582,12 @@ function TerminalPane({
   const say = (msg: string): void => toast.current?.(msg)
 
   const putOnClipboard = (text: string, what: string): void => {
-    const body = text.trim()
+    const body = unwrapForClipboard(text.trim())
     if (!body) {
       say('Nothing to copy there')
       return
     }
-    api.copyText(body)
+    api.copyText(unwrapForClipboard(body))
     // The count is the receipt: "Copied" alone cannot tell a whole reply from one blank
     // line, and a copy that quietly took the wrong range is the failure worth catching.
     const lines = body.split('\n').length
@@ -1602,7 +1603,7 @@ function TerminalPane({
    * sentence saying it worked.
    */
   const sayCopied = (text: string, what = 'Selection'): void => {
-    const body = text.trim()
+    const body = unwrapForClipboard(text.trim())
     // Nothing readable in it - a drag that caught only spaces, or a blank row. It still
     // reached the clipboard (these callers write before they announce), and saying
     // nothing here is the exact silence this whole change exists to remove: the press
@@ -2284,7 +2285,7 @@ function TerminalPane({
       // Ctrl+C is an interrupt again. One extra keypress, never a lost prompt.
       const live = t.getSelection()
       if (live) {
-        api.copyText(live)
+        api.copyText(unwrapForClipboard(live))
         if (announce) sayCopied(live)
         if (!keepHighlight) t.clearSelection()
         lastSelection.current = ''
@@ -2293,7 +2294,7 @@ function TerminalPane({
       }
       const sel = lastSelection.current
       if (!sel || sel === copied.current) return false
-      api.copyText(sel)
+      api.copyText(unwrapForClipboard(sel))
       if (announce) sayCopied(sel)
       copied.current = sel
       lastSelection.current = ''
@@ -2828,7 +2829,7 @@ function TerminalPane({
       e.preventDefault()
       const sel = t.getSelection()
       if (sel) {
-        api.copyText(sel)
+        api.copyText(unwrapForClipboard(sel))
         // `sel.split('n')` here counted the letter n, so a one-line copy of a word
         // containing an n reported several lines. One counter, one place.
         sayCopied(sel)
@@ -3356,7 +3357,7 @@ function TerminalPane({
       if (action === 'yank') {
         const text = t.getSelection()
         if (text) {
-          api.copyText(text)
+          api.copyText(unwrapForClipboard(text))
           sayCopied(text)
         }
         leaveCopy()
