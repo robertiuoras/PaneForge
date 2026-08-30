@@ -538,3 +538,30 @@ export function idleCloseAt(
   // a chip counting UP from zero reads as a clock that jammed.
   return Math.max(at, now)
 }
+
+/**
+ * Whether a freshly computed deadline is the same FACT as the one already published.
+ *
+ * `idleCloseAt` clamps an overdue pane to `now` so its chip cannot count up from zero, and
+ * `now` moves on every single session broadcast - so the publisher in the renderer wrote a
+ * new number, `setClosingAt` saw it move and emitted a session list, that list re-ran the
+ * publisher, and it wrote a newer number still. A pane past its idle deadline therefore
+ * span a full main->renderer->main round trip as fast as the event loop would carry it,
+ * broadcasting the whole desk (and every paired phone) each time, until the minute sweep
+ * finally closed it. That is also what "the countdown stops at 0:01" was: `at` was dragged
+ * forward to `now` faster than the second could tick, so `ceil((at - now) / 1000)` never
+ * reached 0 and the chip never said `now`.
+ *
+ * Due is ONE state, not a number that moves. Two deadlines that are both in the past (or
+ * exactly now) are the same fact and must not be republished; everything else is compared
+ * exactly, so an ordinary countdown still updates the instant it really changes.
+ */
+export function sameDeadline(
+  prev: number | undefined,
+  next: number | undefined,
+  now: number
+): boolean {
+  if (prev === next) return true
+  if (prev === undefined || next === undefined) return false
+  return prev <= now && next <= now
+}

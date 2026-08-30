@@ -94,6 +94,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  sameDeadline,
   idleCloseAt,
   quietSince,
   reclaimPlan,
@@ -4114,7 +4115,12 @@ export default function App(): JSX.Element {
         // down under `closes 55m` and a sentence saying it had been quiet and was being
         // closed - the opposite of what the press it came from promised.
         const held = at !== undefined && kept > (due ?? 0)
-        if (closingRef.current[s.id] === at && keptRef.current[s.id] === held) continue
+        // `sameDeadline`, not `===`. An overdue pane's deadline IS `now`, and `now` moves
+        // every time this runs - so an exact comparison republished on every session
+        // broadcast, and `setClosingAt` emitting one in response made that a loop with no
+        // floor under it. See shared/reclaim.ts.
+        if (sameDeadline(closingRef.current[s.id], at, now) && keptRef.current[s.id] === held)
+          continue
         closingRef.current[s.id] = at
         keptRef.current[s.id] = held
         api.setClosing(s.id, at ?? null, held)

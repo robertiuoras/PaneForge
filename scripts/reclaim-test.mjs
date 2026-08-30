@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -271,6 +271,19 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // reads as a clock that has jammed.
   const late = pane({ id: 'late', lastKeyboard: NOW - 5 * HOUR })
   eq('a pane past its deadline is due now, not overdue', idleCloseAt(late, CLOCKED, NOW), NOW)
+
+  // ...and that clamp is why the publisher may not compare deadlines with `===`. `now`
+  // moves on every session broadcast, so an overdue pane wrote a new number, which emitted
+  // a broadcast, which wrote a newer one: a main->renderer->main loop with no floor, and a
+  // chip whose `at` was dragged forward faster than a second could tick, so it sat at
+  // `0:01` and never reached `now`. Due is one state, not a number.
+  check('two overdue deadlines are the same fact', sameDeadline(NOW - 4000, NOW, NOW))
+  check('...and a deadline exactly now matches one already passed', sameDeadline(NOW, NOW - 1, NOW))
+  check('CONTROL: an ordinary countdown still moves', !sameDeadline(NOW + 60_000, NOW + 30_000, NOW))
+  check('CONTROL: past to future is a change', !sameDeadline(NOW - 1000, NOW + 60_000, NOW))
+  check('CONTROL: appearing is a change', !sameDeadline(undefined, NOW - 1000, NOW))
+  check('CONTROL: going away is a change', !sameDeadline(NOW - 1000, undefined, NOW))
+  check('nothing to nothing is no change', sameDeadline(undefined, undefined, NOW))
 
   // The refusals, and the shell one is the reason this was asked for: a pane running
   // `npm run build` and a pane that has finished look identical in the sidebar, and
