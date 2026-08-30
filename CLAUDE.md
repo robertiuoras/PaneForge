@@ -1207,6 +1207,27 @@ same deadline rather than counted as a submit; an idle composer with no turn beh
 gets another return, up to `PROMPT_ENTER_TRIES`. Source-asserted in
 `npm run test:promptsubmit`, with the old settle-on-busy branch named as the bug.
 
+**And a `/clear` is not a boot, so it does not get a boot's patience.** The same pane came
+back on 2026-08-30 22:11 with the resume prompt typed and unsent again, and the app could
+not say which of five exits took it - every one of them reported through `console.info`, a
+stdout nobody keeps when the app is launched from the dock. All five now write to
+`autoclear-app.log` beside the arm, the one that matters saying `UNSENT` in those words.
+The cause the log would have named: `/clear` restarts the CLI and this desk's SessionStart
+hook chain then paints in bursts with second-long gaps, so the idle read says ready, the
+return is eaten, and three tries `PROMPT_CONFIRM_MS` apart were gone in ~12s while the CLI
+was still not listening. `PROMPT_ENTER_TRIES` is **6** (a return at an empty composer is a
+no-op in every CLI here, so another try costs nothing and running out costs the handoff),
+and the resume prompt waits on `CLEAR_RESUME_BUDGET_MS` (**3 min**) rather than the launch
+prompt's 45s - with the handover curtain following the same number, so the pane says a
+prompt is still coming instead of looking like somebody walked away mid-sentence.
+
+**The clear itself is 27s and only about a second of that is waste.** Measured on this
+desk, ask to `/clear` typed: **2.4s** for the turn to end and release the queued ask,
+**11.4s** of `ARM_QUIET_MS` (the 10s quiet floor, re-entered because the pane printed
+again mid-hold), **15.0s** of the countdown card somebody is meant to be able to stop, and
+**0.9s** of arm lead against a nominal `ARM_CLEAR_LEAD_MS` of 120ms. The two big numbers
+are both deliberate and both were asked for; shortening either is a decision, not a fix.
+
 ## A pane that is still starting says so
 
 `sessions:start` returns in 16-40ms; the first byte out of the pty arrives at ~0.5s warm and

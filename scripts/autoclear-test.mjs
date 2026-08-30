@@ -190,11 +190,14 @@ console.log('keystrokes')
   // composer, sends the return as its own write, and re-sends only after reading the pane.
   ok(
     'the resume prompt goes through queuePrompt',
-    /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS, \(\) => this\.setHandover\(id, 0\)\)/.test(fire)
+    /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS, \(\) => this\.setHandover\(id, 0\), CLEAR_RESUME_BUDGET_MS\)/.test(fire)
   )
   // The curtain over the pane goes UP with the clear and DOWN when the prompt settles.
   // Raising it without passing the settle callback is a pane that never takes keys again.
-  ok('the handover curtain is raised before the prompt is queued', /this\.setHandover\(id, Date\.now\(\) \+ HANDOVER_MAX_MS\)/.test(fire))
+  // ...and it outlives the resume prompt's own wait, which a `/clear` restart makes far
+  // longer than a launch prompt's: the pane must say a prompt is still coming rather than
+  // looking like somebody walked away mid-sentence.
+  ok('the handover curtain is raised before the prompt is queued', /this\.setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(fire))
   ok('the clear itself is still typed first, after the armclear lead', /this\.emit\('armclear', id\)/.test(fire) && /this\.write\(id, clearCmd\)/.test(fire))
   // The beat before the wait BEGINS, not the wait: it must be short, or the adaptive path
   // costs exactly what the blind one did.
