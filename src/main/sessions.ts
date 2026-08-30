@@ -2293,10 +2293,6 @@ export class SessionManager extends EventEmitter {
       if (!live) return
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
-      if ((live.meta.lastKeyboard ?? 0) > mark) {
-        console.info(`queuePrompt: ${id} submit dropped - the pane was used by hand`)
-        return
-      }
       ourWrite('\r')
       if (tries + 1 >= PROMPT_ENTER_TRIES) return
       setTimeout(() => {

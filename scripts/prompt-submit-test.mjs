@@ -172,6 +172,74 @@ ok(
 manager.sendPrompt('no-such-pane', JOB)
 ok(true, 'sendPrompt on a dead id does not throw')
 
+// 8. THE ONE THIS SESSION BROKE ON. A queued prompt must never be delivered into a turn
+//    a PERSON started first. 2026-08-30, pane s4-mtednh9i: autoclear typed `/clear`, the
+//    fresh session spent seconds running its SessionStart hooks (memory symlinks, handoff
+//    injection, superpowers), Robert read the screen and sent his own question, and the
+//    queued `Continue the handoff: ...` was then typed INTO that turn as a second message.
+//    Every log line said the clear succeeded, so it reads as autoclear breaking again.
+//
+//    The old code read composer idleness and nothing else, so it could not tell a composer
+//    idle because the CLI finished booting from one idle because somebody had just sent a
+//    message. This drives the real SessionManager through exactly that order.
+const RESUME = 'Continue the handoff: work its Next steps in order.'
+const hijack = manager.start({ cwd: root, agent: 'shell' })
+const hijackProc = manager.sessions.get(hijack.id).proc
+// The pane is booting: the queued prompt is waiting, not typed.
+hijackProc.say(BOOTING)
+manager.sendPrompt(hijack.id, RESUME)
+await sleep(150)
+ok(
+  !hijackProc.writes.join('').includes('Continue the handoff'),
+  'the queued prompt waits while the fresh session is still booting',
+  JSON.stringify(hijackProc.writes)
+)
+// A person types their own question and sends it. This is a real keystroke path
+// (`write`), which is what moves `lastKeyboard` past the mark the queue took.
+manager.write(hijack.id, 'it broke again do you have logs')
+manager.write(hijack.id, '\r')
+const humanAt = manager.sessions.get(hijack.id).meta.lastKeyboard
+// Their turn runs and then the composer goes quiet again - which is the exact window
+// the old code typed into.
+hijackProc.say(COMPOSER)
+await sleep(900)
+const afterHuman = hijackProc.writes.join('')
+ok(
+  !afterHuman.includes('Continue the handoff'),
+  'a prompt queued before a HUMAN sent one is dropped, never typed into their turn',
+  JSON.stringify(hijackProc.writes)
+)
+ok(
+  typeof humanAt === 'number' && humanAt > 0,
+  'the human submit is what moves lastKeyboard, and it is recorded',
+  String(humanAt)
+)
+// ...and no stray confirm return goes out either. An Enter into a turn that is already
+// answering is a keystroke at a live CLI, harmless at a composer and not at a chooser.
+const straysBefore = hijackProc.writes.filter((w) => w === '\r').length
+await sleep(700)
+ok(
+  hijackProc.writes.filter((w) => w === '\r').length === straysBefore,
+  'and no confirm returns are fired after the person took the pane',
+  JSON.stringify(hijackProc.writes)
+)
+
+// 9. The same pane accepts a prompt queued AFTER the person's message: the drop is about
+//    ownership at queue time, not a pane that is permanently off limits.
+const LATER = 'and this one is still wanted'
+manager.sendPrompt(hijack.id, LATER)
+// Painted AFTER the first poll on purpose: the busy read is of the NEWEST output, and
+// this pane's buffer still holds the boot's `esc to interrupt`. A real CLI keeps painting;
+// a stub that never says anything again leaves the last busy frame as the newest one.
+await sleep(200)
+hijackProc.say(COMPOSER)
+await sleep(700)
+ok(
+  hijackProc.writes.join('').includes(LATER),
+  'a prompt queued after they finished still goes in',
+  JSON.stringify(hijackProc.writes)
+)
+
 manager.killAll?.()
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
