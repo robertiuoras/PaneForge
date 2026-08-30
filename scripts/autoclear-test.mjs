@@ -188,14 +188,26 @@ console.log('keystrokes')
   ok('and it fires no blind submit retries', !/SUBMIT_RETRIES_MS/.test(fire), fire.match(/SUBMIT_RETRIES_MS.*/)?.[0])
   // What it does instead: hand the resume prompt to the machinery that WAITS for an idle
   // composer, sends the return as its own write, and re-sends only after reading the pane.
-  ok('the resume prompt goes through queuePrompt', /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS\)/.test(fire))
+  ok(
+    'the resume prompt goes through queuePrompt',
+    /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS, \(\) => this\.setHandover\(id, 0\)\)/.test(fire)
+  )
+  // The curtain over the pane goes UP with the clear and DOWN when the prompt settles.
+  // Raising it without passing the settle callback is a pane that never takes keys again.
+  ok('the handover curtain is raised before the prompt is queued', /this\.setHandover\(id, Date\.now\(\) \+ HANDOVER_MAX_MS\)/.test(fire))
   ok('the clear itself is still typed first, after the armclear lead', /this\.emit\('armclear', id\)/.test(fire) && /this\.write\(id, clearCmd\)/.test(fire))
   // The beat before the wait BEGINS, not the wait: it must be short, or the adaptive path
   // costs exactly what the blind one did.
   ok('the start beat is short', CLEAR_PROMPT_START_MS > 0 && CLEAR_PROMPT_START_MS < CLEAR_SETTLE_MS / 2)
   // queuePrompt must actually honour the override, or the 2500ms default is back and this
   // whole change is a comment.
-  ok('queuePrompt takes the override', /private queuePrompt\(id: string, prompt\?: string, extraDelay = 0, startMs = PROMPT_START_MS\)/.test(src))
+  ok(
+    'queuePrompt takes the override',
+    /private queuePrompt\(\s*id: string,\s*prompt\?: string,\s*extraDelay = 0,\s*startMs = PROMPT_START_MS,/.test(src)
+  )
+  // Every exit settles, or the curtain outlives the prompt. `settle` is what the callback
+  // runs through and it is called on the drop, the submit and the pane going away.
+  ok('and it settles on every exit', (src.match(/return settle\(\)/g) ?? []).length >= 4, String((src.match(/return settle\(\)/g) ?? []).length))
   ok('and starts on it', /setTimeout\(tick, Math\.max\(0, startMs\) \+ Math\.max\(0, extraDelay\)\)/.test(src))
 
   // PARITY. Two copies of one contract, in two repos, and nothing compared them.
