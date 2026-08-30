@@ -4389,3 +4389,78 @@ function sameTheme(a: Props['termTheme'], b: Props['termTheme']): boolean {
 }
 
 export default memo(TerminalPane, samePaneProps)
+
+/**
+ * The curtain over a pane that is mid-autoclear handover.
+ *
+ * Robert, 2026-08-30: "is there guards to stop user typing in that pane/session if its
+ * running the auto clear flow mabe show popup that its running flow and you cant type in
+ * there? something cool animation but lightweight".
+ *
+ * It covers the terminal between the app's `/clear` and the resume prompt landing - a
+ * window of seconds in which the pane looks like an ordinary fresh session, which is
+ * exactly why somebody types into it. `TerminalPane` swallows the keystrokes; this says
+ * why, and gives the way out. Doing one without the other is a pane that has silently
+ * stopped accepting keys.
+ *
+ * `until` is a DEADLINE, not a flag. The curtain takes itself down when the clock runs
+ * out, so a main process that hangs or forgets to settle cannot leave a pane nobody can
+ * type into - the app-side settle is the fast path, this is the safety.
+ *
+ * Design follows `design-vault/linear.app.md`: hairline `rgba(255,255,255,.08)` border on
+ * a surface one step off the pane, no drop shadow, the 4-step text ramp, and exactly two
+ * motion durations (`0.1s ease` hover, `0.16s cubic-bezier(.25,.46,.45,.94)` entrance).
+ * The idle animation is one 1.4s CSS keyframe on a single element - no rAF loop, nothing
+ * per-frame in JS, and it is dropped entirely under `prefers-reduced-motion`.
+ */
+function HandoverCurtain({
+  until,
+  onExpire,
+  onTakeOver
+}: {
+  until: number
+  onExpire: () => void
+  onTakeOver: () => void
+}): JSX.Element {
+  useEffect(() => {
+    const left = until - Date.now()
+    if (left <= 0) {
+      onExpire()
+      return
+    }
+    const t = setTimeout(onExpire, left)
+    return () => clearTimeout(t)
+  }, [until, onExpire])
+  return (
+    <div
+      className="handover"
+      role="status"
+      aria-live="polite"
+      // A click anywhere is the same as the button. Somebody who wants the pane is
+      // already reaching for it with the mouse, and a curtain that only yields to one
+      // 90px target is a curtain people fight.
+      onMouseDown={(e) => {
+        e.stopPropagation()
+        onTakeOver()
+      }}
+    >
+      <div className="handover-card">
+        <span className="handover-rail" aria-hidden="true" />
+        <div className="handover-words">
+          <b>Carrying this session over</b>
+          <span>Cleared - waiting for the composer to hand it the handoff. Keys are held.</span>
+        </div>
+        <button
+          className="handover-take"
+          onClick={(e) => {
+            e.stopPropagation()
+            onTakeOver()
+          }}
+        >
+          Take over
+          <kbd>esc</kbd>
+        </button>
+      </div>
+    </div>
+  )
+}

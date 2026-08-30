@@ -240,6 +240,51 @@ ok(
   JSON.stringify(hijackProc.writes)
 )
 
+// 10. The handover curtain always comes DOWN. It swallows keystrokes, so every way the
+//     resume prompt can end - typed and submitted, dropped because a person took the pane,
+//     the pane closing - has to settle it, or the pane silently stops accepting keys.
+// A person taking the pane back mid-handover: `takeOver` moves lastKeyboard, which is what
+// drops the queued prompt, and lowers the curtain in the same call.
+const curtain = manager.start({ cwd: root, agent: 'shell' })
+const curtainProc = manager.sessions.get(curtain.id).proc
+curtainProc.say(BOOTING)
+manager.sendPrompt(curtain.id, 'a queued resume prompt')
+await sleep(120)
+ok(manager.takeOver(curtain.id) === true, 'takeOver answers for a live pane')
+await sleep(200)
+curtainProc.say(COMPOSER)
+await sleep(700)
+ok(
+  !curtainProc.writes.join('').includes('a queued resume prompt'),
+  'takeOver drops the queued prompt as a real keystroke would',
+  JSON.stringify(curtainProc.writes)
+)
+ok(manager.takeOver('no-such-pane') === false, 'takeOver on a dead id is false, not a throw')
+
+// And the settle path fires for a prompt that goes in normally, which is what lowers the
+// curtain on the happy path.
+const settling = manager.start({ cwd: root, agent: 'shell' })
+const settlingProc = manager.sessions.get(settling.id).proc
+let done = 0
+manager.queuePrompt(settling.id, 'goes in fine', 0, 40, () => done++)
+await sleep(120)
+settlingProc.say(COMPOSER)
+await sleep(1400)
+ok(done === 1, 'the settle callback fires exactly once on the happy path', String(done))
+ok(
+  settlingProc.writes.join('').includes('goes in fine'),
+  'and it fired because the prompt actually went in',
+  JSON.stringify(settlingProc.writes)
+)
+
+// A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
+const dying = manager.start({ cwd: root, agent: 'shell' })
+let dead2 = 0
+manager.queuePrompt(dying.id, 'never lands', 0, 40, () => dead2++)
+manager.sessions.delete(dying.id)
+await sleep(400)
+ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding it', String(dead2))
+
 manager.killAll?.()
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')

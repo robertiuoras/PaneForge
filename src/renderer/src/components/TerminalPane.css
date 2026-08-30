@@ -208,3 +208,117 @@
   cursor: pointer;
 }
 .find-step:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* The autoclear handover curtain. See `HandoverCurtain` in TerminalPane.tsx for why it
+   exists; this is the linear.app.md treatment of it - hairline border, surface a step off
+   the pane, no shadow, two durations. */
+.handover {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  /* Dark enough to say "not yours right now", sheer enough to still read the pane
+     underneath - a curtain you cannot see through reads as a crash. */
+  background: rgba(8, 9, 10, 0.72);
+  backdrop-filter: blur(2px);
+  animation: handover-in 0.16s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.handover-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, 82%);
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #101112;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* The whole animation: one element, one keyframe, 1.4s. A vertical rail rather than a
+   spinner - it reads as "a thing is moving through" instead of "a thing is loading", and
+   it costs one composited transform. */
+.handover-rail {
+  flex: 0 0 auto;
+  width: 2px;
+  align-self: stretch;
+  min-height: 34px;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    #e4f222 45%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  background-size: 100% 220%;
+  animation: handover-sweep 1.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+}
+
+.handover-words {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.handover-words b {
+  font-weight: 590;
+  letter-spacing: -0.022em;
+  color: #f7f8f8;
+}
+.handover-words span {
+  color: #8a8f98;
+  line-height: 1.35;
+}
+
+.handover-take {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  color: #d0d6e0;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.handover-take:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f7f8f8;
+}
+.handover-take kbd {
+  font: inherit;
+  font-size: 0.85em;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #62666d;
+  background: rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@keyframes handover-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes handover-sweep {
+  from {
+    background-position: 0 -120%;
+  }
+  to {
+    background-position: 0 120%;
+  }
+}
+
+/* A curtain that says "hold on" must not be the thing that makes somebody motion-sick.
+   The rail keeps its colour and stops moving; nothing else here animates. */
+@media (prefers-reduced-motion: reduce) {
+  .handover,
+  .handover-rail {
+    animation: none;
+  }
+}
