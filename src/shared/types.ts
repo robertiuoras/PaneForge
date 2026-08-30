@@ -176,6 +176,14 @@ export interface Session {
    * replaced. See `shared/autoclear.ts`.
    */
   autoClearAt?: number
+  /**
+   * This pane is mid-autoclear handover until this epoch ms, if it is.
+   *
+   * The window between the app typing `/clear` and the resume prompt landing. It is a
+   * DEADLINE rather than a flag so the curtain over the terminal takes itself down when
+   * the clock runs out, whatever main did or failed to do.
+   */
+  handoverUntil?: number
   autoClearPrompt?: string
   autoClearSteps?: string[]
   /**
@@ -2418,6 +2426,15 @@ export interface Api {
    */
   askAutoClear(ask: unknown): Promise<{ ok: boolean; reason?: string }>
   cancelAutoClear(id: string): Promise<boolean>
+  /**
+   * Hand the pane back to the person at the desk, mid-handover.
+   *
+   * The clear has already run and the resume prompt is still queued. This drops that
+   * prompt - `queuePrompt` reads `lastKeyboard` against the mark it took, and this moves
+   * it - and takes the curtain down. The escape hatch is the whole reason the curtain is
+   * allowed to swallow keys at all.
+   */
+  takeOverPane(id: string): Promise<boolean>
 
   /** The best earlier ask this draft repeats, or null. Cheap: a scored lookup, no search. */
   priorPrompt(draft: string): Promise<PriorPrompt | null>
@@ -2520,6 +2537,14 @@ export interface Api {
    * screen into the scrollback now, exactly as it does for a clear somebody typed.
    */
   onPaneArmClear(cb: (id: string) => void): () => void
+  /**
+   * The pane is mid-autoclear-handover until `until` (epoch ms), or free again at 0.
+   *
+   * Sent when the app types `/clear` into a pane it is clearing, and again the moment the
+   * resume prompt has gone in or been dropped. The renderer draws a curtain over the
+   * terminal in between - see `TerminalPane`'s handover overlay.
+   */
+  onPaneHandover(cb: (id: string, until: number) => void): () => void
   /** global push-to-talk hotkey fired from the main process */
   onVoiceHotkey(cb: () => void): () => void
   /** something new landed on the clipboard shelf */

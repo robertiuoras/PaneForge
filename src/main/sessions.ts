@@ -161,6 +161,15 @@ const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
 const PROMPT_TAIL_CHARS = 2000
 const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
 const PROMPT_ENTER_TRIES = 3
+/**
+ * The hard ceiling on the handover curtain.
+ *
+ * Longer than the prompt's own wait (`PROMPT_WAIT_MAX_MS` plus its confirm retries) so the
+ * normal path always settles first, and short enough that the worst case is a few seconds
+ * of a pane refusing keys rather than a pane that has to be closed. The renderer enforces
+ * it too, off the deadline it was handed - see `setHandover`.
+ */
+const HANDOVER_MAX_MS = PROMPT_WAIT_MAX_MS + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES + 5_000
 /** Full terminal reset - written on restart so the pane does not stack two runs. */
 const RESET = '\x1bc'
 /**
@@ -1934,7 +1943,14 @@ export class SessionManager extends EventEmitter {
         // first submit had plainly landed. Nothing read the pane at any point.
         if (!resume) return acLog(`${id} cleared with no resume prompt`)
         acLog(`${id} resume prompt queued (idle-composer wait, start +${CLEAR_PROMPT_START_MS}ms)`)
-        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS)
+        // The window this feature kept losing. Between the `/clear` above and the resume
+        // prompt going in, the pane looks like an ordinary fresh session - so somebody
+        // reads it, types their own question, and the queued prompt lands inside THEIR
+        // turn (2026-08-30, s4-mtednh9i). The prompt is now dropped when that happens,
+        // which stops the collision but still costs the handoff. So the pane says out
+        // loud that it is mid-handover and swallows keys until it is not, with a way out.
+        this.setHandover(id, Date.now() + HANDOVER_MAX_MS)
+        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0))
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
     }
@@ -2224,6 +2240,39 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Raise or drop the handover curtain on a pane, and tell the renderer.
+   *
+   * `until` is an absolute deadline rather than a boolean on purpose: the renderer takes
+   * the curtain down by itself when the clock runs out, so a main process that dies, hangs
+   * or forgets to settle cannot leave a pane nobody can type into. The app-side settle is
+   * the fast path, not the safety.
+   */
+  private setHandover(id: string, until: number): void {
+    const live = this.sessions.get(id)
+    if (!live) return
+    if ((live.meta.handoverUntil ?? 0) === until) return
+    live.meta.handoverUntil = until || undefined
+    this.emit('handover', id, until)
+    this.emitSessions()
+  }
+
+  /**
+   * A person taking the pane back mid-handover.
+   *
+   * Moving `lastKeyboard` is what actually cancels the queued resume prompt: `queuePrompt`
+   * compares it against the mark it took when the prompt was queued, and anything later
+   * reads as somebody owning the pane. Doing it this way rather than with a second flag
+   * means the take-over and a real keystroke cannot disagree.
+   */
+  takeOver(id: string): boolean {
+    const live = this.sessions.get(id)
+    if (!live) return false
+    live.meta.lastKeyboard = Date.now()
+    this.setHandover(id, 0)
+    return true
+  }
+
+  /**
    * Type a launch prompt into a pane and submit it.
    *
    * A fixed delay is not enough and the failure it causes is silent. Codex starts its
@@ -2248,8 +2297,23 @@ export class SessionManager extends EventEmitter {
    * return is sent again, up to `PROMPT_ENTER_TRIES`. Every step is capped, so the worst
    * case is a prompt typed late and left on screen for a person, never a hang.
    */
-  private queuePrompt(id: string, prompt?: string, extraDelay = 0, startMs = PROMPT_START_MS): void {
-    if (!prompt) return
+  private queuePrompt(
+    id: string,
+    prompt?: string,
+    extraDelay = 0,
+    startMs = PROMPT_START_MS,
+    onSettled?: () => void
+  ): void {
+    if (!prompt) return onSettled?.()
+    // Called exactly once, however this ends - typed and submitted, dropped, or the pane
+    // gone. The handover curtain is raised on it, and a curtain with an exit this does not
+    // reach is a pane nobody can type into: every `return` below goes through `settle`.
+    let settled = false
+    const settle = (): void => {
+      if (settled) return
+      settled = true
+      onSettled?.()
+    }
     const deadline = Date.now() + PROMPT_WAIT_MAX_MS + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
     // an autoclear's own `/clear\r` goes through `write` and bumps it. Anything later is a
@@ -2290,27 +2354,28 @@ export class SessionManager extends EventEmitter {
 
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
-      if (!live) return
+      if (!live) return settle()
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
       if ((live.meta.lastKeyboard ?? 0) > mark) {
         console.info(`queuePrompt: ${id} submit dropped - the pane was used by hand`)
-        return
+        return settle()
       }
       ourWrite('\r')
-      if (tries + 1 >= PROMPT_ENTER_TRIES) return
+      if (tries + 1 >= PROMPT_ENTER_TRIES) return settle()
       setTimeout(() => {
         const still = this.sessions.get(id)
         // Work of any kind means it went in: the agent is answering, or the CLI is at
         // least painting something back. A pane still sitting at an idle composer has
         // eaten the return, so send another one.
         if (still && idle(still)) submit(tries + 1)
+        else settle()
       }, PROMPT_CONFIRM_MS)
     }
 
     const tick = (): void => {
       const live = this.sessions.get(id)
-      if (!live) return
+      if (!live) return settle()
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         setTimeout(tick, PROMPT_POLL_MS)
@@ -2322,7 +2387,7 @@ export class SessionManager extends EventEmitter {
             (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
           }`
         )
-        return
+        return settle()
       }
       ourWrite(prompt)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)

@@ -1074,6 +1074,7 @@ remote.on('data', (id: string, data: string) => pump.push(id, data))
 // be pushed into the scrollback before the CLI paints over it, and only the renderer can
 // do that - see the arm in sessions.ts.
 manager.on('armclear', (id: string) => send('pane:armClear', id))
+manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
 remote.on('reset', (id: string) => {
   pump.flushOne(id)
   send('pane:reset', id)
@@ -2277,6 +2278,7 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   return manager.armAutoClear(ask.paneId, { ...ask, command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
+ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
 // A disposable dev copy can set this to prove its clipboard path without replacing the
