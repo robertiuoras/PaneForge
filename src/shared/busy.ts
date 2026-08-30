@@ -59,6 +59,8 @@ export const ASK_PROMPT =
   /do you want to (proceed|continue|make|create|allow|run)|allow (this )?(command|tool|edit)\?|❯\s*\d+\.\s|\(y\/n\)\s*$|press enter to (confirm|continue)|waiting for your (input|reply)/im
 
 /**
+ * COUNTER, the weakest rule, read at the bottom of `busyEvidence`.
+ *
  * The live counter that ticks beside the spinner - "(8s · ↓ 282 tokens)", and the
  * "(esc to interrupt · 12s)" of older builds. Independent of whatever word the CLI
  * decided to spin today, which is the point: one of these has to survive the next
@@ -81,9 +83,6 @@ export const ASK_PROMPT =
  * an answer or a tool summary is not a running agent; the counter always sits in a
  * `·`-delimited group beside the token count or the interrupt hint.
  */
-function hasTurnCounter(text: string): boolean {
-  return scanDuration(text)?.footer === true
-}
 
 /**
  * WHICH rule said the agent is running, or null for a frame that did not.

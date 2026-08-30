@@ -15,7 +15,8 @@ import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
 import { readsBusy } from '../../../shared/busy'
 import { whenWords } from '../../../shared/elapsed'
-import { busyReason, readsElapsedMs, type BusyReason } from '../../../shared/busy'
+import { busyEvidence, readsElapsedMs, type BusyReason } from '../../../shared/busy'
+import { dueForRepaint, staleSignature } from '../../../shared/staleFrame'
 import { askSignature, type PaneAsk } from '../../../shared/choices'
 import {
   applyKey,
@@ -2987,6 +2988,14 @@ function TerminalPane({
     let onSince = 0
     // The last question this pane reported, arrow position included. See checkBusy.
     let lastAsk = ''
+    // The busy evidence this pane last read, when it first read THAT, how many repaints
+    // it has asked for over this stretch of it, and when the last one went. See
+    // `shared/staleFrame.ts`: a working line that has not moved in four minutes is a
+    // frame nobody repainted, not an agent thinking hard.
+    let staleSig = ''
+    let staleSince = 0
+    let staleTries = 0
+    let lastNudge = 0
     let settle2: number | undefined
     /** How long a `false` must hold before it is believed. See the grace below. */
     const BUSY_SETTLE_MS = 1200
@@ -3008,8 +3017,33 @@ function TerminalPane({
         text = screenText(t, BUSY_ROWS)
         // A question on screen is not work in progress, whatever the footer says - that
         // rule and the footers themselves live in shared/busy.ts, against real frames.
-        reason = busyReason(text)
+        const evidence = busyEvidence(text)
+        reason = evidence?.reason ?? null
         now = reason !== null
+        // ...and whether that evidence is still MOVING. A pane torn mid-paint keeps a
+        // working line nothing overwrites, so every read from here on says the agent is
+        // running - the card said Running for hours and the only way out was somebody
+        // pressing Fix. The repaint Fix asks for is a SIGWINCH nudge with no keystrokes
+        // in it, so the pane can ask for its own; `dueForRepaint` is when it may.
+        const sig = staleSignature(evidence)
+        if (sig !== staleSig) {
+          staleSig = sig
+          staleSince = at
+          staleTries = 0
+        }
+        if (
+          dueForRepaint({
+            busy: now,
+            unchangedMs: at - staleSince,
+            tries: staleTries,
+            sinceNudge: lastNudge ? at - lastNudge : Infinity,
+            allowed: autoFixRef.current
+          })
+        ) {
+          staleTries++
+          lastNudge = at
+          api.redraw(sessionId)
+        }
       } catch {
         return
       }
@@ -3025,6 +3059,11 @@ function TerminalPane({
         reads: now,
         reported: busy,
         grid: `${t.cols}x${t.rows}`,
+        // How long this pane's busy evidence has been byte-identical, and how many
+        // repaints it has asked for over it. Same reason as the line above: a pane stuck
+        // on a frame nobody repaints is invisible from outside, and this turns "why does
+        // it still say Running" into one probe.
+        stale: now ? { ms: at - staleSince, tries: staleTries } : null,
         buffer: `${t.buffer.active.type} base=${t.buffer.active.baseY} len=${t.buffer.active.length}`,
         rows: text
           .split('\n')
