@@ -1783,6 +1783,18 @@ the cost is the agent CLI inside the pane (~190 MB each, against 16-17 MB for Co
   `RemotePaneInfo` and `desk.ts` so a listed row agrees), and the card says `kept 10m` with
   the hold's own sentence and no red last-minute alert - nothing is about to happen to it.
   A countdown card naming the pane still wins: that is a live plan to close it.
+- **A deadline in the past is a STATE, not a number.** `idleCloseAt` clamps an overdue pane
+  to `now` so its chip cannot count up from zero, and the renderer publishes that number
+  onto the session with `api.setClosing` from an effect that has `sessions` in its
+  dependency array - so `now` moved, the number moved, `setClosingAt` emitted a session
+  list because it had moved, and that list re-ran the publisher. Measured in a real window
+  with three overdue panes: **3138 `setClosing` writes and 2061 whole-window React renders
+  in five seconds**, each write a broadcast to this window and every paired phone, against
+  **0 and 0** with `sameDeadline` (`shared/reclaim.ts`) comparing them - two deadlines both
+  in the past are the same fact and are not republished. It is also why the chip could sit
+  at `0:01`: `at` was being dragged forward to real `now` while `CloseClock`'s own `now` is
+  the last one-second tick, so `ceil((at - now) / 1000)` never reached 0.
+  `window.__pfClosePublish` counts the writes.
 - **A pane can be taken off the clock for good.** `ReclaimPane.pinned` - "Keep this pane
   open" on the card's right-click, `kept open` where its countdown would have been - is
   refused by `onTheClock` AND by `reclaimPlan`'s filter: somebody who said keep this one did
