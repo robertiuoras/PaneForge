@@ -1004,9 +1004,8 @@ export default function App(): JSX.Element {
     const wear = (on: boolean): void => {
       document.documentElement.classList.toggle('on-battery', on)
     }
-    void window.api.appOnBatteryNow?.().then(wear).catch(() => {})
-    const off = window.api.onBattery?.(wear)
-    return () => off?.()
+    void window.api.appOnBatteryNow().then(wear).catch(() => {})
+    return window.api.onBattery(wear)
   }, [])
 
   // The window's own colours. Ahead of the pane list on purpose: this writes CSS
