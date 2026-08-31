@@ -16,7 +16,7 @@ import {
   Notification,
   protocol,
   screen,
-  shell, powerMonitor } from 'electron'
+  shell } from 'electron'
 import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -72,6 +72,7 @@ import {
   whenClear
 } from './gameMode'
 import { startAway, stopAway } from './away'
+import { onBatteryNow, watchPower } from './power'
 import {
   initProfile,
   isQuietRelaunch,
@@ -596,10 +597,9 @@ function createWindow(): void {
    * watchdog reloads the page and a class only ever set by an event would come back
    * cleared on a machine that had been on battery the whole time.
    */
-  const pushBattery = (): void => send('app:battery', powerMonitor.isOnBatteryPower())
-  powerMonitor.on('on-battery', pushBattery)
-  powerMonitor.on('on-ac', pushBattery)
-  win.webContents.on('did-finish-load', pushBattery)
+  const stopPower = watchPower((onBattery) => send('app:battery', onBattery))
+  win.webContents.on('did-finish-load', () => void onBatteryNow().then((b) => send('app:battery', b)))
+  win.on('closed', stopPower)
   if (glass) {
     // The addon's own requirement: before the document has loaded there is no content
     // view for the glass to sit under. It is idempotent per window and this fires again
@@ -3161,7 +3161,7 @@ ipcMain.handle('game:status', () => gameStatus())
 ipcMain.handle('app:visibleNow', () => !!win && !win.isMinimized() && win.isVisible())
 // Same race, same answer: the push can land before the page is listening, so the first
 // paint asks instead of waiting to be told.
-ipcMain.handle('app:batteryNow', () => powerMonitor.isOnBatteryPower())
+ipcMain.handle('app:batteryNow', () => onBatteryNow())
 /**
  * The renderer's idle clock ran out - see shared/idlequit.ts for every refusal that had
  * to pass first.
