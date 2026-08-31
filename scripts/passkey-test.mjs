@@ -632,7 +632,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // 423 somebody taking their own pane back from the only screen they have.
   const REVIEWED_SAFE = new Set([
     'autoclear:cancel', 'autoclear:takeover',
-    'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
+    'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
