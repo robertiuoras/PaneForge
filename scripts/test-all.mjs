@@ -91,6 +91,7 @@ const TESTS = [
   ['place', 'place-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
+  ['historysearch', 'history-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],

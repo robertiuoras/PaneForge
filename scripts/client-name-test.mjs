@@ -37,6 +37,7 @@ const {
   nameFromHeading,
   slugFromPath,
   topicTitle,
+  mayTopicName,
   withAliases
 } = createRequire(import.meta.url)(out)
 
@@ -156,6 +157,15 @@ is(topicTitle('fix the deploy script and'), 'Fix Deploy Script', 'trailing and t
 is(topicTitle('rename the invoice folder with'), 'Rename Invoice Folder', 'trailing with trimmed')
 is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder', 'a real four-word subject survives')
 is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
+
+// A pane already wearing a project's name is not renamed to a sentence: PaneForge stays
+// PaneForge however the first ask is worded. Only a client tree, where every pane is
+// called `clients`, has nothing to lose.
+is(mayTopicName('/Users/r/Projects/PaneForge'), false, 'a repo keeps its own name')
+is(mayTopicName('/Users/r/Projects/clients'), true, 'the client tree root')
+is(mayTopicName('/Users/r/Projects/clients/pizzasrus/menu'), true, 'anywhere inside it')
+is(mayTopicName('C:\\Users\\Gamer\\Desktop\\Projects\\clients\\angie'), true, 'either separator')
+is(mayTopicName(''), false, 'no folder, no rename')
 
 is(topicTitle('/clear'), '', 'a slash command is a command, not a subject')
 is(topicTitle('ok'), '', 'too short to identify a pane')

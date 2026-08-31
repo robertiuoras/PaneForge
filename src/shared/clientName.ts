@@ -269,6 +269,24 @@ const DANGLING_WORDS =
   'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had'
 const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
 
+/**
+ * Whether a pane in this folder may be renamed to the SUBJECT of what was asked.
+ *
+ * Only inside a client tree. The reason topic naming exists is that every pane under
+ * `clients/` is called `clients` and nothing tells them apart; a pane opened in
+ * `Projects/PaneForge` is already called PaneForge, which is the truest thing that can be
+ * written on it - one repo is worked on across many subjects, so renaming it to the first
+ * sentence typed replaces a fact with a guess, and the guess goes stale the moment the
+ * conversation moves on ("Pizzasrus And" on a PaneForge pane).
+ *
+ * The folder is the fence rather than a cleverer reading of the prompt, because the whole
+ * of this file is the same bet: a card that keeps its folder name is as useful as it was
+ * yesterday, and a card that lies is worse than either.
+ */
+export function mayTopicName(cwd: string): boolean {
+  return parts(cwd).some((seg) => seg.toLowerCase() === CLIENTS_DIR)
+}
+
 export function topicTitle(prompt: string): string {
   const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
   if (!line || line.startsWith('/')) return ''

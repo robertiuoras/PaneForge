@@ -3,6 +3,7 @@ import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import { whenWords } from '@shared/elapsed'
+import { rankBy } from '@shared/historySearch'
 import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -132,19 +133,10 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
    * there - the old search results were a different, actionless row, so finding the
    * session you wanted left you with nothing to press.
    */
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (q.length < 2) return entries
-    const named = (e: HistoryEntry): boolean =>
-      [e.title, e.cwd, e.gist, ...(e.chapters ?? [])].some((t) => t?.toLowerCase().includes(q))
-    return entries
-      .filter((e) => named(e) || byId.has(e.id))
-      .sort((a, b) => {
-        const byName = Number(named(b)) - Number(named(a))
-        if (byName) return byName
-        return (byId.get(b.id)?.length ?? 0) - (byId.get(a.id)?.length ?? 0)
-      })
-  }, [entries, byId, query])
+  const shown = useMemo(
+    () => rankBy(entries, query, (id) => byId.get(id)?.length ?? 0),
+    [entries, byId, query]
+  )
 
   return (
     <div className="overlay" onMouseDown={onClose}>

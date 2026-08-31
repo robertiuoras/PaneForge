@@ -19,7 +19,7 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
 import { clientForCwd, clientForText } from './clients'
-import { clientTitle, mayRename, topicTitle } from '../shared/clientName'
+import { clientTitle, mayRename, mayTopicName, topicTitle } from '../shared/clientName'
 import type { ClientNamed } from '../shared/types'
 
 /**
@@ -766,7 +766,12 @@ export class SessionManager extends EventEmitter {
     // A pane in a client tree doing something else entirely is still a pane nobody can
     // tell apart, so it gets the subject of what was asked instead. Never on the folder
     // reading, which has no words to read.
-    const title = found ? clientTitle(found) : from === 'prompt' && text ? topicTitle(text) : ''
+    // A subject is only ever written over the word `clients`: see `mayTopicName`.
+    const title = found
+      ? clientTitle(found)
+      : from === 'prompt' && text && mayTopicName(s.cwd)
+        ? topicTitle(text)
+        : ''
     if (!title || title === s.title) return
     const was = s.title
     s.title = title

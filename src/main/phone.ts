@@ -130,6 +130,12 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // Reviewed 2026-08-31. `projects:create` writes a directory into the projects root from
+  // a name somebody typed. `shared/projectName.ts` refuses every name that could mean a
+  // folder somewhere else, so the worst case is an empty folder with an odd name - but it
+  // is still the only path where a phone makes something on this disk, so it costs the
+  // same passkey touch as starting a session in it does.
+  'projects:create',
   // Reviewed 2026-08-28. `prompt:split` starts an agent CLI on this desk to read one long
   // ask into a plan. It is the first class in the list - it runs a process here - and it
   // spends somebody's tokens doing it, so it is gated with `sessions:start` rather than
