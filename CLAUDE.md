@@ -307,10 +307,16 @@ Every pane in a client tree was called `clients`. `shared/clientName.ts` rules, 
 disk, `ClientToast.tsx` card. `npm run test:clientname`.
 
 - Roster recognised by SHAPE - `clients/<who>/README.md`, walking UP from folder; name is README's
-  first heading, parenthetical/contact stripped.
+  first heading, contact stripped. A parenthetical is dropped UNLESS it is a person (2-3 capitalised
+  latin words, no business furniture, initials not the outer name spelled out) - `A4 Advocate (Adie
+  Bradley)` is `Adie Bradley`; `PIA Team (Property Investors Alliance)` stays `PIA Team`. A trailing
+  or leading `Client` word comes off.
 - Slug is client only when roster says so; prompt name must match ONE client, word boundary,
   `MIN_ALIAS` chars, unique, not `GENERIC`.
-- Other panes get SUBJECT of first ask (`topicTitle`); nothing replaces client/typed title.
+- Other panes get SUBJECT of first ask (`topicTitle`) - a phrase, `Set Up Meta Ads`, not a keyword;
+  nothing replaces client/typed title. `mayTopicName` is true inside a client tree AND in a folder
+  that names no project (`Desktop`, `Downloads`, the projects root); a real repo keeps its own name
+  until three asks agree (`repeatedTopic`), which then names it off the EARLIEST of those asks.
 - Rename happens, THEN reports; `Cancel` restores folder name, sets `clientOff`.
 
 ## A pane says how long it has been open
