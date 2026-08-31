@@ -82,6 +82,117 @@ for (const rel of files) {
   }
 }
 
+/* --- second question: is every CONTINUOUS loop held still when a frame is expensive?
+   Cheap per frame is not the same as free. A `transform`/`opacity` loop composites a
+   layer once per frame and nothing more, which is a rounding error at 60Hz and is not one
+   at 120 or 480: measured on the PC, ten breathing halos cost 34% of a GPU core (peaks
+   63%) plus 12% of the renderer, and 0.3% held lit. So styles.css carries a block that
+   holds them at their lit end under two classes - `hi-refresh` (fast panel) and
+   `on-battery` (this MacBook's built-in panel is 120Hz, twice the 60Hz these were drawn
+   against, on the one power source that runs out).
+
+   That block is a list, and a list rots. This is what stops it: add a new looping
+   decoration without a line in the guard and the test says so, naming the selector.
+
+   `steps()` loops are not continuous - the mascot changes opacity two or three times a
+   cycle and composites nothing in between - so they are free at any rate and are not
+   asked to hold. */
+
+/** Split a selector list on top-level commas: `:is(a, b)` is ONE selector, not two. */
+function splitSelectors(sel) {
+  const out = []
+  let depth = 0
+  let cur = ''
+  for (const ch of sel) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      out.push(cur.trim())
+      cur = ''
+    } else cur += ch
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out
+}
+
+/** Every ordinary rule in the sheet, with @media descended into and @keyframes skipped. */
+function eachRule(css) {
+  const out = []
+  const scan = (start, end) => {
+    let pos = start
+    while (pos < end) {
+      const brace = css.indexOf('{', pos)
+      if (brace < 0 || brace >= end) break
+      const close = css.indexOf('}', pos)
+      if (close >= 0 && close < brace) {
+        pos = close + 1
+        continue
+      }
+      const sel = css.slice(pos, brace).trim()
+      let depth = 1
+      let j = brace + 1
+      for (; j < end && depth > 0; j++) {
+        if (css[j] === '{') depth++
+        else if (css[j] === '}') depth--
+      }
+      const body = css.slice(brace + 1, j - 1)
+      if (sel.startsWith('@')) {
+        // A keyframe body's "selectors" are percentages, and its declarations are the
+        // motion itself - the first half of this file already judges those.
+        if (!/^@keyframes/.test(sel)) scan(brace + 1, j - 1)
+      } else if (sel) {
+        out.push({ sel, body })
+      }
+      pos = j
+    }
+  }
+  scan(0, css.length)
+  return out
+}
+
+/* Shown for as long as one handover takes and then gone, which is the opposite of the
+   thing this check exists for: a decoration still costing frames an hour later. The rail
+   IS the progress - held still it reads as a stalled handover, which is a worse lie than
+   the frames are worth. */
+const EXEMPT = new Set(['.handover-rail::after'])
+
+const guarded = new Set()
+const needsGuard = []
+
+for (const rel of files) {
+  const css = readFileSync(join(root, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const { sel, body } of eachRule(css)) {
+    const anim = body.match(/animation(?:-name)?\s*:\s*([^;}]+)/)
+    if (!anim) continue
+    const value = anim[1]
+    const holds = /\bnone\b/.test(value)
+    const guardRule = /\.hi-refresh|\.on-battery/.test(sel)
+    if (guardRule && holds) {
+      // `html:is(.hi-refresh, .on-battery) .dot.working` guards `.dot.working`.
+      for (const part of splitSelectors(sel)) {
+        const words = part.split(/\s+/)
+        if (words.length > 1 && words[0].startsWith('html')) guarded.add(words.slice(1).join(' '))
+      }
+      continue
+    }
+    if (!/\binfinite\b/.test(value)) continue
+    // Discrete: a step function composites on the step, not on the frame.
+    if (/\bsteps\s*\(/.test(value)) continue
+    for (const part of splitSelectors(sel)) {
+      if (/\.hi-refresh|\.on-battery|\.app-blurred/.test(part)) continue
+      needsGuard.push({ rel, part })
+    }
+  }
+}
+
+for (const { rel, part } of needsGuard) {
+  if (EXEMPT.has(part) || guarded.has(part)) continue
+  problems.push(
+    `${rel}: \`${part}\` loops forever without a hold - add it to the` +
+      ` html:is(.hi-refresh, .on-battery) block in styles.css`
+  )
+}
+
 if (problems.length) {
   console.error('A looping animation is repainting every frame:\n')
   for (const p of problems) console.error('  ' + p)
@@ -92,4 +203,7 @@ if (problems.length) {
   process.exit(1)
 }
 
-console.log('ok: every infinite animation is transform/opacity only')
+console.log(
+  `ok: every infinite animation is transform/opacity only, and all ${needsGuard.length} continuous` +
+    ` loops are held still on a fast panel or on battery`
+)

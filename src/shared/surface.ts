@@ -110,6 +110,7 @@ export const SURFACE: Surface = {
   installUpdateAnyway: ['send', 'game:installAnyway'],
   gameStatus: ['invoke', 'game:status'],
   appVisibleNow: ['invoke', 'app:visibleNow'],
+  appOnBatteryNow: ['invoke', 'app:batteryNow'],
   setGameManual: ['invoke', 'game:manual'],
   pendingRestore: ['invoke', 'restore:pending'],
   answerRestore: ['send', 'restore:answer'],
@@ -186,6 +187,7 @@ export const SURFACE: Surface = {
   onInstall: ['on', 'agents:install-event'],
   onUpdate: ['on', 'update:changed'],
   onAppVisible: ['on', 'app:visible'],
+  onBattery: ['on', 'app:battery'],
   // Answered by the phone's own transport, never sent by main: a window looking at its
   // own machine has no link to lose. See browserApi.ts `sayLink`.
   onLinkState: ['on', 'link:state'],

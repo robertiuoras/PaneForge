@@ -2541,10 +2541,17 @@ export interface Api {
    * 'visible' forever, so nothing in the page can tell.
    */
   onAppVisible(cb: (visible: boolean) => void): () => void
+  /**
+   * The machine moved between battery and wall power. Drives the `on-battery` class,
+   * which holds the sidebar's looping decorations still - see styles.css.
+   */
+  onBattery(cb: (onBattery: boolean) => void): () => void
   /** Whether this screen can still hear the desk. Only a phone ever gets one. */
   onLinkState(cb: (state: LinkState) => void): () => void
   /** the window state right now, for the page's first paint (the push can arrive first) */
   appVisibleNow(): Promise<boolean>
+  /** on battery right now, for the page's first paint (the push can arrive first) */
+  appOnBatteryNow(): Promise<boolean>
   /** game started or ended, or something joined/left the queue waiting on it */
   onGameMode(cb: (s: GameModeStatus) => void): () => void
   /** a session just went quiet after doing something - drives the chime */

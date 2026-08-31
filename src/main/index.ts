@@ -16,8 +16,7 @@ import {
   Notification,
   protocol,
   screen,
-  shell
-} from 'electron'
+  shell, powerMonitor } from 'electron'
 import { SessionManager, setSilenceAlert } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -581,6 +580,26 @@ function createWindow(): void {
   win.on('show', pushVisible)
   win.on('hide', pushVisible)
   win.webContents.on('did-finish-load', pushVisible)
+
+  /**
+   * ...and whether the machine is running off its own battery.
+   *
+   * Same shape as the line above and for the same reason - the page cannot see this at
+   * all - but a different question. `app:visible` asks whether frames are worth
+   * spending; this asks what a frame COSTS. styles.css holds every looping decoration
+   * at its lit end while this is true, because the built-in panel is 120Hz and each of
+   * those loops was drawn against a 60Hz budget: twice the frames, on the one power
+   * source that runs out. Nothing about how the app RESPONDS changes - transitions,
+   * scrolling and the terminals are untouched.
+   *
+   * Pushed on `did-finish-load` as well as on the events, because the renderer
+   * watchdog reloads the page and a class only ever set by an event would come back
+   * cleared on a machine that had been on battery the whole time.
+   */
+  const pushBattery = (): void => send('app:battery', powerMonitor.isOnBatteryPower())
+  powerMonitor.on('on-battery', pushBattery)
+  powerMonitor.on('on-ac', pushBattery)
+  win.webContents.on('did-finish-load', pushBattery)
   if (glass) {
     // The addon's own requirement: before the document has loaded there is no content
     // view for the glass to sit under. It is idempotent per window and this fires again
@@ -3140,6 +3159,9 @@ ipcMain.handle('game:status', () => gameStatus())
 // Asked once on load: the page can come up either before or after the window is shown,
 // so the push alone is a race the page loses on a cold start.
 ipcMain.handle('app:visibleNow', () => !!win && !win.isMinimized() && win.isVisible())
+// Same race, same answer: the push can land before the page is listening, so the first
+// paint asks instead of waiting to be told.
+ipcMain.handle('app:batteryNow', () => powerMonitor.isOnBatteryPower())
 /**
  * The renderer's idle clock ran out - see shared/idlequit.ts for every refusal that had
  * to pass first.

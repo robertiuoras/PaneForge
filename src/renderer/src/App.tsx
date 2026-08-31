@@ -990,6 +990,25 @@ export default function App(): JSX.Element {
     }
   }, [])
 
+  /* Running off the battery, which is a different question from being unwatched: this is
+     true exactly when Robert IS looking at a desk of running panes, unplugged. The panel
+     is 120Hz and every looping decoration in this file was drawn against 60, so each one
+     costs twice what it was priced at, all day, on the one power source that runs out.
+     styles.css holds them at their lit end while this class is on - the colour and the
+     meaning stay, the frames restating them go. Nothing that responds to a person is
+     touched, so the app feels identical.
+
+     Asked once as well as subscribed, for the same reason as the visibility effect above:
+     the push can land before this page is listening, and the renderer watchdog reloads. */
+  useEffect(() => {
+    const wear = (on: boolean): void => {
+      document.documentElement.classList.toggle('on-battery', on)
+    }
+    void window.api.appOnBatteryNow?.().then(wear).catch(() => {})
+    const off = window.api.onBattery?.(wear)
+    return () => off?.()
+  }, [])
+
   // The window's own colours. Ahead of the pane list on purpose: this writes CSS
   // variables, so it costs one style recalculation and no React tree ever re-renders
   // for it - which is what lets a slider in Settings drag the whole app's palette.
