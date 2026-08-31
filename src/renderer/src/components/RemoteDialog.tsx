@@ -916,11 +916,17 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
           {self.error && <div className="dev-error">{self.error}</div>}
 
-          {/* What this desk is running with no pane on it. Same reading as a peer's,
-              and it belongs on the hero rather than behind hosting: a scheduled
-              `claude -p` and a dev server on a port nobody can reach are facts about
-              this machine whether or not anything is paired with it. */}
-          <PeerJobs id={null} name={self.name} />
+          {/* What this desk is running with no pane on it - behind a fold, because it is
+              a question somebody comes here to ASK and not one this screen should open
+              by answering. Nine times in ten the answer is "Nothing running outside its
+              panes", and a sentence saying nothing is happening, with a Refresh button
+              beside it, was the second thing in the first card of a dialog whose actual
+              job is pairing. Opening it still costs one process-table read and nothing
+              polls; a closed <details> never mounts its body, so the read now happens
+              when it is wanted rather than on every open. */}
+          <Fold label="What else this machine is running">
+            <PeerJobs id={null} name={self.name} />
+          </Fold>
 
           {self.hosting && (
             <div className="dev-self">
@@ -1061,10 +1067,22 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                       {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
                       {p.status === 'connecting' && <span className="chip">connecting</span>}
                     </div>
-                    <div className="dev-sub">
+                    {/* An IP and a port identify this machine to somebody debugging a
+                        link and to nobody else - and they were the only sub-line a
+                        paired device had, so every row said `192.168.1.14:7311` under a
+                        name. The row now says what the row is FOR (whether it is
+                        reachable, in words), and the address stays on the hover for the
+                        case it is really being asked. An error still wins the line: it
+                        is the one thing here somebody has to act on. */}
+                    <div className="dev-sub" title={`${p.address}:${p.port}`}>
                       <span className={'dot ' + p.status} />
-                      {p.address}:{p.port}
-                      {p.error ? ' · ' + p.error : ''}
+                      {p.error
+                        ? p.error
+                        : p.status === 'online'
+                          ? 'Connected'
+                          : p.status === 'connecting'
+                            ? 'Connecting…'
+                            : 'Not connected'}
                     </div>
                   </div>
                   <div className="dev-acts">

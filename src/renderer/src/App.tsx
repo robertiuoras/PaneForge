@@ -41,7 +41,6 @@ import { fleetRow, fleetWaiting } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   BoardIcon,
-  FleetIcon,
   HistoryIcon,
   LinkIcon,
   SearchIcon,
@@ -3687,7 +3686,6 @@ export default function App(): JSX.Element {
     },
     [tiled]
   )
-  const waiting = sessions.filter((s) => s.attention).length
   // Devices in either direction: ones whose panes are in this list, and ones watching
   // this machine's. Both are "a link is up", which is all the sidebar dot claims.
   const remoteLive =
@@ -4965,26 +4963,23 @@ export default function App(): JSX.Element {
             <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Search<span className="wide-word"> sessions and actions</span>{' '}
-          <span className="kbd">{keyLabel('Ctrl K')}</span>
+          {/* Just the word. "sessions and actions" was a label naming the two GROUPS
+              inside the box, printed on the outside of it where nobody can act on it -
+              and it was the widest thing in the sidebar. The box itself now says what is
+              in it (`cmdk-hints` in CommandPalette.tsx), which is where it is useful. */}
+          Search <span className="kbd">{keyLabel('Ctrl K')}</span>
         </button>
 
         {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
             fourth would not have fitted at all; a fixed-width row has room to grow and
             reads faster once you know it. Every one keeps its full sentence on hover. */}
+        {/* Four buttons, and every one of them is a button. The first slot used to hold
+            a `<span>` wearing the same border as its four neighbours that did nothing
+            when pressed: it was a READING - how many panes want you - drawn as a
+            control, in a row whose whole promise is that a press opens something. The
+            reading was never lost, because the Sessions heading below carries the same
+            count as a badge with the word beside it, which is where a number belongs. */}
         <div className="quick">
-          {/* Sessions are always grouped by state, so the fleet icon shows waiting panes. */}
-          <span
-            className={'ghost quick-btn' + (needsYou ? ' live' : '')}
-            title={
-              (needsYou
-                ? `${needsYou} ${needsYou === 1 ? 'pane wants' : 'panes want'} you. `
-                : '') + 'Sessions are grouped by state in the list below.'
-            }
-          >
-            <FleetIcon />
-            {needsYou > 0 && <span className="quick-dot" />}
-          </span>
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
@@ -5091,9 +5086,14 @@ export default function App(): JSX.Element {
                 {working} working
               </span>
             )}
-            {waiting > 0 && (
-              <span className="badge" title="Turns that finished while you were looking elsewhere">
-                {waiting} waiting
+            {/* Desk-wide, both machines, and it keeps counting until the pane is actually
+                answered - `waiting` above is the same panes minus the ones you have since
+                looked at, which is the weaker half of the reading and was the one drawn.
+                This is the number the sidebar's fifth quick "button" used to carry as a
+                dot nobody could press. */}
+            {needsYou > 0 && (
+              <span className="badge" title="Panes wanting a person: a finished turn, a live question, or a stalled run">
+                {needsYou} wants you
               </span>
             )}
             {/* Closing a workspace one Ctrl-W at a time was the tedious half of a day
@@ -5201,6 +5201,18 @@ export default function App(): JSX.Element {
             : undefined
         }
       >
+        {/* A window with no title bar has to be grabbable SOMEWHERE. `titleBarStyle:
+            'hiddenInset'` hands this window's title strip to the document, and the only
+            drag region in it was `.brand` - a 30px row in the sidebar, most of which is
+            behind the traffic lights. Everything else along the top edge is either a pane
+            header, where a drag region swallows the buttons, or the pane itself.
+
+            So the strip is its own element over the top of the panes column, full width
+            of it and 28px tall - the traffic lights' own row - so the two halves of the
+            window's top edge are one line you can pick the window up by. It draws
+            nothing, and it is display:none off macOS, where there is still a real title
+            bar to grab. */}
+        <div className="drag-top" aria-hidden="true" />
         {/* The way back to the list on a phone. Rendered rather than styled into
             existence because it has to sit above the pane's own overlays, and it is the
             only control on the screen while a pane has the whole display. */}
