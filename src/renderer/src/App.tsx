@@ -4948,6 +4948,9 @@ export default function App(): JSX.Element {
                 <button
                   className="x"
                   title="Restart"
+                  // Same reason as the close button below: the ROW's `onPointerDown` picks
+                  // the session and wakes it, and pointerdown lands before click.
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation()
                     api.restartSession(s.id)
@@ -4959,6 +4962,10 @@ export default function App(): JSX.Element {
               <button
                 className="x"
                 title={keyLabel('Close session (Ctrl W)')}
+                // The row picks - and WAKES - the session on `onPointerDown`, which fires
+                // before this button's click, so closing a sleeping session from the
+                // sidebar spawned its CLI first and then killed it. Stop the press here.
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation()
                   close(s.id)
@@ -5676,7 +5683,17 @@ export default function App(): JSX.Element {
                   className="icon pt-close"
                   title={keyLabel('Close (Ctrl W)')}
                   aria-label={`Close ${s.title}`}
-                  onClick={() => close(s.id)}
+                  // The press must not reach the pane underneath. The pane's own
+                  // `onMouseDown` calls `touchPane`, and arriving at a SLEEPING pane is
+                  // the press that wakes it - so pressing × on a sleeping pane spawned the
+                  // CLI on mousedown and killed it again on click. Robert, 2026-08-31:
+                  // "allow me to close asleep session directly when i click x or close".
+                  // mousedown, not click: the wake is on the earlier event.
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    close(s.id)
+                  }}
                 >
                   ×
                 </button>
