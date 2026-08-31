@@ -1075,9 +1075,45 @@ html.app-blurred *, html.app-blurred *::before, html.app-blurred *::after {
    breathing. The key still says "this agent is running" in exactly the colour it did;
    what goes is the movement, which is the part that was being redrawn 455 times a second
    for a 2.4 second cycle. On a 60Hz or 120Hz machine nothing changes at all. */
-html.hi-refresh .num-wrap:has(> .num.live)::before,
-html.hi-refresh .num-wrap:has(> .num.attn)::before { animation: none; opacity: 1; }
-html.hi-refresh .num.live::after { animation: none; }
+/* ...and the same treatment on BATTERY, for the same reason with a different number.
+   The built-in panel on this MacBook is ProMotion at exactly 120.0Hz (measured
+   2026-09-01, CGDisplayCopyDisplayMode - not the 60Hz these decorations were drawn
+   against), so every loop below runs at twice its intended budget all day, on a
+   battery, whether or not the window is focused. `app-blurred` above does not cover
+   this: the expensive case is Robert LOOKING at a desk of running panes, which is
+   exactly when that class is off.
+
+   What is given up is the movement, never the news. Every rule here holds at its lit
+   end, so a running key, a busy lane, a recording mic and a stuck badge say the same
+   thing in the same colour; only the frames spent restating it go. Transitions are
+   untouched, so hover, focus and every click still answer at full speed - this costs
+   the app nothing in feel, which is the whole reason it is allowed to be the default.
+
+   `steps()` loops are deliberately absent. The mascot's poses change opacity two or
+   three times a cycle and composite nothing in between, so they are already free at
+   any refresh rate; holding them would flatten the drawing and buy nothing.
+
+   Adding a new continuous loop without a line in this block fails
+   `npm run test:anim` - the list cannot rot quietly. */
+html:is(.hi-refresh, .on-battery) .num-wrap:has(> .num.live)::before,
+html:is(.hi-refresh, .on-battery) .num-wrap:has(> .num.attn)::before,
+html:is(.hi-refresh, .on-battery) .lane-row.stuck::before { animation: none !important; opacity: 1; }
+
+html:is(.hi-refresh, .on-battery) .num.live::after,
+html:is(.hi-refresh, .on-battery) .row.asking::before,
+html:is(.hi-refresh, .on-battery) .dot.working,
+html:is(.hi-refresh, .on-battery) .dot.connecting,
+html:is(.hi-refresh, .on-battery) .elapsed::after,
+html:is(.hi-refresh, .on-battery) .chip.pf-lane.stuck,
+html:is(.hi-refresh, .on-battery) .chip.pf-lane.busy,
+html:is(.hi-refresh, .on-battery) .chip.place.lane-chip.stuck,
+html:is(.hi-refresh, .on-battery) .chip.place.lane-chip.busy,
+html:is(.hi-refresh, .on-battery) .lane-tag.busy,
+html:is(.hi-refresh, .on-battery) .badge.stuck,
+html:is(.hi-refresh, .on-battery) .mic-float.rec,
+html:is(.hi-refresh, .on-battery) .ic-dot.spin,
+html:is(.hi-refresh, .on-battery) .voice-dots i,
+html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
 .rename {
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 2px 5px; outline: none;

@@ -20,8 +20,21 @@
  * on - and that changes when the window is dragged to the other monitor.
  */
 
-/** Above this, the looping decorations are held at full instead of animating. */
-const HI_REFRESH_FPS = 130
+/**
+ * Above this, the looping decorations are held at full instead of animating.
+ *
+ * Was 130, which was read off the 480Hz desktop and quietly excluded the machine this
+ * guard exists to protect. The MacBook's built-in panel is ProMotion at exactly 120.0Hz
+ * (measured 2026-09-01 with CGDisplayCopyDisplayMode, not assumed), so `fps > 130` was
+ * false on every laptop frame ever drawn and not one loop was ever held. 120Hz is still
+ * TWICE the 60Hz budget every one of those decorations was designed against.
+ *
+ * 90 rather than 61: a 60Hz panel measures a little over 60 on a good sample and a
+ * little under on a busy one, and a threshold that flickers either side of the real
+ * rate would start and stop the animations while somebody watched. 90 is clear of both
+ * 60Hz and the noise around it, and below every panel that is actually fast.
+ */
+const HI_REFRESH_FPS = 90
 
 let measuring = false
 
