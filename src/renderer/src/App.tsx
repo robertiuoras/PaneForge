@@ -83,7 +83,7 @@ import {
 } from '../../shared/capacity'
 import {
   CLOSE_COUNTDOWN_MS,
-  MIN_COUNTDOWN_MS,
+  countdownEnd,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
   paneWord,
@@ -4028,11 +4028,7 @@ export default function App(): JSX.Element {
     // and the number on screen only ever goes down. Floored, because a pane that was
     // already overdue (nothing had swept yet) would otherwise get a count too short to
     // read, and capped, because the count is a warning and not a delay.
-    const due = Math.max(...keep.map((p) => p.dueAt ?? 0))
-    const deadline =
-      due > now
-        ? Math.min(now + CLOSE_COUNTDOWN_MS, Math.max(due, now + MIN_COUNTDOWN_MS))
-        : now + CLOSE_COUNTDOWN_MS
+    const deadline = countdownEnd(now, keep.map((p) => p.dueAt))
     setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline, why })
   }
 

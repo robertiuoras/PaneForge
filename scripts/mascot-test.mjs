@@ -48,6 +48,8 @@ const {
   bubbleSpot,
   countdownWords,
   CLOSE_COUNTDOWN_MS,
+  MIN_COUNTDOWN_MS,
+  countdownEnd,
   KEEP_MINUTES,
   DEFAULT_MASCOT,
   dueDash,
@@ -679,6 +681,33 @@ const desk = [
     spriteReserve(sprite, { left: 8, top: 58, right: 1312, bottom: 58 }),
     0
   )
+}
+
+// The countdown ends when the CARD said it would, so the number only ever goes down.
+{
+  const NOWC = 1_000_000
+  eq(
+    'a pane due in eleven seconds counts eleven, not fifteen',
+    countdownEnd(NOWC, [NOWC + 11_000]) - NOWC,
+    11_000
+  )
+  eq(
+    'a pane due in three seconds is pushed out to something readable',
+    countdownEnd(NOWC, [NOWC + 3_000]) - NOWC,
+    MIN_COUNTDOWN_MS
+  )
+  eq(
+    'a pane already overdue gets the whole count rather than none',
+    countdownEnd(NOWC, [NOWC - 90_000]) - NOWC,
+    CLOSE_COUNTDOWN_MS
+  )
+  eq('and a plan with no deadline at all is the same', countdownEnd(NOWC, [undefined]) - NOWC, CLOSE_COUNTDOWN_MS)
+  eq(
+    'never longer than the count: the latest deadline wins but is capped',
+    countdownEnd(NOWC, [NOWC + 5_000, NOWC + 900_000]) - NOWC,
+    CLOSE_COUNTDOWN_MS
+  )
+  check('the countdown can never end before it can be read', MIN_COUNTDOWN_MS <= CLOSE_COUNTDOWN_MS)
 }
 
 console.log(`mascot: ${checks} checks passed`)

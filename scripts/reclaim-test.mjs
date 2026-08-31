@@ -687,4 +687,24 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   )
 }
 
+// The countdown is armed BEFORE the deadline, not after it.
+//
+// Armed after, a card sat at `closes now` for up to a whole sweep and the count then
+// appeared from nowhere and read fifteen - a clock going backwards on screen. Reported
+// 2026-08-31: "it was stuck on closes now then the timer went back to 0:10".
+{
+  const CLOCKED2 = { ...DEFAULT_RECLAIM, enabled: true, idleCloseMinutes: 5, maxPerSweep: 2 }
+  const quiet = (ms) => pane({ id: 'x', lastKeyboard: NOW - ms, lastFocus: NOW - ms, lastOutput: NOW - ms })
+  const pad = pane({ id: 'pad', lastKeyboard: NOW })
+  const nearly = [quiet(5 * 60_000 - 10_000), pad]
+  eq('a pane ten seconds short of its clock is left alone with no lead', idleClosePlan(nearly, CLOCKED2, NOW).length, 0)
+  const early = idleClosePlan(nearly, CLOCKED2, NOW, true, 15_000)
+  eq('...and IS picked with a fifteen second lead', ids(early), 'x')
+  eq('the plan carries the deadline the card publishes', early[0].dueAt, idleCloseAt(nearly[0], CLOCKED2, NOW))
+  check('and a pane picked early has not been quiet longer than it has', early[0].idleMs <= 5 * 60_000, early[0].idleMs)
+  const over = idleClosePlan([quiet(9 * 60_000), pad], CLOCKED2, NOW, true, 15_000)
+  check('an overdue pane is still picked', ids(over) === 'x')
+  check('idleMs is never negative', idleClosePlan(nearly, CLOCKED2, NOW, true, 60_000).every((r) => r.idleMs >= 0))
+}
+
 console.log(`reclaim: ${checks} checks passed`)

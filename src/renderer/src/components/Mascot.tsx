@@ -782,7 +782,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         <button
           ref={body}
           className={
-            'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '') + (counting ? ' alert' : '')
+            'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '') + (soon ? ' alert' : '')
           }
           title="Ask about this machine - drag to move it"
           onPointerDown={onDown}

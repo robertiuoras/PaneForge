@@ -669,6 +669,21 @@ export const CLOSE_COUNTDOWN_MS = 15_000
 export const MIN_COUNTDOWN_MS = 10_000
 
 /**
+ * When a countdown that arms NOW should end, given the deadlines of the panes it is about.
+ *
+ * The card and the countdown are one clock: the card publishes `dueAt` and the countdown
+ * runs to it, so the number a person is reading only ever goes down. Two exceptions, both
+ * about the count being readable: a deadline already in the past (nothing had swept yet)
+ * gets the full count instead of none, and one closer than `MIN_COUNTDOWN_MS` is pushed
+ * out to it, because a four-second warning is not a warning.
+ */
+export function countdownEnd(now: number, dues: (number | undefined)[]): number {
+  const due = Math.max(0, ...dues.map((d) => d ?? 0))
+  if (!(due > now)) return now + CLOSE_COUNTDOWN_MS
+  return Math.min(now + CLOSE_COUNTDOWN_MS, Math.max(due, now + MIN_COUNTDOWN_MS))
+}
+
+/**
  * How long a pane is left alone after somebody says "keep it open".
  *
  * The sweeps run every minute, so without this the answer to "keep it" is the same
