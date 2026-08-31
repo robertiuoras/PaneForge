@@ -4513,3 +4513,30 @@ measures works as one argument. `window.__pf[sessionId]` gives a pane's live `te
   .pt-more` (0,2,0) loses to the header's own later `.pane-title .icon` (0,2,0). And `.icon.help` carries its
   own `min-width` at equal specificity and later ON PURPOSE, to keep the two brand buttons the same size, so
   it has to be named separately.
+
+## A countdown armed after its own deadline
+
+The card publishes a deadline (`idleCloseAt`) and clamps an overdue pane to `now`, so it
+reads `closes now` rather than counting up from zero. The sweep that closes it ran on a
+sixty second timer and picked only panes ALREADY past that deadline, and arming set a
+fresh fifteen seconds. On screen: `closes now` for up to a minute, then the number jumped
+UP to 0:15 and counted down. Robert, 2026-08-31: "it was stuck on closes now then the
+timer went back to 0:10 then did the countdown its weird".
+
+So the countdown is now the last seconds of the clock it belongs to. `idleClosePlan` takes
+a `lead` (the sweep passes `CLOSE_COUNTDOWN_MS`), the sweep runs every 5s so the lead is
+actually landed in, each planned pane carries its own `dueAt`, and `countdownEnd` in
+`shared/mascot.ts` ends the count there. Two exceptions, both about being readable: a
+deadline already in the past (nothing had swept yet) gets the full count instead of none,
+and one closer than `MIN_COUNTDOWN_MS` is pushed out to it.
+
+`idleMs` is computed from the real `now`, never `now + lead`: a pane picked ten seconds
+early has not been quiet ten seconds longer than it has, and that number is what
+`reclaim.log` is read back for.
+
+The second half of the same report was "popup doesnt show at 10 sec". The countdown had
+two faces: `MoveSoon` (a card, bottom right) drawn only when the mascot was OFF, and the
+mascot's own bubble otherwise. The mascot is on by default here and gets parked in a
+corner, so the commonest desk got a small bubble beside an animal. `MoveSoon` is now
+always drawn and the mascot no longer draws the count at all - it still walks to the pane
+and wears `.alert` while one is running.

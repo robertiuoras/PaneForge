@@ -682,7 +682,7 @@ Mic on every pane, Ctrl/Cmd Shift Space into focused one. `shared/voicePick.ts` 
 - Dev server named beside a pane NUMBER narrows the SERVERS; bare "pane" means the panes.
 - Bubble self-dismisses (`mascot.hideSeconds`, 60s, 0=until pressed); clock restarts on ask-box keystroke; COUNTDOWN exempt.
 - A guess is never an action: "close pane 9" with five panes closes nothing, says how many exist; destructive intent OFFERED as a press. `closeable()` is `reclaim.ts`'s refusal set; refusal meant is `asking`, off `Session.ask`.
-- Countdown HEARD (`sounds.move`, default `bowl`, once on arm, ticks last five seconds); sweeps hand plan to `armCloseRef`; mascot draws `CLOSE_COUNTDOWN_MS` (15s) naming pane, `Keep it open`/`Close now`; doing nothing still closes it. `Keep it open` holds `KEEP_MINUTES` (10). Mascot hidden → closes.
+- Countdown HEARD (`sounds.move`, default `bowl`, once on arm, ticks last ten seconds); sweeps hand plan to `armCloseRef`; `MoveSoon.tsx` ALWAYS draws it (never the mascot bubble - one clock, one face) naming pane, `Keep it open`/`Close now`; doing nothing still closes it. Armed BEFORE the deadline: `idleClosePlan` takes a `lead`, the idle sweep runs every 5s, `countdownEnd` ends the count at the plan's own `dueAt` so the card's number only goes down (floor `MIN_COUNTDOWN_MS`). `Keep it open` holds `KEEP_MINUTES` (10). Mascot hidden → closes.
 - Speaks unasked once per situation, only where app is silent.
 - Ten pets, same cost (`src/shared/pets.ts`); animation keyed on SLOT not animal, same 24x24 grid.
 - Arrives OFF, runs rarely, every condition a refusal (`dueDash`, `DASH_EVERY_MS` 9 min); can be picked up, drop writes `mascot.spot` as window fraction, beats automatic move.
