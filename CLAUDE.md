@@ -301,6 +301,20 @@ lane id into words. `npm run test:place`, 56 assertions.
 - `-a` stripped only when caller knows lane; `-w<digits>` off unasked.
 - Sidebar has no `git status`.
 
+## Every word on screen is read by somebody who has never used git
+
+The reader is a vibe coder. Machinery words - lane, checkout, trunk, worktree, slot, merge,
+conflict, free, stuck - stay in the code and the comments; the screen says what the thing IS.
+A copy of a project folder is `copy 2` (the project's own folder is 1, so lane `a` is 2 and
+legacy `w2` is 2), never `copy f`. `main copy`, never `main checkout`. `Other copies`, never
+`Lanes elsewhere`. `nobody is using it`, never `free`.
+
+- `copyNumber` in `src/shared/place.ts` is the one place a slot becomes a number.
+- A row about a chat that is not a pane here names that chat: `LaneBoardEntry.chatTitle`,
+  joined in `index.ts`'s `lanes:board` from `main/history.ts` `chatNameFor` on the
+  conversation id. No name on disk = nothing drawn, never a guess.
+- `npm run test:laneplain` pins all of it, including "no heading calls a copy a lane".
+
 ## A pane says which client it is working for
 
 Every pane in a client tree was called `clients`. `shared/clientName.ts` rules, `main/clients.ts`
