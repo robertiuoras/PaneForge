@@ -494,16 +494,34 @@ export const SOUNDS: SoundDef[] = [
     id: 'tick',
     label: 'Clock tick',
     group: 'Objects',
-    gain: 0.055,
+    // Two voices rather than one, because a lone band-passed noise burst is a "tss", not a
+    // tick - reported as "sounds weird". A real clock is a hard transient plus the short
+    // pitched knock of the escapement, so that is what this is: 6ms of tight noise high up
+    // for the click, and a fast falling sine under it for the body. Still a third of the
+    // catalogue's level and still under 40ms, so it cannot stack with the next second or
+    // with the alert that armed it.
+    gain: 0.05,
     voices: [
       {
         wave: 'noise',
         at: 0,
-        dur: 0.012,
+        dur: 0.006,
         gain: 1,
-        attack: 0.001,
+        attack: 0.0008,
         decay: 'lin',
-        filter: { type: 'bandpass', freq: 2600, to: 1600, q: 2.2 }
+        filter: { type: 'bandpass', freq: 3400, to: 2200, q: 7 }
+      },
+      {
+        wave: 'sine',
+        glide: [
+          [0, 1500],
+          [1, 850]
+        ],
+        at: 0,
+        dur: 0.032,
+        gain: 0.45,
+        attack: 0.001,
+        decay: 'exp'
       }
     ]
   },

@@ -74,6 +74,29 @@ export type { TurnClock }
 import type { PaneAsk } from './choices'
 export type { PaneAsk }
 
+/**
+ * A pane that has just been renamed for the client it turned out to be working for.
+ *
+ * The rename happens first and the card reports it, rather than the card asking first: a
+ * question in the corner of a window that is often behind something else is a question
+ * nobody answers, and the answer this one wants is "yes" every time it is right. So the
+ * cheap direction is the automatic one, and `was` is what Cancel puts back.
+ */
+export interface ClientNamed {
+  id: string
+  /** the client's folder name, so a caller can tell two renames apart */
+  slug: string
+  /** what the pane is called now */
+  title: string
+  /** what it was called a moment ago - `basename(cwd)` */
+  was: string
+  /**
+   * `folder` is evidence, `prompt` is a client read out of what was typed, and `topic` is
+   * the subject of the first ask when it named no client at all.
+   */
+  from: 'folder' | 'prompt' | 'topic'
+}
+
 export interface Session {
   id: string
   title: string
@@ -106,6 +129,25 @@ export interface Session {
    */
   openedAt?: number
   exitCode?: number
+  /**
+   * The client this pane was recognised as working for, when it was - the folder slug out
+   * of `shared/clientName.ts`. Set once and kept: it is what stops the prompt reading
+   * asking the same question of every line typed afterwards, and what a second reading
+   * compares against when the pane moves to another client's folder.
+   */
+  clientSlug?: string
+  /**
+   * This pane asked not to be named for a client. Set by Cancel on the card, and by
+   * nothing else - a person undoing the rename is stating that the reading was wrong,
+   * which is the one fact here that outranks the folder.
+   */
+  clientOff?: boolean
+  /**
+   * Which reading named this pane, when one did. `topic` is a guess off the first prompt
+   * and may be replaced by a `client` identified later; `client` is final, and a title a
+   * person typed carries neither and is never touched.
+   */
+  autoTitled?: 'client' | 'topic'
   /**
    * Epoch ms since this pane's `cwd` stopped existing on disk, unset while it is there.
    * A live pane keeps running (its shell falls back to $HOME); an EXITED one whose folder
@@ -1960,6 +2002,15 @@ export interface Api {
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
   renameSession(id: string, title: string): Promise<void>
+  /**
+   * Put a client rename back and stop offering it for this pane. The card's Cancel.
+   *
+   * A rename that could only be undone by typing the old name again is not a cancel: the
+   * old name is `basename(cwd)`, which the person never typed and has no reason to know.
+   */
+  undoClientName(id: string): Promise<void>
+  /** A pane has just been named for a client. Carries what it was called before. */
+  onClientNamed(fn: (e: ClientNamed) => void): () => void
   /**
    * The sidebar's order after a card was dragged, newest-first-to-last as displayed.
    * Mirrored ids are carried along and ignored by the machine that receives them.

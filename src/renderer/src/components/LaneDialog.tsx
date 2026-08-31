@@ -326,7 +326,27 @@ export default function LaneDialog({
         <Blurb id="lane" />
         {work === undefined && <div className="confirm-body">Reading the lane…</div>}
         {work === null && (
-          <div className="confirm-body">This pane is not in a lane any more.</div>
+          // "This pane is not in a lane any more" was true and was a dead end: the chip
+          // that opens this card says `copy a`, so the person pressing it is asking what
+          // `copy a` MEANS, and being told the thing they just pressed does not exist
+          // answers nothing. Reported 2026-08-31: "it doesnt make sense too confusing for
+          // user and cant even click on the tag to find details about it".
+          //
+          // A folder that is not in the ledger is still a folder, and everything worth
+          // saying about it is on screen already - which project it copies, where it is,
+          // and that its work is put back by hand rather than by this card.
+          <div className="confirm-body">
+            <div className="lane-plain">
+              This pane is typing in <code>{cwd}</code>, a second copy of{' '}
+              <strong>{project || 'this project'}</strong> kept beside the main one so two
+              chats can work on it without landing on each other.
+            </div>
+            <div className="lane-dialog-sub">
+              PaneForge is not tracking this copy - it was made outside the app, or its
+              work has already gone back - so there is nothing here to merge. Press
+              <em> what is this?</em> for how copies work.
+            </div>
+          </div>
         )}
         {work && (
           <div className="confirm-body">

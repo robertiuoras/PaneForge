@@ -554,7 +554,11 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const SLEEPY = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
   eq('on by default', DEFAULT_RECLAIM.idleSleepMinutes, IDLE_SLEEP_MINUTES)
-  eq('...at half an hour', IDLE_SLEEP_MINUTES, 30)
+  // Five, the same as the close clock. Sleeping gives back the ~190 MB and keeps the card,
+  // its place, its screen and its conversation, so the half hour it used to wait was
+  // buying nothing at a real cost - Robert, 2026-08-31: "we need timer as well 5 mins to
+  // sleep otherwise uses lots of resources".
+  eq('...at five minutes', IDLE_SLEEP_MINUTES, 5)
   // A config written by an older build has no such field at all, and that must read as the
   // default rather than as "never" (undefined) or "immediately" (0).
   const older = { ...DEFAULT_RECLAIM }
@@ -601,11 +605,27 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     ['is being handed over', { handingOff: true }],
     ['is running a command', { job: 'npm' }],
     ['left a background job', { backJob: 'npm' }],
-    ['somebody said to keep open', { pinned: true }],
     ['is already asleep', { asleep: NOW - HOUR }]
   ]) {
     const p = [pane({ id: 'x', lastKeyboard: NOW - 9 * HOUR, ...extra }), pane({ id: 'pad', lastKeyboard: NOW })]
     check(`never a pane that ${what}`, !idleSleepPlan(p, SLEEPY, NOW).some((r) => r.id === 'x'), ids(idleSleepPlan(p, SLEEPY, NOW)))
+  }
+  // ...and the refusal it deliberately does NOT share with the close clock. "Keep this one
+  // open" is an instruction about the CARD, and a slept pane keeps its card, its place, its
+  // screen and its conversation - so a kept pane still gives its agent back, which is what
+  // makes saying "keep it open" free. Robert, 2026-08-31: "sessions even if kept open
+  // should still sleep". The close clock's own refusal is asserted above and unchanged.
+  {
+    const kept = [
+      pane({ id: 'x', pinned: true, lastKeyboard: NOW - 9 * HOUR }),
+      pane({ id: 'pad', lastKeyboard: NOW })
+    ]
+    eq('a pane kept open still sleeps', ids(idleSleepPlan(kept, SLEEPY, NOW)), 'x')
+    eq(
+      'CONTROL: and is never closed',
+      idleCloseAt(kept[0], { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }, NOW),
+      null
+    )
   }
   // The control: the same pane with none of those true really is slept, or every line
   // above passes for the wrong reason.

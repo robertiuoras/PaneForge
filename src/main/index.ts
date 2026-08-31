@@ -48,7 +48,7 @@ import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import type { DiffScope, PhoneState, ShelfEdge } from '../shared/types'
+import type { ClientNamed, DiffScope, PhoneState, ShelfEdge } from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry } from './laneBoard'
@@ -865,6 +865,10 @@ manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
+// A pane naming itself is a thing the app decided, so it is reported and never asked -
+// the card in the corner carries the undo. Renderer only: nothing about it is worth a
+// phone notification.
+manager.on('clientNamed', (e: ClientNamed) => send('sessions:clientNamed', e))
 
 /**
  * One phone message per question. The pane raises `ask` once per FRAME of a question and
@@ -1329,6 +1333,7 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
+ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
 ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said

@@ -18,6 +18,9 @@ import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, 
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
+import { clientForCwd, clientForText } from './clients'
+import { clientTitle, mayRename, topicTitle } from '../shared/clientName'
+import type { ClientNamed } from '../shared/types'
 
 /**
  * The refusal a caller must NOT override.
@@ -717,8 +720,76 @@ export class SessionManager extends EventEmitter {
     // be done in `place.ts`: half the callers draw the strip with no branch in hand.
     this.stampLane(id)
 
+    // ...and WHO this pane is for, when the folder proves it. A title the caller supplied
+    // is a person's answer to the same question and is never argued with.
+    if (!req.title) this.nameForClient(id, 'folder')
+
     this.emitSessions()
     return meta
+  }
+
+  /**
+   * Name a pane for the client it is working for, and say so.
+   *
+   * One client per pane is how this desk is actually driven, and until now the pane knew
+   * it and could not say it: every card in a client tree is called `clients`, so the only
+   * thing separating seven of them is which chat you remember opening. The identity is
+   * already on disk (the folder) or already typed (the first prompt); this writes it down.
+   *
+   * The rename happens and THEN reports, rather than asking first, for the reason every
+   * other automatic thing in this app is arranged that way: a card in the corner of a
+   * window that is usually behind something else is not a question anybody answers. So
+   * the automatic direction is the one that is right nearly always, and `was` is carried
+   * out with the event so Cancel is a real undo rather than "type the old name again".
+   *
+   * Every refusal is in `shared/clientName.ts`, and they are the feature: a pane renamed
+   * to the WRONG client is a card that lies while somebody works off it, which is a worse
+   * outcome than the folder name it replaced.
+   */
+  private nameForClient(id: string, from: 'folder' | 'prompt', text?: string): void {
+    const live = this.sessions.get(id)
+    if (!live) return
+    const s = live.meta
+    if (s.clientOff) return
+    // Only a pane still wearing the name the APP gave it, with one exception: a subject
+    // read out of the first prompt is a guess, and a client identified afterwards is
+    // evidence, so evidence is allowed to replace the guess. Nothing replaces a client,
+    // and nothing at all replaces a name a person typed.
+    const untitled = mayRename(s.title, s.cwd)
+    const upgradable = s.autoTitled === 'topic'
+    if (!untitled && !upgradable) return
+
+    const found =
+      from === 'folder' ? clientForCwd(s.cwd) : text ? clientForText(s.cwd, text) : undefined
+    if (!found && !untitled) return
+    if (found && found.slug === s.clientSlug) return
+    // A pane in a client tree doing something else entirely is still a pane nobody can
+    // tell apart, so it gets the subject of what was asked instead. Never on the folder
+    // reading, which has no words to read.
+    const title = found ? clientTitle(found) : from === 'prompt' && text ? topicTitle(text) : ''
+    if (!title || title === s.title) return
+    const was = s.title
+    s.title = title
+    s.clientSlug = found?.slug
+    s.autoTitled = found ? 'client' : 'topic'
+    this.emit('clientNamed', {
+      id,
+      slug: found?.slug ?? '',
+      title,
+      was,
+      from: found ? from : 'topic'
+    } satisfies ClientNamed)
+    this.emitSessions()
+  }
+
+  /** Cancel on the card: put the name back, and stop reading this pane for a client. */
+  undoClientName(id: string): void {
+    const live = this.sessions.get(id)
+    if (!live) return
+    live.meta.clientOff = true
+    live.meta.clientSlug = undefined
+    live.meta.title = basename(live.meta.cwd)
+    this.emitSessions()
   }
 
   /**
@@ -1116,6 +1187,9 @@ export class SessionManager extends EventEmitter {
     // a phone's send button on an empty box - and none of them is work anybody is
     // waiting on.
     let bare = false
+    // What was actually asked, kept before the composer is emptied a few lines down: the
+    // client reading needs the words, and by the time the block ends they are gone.
+    const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
       const slash = isSlashCommand(live.typed)
@@ -1144,6 +1218,9 @@ export class SessionManager extends EventEmitter {
       // question straight after a /clear arms the bell again immediately.
       live.slashQuietUntil = quiet ? Date.now() + QUIET_SLASH_MS : 0
       if (slash) live.turnPending = false
+      // A slash command is a command to the CLI, not a sentence about the work, so it
+      // never names anybody. A bare return said nothing at all.
+      if (!slash && !bare) this.nameForClient(id, 'prompt', asked)
     }
     // Typing into a pane is both "I have asked it something" (so its next quiet
     // moment is a real end-of-turn) and "I have seen it" (so drop any nag). A bare

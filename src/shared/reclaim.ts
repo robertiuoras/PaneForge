@@ -148,11 +148,15 @@ export const IDLE_CLOSE_MINUTES = 5
  * them". Measured on this desk 2026-08-28, eight live `claude` panes: 61, 64, 153, 166,
  * 174, 177, 231 and 247 MB, 1.27 GB in total, none of it doing anything.
  *
- * Half an hour rather than the close clock's five minutes: this fires whether or not the
- * machine is under pressure, so it has to be long enough that a pane somebody is thinking
- * about between turns is never in it.
+ * Five minutes, the same as the close clock, and that is the point: sleeping is what this
+ * app does to an idle pane, and closing is what it does when it is also allowed to take
+ * the card away. Half an hour was set when sleeping was the new rung and the risk was
+ * unknown; measured since, a slept pane costs nothing to wake and loses nothing, so the
+ * conservative number was buying a quarter of an hour of a CLI sitting on ~190 MB doing
+ * nothing. Robert, 2026-08-31: "we need timer as well 5 mins to sleep otherwise uses lots
+ * of resources".
  */
-export const IDLE_SLEEP_MINUTES = 30
+export const IDLE_SLEEP_MINUTES = 5
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
@@ -447,7 +451,7 @@ export function idleSleepPlan(
   if (!minutes) return []
   const minIdle = minutes * 60_000
   return panes
-    .filter(keepable)
+    .filter(sleepable)
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
@@ -494,6 +498,24 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
  * make the sleep clock inert on the desk it was built for. Measured on this machine: two
  * eligible panes, quiet 126s against a 60s clock, neither slept.
  */
+/**
+ * The refusals the SLEEP clock keeps, which is `keepable` minus exactly one of them.
+ *
+ * `pinned` - "keep this one open" - is an instruction about the CARD. Somebody who said it
+ * meant that the pane must still be there when they come back, and a slept pane is: its
+ * card, its place, its screen and its conversation are all exactly where they were, and a
+ * press wakes it in the same chat. What sleeping gives back is the agent, which is the
+ * ~190 MB that made the pane worth a rule in the first place.
+ *
+ * So a kept pane is exempt from closing and NOT from sleeping, which is what makes "keep
+ * it open" cost nothing to say. Robert, 2026-08-31: "sessions even if kept open should
+ * still sleep ... otherwise uses lots of resources". Every other refusal is shared
+ * verbatim, `asleep` included - a sleeping pane is the outcome, not a candidate.
+ */
+function sleepable(p: ReclaimPane): boolean {
+  return keepable({ ...p, pinned: false })
+}
+
 function keepable(p: ReclaimPane): boolean {
   return (
     !p.focused &&

@@ -3,6 +3,7 @@ import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
+  ClientNamed,
   Config,
   DiffScope,
   HistoryEntry,
@@ -142,6 +143,7 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
+import ClientToast from './components/ClientToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import Tips from './components/Tips'
@@ -1173,10 +1175,14 @@ export default function App(): JSX.Element {
       if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
+    // A pane naming itself for the client (or the subject) it is working on. No sound and
+    // no glow: nothing was asked of anybody, and the card says so for three seconds.
+    const offNamed = api.onClientNamed((e) => setClientNamed(e))
     return () => {
       offStalled()
       offAsk()
       offBell()
+      offNamed()
     }
   }, [])
   // Looking at the pane answers the question the glow was asking, however you got
@@ -3778,6 +3784,8 @@ export default function App(): JSX.Element {
    * screen and this app never does that on its own initiative; it is a sentence with a
    * clock in it, and doing nothing still closes the pane.
    */
+  // The newest pane to have named itself, for the three-second card in the corner.
+  const [clientNamed, setClientNamed] = useState<ClientNamed | undefined>(undefined)
   const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
   // Debug handle, the same one `window.__pf` is for a pane: a probe cannot wait for this
   // machine to run out of memory, and a countdown that is only ever drawn by a sweep is a
@@ -3992,7 +4000,11 @@ export default function App(): JSX.Element {
     // finished, so the `done` chime lands a moment before this and the 900ms guard ate it.
     playAction('move', soundSet.current)
     const ticks: number[] = []
-    for (let left = 5; left >= 1; left--) {
+    // Ten, not five. The countdown is fifteen seconds and five put the first sound two
+    // thirds of the way through the thing it was announcing - reported as "doesn't make
+    // any sound when under 10 secs". Same number as the auto-clear countdown below, for
+    // the same reason, so the two clocks in this app sound alike.
+    for (let left = 10; left >= 1; left--) {
       const at = closeSoon.deadline - left * 1000 - Date.now()
       if (at > 0) ticks.push(window.setTimeout(() => playTick(soundSet.current), at))
     }
@@ -6349,6 +6361,16 @@ export default function App(): JSX.Element {
       {/* A session about to clear itself. Drawn for the window rather than per pane: the
           countdown is about a CONVERSATION, and the pane it belongs to is very often not
           the one on screen - which is the whole reason the silent version was a bug. */}
+      {/* A pane that has just worked out whose work it is doing. */}
+      <ClientToast
+        named={clientNamed}
+        besidePet={config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled}
+        onCancel={(id) => {
+          void api.undoClientName(id)
+          setClientNamed(undefined)
+        }}
+        onDone={() => setClientNamed(undefined)}
+      />
       <AutoClearToast
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}

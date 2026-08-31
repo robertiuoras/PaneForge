@@ -57,6 +57,7 @@
     "test:conceal": "node scripts/conceal-test.mjs",
     "test:voice": "node scripts/voice-test.mjs",
     "test:place": "node scripts/place-test.mjs",
+    "test:clientname": "node scripts/client-name-test.mjs",
     "test:projectroot": "node scripts/projectroot-test.mjs",
     "test:agentenv": "node scripts/agent-env-test.mjs",
     "test:devicewatch": "node scripts/device-watch-test.mjs",
