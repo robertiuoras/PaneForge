@@ -149,6 +149,14 @@ is(
   'Fix Invoice Template',
   'politeness and articles both come off'
 )
+// A label may not end on the word that joined it to the half that was cut off:
+// `pizzasrus and the invoice template` used to name a pane `Pizzasrus And`.
+is(topicTitle('pizzasrus and the invoice template'), 'Pizzasrus And Invoice', 'never half a word')
+is(topicTitle('fix the deploy script and'), 'Fix Deploy Script', 'trailing and trimmed')
+is(topicTitle('rename the invoice folder with'), 'Rename Invoice Folder', 'trailing with trimmed')
+is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder', 'a real four-word subject survives')
+is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
+
 is(topicTitle('/clear'), '', 'a slash command is a command, not a subject')
 is(topicTitle('ok'), '', 'too short to identify a pane')
 is(topicTitle(''), '', 'nothing typed')

@@ -32,6 +32,8 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
+  /** A transcript search is in flight, so an empty list is not yet an answer. */
+  const [searching, setSearching] = useState(false)
   const [open, setOpen] = useState<HistoryEntry | null>(null)
   const [text, setText] = useState('')
   /**
@@ -50,16 +52,28 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
     api.listHistory().then(setEntries)
   }, [])
 
-  // Search runs in the main process over files, so debounce rather than search per key.
+  // Searching the TRANSCRIPTS runs in the main process over half a gigabyte of logs, so
+  // debounce rather than search per key - and drop an answer that arrived after the query
+  // moved on, which is what made the box feel like it was fighting the typing: a slow
+  // answer for `pizz` used to land on top of the results for `pizzasrus`.
   useEffect(() => {
     if (query.trim().length < 2) {
       setHits(null)
       return
     }
+    let dead = false
+    setSearching(true)
     const t = window.setTimeout(() => {
-      api.searchHistory(query).then(setHits)
+      api.searchHistory(query).then((h) => {
+        if (dead) return
+        setHits(h)
+        setSearching(false)
+      })
     }, 250)
-    return () => window.clearTimeout(t)
+    return () => {
+      dead = true
+      window.clearTimeout(t)
+    }
   }, [query])
 
   /**
@@ -96,12 +110,41 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
     }
   }, [open])
 
-  const grouped = useMemo(() => {
-    if (!hits) return null
+  /** Every matched line, by the session it came from. */
+  const byId = useMemo(() => {
     const map = new Map<string, HistoryHit[]>()
-    for (const h of hits) map.set(h.id, [...(map.get(h.id) ?? []), h])
-    return [...map.entries()]
+    for (const h of hits ?? []) map.set(h.id, [...(map.get(h.id) ?? []), h])
+    return map
   }, [hits])
+
+  /**
+   * What the list shows: every session, or the ones the query names.
+   *
+   * A session is found by its NAME as well as by what it printed. Searching `pizzasrus`
+   * returned nothing at all for a pane called Pizzasrus unless the word also happened to
+   * appear in its output - which is the opposite of the question being asked, since the
+   * reason to type a session's name is to open it again. The name, the folder and the
+   * asks are already here, in a few hundred small objects, so this costs one pass and no
+   * round trip; only the transcripts need main.
+   *
+   * Name matches lead, then whichever printed the word most. And the rows are the SAME
+   * rows as the unsearched list, so `Open again`, `Delete` and the clocks are all still
+   * there - the old search results were a different, actionless row, so finding the
+   * session you wanted left you with nothing to press.
+   */
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return entries
+    const named = (e: HistoryEntry): boolean =>
+      [e.title, e.cwd, e.gist, ...(e.chapters ?? [])].some((t) => t?.toLowerCase().includes(q))
+    return entries
+      .filter((e) => named(e) || byId.has(e.id))
+      .sort((a, b) => {
+        const byName = Number(named(b)) - Number(named(a))
+        if (byName) return byName
+        return (byId.get(b.id)?.length ?? 0) - (byId.get(a.id)?.length ?? 0)
+      })
+  }, [entries, byId, query])
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -135,31 +178,9 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
             {summaryFull(open) && <div className="hist-chapters">{summaryFull(open)}</div>}
             <pre className="transcript">{text || 'Reading the transcript…'}</pre>
           </>
-        ) : grouped ? (
-          <div className="hist-list">
-            {grouped.map(([id, list]) => {
-              const entry = entries.find((e) => e.id === id)
-              return (
-                <div key={id} className="hist-item">
-                  <div className="hist-head" onClick={() => entry && setOpen(entry)}>
-                    <AgentLogo id={list[0].agent} spec={agents.find((a) => a.id === list[0].agent)} size={13} />
-                    <strong>{list[0].title}</strong>
-                    <span className="hint">{list[0].cwd}</span>
-                    <span className="chip">{list.length} hits</span>
-                  </div>
-                  {list.slice(0, 4).map((h, i) => (
-                    <div key={i} className="hist-line">
-                      {h.line}
-                    </div>
-                  ))}
-                </div>
-              )
-            })}
-            {!grouped.length && <div className="empty">Nothing matched.</div>}
-          </div>
         ) : (
           <div className="hist-list">
-            {entries.map((e) => (
+            {shown.map((e) => (
               /* Still open or closed is the first thing the eye needs off this list - a
                  row for the pane that is on screen right now reads exactly like a row
                  for one closed a week ago. Green edge for live, red for closed, and the
@@ -214,6 +235,21 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       {summaryOf(e)}
                     </div>
                   ))}
+                {/* The lines this session PRINTED that the query matched, when the query
+                    did not simply name it. Four of them, which is enough to recognise
+                    which session this is without turning the row into a transcript. */}
+                {(byId.get(e.id)?.length ?? 0) > 0 && (
+                  <div className="hist-lines">
+                    {byId.get(e.id)!.slice(0, 4).map((h, i) => (
+                      <div key={i} className="hist-line">
+                        {h.line}
+                      </div>
+                    ))}
+                    {byId.get(e.id)!.length > 4 && (
+                      <div className="hint">{byId.get(e.id)!.length} matching lines</div>
+                    )}
+                  </div>
+                )}
                 <div className="hist-actions">
                   {/* Only where there is something the row is not already showing: one
                       chapter is printed whole, so a button offering to print it again is
@@ -256,7 +292,15 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                 </div>
               </div>
             ))}
-            {!entries.length && <div className="empty">No transcripts yet.</div>}
+            {!shown.length && (
+              <div className="empty">
+                {!entries.length
+                  ? 'No transcripts yet.'
+                  : searching
+                    ? 'Searching every transcript…'
+                    : 'Nothing matched.'}
+              </div>
+            )}
           </div>
         )}
 

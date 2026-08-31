@@ -259,6 +259,16 @@ export function mayRename(title: string, cwd: string, dismissed?: boolean): bool
  * a pane. There is no model here and there should not be: this is a label, and a wrong
  * label somebody can retype costs nothing, while a request per prompt costs money for ever.
  */
+/**
+ * Words a title may not END on: they join a phrase to something that was cut off.
+ *
+ * Not the same list as the openers stripped off the front - `check` and `fix` are fine
+ * to end a title on ("Deploy Check"), and `and`/`with`/`to` never are.
+ */
+const DANGLING_WORDS =
+  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had'
+const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
+
 export function topicTitle(prompt: string): string {
   const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
   if (!line || line.startsWith('/')) return ''
@@ -277,9 +287,26 @@ export function topicTitle(prompt: string): string {
     .split(' ')
     .filter((w) => w && !/^(?:the|a|an)$/.test(w))
     .slice(0, 4)
-  const out = words.join(' ')
+  // A label may not end on a word that is only there to join it to the words that were
+  // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
+  // card called `Pizzasrus And`, which reads as an unfinished sentence rather than a name
+  // - the reader spends a beat looking for the missing half. Trimmed AFTER the slice,
+  // because that is where the dangling word comes from.
+  while (words.length && DANGLING.test(words[words.length - 1])) words.pop()
+  // The 26-character cap takes whole WORDS. Slicing the string left the card wearing half
+  // a word - `pizzasrus and the invoice template` became `Pizzasrus And Invoice Tem`,
+  // which reads as a name that got corrupted rather than one that got shortened.
+  const kept: string[] = []
+  for (const w of words) {
+    const next = kept.length ? kept.join(' ').length + 1 + w.length : w.length
+    if (kept.length && next > 26) break
+    kept.push(w)
+  }
+  // ...and dropping the last word can leave the one that joined it on the end.
+  while (kept.length && DANGLING.test(kept[kept.length - 1])) kept.pop()
+  const out = kept.join(' ').slice(0, 26)
   if (out.length < 5) return ''
-  return titleCase(out.length > 26 ? out.slice(0, 25).trimEnd() : out)
+  return titleCase(out)
 }
 
 /** The title a client gets, capped the way `rename` caps it. */

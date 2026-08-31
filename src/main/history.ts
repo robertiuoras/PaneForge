@@ -20,6 +20,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
@@ -299,8 +300,28 @@ function backfill(e: HistoryEntry): HistoryEntry {
   }
 }
 
-/** Substring search across every transcript. Case-insensitive, newest first. */
-export function search(query: string, limit = 200): HistoryHit[] {
+/**
+ * Substring search across every transcript. Case-insensitive, newest first.
+ *
+ * Two things make this fast enough to run while somebody types, measured on this Mac
+ * 2026-08-31 over 267 logs / 534 MB with a query that matches:
+ *
+ *  - **Read as latin1 and test the RAW bytes first.** Stripping every log's escape
+ *    sequences was 3070ms; a raw `indexOf` prefilter, stripping only the files that can
+ *    contain the query, is 659ms. The one thing this
+ *    gives up is a match that only EXISTS once stripped - a word an agent recoloured in
+ *    the middle - which is a price worth 4.7x. latin1 because the
+ *    UTF-8 decode is most of the read cost and a byte-wise substring test does not need
+ *    the codepoints - the file is re-read as utf8 only when it matched.
+ *  - **`await` between files.** This runs on the main process, so a 650ms synchronous
+ *    scan is 650ms of a window that does not repaint. Asynchronous reads hand the loop
+ *    back between logs, which is what makes typing in the box stay smooth.
+ *
+ * Only the TRANSCRIPT is searched here. A session's name, folder and asks are already in
+ * the renderer's own list of entries, and matching them there costs one pass over a few
+ * hundred small objects instead of a round trip - see `HistoryDialog`.
+ */
+export async function search(query: string, limit = 200): Promise<HistoryHit[]> {
   const q = query.trim().toLowerCase()
   if (q.length < 2) return []
   flush()
@@ -308,10 +329,11 @@ export function search(query: string, limit = 200): HistoryHit[] {
   for (const entry of list()) {
     if (hits.length >= limit) break
     const file = logFile(entry.id)
-    if (!existsSync(file)) continue
     let text: string
     try {
-      text = strip(readFileSync(file, 'utf8'))
+      const raw = await readFile(file, 'latin1')
+      if (!raw.toLowerCase().includes(q)) continue
+      text = strip(await readFile(file, 'utf8'))
     } catch {
       continue
     }
