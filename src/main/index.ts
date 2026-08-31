@@ -1811,7 +1811,23 @@ const lanePanes = (): LanePane[] =>
 
 ipcMain.handle('lanes:board', () => {
   const panes = lanePanes()
-  return laneBoards(panes).map((b) => attachLaneOwners(b, panes))
+  return laneBoards(panes)
+    .map((b) => attachLaneOwners(b, panes))
+    .map((b) =>
+      b
+        ? {
+            ...b,
+            // Only for the rows the strip actually draws - lanes no pane in this window
+            // holds. A lane a pane holds is already named by that pane's own card, and
+            // looking its old history up would put a stale name beside a live one.
+            lanes: b.lanes.map((l) => {
+              if (l.ownerPane || !l.session) return l
+              const named = history.chatNameFor(l.session)
+              return named ? { ...l, chatTitle: named.title, chatAbout: named.about } : l
+            })
+          }
+        : b
+    )
 })
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the

@@ -604,6 +604,19 @@ export interface LaneBoardEntry {
    * nothing on this screen is that chat: it ended without saying so, or it runs elsewhere.
    */
   ownerPane: string | null
+  /**
+   * What the chat holding it is CALLED - the name on its card, after any rename.
+   *
+   * Every row on the lane strip belongs to a chat that is not a pane in this window, so
+   * the one thing no card can say about it is what it was. A folder and a letter answered
+   * "which checkout" and never "which job", which is the question actually being asked of
+   * a list of seven. Filled in from the history file the chat left behind (main/history.ts
+   * `chatNameFor`), matched on the conversation id the lane recorded; absent when that
+   * chat left no history, and then nothing is drawn rather than a guess.
+   */
+  chatTitle?: string
+  /** the first thing that chat was asked to do, when its history kept one */
+  chatAbout?: string
   /** a live chat holds it right now */
   held: boolean
   /** epoch ms the holding chat was last seen doing something */

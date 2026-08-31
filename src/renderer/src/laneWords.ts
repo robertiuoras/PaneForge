@@ -160,7 +160,7 @@ export function laneState(
     const why = holdWords(hold, now)
     return why ? `done, ${why}` : 'done - ships with the next update'
   }
-  if (!lane.held) return 'free'
+  if (!lane.held) return 'nobody is using it'
   // "working" was a lie the strip told about every lane: a chat claims one the moment it
   // starts, so four chats that had typed nothing all read as busy. What the lane file
   // actually knows is who holds it and when that chat was last heard from.
@@ -200,10 +200,23 @@ export function holdWords(hold: { reason: string; at: number } | null, now = Dat
   return r.split('. ')[0].slice(0, 140)
 }
 
+/**
+ * What the chat in this copy was called and what it was asked to do.
+ *
+ * Empty for a copy whose chat left no history, which is the point: a row that cannot say
+ * what it was says nothing instead of inventing a name for it.
+ */
+export function laneWho(lane: LaneBoardEntry): string {
+  return lane.chatTitle ? `"${lane.chatTitle}"` : ''
+}
+
 /** The holder, spelled out in full: the tooltip is where the whole path and id belong. */
 export function heldByTip(lane: LaneBoardEntry, pane?: number): string {
   if (!lane.held) return ''
-  const where = lane.from ? `\nStarted in ${lane.from}` : ''
+  const named = lane.chatTitle
+    ? `\nThat chat was called "${lane.chatTitle}"${lane.chatAbout ? `\nIt was asked: ${lane.chatAbout}` : ''}`
+    : ''
+  const where = (lane.from ? `\nStarted in ${lane.from}` : '') + named
   const who = lane.session ? `\nChat ${lane.session}` : ''
   return where || who ? `Held by ${holderName(lane, pane)}${where}${who}` : ''
 }

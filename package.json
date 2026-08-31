@@ -233,7 +233,8 @@
     "main-latency": "node scripts/main-latency.mjs",
     "pane-frames": "node scripts/pane-frames.mjs",
     "test:faultnotify": "node scripts/fault-notify-test.mjs",
-    "test:spawnguard": "node scripts/spawn-guard-test.mjs"
+    "test:spawnguard": "node scripts/spawn-guard-test.mjs",
+    "test:laneplain": "node scripts/lane-plain-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

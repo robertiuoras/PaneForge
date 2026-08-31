@@ -89,6 +89,7 @@ const TESTS = [
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
+  ['laneplain', 'lane-plain-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],

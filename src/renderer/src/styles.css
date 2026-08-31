@@ -1365,6 +1365,9 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-row { padding: 5px 8px; }
 .lane-row .row-title { font-size: 12px; }
 .lane-row .row-sub { font-size: 10.5px; }
+/* The folder is what you act on and the chat's name is what tells you whether you want
+   to: same line, second, dimmer, and the first thing to be cut when the row is short. */
+.lane-row .row-who { color: var(--muted); font-weight: 400; }
 .lane-row.done .row-sub { color: var(--ok); opacity: 0.85; }
 /* The strip only ever draws lanes held by a chat that is NOT a pane here, so "busy now"
    is the fact it exists to carry - and it was grey, identical to a lane last touched

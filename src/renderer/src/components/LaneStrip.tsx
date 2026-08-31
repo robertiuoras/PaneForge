@@ -12,6 +12,7 @@ import {
   laneProject,
   laneState,
   laneTip,
+  laneWho,
   RELEASE_STUCK_MS
 } from '../laneWords'
 
@@ -159,8 +160,8 @@ export function LaneChip({
         })
       }
       title={
-        `This chat is also editing ${laneProject(lane)}, in its own copy of it ` +
-        `(lane ${lane.lane}) - ${laneState(lane, true)}.\n` +
+        `This chat is also editing ${laneProject(lane)}, in its own copy of the folder ` +
+        `- ${laneState(lane, true)}.\n` +
         `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}` +
         (onHelp ? '\nClick: how lanes work.' : '')
       }
@@ -228,15 +229,20 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
         {/* The middle word is the first thing a narrow sidebar gives up: the heading was
             ellipsed to `LANES ELSEWHERE …` with the count - the one number on the line -
             inside the part that got cut. */}
+        {/* "Lanes" is this app's word for a thing that already has a plain one: an extra
+            copy of a project folder, so two chats can work on it without landing on each
+            other. The heading says the plain one. The middle word is still the first
+            thing a narrow sidebar gives up - the heading was ellipsed with the count, the
+            one number on the line, inside the part that got cut. */}
         <span className="section-title">
-          Lanes<span className="wide-word"> elsewhere</span> ({orphans.length})
+          Other<span className="wide-word"> copies</span> ({orphans.length})
         </span>
         {stuck > 0 && (
           <span
             className="badge stuck"
             title="Two chats changed the same lines, so this work won't merge until someone picks. Everything else still ships."
           >
-            {stuck} stuck
+            {stuck} need you
           </span>
         )}
         {releasingAt !== undefined && (
@@ -335,7 +341,13 @@ function LaneRow({
         {/* Was `lane.branch`, which is the single word this whole change exists to stop
             printing: several rows saying `master`, for different repositories, with
             nothing on any of them naming one. */}
-        <div className="row-title">{laneLabel(lane)}</div>
+        {/* The folder, then what the chat in it was called. The folder alone answered
+            "which copy" and never "which job", which is the question a list of seven is
+            asking. Nothing is drawn for a copy whose chat left no name behind. */}
+        <div className="row-title">
+          {laneLabel(lane)}
+          {laneWho(lane) && <span className="row-who"> {laneWho(lane)}</span>}
+        </div>
         <div className="row-sub">
           {laneState(lane, false, Date.now(), holderPane, hold)}
           {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}

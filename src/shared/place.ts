@@ -98,6 +98,27 @@ export function isGeneratedBranch(branch: string, slot: string): boolean {
   return b === `lane-${s}` || b === `pf/${s}` || b === s
 }
 
+/**
+ * Which copy of the project this is, counting the project's own folder as the first.
+ *
+ * The label a person reads must not be the label the machinery uses. `a`, `b`, `f` are
+ * slots in a pool - they mean something to scripts/lane.mjs and nothing to somebody who
+ * has never opened a terminal, and "copy f" on a card was read here as an error message.
+ * A number is the thing everybody already understands: the project's own folder is copy 1,
+ * the first extra one is copy 2. Legacy `w2` lanes already carry their number, and it is
+ * the same counting - `w1` was never made because the project itself is 1.
+ *
+ * Null for a slot that is neither shape, so the caller prints it verbatim rather than
+ * inventing a number for a folder nobody can find.
+ */
+export function copyNumber(slot: string): number | null {
+  const s = slot.trim().toLowerCase()
+  if (/^[a-z]$/.test(s)) return s.charCodeAt(0) - 'a'.charCodeAt(0) + 2
+  const w = /^w(\d+)$/.exec(s)
+  if (w) return Number(w[1])
+  return null
+}
+
 export interface PlaceInput {
   /** the folder the pane is open in */
   cwd: string
@@ -127,7 +148,7 @@ export interface Place {
   onTrunk: boolean
   /** the chip: at most three words, project first, always */
   short: string
-  /** what this checkout IS, for a second line: "main checkout" or "copy a" */
+  /** what this folder IS, in words anybody reads: "main copy" or "copy 2" */
   role: string
   /** the tooltip: every fact, spelled out */
   full: string
@@ -152,7 +173,7 @@ export function describePlace(input: PlaceInput): Place {
   // something no folder is called.
   const slot = kind === 'lane' ? (input.lane ?? '') : ''
 
-  const role = kind === 'lane' ? `copy ${slot}` : 'main checkout'
+  const role = kind === 'lane' ? `copy ${copyNumber(slot) ?? slot}` : 'main copy'
 
   // The branch earns its place on the chip by disagreeing with something. On the trunk it
   // does not, and "PaneForge · master" is two words to say one - the Vercel rule. Nor does

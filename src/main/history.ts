@@ -143,6 +143,50 @@ export function gistFor(id: string): string | undefined {
 }
 
 /**
+ * What a CLOSED chat was called, looked up by its conversation id.
+ *
+ * The lane strip's rows are all chats that are not panes in this window, and a row that
+ * says only `PaneForge-f · quiet 3h` answers which folder and never which job. The chat's
+ * own name is on disk already: it was renamed while it ran (a client's name, or the
+ * subject of its first ask) and `recordEnd` wrote that name, its opening ask and its
+ * conversation id into the history file when the pane closed.
+ *
+ * Read from the same metadata files History lists, cached for a moment because the strip
+ * polls every five seconds and this is one readdir per look. Newest close wins where one
+ * conversation was open twice: that is the one the reader means.
+ */
+const NAME_TTL = 30_000
+let chatNames: Map<string, { title: string; about?: string }> | null = null
+let chatNamesAt = 0
+
+export function chatNameFor(resumeId: string): { title: string; about?: string } | undefined {
+  if (!resumeId) return undefined
+  if (!chatNames || Date.now() - chatNamesAt > NAME_TTL) {
+    const map = new Map<string, { title: string; about?: string; at: number }>()
+    try {
+      for (const f of readdirSync(dir())) {
+        if (!f.endsWith('.json')) continue
+        try {
+          const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
+          if (!e.resumeId || !e.title) continue
+          const at = e.endedAt ?? e.startedAt ?? 0
+          const was = map.get(e.resumeId)
+          if (was && was.at >= at) continue
+          map.set(e.resumeId, { title: e.title, about: e.gist, at })
+        } catch {
+          /* one unreadable row must not blank the rest */
+        }
+      }
+    } catch {
+      /* no history folder yet */
+    }
+    chatNames = new Map([...map].map(([k, v]) => [k, { title: v.title, about: v.about }]))
+    chatNamesAt = Date.now()
+  }
+  return chatNames.get(resumeId)
+}
+
+/**
  * The pane's current width, for replaying its transcript at the width it was written for.
  *
  * Held in memory and written when the session ends, never per resize: a window being
