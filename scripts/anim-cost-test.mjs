@@ -170,8 +170,11 @@ for (const rel of files) {
     if (guardRule && holds) {
       // `html:is(.hi-refresh, .on-battery) .dot.working` guards `.dot.working`.
       for (const part of splitSelectors(sel)) {
-        const words = part.split(/\s+/)
-        if (words.length > 1 && words[0].startsWith('html')) guarded.add(words.slice(1).join(' '))
+        // Not `split(/\s+/)`: `html:is(.hi-refresh, .on-battery)` has a space INSIDE its
+        // parentheses, so word-splitting tears the prefix in half and guards a selector
+        // that does not exist. Match the whole prefix, parentheses and all.
+        const bare = part.replace(/^html(?::is\([^)]*\)|[.\w-]*)\s+/, '')
+        if (bare !== part) guarded.add(bare)
       }
       continue
     }
