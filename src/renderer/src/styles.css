@@ -2324,6 +2324,13 @@ body.sizing * { user-select: none !important; }
 .proj.on { background: var(--accent-dim); border-color: #8b9dff33; }
 .tick { display: inline-flex; flex: none; }
 .proj-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "Create <name> and start a session": the row that appears when the filter names a
+   project that does not exist yet. A button so it is reachable by keyboard, wearing the
+   project row's own geometry - it belongs to that list and reads as one of its rows, and
+   the dashed edge is the only thing saying this one is not there yet. */
+.proj.proj-new { width: 100%; text-align: left; background: none; border: 1px dashed var(--border); color: var(--text); font: inherit; cursor: pointer; }
+.proj.proj-new:hover { background: var(--surface); }
+.proj.proj-new:disabled { opacity: 0.6; cursor: default; }
 .tag {
   color: var(--muted); font-size: 10px; border: 1px solid var(--line-strong);
   border-radius: 5px; padding: 0 5px;

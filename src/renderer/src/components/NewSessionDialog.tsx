@@ -5,6 +5,7 @@ import AgentPicker, { AgentInstallBar } from './AgentPicker'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import { Checkbox } from './Controls'
+import { folderNameFor } from '@shared/projectName'
 
 const api = window.api
 
@@ -17,6 +18,8 @@ interface Props {
   onDefaultsChange: (agent: Agent, model: string) => void
   agents: AgentInfo[]
   onStart: (reqs: StartSessionRequest[]) => void
+  /** a project folder was made from this dialog, so the list behind it is stale */
+  onProjectsChanged: () => void
   /** save the current tick-list as a named workspace without launching it */
   onSaveWorkspace: (name: string, reqs: StartSessionRequest[]) => void
   onCancel: () => void
@@ -33,6 +36,7 @@ export default function NewSessionDialog({
   onDefaultsChange,
   agents: probed,
   onStart,
+  onProjectsChanged,
   onSaveWorkspace,
   onCancel
 }: Props): JSX.Element {
@@ -74,6 +78,35 @@ export default function NewSessionDialog({
     if (!picked) return
     await api.setConfig({ root: picked })
     setRoot(picked)
+  }
+
+  /**
+   * The name in the search box is not a project yet - make it one and open it.
+   *
+   * Typing a name nothing matches is the moment somebody decides a project exists, and
+   * until now it was the moment they left the app: make the folder in Finder, come back,
+   * reopen this dialog. The box already holds the name, so the answer is one press.
+   *
+   * A folder and nothing else (`createProject`), then straight into a session in it -
+   * which is what "call it Car and press start" means. `null` back means the name may
+   * not be a folder (`shared/projectName.ts` holds every refusal) and the row that
+   * offers this is not drawn for such a name in the first place.
+   */
+  const [making, setMaking] = useState(false)
+  const newName = folderNameFor(q)
+  const exists = projects.some((p) => p.name.toLowerCase() === newName.toLowerCase())
+  const create = async (): Promise<void> => {
+    if (!newName || making) return
+    setMaking(true)
+    try {
+      const made = await api.createProject(newName)
+      if (!made) return
+      onProjectsChanged()
+      setQ('')
+      go(made)
+    } finally {
+      setMaking(false)
+    }
   }
 
   /*
@@ -225,7 +258,10 @@ export default function NewSessionDialog({
               e.preventDefault()
               if (shown[sel]) toggle(shown[sel].path)
             } else if (e.key === 'Enter') {
-              go()
+              // Enter on a name that matches nothing is the create press: there is
+              // nothing else it could start, and the alternative was a dead key.
+              if (!shown.length && newName && !exists) void create()
+              else go()
             }
           }}
         />
@@ -262,8 +298,18 @@ export default function NewSessionDialog({
               {copiesOpen ? 'Hide' : 'Show'} {copies.length} lane {copies.length === 1 ? 'checkout' : 'checkouts'}
             </button>
           )}
+          {/* A name nothing matches, offered as a project rather than as "No match".
+              Drawn whenever the typed name is a legal folder that is not already here,
+              so it is also reachable when the filter DID match something else. */}
+          {newName && !exists && (
+            <button className="proj proj-new" disabled={making} onClick={() => void create()}>
+              <span className="proj-name">Create “{newName}” and start a session</span>
+              <span className="tag">new folder</span>
+            </button>
+          )}
           {shown.length === 0 &&
             copies.length === 0 &&
+            !newName &&
             (q.trim() ? (
               <div className="empty">No match</div>
             ) : (

@@ -5773,6 +5773,7 @@ export default function App(): JSX.Element {
           }
           onCancel={() => setPicking(false)}
           onStart={start}
+          onProjectsChanged={() => void api.listProjects().then(setProjects)}
           onSaveWorkspace={(name, reqs) => {
             saveWorkspace(name, reqs)
             setPicking(false)

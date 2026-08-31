@@ -24,7 +24,7 @@ import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
 import { revealTarget, within } from '../shared/reveal'
-import { listProjects } from './projects'
+import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
@@ -1228,6 +1228,7 @@ manager.on('sessions', () => publishCapacity())
 startAway((a) => send('system:away', a))
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())

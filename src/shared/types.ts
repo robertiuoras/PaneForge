@@ -1987,6 +1987,8 @@ export const STASH_CONFIG_KEYS = [
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
   listProjects(): Promise<Project[]>
+  /** make a project folder from a typed name; null when the name may not be one */
+  createProject(name: string): Promise<Project | null>
   /**
    * Which project a first message is about, ranked. Empty text means no matches, so
    * this is safe to call on every keystroke; it reads no files that are not cached.

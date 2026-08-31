@@ -5,17 +5,49 @@
 // working directory under ~/.claude/projects, named after the path with every
 // non-alphanumeric character replaced by '-'.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { projectsRoot } from './config'
 import { checkoutOwners, type FolderFacts } from '../shared/checkout'
+import { folderNameFor } from '../shared/projectName'
 import type { Project } from '../shared/types'
 
 const SKIP = new Set([
   'node_modules', '.git', '.vscode', '.claude', '.cursor', '.autosync',
   'assets', 'backups', 'temp', 'dist', 'out'
 ])
+
+/**
+ * Make a project folder from a name somebody typed, and answer with the row for it.
+ *
+ * The New session box already knows the answer to "which project" for everything that
+ * exists; a project that does NOT exist yet meant leaving the app, making a folder in
+ * Finder, and coming back. So typing a name nothing matches offers to create it here.
+ *
+ * It creates a FOLDER and nothing else - no git init, no scaffolding, no README. The
+ * first thing that happens in it is an agent, and an agent in an empty folder is the
+ * whole point; anything written here would be a guess about a project nobody has
+ * described yet.
+ *
+ * A name that already exists is not an error and is not a second folder: it answers with
+ * the row for the folder that is there, which is what "start a session in Car" means
+ * whether or not Car was made a moment ago.
+ */
+export function createProject(typed: string, root = projectsRoot()): Project | null {
+  const name = folderNameFor(typed)
+  if (!name) return null
+  try {
+    if (!existsSync(root)) return null
+    const path = join(root, name)
+    // `recursive` so an existing folder is a success rather than EEXIST - see above.
+    mkdirSync(path, { recursive: true })
+    if (!statSync(path).isDirectory()) return null
+    return listProjects(root).find((p) => p.path === path) ?? { name, path, lastUsed: 0, isGit: false }
+  } catch {
+    return null
+  }
+}
 
 export function listProjects(root = projectsRoot()): Project[] {
   if (!existsSync(root)) return []
