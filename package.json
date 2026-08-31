@@ -141,6 +141,7 @@
     "dist:mac": "electron-vite build && electron-builder --mac --publish never",
     "release": "electron-vite build && electron-builder --publish always",
     "try": "node scripts/try.mjs",
+    "layout": "node scripts/dev-layout.mjs",
     "setup": "node scripts/setup.mjs",
     "ship": "node scripts/lane.mjs ship",
     "lane": "node scripts/lane.mjs",

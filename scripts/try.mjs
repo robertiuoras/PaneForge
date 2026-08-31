@@ -147,3 +147,17 @@ Your live app is untouched: separate settings, separate workspaces, separate pan
 With a game running it opens no window at all - not even a taskbar button - and appears
 once the game closes, because showing one is enough to take a fullscreen game off screen.
 Close the test window when you are done - nothing to clean up.`)
+
+// Two copies on screen at once is a comparison, and Robert arranges that comparison the
+// same way every time: both on the external monitor, installed app on the left half, this
+// copy on the right. `--show` is the only mode where somebody is doing that, and
+// `scripts/dev-layout.mjs` refuses on a single screen, so this costs nothing on the road.
+// After a beat, because a window that does not exist yet cannot be placed.
+if (!minimized) {
+  setTimeout(() => {
+    const r = spawnSync(process.execPath, [new URL('dev-layout.mjs', import.meta.url).pathname], {
+      encoding: 'utf8'
+    })
+    if (r.stdout) process.stdout.write(r.stdout)
+  }, 2500).unref?.()
+}
