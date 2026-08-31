@@ -38,6 +38,9 @@ const {
   slugFromPath,
   topicTitle,
   mayTopicName,
+  repeatedTopic,
+  topicKeywords,
+  SHORT_TITLE,
   withAliases
 } = createRequire(import.meta.url)(out)
 
@@ -178,5 +181,42 @@ ok(mayRename('clients', '/Users/r/Projects/clients'), 'a pane still wearing the 
 ok(!mayRename('Angie C.', '/Users/r/Projects/clients'), 'a pane that has already been named')
 ok(!mayRename('clients', '/Users/r/Projects/clients', true), 'a pane that said no')
 is(clientTitle({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'capped like rename')
+
+// ------------------------------------------------- a subject several asks agree on
+
+const say = (...asks) => repeatedTopic(asks)
+
+is(say('the invoice reminder emails'), '', 'one ask is not a subject')
+is(say('invoice reminders', 'the invoice template'), '', 'twice is not a subject either')
+is(
+  say('sort the invoice reminders', 'fix the invoice template', 'invoice numbering is wrong'),
+  'Invoice',
+  'three asks about invoices name the pane'
+)
+is(
+  say('what did we ship', 'is the mac lagging', 'make a dev release'),
+  '',
+  'three unrelated asks name nothing'
+)
+is(
+  say('invoice reminders', 'invoice template', 'deploy the site', 'the site deploy failed'),
+  '',
+  'a subject that has scrolled out of the window stops counting'
+)
+ok(
+  say(
+    'the onboarding email sequence needs rewriting',
+    'onboarding email sequence tone',
+    'onboarding email sequence timing'
+  ).length <= SHORT_TITLE,
+  'a repeated subject is short'
+)
+is(
+  say('please can you check this', 'could you look at that', 'would you make it better'),
+  '',
+  'words every prompt uses are not a subject'
+)
+is(say('/clear', '/clear', '/clear'), '', 'slash commands say nothing')
+is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'runway and verbs drop out')
 
 console.log(`client-name: ${checks} checks passed`)

@@ -19,7 +19,14 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
 import { clientForCwd, clientForText } from './clients'
-import { clientTitle, mayRename, mayTopicName, topicTitle } from '../shared/clientName'
+import {
+  clientTitle,
+  mayRename,
+  mayTopicName,
+  repeatedTopic,
+  TOPIC_WINDOW,
+  topicTitle
+} from '../shared/clientName'
 import type { ClientNamed } from '../shared/types'
 
 /**
@@ -306,6 +313,8 @@ interface Live {
    */
   runner: string
   jobName: string | null
+  /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
+  topicAsks?: string[]
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
@@ -767,11 +776,12 @@ export class SessionManager extends EventEmitter {
     // tell apart, so it gets the subject of what was asked instead. Never on the folder
     // reading, which has no words to read.
     // A subject is only ever written over the word `clients`: see `mayTopicName`.
-    const title = found
-      ? clientTitle(found)
-      : from === 'prompt' && text && mayTopicName(s.cwd)
-        ? topicTitle(text)
-        : ''
+    // Outside a client roster the folder name is already true, so a subject may only
+    // replace it once the desk has asked about the same thing three times: see
+    // `repeatedTopic`. Inside the tree every card says `clients` and nothing tells them
+    // apart, so the first ask still names them.
+    const topic = !found && from === 'prompt' && text ? this.topicFor(live, text) : ''
+    const title = found ? clientTitle(found) : topic
     if (!title || title === s.title) return
     const was = s.title
     s.title = title
@@ -785,6 +795,22 @@ export class SessionManager extends EventEmitter {
       from: found ? from : 'topic'
     } satisfies ClientNamed)
     this.emitSessions()
+  }
+
+  /**
+   * The subject this pane may be named for, given what has been asked of it.
+   *
+   * The asks are kept here rather than read back out of the transcript because they are
+   * already passing through this process on their way to the pty - the same feed the
+   * prompt archive and the rail run off - so remembering four of them costs nothing and
+   * needs no CLI to cooperate.
+   */
+  private topicFor(live: Live, text: string): string {
+    const asks = (live.topicAsks ??= [])
+    asks.push(text)
+    if (asks.length > TOPIC_WINDOW) asks.splice(0, asks.length - TOPIC_WINDOW)
+    if (mayTopicName(live.meta.cwd)) return topicTitle(text)
+    return repeatedTopic(asks)
   }
 
   /** Cancel on the card: put the name back, and stop reading this pane for a client. */

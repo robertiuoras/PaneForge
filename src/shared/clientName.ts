@@ -331,3 +331,98 @@ export function topicTitle(prompt: string): string {
 export function clientTitle(entry: ClientEntry): string {
   return entry.name.trim().slice(0, MAX_TITLE)
 }
+
+/**
+ * The subject a pane keeps coming back to, when several asks in a row agree on it.
+ *
+ * Naming a pane off the FIRST sentence typed is a guess made from one reading, and it is
+ * wrong as often as it is right: the first thing asked in a repo is usually an errand
+ * ("what did we ship yesterday") and the card then wears that errand for the rest of the
+ * day. Repetition is the evidence that was missing. Three asks that share a word are not
+ * a sentence about the work, they ARE the work, and a pane can be named for it without a
+ * model, a request, or a fence around one folder.
+ *
+ * So this is the rule outside a client roster: the folder name stands until the desk has
+ * said the same thing three times, and only then does the card take a subject.
+ */
+export const TOPIC_MIN_ASKS = 3
+
+/** How many recent asks are looked at, so a subject that has moved on stops matching. */
+export const TOPIC_WINDOW = 4
+
+/**
+ * A repeated subject is a LABEL, not a sentence, and it sits beside a client name on the
+ * same card - so it is held to the same width a person would type. Shorter than
+ * `topicTitle`'s 26: the words here are the ones that survived three asks, so there are
+ * fewer of them worth keeping.
+ */
+export const SHORT_TITLE = 22
+
+/** The most words a repeated subject may spend. */
+const TOPIC_MAX_WORDS = 3
+
+/**
+ * Words that carry no subject: the runway a request starts with, the verbs every ask
+ * uses, and the joining words. A word repeated three times only means something if it is
+ * about the WORK - "please" and "should" are in every prompt on the desk.
+ */
+const TOPIC_STOP = new Set(
+  (
+    'hi hey okay also please pls can could would you your we our they them this that these those ' +
+    'need needs needed want wanna think maybe just help lets let does did done doing what which ' +
+    'when where why how there here from with without into onto about again still then than they ' +
+    'make made makes making check checks checked look looks looked have has had been being will ' +
+    'shall must some more most much many any all every each other another same thing things stuff ' +
+    'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
+    'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
+    'working works worked run runs running fix fixes fixed add adds added change changes changed'
+  ).split(' ')
+)
+
+/** The words in one ask that could name a subject, in the order they were typed. */
+export function topicKeywords(prompt: string): string[] {
+  const line = prompt.trim()
+  if (!line || line.startsWith('/')) return []
+  const out: string[] = []
+  for (const w of normalise(line).split(' ')) {
+    if (w.length < 4 || /^\d+$/.test(w)) continue
+    if (TOPIC_STOP.has(w) || DANGLING.test(w)) continue
+    if (!out.includes(w)) out.push(w)
+  }
+  return out
+}
+
+/**
+ * The title several asks agree on, or nothing.
+ *
+ * Nothing is the common answer and it is the point: a desk that jumps between subjects
+ * keeps its folder name, which is the truest thing that can be written on that card.
+ */
+export function repeatedTopic(asks: string[]): string {
+  const recent = asks.slice(-TOPIC_WINDOW)
+  if (recent.length < TOPIC_MIN_ASKS) return ''
+  const words = recent.map(topicKeywords)
+  if (words.some((w) => w.length === 0)) {
+    // A window holding an ask with no subject at all (`ok`, a pasted path) has not said
+    // the same thing three times - it has said it twice with something else in between.
+    if (words.filter((w) => w.length > 0).length < TOPIC_MIN_ASKS) return ''
+  }
+  const seen = new Map<string, number>()
+  for (const w of words) for (const word of w) seen.set(word, (seen.get(word) ?? 0) + 1)
+  const shared = new Set([...seen].filter(([, n]) => n >= TOPIC_MIN_ASKS).map(([w]) => w))
+  if (!shared.size) return ''
+  // Ordered by the LATEST ask that used them, so the label reads the way the desk last
+  // said it rather than the way it was first typed.
+  const order = [...words].reverse().flat()
+  const kept: string[] = []
+  for (const w of order) {
+    if (!shared.has(w) || kept.includes(w)) continue
+    const next = kept.length ? kept.join(' ').length + 1 + w.length : w.length
+    if (kept.length && (next > SHORT_TITLE || kept.length >= TOPIC_MAX_WORDS)) break
+    kept.push(w)
+  }
+  while (kept.length && DANGLING.test(kept[kept.length - 1])) kept.pop()
+  const out = kept.join(' ')
+  if (out.length < 5) return ''
+  return titleCase(out)
+}
