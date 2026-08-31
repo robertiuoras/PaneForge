@@ -203,7 +203,7 @@ ok(
 // A download the updater retries is written down and never sent.
 ok(
   'an interrupted update download is not sent',
-  !worthSending({
+  !F.worthSending({
     kind: 'unhandledRejection',
     detail: 'Error: net::ERR_HTTP2_PROTOCOL_ERROR\n    at SimpleURLLoaderWrapper'
   }),
@@ -211,12 +211,12 @@ ok(
 )
 ok(
   'nor is a half-downloaded asset that failed its checksum',
-  !worthSending({ kind: 'unhandledRejection', detail: 'Error: sha512 checksum mismatch, expected a, got b' }),
+  !F.worthSending({ kind: 'unhandledRejection', detail: 'Error: sha512 checksum mismatch, expected a, got b' }),
   'same download, arriving as a mismatch when the bytes did land'
 )
 ok(
   'an ordinary rejection still leaves the machine',
-  worthSending({ kind: 'unhandledRejection', detail: 'TypeError: x is not a function' }),
+  F.worthSending({ kind: 'unhandledRejection', detail: 'TypeError: x is not a function' }),
   'the quiet list is narrow on purpose'
 )
 
