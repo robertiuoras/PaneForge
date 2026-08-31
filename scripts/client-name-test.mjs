@@ -103,6 +103,33 @@ is(
   'a bare first name is part of the name'
 )
 is(nameFromHeading('#   ', 'sonia-b'), 'Sonia B', 'an empty heading falls back to the folder')
+// A trading name with the person in brackets is a card about the PERSON: that is who the
+// work is with. An expansion of the same name is not, which is why PIA Team survives above.
+is(
+  nameFromHeading('# A4 Advocate (Adie Bradley)', 'a4-advocate'),
+  'Adie Bradley',
+  'the person in brackets is the client'
+)
+is(
+  nameFromHeading('# Pizza Ovens R Us (PORUS)', 'pizza-ovens-r-us'),
+  'Pizza Ovens R Us',
+  'an acronym in brackets is not a person'
+)
+is(
+  nameFromHeading('# Powerhouse Management Limited (NZ)', 'powerhouse-management'),
+  'Powerhouse Management Limited',
+  'a country in brackets is not a person'
+)
+is(
+  nameFromHeading('# Level 8 Building (Property Solutions)', 'level-8-building'),
+  'Level 8 Building',
+  'business furniture in brackets is not a person'
+)
+is(
+  nameFromHeading('# Adie Bradley Client', 'a4-advocate'),
+  'Adie Bradley',
+  'the word client says nothing a client tree did not'
+)
 
 // --------------------------------------------------------- what a prompt is allowed to say
 
@@ -160,11 +187,23 @@ is(topicTitle('fix the deploy script and'), 'Fix Deploy Script', 'trailing and t
 is(topicTitle('rename the invoice folder with'), 'Rename Invoice Folder', 'trailing with trimmed')
 is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder', 'a real four-word subject survives')
 is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
+is(
+  topicTitle("i'm looking for a cheap car"),
+  'Looking For Cheap Car',
+  'half a contraction is not the first word of a card'
+)
+is(
+  topicTitle('we need to set up meta ads for the new offer'),
+  'Set Up Meta Ads',
+  'the runway comes off a real errand too'
+)
 
 // A pane already wearing a project's name is not renamed to a sentence: PaneForge stays
 // PaneForge however the first ask is worded. Only a client tree, where every pane is
 // called `clients`, has nothing to lose.
 is(mayTopicName('/Users/r/Projects/PaneForge'), false, 'a repo keeps its own name')
+is(mayTopicName('/Users/r/Desktop'), true, 'a folder that is nobody project')
+is(mayTopicName('/Users/r/Projects'), true, 'the projects root names no work')
 is(mayTopicName('/Users/r/Projects/clients'), true, 'the client tree root')
 is(mayTopicName('/Users/r/Projects/clients/pizzasrus/menu'), true, 'anywhere inside it')
 is(mayTopicName('C:\\Users\\Gamer\\Desktop\\Projects\\clients\\angie'), true, 'either separator')
@@ -190,8 +229,8 @@ is(say('the invoice reminder emails'), '', 'one ask is not a subject')
 is(say('invoice reminders', 'the invoice template'), '', 'twice is not a subject either')
 is(
   say('sort the invoice reminders', 'fix the invoice template', 'invoice numbering is wrong'),
-  'Invoice',
-  'three asks about invoices name the pane'
+  'Sort Invoice Reminders',
+  'three asks about invoices name the pane, as a phrase'
 )
 is(
   say('what did we ship', 'is the mac lagging', 'make a dev release'),
