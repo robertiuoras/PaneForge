@@ -21,6 +21,30 @@ interface Props {
 const FIRST_PER_GROUP = 6
 
 /**
+ * The box cannot say what is in it, so it says what to type into it.
+ *
+ * A search box with a static placeholder teaches nothing: "Jump to a session, run a
+ * command" names two categories and not one thing anybody could type. These are real
+ * queries against the commands this app actually registers, cycled in the placeholder
+ * so the box is showing a different one each time it is opened.
+ *
+ * It stops the moment anything is typed - a placeholder is gone by then anyway, and a
+ * timer still running behind a box somebody is using is a render per tick for nothing.
+ */
+const EXAMPLES = [
+  'settings',
+  'a project name',
+  'split a long ask',
+  'history',
+  'devices',
+  'new session',
+  'a pane you have open'
+]
+
+/** How long one example stays up. Slow enough to read a whole one before it moves. */
+const EXAMPLE_MS = 3600
+
+/**
  * Ctrl K: one box that reaches every session, workspace and action. It exists because
  * the sidebar stops being scannable past about eight sessions, and because switching
  * project should not need the mouse.
@@ -31,10 +55,16 @@ const FIRST_PER_GROUP = 6
 export default function CommandPalette({ commands, onClose }: Props): JSX.Element {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
+  const [ex, setEx] = useState(() => Math.floor(Math.random() * EXAMPLES.length))
   const box = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
 
   useEffect(() => box.current?.focus(), [])
+  useEffect(() => {
+    if (q) return
+    const t = setInterval(() => setEx((i) => (i + 1) % EXAMPLES.length), EXAMPLE_MS)
+    return () => clearInterval(t)
+  }, [q])
   useEffect(() => setHi(0), [q])
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('.cmd.hi')?.scrollIntoView({ block: 'nearest' })
@@ -64,6 +94,22 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
       .map((r) => r.c)
   }, [commands, q])
 
+  /**
+   * The groups this box actually holds, in the order they were registered.
+   *
+   * Drawn as one row of chips under the input while nothing is typed, and gone the
+   * moment something is: this is the answer to "what can I even search for here",
+   * which the sidebar's button used to try to give by spelling out "sessions and
+   * actions" in words nobody reads twice. A press types the group's own name, which
+   * the subsequence match already scores against (`c.group` is part of the haystack),
+   * so the chip is a real query and not a second filtering mechanism to keep in step.
+   */
+  const groups = useMemo(() => {
+    const seen: string[] = []
+    for (const c of commands) if (c.group && !seen.includes(c.group)) seen.push(c.group)
+    return seen
+  }, [commands])
+
   const go = (c?: Command): void => {
     if (!c) return
     onClose()
@@ -82,7 +128,7 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
           </svg>
           <input
             ref={box}
-            placeholder="Jump to a session, run a command"
+            placeholder={`Search — try “${EXAMPLES[ex]}”`}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -101,6 +147,23 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
           />
           <span className="kbd-box">Esc</span>
         </div>
+        {!q && groups.length > 0 && (
+          <div className="cmdk-hints">
+            <span className="cmdk-hint-lead">In here:</span>
+            {groups.map((g) => (
+              <button
+                key={g}
+                className="cmdk-chip"
+                onClick={() => {
+                  setQ(g)
+                  box.current?.focus()
+                }}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="cmdk-list" ref={list}>
           {shown.map((c, i) => {
             const head = c.group && c.group !== last ? c.group : null

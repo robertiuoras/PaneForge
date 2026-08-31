@@ -551,7 +551,7 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .sidebar.narrow .kbd { display: none; }
 .sidebar.narrow .wide-word { display: none; }
 .sidebar.narrow .primary { padding-left: 10px; padding-right: 10px; }
-/* Five icons in 167px: the gap halves and the buttons give up their side padding, which
+/* Four icons in 167px: the gap halves and the buttons give up their side padding, which
    they can - `.quick .ghost` is already `flex: 1`, so the row divides what is left. */
 .sidebar.narrow .quick { gap: 4px; }
 .sidebar.narrow .quick-btn { padding-left: 0; padding-right: 0; min-width: 0; }
@@ -1509,6 +1509,27 @@ button.small { padding: 5px 9px; font-size: 11px; }
    27px of the height spent on air - about one column and two rows of terminal per pane.
    6px still separates two panes that both have a 1px border and a focus ring. */
 .panes { position: relative; min-width: 0; height: 100vh; padding: 6px; }
+/* ---- the other half of the window's top edge --------------------------------
+   `.mac-chrome .brand` (above) made the sidebar's first row a drag handle, which is 208
+   usable pixels of a window that is otherwise unpickupable: `titleBarStyle:
+   'hiddenInset'` leaves no title bar, and the panes column's own first row is a header
+   full of buttons - a drag region over a button swallows the press.
+
+   `.drag-top` (App.tsx, inside `.panes`) is a strip over the top of that column. 28px
+   is the traffic lights' own row height, so the two handles are one line across the
+   whole window. It paints nothing and is not there off macOS.
+
+   The panes have to move down by the same amount, and in TWO places: the grid flows in
+   normal flow and takes the padding, but a focus-view pane is absolute and is placed off
+   the PADDING box, so `inset: 6px` ignores it and would have covered the strip. */
+.drag-top { display: none; }
+.mac-chrome .drag-top {
+  display: block;
+  position: absolute; top: 0; left: 0; right: 0; height: 28px; z-index: 4;
+  -webkit-app-region: drag;
+}
+.mac-chrome .panes { padding-top: 28px; }
+.mac-chrome .panes:not(.grid) .pane { top: 28px; }
 .panes.grid { display: grid; grid-auto-rows: 1fr; gap: 6px; }
 .panes:not(.grid) .pane { position: absolute; inset: 6px; }
 .pane {
@@ -1869,6 +1890,8 @@ body.sizing * { user-select: none !important; }
   .brand .icon.help { min-width: 44px; height: 44px; font-size: 18px; }
   .primary, .search-btn { min-height: 44px; }
   .quick-btn { min-height: 44px; padding-inline: 10px; }
+  /* A chip is a query somebody taps, so it is a control like any other here. */
+  .cmdk-chip { min-height: 44px; padding-inline: 14px; font-size: 13px; }
   /* A destructive control may never be the smallest thing on the screen. It keeps its
      place at the end of the section heading and stops being a 21x17 glyph. */
   .section-btn { min-width: 44px; min-height: 44px; font-size: 15px; }
@@ -2673,6 +2696,23 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .cmdk-input input::placeholder { color: #6f6f7d; }
 .cmdk-input { flex: 0 0 auto; }
 .cmdk-input .kbd-box { min-width: 0; }
+/* What is in this box, said inside it. The row is gone the moment anything is typed, so
+   it costs nothing but the empty state - which is the one moment somebody is looking for
+   it. A chip is a real query (it types the group's own name), not a second filter to keep
+   in step with the search. Hairline rims rather than filled pills: the list below is the
+   thing to read, and four filled blocks over it read as the answer. */
+.cmdk-hints {
+  flex: 0 0 auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line);
+}
+.cmdk-hint-lead { color: var(--muted); font-size: 11px; margin-right: 1px; }
+.cmdk-chip {
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-size: 11px; padding: 3px 9px; cursor: pointer;
+  transition: color var(--fast), border-color var(--fast);
+}
+.cmdk-chip:hover { color: var(--text); border-color: var(--line-strong); }
 .cmdk-list { flex: 1 1 auto; min-height: 0; max-height: 56vh; overflow-y: auto; padding: 6px 6px 12px; }
 .cmd {
   display: flex; align-items: center; gap: 9px;
