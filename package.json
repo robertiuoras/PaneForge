@@ -142,6 +142,7 @@
     "release": "electron-vite build && electron-builder --publish always",
     "try": "node scripts/try.mjs",
     "layout": "node scripts/dev-layout.mjs",
+    "demo": "node scripts/demo.mjs",
     "setup": "node scripts/setup.mjs",
     "ship": "node scripts/lane.mjs ship",
     "lane": "node scripts/lane.mjs",
