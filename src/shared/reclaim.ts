@@ -324,6 +324,16 @@ export interface Reclaim {
   idleMs: number
   /** Whether closing it frees an agent, or only a buffer. */
   hadAgent: boolean
+  /**
+   * The moment this pane's own idle clock runs out - the same number `idleCloseAt` puts on
+   * the card.
+   *
+   * It is here because the countdown is armed BEFORE the deadline rather than after it,
+   * and the two have to agree. Armed after, the card said `closes now`, nothing happened
+   * for up to a whole sweep, and then fifteen seconds appeared from nowhere - reported
+   * 2026-08-31 as "it was stuck on closes now then the timer went back to 0:10".
+   */
+  dueAt?: number
 }
 
 /**
@@ -395,7 +405,16 @@ export function idleClosePlan(
   panes: ReclaimPane[],
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
   now = 0,
-  personHere = true
+  personHere = true,
+  /**
+   * How far AHEAD of the deadline a pane may be picked, ms.
+   *
+   * Zero is "only panes already past their clock", which made the countdown the one thing
+   * on screen that runs after the clock it belongs to has already finished. With a lead,
+   * the countdown IS the last seconds of the card's own clock and the number only ever
+   * goes down.
+   */
+  lead = 0
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
@@ -405,7 +424,7 @@ export function idleClosePlan(
 
   const eligible = panes
     .filter((p) => onTheClock(p, personHere))
-    .filter((p) => now - quietSince(p) >= minIdle)
+    .filter((p) => now + lead - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
 
   // Same last-pane rule as the pressure sweep: an app that empties its own window has not
@@ -415,8 +434,11 @@ export function idleClosePlan(
 
   return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
     id: p.id,
-    idleMs: now - quietSince(p),
-    hadAgent: p.state !== 'exited'
+    // Never the lead: this is how long the pane has REALLY been quiet, and it is what the
+    // log line is read back for.
+    idleMs: Math.max(0, now - quietSince(p)),
+    hadAgent: p.state !== 'exited',
+    dueAt: quietSince(p) + minIdle
   }))
 }
 

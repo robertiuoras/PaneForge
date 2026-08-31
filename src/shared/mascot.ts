@@ -659,6 +659,16 @@ export function actedWords(
 export const CLOSE_COUNTDOWN_MS = 15_000
 
 /**
+ * The shortest countdown worth drawing.
+ *
+ * The count is armed a little ahead of the pane's real deadline and then held to it, so a
+ * pane that was already overdue when the app started - or one whose deadline lands between
+ * two sweeps - could otherwise get a two second count, which is a warning nobody can act
+ * on. Below this it is given the full count instead.
+ */
+export const MIN_COUNTDOWN_MS = 10_000
+
+/**
  * How long a pane is left alone after somebody says "keep it open".
  *
  * The sweeps run every minute, so without this the answer to "keep it" is the same

@@ -39,7 +39,6 @@ import {
   dueDash,
   bubbleSpot,
   clampSpot,
-  countdownWords,
   DEFAULT_MASCOT,
   isDestructive,
   notice,
@@ -338,8 +337,6 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   useEffect(() => {
     if (!soon) return
     walkTo(soon.ids[0])
-    const t = window.setInterval(() => setTick((n) => n + 1), 500)
-    return () => window.clearInterval(t)
   }, [soon?.deadline, soon?.ids.join(','), walkTo])
 
   // The unasked notice. One at a time, said once, and only ever an OFFER. Silent while a
@@ -612,13 +609,11 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   if (!cfg.enabled) return null
 
-  // Read fresh on every render, and re-rendered once a second by the countdown's own
-  // interval. `tick` is the dependency that makes that true.
-  void tick
-  const left = soon ? soon.deadline - Date.now() : 0
-  const counting = !!soon && left > -1000
-  const secs = Math.max(0, Math.ceil(left / 1000))
-  const showBubble = counting || !!bubble || open
+  // The countdown is NOT drawn here. `MoveSoon` draws it, always, as a card in the
+  // corner - two faces for one clock meant the commonest desk (a mascot parked in a
+  // corner) got the small bubble, and the warning was reported missing twice. The sprite
+  // still walks to the pane the countdown is about, and still says nothing over it.
+  const showBubble = !!bubble || open
 
 
 
@@ -630,9 +625,7 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
    * then have been copied at a different moment from the one being read. One expression,
    * rendered and copied.
    */
-  const saidText = counting && soon
-    ? countdownWords(soon.names, left, soon.why, soon.move?.deviceName)
-    : bubble?.acted
+  const saidText = bubble?.acted
       ? actedWords(
           bubble.acted.what,
           bubble.acted.panes,
@@ -683,32 +676,15 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             'mascot-bubble' +
             (drawn ? '' : ' dock') +
             (box.above ? '' : ' below') +
-            (dragging ? ' dragging' : '') +
-            (counting ? ' counting' : '')
+            (dragging ? ' dragging' : '')
           }
           role="status"
           style={drawn ? { left: box.left, top: box.top, maxWidth: box.max } : undefined}
         >
-          {counting && soon && (
-            <>
-              <div className="mascot-count">
-                <span className="mascot-secs">{secs}</span>
-                <span className="mascot-count-say">{saidText}</span>
-              </div>
-              <div className="mascot-acts">
-                <button className="primary small" onClick={() => props.onKeep(soon.ids)}>
-                  Keep {soon.ids.length > 1 ? 'them' : 'it'} {soon.move ? 'here' : 'open'}
-                </button>
-                <button className="ghost small" onClick={() => props.onCloseNow(soon.ids)}>
-                  {soon.move ? 'Move now' : 'Close now'}
-                </button>
-              </div>
-            </>
-          )}
-          {!counting && bubble && (
+          {bubble && (
             <div className="mascot-say">{saidText}</div>
           )}
-          {!counting && bubble?.action && (
+          {bubble?.action && (
             <div className="mascot-acts">
               <button className="primary small" onClick={() => run(bubble.action as Intent)}>
                 {bubble.action.kind === 'close'

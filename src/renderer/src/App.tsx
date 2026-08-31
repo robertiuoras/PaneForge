@@ -83,6 +83,7 @@ import {
 } from '../../shared/capacity'
 import {
   CLOSE_COUNTDOWN_MS,
+  MIN_COUNTDOWN_MS,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
   paneWord,
@@ -2745,14 +2746,22 @@ export default function App(): JSX.Element {
         // Frozen while nobody is at this machine: the clock counts time a person could
         // have acted in, not wall time. See src/shared/away.ts.
         deskNow(Date.now(), awayRef.current),
-        personRef.current
+        personRef.current,
+        // Picked a countdown EARLY rather than a countdown late. See `idleClosePlan`.
+        CLOSE_COUNTDOWN_MS
       )
       // ...and out loud, and not yet. This sweep has closed panes into a console nobody
-      // has open since it shipped; now it counts down on the mascot first, and a press
-      // stops it.
+      // has open since it shipped; now it counts down on screen first, and a press stops
+      // it.
       if (plan.length) armCloseRef.current(plan, 'idle', 'idle-close')
     }
-    const timer = window.setInterval(sweep, 60_000)
+    // Every few seconds, not every minute. The lead above is only worth having if a sweep
+    // actually lands inside it: on a minute timer a pane sat at `closes now` for up to
+    // sixty seconds before anything at all happened, which is what made the countdown read
+    // as arriving from nowhere. The sweep is arithmetic over readings the app already
+    // holds, so the cost of running it twelve times as often is nothing.
+    sweep()
+    const timer = window.setInterval(sweep, 5_000)
     return () => window.clearInterval(timer)
   }, [config?.reclaim])
 
@@ -4014,7 +4023,17 @@ export default function App(): JSX.Element {
     const ids = keep.map((p) => p.id)
     pendingMb.current = mb
     // Same as the move above: with no sprite the count is drawn by `MoveSoon` instead.
-    setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline: now + CLOSE_COUNTDOWN_MS, why })
+    // The countdown ends when the CARD said it would. `dueAt` is the pane's own deadline,
+    // the same number `idleCloseAt` publishes to the chip, so the two clocks are one clock
+    // and the number on screen only ever goes down. Floored, because a pane that was
+    // already overdue (nothing had swept yet) would otherwise get a count too short to
+    // read, and capped, because the count is a warning and not a delay.
+    const due = Math.max(...keep.map((p) => p.dueAt ?? 0))
+    const deadline =
+      due > now
+        ? Math.min(now + CLOSE_COUNTDOWN_MS, Math.max(due, now + MIN_COUNTDOWN_MS))
+        : now + CLOSE_COUNTDOWN_MS
+    setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline, why })
   }
 
   /**
@@ -6363,20 +6382,20 @@ export default function App(): JSX.Element {
           and offered Approve to the one screen that cannot check the digits against the
           desk. The desk decides. */}
       {phone?.ask && !isPhoneClient() && <PhoneAsk ask={phone.ask} />}
-      {/* ...and the same countdown for a desk with no sprite to draw it beside. The
-          mascot arrives off, so without this the commonest desk in the app gets no
-          warning at all before a pane moves or closes. */}
-      {!(config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
-        <MoveSoon
-          soon={closeSoon}
-          onKeep={keepOpen}
-          onNow={(ids) =>
-            closeSoon?.move
-              ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-              : doClose(ids, pendingMb.current)
-          }
-        />
-      )}
+      {/* The countdown in front of an automatic close or move, ALWAYS. It used to be
+          drawn only on a desk with no sprite, and the mascot's own bubble drew it
+          otherwise - so the commonest desk got a small bubble beside an animal somebody
+          had parked in a corner, and the warning was reported missing twice
+          ("popup doesnt show at 10 sec"). One clock, one face. */}
+      <MoveSoon
+        soon={closeSoon}
+        onKeep={keepOpen}
+        onNow={(ids) =>
+          closeSoon?.move
+            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+            : doClose(ids, pendingMb.current)
+        }
+      />
       {/* The face on the resource ladder. Everything it may do is in shared/mascot.ts;
           this passes it the readings and the two actions, and nothing else. */}
       <Mascot
