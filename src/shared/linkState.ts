@@ -66,3 +66,27 @@ export function linkWords(link: LinkState, now: number): string {
 export function linkNote(): string {
   return 'Sessions below are the last thing it said, not what they are doing now.'
 }
+
+/**
+ * The moment every clock on a phone should stop at.
+ *
+ * A pane's header clock counts up from when its turn started, and it counts on the SCREEN
+ * - not from anything the desk sends. So a phone whose link has gone keeps drawing a turn
+ * clock that climbs forever: reported 2026-08-31, "timer still counting when not even
+ * connection". Nothing on the other end is running; the number is this handset's own
+ * arithmetic over a photograph, and it is the most convincing wrong thing on the screen
+ * because it moves.
+ *
+ * `lastSeen` is the honest freeze point: it is when this screen was last told anything, so
+ * a clock stopped there says "this pane had been running 4m as of the last thing I heard",
+ * which is true. Returns 0 while the link is up, meaning "do not freeze anything".
+ */
+export function linkFrozenAt(link: LinkState, now: number): number {
+  if (!linkLost(link, now)) return 0
+  return link.lastSeen || 0
+}
+
+/** What the banner's icon means, so the same word is used in the aria-label and the tip. */
+export function linkIconWords(link: LinkState, now: number): string {
+  return linkLost(link, now) ? 'Not connected to the desk' : 'Connected'
+}
