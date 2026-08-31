@@ -48,8 +48,26 @@ const RENDERER_ACTS = /^(reload|recreate|still wedged)/
 /** The crash-guard drill names itself so a test copy cannot page anybody. */
 const DRILL = /SMOKE TEST \(not a real fault\)/
 
+/**
+ * A fault the app was always going to retry, and did.
+ *
+ * The updater downloads a release over HTTP and an interrupted download rejects: a phone
+ * losing the tunnel, a laptop sleeping mid-file, or - the case that produced this, on the
+ * PC at 07:46 on 2026-08-31 - a build being REPLACED on the release page while that
+ * machine was part-way through fetching it, which arrives as `net::ERR_HTTP2_PROTOCOL_ERROR`
+ * and, when the bytes did land, as a `sha512 checksum mismatch` against the feed.
+ *
+ * None of that is a fault anybody acts on. The download is retried on the next check, the
+ * app never stopped working, and paging about it trains the person receiving the message
+ * to ignore the channel that also carries a wedged renderer. Still WRITTEN to
+ * `paneforge-errors.log` - the evidence is worth keeping - and still not sent.
+ */
+const RETRIED_DOWNLOAD =
+  /net::ERR_|sha512 checksum mismatch|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/
+
 export function worthSending(f: Fault): boolean {
   if (DRILL.test(f.detail)) return false
+  if (RETRIED_DOWNLOAD.test(f.detail)) return false
   if (f.kind === 'uncaughtException' || f.kind === 'unhandledRejection') return true
   if (f.kind === 'renderer') return RENDERER_ACTS.test(f.detail.trim())
   return false
