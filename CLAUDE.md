@@ -476,6 +476,27 @@ folder, branch, worktree suffix and lane id into words. `npm run test:place` is 
   project name. Only `-w<digits>` comes off unasked.
 - The sidebar has no `git status` of its own, so it may not assert "not a git checkout".
 
+## A pane says which client it is working for
+
+Every pane in a client tree was called `clients`. The identity is already on disk or
+already typed, so the pane writes it down. `shared/clientName.ts` rules, `main/clients.ts`
+disk, `ClientToast.tsx` the card. `npm run test:clientname`.
+
+- **A roster is recognised by its SHAPE, never configured** - `clients/<who>/README.md`,
+  found by walking UP from the pane's folder. The name is that README's first heading with
+  the parenthetical expansion and a trailing `- Firstname X.` contact taken off.
+- **The folder is evidence, the prompt is inference, and the refusals are the feature.** A
+  slug is only a client when the roster says so (`clients/tools` is not a person); a name
+  read out of a prompt must match EXACTLY ONE client, on a word boundary, with `MIN_ALIAS`
+  characters. A word is an alias only when it is unique across the whole roster - computed,
+  not stop-listed - and is not in the small `GENERIC` set of business furniture.
+- **A pane in a client tree doing something else gets the SUBJECT of its first ask**
+  (`topicTitle`). A client identified later may replace that guess; nothing replaces a
+  client, and nothing at all replaces a title a person typed (`mayRename`).
+- **The rename happens and THEN reports** - a card in a corner is not a question anybody
+  answers. Three seconds, bottom-right, `Cancel` puts the folder name back AND sets
+  `clientOff`, because undoing it says the reading was wrong.
+
 ## A pane says how long it has been open
 
 The header's clock is the TURN and resets when the agent finishes; `.pt-open` is `openedAt ??
