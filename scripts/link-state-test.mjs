@@ -27,7 +27,7 @@ buildSync({
   format: 'esm',
   platform: 'neutral'
 })
-const { linkLost, linkWords, linkNote, LINK_QUIET_MS } = await import(out)
+const { linkLost, linkWords, linkNote, linkFrozenAt, linkIconWords, LINK_QUIET_MS } = await import(out)
 
 const fail = []
 const ok = (cond, what, got) => {
@@ -101,5 +101,26 @@ ok(
 )
 
 rmSync(work, { recursive: true, force: true })
+// ------------------------------------------------- clocks stop when the desk stops
+
+ok(
+  linkFrozenAt({ up: true, lastSeen: NOW - 5_000 }, NOW) === 0,
+  'a live link freezes nothing'
+)
+ok(
+  linkFrozenAt({ up: false, lastSeen: NOW - 3_000 }, NOW) === 0,
+  'an ordinary reconnect blip does not stop the clocks'
+)
+ok(
+  linkFrozenAt({ up: false, lastSeen: NOW - 60_000 }, NOW) === NOW - 60_000,
+  'a lost link stops every clock at the last thing this screen heard'
+)
+ok(
+  linkFrozenAt({ up: false, lastSeen: 0 }, NOW) === 0,
+  'a screen that never heard anything has no moment to freeze at'
+)
+ok(/not connected/i.test(linkIconWords({ up: false, lastSeen: 0 }, NOW)), 'the icon says what it means')
+ok(/connected/i.test(linkIconWords({ up: true, lastSeen: NOW }, NOW)), 'and says so when it is up')
+
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall good')
 process.exit(fail.length ? 1 : 0)

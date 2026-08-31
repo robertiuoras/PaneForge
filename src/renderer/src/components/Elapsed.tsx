@@ -6,6 +6,8 @@
 
 import { useEffect, useState } from 'react'
 import { bucketOf, formatElapsed, kb, stepFor } from '@shared/elapsed'
+import { linkFrozenAt } from '@shared/linkState'
+import { useLink } from '../linkStore'
 
 // Re-exported so the dozen files that already import these from here keep working: the
 // rules moved to `shared/elapsed.ts` to be testable, not to be relocated for callers.
@@ -107,13 +109,25 @@ export default function Elapsed({ since, until, className = 'elapsed', title }: 
   // a pane crossing its first hour drops to minute ticks on the next render.
   const step = until !== undefined ? Infinity : stepFor(Date.now() - since)
   const now = useNow(step, since)
-  const text = formatElapsed((until ?? now) - since)
+  // ...and a phone that has stopped hearing from the desk is drawing arithmetic, not a
+  // reading: the pane it is counting for may have finished minutes ago. The clock stops at
+  // the last thing this screen was actually told. See `linkFrozenAt`.
+  const link = useLink()
+  const stopped = until ?? (linkFrozenAt(link, now) || undefined)
+  const text = formatElapsed((stopped ?? now) - since)
   return (
     // One copy of the digits, and only one. The clock used to carry `data-t` so a
     // pseudo-element could redraw the same text in a gradient clipped to the glyphs; two
     // copies of a glyph antialiased two different ways is a ghost, not a shimmer
     // (styles.css, `.elapsed`). The pill's sheen is the "live" signal now.
-    <span className={className} title={title ?? 'Time since this session started'}>
+    <span
+      className={stopped !== undefined && until === undefined ? `${className} stale` : className}
+      title={
+        stopped !== undefined && until === undefined
+          ? 'Stopped: the desk is not answering, so this is the last reading'
+          : (title ?? 'Time since this session started')
+      }
+    >
       {text}
     </span>
   )

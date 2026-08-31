@@ -121,6 +121,16 @@ class HttpTransport implements Transport {
           void this.open()
         }
       }, STALE_MS / 3)
+      // The banner offers a Reconnect button, and the honest thing for it to do is what
+      // the stale timer does: throw this stream away and open a new one, which re-runs
+      // `resync` on the way up. Exposed on `window` rather than through the api object
+      // because the api is built from `shared/surface.ts`, which is the list of channels
+      // that reach MAIN - and this one never leaves the browser.
+      ;(window as unknown as { __pfReconnect?: () => void }).__pfReconnect = () => {
+        this.sayLink(false)
+        this.source?.close()
+        void this.open()
+      }
       // A phone does not close its tab, it BACKGROUNDS it - and iOS then suspends both
       // the EventSource and the timer above, so the stale check that was meant to notice
       // is itself asleep. Coming back to the tab is the one moment a handset is certainly
@@ -155,6 +165,14 @@ class HttpTransport implements Transport {
       const list = await this.invoke('sessions:list', [])
       if (!Array.isArray(list)) return
       for (const h of this.handlers.get('sessions:changed') ?? []) h(list)
+      // The session list is not the whole of what a phone counts. The sidebar's groups and
+      // its badge count the OTHER machine's panes too, and those arrive on `remote:changed`
+      // - an event, like the rest, so every one sent while the stream was down is gone and
+      // the phone kept drawing rows from a device it had stopped hearing about. Reported
+      // 2026-08-31 as "numbers/sessions may be wrong". Failure is silent and separate: a
+      // desk with no paired device answers this fine and has nothing to say.
+      const remote = await this.invoke('remote:state', [])
+      if (remote) for (const h of this.handlers.get('remote:changed') ?? []) h(remote)
     } catch {
       // The list is the cheapest possible probe, so a failure here is also the fastest
       // proof the desk is not answering - and on a phone it is regularly the FIRST proof,

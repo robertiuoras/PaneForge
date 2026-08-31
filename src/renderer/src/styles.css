@@ -1174,6 +1174,15 @@ html.hi-refresh .num.live::after { animation: none; }
 html.app-blurred .elapsed::after { animation: none; }
 /* The same slot once the turn is over: frozen, flat, and dim enough that a still number
    never reads as a running one. No glass, no sheen - that is the whole tell. */
+/* A clock that has stopped because this screen is no longer hearing from the desk. The
+   sheen is the "live" signal, so it goes first: a number that shimmers while nothing is
+   running is the lie this styling exists to stop. */
+.elapsed.stale {
+  color: var(--muted, #a8a8a8);
+  opacity: 0.55;
+  border-style: dashed;
+}
+.elapsed.stale::after { content: none; }
 .elapsed.done {
   padding: 0; border-color: transparent; background: none; box-shadow: none;
   color: var(--muted); opacity: 0.42;
@@ -4245,6 +4254,30 @@ button.chip:hover {
   border: 1px solid color-mix(in srgb, var(--warn, #d8a657) 45%, transparent);
   background: color-mix(in srgb, var(--warn, #d8a657) 13%, transparent);
 }
+.link-down-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+/* 44px of finger, drawn as 15px of ink: the icon is the picture, the row is the target. */
+.link-down-icon {
+  flex: none;
+  color: var(--warn, #d8a657);
+}
+.link-down-retry {
+  margin-left: auto;
+  flex: none;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d8a657) 45%, transparent);
+  background: transparent;
+  color: var(--text, #e6e6e6);
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 .link-down-head {
   font-size: 12.5px;
   font-weight: 560;

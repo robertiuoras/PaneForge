@@ -52,7 +52,8 @@ import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
 import { PhoneAsk } from './components/PhoneAsk'
 import { isPhoneClient, viewerName } from './client'
-import { linkLost, linkNote, linkWords, type LinkState } from '@shared/linkState'
+import { reconnectNow, useLink } from './linkStore'
+import { linkIconWords, linkLost, linkNote, linkWords } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
   paneCopyMode,
@@ -451,15 +452,53 @@ interface AskState {
  * Drawn only on a phone: the desk window is looking at its own machine.
  */
 function LinkBanner(): JSX.Element | null {
-  const [link, setLink] = useState<LinkState>({ up: true, lastSeen: Date.now() })
-  useEffect(() => window.api.onLinkState((s: LinkState) => setLink(s)), [])
+  // One subscription for the whole page (`linkStore.ts`): the clocks read the same
+  // reading, and they used to carry on counting while this banner said the desk was gone.
+  const link = useLink()
   // One second while the gap is short, so the first "12s" moves; a minute past that, which
   // is the unit the string actually draws. Same rule as every other clock here.
   const now = useNow(link.lastSeen && Date.now() - link.lastSeen > 60_000 ? 60_000 : 1000)
   if (!isPhoneClient() || !linkLost(link, now)) return null
   return (
     <div className="link-down" role="status">
-      <span className="link-down-head">{linkWords(link, now)}</span>
+      <div className="link-down-top">
+        {/* An icon, because the sentence is the second thing read on a handset and the
+            colour alone says "warning" without saying about WHAT. A plug pulled apart is
+            the one picture that means this and nothing else. */}
+        <svg
+          className="link-down-icon"
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          aria-label={linkIconWords(link, now)}
+          role="img"
+        >
+          <path
+            d="M7 3v4M11 3v4M5 7h8v3a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V7Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M9 14v3M13 21v-4M19 21v-4M15 17h6v-3"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="link-down-head">{linkWords(link, now)}</span>
+        {/* The stream reconnects by itself, and on a handset that has been in a pocket it
+            can be waiting on a timer iOS has suspended. This is the same thing the stale
+            timer does - drop the stream, open a new one - offered to somebody who is
+            already looking at the screen and would otherwise just reload the page. */}
+        <button className="link-down-retry" onClick={() => reconnectNow()}>
+          Reconnect
+        </button>
+      </div>
       <span className="link-down-note">{linkNote()}</span>
     </div>
   )
