@@ -152,11 +152,40 @@ export function slugFromPath(cwd: string): string | undefined {
  * actually referred to, and dropping it would leave a title nobody uses.
  */
 export function nameFromHeading(heading: string, slug: string): string {
-  let s = heading.replace(/^#+\s*/, '').trim()
-  s = s.replace(/\s*\([^)]*\)\s*/g, ' ').trim()
+  const raw = heading.replace(/^#+\s*/, '').trim()
+  const paren = /\(([^)]*)\)/.exec(raw)?.[1]?.trim() ?? ''
+  let s = raw.replace(/\s*\([^)]*\)\s*/g, ' ').trim()
   s = s.replace(/\s+[-–—]\s+[A-Z][\w'-]*\s+[A-Z]\.?$/, '').trim()
+  // A trading name with the PERSON in brackets - `A4 Advocate (Adie Bradley)` - is a card
+  // about Adie Bradley: that is who the work is with and what a person says out loud. An
+  // expansion of the trading name (`PIA Team (Property Investors Alliance)`) is the same
+  // client said longer and is dropped, which is why `isPerson` refuses one.
+  if (paren && isPerson(paren, s)) s = paren
+  // ...and a heading that spells out the ROLE - `Adie Bradley Client` - says nothing a
+  // pane in a client tree did not already say.
+  s = s.replace(/\s+clients?$/i, '').replace(/^clients?\s+/i, '').trim()
   if (!s) s = titleCase(slug)
   return s.length > 34 ? s.slice(0, 33).trimEnd() + '…' : s
+}
+
+/**
+ * Whether a parenthetical is a PERSON rather than the outer name said longer.
+ *
+ * Two or three capitalised latin words, none of them the furniture of a business name,
+ * and - the load-bearing half - whose initials are not the outer name spelled out.
+ * `Property Investors Alliance` initials P,I,A are `PIA`, so it is an expansion; `Adie
+ * Bradley` against `A4 Advocate` is not, so it is somebody.
+ */
+function isPerson(paren: string, outer: string): boolean {
+  const words = paren.split(/\s+/).filter(Boolean)
+  if (words.length < 2 || words.length > 3) return false
+  if (!words.every((w) => /^[A-Z][a-z'’-]+$/.test(w))) return false
+  if (words.some((w) => GENERIC.has(w.toLowerCase()))) return false
+  const initials = words.map((w) => w[0].toLowerCase()).join('')
+  const outerWords = outer.split(/\s+/).filter(Boolean)
+  if (outerWords.map((w) => w[0]?.toLowerCase()).join('') === initials) return false
+  if (outerWords.some((w) => w.toLowerCase() === initials)) return false
+  return true
 }
 
 /** `right-key-alison` -> `Right Key Alison`, for a client with no readable heading. */
@@ -283,8 +312,27 @@ const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
  * of this file is the same bet: a card that keeps its folder name is as useful as it was
  * yesterday, and a card that lies is worse than either.
  */
+const NO_IDENTITY = new Set([
+  CLIENTS_DIR,
+  'desktop',
+  'documents',
+  'downloads',
+  'projects',
+  'tmp',
+  'temp',
+  'home',
+  'users'
+])
+
 export function mayTopicName(cwd: string): boolean {
-  return parts(cwd).some((seg) => seg.toLowerCase() === CLIENTS_DIR)
+  const seg = parts(cwd)
+  if (seg.some((s) => s.toLowerCase() === CLIENTS_DIR)) return true
+  // ...and a pane opened in a folder that is nobody's project - `Desktop`, `Downloads`,
+  // the projects root itself - has the same problem the client tree has: the folder name
+  // is not about the work. Those get the subject of the first ask too. A real project
+  // folder still keeps its own name until the desk has said the same thing three times.
+  const last = seg[seg.length - 1]?.toLowerCase() ?? ''
+  return NO_IDENTITY.has(last)
 }
 
 export function topicTitle(prompt: string): string {
@@ -303,7 +351,10 @@ export function topicTitle(prompt: string): string {
   // of a four-word label on a word that identifies nothing.
   const words = s
     .split(' ')
-    .filter((w) => w && !/^(?:the|a|an)$/.test(w))
+    // Articles anywhere, and the single letters `normalise` leaves behind when it splits
+    // `i'm` and `we've` - a card called `M Looking For Cheap` spends its first word on
+    // half a contraction.
+    .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w))
     .slice(0, 4)
   // A label may not end on a word that is only there to join it to the words that were
   // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
@@ -356,7 +407,7 @@ export const TOPIC_WINDOW = 4
  * `topicTitle`'s 26: the words here are the ones that survived three asks, so there are
  * fewer of them worth keeping.
  */
-export const SHORT_TITLE = 22
+export const SHORT_TITLE = 26
 
 /** The most words a repeated subject may spend. */
 const TOPIC_MAX_WORDS = 3
@@ -411,18 +462,15 @@ export function repeatedTopic(asks: string[]): string {
   for (const w of words) for (const word of w) seen.set(word, (seen.get(word) ?? 0) + 1)
   const shared = new Set([...seen].filter(([, n]) => n >= TOPIC_MIN_ASKS).map(([w]) => w))
   if (!shared.size) return ''
-  // Ordered by the LATEST ask that used them, so the label reads the way the desk last
-  // said it rather than the way it was first typed.
-  const order = [...words].reverse().flat()
-  const kept: string[] = []
-  for (const w of order) {
-    if (!shared.has(w) || kept.includes(w)) continue
-    const next = kept.length ? kept.join(' ').length + 1 + w.length : w.length
-    if (kept.length && (next > SHORT_TITLE || kept.length >= TOPIC_MAX_WORDS)) break
-    kept.push(w)
+  // The label is the SENTENCE the desk keeps coming back to, not the words it has in
+  // common: `Invoice Reminders` reads like something a person would type on a card,
+  // `Invoice` reads like a search term. The EARLIEST ask in the window is the one that
+  // states the job - the later ones are follow-ups about a corner of it - so the phrase
+  // comes off that one, and the repetition is only what earns the rename.
+  for (let i = 0; i < recent.length; i++) {
+    if (!words[i].some((w) => shared.has(w))) continue
+    const phrase = topicTitle(recent[i])
+    if (phrase) return phrase
   }
-  while (kept.length && DANGLING.test(kept[kept.length - 1])) kept.pop()
-  const out = kept.join(' ')
-  if (out.length < 5) return ''
-  return titleCase(out)
+  return ''
 }
