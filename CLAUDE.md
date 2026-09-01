@@ -70,12 +70,14 @@ npm run ship   # ONLY when Robert asks
 
 `ready` merges master in, refuses while dirty.
 
-Never ASK whether to cut a dev release - the question is unanswerable without knowing what
-the answer would give him. `npm run unreleased` reads the installed app's version, the
-commits master carries past it, and how many a person would notice (`feat`/`fix`/`perf`);
-past `ENOUGH` (3) it prints them as sentences and exits 1. Say THAT - what the copy on his
-machine cannot do yet - and let him decide. Nothing here cuts a release.
-`npm run test:unreleased`.
+Never ASK whether to cut a dev release. `npm run unreleased` reads the installed app's
+version, the commits master carries past it, and how many a person would notice
+(`feat`/`fix`/`perf`); past `ENOUGH` (3) it prints them as sentences and exits 1.
+
+**When it exits 1, CUT IT - do not report it and wait** (standing 2026-09-01: "worth a dev
+release when you know the changes, just go ahead and make dev release"). Asking cost a
+round trip every time, and the answer was always yes. Under `ENOUGH` it says nothing and
+nothing is cut. `npm run test:unreleased`.
 
 When asked for (`"release": "version"`):
 
