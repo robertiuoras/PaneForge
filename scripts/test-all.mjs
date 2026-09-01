@@ -101,6 +101,7 @@ const TESTS = [
   ['projectroot', 'projectroot-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],
+  ['agytrust', 'agy-trust-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device
   // that freezes instead of reporting itself gone is too costly to catch by hand.
   ['deadlink', 'deadlink-test.mjs'],

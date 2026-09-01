@@ -30,6 +30,7 @@ buildSync({
   outfile: out
 })
 const {
+  topicReading,
   clientFromPath,
   clientFromText,
   clientTitle,
@@ -290,5 +291,39 @@ is(
   'Invoice Reminders Work',
   'a real subject beside a session word still names the pane'
 )
+
+// A subject already on a card may be replaced, but only by evidence.
+//
+// The failure this pins: a pane in a real project folder was named off an errand, and
+// nothing could ever rename it - `untitled` is false the moment the card wears a subject,
+// so the better name the desk went on to earn was never written. A repeated reading is
+// allowed to; one sentence is not.
+{
+  const repo = '/Users/r/Projects/PaneForge'
+  const one = topicReading(repo, ['sort out the invoice reminders'], 'sort out the invoice reminders')
+  is(one.title, '', 'one ask in a real project folder names nothing')
+  is(one.strong, false, '...and is never evidence')
+
+  const asks = [
+    'sort out the invoice reminders',
+    'the invoice reminders are still wrong',
+    'invoice reminders need a resume button'
+  ]
+  const three = topicReading(repo, asks, asks[2])
+  is(three.title, 'Sort Out Invoice Reminders', 'three asks agreeing name the pane')
+  is(three.strong, true, '...and that reading may replace a name the pane already wears')
+
+  // Inside a client tree the first ask still names the pane, because every card there
+  // says `clients` - but it says so as a GUESS, so it cannot overwrite anything later.
+  const tree = '/Users/r/Projects/clients'
+  const guess = topicReading(tree, ['check the rental car booking'], 'check the rental car booking')
+  is(guess.title, 'Rental Car Booking', 'a client-tree pane is still named off its first ask')
+  is(guess.strong, false, '...as a guess, which never replaces a subject already earned')
+
+  // ...and once the tree pane has repeated itself, that reading outranks the first-ask one.
+  const settled = topicReading(tree, asks, asks[2])
+  is(settled.title, 'Sort Out Invoice Reminders', 'a repeated subject wins inside the tree too')
+  is(settled.strong, true, '...as evidence')
+}
 
 console.log(`client-name: ${checks} checks passed`)

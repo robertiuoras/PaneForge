@@ -19,13 +19,13 @@ import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
 import { clientForCwd, clientForText } from './clients'
+import { trustAgyWorkspace } from './agyTrust'
 import {
   clientTitle,
   mayRename,
-  mayTopicName,
-  repeatedTopic,
   TOPIC_WINDOW,
-  topicTitle
+  topicReading,
+  type TopicReading
 } from '../shared/clientName'
 import type { ClientNamed } from '../shared/types'
 
@@ -771,7 +771,6 @@ export class SessionManager extends EventEmitter {
 
     const found =
       from === 'folder' ? clientForCwd(s.cwd) : text ? clientForText(s.cwd, text) : undefined
-    if (!found && !untitled) return
     if (found && found.slug === s.clientSlug) return
     // A pane in a client tree doing something else entirely is still a pane nobody can
     // tell apart, so it gets the subject of what was asked instead. Never on the folder
@@ -781,8 +780,18 @@ export class SessionManager extends EventEmitter {
     // replace it once the desk has asked about the same thing three times: see
     // `repeatedTopic`. Inside the tree every card says `clients` and nothing tells them
     // apart, so the first ask still names them.
-    const topic = !found && from === 'prompt' && text ? this.topicFor(live, text) : ''
-    const title = found ? clientTitle(found) : topic
+    const topic: TopicReading =
+      !found && from === 'prompt' && text
+        ? this.topicFor(live, text)
+        : { title: '', strong: false }
+    // ...and a subject already on the card may be replaced by a BETTER one. The first
+    // few asks in a repo are usually an errand ("what did we ship yesterday") and the
+    // card then wears that errand through the job that follows it, which is the name
+    // Robert kept looking at after a `/clear`. Only a STRONG reading may do it - three
+    // of the last four asks agreeing - so one sentence cannot re-name a pane, and a
+    // title a person typed is still never touched.
+    if (!found && !untitled && !(upgradable && topic.strong)) return
+    const title = found ? clientTitle(found) : topic.title
     if (!title || title === s.title) return
     const was = s.title
     s.title = title
@@ -806,12 +815,11 @@ export class SessionManager extends EventEmitter {
    * prompt archive and the rail run off - so remembering four of them costs nothing and
    * needs no CLI to cooperate.
    */
-  private topicFor(live: Live, text: string): string {
+  private topicFor(live: Live, text: string): TopicReading {
     const asks = (live.topicAsks ??= [])
     asks.push(text)
     if (asks.length > TOPIC_WINDOW) asks.splice(0, asks.length - TOPIC_WINDOW)
-    if (mayTopicName(live.meta.cwd)) return topicTitle(text)
-    return repeatedTopic(asks)
+    return topicReading(live.meta.cwd, asks, text)
   }
 
   /** Cancel on the card: put the name back, and stop reading this pane for a client. */
@@ -1272,6 +1280,11 @@ export class SessionManager extends EventEmitter {
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running
     // while its hooks flap), and the pane falls into Ready the moment that ends.
+    // A `/clear` ends the job the pane was named for, so the asks that earned that name
+    // stop counting towards the next one: the card keeps what it has - flickering back to
+    // the folder name would be a worse reading, not a truer one - until three fresh asks
+    // agree on something else.
+    if (cleared) live.topicAsks = []
     if (cleared && live.meta.engaged) {
       live.meta.engaged = false
       live.meta.attention = false
@@ -2306,6 +2319,10 @@ export class SessionManager extends EventEmitter {
     // resume is per-CLI: `claude --continue` but `codex resume --last`, and some
     // agents have nothing at all - buildArgs drops the flag rather than guessing.
     const args = buildArgs(spec, { resume: req.resume, resumeId: req.resumeId, model: req.model })
+    // Antigravity opens on `Yes, I trust this folder` in any folder it has not seen, and
+    // a pane this app was asked to open is not a question anybody wants to answer twice.
+    // No-op for every other agent and on a desk where that CLI is not installed.
+    if (spec.id === 'antigravity') trustAgyWorkspace(req.cwd)
     return pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
