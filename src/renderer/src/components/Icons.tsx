@@ -79,6 +79,16 @@ export function HistoryIcon(p: IconProps): JSX.Element {
   )
 }
 
+/** What the app did on its own: a bell. */
+export function BellIcon(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M4 7a4 4 0 0 1 8 0c0 2.4.6 3.4 1.2 4H2.8C3.4 10.4 4 9.4 4 7Z" />
+      <path d="M6.6 13a1.6 1.6 0 0 0 2.8 0" />
+    </Svg>
+  )
+}
+
 /** Another machine's panes: two screens with a link between them. */
 export function RemoteIcon(p: IconProps): JSX.Element {
   return (

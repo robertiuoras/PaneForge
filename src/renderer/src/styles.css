@@ -4392,3 +4392,84 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 /* Two actions on one chord is a real state - the handler's first match wins - so it is
    said at the moment of choosing rather than discovered by pressing the key. */
 .key-clash { color: var(--warn); font-size: 10.5px; }
+
+
+/* --------------------------------------------------------------------------
+   ONE column for every card the app puts in the bottom-right corner.
+
+   `.move-soon`, `.client-toast`, `.update-toast` (and its `.whatsnew` and
+   `.autoclear` variants) and `.tip-toast` were five separate `position: fixed`
+   cards at the same `right: 18px; bottom: 18px`, told apart only by z-index -
+   which is not a layout. Two of them up at once and the lower one is drawn
+   UNDERNEATH the other, buttons and all: 2026-09-01, an automatic close and an
+   automatic /clear armed together and the close card's `Keep it open` /
+   `Close now` were unreachable behind the clear's.
+
+   So the corner is a flex column and the cards flow inside it. `column-reverse`
+   because the FIRST child is the urgent one and it must not move: a card
+   arriving or leaving stacks upward, away from the corner, so the countdown
+   stays under the hand that is already going for it.
+
+   The layer takes no clicks of its own - only the cards do - so the panes and
+   the pane header underneath stay reachable through the gaps. */
+.corner-stack {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  display: flex; flex-direction: column-reverse; align-items: flex-end;
+  gap: 10px; pointer-events: none;
+  /* Never taller than the window: with five cards up the top one would otherwise be
+     drawn off-screen, which is the same bug in a different direction. */
+  max-height: calc(100vh - 36px); overflow: hidden;
+}
+.corner-stack > * { pointer-events: auto; }
+/* Inside the stack a card is a row, not a fixed thing in a corner. Every one of these
+   keeps its own width, padding and border - only the placement is taken away. */
+.corner-stack > .move-soon,
+.corner-stack > .client-toast,
+.corner-stack > .update-toast,
+.corner-stack > .tip-toast {
+  position: static; right: auto; bottom: auto; z-index: auto;
+}
+/* A sprite sits in this corner too, and a card drawn over an animal is the old bug with
+   a nicer name. The whole stack steps up, once, rather than each card guessing. */
+.corner-stack.beside-pet { bottom: 108px; }
+/* Superseded: the stack now owns this, and a card doing it too would step up twice. */
+.corner-stack > .client-toast.beside-pet { bottom: auto; }
+
+/* --------------------------------------------------------------------------
+   What the app did on its own, behind the bell in the sidebar.
+
+   A reading, never a control: no row does anything when pressed, because
+   everything in it has already happened. So no veil and no dimming - the
+   backdrop only catches the press that closes it. */
+.act-back { position: fixed; inset: 0; z-index: 64; }
+.act-fly {
+  position: fixed; z-index: 65;
+  max-height: min(420px, calc(100vh - 24px)); overflow: auto;
+  background: var(--surface-3); border: 1px solid var(--line-strong);
+  border-radius: var(--r); box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+}
+.act-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 8px 7px 13px; color: var(--muted); font-size: 11px;
+  letter-spacing: .04em; text-transform: uppercase;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0;
+  background: var(--surface-3);
+}
+.act-empty { padding: 16px 13px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.act-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; }
+.act-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+  padding: 8px 13px; border-bottom: 1px solid var(--line);
+}
+.act-row:last-child { border-bottom: 0; }
+.act-kind {
+  grid-row: 1; font-size: 10.5px; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--muted); align-self: baseline; padding-top: 1px;
+}
+.act-what { grid-row: 1; color: var(--text); font-size: 12.5px; line-height: 1.4; }
+.act-when { grid-column: 2; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.act-why { grid-column: 2; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+/* The one kind that took something away reads in the accent, so a list of eight rows
+   answers "did it close anything" without being read word by word. */
+.act-kind.k-closed, .act-kind.k-cleared { color: var(--acc); }

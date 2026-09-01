@@ -107,6 +107,7 @@
     "test:recover": "node scripts/recover-test.mjs",
     "test:sleep": "node scripts/sleep-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
+    "test:activity": "node scripts/activity-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",
     "test:devlist": "node scripts/devlist-test.mjs",

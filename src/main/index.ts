@@ -171,6 +171,8 @@ import {
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { logActivation, logReclaim } from './activationLog'
+import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
+import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -888,7 +890,13 @@ manager.on('ask', (s: Session) => raiseAsk(s))
 // A pane naming itself is a thing the app decided, so it is reported and never asked -
 // the card in the corner carries the undo. Renderer only: nothing about it is worth a
 // phone notification.
-manager.on('clientNamed', (e: ClientNamed) => send('sessions:clientNamed', e))
+manager.on('clientNamed', (e: ClientNamed) => {
+  send('sessions:clientNamed', e)
+  // The card that says this is gone in three seconds; the list is where it can still be
+  // read afterwards. `was` is in the sentence because "why is this pane called that" is
+  // the question the rename produces.
+  noteActivity(activityEntry('named', `renamed ${e.was} to ${e.title}`, undefined))
+})
 
 /**
  * One phone message per question. The pane raises `ask` once per FRAME of a question and
@@ -1100,7 +1108,12 @@ remote.on('data', (id: string, data: string) => pump.push(id, data))
 // The app is about to type a clear into a pane nobody pressed a key in. The screen has to
 // be pushed into the scrollback before the CLI paints over it, and only the renderer can
 // do that - see the arm in sessions.ts.
-manager.on('armclear', (id: string) => send('pane:armClear', id))
+manager.on('armclear', (id: string) => {
+  send('pane:armClear', id)
+  // The one moment an automatic /clear is a FACT rather than a countdown: the keystrokes
+  // are on their way to the pty. The countdown before it is a card, not a list entry.
+  noteActivity(activityEntry('cleared', `cleared ${manager.list().find((x) => x.id === id)?.title ?? 'a pane'}`, 'it was out of context, and its handoff said there was work left'))
+})
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
 remote.on('reset', (id: string) => {
   pump.flushOne(id)
@@ -3227,7 +3240,19 @@ ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory
 
 // --- history ---------------------------------------------------------------
 
-ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => logReclaim(entry))
+ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
+  logReclaim(entry)
+  // Same line, twice: the file stays the place a week-old close is reconstructed from,
+  // and the list is what somebody reads on screen ten minutes after it happened. An
+  // `armed` line produces nothing - see the note at the top of shared/activity.ts.
+  noteActivity(activityFromReclaim(entry))
+})
+
+// --- what the app did on its own -------------------------------------------
+
+ipcMain.handle('activity:list', () => listActivity())
+ipcMain.on('activity:seen', () => markActivitySeen())
+onActivityChange((s) => send('activity:changed', s))
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))

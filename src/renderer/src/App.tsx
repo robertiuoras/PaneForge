@@ -32,6 +32,9 @@ import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon from './components/MoveSoon'
+import ActivityFlyout from './components/ActivityFlyout'
+import type { ActivityEntry } from '@shared/activity'
+import { unreadCount } from '@shared/activity'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
@@ -46,7 +49,8 @@ import {
   SearchIcon,
   RemoteIcon,
   SwarmIcon,
-  TrashIcon
+  TrashIcon,
+  BellIcon
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
@@ -654,6 +658,13 @@ export default function App(): JSX.Element {
   const [splitting, setSplitting] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  // What the app has done on its own, and when the list was last looked at. Both live in
+  // main (see main/activity.ts): a reload, a renderer rebuilt after a wedge and a restart
+  // all lose renderer memory, and "what happened to my pane" is asked after exactly those.
+  const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [activitySeen, setActivitySeen] = useState(0)
+  /** The bell's rectangle while the list is open, absent when it is shut. */
+  const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
   const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
@@ -3754,6 +3765,27 @@ export default function App(): JSX.Element {
   )
   // Devices in either direction: ones whose panes are in this list, and ones watching
   // this machine's. Both are "a link is up", which is all the sidebar dot claims.
+  // The list, and how much of it is new. Pushed from main rather than polled: the things
+  // in it happen while nobody is looking at this window, which is why it exists at all.
+  useEffect(() => {
+    let gone = false
+    void api.listActivity().then((feed) => {
+      if (gone) return
+      setActivity(feed.items)
+      setActivitySeen(feed.seenAt)
+    })
+    const off = api.onActivity((feed) => {
+      setActivity(feed.items)
+      setActivitySeen(feed.seenAt)
+    })
+    return () => {
+      gone = true
+      off()
+    }
+  }, [])
+  const activityNew = activityAt ? 0 : unreadCount(activity, activitySeen)
+  /** Is the mascot parked in the same corner the cards use. */
+  const petHere = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
   const remoteLive =
     (remote?.peers.filter((p) => p.status === 'online').length ?? 0) + (remote?.guests.length ?? 0)
   // "Working" is now the agent's own on-screen state rather than "something was printed
@@ -5104,6 +5136,29 @@ export default function App(): JSX.Element {
             <RemoteIcon />
             {remoteLive > 0 && <span className="quick-dot" />}
           </button>
+          {/* What the app did on its own. A reading, so it opens a panel and never a
+              dialog: nothing in it can be acted on, because everything in it has already
+              happened. The dot counts what has arrived since it was last opened. */}
+          <button
+            className={'ghost quick-btn' + (activityNew > 0 ? ' live' : '')}
+            title={
+              activityNew > 0
+                ? `Recently: ${activityNew} new thing${activityNew === 1 ? '' : 's'} the app did on its own`
+                : 'Recently: what the app did on its own'
+            }
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              if (activityAt) return setActivityAt(null)
+              setActivityAt(r)
+              // Opened is seen. The count is about what arrived while nobody was looking,
+              // not about which rows have been read one at a time.
+              api.markActivitySeen()
+              setActivitySeen(Date.now())
+            }}
+          >
+            <BellIcon />
+            {activityNew > 0 && <span className="quick-dot" />}
+          </button>
         </div>
 
         {config && config.presets.length > 0 && (
@@ -6409,15 +6464,6 @@ export default function App(): JSX.Element {
           otherwise - so the commonest desk got a small bubble beside an animal somebody
           had parked in a corner, and the warning was reported missing twice
           ("popup doesnt show at 10 sec"). One clock, one face. */}
-      <MoveSoon
-        soon={closeSoon}
-        onKeep={keepOpen}
-        onNow={(ids) =>
-          closeSoon?.move
-            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-            : doClose(ids, pendingMb.current)
-        }
-      />
       {/* The face on the resource ladder. Everything it may do is in shared/mascot.ts;
           this passes it the readings and the two actions, and nothing else. */}
       <Mascot
@@ -6468,9 +6514,31 @@ export default function App(): JSX.Element {
           void api.setConfig({ mascot: { ...DEFAULT_MASCOT, ...config?.mascot, ...patch } })
         }
       />
-      {/* A session about to clear itself. Drawn for the window rather than per pane: the
-          countdown is about a CONVERSATION, and the pane it belongs to is very often not
-          the one on screen - which is the whole reason the silent version was a bug. */}
+      {/* Every card the app puts in this corner, in ONE column.
+          They were six separate `position: fixed` cards at the same `right: 18px;
+          bottom: 18px`, told apart only by z-index - so two of them up at once meant the
+          lower one was drawn UNDERNEATH the other, buttons and all. Robert, 2026-09-01:
+          "it closing session had popup from pet but clearing session had a separate popup
+          and we couldnt see the keep it open or close now buttons".
+          Column-reverse, so the FIRST child is the one in the corner and a card arriving
+          or leaving above it never moves it: the thing counting down stays where the
+          hand already is. Order is urgency - a countdown that is about to take something
+          away sits nearest the corner, a tip sits furthest from it. */}
+      <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
+      <AutoClearToast
+        panes={sessions}
+        numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
+        onKeep={(id) => void api.cancelAutoClear(id)}
+      />
+      <MoveSoon
+        soon={closeSoon}
+        onKeep={keepOpen}
+        onNow={(ids) =>
+          closeSoon?.move
+            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
+            : doClose(ids, pendingMb.current)
+        }
+      />
       {/* A pane that has just worked out whose work it is doing. */}
       <ClientToast
         named={clientNamed}
@@ -6480,11 +6548,6 @@ export default function App(): JSX.Element {
           setClientNamed(undefined)
         }}
         onDone={() => setClientNamed(undefined)}
-      />
-      <AutoClearToast
-        panes={sessions}
-        numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
-        onKeep={(id) => void api.cancelAutoClear(id)}
       />
       <UpdateToast />
       <WhatsNewCard />
@@ -6509,6 +6572,14 @@ export default function App(): JSX.Element {
         since={OPENED_AT}
         onConfig={(patch) => void api.setConfig({ tips: { ...DEFAULT_TIPS, ...config?.tips, ...patch } })}
       />
+      </div>
+      {activityAt && (
+        <ActivityFlyout
+          items={activity}
+          anchor={activityAt}
+          onClose={() => setActivityAt(null)}
+        />
+      )}
     </div>
     </BlurbContext.Provider>
   )

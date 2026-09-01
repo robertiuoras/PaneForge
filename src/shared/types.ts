@@ -5,6 +5,7 @@ import type { LinkState } from './linkState'
 // Types shared by the Electron main process and the React renderer.
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
+import type { ActivityEntry } from './activity'
 import type { AttachIn, AttachResult } from './attach'
 import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
@@ -82,6 +83,12 @@ export type { PaneAsk }
  * nobody answers, and the answer this one wants is "yes" every time it is right. So the
  * cheap direction is the automatic one, and `was` is what Cancel puts back.
  */
+/** The activity list plus when it was last looked at, so a badge can count what is new. */
+export interface ActivityFeed {
+  items: ActivityEntry[]
+  seenAt: number
+}
+
 export interface ClientNamed {
   id: string
   /** the client's folder name, so a caller can tell two renames apart */
@@ -2026,6 +2033,7 @@ export interface Api {
   undoClientName(id: string): Promise<void>
   /** A pane has just been named for a client. Carries what it was called before. */
   onClientNamed(fn: (e: ClientNamed) => void): () => void
+  onActivity(fn: (feed: ActivityFeed) => void): () => void
   /**
    * The sidebar's order after a card was dragged, newest-first-to-last as displayed.
    * Mirrored ids are carried along and ignored by the machine that receives them.
@@ -2033,6 +2041,10 @@ export interface Api {
   reorderSessions(ids: string[]): void
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
+  /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
+  listActivity(): Promise<ActivityFeed>
+  /** The list has been opened: everything in it stops counting as new. */
+  markActivitySeen(): void
   killSession(id: string): Promise<void>
   /**
    * End this pane's agent and keep its card: the process and its whole tree go, the row
