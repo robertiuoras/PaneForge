@@ -659,7 +659,11 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // on a paired machine. Both are reads and neither can start or stop anything: the
     // remote one goes out as a `jobs` frame the other end answers by reading ITS table,
     // and there is no `jobs:stop`. What comes back is a pid, a label and an age.
-    'jobs:list', 'jobs:remote'
+    'jobs:list', 'jobs:remote',
+    // Reviewed 2026-09-01. One boolean off `powerMonitor`: is this machine on battery.
+    // It starts nothing, changes nothing, and names nothing that is not already on the
+    // lid of the laptop the asker is holding.
+    'app:batteryNow'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
   ok(
