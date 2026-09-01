@@ -181,7 +181,7 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   const rule = css.match(/\.corner-stack > \.move-soon,[\s\S]*?\{([^}]*)\}/)
   check('the stack un-fixes its children', Boolean(rule))
   check('...by making them static', /position:\s*static/.test(rule[1]), rule && rule[1])
-  for (const sel of ['.move-soon', '.client-toast', '.update-toast', '.tip-toast']) {
+  for (const sel of ['.autoclear-card', '.move-soon', '.client-toast', '.update-toast', '.tip-toast']) {
     check(`${sel} is un-fixed inside the stack`, css.includes(`.corner-stack > ${sel}`), sel)
   }
   // One step up for the whole stack when a sprite is parked in the same corner - and the

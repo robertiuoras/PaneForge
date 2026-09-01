@@ -4423,6 +4423,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 .corner-stack > * { pointer-events: auto; }
 /* Inside the stack a card is a row, not a fixed thing in a corner. Every one of these
    keeps its own width, padding and border - only the placement is taken away. */
+.corner-stack > .autoclear-card,
 .corner-stack > .move-soon,
 .corner-stack > .client-toast,
 .corner-stack > .update-toast,

@@ -25,12 +25,18 @@ export default function AutoClearToast({
   onKeep: (id: string) => void
 }): React.JSX.Element | null {
   const now = useNow()
-  // The SOONEST one, never a card per pane: two countdowns are two cards fighting for one
-  // corner, and the second is the one nobody reads.
-  const soon = panes
+  // One card per counting-down pane, soonest nearest the corner. It used to draw the
+  // SOONEST one only, because two `position: fixed` cards at one corner were two cards
+  // drawn on top of each other. The corner is a COLUMN now (`.corner-stack`), so a second
+  // countdown has somewhere to go - and it has to have one: two handoffs ran on
+  // 2026-09-01 and only one of them ever said so, which means the other pane cleared with
+  // nobody given the chance to stop it. Capped, because a desk clearing six panes at once
+  // is a wall of cards, and the ones past the cap are the ones with the most time left.
+  const counting = panes
     .filter((s) => s.autoClearAt)
-    .sort((a, b) => (a.autoClearAt ?? 0) - (b.autoClearAt ?? 0))[0]
-  if (!soon?.autoClearAt) {
+    .sort((a, b) => (a.autoClearAt ?? 0) - (b.autoClearAt ?? 0))
+    .slice(0, MAX_CARDS)
+  if (!counting.length) {
     // No countdown, but one JUST ended: say how. A card that vanishes without a word -
     // or worse, freezes at 0:00 - leaves whoever watched it guessing what the app
     // decided (ADDENDUM 2026-08-27, the s2 incident). Main deletes the outcome after
@@ -50,30 +56,55 @@ export default function AutoClearToast({
       </div>
     )
   }
-  const left = Math.max(0, Math.ceil((soon.autoClearAt - now) / 1000))
-  const steps = soon.autoClearSteps ?? []
+  return (
+    <>
+      {counting.map((s) => (
+        <ClearingCard key={s.id} pane={s} now={now} numberOf={numberOf} onKeep={onKeep} />
+      ))}
+    </>
+  )
+}
+
+/** More countdowns than this at once is a wall of cards, not a warning. */
+const MAX_CARDS = 3
+
+/** One pane, counting down, with the button that stops it. */
+function ClearingCard({
+  pane,
+  now,
+  numberOf,
+  onKeep
+}: {
+  pane: Session
+  now: number
+  numberOf: (id: string) => number
+  onKeep: (id: string) => void
+}): React.JSX.Element | null {
+  if (!pane.autoClearAt) return null
+  const left = Math.max(0, Math.ceil((pane.autoClearAt - now) / 1000))
+  const steps = pane.autoClearSteps ?? []
   // A clear with nothing to carry is a different event and has to read as one. "Carrying on
   // from its handoff" over an empty prompt is a promise the clear does not keep: nothing is
   // typed after the /clear, the fresh session sits at its composer, and somebody who read
   // that sentence would come back expecting work to have continued. What this one buys is
   // the context, so the card says the context.
-  const freeing = Math.round((soon.autoClearTokens ?? 0) / 1000)
+  const freeing = Math.round((pane.autoClearTokens ?? 0) / 1000)
   return (
     <div className="autoclear-card" role="status">
       <div className="autoclear-top">
         {/* Seconds first and biggest: read from across the desk, or not at all. */}
         <span className="autoclear-left">{left > 0 ? `${left}s` : 'now'}</span>
         <span className="autoclear-word">
-          {soon.autoClearNoResume ? (
+          {pane.autoClearNoResume ? (
             <>
-              Clearing <PaneNum n={numberOf(soon.id)} />
-              <b>{soon.title}</b> - nothing open
+              Clearing <PaneNum n={numberOf(pane.id)} />
+              <b>{pane.title}</b> - nothing open
               {freeing > 0 ? `, freeing about ${freeing}k of context` : ''}
             </>
           ) : (
             <>
-              Clearing <PaneNum n={numberOf(soon.id)} />
-              <b>{soon.title}</b> and carrying on from its handoff
+              Clearing <PaneNum n={numberOf(pane.id)} />
+              <b>{pane.title}</b> and carrying on from its handoff
             </>
           )}
         </span>
@@ -87,7 +118,7 @@ export default function AutoClearToast({
           ))}
         </ul>
       )}
-      <button className="autoclear-keep" onClick={() => onKeep(soon.id)}>
+      <button className="autoclear-keep" onClick={() => onKeep(pane.id)}>
         Keep this session
       </button>
     </div>

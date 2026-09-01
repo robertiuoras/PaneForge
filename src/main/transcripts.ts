@@ -34,15 +34,20 @@ import { basename, join } from 'node:path'
 /** Claude Code and Antigravity keep transcripts we can name a session from. */
 const SUPPORTED = new Set(['claude', 'antigravity'])
 
+/** Antigravity's own home. The env override exists for the test, which must not read
+ * the real machine's history file. */
+function agyHome(): string {
+  return process.env.PF_GEMINI_HOME || join(homedir(), '.gemini')
+}
+
 function antigravityHistoryFile(): string {
-  return join(homedir(), '.gemini', 'antigravity-cli', 'history.jsonl')
+  return join(agyHome(), 'antigravity-cli', 'history.jsonl')
 }
 
 function antigravityTranscriptFile(conversationId: string): string | null {
   if (!conversationId || /[\\/]/.test(conversationId)) return null
   const f = join(
-    homedir(),
-    '.gemini',
+    agyHome(),
     'antigravity-cli',
     'brain',
     conversationId,
@@ -51,7 +56,7 @@ function antigravityTranscriptFile(conversationId: string): string | null {
     'transcript.jsonl'
   )
   if (existsSync(f)) return f
-  const db = join(homedir(), '.gemini', 'antigravity-cli', 'conversations', `${conversationId}.db`)
+  const db = join(agyHome(), 'antigravity-cli', 'conversations', `${conversationId}.db`)
   if (existsSync(db)) return db
   return null
 }
@@ -65,20 +70,87 @@ function sameCwd(a: string, b: string): boolean {
   }
 }
 
-function antigravityConversationFor(cwd: string, since: number): string | null {
+/**
+ * Lines a pane has actually submitted, newest last, so a conversation can be PROVED.
+ *
+ * Antigravity keeps one flat `history.jsonl` for the whole machine, so the only things a
+ * row carries are the folder and the moment. That is not identity: anything else running
+ * `agy` in that folder - a script, another pane, a cron job - writes rows that are newer
+ * than the pane's own, and "newest row in this folder" hands the pane somebody else's
+ * chat. Measured 2026-09-01: `clients-b/tools/backdrop-gen.mjs` runs `agy` headlessly in
+ * `~/Projects/clients-b`, and the pane there adopted its conversation `96d46b7a` - three
+ * asks, none of them the work the pane had done. History showed the script's transcript
+ * and a restore would have resumed it.
+ *
+ * So a pane adopts a conversation only when one of that conversation's `display` rows is
+ * a line this pane is known to have typed. The feed is the same keystroke path
+ * `promptArchive` and History's one-line note run off, so it costs nothing new. A pane
+ * that can prove nothing reports NO conversation, which is the honest answer: a plausible
+ * wrong one is worse than none.
+ */
+const submitted = new Map<string, string[]>()
+
+/** Enough recent lines to recognise a pane, few enough that a long pane costs nothing. */
+const SUBMITTED_KEEP = 40
+
+/** A line long enough that two panes agreeing on it is not a coincidence. */
+const MIN_PROOF_CHARS = 8
+
+function normalisePrompt(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+/** A pane submitted a line. Fed from the same place History's note is. */
+export function noteSubmittedPrompt(id: string, text: string): void {
+  const line = normalisePrompt(text || '')
+  if (line.length < MIN_PROOF_CHARS) return
+  const lines = submitted.get(id) || []
+  if (lines[lines.length - 1] === line) return
+  lines.push(line)
+  while (lines.length > SUBMITTED_KEEP) lines.shift()
+  submitted.set(id, lines)
+}
+
+/**
+ * Whether a `display` row is one of this pane's own lines.
+ *
+ * Not equality alone: an agent CLI may write back a shortened version of a long ask, so a
+ * row that is a prefix of a line the pane typed (or the other way round) counts - but only
+ * once it is long enough that the agreement means something.
+ */
+function saidByPane(display: string, lines: string[]): boolean {
+  const row = normalisePrompt(display)
+  if (row.length < MIN_PROOF_CHARS) return false
+  for (const line of lines) {
+    if (row === line) return true
+    const short = row.length < line.length ? row : line
+    const long = row.length < line.length ? line : row
+    if (short.length >= MIN_PROOF_CHARS && long.startsWith(short)) return true
+  }
+  return false
+}
+
+function antigravityConversationFor(paneId: string, cwd: string, since: number): string | null {
+  const lines = submitted.get(paneId)
+  // Nothing typed yet is not "adopt whatever is there" - it is nothing to go on.
+  if (!lines || !lines.length) return null
   const hFile = antigravityHistoryFile()
   if (!existsSync(hFile)) return null
   try {
     const text = tail(hFile)
-    const lines = text.split('\n').filter(Boolean)
-    for (let i = lines.length - 1; i >= 0; i--) {
+    const rows = text.split('\n').filter(Boolean)
+    for (let i = rows.length - 1; i >= 0; i--) {
       try {
-        const row = JSON.parse(lines[i]) as { workspace?: string; conversationId?: string; timestamp?: number }
-        if (row.conversationId && row.workspace && sameCwd(row.workspace, cwd)) {
-          if (!since || (row.timestamp && row.timestamp >= since - START_SLACK_MS)) {
-            return row.conversationId
-          }
+        const row = JSON.parse(rows[i]) as {
+          workspace?: string
+          conversationId?: string
+          timestamp?: number
+          display?: string
         }
+        if (!row.conversationId || !row.workspace || !sameCwd(row.workspace, cwd)) continue
+        if (since && row.timestamp && row.timestamp < since - START_SLACK_MS) continue
+        if (!row.display || !saidByPane(row.display, lines)) continue
+        return row.conversationId
       } catch {
         continue
       }
@@ -370,7 +442,7 @@ export function transcriptFor(id: string): string | null {
   if (s.agent === 'antigravity') {
     const mine = claimed.get(id)
     if (mine && existsSync(mine)) return mine
-    const convId = antigravityConversationFor(s.cwd, s.at)
+    const convId = antigravityConversationFor(id, s.cwd, s.at)
     if (convId) {
       const f = antigravityTranscriptFile(convId) || convId
       claimed.set(id, f)
@@ -566,7 +638,7 @@ export function resumeIdFor(id: string): string | undefined {
       if (m) return m[1]
       return basename(claimedFile, '.jsonl')
     }
-    const convId = antigravityConversationFor(s.cwd, s.at)
+    const convId = antigravityConversationFor(id, s.cwd, s.at)
     if (convId) return convId
   }
   const file = transcriptFor(id)

@@ -97,6 +97,7 @@ import { sweepOldStrays, sweepOwnStraysOnExit } from './strays'
 import {
   heldElsewhere,
   lastPrompt,
+  noteSubmittedPrompt,
   projectDir,
   resumable,
   resumeIdFor,
@@ -3338,6 +3339,9 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   // reason for a closed session to go back to being a folder name and a clock.
   if (meta.id) {
     try {
+      // ...and to the transcript claimer, which uses a line the pane is KNOWN to have
+      // typed as its proof that a conversation is its own. See noteSubmittedPrompt.
+      noteSubmittedPrompt(meta.id, draft)
       history.noteAsk(meta.id, draft)
       // ...and onto the live session, so the app can say WHICH conversation a pane is in
       // while the pane still exists. See Session.gist.
