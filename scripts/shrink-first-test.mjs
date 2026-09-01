@@ -22,6 +22,7 @@ import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-shrink-first-'))
@@ -33,7 +34,8 @@ buildSync({
   bundle: true,
   platform: 'node'
 })
-const { nextResize, GRANT_GRACE_MS } = await import(out)
+// Same trap as link-state and whatsnew: a bare `C:\...` is protocol `c:` to the loader.
+const { nextResize, GRANT_GRACE_MS } = await import(pathToFileURL(out).href)
 
 let failed = 0
 const ok = (name, cond, detail = '') => {

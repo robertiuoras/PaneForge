@@ -9,11 +9,13 @@
 
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// A bare path is not a URL: on Windows `C:\...` parses as the protocol `c:` and the loader
+// refuses it. pathToFileURL is the one spelling that is right on both machines.
 const { shouldSpeak, bulletsFrom, compareVersions, MAX_BULLETS, MAX_CHARS } = await import(
-  join(root, 'src/shared/whatsNew.ts')
+  pathToFileURL(join(root, 'src/shared/whatsNew.ts')).href
 )
 
 let failed = 0
