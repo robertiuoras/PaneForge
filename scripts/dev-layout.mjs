@@ -8,9 +8,13 @@
 //   node scripts/dev-layout.mjs            # place both, if there is a second screen
 //   node scripts/dev-layout.mjs --dry      # say what it would do
 //
+// With one screen it splits THAT screen instead. Half a laptop screen was refused here
+// until 2026-09-01, on the argument that nobody wants a 720px-wide window; the answer to
+// that turned out to be that a checked build is worth more than a wide window, and the
+// alternative is two drags by hand every time. The split is of the VISIBLE frame, so the
+// menu bar and the dock are left where they are.
+//
 // Refuses rather than guesses:
-//  - one screen: nothing is moved, because half a laptop screen is not a window anybody
-//    wanted, and this is the state the machine is in most of the time;
 //  - a copy that is not running is skipped, not waited for;
 //  - no accessibility permission: says so and exits 0, since a layout is a nicety and the
 //    build it was checking is still on screen.
@@ -24,12 +28,17 @@ function screens() {
   const jxa = `ObjC.import("AppKit");
 const s = $.NSScreen.screens
 const main = $.NSScreen.mainScreen.frame
+const vis = $.NSScreen.mainScreen.visibleFrame
 const out = []
 for (let i = 0; i < s.count; i++) {
   const f = s.objectAtIndex(i).frame
   out.push({ x: f.origin.x, y: f.origin.y, w: f.size.width, h: f.size.height })
 }
-JSON.stringify({ screens: out, mainHeight: main.size.height })`
+JSON.stringify({
+  screens: out,
+  mainHeight: main.size.height,
+  mainVisible: { x: vis.origin.x, y: vis.origin.y, w: vis.size.width, h: vis.size.height }
+})`
   return JSON.parse(execFileSync('osascript', ['-l', 'JavaScript', '-e', jxa], { encoding: 'utf8' }))
 }
 
@@ -41,8 +50,17 @@ JSON.stringify({ screens: out, mainHeight: main.size.height })`
  * correct placement look like a bug.
  */
 function externalRect() {
-  const { screens: list, mainHeight } = screens()
-  if (list.length < 2) return null
+  const { screens: list, mainHeight, mainVisible } = screens()
+  // One screen: split the laptop's own visible frame. Same conversion as below - Cocoa's
+  // y is the distance from the BOTTOM, System Events wants the distance from the top.
+  if (list.length < 2)
+    return {
+      x: mainVisible.x,
+      y: mainHeight - (mainVisible.y + mainVisible.h),
+      w: mainVisible.w,
+      h: mainVisible.h,
+      only: true
+    }
   const main = list.find((s) => s.x === 0 && s.y === 0) ?? list[0]
   const others = list.filter((s) => s !== main)
   // Widest, so a monitor beats a projector nobody is looking at.
@@ -82,17 +100,13 @@ return "ok"`
 }
 
 const screen = externalRect()
-if (!screen) {
-  console.log('dev-layout: one screen only, nothing moved')
-  process.exit(0)
-}
 
 const half = { w: Math.floor(screen.w / 2), h: screen.h, y: screen.y }
 const left = { x: screen.x, y: half.y, w: half.w, h: half.h }
 const right = { x: screen.x + half.w, y: half.y, w: screen.w - half.w, h: half.h }
 const { installed, test } = copies()
 
-console.log(`dev-layout: external ${screen.w}x${screen.h} at ${screen.x},${screen.y}`)
+console.log(`dev-layout: ${screen.only ? 'this screen' : 'external'} ${screen.w}x${screen.h} at ${screen.x},${screen.y}`)
 for (const [what, pid, rect] of [
   ['PaneForge', installed, left],
   ['test copy', test, right]
