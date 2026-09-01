@@ -32,7 +32,17 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { keysForClick, keysAlongLine, keysForRows, keysToPoint, offsetIn, cellAt, ARROW, BACKSPACE } =
+const {
+  keysForClick,
+  keysAlongLine,
+  keysForRows,
+  keysToPoint,
+  offsetIn,
+  cellAt,
+  leftoverBackspaces,
+  ARROW,
+  BACKSPACE
+} =
   createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -341,6 +351,38 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
     ARROW.right.repeat(92)
   )
   eq('a click on the indent of a row lands at its first character', keysToPoint(spaceWrap, { row: 1, col: 10 }, { row: 1, col: 0 }), ARROW.left.repeat(8))
+}
+
+// The character the count is allowed to lose, and the check that gets it back.
+//
+// `InputRow.full` is a judgement, and a deliberately biased one: a row that stops one
+// column short of the composer's edge is called full, so the space its wrap ate is
+// counted as nothing. That is one character of a highlight surviving - at the START,
+// because the walk goes to the END of the selection and backspaces from there. Robert's
+// report was exactly that: "it misses the first character that's highlighted".
+{
+  // Two rows of a 157-column composer. The first stops at 156 - one short of the edge -
+  // so it is called full, and the space the wrap ate is not counted.
+  const shortOfEdge = [
+    { start: 2, end: 156, full: true },
+    { start: 2, end: 40, full: false }
+  ]
+  // 154 on the first row, 38 on the second: 192 counted. The CLI holds 193.
+  eq(
+    'a row that broke one column short of the edge is counted one character short',
+    keysForRows({ rows: shortOfEdge, cursor: { row: 1, col: 40 }, start: { row: 0, col: 2 }, end: { row: 1, col: 40 } }),
+    BACKSPACE.repeat(192)
+  )
+  // What the composer is left holding, measured the same way, is one more than wanted.
+  eq('and the check asks for that one back', leftoverBackspaces({ seen: 1, want: 0, rowsCrossed: 1 }), 1)
+  eq('nothing owed when the count came out right', leftoverBackspaces({ seen: 0, want: 0, rowsCrossed: 1 }), 0)
+  eq('nothing owed when more went than was highlighted', leftoverBackspaces({ seen: -1, want: 0, rowsCrossed: 1 }), 0)
+  // One per boundary crossed, plus one, is the most a count can honestly lose. More than
+  // that is somebody typing, and a backspace into that is a character nobody highlighted.
+  eq('a single row may owe one', leftoverBackspaces({ seen: 1, want: 0, rowsCrossed: 0 }), 1)
+  eq('and no more than one', leftoverBackspaces({ seen: 2, want: 0, rowsCrossed: 0 }), 0)
+  eq('two boundaries may owe three', leftoverBackspaces({ seen: 3, want: 0, rowsCrossed: 2 }), 3)
+  eq('a composer that grew by a paragraph is left alone', leftoverBackspaces({ seen: 40, want: 0, rowsCrossed: 2 }), 0)
 }
 
 console.log(`cursor click: ${checks} checks passed`)
