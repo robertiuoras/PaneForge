@@ -105,6 +105,7 @@ import {
   sameDeadline,
   idleCloseAt,
   quietSince,
+  readStamp,
   reclaimPlan,
   reclaimedMb,
   type Reclaim,
@@ -621,6 +622,40 @@ export default function App(): JSX.Element {
     // timer doesnt reset". Touching a pane is using it, at both ends of the visit.
     if (activeId) focusLeftAt.current[activeId] = Date.now()
     hadFocus.current = activeId
+  }, [activeId])
+  /**
+   * ...and it keeps being read for as long as somebody is sat in front of it.
+   *
+   * The effect above fires on a CHANGE of active pane, so the stamp for a pane you never
+   * leave is the moment you arrived - and an answer that printed after you got there put
+   * `lastOutput` past it. Nothing then moved the stamp again unless you clicked a different
+   * pane, so a pane you watched finish and then walked away from read as unread for ever
+   * and could never be put on the idle clock (`readStamp` in shared/reclaim.ts carries the
+   * whole reason). Ticking it while the window has the keyboard makes the frozen value the
+   * last moment the screen could actually have been seen.
+   *
+   * A ref write on a five second tick: nothing draws it and nothing re-renders for it.
+   */
+  useEffect(() => {
+    if (!activeId) return
+    const stamp = (): void => {
+      focusLeftAt.current[activeId] = readStamp(
+        { lastFocus: focusLeftAt.current[activeId] },
+        { focused: true, windowFocused: document.hasFocus(), now: Date.now() }
+      ) as number
+    }
+    stamp()
+    // The window going to the back is the moment the last look ends, and waiting up to a
+    // whole tick to notice it would hand the clock a stamp from after the person left.
+    const onBlur = (): void => {
+      focusLeftAt.current[activeId] = Date.now()
+    }
+    window.addEventListener('blur', onBlur)
+    const timer = window.setInterval(stamp, 5_000)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.clearInterval(timer)
+    }
   }, [activeId])
   /**
    * Panes somebody has said are never to be closed for being idle - see

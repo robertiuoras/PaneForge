@@ -318,6 +318,35 @@ export function unread(p: Pick<ReclaimPane, 'lastOutput' | 'lastFocus'>): boolea
   return (p.lastOutput ?? 0) > (p.lastFocus ?? 0)
 }
 
+/**
+ * The read stamp a pane should carry after this tick - the answer to "is somebody looking
+ * at this pane right now".
+ *
+ * `unread` compares the last printed byte against the moment the keyboard last touched the
+ * pane, and that stamp used to move only when the ACTIVE pane changed. So a pane watched
+ * while its answer printed ended the turn with `lastOutput` past `lastFocus`, and if the
+ * next thing that happened was not a click on a different pane - the window went to the
+ * back, the screen locked, somebody walked off - the stamp never moved again. The pane read
+ * as unread for ever, `onTheClock` refused it for ever, and no countdown could ever start
+ * on it. Robert, 2026-09-01: "im confused why closing countdown didnt start for this and
+ * since its also been read/viewed as well after output finished".
+ *
+ * Reading is not an event, it is a state: while the pane is the active one AND this window
+ * has the keyboard, the stamp follows the clock, so the last look is always the last moment
+ * somebody could have seen the screen. The moment either stops being true the stamp freezes
+ * there, which is exactly the reading the idle clock wants to count from.
+ *
+ * `windowFocused` is load-bearing and not decoration: without it a pane left active behind
+ * another app would go on being "read" by an empty chair, and the clock would never start
+ * for the opposite reason.
+ */
+export function readStamp(
+  p: Pick<ReclaimPane, 'lastFocus'>,
+  o: { focused: boolean; windowFocused: boolean; now: number }
+): number | undefined {
+  return o.focused && o.windowFocused ? o.now : p.lastFocus
+}
+
 export interface Reclaim {
   id: string
   /** How long it had been quiet, ms. Goes in the log line so the choice is auditable. */
