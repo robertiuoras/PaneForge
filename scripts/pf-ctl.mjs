@@ -12,6 +12,7 @@
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
  *   node scripts/pf-ctl.mjs close <title-or-id>
+ *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
  *
  * Auth is self-serve: the pairing code lives in the app's own config.json, so a local
@@ -155,6 +156,22 @@ if (cmd === 'list') {
   const still = (await sessions()).some((x) => x.id === s.id)
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   console.log(`closed ${s.id} (${s.title})`)
+} else if (cmd === 'rename') {
+  // A pane wearing a name a person typed is never renamed by the app - that is the point
+  // of `mayRename` - so a name typed WRONG (a client called `PiaTeam` when the roster says
+  // `PIA Team`) can only be put right from outside. Without this the only way in was the
+  // `call` escape hatch and the channel name, which is not something to rediscover.
+  const ref = rest.shift()
+  const name = rest.join(' ').trim()
+  if (!ref || !name) fail(1, 'rename needs a pane and a name: pf-ctl rename <title-or-id> <name...>')
+  const s = resolve(await sessions(), ref)
+  if (!s) fail(1, `no pane named "${ref}"`)
+  const was = s.title
+  await call('sessions:rename', [s.id, name])
+  // The rename re-emits the list, so the new name being LISTED is the verification.
+  const now = (await sessions()).find((x) => x.id === s.id)
+  if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
+  console.log(`renamed ${s.id} (${was} -> ${name})`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')
@@ -202,5 +219,5 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | type | call | send`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | rename | type | call | send`)
 }
