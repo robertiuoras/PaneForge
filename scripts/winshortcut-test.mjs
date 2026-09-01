@@ -10,7 +10,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -83,8 +83,15 @@ assert.equal(
 // every Windows install sat on v0.8.104. makensis does not run on this desk, so the shape
 // is checked instead: a label built out of a preprocessor token is refused outright, and
 // every jump has to land somewhere that exists.
-{
-  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8')
+// `build/` holds SOURCE in this repo (the NSIS include), and every tool that ships a
+// working tree elsewhere - rbuild's tar among them - drops a folder of that name as
+// build output. The file being absent is therefore a fact about the copy this is
+// running in, not a failing assertion, and it has to say which.
+const nshPath = join(root, 'build', 'installer.nsh')
+if (!existsSync(nshPath)) {
+  console.log('skip  build/installer.nsh is not in this copy of the tree - NSIS shape unchecked')
+} else {
+  const nsh = readFileSync(nshPath, 'utf8')
   const defined = new Set()
   const targets = []
   for (const raw of nsh.split(/\r?\n/)) {

@@ -375,6 +375,18 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
     workspace: { current_dir: '/tmp/demo' },
     context_window: { context_window_size: 1_000_000, used_percentage: 19, total_input_tokens: 190_000 }
   })
+  // RUNNING the script needs a bash, and a Windows box has none on PATH - the WSL shim
+  // answers `execvpe(/bin/bash) failed` and the whole suite reads as a code failure. The
+  // shape assertions above hold everywhere; only the execution is skipped, out loud, so
+  // nobody mistakes a machine without bash for a passing tee.
+  let hasBash = true
+  try {
+    execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' })
+  } catch {
+    hasBash = false
+  }
+  if (!hasBash) console.log('skip  no bash on this machine - the statusline tee is not run')
+  if (hasBash) {
   const printed = execFileSync('bash', [sl], { input: feed, encoding: 'utf8' })
   ok('the original output is untouched', printed === `model | ${feed.length}\n`)
   const log = join(home, 'pf-context.jsonl')
@@ -388,6 +400,7 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
   // An empty object is the one input that would otherwise produce `{"pf_ts":1,}`.
   execFileSync('bash', [sl], { input: '{}', encoding: 'utf8' })
   ok('an empty object is still valid JSON', typeof JSON.parse(readFileSync(log, 'utf8').trim().split('\n').pop()).pf_ts === 'number')
+  }
 
   // A machine that has never run the CLI must not get a folder full of state for it.
   const nowhere = await ensureBridge(join(out, 'not-installed'))

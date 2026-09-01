@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-link-'))
@@ -27,7 +27,11 @@ buildSync({
   format: 'esm',
   platform: 'neutral'
 })
-const { linkLost, linkWords, linkNote, linkFrozenAt, linkIconWords, LINK_QUIET_MS } = await import(out)
+// `import()` takes a URL, and on Windows a bare `C:\...` path parses as the protocol
+// `c:` - ERR_UNSUPPORTED_ESM_URL_SCHEME, on that machine only. pathToFileURL is the
+// only spelling that is right on both.
+const { linkLost, linkWords, linkNote, linkFrozenAt, linkIconWords, LINK_QUIET_MS } =
+  await import(pathToFileURL(out).href)
 
 const fail = []
 const ok = (cond, what, got) => {

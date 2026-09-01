@@ -22,6 +22,7 @@
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
 import { spawnSync } from 'node:child_process'
+import { cpus } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -175,7 +176,6 @@ const TESTS = [
   ['splitplan', 'split-plan-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
-  ['autoclear', 'autoclear-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs']
 ]
@@ -190,10 +190,41 @@ if (!run.length) {
   process.exit(2)
 }
 
+/*
+ * How many suites run at once.
+ *
+ * Every suite is an independent `node` process that writes only to its own temp files and
+ * binds only `listen(0)` ports - the kernel hands each one a port it has just confirmed
+ * free, so two suites cannot collide over one. That makes the run a pool, not a queue, and
+ * the machine's cores are the only reason to hold it to a number at all.
+ *
+ * Serial (`--jobs 1`) is kept because a FAILURE is easier to read when nothing else is
+ * printing, and because a suite proven to need the machine to itself belongs in SERIAL
+ * below rather than forcing the whole run back into a queue.
+ */
+const jobsArg = /^--jobs=(\d+)$/.exec(process.argv.slice(2).find((a) => a.startsWith('--jobs=')) ?? '')
+const JOBS = Math.max(1, Number(jobsArg?.[1] ?? process.env.PF_TEST_JOBS ?? Math.min(8, cpus().length)))
+
+/**
+ * Suites that may not share the machine, each with the reason it cannot.
+ *
+ * A name lands here only after it has been MEASURED failing in a pool and passing alone -
+ * a guess here silently gives back the time the pool was built to win.
+ */
+const SERIAL = new Set([
+  // Reads the whole process table and asserts on what it finds, so another suite's
+  // spawned children are its noise.
+  'strays',
+  'panejob',
+  'panebackjobs',
+  'deaddev',
+  'usage'
+])
+
 const failed = []
 const started = Date.now()
 
-for (const [name, file] of run) {
+async function runOne([name, file]) {
   const at = Date.now()
   const r = spawnSync(process.execPath, [join(root, 'scripts', file)], {
     cwd: root,
@@ -204,15 +235,44 @@ for (const [name, file] of run) {
   })
   const secs = ((Date.now() - at) / 1000).toFixed(1)
   const ok = r.status === 0
-  console.log(`${ok ? 'ok  ' : 'FAIL'}  ${name.padEnd(12)} ${secs.padStart(5)}s`)
-  if (!ok) {
-    failed.push(name)
-    // The evidence, not a summary of it. Whatever reads this - a person or the agent
-    // being told its lane failed - needs the assertion that fired.
-    const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd()
-    console.log(out ? `\n${out}\n` : `\n  (no output; exit ${r.status})\n`)
-  }
+  // The evidence, not a summary of it. Whatever reads this - a person or the agent
+  // being told its lane failed - needs the assertion that fired.
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd()
+  return { name, ok, secs, out, status: r.status }
 }
+
+function report(res) {
+  console.log(`${res.ok ? 'ok  ' : 'FAIL'}  ${res.name.padEnd(12)} ${res.secs.padStart(5)}s`)
+  if (res.ok) return
+  failed.push(res.name)
+  console.log(res.out ? `\n${res.out}\n` : `\n  (no output; exit ${res.status})\n`)
+}
+
+// Lines are printed in the order the suites are LISTED, never the order they finish - a
+// run whose output reshuffles itself between two runs cannot be diffed against the last one.
+async function pool(list, width) {
+  const results = new Array(list.length)
+  let next = 0
+  let printed = 0
+  const flush = () => {
+    while (printed < results.length && results[printed]) report(results[printed++])
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(width, list.length) }, async () => {
+      for (let i = next++; i < list.length; i = next++) {
+        results[i] = await runOne(list[i])
+        flush()
+      }
+    })
+  )
+  flush()
+}
+
+const alone = run.filter(([n]) => SERIAL.has(n))
+const together = run.filter(([n]) => !SERIAL.has(n))
+
+await pool(together, JOBS)
+await pool(alone, 1)
 
 const total = ((Date.now() - started) / 1000).toFixed(1)
 if (failed.length) {

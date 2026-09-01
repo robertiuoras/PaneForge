@@ -217,6 +217,8 @@
     "test:lanedevice": "node scripts/lane-device-test.mjs",
     "typecheck:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run typecheck",
     "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test",
+    "verify": "npm run typecheck && npm test",
+    "verify:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run verify",
     "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build",
     "test:borrow": "node scripts/borrow-cycle-test.mjs",
     "test:shipimports": "node scripts/ship-imports-test.mjs",
