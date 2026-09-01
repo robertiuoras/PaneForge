@@ -13,6 +13,50 @@ Read the matching section here before CHANGING one of those things. The rule in
 Electron app that hosts coding agents in panes. It hosts the chat you are reading this
 in, which shapes every rule below.
 
+## A dev server nothing can reach is closed, after a countdown
+
+Measured 2026-09-01. `pf list` showed six panes and `devList.ts` showed two dev servers for
+taskdriver.ai: pid 23918/23921, the launchd job `com.robert.taskdriver-dev-main`, holding
+:3006 — and pid 58208 on ppid 1, up nineteen minutes, holding a Next compiler, a file
+watcher and its memory while nothing could reach it. It had lost the port race at startup
+and never bound anything. Nothing in the app could tell the two apart, because "what is
+running" was the only question `devList.ts` was ever asked. Robert: "dev server uses
+resources and i said its important to manage properly".
+
+Three readings were considered and two were thrown away.
+
+**"Does a pane own it"** is wrong: the supervised one has no pane either, and the whole
+point of a launchd job is that nobody is sitting in front of it. **"Has it been quiet"** is
+wrong for the same reason a healthy dev server is quiet all day — it is waiting for a
+request. **ppid 1** is wrong because both of them were on ppid 1.
+
+What separates them is whether anything can connect. A dev server holding no listening
+socket is not serving anybody, whoever started it and however long ago, and that is
+checkable in two seconds by hand (`lsof -nP -iTCP -sTCP:LISTEN`) — which is what makes it
+safe to act on automatically. The card says the port, so the person reading it can check
+the same thing in a browser while the count runs.
+
+Two traps, both found by measuring rather than by reasoning:
+
+- The socket is held by the CHILD. `devList.ts` deliberately folds `next dev` into the
+  `npm run dev` a person typed, because killing the ancestor takes the tree — so the pid it
+  reports routinely holds no socket at all. Judging that pid alone marks every npm-started
+  dev server on the desk as dead. `servingDevs()` walks descendants; proved on the live
+  table, where pid 23918 reads SERVING because 23921 below it listens.
+- An empty socket table is a FAILED reading, not "nothing is listening". `lsof` can be
+  missing, sandboxed or slow, and this app already has the rule elsewhere (an empty model
+  list may never overwrite a good one). Here the failure mode is killing every dev server
+  on the machine at once, so an empty reading stops the sweep.
+
+The 90-second grace is the third measurement: `next dev` compiles before it listens, and a
+cold start on this Mac took 11s. Anything shorter turns every start into a countdown.
+
+A supervised job is refused outright — it comes straight back, so the kill wins nothing
+and loses the log line saying why it went. macOS reads that from `launchctl list`; Windows
+claims none rather than guessing, because Task Scheduler does not publish the pid of what
+it started.
+
+
 ## Never close the app you are running inside
 
 `PaneForge.exe` under `AppData\Local\Programs\claude-orchestrator` is the live app and
