@@ -196,8 +196,13 @@ export function describePlace(input: PlaceInput): Place {
   // uncommitted files carried a tooltip claiming it was not a repository. An absent fact
   // and a known-negative fact are not the same thing, and only one of them is safe to
   // assert.
+  // Only a person who has MADE a second copy has any use for the word "copy". Somebody who
+  // installed the app and opened one folder has exactly one, so `PaneForge - main copy` in
+  // every tooltip is a distinction drawn against nothing, and it invites the question "which
+  // other copy?" - the answer being none. The role line is therefore printed only when there
+  // IS more than this folder, and the common case reads as the project's name alone.
   const full = [
-    `${project} - ${role}`,
+    kind === 'lane' ? `${project} - ${role}` : project,
     branch ? `on ${branch}${onTrunk ? ' (the trunk)' : ''}` : '',
     input.pane ? `pane ${input.pane}` : '',
     input.cwd
