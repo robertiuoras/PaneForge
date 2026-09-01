@@ -390,6 +390,45 @@ export function reclaimPlan(
 }
 
 /**
+ * The panes the idle clock would take, in the order it would take them.
+ *
+ * One function, because the card and the sweep must not disagree about a single pane:
+ * `idleClosePlan` closes these and `idleCloseAt` draws a countdown for exactly these. It
+ * used to be two readings, and the pane they disagreed about was the one the last-pane
+ * rule holds back - its card said `closes now` and nothing was ever going to close it.
+ * Measured 2026-09-01: with no focused pane, one pane on a quiet desk sat at `closes now`
+ * for the whole run and never went.
+ *
+ * The last-pane rule is kept - an app that empties its own window has not saved anything,
+ * it has removed the reason the window is open - so the fix is that the held-back pane is
+ * not on the clock at all, rather than on a clock that never rings.
+ */
+export function dueForIdleClose(
+  panes: ReclaimPane[],
+  cfg: ReclaimConfig = DEFAULT_RECLAIM,
+  now = 0,
+  personHere = true,
+  lead = 0
+): ReclaimPane[] {
+  if (!cfg.enabled) return []
+  const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
+  if (!minutes) return []
+  // `maxPerSweep` is no longer a cap here, but zero still means the sweeps are switched
+  // off and this clock is one of them.
+  if (!(cfg.maxPerSweep > 0)) return []
+  const minIdle = minutes * 60_000
+
+  const eligible = panes
+    .filter((p) => onTheClock(p, personHere))
+    .filter((p) => now + lead - quietSince(p) >= minIdle)
+    // Oldest quiet first, so the one held back is the one that went quiet most recently.
+    .sort((a, b) => quietSince(a) - quietSince(b))
+
+  const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
+  return eligible.slice(0, Math.max(0, eligible.length - keepAtLeastOne))
+}
+
+/**
  * Which panes have simply been quiet too long, or an empty list.
  *
  * The clock the sweep above refuses to have, for the machine that has no person: same
@@ -416,23 +455,19 @@ export function idleClosePlan(
    */
   lead = 0
 ): Reclaim[] {
-  if (!cfg.enabled) return []
-  const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
-  if (!minutes) return []
-  if (!(cfg.maxPerSweep > 0)) return []
-  const minIdle = minutes * 60_000
+  const eligible = dueForIdleClose(panes, cfg, now, personHere, lead)
+  if (!eligible.length) return []
+  const minIdle = Math.max(0, cfg.idleCloseMinutes ?? 0) * 60_000
 
-  const eligible = panes
-    .filter((p) => onTheClock(p, personHere))
-    .filter((p) => now + lead - quietSince(p) >= minIdle)
-    .sort((a, b) => quietSince(a) - quietSince(b))
-
-  // Same last-pane rule as the pressure sweep: an app that empties its own window has not
-  // saved anything, it has removed the reason the window is open.
-  const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
-  const room = Math.max(0, eligible.length - keepAtLeastOne)
-
-  return eligible.slice(0, Math.min(cfg.maxPerSweep, room)).map((p) => ({
+  // NOT capped at `maxPerSweep`. That cap belongs to the pressure sweep, which closes a
+  // pane in order to change a reading of the machine and is worth taking that reading again
+  // between panes. Nothing here reads the machine - this clock only knows that nobody has
+  // touched these panes for minutes - so the cap bought no accuracy and cost the truth of
+  // the card: with one countdown on screen at a time, seven due panes closed two at a time
+  // and the last one sat wearing `closes now` for 54 seconds (measured 2026-09-01, real
+  // `idleClosePlan` stepped at the sweep's own 5s). Robert: "shows closes now tag but it
+  // wasnt closing at all or too slow to close".
+  return eligible.map((p) => ({
     id: p.id,
     // Never the lead: this is how long the pane has REALLY been quiet, and it is what the
     // log line is read back for.
@@ -570,12 +605,25 @@ export function idleCloseAt(
   pane: ReclaimPane,
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
   now = 0,
-  personHere = true
+  personHere = true,
+  /**
+   * Every local pane, so this can refuse the one the last-pane rule holds back.
+   *
+   * Optional only because the answer without it is the one this function always gave.
+   * Pass it: a card is the only place that refusal is visible, and without the list this
+   * draws `closes now` on the pane that is never going to be closed.
+   */
+  all?: ReclaimPane[]
 ): number | null {
   if (!cfg.enabled) return null
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
   if (!minutes) return null
   if (!onTheClock(pane, personHere)) return null
+  if (all && !dueForIdleClose(all, cfg, now, personHere).some((p) => p.id === pane.id)) {
+    // Not "later": the last-pane rule does not lift while the desk stays as it is, and a
+    // pane that has not reached its own clock yet is caught by the arithmetic below.
+    if (now - quietSince(pane) >= minutes * 60_000) return null
+  }
   const at = quietSince(pane) + minutes * 60_000
   // A pane already past its deadline is due NOW, not overdue by four minutes: the sweep
   // runs on a minute timer, so `now` is regularly a little past the moment it was due and

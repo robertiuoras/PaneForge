@@ -4174,20 +4174,28 @@ export default function App(): JSX.Element {
       // not coming.
       const now = deskNow(Date.now(), awayRef.current)
       const live = new Set<string>()
-      for (const s of sessions) {
-        if (s.remote) continue
-        live.add(s.id)
-        const due = idleCloseAt(
+      // Every local pane, read once, so the chip can refuse the pane the last-pane rule
+      // holds back. Without it that card wore `closes now` and nothing ever closed it.
+      const localPanes = sessions
+        .filter((s) => !s.remote)
+        .map((s) =>
           reclaimPaneOf(
             s,
             activeId,
             focusLeftAt.current[s.id],
             pinned[s.id],
             usage?.panes[s.id]?.jobs?.[0]?.label
-          ),
+          )
+        )
+      for (const s of sessions) {
+        if (s.remote) continue
+        live.add(s.id)
+        const due = idleCloseAt(
+          localPanes.find((p) => p.id === s.id) as ReclaimPane,
           cfg,
           now,
-          personHere
+          personHere,
+          localPanes
         )
         // A pane somebody pressed "keep it open" on is held by that, not by the clock -
         // and the card must say so rather than counting down to a close that will not

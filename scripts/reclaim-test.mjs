@@ -202,15 +202,34 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     'seen'
   )
   eq('never the last pane', idleClosePlan([pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })], CLOCKED, NOW).length, 0)
-  eq(
-    'at most maxPerSweep at a time',
-    idleClosePlan(
-      [pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'b', lastKeyboard: NOW - 8 * HOUR }), pane({ id: 'c', lastKeyboard: NOW - 7 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })],
-      { ...CLOCKED, maxPerSweep: 1 },
-      NOW
-    ).length,
-    1
-  )
+  // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
+  // sweep that closes a pane in order to change a reading of the machine. Here it only
+  // made the card lie: with one countdown on screen at a time, seven due panes went two at
+  // a time and the last wore `closes now` for 54 seconds (measured 2026-09-01). All of
+  // them go in one countdown now, and the number on the card is 9s for every one.
+  const crowd = [
+    pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'b', lastKeyboard: NOW - 8 * HOUR }),
+    pane({ id: 'c', lastKeyboard: NOW - 7 * HOUR }),
+    pane({ id: 'pad', lastKeyboard: NOW })
+  ]
+  eq('every due pane goes in one countdown, whatever maxPerSweep says', ids(idleClosePlan(crowd, { ...CLOCKED, maxPerSweep: 1 }, NOW)), 'a,b,c')
+  // ...but zero still means the sweeps are switched off, and this clock is one of them.
+  eq('maxPerSweep 0 switches the clock off', idleClosePlan(crowd, { ...CLOCKED, maxPerSweep: 0 }, NOW).length, 0)
+
+  // The pane the last-pane rule holds back is not on the clock AT ALL. It used to have a
+  // deadline nothing would ever act on: `closes now` on a card, for ever, on a desk with
+  // no focused pane. Robert 2026-09-01: "shows closes now tag but it wasnt closing at all".
+  const alone = [pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })]
+  eq('the last pane has no countdown either', idleCloseAt(alone[0], CLOCKED, NOW, true, alone), null)
+  const twoLeft = [pane({ id: 'old', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'newer', lastKeyboard: NOW - 8 * HOUR })]
+  eq('...and with every pane due, the one held back is the newest quiet', ids(idleClosePlan(twoLeft, CLOCKED, NOW)), 'old')
+  check('the held-back one draws nothing', idleCloseAt(twoLeft[1], CLOCKED, NOW, true, twoLeft) === null)
+  check('the one that goes still counts down', idleCloseAt(twoLeft[0], CLOCKED, NOW, true, twoLeft) === NOW)
+  // A pane that has simply not reached its own clock keeps its future deadline - the
+  // refusal above is about the last-pane rule, not about being early.
+  const early = [pane({ id: 'due', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'young', lastKeyboard: NOW - 5 * 60_000 }), pane({ id: 'pad2', lastKeyboard: NOW })]
+  check('an early pane keeps its own deadline', idleCloseAt(early[1], CLOCKED, NOW, true, early) > NOW)
   // A config written by an older build has no such field at all, and reading `undefined`
   // as "close everything that is older than never" would be the worst possible default.
   const legacy = { enabled: true, minIdleMinutes: 15, maxPerSweep: 2 }
