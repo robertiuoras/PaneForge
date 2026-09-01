@@ -203,7 +203,14 @@ export function verify({ tag, version, dist, repair = false }) {
   const published = Object.fromEntries(
     JSON.parse(listed.out).assets.map((a) => [a.name, a.size])
   )
-  const sizes = Object.fromEntries(Object.entries(local).map(([n, v]) => [n, v.size]))
+  // The feed is judged by what it DECLARES, not by its own byte count: a feed rewritten
+  // by hand to repair a bad upload is a different length from the one electron-builder
+  // left in dist/, and that difference says nothing about the build.
+  const sizes = Object.fromEntries(
+    Object.entries(local)
+      .filter(([n]) => !n.endsWith('.yml'))
+      .map(([n, v]) => [n, v.size])
+  )
   let bad = sizeMismatches(published, sizes)
 
   const feedName = names[0]

@@ -89,11 +89,17 @@ When asked for (`"release": "version"`):
 - Notes from commit subjects between tags (`scripts/release-notes.mjs`); only
   `feat:`/`fix:`/`perf:` reach the page. `npm run test:notes`.
 - Check asset size before fixing `latest.yml` (`reconcileFeed`). `npm run test:laneargs`.
-- The tag push publishes it: the `Release` workflow builds mac AND win. Never run a bare
-  `npm run release` on top of a green run - it has no `GH_TOKEN` (only `lane.mjs`'s
-  `publishFallback` injects one, and only after waiting for Actions), and it still clobbers
-  `latest-mac.yml` and the zip with a partial upload. An asset size that is an exact power of
-  two (22,020,096 = 21 MiB) is a truncated upload, never a build.
+- The tag push publishes it: the `Release` workflow builds mac AND win. `npm run release` is
+  `scripts/release.mjs`, a GUARD and not the publisher - it refuses to publish over a release
+  already carrying every asset for this platform, refuses BEFORE the build when there is no
+  `GH_TOKEN`, refuses when GitHub cannot be asked, and holds the served bytes against `dist/`
+  afterwards. `npm run release:verify` is that last check on its own; the feed is judged by
+  the rows it declares, never by its own byte count. `npm run test:release`.
+- Never reach past the guard to `electron-builder --publish always`: a second publisher left
+  v0.8.183 serving 22,020,096 bytes of a 167,357,224-byte zip, with a `latest-mac.yml`
+  recording the truncated size and its sha512 - a feed and a corpse that agree look healthy
+  from every angle except `dist/`. An asset size that is an exact power of two is a partial
+  upload, never a build.
 - Auto release = dev prerelease; auto-promotes after `PF_PROMOTE_SOAK_MS` (3d). `lane.mjs
   promote`, `lane.mjs doctor`, `npm run test:promote`.
 

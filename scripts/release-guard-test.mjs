@@ -91,6 +91,22 @@ is(
   "the other platform's assets are not ours to judge"
 )
 
+// 5b. The feed's own byte count is not evidence: a hand-repaired latest-mac.yml is a
+//     different length from electron-builder's and that is not a broken build. Only the
+//     rows inside it are checked (see feedMismatches below).
+is(
+  sizeMismatches({ 'latest-mac.yml': 511 }, { 'latest-mac.yml': 510 }).length,
+  1,
+  'sizeMismatches itself is blind to what a name means'
+)
+is(
+  /filter\(\(\[n\]\) => !n\.endsWith\('\.yml'\)\)/.test(
+    readFileSync(new URL('./release.mjs', import.meta.url), 'utf8')
+  ),
+  true,
+  'verify keeps the feed out of the size comparison'
+)
+
 // 6. The feed. It was self-consistent with the corpse, which is why it must be read
 //    against dist/ and never against the asset it describes.
 const feed = `version: ${V}
