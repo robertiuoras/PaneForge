@@ -36,6 +36,15 @@ export interface RevealAsk {
   /** the pane's title - a rename, or the folder name it was born with */
   title?: string
   /**
+   * The folder of the client this pane is for, absolute, already proved to exist by the
+   * caller. A client pane is named out of a README heading - `Adie Bradley` - and the
+   * folder holding them is a slug two levels down (`clients/clients/a4-advocate`), so the
+   * title matches no subfolder of the cwd and the name match above cannot find it. This
+   * is the caller handing the answer over rather than a name to graft on: absent means
+   * nobody found one, and it is still refused unless it is inside the root.
+   */
+  clientDir?: string
+  /**
    * The immediate subfolder NAMES of `cwd`, as read off disk. Empty (or absent) means
    * nobody looked, which is not the same as "there are none" - both fall through to the
    * cwd, and neither is allowed to invent a path.
@@ -71,11 +80,18 @@ export function revealTarget(ask: RevealAsk): string {
   const sep = ask.sep ?? '/'
   // A pane already inside the root is its own answer, whatever it is called.
   const base = ask.cwd && within(ask.root, ask.cwd, sep) ? ask.cwd : ask.root
-  if (!nameable(ask.title)) return base
-  const want = (ask.title as string).trim().toLowerCase()
-  // The pane is already sitting in the folder it is named after: nothing deeper to open.
-  const leaf = base.split(sep).filter(Boolean).pop()
-  if (leaf?.toLowerCase() === want) return base
-  const hit = (ask.subdirs ?? []).find((d) => d.toLowerCase() === want)
-  return hit ? base + (base.endsWith(sep) ? '' : sep) + hit : base
+  if (nameable(ask.title)) {
+    const want = (ask.title as string).trim().toLowerCase()
+    // The pane is already sitting in the folder it is named after: nothing deeper to open.
+    const leaf = base.split(sep).filter(Boolean).pop()
+    if (leaf?.toLowerCase() === want) return base
+    const hit = (ask.subdirs ?? []).find((d) => d.toLowerCase() === want)
+    if (hit) return base + (base.endsWith(sep) ? '' : sep) + hit
+  }
+  // A client folder is only ever a step DOWN. It has to be inside the root, and it may
+  // not move the button up out of a cwd that is already deeper - a pane working in
+  // `clients/a4-advocate/site` means the site, not the client.
+  if (ask.clientDir && within(ask.root, ask.clientDir, sep) && !within(ask.clientDir, base, sep))
+    return ask.clientDir
+  return base
 }

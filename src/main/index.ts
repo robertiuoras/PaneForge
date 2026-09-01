@@ -23,6 +23,7 @@ import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
 import { revealTarget, within } from '../shared/reveal'
+import { clientForText, rosterRoot } from './clients'
 import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
@@ -1787,7 +1788,21 @@ ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) =>
   } catch {
     /* unreadable: the title matches nothing and the answer is `base` */
   }
-  const target = revealTarget({ root, cwd: cwd ?? '', title, subdirs, sep })
+  // ...and the client this pane is named after, when there is one. `clientForText` is the
+  // same reading that renamed the pane in the first place, so the button lands where the
+  // name came from; it answers nobody unless exactly one client matches.
+  let clientDir: string | undefined
+  try {
+    const rosterAt = rosterRoot(base)
+    const entry = title ? clientForText(base, title) : undefined
+    if (rosterAt && entry) {
+      const dir = join(rosterAt, entry.slug)
+      if (statSync(dir).isDirectory()) clientDir = dir
+    }
+  } catch {
+    /* no roster, or a slug whose folder has gone: the title match above is the answer */
+  }
+  const target = revealTarget({ root, cwd: cwd ?? '', title, subdirs, clientDir, sep })
   shell.openPath(target)
   return target
 })

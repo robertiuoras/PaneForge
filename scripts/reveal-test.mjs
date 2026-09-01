@@ -37,6 +37,48 @@ is(
   'a pane already in the folder it is named after opens it once, not twice'
 )
 
+// --- the client a pane is named after ------------------------------------
+// A client pane is named out of a README heading, and the folder is a slug two levels
+// down, so the name match above finds nothing. Main hands the folder over instead.
+const CROOT = `${ROOT}/clients`
+is(
+  revealTarget({
+    root: ROOT,
+    cwd: ROOT,
+    title: 'Adie Bradley',
+    subdirs: ['clients', 'data', 'tools'],
+    clientDir: `${CROOT}/a4-advocate`
+  }),
+  `${CROOT}/a4-advocate`,
+  "a client pane opens the client's own folder, which its title does not name"
+)
+is(
+  revealTarget({
+    root: ROOT,
+    cwd: `${CROOT}/a4-advocate/site`,
+    title: 'Adie Bradley',
+    subdirs: [],
+    clientDir: `${CROOT}/a4-advocate`
+  }),
+  `${CROOT}/a4-advocate/site`,
+  'a pane already deeper than the client folder is not dragged back up to it'
+)
+is(
+  revealTarget({ root: ROOT, cwd: ROOT, title: 'Sonia', subdirs: subs, clientDir: `${CROOT}/a4-advocate` }),
+  `${ROOT}/sonia`,
+  'a title that does name a real folder still wins - it is the one fact a person typed'
+)
+is(
+  revealTarget({ root: ROOT, cwd: ROOT, title: 'Adie Bradley', subdirs: [], clientDir: '/Users/r/elsewhere/a4' }),
+  ROOT,
+  'a client folder outside the project is refused, like every other path this button is handed'
+)
+is(
+  revealTarget({ root: ROOT, cwd: ROOT, title: 'Adie Bradley', subdirs: [] }),
+  ROOT,
+  'no client found is the answer it always gave'
+)
+
 // --- the control: everything below must answer exactly what it always did ---
 is(
   revealTarget({ root: ROOT, cwd: ROOT, title: 'PaneForge', subdirs: subs }),
