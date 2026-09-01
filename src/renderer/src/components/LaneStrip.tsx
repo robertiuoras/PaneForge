@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
-import { paneRef } from '@shared/place'
+import { copyNumber, paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
 import {
   ago,
@@ -334,8 +334,12 @@ function LaneRow({
       }
       title={laneTip(lane, holderPane) + (lane.ready && hold ? `\n\n${hold.reason}` : '')}
     >
+      {/* The copy's NUMBER, never its slot letter. `a` is scripts/lane.mjs's word for a
+          position in a pool and means nothing to the person reading this row; the folder
+          the project itself lives in is copy 1, so `a` is 2. A slot of neither shape is
+          printed as it is rather than given an invented number (src/shared/place.ts). */}
       <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
-        {lane.lane}
+        {copyNumber(lane.lane) ?? lane.lane}
       </span>
       <div className="row-text">
         {/* Was `lane.branch`, which is the single word this whole change exists to stop
@@ -353,11 +357,15 @@ function LaneRow({
           {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
         </div>
       </div>
-      {lane.device && (
-        <span
-          className={'lane-device' + (here && lane.device !== here ? ' away' : '')}
-          title={deviceTip(lane, here)}
-        >
+      {/* Which desk, drawn only when it is the OTHER one.
+          It used to be drawn on every row, and on a one-machine desk that is the same
+          word repeated down the strip - 92px of reserved width (styles.css .lane-device)
+          spent saying nothing, taken off the front of the line that carries the state.
+          The row that has to be read differently is the one this window cannot free, and
+          that is the only row that keeps the tag. `here` unknown keeps it too: a device
+          we cannot compare against is not a device we can call ours. */}
+      {lane.device && (!here || lane.device !== here) && (
+        <span className="lane-device away" title={deviceTip(lane, here)}>
           {lane.device}
         </span>
       )}

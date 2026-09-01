@@ -256,7 +256,11 @@ ok('finished work is not in-flight work', laneBusy(entry({ ready: true }), NOW) 
 ok('a conflict is not in-flight work', laneBusy(entry({ conflicted: true }), NOW) === false)
 
 // A free lane says nothing about a holder, and a stuck one leads with the thing to act on.
-ok('a free lane is still just free', laneState(entry({ held: false }), false, NOW) === 'free')
+ok(
+  'a lane nobody holds says so in words, never the word "free"',
+  laneState(entry({ held: false }), false, NOW) === 'nobody is using it',
+  laneState(entry({ held: false }), false, NOW)
+)
 // Plain words on purpose: "conflicts with master" assumed the reader wrote the release
 // script. The row says what it means and what ends it; git specifics live in the tooltip.
 ok(
@@ -320,7 +324,7 @@ ok('a free lane gets no holder tooltip', !laneTip(entry({ held: false })).includ
 // `master`, for two different repositories.
 ok(
   'a lane row names the project before the lane',
-  laneLabel(entry({})) === 'PaneForge · lane a',
+  laneLabel(entry({})) === 'PaneForge copy 2',
   laneLabel(entry({}))
 )
 ok(
@@ -333,7 +337,7 @@ ok(
 ok(
   'another repository names itself, not PaneForge',
   laneLabel(entry({ dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\taskdriver-b', lane: 'b', branch: 'lane-b' })) ===
-    'taskdriver · lane b'
+    'taskdriver copy 3'
 )
 
 // ---------------------------------------------------------------------------------------
@@ -343,13 +347,13 @@ ok(
 const td = entry({ dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\taskdriver-b', lane: 'b', branch: 'lane-b' })
 ok(
   'a chip beside its own project drops the name and says only the lane',
-  laneChipLabel(td, 'taskdriver') === 'lane b',
+  laneChipLabel(td, 'taskdriver') === 'copy 3',
   laneChipLabel(td, 'taskdriver')
 )
 // The one case the name exists for: a chat holding a lane of some other repository.
 ok(
   'the project comes back when the lane is a copy of a DIFFERENT project',
-  laneChipLabel(td, 'assistant') === 'taskdriver · lane b',
+  laneChipLabel(td, 'assistant') === 'taskdriver copy 3',
   laneChipLabel(td, 'assistant')
 )
 ok(
@@ -358,11 +362,11 @@ ok(
 )
 // The main checkout has no lane letter, so `role` is the whole answer there.
 ok(
-  'the main lane on its own project says "main checkout", never a bare project name twice',
+  'the main lane on its own project says "main copy", never a bare project name twice',
   laneChipLabel(
     entry({ lane: 'main', dir: 'C:\\Users\\Gamer\\Desktop\\Projects\\PaneForge', branch: 'master' }),
     'PaneForge'
-  ) === 'main checkout'
+  ) === 'main copy'
 )
 ok('the project is spelled out on its own for the tooltip', laneProject(td) === 'taskdriver')
 
@@ -387,7 +391,7 @@ ok('the tooltip uses the pane number too', laneTip(fromTaskdriver, 3).includes('
 // the distinction the whole strip exists to make, and the easy one to get backwards.
 ok(
   'the tooltip leads with the project the LANE is in',
-  laneTip(fromTaskdriver, 3).startsWith('PaneForge · lane a'),
+  laneTip(fromTaskdriver, 3).startsWith('PaneForge copy 2'),
   laneTip(fromTaskdriver, 3)
 )
 ok(

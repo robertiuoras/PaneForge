@@ -109,7 +109,7 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
   // itself - as the folder it actually is, never renamed in the UI to something no
   // folder is called.
   const p = describePlace({ cwd: `${W}\\PaneForge-w2`, branch: 'pf/w2', lane: 'w2', pane: 3 })
-  is(p.short, 'PaneForge-w2', 'an old lane is named the way its FOLDER is named')
+  is(p.short, 'PaneForge copy 2', 'an old lane counts the same way - w2 was always the 2nd copy')
   is(p.slot, 'w2', '')
   is(p.role, 'copy 2', 'a legacy w2 lane already carried its number - same counting')
   ok(!p.short.includes('#'), 'and never a bare # that could be read as a switch key')
@@ -119,10 +119,11 @@ for (const b of ['lane-a', 'feat/x', 'mastery', 'pf/w2', 'main-menu'])
 
 {
   const p = describePlace({ cwd: `${W}\\PaneForge-a`, branch: 'lane-a', lane: 'a' })
-  is(p.short, 'PaneForge-a', 'a development lane is named the way its folder is')
+  is(p.short, 'PaneForge copy 2', 'a copy is numbered, never lettered and never a folder suffix')
   is(p.role, 'copy 2', 'the slot letter never reaches a person: a is the SECOND copy')
   ok(!p.short.startsWith('lane'), 'never "lane a" on its own - that is the string being fixed')
-  ok(!/ lane /.test(p.short), 'and never the word "lane" at all - the folder name is the fact')
+  ok(!/ lane /.test(p.short), 'and never the word "lane" at all - that is the app\'s own jargon')
+  ok(!/-a\b/.test(p.short), 'nor the slot letter wearing a hyphen, which is the same letter')
 }
 
 {

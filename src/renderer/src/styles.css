@@ -1403,7 +1403,16 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-row .row-sub { font-size: 10.5px; }
 /* The folder is what you act on and the chat's name is what tells you whether you want
    to: same line, second, dimmer, and the first thing to be cut when the row is short. */
-.lane-row .row-who { color: var(--muted); font-weight: 400; }
+/* The title is the project and the chat's name, and only the NAME may be shortened. They
+   were one run of text under a single ellipsis, so a long chat name ate the project it
+   was in - the one fact on the row that says which folder this is about. Flex puts the
+   ellipsis on the name instead, and the project keeps its width. */
+.lane-row .row-title { display: flex; align-items: baseline; gap: 4px; }
+.lane-row .row-title > :first-child { flex: none; }
+.lane-row .row-who {
+  color: var(--muted); font-weight: 400;
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .lane-row.done .row-sub { color: var(--ok); opacity: 0.85; }
 /* The strip only ever draws lanes held by a chat that is NOT a pane here, so "busy now"
    is the fact it exists to carry - and it was grey, identical to a lane last touched
@@ -1454,12 +1463,14 @@ html.app-blurred .lane-row.stuck::before { animation: none; opacity: 1; }
    which is the case a reader has to act on differently (nothing here can free it). */
 .lane-device {
   flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
-  color: var(--muted); border: 1px solid transparent; border-radius: 5px; padding: 1px 4px;
-  max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.lane-device.away {
+  border-radius: 5px; padding: 1px 4px;
+  /* 92px was reserved on every row to print this desk's own name over and over. The tag
+     is now drawn only for the other machine (LaneStrip.tsx), so the width it takes is
+     width the state line was not getting, and it is narrower besides: a hostname is
+     long, and the useful half of it is the front. */
+  max-width: 68px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--info);
-  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
   background: color-mix(in srgb, var(--info) 10%, transparent);
 }
 .lane-fix { flex: none; padding: 2px 8px; font-size: 10.5px; }
