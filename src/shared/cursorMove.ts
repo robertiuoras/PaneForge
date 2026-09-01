@@ -220,3 +220,31 @@ export function keysForRows(a: {
   if (Math.abs(e - c) > keyLimit) return ''
   return keysToPoint(a.rows, a.cursor, a.end, keyLimit) + BACKSPACE.repeat(length)
 }
+
+/**
+ * The backspaces still owed after a delete that did not take everything highlighted.
+ *
+ * A composer's rows are counted, not measured: whether the break at the end of a row ate a
+ * separator is a JUDGEMENT (`InputRow.full`), and one row's judgement was deliberately
+ * biased - "within a column of the far edge counts as full" - because guessing the other
+ * way deletes a character nobody highlighted. The cost of that bias is this: a row that
+ * broke one column short of the edge is called full, its eaten space is counted as
+ * nothing, and one character of the highlight survives. It survives at the START, because
+ * the walk goes to the END of the selection and backspaces from there.
+ *
+ * So the count is checked instead of trusted. `seen` and `want` are the composer's length
+ * after the keys landed and what it should have been; both are read the same way, so the
+ * same ambiguity is on both sides of the subtraction and cancels. Anything left over is
+ * characters of the highlight that are still there, with the cursor sitting right after
+ * them - which is exactly where a backspace removes them.
+ *
+ * `cap` is the most that can honestly be owed: at most one character per row boundary the
+ * selection crossed, plus one. Over that, something else moved the composer - the person
+ * typing, the CLI redrawing - and nothing is sent, because a backspace into that is a
+ * character nobody highlighted.
+ */
+export function leftoverBackspaces(a: { seen: number; want: number; rowsCrossed: number }): number {
+  const extra = a.seen - a.want
+  if (extra <= 0) return 0
+  return extra > Math.max(0, a.rowsCrossed) + 1 ? 0 : extra
+}

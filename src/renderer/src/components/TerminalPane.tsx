@@ -28,7 +28,16 @@ import {
 } from '../../../shared/copyMode'
 import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import type { InputRow } from '../../../shared/cursorMove'
-import { cellAt, keysAlongLine, keysForClick, keysForRows, keysToPoint } from '../../../shared/cursorMove'
+import {
+  cellAt,
+  keysAlongLine,
+  keysForClick,
+  keysForRows,
+  keysToPoint,
+  leftoverBackspaces,
+  offsetIn,
+  BACKSPACE
+} from '../../../shared/cursorMove'
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
@@ -842,7 +851,7 @@ function TerminalPane({
   // inside the effect that owns it; the key handler is attached before that point and
   // reaches them through here.
   const selectInputRef = useRef<() => boolean>(() => false)
-  const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
+  const deleteSelectionRef = useRef<(replacing?: boolean) => 'done' | 'refused' | 'no'>(() => 'no')
   const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
@@ -892,6 +901,8 @@ function TerminalPane({
    * only honest reading is one the pane keeps itself.
    */
   const clickKeys = useRef<string[]>([])
+  /** When a person last typed into this pane - see `t.onData`. */
+  const typedAt = useRef(0)
   const sendKeys = (keys: string): void => {
     clickKeys.current.push(keys)
     void api.write(sessionId, keys)
@@ -2228,6 +2239,10 @@ function TerminalPane({
     })
 
     t.onData((d) => {
+      // When somebody last typed into this pane. `sendKeys` writes to the pty directly and
+      // never comes through here, so this is the person and not the app - which is what
+      // the delete's own check needs to know before it sends anything else.
+      typedAt.current = Date.now()
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.
       // A keystroke here is the collision this whole thing exists to stop - it would be
       // typed into a session that is about to be handed a prompt, and it moves
@@ -2359,7 +2374,7 @@ function TerminalPane({
         t.hasSelection() &&
         (e.key === 'Backspace' || e.key === 'Delete' || e.key.length === 1)
       ) {
-        const outcome = deleteSelectionRef.current()
+        const outcome = deleteSelectionRef.current(e.key.length === 1)
         if (outcome === 'done') {
           if (e.key.length !== 1) {
             e.preventDefault()
@@ -2630,6 +2645,23 @@ function TerminalPane({
     }
 
     /**
+     * How many characters the composer is holding, counted the same way the delete counts
+     * them - so a difference between two readings is exact even where a single reading is
+     * a judgement. See `leftoverBackspaces`.
+     */
+    const composerLength = (): number => {
+      const span = inputRows()
+      if (!span) return -1
+      let n = 0
+      for (let i = 0; i < span.rows.length; i++) {
+        const r = span.rows[i]
+        n += r.end - r.start
+        if (i < span.rows.length - 1 && !r.full) n++
+      }
+      return n
+    }
+
+    /**
      * Highlight everything typed so far, so the next Backspace clears it.
      *
      * Returns false - and lets the key through to the agent - whenever there is nothing it
@@ -2662,7 +2694,7 @@ function TerminalPane({
      * composer rows are neither framed nor wrapped, so every multi-row selection took that
      * path.
      */
-    const deleteSelection = (): 'done' | 'refused' | 'no' => {
+    const deleteSelection = (replacing = false): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
       if (!pos || t.buffer.active.type === 'alternate') return 'no'
       // A run of backspaces into a chooser is the same mistake as a run of arrows, and
@@ -2682,9 +2714,37 @@ function TerminalPane({
         end: { row: pos.end.y - span.top, col: pos.end.x }
       })
       if (!keys) return 'refused'
+      // What the composer should hold once those keys have landed. Read BEFORE they are
+      // sent, so the reading is of a screen nothing is mid-way through changing.
+      const before = composerLength()
+      const want =
+        before -
+        (offsetIn(span.rows, pos.end.y - span.top, pos.end.x) -
+          offsetIn(span.rows, pos.start.y - span.top, pos.start.x))
       sendKeys(keys)
       t.clearSelection()
       lastSelection.current = ''
+      // A count that came up short leaves the head of the highlight on screen with the
+      // cursor right after it. Checked twice rather than trusted: the CLI redraws on its
+      // own clock, so the first look can be at the old frame.
+      //
+      // Not when the key was a character REPLACING the highlight: that character is on its
+      // way to the pty down xterm's own path, so the composer is legitimately one longer
+      // than this arithmetic wants and a backspace here would delete what was just typed.
+      // Same reason the check stands down the moment anybody types.
+      if (before >= 0 && !replacing) {
+        const rowsCrossed = Math.abs(pos.end.y - pos.start.y)
+        const sentAt = Date.now()
+        const owed = (): void => {
+          if (typedAt.current > sentAt) return
+          const seen = composerLength()
+          if (seen < 0) return
+          const extra = leftoverBackspaces({ seen, want, rowsCrossed })
+          if (extra > 0) sendKeys(BACKSPACE.repeat(extra))
+        }
+        window.setTimeout(owed, 140)
+        window.setTimeout(owed, 420)
+      }
       return 'done'
     }
     inputRowsRef.current = inputRows
