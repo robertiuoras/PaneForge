@@ -518,7 +518,10 @@ ok('two decisions are two cards, and answering one leaves the other counting', (
     /const anySoon = closeSoons\.length > 0/,
     'the alert is keyed on the stack being occupied, not on each card'
   )
-  assert.match(app, /playAction\('move', soundSet\.current\)\n  \}, \[anySoon\]\)/)
+  // Two matches rather than one spanning a line break: a regex with a bare \n in it does
+  // not match the same file checked out with CRLF endings (`npm run test:crlf`).
+  assert.match(app, /playAction\('move', soundSet\.current\)/, 'the alert is still the move chime')
+  assert.match(app, /\}, \[anySoon\]\)/, 'and its effect depends on nothing but that')
 })
 
 rmSync(out, { recursive: true, force: true })
