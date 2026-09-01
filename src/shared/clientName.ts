@@ -354,7 +354,8 @@ export function topicTitle(prompt: string): string {
     // Articles anywhere, and the single letters `normalise` leaves behind when it splits
     // `i'm` and `we've` - a card called `M Looking For Cheap` spends its first word on
     // half a contraction.
-    .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w))
+    // ...and never a word about the session itself: see `SESSION_WORDS`.
+    .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w) && !SESSION_WORDS.includes(w))
     .slice(0, 4)
   // A label may not end on a word that is only there to join it to the words that were
   // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
@@ -417,6 +418,25 @@ const TOPIC_MAX_WORDS = 3
  * uses, and the joining words. A word repeated three times only means something if it is
  * about the WORK - "please" and "should" are in every prompt on the desk.
  */
+/**
+ * Words about the SESSION rather than about the work.
+ *
+ * A pane in `Projects/PaneForge` came back from a `/clear` called `Handoff`, because the
+ * three asks that earned the rename were all about continuing a handoff - which is
+ * housekeeping the desk does to itself between jobs, not the job. Naming a card for it is
+ * the same failure the folder fence was built to stop: a fact ("PaneForge") replaced by a
+ * word that will be wrong the moment the session gets going.
+ *
+ * Held out of BOTH readings - the keywords that earn a repeat, and the phrase a
+ * client-tree pane takes off its first ask - so no path can name a pane after the plumbing.
+ */
+const SESSION_WORDS = [
+  'handoff', 'handoffs', 'handover', 'clear', 'clears', 'cleared', 'clearing',
+  'compact', 'compacted', 'resume', 'resumed', 'resuming', 'continue', 'continues',
+  'continued', 'continuing', 'context', 'session', 'sessions', 'chat', 'transcript',
+  'transcripts', 'memory', 'summarise', 'summarize', 'summary', 'recap'
+]
+
 const TOPIC_STOP = new Set(
   (
     'hi hey okay also please pls can could would you your we our they them this that these those ' +
@@ -427,7 +447,7 @@ const TOPIC_STOP = new Set(
     'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
     'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
     'working works worked run runs running fix fixes fixed add adds added change changes changed'
-  ).split(' ')
+  ).split(' ').concat(SESSION_WORDS)
 )
 
 /** The words in one ask that could name a subject, in the order they were typed. */

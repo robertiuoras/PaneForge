@@ -258,4 +258,37 @@ is(
 is(say('/clear', '/clear', '/clear'), '', 'slash commands say nothing')
 is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'runway and verbs drop out')
 
+// Housekeeping the desk does to itself between jobs is not the job. A pane in
+// `Projects/PaneForge` came back from a `/clear` wearing the name `Handoff`.
+is(
+  say(
+    'continue the handoff and work its next steps',
+    'the handoff says the next steps are open',
+    'write the handoff before I clear this'
+  ),
+  '',
+  'a session talking about its own handoff is not a subject'
+)
+is(
+  say('resume the session', 'resume this session context', 'session context resume'),
+  '',
+  'resume, session and context name nothing either'
+)
+is(topicTitle('continue the handoff and clear the session'), '', 'nor as a first-ask phrase')
+is(
+  topicKeywords('write the handoff then clear the session context').join(' '),
+  'write',
+  'the session words drop out, the verb is all that is left'
+)
+// ...and the fence still lets a real subject through, so the stop list has not eaten naming.
+is(
+  say(
+    'continue the invoice reminders work',
+    'the invoice reminders are still wrong',
+    'invoice reminders need a resume button'
+  ),
+  'Invoice Reminders Work',
+  'a real subject beside a session word still names the pane'
+)
+
 console.log(`client-name: ${checks} checks passed`)
