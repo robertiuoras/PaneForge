@@ -421,7 +421,15 @@ function createWindow(): void {
     height: area?.height ?? cfg.window.height,
     x: area?.x ?? cfg.window.x,
     y: area?.y ?? cfg.window.y,
-    minWidth: 900,
+    // 900 until 2026-09-01, and that is wider than half of this laptop's screen (1512, so
+    // 756 a side): the window silently refused every half-screen placement, including the
+    // one `npm run layout` asks for, and reported the placement as done. The floor is the
+    // narrowest DESKTOP window instead - one column past `HANDHELD_MAX` (720) in
+    // `renderer/src/handheld.ts`, whose media query is inclusive, so 721 is the first
+    // width that still draws the list and a pane side by side rather than the phone's
+    // take-turns layout. Anything narrower than that is a layout the desktop has no
+    // business entering by a drag.
+    minWidth: 721,
     minHeight: 600,
     show: false,
     // A window drawing real glass has to let the glass through, and `backgroundColor` is

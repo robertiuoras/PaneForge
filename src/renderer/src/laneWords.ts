@@ -106,7 +106,16 @@ export function holderName(lane: LaneBoardEntry, pane?: number): string {
     // otherwise would name a folder nobody can find.
     // A copy held by the chat that started IN it: the row is already headed `clients copy
     // 2`, so "the chat in copy 2 has it" underneath is the same number twice.
-    if (samePath(lane.from, lane.dir)) return 'its own chat'
+    //
+    // It said `its own chat` until 2026-09-01, and Robert could not tell what it meant:
+    // "its" points at the row's own heading, which is a thing a sentence can do only if
+    // you already know the row is ABOUT a copy - which is the knowledge the plain-words
+    // rule says the reader does not have. `a chat in this copy` names the same fact
+    // without asking the reader to resolve a pronoun back onto a heading, and it is the
+    // one phrase here that does NOT print a number, which is what keeps it from repeating
+    // the title. The chat's own NAME is not used: the row already draws it (`laneWho`),
+    // and a row that says the name twice is the defect this replaced.
+    if (samePath(lane.from, lane.dir)) return 'a chat in this copy'
     const from = folderName(lane.from)
     const m = /^(.*)-([a-z]|w\d+)$/.exec(from)
     const copy = m && m[1] === projectOf(lane.dir, lane.lane) ? copyNumber(m[2]) : null
