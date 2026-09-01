@@ -261,6 +261,11 @@ Gemini CLI removed 2026-08-26. `GEMINI_DEFAULT_AUTH_TYPE`: `oauth-personal` in
 
 Antigravity (`agy`, id `antigravity`): Go binary, `~/.local/bin` or `%LOCALAPPDATA%\agy\bin`.
 `--continue`/`--conversation <id>`. No model list; `/model` in TUI picks one. No `uninstall`.
+It asks `Yes, I trust this folder` in any folder absent from `trustedWorkspaces` in
+`~/.gemini/antigravity-cli/settings.json` - no flag, no trust-all, and `toolPermission`
+answers something else. `main/agyTrust.ts` puts the pane's folder there before spawn;
+`shared/agyTrust.ts` holds the refusals (no settings file, unparseable file, relative path,
+folder already listed - each writes nothing). `npm run test:agytrust`.
 
 ## ...and the model list is not this build's opinion of what exists
 
@@ -327,6 +332,10 @@ disk, `ClientToast.tsx` card. `npm run test:clientname`.
   or leading `Client` word comes off.
 - Slug is client only when roster says so; prompt name must match ONE client, word boundary,
   `MIN_ALIAS` chars, unique, not `GENERIC`.
+- A subject already on a card is replaced only by a STRONG reading - `topicReading` marks
+  `repeatedTopic` strong and a first-ask phrase a guess - so the errand the first asks were
+  about cannot hold the card through the job that follows. `/clear` empties `topicAsks`, so
+  the next three agreeing asks re-name the pane; the old name stands until they do.
 - Other panes get SUBJECT of first ask (`topicTitle`) - a phrase, `Set Up Meta Ads`, not a keyword;
   nothing replaces client/typed title. `mayTopicName` is true inside a client tree AND in a folder
   that names no project (`Desktop`, `Downloads`, the projects root); a real repo keeps its own name
