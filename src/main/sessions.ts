@@ -66,6 +66,7 @@ export interface AutoClearArm {
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, resumeIdFor } from './transcripts'
+import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
 
 /**
@@ -2341,6 +2342,10 @@ export class SessionManager extends EventEmitter {
       if (live.proc !== proc) return
       live.buffer.push(data)
       recordData(id, data)
+      // A gate in the pane refusing a command is not output the pane produced and not
+      // anything this app decided, but it costs the pane a whole round trip and nothing
+      // on screen says it happened. Counted here, drawn once per stretch on the bell.
+      feedHookDeny(id, data)
       // Before the repaint gate below: a tee is a copy of what the pane printed, and a
       // repaint is something the pane printed. Only the status machinery cares why.
       feedPipe(id, data)
@@ -2398,6 +2403,10 @@ export class SessionManager extends EventEmitter {
       meta.piping = undefined
       this.endRun(live)
       recordEnd(id, resumeIdFor(id))
+      // A stretch of refusals that is still counting when the pane dies is written out
+      // now: a row that never arrives because the pane closed first is the same as no
+      // reading at all.
+      endHookDeny(id)
       this.emitSessions()
     })
   }

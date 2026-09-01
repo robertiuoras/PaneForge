@@ -26,6 +26,10 @@ export type ActivityKind =
   | 'updated'
   | 'recovered'
   | 'stopped'
+  // Not something the app decided - a hook in the pane refused a command. It earns a row
+  // by the same test as the rest: it happened without a person, it cost the pane real
+  // time, and nowhere else on screen says it. See `shared/hookDeny.ts`.
+  | 'refused'
 
 export interface ActivityEntry {
   /** Unique per entry, so a list can be keyed without using the index. */
@@ -56,7 +60,8 @@ export const KIND_WORDS: Record<ActivityKind, string> = {
   trimmed: 'Trimmed',
   updated: 'Updated',
   recovered: 'Recovered',
-  stopped: 'Stopped'
+  stopped: 'Stopped',
+  refused: 'Refused'
 }
 
 /**

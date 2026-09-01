@@ -175,6 +175,7 @@ import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { logActivation, logReclaim } from './activationLog'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
 import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
+import { hookDenyNames } from './hookDeny'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
 import { swapAndRelaunch } from './macUpdate'
 import {
@@ -3284,6 +3285,10 @@ ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
 ipcMain.handle('activity:list', () => listActivity())
 ipcMain.on('activity:seen', () => markActivitySeen())
 onActivityChange((s) => send('activity:changed', s))
+
+// The refusal counter holds pane ids and nothing else; the words come from the list that
+// already knows what a pane is called.
+hookDenyNames((id) => manager.list().find((x) => x.id === id)?.title ?? 'a pane')
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))

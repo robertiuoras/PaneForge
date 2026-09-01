@@ -108,6 +108,7 @@
     "test:sleep": "node scripts/sleep-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:activity": "node scripts/activity-test.mjs",
+    "test:hookdeny": "node scripts/hookdeny-test.mjs",
     "test:deaddev": "node scripts/deaddev-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",
