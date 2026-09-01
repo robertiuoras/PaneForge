@@ -104,8 +104,15 @@ if (!big) {
   console.log('  SKIP no pane log over 2 MB on this machine - the byte budget is unmeasured here')
 } else {
   const log = readFileSync(big.f)
+  // Not the app's own 20,000-line scrollback. That is a CEILING, and 4 MB of a real pane
+  // log goes straight through it - the read came back as exactly 20000, so what was being
+  // compared was the ceiling and not the budget, and the ratio below could never be
+  // reached once the 400 KB read passed a quarter of it. Measured on a 9.8 MB log:
+  // 400 KB is 6858 rows, 4 MB is 20000 clamped and 68927 unclamped. The ceiling is held
+  // far out of the way here and both reads are checked against it.
+  const HEADROOM = 200_000
   const rows = async (bytes) => {
-    const term = new Terminal({ cols: 120, rows: 40, scrollback: 20000, allowProposedApi: true })
+    const term = new Terminal({ cols: 120, rows: 40, scrollback: HEADROOM, allowProposedApi: true })
     await new Promise((r) => term.write(log.subarray(-bytes), r))
     const n = term.buffer.active.length - 40
     term.dispose()
@@ -113,6 +120,7 @@ if (!big) {
   }
   const small = await rows(400_000)
   const full = await rows(4_000_000)
+  ok(`neither read hit the scrollback ceiling - ${small} and ${full} of ${HEADROOM}`, full < HEADROOM)
   ok(`4 MB gives materially more history than 400 KB - ${small} rows -> ${full} rows`, full > small * 4)
 }
 
