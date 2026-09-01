@@ -95,6 +95,9 @@ const TESTS = [
   ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
+  // Was on disk and in no list, so it went red at two renames and nobody heard: it still
+  // wanted `lane a` and `main checkout` months after both were replaced.
+  ['laneholder', 'lane-holder-test.mjs'],
   ['laneplain', 'lane-plain-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['projectname', 'project-name-test.mjs'],

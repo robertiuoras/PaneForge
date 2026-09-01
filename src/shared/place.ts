@@ -179,13 +179,22 @@ export function describePlace(input: PlaceInput): Place {
   // does not, and "PaneForge · master" is two words to say one - the Vercel rule. Nor does
   // the branch a tool generated to hold this lane, which repeats the lane's own label.
   const machinery = isGeneratedBranch(branch, slot)
-  // A lane is named the way the FOLDER is named, and that is the whole change: the chip
-  // used to read `clients · lane b` for a folder called `clients-b`, which is three words
-  // for one fact and two of them are jargon - "lane" is this app's word, "b" is a letter
-  // with no meaning next to it, and neither appears anywhere the person can look. The
-  // folder name is the fact, it is already unique, and it is what `cd` takes.
+  // A lane is named `PaneForge copy 2`, and the two rejected wordings are why.
+  //
+  // It read `clients · lane b` first, which is three words for one fact and two of them
+  // are jargon: "lane" is this app's word for a slot in a pool, and "b" is that slot's
+  // letter. It then read `clients-b`, the folder name - honest, unique, and what `cd`
+  // takes, which is the argument that put it there. But the person reading this row has
+  // never opened a terminal and never types `cd`, so a trailing `-b` is the same letter
+  // wearing a hyphen, and `role` was already saying `copy 2` on the card two inches away.
+  // One vocabulary: the number, everywhere.
+  //
+  // A slot that is neither shape keeps the folder name - `copyNumber` refuses to invent a
+  // number, and a made-up one would point at a folder nobody can find.
   const tail = [onTrunk || machinery ? '' : branch].filter(Boolean)
-  const head = kind === 'lane' ? `${project}-${slot}` : project
+  const copy = kind === 'lane' ? copyNumber(slot) : null
+  const head =
+    kind === 'lane' ? (copy ? `${project} copy ${copy}` : `${project}-${slot}`) : project
   const short = [head, ...tail].join(' · ')
 
   // No branch line at all when there is no branch to state.

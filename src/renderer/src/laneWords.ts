@@ -9,7 +9,7 @@
 // Relative, where the rest of the renderer says `@shared/types`: the alias is a tsconfig
 // path, and the test builds this file on its own, which knows nothing about it.
 import type { LaneBoardEntry } from '../../shared/types'
-import { describePlace, paneRef } from '../../shared/place'
+import { copyNumber, describePlace, paneRef, projectOf } from '../../shared/place'
 
 /** How long since `ms`, in the roughest unit that is still true. */
 export function ago(ms: number, now = Date.now()): string {
@@ -94,18 +94,38 @@ export function holderName(lane: LaneBoardEntry, pane?: number): string {
   // eight characters of a chat this machine has never hosted, so the desk IS the answer -
   // "mac-nbn has it" is the sentence the row existed to say and never could.
   if (lane.peer && lane.device) return lane.device
-  if (lane.from) return `${folderName(lane.from)}'s chat`
+  if (lane.from) {
+    // A folder name is only a plain answer when it names a PROJECT. `clients-b's chat`
+    // put the slot letter back on screen through the side door, one line under a title
+    // that had just called the same folder `clients copy 3`, so the row said the same
+    // thing twice in two vocabularies and one of them was jargon.
+    //
+    // The suffix comes off on evidence, never on shape: only when what is left is this
+    // lane's own project. `service-a` holding a lane of `service` is a copy of it;
+    // `service-a` holding a lane of `notes` is a project called `service-a`, and saying
+    // otherwise would name a folder nobody can find.
+    // A copy held by the chat that started IN it: the row is already headed `clients copy
+    // 2`, so "the chat in copy 2 has it" underneath is the same number twice.
+    if (samePath(lane.from, lane.dir)) return 'its own chat'
+    const from = folderName(lane.from)
+    const m = /^(.*)-([a-z]|w\d+)$/.exec(from)
+    const copy = m && m[1] === projectOf(lane.dir, lane.lane) ? copyNumber(m[2]) : null
+    return copy ? `the chat in copy ${copy}` : `${from}'s chat`
+  }
   return lane.session ? `chat ${lane.session.slice(0, 8)}` : 'a chat'
 }
 
 /**
  * The desk a lane is on, for the tag beside it.
  *
- * Printed on every row that knows, not only the foreign ones. Showing it only when it
- * disagrees means "no tag" carries the fact instead - and no tag is also what an old
- * record with no stamp on it looks like, so the reader cannot tell "here" from "nobody
- * wrote it down". The report was the plain version of that: "why shows main lanes
- * elsewhere, can we say which device".
+ * It was printed on every row that knew, on the argument that "no tag" would otherwise
+ * carry a fact - and an old record with no stamp looks the same, so the reader cannot
+ * tell "here" from "nobody wrote it down". Measured in the window, that argument cost
+ * more than it bought: the tag reserved 92px on every row of a one-machine desk to
+ * repeat this desk's own name, taken off the front of the line carrying the state, which
+ * was being ellipsed. So the row draws it only for a machine that is NOT this one - the
+ * one row a reader has to act on differently, since nothing here can free it - and the
+ * tooltip still answers "which desk" on every row, including the ambiguous ones.
  */
 export function deviceTip(lane: LaneBoardEntry, here?: string | null): string {
   if (!lane.device) return ''
@@ -191,7 +211,20 @@ export function holdWords(hold: { reason: string; at: number } | null, now = Dat
   if (!r) return ''
   if (/^another chat is mid-release/i.test(r)) return 'a release is running'
   const busy = r.match(/^waiting on chats still working:\s*(.+)$/i)
-  if (busy) return `waiting for the chats still working in ${busy[1]}`
+  // The gate's own list is `a (3 unmerged commits, last touched 13m ago), b (6 ...)`.
+  // Measured in the window at a 231px sub-line: 695px of text, so two thirds of it was
+  // ellipsed away - including every letter of the second copy. The row says WHICH copies
+  // and nothing else; the counts and the clocks are already in the tooltip, whole.
+  if (busy) {
+    const copies = busy[1]
+      .split(',')
+      .map((part) => (part.split('(')[0] ?? '').trim().toLowerCase())
+      .map((slot) => (slot === 'main' ? 'the main copy' : (n => (n ? `copy ${n}` : ''))(copyNumber(slot))))
+      .filter(Boolean)
+    const list =
+      copies.length > 1 ? `${copies.slice(0, -1).join(', ')} and ${copies[copies.length - 1]}` : copies[0]
+    return list ? `waiting for ${list}` : `waiting for the copies still being worked in`
+  }
   const soon = r.match(/about (\d+)m\)/)
   if (soon) return `releases batch - the next one is about ${soon[1]}m away`
   if (/test suite/i.test(r)) return `held back ${ago(hold!.at, now)}: master fails its own tests`
