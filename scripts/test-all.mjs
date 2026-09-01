@@ -21,7 +21,7 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -224,15 +224,32 @@ const SERIAL = new Set([
 const failed = []
 const started = Date.now()
 
+/*
+ * `spawnSync` cannot be pooled - it blocks the event loop until the child exits, so eight
+ * "workers" awaiting it take their turns one at a time. Measured: 136 suites, jobs=8, wall
+ * 197.8s against 196.8s of summed suite time - a pool that was still a queue, and the giveaway
+ * is exactly that, the two numbers agreeing. A real pool's wall clock is a fraction of the sum.
+ */
+function runChild(file) {
+  return new Promise((done) => {
+    const kid = spawn(process.execPath, [join(root, 'scripts', file)], {
+      cwd: root,
+      // Captured rather than inherited: 34 passing tests printing their own output is a
+      // wall nobody reads, and the gate keeps only the tail. A failure prints in full.
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let stdout = ''
+    let stderr = ''
+    kid.stdout.on('data', (b) => (stdout += b))
+    kid.stderr.on('data', (b) => (stderr += b))
+    kid.on('error', (e) => done({ status: 1, stdout, stderr: `${stderr}${e.message}` }))
+    kid.on('close', (status) => done({ status, stdout, stderr }))
+  })
+}
+
 async function runOne([name, file]) {
   const at = Date.now()
-  const r = spawnSync(process.execPath, [join(root, 'scripts', file)], {
-    cwd: root,
-    encoding: 'utf8',
-    // Captured rather than inherited: 34 passing tests printing their own output is a
-    // wall nobody reads, and the gate keeps only the tail. A failure prints in full.
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  const r = await runChild(file)
   const secs = ((Date.now() - at) / 1000).toFixed(1)
   const ok = r.status === 0
   // The evidence, not a summary of it. Whatever reads this - a person or the agent
