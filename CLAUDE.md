@@ -689,6 +689,32 @@ Mic on every pane, Ctrl/Cmd Shift Space into focused one. `shared/voicePick.ts` 
 - Layer never takes a click: `z-index: 40`, over panes, under every dialog, `pointer-events: none` except sprite/bubble.
 - Mute by default; never picks machine — `hand off pane 2` opens box with panes chosen.
 
+## Every card the app puts in the corner is in ONE column
+
+`.corner-stack` in `App.tsx`/`styles.css`. `.move-soon`, `.client-toast`, `.update-toast`
+(+`.whatsnew`,`.autoclear`) and `.tip-toast` were separate `position: fixed` cards at the same
+`right: 18px; bottom: 18px`, told apart only by z-index - so two up at once drew one UNDER the
+other, buttons and all. `npm run test:activity`.
+
+- `column-reverse`: FIRST child is the corner one and never moves when a card arrives above it.
+  DOM order is urgency - AutoClear, MoveSoon, ClientToast, Update, WhatsNew, Tips.
+- Children go `position: static` inside it; a new corner card is added HERE, never fixed itself.
+- `.beside-pet` steps the whole stack up once (108px); the per-card version must stay `auto`.
+- Layer is `pointer-events: none`, cards `auto`; `max-height` so the top card cannot go off-screen.
+
+## ...and what it did on its own is a list, not just a card that vanished
+
+Bell in the sidebar's quick row, `ActivityFlyout.tsx`; `shared/activity.ts` judges, `main/activity.ts`
+holds `activity.json` under userData (main, so a reload/wedge/restart does not lose it).
+
+- Fed by the existing `reclaim:log` line, `clientNamed` and `armclear` - one wiring point each, and
+  the log files stay the place a week-old close is reconstructed from.
+- `armed` is NOT a row: the countdown card is already on screen and can still be kept open.
+- The row's left column carries the verb (`KIND_WORDS`); the sentence must not repeat it.
+- A READING: nothing in it can be pressed, so no veil, no dimming, no dialog. Opening it marks
+  everything seen; the dot counts what arrived while nobody looked.
+- `activity:list`/`activity:seen` are `REVIEWED_SAFE` in `scripts/passkey-test.mjs`.
+
 ## ...and one card says what this app can even do
 
 One quiet card bottom-right — `shared/tips.ts` catalogue/judgement, `components/Tips.tsx` the card. `npm run test:tips`.

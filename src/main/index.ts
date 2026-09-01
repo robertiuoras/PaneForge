@@ -895,7 +895,7 @@ manager.on('clientNamed', (e: ClientNamed) => {
   // The card that says this is gone in three seconds; the list is where it can still be
   // read afterwards. `was` is in the sentence because "why is this pane called that" is
   // the question the rename produces.
-  noteActivity(activityEntry('named', `renamed ${e.was} to ${e.title}`, undefined))
+  noteActivity(activityEntry('named', `${e.was} is now ${e.title}`, undefined))
 })
 
 /**
@@ -1112,7 +1112,7 @@ manager.on('armclear', (id: string) => {
   send('pane:armClear', id)
   // The one moment an automatic /clear is a FACT rather than a countdown: the keystrokes
   // are on their way to the pty. The countdown before it is a card, not a list entry.
-  noteActivity(activityEntry('cleared', `cleared ${manager.list().find((x) => x.id === id)?.title ?? 'a pane'}`, 'it was out of context, and its handoff said there was work left'))
+  noteActivity(activityEntry('cleared', manager.list().find((x) => x.id === id)?.title ?? 'a pane', 'it was out of context, and its handoff said there was work left'))
 })
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
 remote.on('reset', (id: string) => {

@@ -32,7 +32,7 @@ export interface ActivityEntry {
   /** When it happened, epoch ms. */
   at: number
   kind: ActivityKind
-  /** The plain sentence: `closed (3) taskdriver`. No jargon, no ids. */
+  /** What it happened TO: `(3) taskdriver`. The verb is the row's `KIND_WORDS`, not this. */
   what: string
   /** Why, if there is a reason worth a second line. Optional on purpose. */
   why?: string
@@ -96,13 +96,15 @@ export function activityFromReclaim(
   const name = typeof raw.name === 'string' && raw.name ? raw.name : 'a pane'
   const idleMin = typeof raw.idleMin === 'number' ? raw.idleMin : undefined
   const quiet = idleMin && idleMin > 0 ? `it had been quiet ${idleMin} min` : undefined
-  if (event === 'closed') return entry('closed', `closed ${name}`, quiet ?? 'nothing was running in it', at)
-  if (event === 'slept') return entry('slept', `put ${name} to sleep`, quiet, at)
+  // The row already carries the verb in `KIND_WORDS`, so the sentence must not repeat it:
+  // "Closed closed (3) taskdriver" was the first thing this drew on a real desk.
+  if (event === 'closed') return entry('closed', name, quiet ?? 'nothing was running in it', at)
+  if (event === 'slept') return entry('slept', name, quiet, at)
   if (event === 'moved') {
     const to = typeof raw.to === 'string' && raw.to ? ` to ${raw.to}` : ''
-    return entry('moved', `moved ${name}${to}`, 'this machine was running out of memory', at)
+    return entry('moved', `${name}${to}`, 'this machine was running out of memory', at)
   }
-  if (event === 'trimmed') return entry('trimmed', `trimmed ${name}`, 'to give the machine memory back', at)
+  if (event === 'trimmed') return entry('trimmed', name, 'to give the machine memory back', at)
   return null
 }
 

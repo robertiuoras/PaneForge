@@ -96,6 +96,12 @@ const NOW = 1_700_000_000_000
   check('a close is a row', closed !== null)
   eq('...saying what it did', closed.kind, 'closed')
   check('...naming the pane the way the rest of the app does', closed.what.includes('(3) taskdriver'))
+  // The row's left column already says Closed. A sentence that says it again reads
+  // "Closed closed (3) taskdriver", which is what the first live desk drew.
+  for (const [kind, word] of Object.entries(KIND_WORDS)) {
+    void kind
+    check('the sentence does not repeat the kind word', !closed.what.toLowerCase().startsWith(word.toLowerCase()), closed.what)
+  }
   check('...and why', closed.why.includes('31 min'))
 
   // The refusal. A sweep that has only PICKED a pane has a countdown card on screen
@@ -112,7 +118,7 @@ const NOW = 1_700_000_000_000
 
   // A line whose pane has no name still produces a readable sentence rather than `undefined`.
   const bare = activityFromReclaim({ event: 'closed' }, NOW)
-  check('a nameless close still reads', /^closed a pane$/.test(bare.what), bare.what)
+  check('a nameless close still reads', /^a pane$/.test(bare.what), bare.what)
 }
 
 // --- every word on it is plain ------------------------------------------------
