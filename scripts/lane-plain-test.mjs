@@ -131,6 +131,56 @@ is(
   'a free copy says so in words, not in the word "free"'
 )
 
+// The row's own title. `clients-a` was the folder name, which is honest and is still a
+// slot letter with a hyphen in front of it - and the card two inches away was already
+// saying `copy 2` for the same folder.
+is(
+  words.laneLabel(lane({ dir: `${W}\\clients-a`, lane: 'a', branch: 'lane-a' })),
+  'clients copy 2',
+  'a row is headed by the project and the copy NUMBER'
+)
+is(
+  words.laneLabel(lane({ dir: `${W}\\clients-w2`, lane: 'w2', branch: 'pf/w2' })),
+  'clients copy 2',
+  'and a legacy copy counts identically - it always did'
+)
+
+// The same letter came back through the sub-line, which names the holder by its FOLDER.
+is(
+  words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\clients-b` })),
+  'the chat in copy 3',
+  'the holder is named by its copy number, never `clients-b`'
+)
+is(
+  words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\taskdriver` })),
+  "taskdriver's chat",
+  'a holder in a DIFFERENT project still names that project - the suffix comes off on evidence'
+)
+is(
+  words.holderName(lane({ dir: `${W}\\notes-a`, lane: 'a', from: `${W}\\service-a` })),
+  "service-a's chat",
+  'and a project whose name simply ends in -a is not renamed out of existence'
+)
+
+is(
+  words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\clients-a` })),
+  'its own chat',
+  'a copy held by the chat that started in it does not repeat its own number'
+)
+
+// The release gate's list, which was 695px of text in a 231px line (measured in the window
+// 2026-09-01): every letter of the second copy was ellipsed off the end.
+is(
+  words.holdWords({ reason: 'waiting on chats still working: a (3 unmerged commits, last touched 13m ago), b (6 unmerged commits, last touched 13m ago)', at: Date.now() }),
+  'waiting for copy 2 and copy 3',
+  'the row says WHICH copies; the counts and clocks stay in the tooltip'
+)
+is(
+  words.holdWords({ reason: 'waiting on chats still working: main (uncommitted edits, 4m ago)', at: Date.now() }),
+  'waiting for the main copy',
+  'the project\'s own folder is named as itself, never "copy 1"'
+)
+
 const strip = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'LaneStrip.tsx'), 'utf8')
 // Only what is DRAWN: the comments in that file explain the lane system and have to say
 // "lane" to do it. Text between tags, and the strings inside title={...}, are the screen.
@@ -146,6 +196,16 @@ ok(
 ok(
   strip.includes('Other<span className="wide-word"> copies</span>'),
   'the section is headed "Other copies", and still gives the middle word up first when narrow'
+)
+// The desk tag is 92px of every row and says this machine's own name on a one-machine
+// desk. Only the OTHER machine's rows keep it.
+ok(
+  /lane\.device && \(!here \|\| lane\.device !== here\)/.test(strip),
+  'the desk tag is drawn only when the desk is not this one'
+)
+ok(
+  /copyNumber\(lane\.lane\)/.test(strip),
+  'the tag beside a row is the copy NUMBER, never the slot letter'
 )
 ok(
   !/>\s*\{stuck\} stuck/.test(strip),

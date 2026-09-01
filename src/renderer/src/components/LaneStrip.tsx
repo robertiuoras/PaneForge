@@ -339,7 +339,7 @@ function LaneRow({
           the project itself lives in is copy 1, so `a` is 2. A slot of neither shape is
           printed as it is rather than given an invented number (src/shared/place.ts). */}
       <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
-        {copyNumber(lane.lane) ?? lane.lane}
+        {lane.lane === 'main' ? 1 : (copyNumber(lane.lane) ?? lane.lane)}
       </span>
       <div className="row-text">
         {/* Was `lane.branch`, which is the single word this whole change exists to stop

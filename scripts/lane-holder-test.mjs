@@ -281,7 +281,7 @@ const heldFor = (reason, at = NOW) => ({ reason, at })
 ok(
   'a finished lane waiting on another chat says which',
   laneState(entry({ ready: true }), false, NOW, undefined, heldFor('waiting on chats still working: main (uncommitted edits, 4m ago)')) ===
-    'done, waiting for the chats still working in main (uncommitted edits, 4m ago)',
+    'done, waiting for the main copy',
   laneState(entry({ ready: true }), false, NOW, undefined, heldFor('waiting on chats still working: main (uncommitted edits, 4m ago)'))
 )
 ok(
