@@ -630,7 +630,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // nothing, starts nothing and cannot reach a pty. It is also fired from the renderer by
   // an ESC in a pane mid-handover, and that renderer IS the phone - so gating it would
   // 423 somebody taking their own pane back from the only screen they have.
+  // `activity:list` is a READING of things that have already happened - the same words
+  // the corner cards said out loud at the time. It types nothing and reaches no pty.
   const REVIEWED_SAFE = new Set([
+    'activity:list',
     'autoclear:cancel', 'autoclear:takeover',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
     // Read-only, and the answer is a public release page's own notes.
@@ -683,6 +686,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // Reviewed 2026-08-16: pane geometry, visibility, bells and the stash's own text - the
   // things a phone touches constantly and none of which start anything.
   const REVIEWED_SAFE_SEND = new Set([
+    // Writes ONE number - when the list was last looked at, so a badge stops counting.
+    // Nothing it touches can start, stop, type into or close anything.
+    'activity:seen',
     'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
     'recents:drag', 'recents:remove', 'recents:clear', 'recents:inWindow', 'shelf:toggle',
