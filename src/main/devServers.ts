@@ -23,7 +23,7 @@ import { runningDevs, type DevPane, type RunningDev } from '../shared/devList'
 const WIN = process.platform === 'win32'
 
 /** Just enough of a process to walk trees and read command lines. */
-interface Proc {
+export interface Proc {
   pid: number
   ppid: number
   cmd: string
@@ -50,7 +50,7 @@ function parseTable(text: string): Proc[] {
 }
 
 /** One process table, asynchronously, or an empty one. Never a reason a handoff fails. */
-function table(): Promise<Proc[]> {
+export function table(): Promise<Proc[]> {
   return new Promise((resolve) => {
     const done = (err: unknown, stdout: string): void => resolve(err || !stdout ? [] : parseTable(stdout))
     try {
@@ -77,7 +77,7 @@ function table(): Promise<Proc[]> {
 }
 
 /** Every live descendant of `root`, with a seen-set so a reused pid cannot close a loop. */
-function descendants(procs: Proc[], root: number): Proc[] {
+export function descendants(procs: Proc[], root: number): Proc[] {
   const byParent = new Map<number, Proc[]>()
   for (const p of procs) {
     const kids = byParent.get(p.ppid)

@@ -702,6 +702,27 @@ other, buttons and all. `npm run test:activity`.
 - `.beside-pet` steps the whole stack up once (108px); the per-card version must stay `auto`.
 - Layer is `pointer-events: none`, cards `auto`; `max-height` so the top card cannot go off-screen.
 
+## A dev server nothing can reach is closed, after a countdown
+
+`shared/deadDev.ts` judges, `main/deadDev.ts` reads, `StopServer.tsx` is the card.
+`npm run test:deaddev`.
+
+- The reading is a LISTENING SOCKET, never a pane, never a clock: a dev server holding no
+  connection cannot be what anyone is looking at, whoever started it. `listeningPids()`
+  (`lsof -Fp` / `netstat -ano`), resolved DOWN the tree - `npm run dev` never holds the
+  socket its child bound, and `devList.ts` reports the ancestor.
+- An empty socket reading is a FAILED reading and stops the sweep. It must never read as
+  "nothing is listening", which would take every dev server on the desk.
+- Refusals: anything serving, anything `launchctl list` names (a supervised job comes
+  straight back), `DEAD_AFTER_MS` (90s, a cold `next dev` binds late), one somebody kept,
+  pid 1. Windows claims no supervised pids rather than guessing.
+- `SWEEP_MS` 60s for the readings; the deadline gets its own 500ms tick that reads
+  nothing - a card saying 5s may not act a minute later.
+- One card at a time; a countdown already armed is never re-armed, so the number only
+  goes down. Default 5s, `config.deadDev`, switch in Settings beside the idle-close one.
+- The kill goes through `stopDevServer`, which re-validates the pid against the live
+  table - a pid is reused. Closing writes a `stopped` row on the bell.
+
 ## ...and what it did on its own is a list, not just a card that vanished
 
 Bell in the sidebar's quick row, `ActivityFlyout.tsx`; `shared/activity.ts` judges, `main/activity.ts`

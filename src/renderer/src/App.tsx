@@ -32,6 +32,8 @@ import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon from './components/MoveSoon'
+import StopServer from './components/StopServer'
+import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
 import type { ActivityEntry } from '@shared/activity'
 import { unreadCount } from '@shared/activity'
@@ -665,6 +667,8 @@ export default function App(): JSX.Element {
   const [activitySeen, setActivitySeen] = useState(0)
   /** The bell's rectangle while the list is open, absent when it is shut. */
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
+  // The dev server the app is about to close, published by main every sweep.
+  const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
   const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
@@ -1637,6 +1641,7 @@ export default function App(): JSX.Element {
   >(null)
   const capacityShown = useRef('')
   const capacityTimer = useRef<number | undefined>(undefined)
+  useEffect(() => api.onStopSoon((soon) => setStopSoon(soon ?? null)), [])
   useEffect(() => api.onCapacity(setCapacity), [])
 
   /**
@@ -6529,6 +6534,20 @@ export default function App(): JSX.Element {
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
         onKeep={(id) => void api.cancelAutoClear(id)}
+      />
+      {/* A dev server that is running and serving nothing - shared/deadDev.ts. It sits
+          beside the pane countdowns rather than under them: it is the same kind of thing,
+          about to take something away, and stoppable for as long as it is drawn. */}
+      <StopServer
+        soon={stopSoon}
+        onKeep={(pid) => {
+          api.keepDevServer(pid)
+          setStopSoon(null)
+        }}
+        onNow={(pid) => {
+          api.stopDevNow(pid)
+          setStopSoon(null)
+        }}
       />
       <MoveSoon
         soon={closeSoon}

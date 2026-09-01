@@ -108,6 +108,8 @@ import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
+import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
+import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
@@ -1224,6 +1226,35 @@ ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; 
 })
 
 ipcMain.handle('devs:stop', (_e, pid: number) => stopDevServer(Number(pid)))
+
+// A dev server that is running and serving nothing - see shared/deadDev.ts. The two
+// buttons on its countdown card, and the sweep that arms it. Panes are built HERE from
+// the manager, never from the renderer: this one can close a process, so the folder and
+// the pty pid it attributes with have to be the app's own reading.
+ipcMain.on('devs:keep', (_e, pid: number) => keepDevServer(Number(pid)))
+ipcMain.on('devs:stopNow', (_e, pid: number) => void stopNow(Number(pid)))
+watchDeadDevs({
+  panes: () => {
+    const roots = manager.roots()
+    return manager.list().map((s) => ({
+      id: s.id,
+      pane: 0,
+      name: s.title || '',
+      cwd: s.cwd,
+      pid: roots.find((r) => r.id === s.id)?.pid ?? 0
+    }))
+  },
+  cfg: () => ({ ...DEFAULT_DEAD_DEV, ...(getConfig().deadDev ?? {}) }),
+  publish: (soon) => send('devs:stopSoon', soon),
+  noted: (dev) =>
+    noteActivity(
+      activityEntry(
+        'stopped',
+        `the ${dev.label} server in ${dev.where}`,
+        `it had been running ${dev.deadMin} min without serving anything`
+      )
+    )
+})
 
 /**
  * What this machine is running that no pane owns - see `shared/backJobs.ts`.

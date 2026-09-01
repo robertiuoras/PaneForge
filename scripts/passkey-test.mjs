@@ -696,7 +696,11 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Reviewed 2026-08-25: one line in this desk's own reclaim log saying why a pane was
     // or was not closed. It starts nothing and answers nothing - the worst a phone reaches
     // is a bigger log file.
-    'reclaim:log'
+    'reclaim:log',
+    // Reviewed 2026-09-01: "leave that dev server alone". It writes one pid into a
+    // never-offer-again set for this app run. It starts nothing and stops nothing - the
+    // worst a phone reaches is that a leaked dev server keeps leaking.
+    'devs:keep'
   ])
   const unclassifiedSend = sends.filter(
     (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)

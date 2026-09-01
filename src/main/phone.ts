@@ -113,6 +113,9 @@ const DESK_ONLY = new Set([
  * construction rather than by a flag.
  */
 const GATED_SEND = new Set([
+  // It kills a process: the countdown card's `Close now`. The invoke half, `devs:stop`,
+  // is gated for the same reason.
+  'devs:stopNow',
   'pty:write',
   // Strictly more than `pty:write`: it types text into a pane AND presses Enter for it, so
   // a stolen cookie needs no second call to make the agent act.

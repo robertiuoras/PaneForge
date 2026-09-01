@@ -25,6 +25,7 @@ export type ActivityKind =
   | 'trimmed'
   | 'updated'
   | 'recovered'
+  | 'stopped'
 
 export interface ActivityEntry {
   /** Unique per entry, so a list can be keyed without using the index. */
@@ -54,7 +55,8 @@ export const KIND_WORDS: Record<ActivityKind, string> = {
   named: 'Renamed',
   trimmed: 'Trimmed',
   updated: 'Updated',
-  recovered: 'Recovered'
+  recovered: 'Recovered',
+  stopped: 'Stopped'
 }
 
 /**

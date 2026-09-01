@@ -12,6 +12,7 @@ import type { Verdict } from './capacity'
 import type { AutoAnswerConfig } from './autoAnswer'
 import type { MascotConfig } from './mascot'
 import type { TipsConfig } from './tips'
+import type { DeadDevConfig, StopSoon } from './deadDev'
 import type { RecoverConfig } from './recover'
 import type { AutoHandoffConfig } from './autoHandoff'
 import type { AutoClearConfig } from './autoclear'
@@ -1764,6 +1765,11 @@ export interface Config {
    * nothing else in the window would ever mention.
    */
   tips?: TipsConfig
+  /**
+   * Closing a dev server that is running and serving nothing - src/shared/deadDev.ts.
+   * Optional so a config written before it existed still loads.
+   */
+  deadDev?: DeadDevConfig
   reclaim?: ReclaimConfig
   /**
    * Panes somebody has said are never to be closed for being idle - "Keep this pane open"
@@ -2610,6 +2616,12 @@ export interface Api {
   listDevServers(panes: Array<{ id: string; pane: number; name: string }>): Promise<RunningDev[]>
   /** Stop one of them, and the tree under it. Re-validated in main - a pid is reused. */
   stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }>
+  /** The dev server the app is about to close for serving nothing, or null. */
+  onStopSoon(cb: (soon: StopSoon | null) => void): () => void
+  /** Leave that one running - never offered again while the app is up. */
+  keepDevServer(pid: number): void
+  /** Close it now rather than at the deadline. */
+  stopDevNow(pid: number): void
   /**
    * What THIS machine is running that no pane owns: scheduled agent turns, cron loops,
    * dev servers. See `shared/backJobs.ts`. Read on demand - it is a whole process table.

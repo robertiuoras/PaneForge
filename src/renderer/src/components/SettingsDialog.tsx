@@ -6,6 +6,7 @@ import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
 import { DEFAULT_TIPS } from '@shared/tips'
 import PetPicker from './PetPicker'
 import { DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } from '@shared/reclaim'
+import { DEFAULT_DEAD_DEV } from '../../../shared/deadDev'
 import { pickVoiceEngine } from '@shared/voicePick'
 import { MODEL_MB } from '@shared/voiceModels'
 import type { AgentInfo, AgentSpec } from '@shared/agents'
@@ -756,6 +757,14 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     />
                   </div>
                 )}
+                <Switch
+                  checked={config.deadDev?.enabled !== false}
+                  onChange={(v) =>
+                    onChange({ deadDev: { ...DEFAULT_DEAD_DEV, ...config.deadDev, enabled: v } })
+                  }
+                  label="Close a dev server that is serving nothing"
+                  hint={`A dev server that has lost its port - a second copy started while the first still had it, or one whose window went away - keeps a compiler, a file watcher and a few hundred MB running while nothing can reach it. On, a server holding no connection at all for a minute and a half gets a ${config.deadDev?.countdownSeconds ?? DEFAULT_DEAD_DEV.countdownSeconds}-second card in the corner naming the project and the port, and is closed if nobody says otherwise. It never touches one that anything is connected to, and never one that launchd or a Windows service keeps alive, because that one comes straight back.`}
+                />
                 <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>

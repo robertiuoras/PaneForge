@@ -13,6 +13,7 @@ import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '../shared/autoHandof
 import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
+import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
@@ -272,6 +273,9 @@ function defaults(): Config {
     // resume id and the scrollback, so it is a pane minimised rather than work thrown away.
     mascot: DEFAULT_MASCOT,
     tips: DEFAULT_TIPS,
+    // On. It only ever acts on a dev server that holds no listening socket - one nothing
+    // can reach, whoever started it - and never on one launchd or a service supervises.
+    deadDev: DEFAULT_DEAD_DEV,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // The token line a session clears itself at, and whether the app watches the CLIs that
@@ -341,6 +345,7 @@ export function getConfig(): Config {
       autoAnswer: migrateAutoAnswer(base.autoAnswer, raw.autoAnswer),
       mascot: { ...DEFAULT_MASCOT, ...(base.mascot ?? {}), ...(raw.mascot ?? {}) },
       tips: { ...DEFAULT_TIPS, ...(base.tips ?? {}), ...(raw.tips ?? {}) },
+      deadDev: { ...DEFAULT_DEAD_DEV, ...(base.deadDev ?? {}), ...(raw.deadDev ?? {}) },
       reclaim: migrateReclaim(base.reclaim, raw.reclaim),
       autoHandoff: {
         ...DEFAULT_AUTO_HANDOFF,

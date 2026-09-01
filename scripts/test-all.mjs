@@ -69,6 +69,7 @@ const TESTS = [
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['activity', 'activity-test.mjs'],
+  ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['tips', 'tips-test.mjs'],
