@@ -70,6 +70,13 @@ npm run ship   # ONLY when Robert asks
 
 `ready` merges master in, refuses while dirty.
 
+Never ASK whether to cut a dev release - the question is unanswerable without knowing what
+the answer would give him. `npm run unreleased` reads the installed app's version, the
+commits master carries past it, and how many a person would notice (`feat`/`fix`/`perf`);
+past `ENOUGH` (3) it prints them as sentences and exits 1. Say THAT - what the copy on his
+machine cannot do yet - and let him decide. Nothing here cuts a release.
+`npm run test:unreleased`.
+
 When asked for (`"release": "version"`):
 
 - Below 1.0, patch only: `feat:` patch, `feat!:` minor, larger typed (`ship minor|major`).

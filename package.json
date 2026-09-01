@@ -241,7 +241,9 @@
     "test:spawnguard": "node scripts/spawn-guard-test.mjs",
     "test:laneplain": "node scripts/lane-plain-test.mjs",
     "test:power": "node scripts/power-test.mjs",
-    "test:agytrust": "node scripts/agy-trust-test.mjs"
+    "test:agytrust": "node scripts/agy-trust-test.mjs",
+    "unreleased": "node scripts/unreleased.mjs",
+    "test:unreleased": "node scripts/unreleased-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
