@@ -89,6 +89,11 @@ When asked for (`"release": "version"`):
 - Notes from commit subjects between tags (`scripts/release-notes.mjs`); only
   `feat:`/`fix:`/`perf:` reach the page. `npm run test:notes`.
 - Check asset size before fixing `latest.yml` (`reconcileFeed`). `npm run test:laneargs`.
+- The tag push publishes it: the `Release` workflow builds mac AND win. Never run a bare
+  `npm run release` on top of a green run - it has no `GH_TOKEN` (only `lane.mjs`'s
+  `publishFallback` injects one, and only after waiting for Actions), and it still clobbers
+  `latest-mac.yml` and the zip with a partial upload. An asset size that is an exact power of
+  two (22,020,096 = 21 MiB) is a truncated upload, never a build.
 - Auto release = dev prerelease; auto-promotes after `PF_PROMOTE_SOAK_MS` (3d). `lane.mjs
   promote`, `lane.mjs doctor`, `npm run test:promote`.
 
