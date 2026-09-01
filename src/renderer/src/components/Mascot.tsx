@@ -119,6 +119,14 @@ const IconSend = (): React.JSX.Element => (
 
 /** A close the app has decided on and has not done yet. The person gets the seconds. */
 export interface CloseSoon {
+  /**
+   * This countdown's own identity, stable while it counts.
+   *
+   * There can be more than one on screen (see `MoveSoon.tsx`), so a decision has to be
+   * tellable from another decision about different panes. Optional because a probe arms
+   * the card by hand and should not have to know that; `soonKey` supplies the fallback.
+   */
+  key?: string
   ids: string[]
   /** `paneWord` strings, so the sentence names panes the way the rest of the app does. */
   names: string[]

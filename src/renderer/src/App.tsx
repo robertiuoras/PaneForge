@@ -31,7 +31,7 @@ import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
-import MoveSoon from './components/MoveSoon'
+import MoveSoon, { soonKey } from './components/MoveSoon'
 import StopServer from './components/StopServer'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
@@ -3887,14 +3887,37 @@ export default function App(): JSX.Element {
    */
   // The newest pane to have named itself, for the three-second card in the corner.
   const [clientNamed, setClientNamed] = useState<ClientNamed | undefined>(undefined)
-  const [closeSoon, setCloseSoon] = useState<CloseSoon | undefined>(undefined)
+  /**
+   * Every countdown currently on screen - one per decision, not one full stop.
+   *
+   * It was a single `CloseSoon` and `armCloseRef` refused outright while it was set, so a
+   * second pane coming due inside the first one's fifteen seconds was dropped silently
+   * and re-armed from the top by the next sweep. On screen that reads as one countdown
+   * that ran down and then jumped back up, with neither pane closing when it said it
+   * would (Robert, 2026-09-01). A list because two decisions about different panes are
+   * two sentences, and each needs its own Keep button - see `MoveSoon.tsx`.
+   */
+  const [closeSoons, setCloseSoons] = useState<CloseSoon[]>([])
+  /** The one a single-slot consumer (the mascot's bubble) should show: the soonest. */
+  const closeSoon = useMemo(
+    () => (closeSoons.length ? closeSoons.reduce((a, b) => (a.deadline <= b.deadline ? a : b)) : undefined),
+    [closeSoons]
+  )
+  /** Take down whatever countdown named these panes, leaving every other one running. */
+  const dropSoon = useCallback((ids: string[]) => {
+    setCloseSoons((list) => list.filter((s) => !s.ids.some((id) => ids.includes(id))))
+  }, [])
   // Debug handle, the same one `window.__pf` is for a pane: a probe cannot wait for this
   // machine to run out of memory, and a countdown that is only ever drawn by a sweep is a
   // card no test can read. An empty `ids` is deliberately safe - the outcome of running it
   // is a loop over no panes - so a probe arms the CARD without arming a move.
-  ;(window as unknown as { __pfSoon?: (s?: CloseSoon) => void }).__pfSoon = setCloseSoon
-  const closeSoonRef = useRef<CloseSoon | undefined>(undefined)
-  closeSoonRef.current = closeSoon
+  ;(
+    window as unknown as { __pfSoon?: (s?: CloseSoon) => void; __pfSoons?: (l: CloseSoon[]) => void }
+  ).__pfSoon = (s) => setCloseSoons(s ? [s] : [])
+  // ...and the stack, so a probe can put two cards up and read that they are two cards.
+  ;(window as unknown as { __pfSoons?: (l: CloseSoon[]) => void }).__pfSoons = (l) => setCloseSoons(l)
+  const closeSoonsRef = useRef<CloseSoon[]>([])
+  closeSoonsRef.current = closeSoons
   /**
    * The panes a live countdown names. A Set because the sidebar asks this per row, and the
    * list is redrawn on every session broadcast.
@@ -3907,16 +3930,25 @@ export default function App(): JSX.Element {
    * chip must never print two different numbers for one decision.
    */
   const alarmAt = useCallback(
-    (id: string): number | undefined =>
-      closeSoon && closeSoon.ids.includes(id) ? closeSoon.deadline : undefined,
-    [closeSoon]
+    (id: string): number | undefined => {
+      // A pane is named by at most one countdown, but the reduce is cheap and the soonest
+      // is the honest answer if that ever stops being true.
+      const named = closeSoons.filter((s) => s.ids.includes(id))
+      return named.length ? Math.min(...named.map((s) => s.deadline)) : undefined
+    },
+    [closeSoons]
   )
   const alarmIds = useMemo(
-    () => new Set([...(closeSoon?.ids ?? []), ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)]),
-    [closeSoon, sessions]
+    () =>
+      new Set([
+        ...closeSoons.flatMap((s) => s.ids),
+        ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)
+      ]),
+    [closeSoons, sessions]
   )
   /** What the pending close is expected to give back, for the sentence afterwards. */
-  const pendingMb = useRef(0)
+  // Keyed by the countdown it belongs to: two armed closes are two different numbers.
+  const pendingMb = useRef<Record<string, number>>({})
   /**
    * Panes somebody said "keep it open" about, and until when.
    *
@@ -3951,7 +3983,7 @@ export default function App(): JSX.Element {
 
   const doClose = useCallback(
     (ids: string[], mb: number) => {
-      setCloseSoon(undefined)
+      dropSoon(ids)
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
         console.info(`reclaim: nothing left to close - ${ids.join(', ')} woke up during the countdown`)
@@ -3971,20 +4003,17 @@ export default function App(): JSX.Element {
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
-    [stillCloseable]
+    [stillCloseable, dropSoon]
   )
 
   /**
-   * The plan a countdown is currently holding, and the cooldown it was armed with.
+   * The plan each countdown is holding, and the cooldown it was armed with, by countdown.
    *
    * A ref rather than state: the countdown that draws it is `closeSoon`, and holding the
    * same fact twice in state is how the two get out of step - the bubble would say one
    * pane and the timer move another.
    */
-  const moveSoonRef = useRef<{ plan: AutoHandoff[]; cooldownMinutes: number }>({
-    plan: [],
-    cooldownMinutes: 15
-  })
+  const moveSoonRef = useRef<Record<string, { plan: AutoHandoff[]; cooldownMinutes: number }>>({})
 
   /**
    * Run an armed move. This is the loop that used to sit inside the sweep itself.
@@ -3996,7 +4025,7 @@ export default function App(): JSX.Element {
    * ends rather than being killed.
    */
   const doMove = useCallback((plan: AutoHandoff[], cooldownMinutes: number) => {
-    setCloseSoon(undefined)
+    dropSoon(plan.map((m) => m.id))
     void (async () => {
       try {
         for (const move of plan) {
@@ -4020,43 +4049,53 @@ export default function App(): JSX.Element {
         handoffSweeping.current = false
       }
     })()
-  }, [])
+  }, [dropSoon])
 
   armMoveRef.current = (plan, why, cooldownMinutes) => {
     const now = Date.now()
     const fresh = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
-    // One countdown at a time - a second would replace the first mid-count - and the sweep
-    // lock goes straight back whenever this decides not to run.
-    if (!fresh.length || closeSoonRef.current) {
+    // A pane already counting down is not armed twice; a pane nothing has named gets its
+    // own card beside the others. The sweep lock goes straight back if there is nobody
+    // left to move.
+    const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
+    const mine = fresh.filter((p) => !armed.has(p.id))
+    if (!mine.length) {
       handoffSweeping.current = false
       return
     }
-    for (const move of fresh)
+    for (const move of mine)
       console.info(
         `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
       )
-    moveSoonRef.current = { plan: fresh, cooldownMinutes }
+    const key = mine.map((p) => p.id).join('|')
+    moveSoonRef.current[key] = { plan: mine, cooldownMinutes }
     // The mascot is no longer the only face this has: `MoveSoon` draws the same countdown
     // as a plain card when there is no sprite, which matters because the mascot ARRIVES
     // OFF - so this used to move a pane off the desk of anybody who had never gone looking
     // for an animal with nothing at all on screen.
-    setCloseSoon({
-      ids: fresh.map((p) => p.id),
-      names: fresh.map((p) => paneWordRef.current(p.id)),
-      deadline: now + CLOSE_COUNTDOWN_MS,
-      why: why.startsWith('idle') ? 'idle' : 'pressure',
-      // The machine, named. Every move in one plan goes to the device the plan picked.
-      move: { device: fresh[0].device, deviceName: fresh[0].deviceName }
-    })
+    setCloseSoons((list) => [
+      ...list,
+      {
+        key,
+        ids: mine.map((p) => p.id),
+        names: mine.map((p) => paneWordRef.current(p.id)),
+        deadline: now + CLOSE_COUNTDOWN_MS,
+        why: why.startsWith('idle') ? 'idle' : 'pressure',
+        // The machine, named. Every move in one plan goes to the device the plan picked.
+        move: { device: mine[0].device, deviceName: mine[0].deviceName }
+      }
+    ])
   }
 
   armCloseRef.current = (plan, why, log) => {
     const now = Date.now()
-    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now)
+    const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
+    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now && !armed.has(p.id))
+    // A pane already counting down keeps the deadline it is already showing; anything else
+    // gets a card of its own. Refusing outright here - which is what this did until
+    // 2026-09-01 - was how a second pane that came due inside the first one's fifteen
+    // seconds got dropped without a word.
     if (!keep.length) return
-    // One countdown at a time. Two would be two bubbles for one bubble's worth of space,
-    // and the second would silently replace the first mid-count.
-    if (closeSoonRef.current) return
     const mb = reclaimedMb(keep)
     for (const p of keep) {
       const line =
@@ -4076,7 +4115,8 @@ export default function App(): JSX.Element {
       })
     }
     const ids = keep.map((p) => p.id)
-    pendingMb.current = mb
+    const key = ids.join('|')
+    pendingMb.current[key] = mb
     // Same as the move above: with no sprite the count is drawn by `MoveSoon` instead.
     // The countdown ends when the CARD said it would. `dueAt` is the pane's own deadline,
     // the same number `idleCloseAt` publishes to the chip, so the two clocks are one clock
@@ -4084,7 +4124,10 @@ export default function App(): JSX.Element {
     // already overdue (nothing had swept yet) would otherwise get a count too short to
     // read, and capped, because the count is a warning and not a delay.
     const deadline = countdownEnd(now, keep.map((p) => p.dueAt))
-    setCloseSoon({ ids, names: ids.map((id) => paneWordRef.current(id)), deadline, why })
+    setCloseSoons((list) => [
+      ...list,
+      { key, ids, names: ids.map((id) => paneWordRef.current(id)), deadline, why }
+    ])
   }
 
   /**
@@ -4100,12 +4143,23 @@ export default function App(): JSX.Element {
    * `playTick` deliberately bypasses the 900ms alert throttle - see `useChime` - or the
    * ticks would swallow each other and the alert above them.
    */
+  // One alert for a STRETCH of countdowns, not one per card. Robert, 2026-09-01: "just 1
+  // sound is fine for coutndown because when i check i should see both will close and i
+  // can choose which to keep". So this fires when the stack goes from empty to occupied
+  // and stays quiet while a second card joins it.
+  const anySoon = closeSoons.length > 0
   useEffect(() => {
-    if (!closeSoon) return
+    if (!anySoon) return
     if (!soundOn.current) return
     // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that just
     // finished, so the `done` chime lands a moment before this and the 900ms guard ate it.
     playAction('move', soundSet.current)
+  }, [anySoon])
+  // The ticks belong to the SOONEST deadline: the last ten seconds of the stack, once,
+  // whichever card they are counting.
+  useEffect(() => {
+    if (!closeSoon) return
+    if (!soundOn.current) return
     const ticks: number[] = []
     // Ten, not five. The countdown is fifteen seconds and five put the first sound two
     // thirds of the way through the thing it was announcing - reported as "doesn't make
@@ -4158,17 +4212,26 @@ export default function App(): JSX.Element {
     return () => ticks.forEach((t) => window.clearTimeout(t))
   }, [clearSoonAt])
 
+  // One timer per card, so a second decision is not waiting on the first one's clock.
   useEffect(() => {
-    if (!closeSoon) return
-    const t = window.setTimeout(
-      () =>
-        closeSoon.move
-          ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-          : doClose(closeSoon.ids, pendingMb.current),
-      Math.max(0, closeSoon.deadline - Date.now())
-    )
-    return () => window.clearTimeout(t)
-  }, [closeSoon, doClose, doMove])
+    if (!closeSoons.length) return
+    const timers = closeSoons.map((soon) => {
+      const key = soonKey(soon)
+      return window.setTimeout(() => {
+        if (soon.move) {
+          const held = moveSoonRef.current[key]
+          delete moveSoonRef.current[key]
+          if (held) doMove(held.plan, held.cooldownMinutes)
+          else dropSoon(soon.ids)
+          return
+        }
+        const mb = pendingMb.current[key] ?? 0
+        delete pendingMb.current[key]
+        doClose(soon.ids, mb)
+      }, Math.max(0, soon.deadline - Date.now()))
+    })
+    return () => timers.forEach((t) => window.clearTimeout(t))
+  }, [closeSoons, doClose, doMove, dropSoon])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -4179,15 +4242,15 @@ export default function App(): JSX.Element {
    * is what changes when a pane goes busy or is asked something.
    */
   useEffect(() => {
-    if (!closeSoon) return
     // Not for a move: a pane going back to work is exactly what a move is allowed to
     // carry - the far end QUEUES a mid-turn pane rather than killing it - so dropping the
     // countdown here would make the one pane worth moving the one that never moves.
-    if (closeSoon.move) return
-    if (closeSoon.ids.every((id) => stillCloseable(id))) return
+    const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
+    if (!woke.length) return
     console.info('reclaim: countdown dropped - a pane it named went back to work')
-    setCloseSoon(undefined)
-  }, [closeSoon, sessions, stillCloseable])
+    const gone = new Set(woke.map((s) => soonKey(s)))
+    setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
+  }, [closeSoons, sessions, stillCloseable])
 
   /**
    * Put each local pane's closing deadline on the session, where the card reads it.
@@ -4289,17 +4352,43 @@ export default function App(): JSX.Element {
     publishClosingRef.current()
   }, [])
 
+  /**
+   * "Do it now" on one card - the countdown that NAMED these panes, never the stack.
+   *
+   * It used to read `closeSoon?.move`, which was the only countdown there could be; with
+   * a stack that would answer the wrong card's question as soon as two were up.
+   */
+  const doSoonNow = useCallback(
+    (ids: string[]) => {
+      const soon = closeSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
+      const key = soon ? soonKey(soon) : ids.join('|')
+      if (soon?.move) {
+        const held = moveSoonRef.current[key]
+        delete moveSoonRef.current[key]
+        if (held) doMove(held.plan, held.cooldownMinutes)
+        else dropSoon(ids)
+        return
+      }
+      const mb = pendingMb.current[key] ?? 0
+      delete pendingMb.current[key]
+      doClose(ids, mb)
+    },
+    [doClose, doMove, dropSoon]
+  )
+
   const keepOpen = useCallback((ids: string[]) => {
     const until = Date.now() + KEEP_MINUTES * 60_000
     for (const id of ids) keptUntil.current[id] = until
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
     // switched off. The sweep lock goes back with it.
-    if (closeSoonRef.current?.move) {
+    if (closeSoonsRef.current.some((c) => c.move && c.ids.some((id) => ids.includes(id)))) {
       for (const id of ids) handoffBlocked.current[id] = until
       handoffSweeping.current = false
     }
-    setCloseSoon(undefined)
+    // Only the card that named these panes. Answering one of two cards leaves the other
+    // counting, which is the whole point of there being two of them.
+    setCloseSoons((list) => list.filter((c) => !c.ids.some((id) => ids.includes(id))))
     // `keptUntil` is a ref, so nothing about this reaches the effect that publishes the
     // deadline. Without this the chip goes on counting down to a close an hour away.
     publishClosingRef.current()
@@ -4337,14 +4426,14 @@ export default function App(): JSX.Element {
     // keeps it from being picked again (`quietSince` reads `lastFocus`). Any OTHER pane in
     // the same plan is re-decided by the next sweep rather than closed on a count that is
     // no longer on screen - that is the honest half, because nobody arrived at those.
-    const soon = closeSoonRef.current
-    if (soon?.ids.includes(id)) {
+    const soon = closeSoonsRef.current.find((c) => c.ids.includes(id))
+    if (soon) {
       console.info(`reclaim: countdown dropped - somebody came to ${id}`)
       // The move sweep holds a lock for as long as its countdown is up. Dropping the
       // countdown without giving it back is how `stopMove` shipped as a control that
       // appeared to work and then let nothing move ever again.
       if (soon.move) handoffSweeping.current = false
-      setCloseSoon(undefined)
+      setCloseSoons((list) => list.filter((c) => soonKey(c) !== soonKey(soon)))
     }
     publishClosingRef.current()
   }, [])
@@ -6488,9 +6577,7 @@ export default function App(): JSX.Element {
         }}
         onKeep={keepOpen}
         onCloseNow={(ids) =>
-          closeSoon?.move
-            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-            : doClose(ids, pendingMb.current)
+          doSoonNow(ids)
         }
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
@@ -6550,12 +6637,10 @@ export default function App(): JSX.Element {
         }}
       />
       <MoveSoon
-        soon={closeSoon}
+        soons={closeSoons}
         onKeep={keepOpen}
         onNow={(ids) =>
-          closeSoon?.move
-            ? doMove(moveSoonRef.current.plan, moveSoonRef.current.cooldownMinutes)
-            : doClose(ids, pendingMb.current)
+          doSoonNow(ids)
         }
       />
       {/* A pane that has just worked out whose work it is doing. */}
