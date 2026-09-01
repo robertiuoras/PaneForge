@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -724,6 +724,37 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const over = idleClosePlan([quiet(9 * 60_000), pad], CLOCKED2, NOW, true, 15_000)
   check('an overdue pane is still picked', ids(over) === 'x')
   check('idleMs is never negative', idleClosePlan(nearly, CLOCKED2, NOW, true, 60_000).every((r) => r.idleMs >= 0))
+}
+
+// A pane is read for as long as somebody is sat in front of it, not only at the moment
+// they leave it.
+//
+// `unread` compares the last printed byte against the read stamp, and that stamp used to
+// move only when the ACTIVE pane changed. A pane watched while its answer printed ended
+// with `lastOutput` past the stamp, and unless the next act was a click on a DIFFERENT
+// pane, nothing moved it again: unread for ever, refused by `onTheClock` for ever, no
+// countdown possible. Robert, 2026-09-01: "im confused why closing countdown didnt start
+// for this and since its also been read/viewed as well after output finished".
+{
+  const CLOCKED3 = { ...DEFAULT_RECLAIM, enabled: true, idleCloseMinutes: 5 }
+  const arrived = NOW - 30 * 60_000
+  eq('the active pane in a focused window is read right now', readStamp({ lastFocus: arrived }, { focused: true, windowFocused: true, now: NOW }), NOW)
+  eq('...and the stamp freezes the moment the window goes to the back', readStamp({ lastFocus: arrived }, { focused: true, windowFocused: false, now: NOW }), arrived)
+  eq('a pane nobody is on is never restamped', readStamp({ lastFocus: arrived }, { focused: false, windowFocused: true, now: NOW }), arrived)
+  eq('a pane never looked at stays unstamped', readStamp({}, { focused: false, windowFocused: true, now: NOW }), undefined)
+
+  // The whole reported case, end to end: arrive, the answer prints while you watch, then
+  // you walk off without touching another pane.
+  const watched = { lastOutput: NOW - 20 * 60_000, lastFocus: arrived }
+  check('output that printed after you arrived reads as unread', unread(watched))
+  const seen = { ...watched, lastFocus: readStamp(watched, { focused: true, windowFocused: true, now: NOW - 20 * 60_000 }) }
+  check('...and is read once the stamp follows the clock', !unread(seen))
+  const pad = pane({ id: 'pad', lastKeyboard: NOW })
+  const before = pane({ id: 'watched', lastKeyboard: watched.lastOutput, lastOutput: watched.lastOutput, lastFocus: watched.lastFocus })
+  const after = pane({ id: 'watched', lastKeyboard: seen.lastOutput, lastOutput: seen.lastOutput, lastFocus: seen.lastFocus })
+  eq('a watched pane got no countdown at all before this', idleCloseAt(before, CLOCKED3, NOW), null)
+  check('...and is on the clock after it', idleCloseAt(after, CLOCKED3, NOW) !== null)
+  eq('...and the sweep picks it', ids(idleClosePlan([after, pad], CLOCKED3, NOW)), 'watched')
 }
 
 console.log(`reclaim: ${checks} checks passed`)
