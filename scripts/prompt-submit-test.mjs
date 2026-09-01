@@ -305,7 +305,19 @@ rmSync(work, { recursive: true, force: true })
   const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
-  ok(/Date\.now\(\) >= deadline\)/.test(fn), 'and the wait must still be bounded')
+  // ...AND THE CONFIRM IS BOUNDED BY ITS OWN CLOCK, NOT THE WAIT'S.
+  // 2026-09-01, pane s31-mti4yatg: the composer only read idle 181s into a 180s budget,
+  // so the return went out with the deadline already past and the very first confirm
+  // logged UNSENT with five retries unused. `handoverMaxMs` always sized the curtain as
+  // `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`; only this branch disagreed.
+  ok(/Date\.now\(\) >= confirmUntil\)/.test(fn), 'and the wait must still be bounded')
+  ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
+  ok(
+    /confirmUntil = typedAt \+ PROMPT_CONFIRM_MS \* PROMPT_ENTER_TRIES/.test(
+      src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+    ),
+    'the confirm clock starts at the return and lasts every retry it is allowed'
+  )
   ok(!/if \(still && idle\(still\)\) submit\(tries \+ 1\)\s*\n\s*else settle\(\)/.test(fn),
     'the old settle-on-busy branch is the bug and must be gone')
 

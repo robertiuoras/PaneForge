@@ -2516,6 +2516,18 @@ export class SessionManager extends EventEmitter {
       return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted)
     }
 
+    // THE WAIT'S DEADLINE MAY NOT ALSO BE THE CONFIRM'S. `deadline` caps how long we
+    // wait for an idle composer; once the prompt is typed and a return sent, the return
+    // needs its own time to be PROVEN - and a prompt typed at the very edge of the budget
+    // had none. Measured 2026-09-01, pane s31-mti4yatg: /clear at 04:37:05, the composer
+    // only read idle at 04:40:06 (181s, right on the 180s budget), return sent, and 4s
+    // later the first confirm found the pane still painting with the deadline already
+    // past - so it logged UNSENT immediately, on its first look, with five retries unused.
+    // The pane sat cleared holding a fully typed prompt nobody sent, which is exactly the
+    // failure this whole path exists to prevent. `handoverMaxMs` already sizes the curtain
+    // as `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`, so the confirm was always
+    // meant to outlive the wait; only this branch disagreed.
+    let confirmUntil = 0
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle()
@@ -2528,6 +2540,7 @@ export class SessionManager extends EventEmitter {
       ourWrite('\r')
       acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
+      if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
       const confirm = (): void => {
         setTimeout(() => {
           const still = this.sessions.get(id)
@@ -2552,8 +2565,10 @@ export class SessionManager extends EventEmitter {
             // nobody had sent, with the app's own log ending at that write. So a busy pane
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
-            if (Date.now() >= deadline) {
-              acLog(`${id} prompt left UNSENT: still painting when the ${budgetMs}ms budget ran out`)
+            if (Date.now() >= confirmUntil) {
+              acLog(
+                `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return`
+              )
               return settle()
             }
             return confirm()
