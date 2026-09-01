@@ -218,7 +218,12 @@ const SERIAL = new Set([
   'panejob',
   'panebackjobs',
   'deaddev',
-  'usage'
+  'usage',
+  // Measured: passes alone in 4.2s, fails at jobs=8 in 31.8s - `the clock is not cut off,
+  // 54.6px of 116px`. It lays out a card whose content is a RUNNING clock, so a slow
+  // machine writes a wider string than the box the assertion was written against. The
+  // contention is the test's input, not its environment.
+  'cardfit'
 ])
 
 const failed = []
