@@ -481,12 +481,47 @@ ok('a person arriving at a pane takes its close countdown with them', () => {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   const touch = app.slice(app.indexOf('const touchPane = useCallback'), app.indexOf('const togglePin'))
   assert.ok(touch, 'touchPane is where a press on a pane lands')
-  assert.match(touch, /closeSoonRef\.current/, 'it reads the live countdown')
-  assert.match(touch, /soon\?\.ids\.includes\(id\)/, 'and only for a pane that countdown NAMED')
-  assert.match(touch, /setCloseSoon\(undefined\)/)
+  assert.match(touch, /closeSoonsRef\.current/, 'it reads the live countdowns')
+  // The stack, since 2026-09-01: it takes down the ONE card that named this pane and
+  // leaves every other card counting.
+  assert.match(touch, /find\(\(c\) => c\.ids\.includes\(id\)\)/, 'and only the one that NAMED it')
+  assert.match(touch, /setCloseSoons\(\(list\) => list\.filter/)
   // A move countdown holds the sweep lock. Dropping the count without giving it back is
   // how `stopMove` shipped as a control that worked once and then moved nothing ever.
   assert.match(touch, /if \(soon\.move\) handoffSweeping\.current = false/)
+})
+
+ok('two decisions are two cards, and answering one leaves the other counting', () => {
+  // It was one card full stop: `armCloseRef` began `if (closeSoonRef.current) return`, so
+  // a second pane coming due inside the first one's fifteen seconds was dropped without a
+  // word and re-armed from the top by the next sweep - which reads as one countdown that
+  // ran down and jumped back up, with neither pane closing (Robert, 2026-09-01).
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const arm = app.slice(app.indexOf('armCloseRef.current = (plan'), app.indexOf('const doSoonNow'))
+  assert.ok(arm, 'armCloseRef is where a close countdown starts')
+  assert.doesNotMatch(
+    arm,
+    /if \(closeSoonRef\.current\) return/,
+    'a countdown already up may not refuse a countdown about a DIFFERENT pane'
+  )
+  assert.match(arm, /armed\.has\(p\.id\)/, 'only a pane already counting is left alone')
+  assert.match(arm, /setCloseSoons\(\(list\) => \[/, 'the new one joins the stack')
+
+  const card = readFileSync(join(root, 'src/renderer/src/components/MoveSoon.tsx'), 'utf8')
+  assert.match(card, /soons\.map\(\(soon\) =>/, 'and the corner draws one card per decision')
+  assert.match(card, /key=\{soonKey\(soon\)\}/, 'each keyed by the panes it names')
+
+  // One sound for a stretch of countdowns, not one per card: "just 1 sound is fine for
+  // coutndown because when i check i should see both will close".
+  assert.match(
+    app,
+    /const anySoon = closeSoons\.length > 0/,
+    'the alert is keyed on the stack being occupied, not on each card'
+  )
+  // Two matches rather than one spanning a line break: a regex with a bare \n in it does
+  // not match the same file checked out with CRLF endings (`npm run test:crlf`).
+  assert.match(app, /playAction\('move', soundSet\.current\)/, 'the alert is still the move chime')
+  assert.match(app, /\}, \[anySoon\]\)/, 'and its effect depends on nothing but that')
 })
 
 rmSync(out, { recursive: true, force: true })

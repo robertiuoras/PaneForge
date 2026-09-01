@@ -164,8 +164,17 @@ is(
 
 is(
   words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\clients-a` })),
-  'its own chat',
+  'a chat in this copy',
   'a copy held by the chat that started in it does not repeat its own number'
+)
+// `its own chat` was the phrase until 2026-09-01 and Robert could not read it: "its"
+// points back at the row's heading, which only resolves for somebody who already knows
+// the row is about a copy.
+ok(
+  !/its own chat/.test(
+    words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\clients-a` }))
+  ),
+  'and it does not ask the reader to resolve a pronoun onto a heading'
 )
 
 // The release gate's list, which was 695px of text in a 231px line (measured in the window
