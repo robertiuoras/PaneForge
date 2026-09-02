@@ -202,6 +202,17 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     'seen'
   )
   eq('never the last pane', idleClosePlan([pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })], CLOCKED, NOW).length, 0)
+  // A pane that fell asleep (or came back asleep after a restart) is on the close clock
+  // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
+  // refused them. Robert: "id rather them to close than sleep".
+  {
+    const slept = pane({ id: 'slept', asleep: NOW - HOUR, state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+    const pad = pane({ id: 'pad', lastKeyboard: NOW })
+    eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
+    check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
+    check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
+    eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], SLEEPY, NOW)), '')
+  }
   // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
   // sweep that closes a pane in order to change a reading of the machine. Here it only
   // made the card lie: with one countdown on screen at a time, seven due panes went two at
