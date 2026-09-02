@@ -165,6 +165,7 @@ const TESTS = [
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
+  ['openurl', 'open-url-test.mjs'],
   ['spawnquiet', 'spawn-quiet-test.mjs'],
   ['updatehold', 'update-hold-test.mjs'],
   ['updatestale', 'update-stale-test.mjs'],
