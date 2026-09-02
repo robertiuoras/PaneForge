@@ -1,0 +1,100 @@
+/* What the desk looks like, on the pet - see src/shared/petMood.ts for the reading.
+ *
+ * A deliberately separate sheet from styles.css: everything here is one class on
+ * `.mascot-body` overriding the slot animations that file already defines, and keeping it
+ * apart means a mood can be read, changed or deleted without going near the sprite's own
+ * drawing. It is imported by Mascot.tsx, so it ships in the same bundle and is checked by
+ * `npm run test:anim` like the rest.
+ *
+ * The rules those checks impose, and which every rule below is written under:
+ *   - a looping animation may move `transform` and `opacity` and nothing else;
+ *   - a CONTINUOUS loop (not `steps()`) must be held still on a fast panel and on battery;
+ *   - nothing may keep animating behind a window nobody is looking at (`.asleep`).
+ * So the moods are overrides of `animation-duration`, `animation-play-state`, `opacity`
+ * and `transform`, and nothing else - no colour change, no filter, no shadow, no size.
+ */
+
+/* ---- alert: a pane is asking somebody something ---------------------------------
+   The same reading the countdown already uses, for the same reason: the sprite has
+   stopped being scenery and is now the thing to look at. Beacon to a hard blink, visor
+   locked ahead rather than wandering. (The blink is dropped in Mascot.tsx rather than
+   here - a lid held open by CSS would fight the blink class at the same specificity, and
+   which one won would depend on the order two stylesheets happened to be bundled in.) */
+.mascot-body.mood-alert .m-beacon-on { animation-duration: 700ms; }
+.mascot-body.mood-alert .m-eye-look { animation: none; opacity: 0; }
+.mascot-body.mood-alert .m-eye-ahead { animation: none; opacity: 1; }
+
+/* ---- work: something is printing -------------------------------------------------
+   Half the period, and nothing else. The arms and treads keep their own unrelated
+   clocks (4.8s and 7s) so that halving both does not suddenly line them up into one
+   countable loop - 2.4 and 3.5 are as unrelated as the pair they came from. */
+.mascot-body.mood-work .m-arm-a,
+.mascot-body.mood-work .m-arm-b,
+.mascot-body.mood-work .m-arm-c { animation-duration: 2.4s; }
+.mascot-body.mood-work .m-treads-a,
+.mascot-body.mood-work .m-treads-b { animation-duration: 3.5s; }
+
+/* ---- cheer: a turn just finished -------------------------------------------------
+   The one vertical move this sprite is allowed, and it is allowed because it ENDS: three
+   steps, once, 620ms, and then the rig is where it was. The standing law that nothing
+   here bobs is about a loop - a 4.2s float nobody can turn off - not about a sprite
+   reacting once to something that happened. `steps(3)` rather than a smooth arc keeps it
+   in the same pixel-art grammar as every other pose on the drawing. */
+@keyframes m-hop {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(-1.6px); }
+  75% { transform: translateY(-0.6px); }
+  100% { transform: translateY(0); }
+}
+.mascot-body.mood-cheer .m-rig { animation: m-hop 620ms steps(3, end) 1; }
+
+/* ---- nap: nothing has happened for a while ----------------------------------------
+   Every slot held at one frame: lid down, beacon dark, arms and treads parked on their
+   first pose. `animation: none` on each rather than `animation-play-state: paused`,
+   because a paused animation stops on whichever frame it happened to be on - which for
+   an alternating pose is a coin toss between the drawing and nothing at all. */
+.mascot-body.mood-nap .m-lid { animation: none; opacity: 1; }
+.mascot-body.mood-nap .m-beacon-on { animation: none; opacity: 0; }
+.mascot-body.mood-nap .m-arm-a { animation: none; opacity: 1; }
+.mascot-body.mood-nap .m-arm-b,
+.mascot-body.mood-nap .m-arm-c { animation: none; opacity: 0; }
+.mascot-body.mood-nap .m-treads-a { animation: none; opacity: 1; }
+.mascot-body.mood-nap .m-treads-b { animation: none; opacity: 0; }
+.mascot-body.mood-nap .m-eye-ahead { animation: none; opacity: 1; }
+.mascot-body.mood-nap .m-eye-look { animation: none; opacity: 0; }
+.mascot-body.mood-nap .m-antenna { animation: none; opacity: 1; }
+.mascot-body.mood-nap .m-antenna-tilt { animation: none; opacity: 0; }
+
+/* The one glyph, so a still sprite reads as asleep rather than as a sprite that has
+   stopped working. Drawn by CSS rather than added to ten pieces of pixel art, and it
+   fades rather than blinking - a hard blink is what `alert` means on this sprite, and two
+   moods must never share a motion. `position: relative` is set here rather than in
+   styles.css because it exists only for this pseudo-element. */
+.mascot-body { position: relative; }
+.mascot-body.mood-nap::after {
+  content: 'z';
+  position: absolute; right: -1px; top: -3px;
+  font: 600 11px/1 inherit; letter-spacing: -0.02em;
+  color: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: m-zzz 2.8s ease-in-out infinite;
+}
+@keyframes m-zzz {
+  0%, 100% { opacity: 0; transform: translateY(1px); }
+  50% { opacity: 0.85; transform: translateY(-1px); }
+}
+
+/* Held still where it is expensive to be wrong: a continuous fade composites a layer
+   every frame, which is nothing at 60Hz and is not nothing on a 120Hz panel or on the
+   battery it drains. Lit rather than dark, so the glyph is still there saying the pet is
+   asleep - the guard removes the motion, never the meaning. */
+html:is(.hi-refresh, .on-battery) .mascot-body.mood-nap::after {
+  animation: none;
+  opacity: 0.85;
+}
+
+/* Nobody is looking. `styles.css` pauses `.m-rig *`, which covers the slots but not the
+   rig itself (the hop) or a pseudo-element on the button (the z). */
+.mascot-layer.asleep .m-rig,
+.mascot-layer.asleep .mascot-body::after { animation-play-state: paused; }
