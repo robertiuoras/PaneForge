@@ -1,0 +1,14 @@
+# Brief: remote setup as a step-by-step walkthrough, then one small summary card
+
+Robert, 2026-09-02: "for other users the remote popup its so hard to navigate, codes, qr, etc. i want popups for users like a step by step walkthrough etc then when finish a popup with minimal detail thats necessary." His own setup (two devices on Tailscale, PaneForge pinned on Mac and PC home screens) works; this is for a NEW user of the app.
+
+Current surface (RemoteDialog.tsx, 1362 lines; PairAsk.tsx, PairQr.tsx, PhoneAsk.tsx). Ordered map of what a first-timer meets today, with file:line and api calls, is in `remote-flow-map.md` beside this brief - read it first.
+
+Design target: ONE wizard reached from Devices, replacing the flat dialog as the first-run path (the flat dialog stays reachable as "Advanced" for people who already paired):
+- Step 0: "What do you want to connect?" - `My phone` / `Another computer`. Two big rows, one sentence each.
+- Phone: Step 1 "Make this desk reachable" (funnel if Tailscale present, else tunnel; show the state, one switch, one line saying what it does). Step 2 "Scan this on your phone" (QR only, the address under it as a copy row, nothing else). Step 3 "Approve it here" (the four digits shown on both screens; this step IS the PhoneAsk card, docked in the wizard). Done: a card with exactly: the address, "typing needs a passkey tap every 15 min" (only if typeGate on), and a `Done` button. Nothing about ports, cookies, marks, rotation.
+- Another computer: Step 1 "Turn on hosting here". Step 2 "Find it" (LAN list if any answered, else the paste-invite box, with `Type an address instead` as a small link). Step 3 "Do the numbers match?" (PairAsk card docked). Done: device name, Connected, `Done`.
+- Every step: a title, one sentence, one primary action, `Back`. Progress shown as `Step 2 of 3`. No dialog may take focus on its own (CLAUDE.md "Never take the screen"); the wizard is opened by a click.
+- Copy is read by someone who has never used a terminal: no "SAS", "funnel", "tunnel", "passkey" without a plain-word gloss.
+
+Process (standing rule in the prompt hook): RESEARCH BEFORE UI - read `<P>/claude-memory/toolstash/design-vault/INDEX.md` and follow `linear.app.md` for the dark dialog (name it in the commit). Then show a CHEAP MOCK FIRST: one static HTML file of all steps (both paths) published as an Artifact, link in your reply, and STOP for Robert's OK before building it into the app. When he OKs: build in `src/renderer/src/components/RemoteWizard.tsx`, drive the real api.* calls from the flow map, pin with a headless test of the step machine (`src/shared/remoteWizard.ts` holding the step logic, `npm run test:remotewizard` added to scripts/test-all.mjs TESTS as a [name,file] pair), `npm run typecheck`, `npm test`, `npm run test:contrast` if the window is available. Commit on your lane, `lane.mjs ready`. No release.
