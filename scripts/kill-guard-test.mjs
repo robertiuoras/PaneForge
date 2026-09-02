@@ -4,6 +4,7 @@
 // a session dying mid-turn, and a test that reproduces it faithfully would kill the session
 // running the test. `chainOf` takes its reader as an argument for exactly that reason, so
 // the walk itself is still exercised without a `ps` anywhere near it.
+import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -94,7 +95,8 @@ ok('a missing chain answers null', hostAncestor(undefined, ELECTRON_PATTERN) ===
 
 // And the wiring: boot-timing must actually CALL the refusal, and before it kills anything.
 {
-  const src = spawnSync('cat', [join(root, 'scripts/boot-timing.mjs')], { encoding: 'utf8' }).stdout ?? ''
+  // readFileSync, not `cat`: the PC has no cat, and an empty stdout there read as 'no guard'.
+  const src = readFileSync(join(root, 'scripts/boot-timing.mjs'), 'utf8')
   // The CALL, not the import and not a commented-out line: an `indexOf` would be satisfied
   // by `// refuseSelfKill(...)`, which is exactly the shape of the regression.
   const guardAt = src.search(/^refuseSelfKill\(/m)
