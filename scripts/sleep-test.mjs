@@ -102,11 +102,13 @@ is(sleepWords(t, t - 5_000), 'asleep', 'a clock behind the record never goes neg
 
 const reclaim = readFileSync(join(root, 'src/shared/reclaim.ts'), 'utf8')
 ok(/asleep\?: number/.test(reclaim), 'reclaim reads the sleeping flag')
-is(
-  (reclaim.match(/!p\.asleep &&/g) ?? []).length,
-  2,
-  'BOTH sweeps refuse it - the pressure one and the idle clock'
-)
+// The pressure sweep and the sleep clock refuse a sleeping pane (nothing to reclaim, already
+// the outcome); the idle CLOSE clock does not - since 2026-09-02 a pane that came back asleep
+// after a restart closes like any other, or it sits on the desk for ever.
+const body = (name) => reclaim.slice(reclaim.indexOf(`function ${name}(`)).split('\n}')[0]
+ok(/!p\.asleep &&/.test(body('reclaimPlan')), 'the pressure sweep refuses a sleeping pane')
+ok(/!p\.asleep &&/.test(body('sleepable')), 'and so does the sleep clock')
+ok(!/!p\.asleep &&/.test(body('keepable')), 'but the idle close clock takes one')
 
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 ok(/if \(meta\.asleep\) return/.test(sessions), 'the exit handler does not stamp a code on a sleep')

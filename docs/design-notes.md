@@ -135,6 +135,33 @@ package.json and no tag matching it, and `v0.1.0..HEAD` is a fatal "ambiguous ar
 that surfaced as `No release yet: Command failed` - a repo that could never cut its first
 release and never said why.
 
+### A conflict is cheapest at the first edit
+
+2026-09-02: lane c (offload-first) and lane d (task brief) both inserted at `laneFor`, line
+1371 of `src/main/index.ts`, the same afternoon. Neither chat knew about the other. d shipped
+first; c sat conflicted on master and a pane spent its turn on the merge. CLAUDE.md's
+peer-announce rule ("message the other chat naming the files before the first edit") had been
+there for a week and nobody did it, because nothing told them there was anything to announce.
+
+The engine cannot stop two chats editing one region, and it should not try: index.ts is
+4,072 lines and 88 of the last 923 commits touch it, so refusing overlap would refuse most
+work. What it can do is say so at the first edit, the one moment it is cheap. `lane.mjs
+guard` now exits 0 WITH TEXT when the file being edited has hunks in another lane's working
+tree that master does not carry - lane letter, folder, whether a chat is in it, line ranges -
+and the hook folds it into the edit's context. Once per session, file and ten minutes; a file
+nobody else changed is re-read at most once a minute.
+
+The reading is `git diff <merge-base with master> -- <file>` per lane: a COMMIT against the
+WORKING TREE. `git diff master... -- <file>` reads the same and is not: with one side omitted
+it diffs to HEAD, so the uncommitted edit a live chat is making right now never showed. The
+test fixture also has to `realpathSync(tmpdir())` - macOS's `/var` is a symlink to
+`/private/var`, and the engine answers in resolved paths, so nothing prefix-matched and every
+guard call, refusals included, passed. `scripts/lane-overlap-test.mjs`.
+
+The structural fix is splitting index.ts into per-feature IPC modules, and it is a job for a
+quiet moment with every lane merged: done while four lanes are live it conflicts with all of
+them.
+
 ## Releasing happens by itself
 
 There is one command, and it is not a release:
@@ -1920,7 +1947,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn: never off the rail, never far from the thumb it points at (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
-| `npm run test:turncopy` | where a turn's two copy icons go: one pair per prompt on screen, the newer one keeping the space when two prompts land within a pair's height, and the reply range that is off by one in the direction that pastes perfectly and is wrong |
+| `npm run test:replytext` | what a reply looks like on the clipboard: the CLI's composer box, rules, footers and spinner rows dropped, `⏺`/`⎿` text kept, fixtures replayed from real history logs (replaced `test:turncopy` 2026-09-02 when the floating per-turn pair went) |
 | `npm run test:cursorclick` | clicking where the CLI's cursor should go: the keys it sends, the clicks it refuses, and — the load-bearing half — that a BARE click can emit no vertical arrow at any input, plus deleting a highlight by walking to it and backspacing over it |
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go — a real xterm in a real Chrome, with the control that the unconditional capture-phase `stopPropagation` this app used to do leaves the selection growing from 18 characters to 58 after the button is up, because xterm's own mouseup (a bubble listener on the document) never runs and its mousemove listener is never taken off |
 | `npm run test:anim` | what a looping decoration may cost: an `infinite` keyframe may animate `transform` and `opacity` and nothing else. The idle dot's ring animated a `box-shadow` spread and measured **136% of a GPU core** against the same ring drawn as a scaling layer at **36%** (floor 20%), on IDLE panes — which is most of a working day |
@@ -1970,7 +1997,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:turncopyview` (which is happy minimized),
+`test:activate`, (turncopyview removed 2026-09-02) (which is happy minimized),
 `test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
 back), `test:askclick`, `test:askrender` (the countdown on a real question, and what
 arrowing through it costs every OTHER pane), and `test:phoneview` (a real headless Chrome at
@@ -2975,7 +3002,7 @@ runs) stays there.
 | `npm run test:diff` | reading a repo's changes: `-z` records, renames, patch numbering |
 | `npm run test:railplace` | where a prompt tag is drawn (no window) |
 | `npm run test:grid` | layout arithmetic, no window needed |
-| `npm run test:turncopy` | where a turn's two copy icons go, and the reply range that is off by one |
+| `npm run test:replytext` | what a reply looks like on the clipboard, chrome stripped |
 | `npm run test:cursorclick` | the keys a click sends, the clicks refused, and that a BARE click emits no vertical arrow |
 | `npm run test:stickyselect` | that a highlight stops moving when the mouse is let go |
 | `npm run test:promptbox` | telling a CLI's drawn input box from a zsh prompt, a diff and a markdown table |
@@ -4310,7 +4337,7 @@ pins**; `npm run` lists the commands. Read that table before changing or deletin
 you add one.
 
 Needing a real window (`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`):
-`test:view`, `test:stashdrag`, `test:activate`, `test:turncopyview`, `test:restorefix` (two launches),
+`test:view`, `test:stashdrag`, `test:activate`, (turncopyview removed 2026-09-02), `test:restorefix` (two launches),
 `test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast` (~90s, both themes),
 `test:renderwatchlive` (spins the renderer on purpose, ~25s).
 

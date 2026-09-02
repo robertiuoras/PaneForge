@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { InstallOutcome, UpdateState } from '@shared/types'
+import { ignoredHint } from '@shared/updateStale'
 
 const api = window.api
 
@@ -64,7 +65,9 @@ export default function UpdateToast(): JSX.Element | null {
                 ? 'Do not disturb is on, so the restart is queued rather than taking the screen. It happens the moment you turn it off - or restart now anyway.'
                 : `${held.game ?? 'A game'} is running, so the restart is queued rather than pulling it off the screen. It happens by itself when that closes - or restart now anyway.`
             : ready
-              ? `You are on ${state.current}. It installs silently and reopens your panes where they were - or on Later, the next time you quit.`
+              ? state.ignored
+                ? ignoredHint(state.current)
+                : `You are on ${state.current}. It installs silently and reopens your panes where they were - or on Later, the next time you quit.`
               : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
       </div>

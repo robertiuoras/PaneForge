@@ -81,6 +81,8 @@ export class RemoteClient extends EventEmitter {
   /** epoch ms the current connection came up */
   since = 0
   sessions: Session[] = []
+  /** the version that device's handshake reported, cleared on disconnect */
+  peerVersion = ''
 
   /** Every pane that device has, whether or not this one is mirroring it. */
   private available: Session[] = []
@@ -405,6 +407,7 @@ export class RemoteClient extends EventEmitter {
     this.since = Date.now()
     // The id in the config was a guess until now (typed in, or read off a broadcast);
     // the handshake is the first time the device has actually said who it is.
+    this.peerVersion = conn.peer.version || ''
     if (conn.peer.id && conn.peer.id !== this.peer.id) this.emit('identified', conn.peer)
     conn.on('msg', (m: Msg) => this.receive(m))
     conn.on('gone', (why: string) => {
@@ -545,6 +548,7 @@ export class RemoteClient extends EventEmitter {
     }
     this.socket = null
     this.since = 0
+    this.peerVersion = ''
     this.available = []
     // `watching` deliberately survives: it is what this device chose to mirror, and a
     // reconnect should bring those panes back rather than make the choice again.

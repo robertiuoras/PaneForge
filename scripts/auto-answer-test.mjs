@@ -364,7 +364,9 @@ ok('the sweep is wired and the decision above is the one it asks', () => {
     'and it still names the option it would press'
   )
   // The keys go through `choose`, which re-checks the question before every one of them.
-  assert.match(sessions, /this\.choose\(live\.meta\.id, pick\.n\)/)
+  // The `'app'` hand is part of the pin, not decoration: A7 counts how often a PERSON
+  // stepped in, and a question this code answered for you may not read as one you did.
+  assert.match(sessions, /this\.choose\(live\.meta\.id, pick\.n, 'app'\)/)
 })
 
 ok('the state the guards read is actually written', () => {

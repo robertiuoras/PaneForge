@@ -55,7 +55,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hostname } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
@@ -1802,6 +1802,102 @@ function guard(session, path) {
     (where
       ? ` Yours is ${where} - make the same change there.`
       : ` Run \`node ${join(own, 'scripts', 'lane.mjs')} claim --repo ${MAIN} --session <id>\` to get your own checkout.`)
+  )
+}
+
+/**
+ * Is somebody else already changing this file?
+ *
+ * A conflict is two lanes editing the same lines of one file, and the moment it is cheap
+ * to know is the FIRST edit, not the merge: lanes c and d both put a hundred lines into
+ * `laneFor` in src/main/index.ts one afternoon (2026-09-02), neither told the other, and
+ * lane c sat conflicted while master carried d. Nothing here refuses anything - it is one
+ * paragraph of additionalContext on the edit, naming the lane, the folder and the line
+ * ranges it changed, so the chat can move its change, message the other chat, or carry
+ * on knowing it will resolve a merge.
+ *
+ * The reading is `git diff <merge-base with the release branch> -- <file>` in every other
+ * lane: a commit against the WORKING TREE, so committed-but-unmerged and uncommitted edits are one read, and a
+ * lane whose work master already carries reads as empty. Said once per session, file and
+ * ten minutes; a file nobody else touches is re-read at most once a minute.
+ */
+const OVERLAP_SAID_MS = 10 * 60 * 1000
+const OVERLAP_CLEAR_MS = 60 * 1000
+
+function hunksOf(dir, rel) {
+  // Merge-base to WORKING TREE. `git diff <branch>...` looks right and is not: with one
+  // side omitted it diffs to HEAD, so an uncommitted edit - the one a live chat is making
+  // right now - never showed. A commit on the left and no commit on the right is the tree.
+  const base = gitSafe(dir, 'merge-base', MB, 'HEAD')
+  if (!base.ok || !base.out) return []
+  const r = gitSafe(dir, 'diff', '-U0', base.out, '--', rel)
+  if (!r.ok || !r.out) return []
+  const out = []
+  for (const m of r.out.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const start = Number(m[1])
+    const n = m[2] === undefined ? 1 : Number(m[2])
+    out.push([start, n ? start + n - 1 : start])
+  }
+  return out
+}
+
+function overlap(session, path) {
+  if (!session || !path) return null
+  const target = resolve(path)
+  const inside = (dir) => target === dir || target.startsWith(dir + sep)
+  const mine = POOL.map((id) => ({ id, dir: laneDir(id) }))
+    .filter((l) => inside(l.dir))
+    .sort((x, y) => y.dir.length - x.dir.length)[0]
+  if (!mine) return null
+  const rel = relative(mine.dir, target)
+  if (!rel || rel.startsWith('..')) return null
+
+  const cachePath = join(dirname(STATE), 'paneforge-overlap.json')
+  let cache = {}
+  try {
+    cache = JSON.parse(readFileSync(cachePath, 'utf8'))
+  } catch {
+    cache = {}
+  }
+  const t = now()
+  const key = `${session}\n${rel}`
+  const was = cache[key]
+  if (was && t - was.at < (was.hit ? OVERLAP_SAID_MS : OVERLAP_CLEAR_MS)) return null
+
+  const state = read()
+  const found = []
+  for (const id of POOL) {
+    if (id === mine.id) continue
+    const dir = laneDir(id)
+    if (!existsSync(dir)) continue
+    const hunks = hunksOf(dir, rel)
+    if (!hunks.length) continue
+    const holder = state.lanes[id]
+    found.push({ id, dir, hunks, held: Boolean(holder && holder.session !== session) })
+  }
+  for (const k of Object.keys(cache)) if (t - (cache[k]?.at ?? 0) > OVERLAP_SAID_MS) delete cache[k]
+  cache[key] = { at: t, hit: found.length > 0 }
+  try {
+    writeFileSync(cachePath, JSON.stringify(cache))
+  } catch {
+    /* a cache that cannot be written only costs a re-read */
+  }
+  if (!found.length) return null
+
+  const ranges = (hs) => {
+    const shown = hs.slice(0, 6).map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`))
+    return shown.join(', ') + (hs.length > 6 ? ` and ${hs.length - 6} more` : '')
+  }
+  const rows = found.map(
+    (f) =>
+      `${f.id === 'main' ? 'the main checkout' : `lane ${f.id}`} (${f.dir}, ${
+        f.held ? 'another chat is in it' : 'nobody in it, work not yet merged'
+      }) at lines ${ranges(f.hunks)}`
+  )
+  return (
+    `${basename(MAIN)}: ${rel} is also changed, not yet on ${MB}, in ${rows.join('; ')}. ` +
+    'An edit in the same region conflicts when both lanes merge. Different region: carry on. ' +
+    'Same function: message that chat first (SendMessage) so one of you owns it, or plan to resolve the merge yourself.'
   )
 }
 
@@ -3633,6 +3729,10 @@ try {
       console.log(reason)
       process.exit(2)
     }
+    // Allowed. Exit 0 with text is a heads-up, never a refusal: the hook folds it into
+    // the edit's context and the edit goes ahead.
+    const warn = overlap(session, arg('path'))
+    if (warn) console.log(warn)
   } else if (cmd === 'ready') {
     const r = ready(session, arg('lane'))
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)

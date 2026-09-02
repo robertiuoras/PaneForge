@@ -9,6 +9,7 @@ import type {
   RemoteState
 } from '@shared/types'
 import { reachWords } from '@shared/net'
+import { versionGap } from '@shared/remoteVersion'
 import { ageWords, jobsSummary, type BackJob } from '@shared/backJobs'
 import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
@@ -1050,7 +1051,9 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
             </p>
           )}
           <div className="dev-list">
-            {state.peers.map((p) => (
+            {state.peers.map((p) => {
+              const gap = p.status === 'online' ? versionGap(p.version, state.self.version) : null
+              return (
               <div key={p.id} className={'dev-entry ' + p.status + (opening === p.id ? ' open' : '')}>
                 <div className={'dev-row ' + p.status}>
                   <span className={'dev-glyph small ' + p.status} aria-hidden="true">
@@ -1066,6 +1069,14 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                       )}
                       {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
                       {p.status === 'connecting' && <span className="chip">connecting</span>}
+                      {gap && (
+                        <span
+                          className="chip"
+                          title="Updates land one machine at a time; a fix may be on only one of them until both restart."
+                        >
+                          {gap}
+                        </span>
+                      )}
                     </div>
                     {/* An IP and a port identify this machine to somebody debugging a
                         link and to nobody else - and they were the only sub-line a
@@ -1214,7 +1225,8 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                   </div>
                 )}
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 

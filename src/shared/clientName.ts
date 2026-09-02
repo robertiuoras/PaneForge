@@ -295,7 +295,7 @@ export function mayRename(title: string, cwd: string, dismissed?: boolean): bool
  * to end a title on ("Deploy Check"), and `and`/`with`/`to` never are.
  */
 const DANGLING_WORDS =
-  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had'
+  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had|do|does|did|can|could|would|should|will'
 const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
 
 /**
@@ -335,28 +335,130 @@ export function mayTopicName(cwd: string): boolean {
   return NO_IDENTITY.has(last)
 }
 
-export function topicTitle(prompt: string): string {
+/**
+ * A verb at the front of an ask names what the pane is DOING, so the card says
+ * `Fixing Remote Screen` rather than `Remote Screen` - and never the runway of the
+ * sentence around it. The map is the verb somebody types to the word a card wears; a verb
+ * not in it names nothing on its own and the subject stands alone as before.
+ */
+const DOING: Record<string, string> = {
+  fix: 'Fixing', fixing: 'Fixing', repair: 'Fixing', resolve: 'Fixing', debug: 'Debugging',
+  check: 'Checking', checking: 'Checking', see: 'Checking', look: 'Checking', review: 'Reviewing',
+  verify: 'Checking', confirm: 'Checking', test: 'Testing', investigate: 'Investigating',
+  explain: 'Explaining', understand: 'Explaining', research: 'Researching', find: 'Finding',
+  add: 'Adding', adding: 'Adding', build: 'Building', create: 'Creating', write: 'Writing',
+  make: 'Making', set: 'Setting', setup: 'Setting Up', install: 'Installing', update: 'Updating',
+  upgrade: 'Upgrading', improve: 'Improving', polish: 'Improving', harden: 'Hardening',
+  change: 'Changing', rename: 'Renaming', move: 'Moving', remove: 'Removing', delete: 'Removing',
+  clean: 'Cleaning', refactor: 'Refactoring', rewrite: 'Rewriting', redesign: 'Redesigning',
+  design: 'Designing', deploy: 'Deploying', release: 'Releasing', ship: 'Shipping',
+  publish: 'Publishing', merge: 'Merging', migrate: 'Migrating', optimise: 'Optimising',
+  optimize: 'Optimising', speed: 'Speeding', plan: 'Planning', implement: 'Building',
+  run: 'Running', try: 'Trying', compare: 'Comparing', draft: 'Drafting', prepare: 'Preparing',
+  reply: 'Replying', answer: 'Answering', translate: 'Translating', convert: 'Converting',
+  // A question is a pane explaining something: `what does this function do` is
+  // `Explaining Function`, not the question's own runway.
+  why: 'Explaining', what: 'Explaining', how: 'Explaining', where: 'Explaining',
+  when: 'Explaining', which: 'Explaining', who: 'Explaining'
+}
+
+/** Words that describe the SHAPE of an ask, not its subject: `issue with this` is nothing. */
+const HOLLOW = new RegExp(
+  '^(?:issue|issues|problem|problems|thing|things|stuff|bit|little|some|any|this|that|these|those|' +
+    'it|its|my|our|your|their|his|her|me|us|them|the|a|an|up|out|please|pls|again|now|quick|quickly|' +
+    'with|on|in|for|about|regarding|around|why|how|what|where|i|you|we|they|to|' +
+    'properly|correctly|also|really|actually|just|new|current|whole|entire|here|there|all|of|' +
+    'is|are|was|were|be|being|been|do|does|did|can|could|would|should|will|okay|ok|if|whether)$'
+)
+
+/** Where the first thought ends: the card wears one clause, never the sentence after it. */
+const CLAUSE_END =
+  /\s(?:and|but|also|so\s(?:that|it|we|i|you|they)|then|because|since|when|while|until|after|before|if|which|where|or|can|could|would|should)\s/
+
+/**
+ * A thing said to be broken is a thing being fixed: `the login page is broken on safari`
+ * is `Fixing Login Page`, and the words after the complaint are the symptom, not the name.
+ */
+const BROKEN =
+  /\s(?:is|are|was|were|isnt|arent|keeps|still|seems)?\s*(?:so|very|really|too|not|now)?\s*(?:broken|breaks|breaking|broke|not working|doesnt work|dont work|failing|fails|failed|crashes|crashing|crashed|wrong|weird|slow|stuck|missing|glitchy|laggy|buggy)(?:\s|$)/
+
+/**
+ * The runway an ask starts on - every word about the ASKING rather than the work. A lone
+ * letter or digit counts too: a stray keystroke ahead of the sentence (`r is it okay`)
+ * used to stop the stripping dead and name a card `R Is It Okay`.
+ */
+const RUNWAY =
+  /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|now|were|was|able|been|have|has|had|will|gonna|going|thats|its|im|ive|weve|youre|still|already|yes|yeah|no|not|that|this|quickly|quick|[a-z0-9])\s+/
+
+export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string {
   const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
   if (!line || line.startsWith('/')) return ''
-  let s = normalise(line)
+  // One clause: `fix the remote screen and also can you see the screenshot` is about the
+  // remote screen, and everything after `and` is another ask. Punctuation ends it too.
+  let s = normalise(line.split(/[,.;:?!()]/)[0] ?? '')
   for (;;) {
-    const cut = s.replace(
-      /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|check|make|now)\s+/,
-      ''
-    )
+    const cut = s.replace(RUNWAY, '')
     if (cut === s) break
     s = cut
   }
-  // Articles anywhere, not only at the front: `Fix The Invoice Template` spends a quarter
-  // of a four-word label on a word that identifies nothing.
-  const words = s
+  // The verb the ask opens on, if the card has a word for it: `Fixing`, `Checking`. Only
+  // a first-ask reading; a phrase earned by repetition is a subject, not a job.
+  let doing = ''
+  let first = s.split(' ')[0] ?? ''
+  // A complaint outranks its question: `why is the build so slow` is a build being fixed.
+  if (!anchor && (!DOING[first] || DOING[first] === 'Explaining')) {
+    const hurt = (' ' + s).search(BROKEN)
+    if (hurt >= 0) {
+      s = (' ' + s).slice(0, hurt).trim().replace(/^(?:why|what|how|where|when|is|are|does|do|did|the|a|an|this|that|it|my|our|so)\s+/g, '')
+      for (;;) {
+        const cut = s.replace(/^(?:why|what|how|where|when|is|are|does|do|did|the|a|an|this|that|it|my|our|so)\s+/, '')
+        if (cut === s) break
+        s = cut
+      }
+      if (s) s = 'fix ' + s
+      first = 'fix'
+    }
+  }
+  if (!anchor && DOING[first]) {
+    doing = DOING[first]
+    s = s.slice(first.length).trim()
+    // `set up`, `look at`, `speed up`: the particle belongs to the verb, not the subject.
+    s = s.replace(/^(?:up|at|into|out|on)\s+/, (m) => {
+      if (m.trim() === 'up' && /^(?:Setting|Speeding|Cleaning)$/.test(doing)) doing += ' Up'
+      return ''
+    })
+    // ...and a hollow word after the verb is the shape of the ask, not what it is about:
+    // `fix issue with this remote screen` is about the remote screen.
+    for (;;) {
+      const cut = s.replace(/^[a-z0-9]+\s+/, (m) => (HOLLOW.test(m.trim()) ? '' : m))
+      if (cut === s) break
+      s = cut
+    }
+  }
+  if (!anchor) {
+    const stop = (' ' + s + ' ').search(CLAUSE_END)
+    if (stop === 0) return ''
+    if (stop > 0) s = s.slice(0, stop - 1)
+  }
+  let words = s
     .split(' ')
     // Articles anywhere, and the single letters `normalise` leaves behind when it splits
     // `i'm` and `we've` - a card called `M Looking For Cheap` spends its first word on
     // half a contraction.
     // ...and never a word about the session itself: see `SESSION_WORDS`.
     .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w) && !SESSION_WORDS.includes(w))
-    .slice(0, 4)
+  // A phrase earned by REPETITION must contain a word that was repeated. The first four
+  // words of "so you were able to switch models for me? ... does fable have cached now"
+  // named a toolstash pane `Were Able To Switch` (2026-09-01) - the sentence's runway,
+  // with the subject the three asks agreed on ("fable", "models") still ahead. So when
+  // the opening words hold no anchor, the phrase starts one word before the first anchor
+  // and reads on from there, and an ask with no anchor at all names nothing.
+  if (anchor) {
+    const at = words.findIndex((w) => anchor.has(w))
+    if (at < 0) return ''
+    if (!words.slice(0, 4).some((w) => anchor.has(w))) words = words.slice(Math.max(0, at - 1))
+  }
+  words = words.slice(0, doing ? 3 : 4)
   // A label may not end on a word that is only there to join it to the words that were
   // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
   // card called `Pizzasrus And`, which reads as an unfinished sentence rather than a name
@@ -366,7 +468,7 @@ export function topicTitle(prompt: string): string {
   // The 26-character cap takes whole WORDS. Slicing the string left the card wearing half
   // a word - `pizzasrus and the invoice template` became `Pizzasrus And Invoice Tem`,
   // which reads as a name that got corrupted rather than one that got shortened.
-  const kept: string[] = []
+  const kept: string[] = doing ? [doing.toLowerCase()] : []
   for (const w of words) {
     const next = kept.length ? kept.join(' ').length + 1 + w.length : w.length
     if (kept.length && next > 26) break
@@ -374,6 +476,9 @@ export function topicTitle(prompt: string): string {
   }
   // ...and dropping the last word can leave the one that joined it on the end.
   while (kept.length && DANGLING.test(kept[kept.length - 1])) kept.pop()
+  // A verb with nothing after it is not a subject: `Fixing` alone says less than the
+  // folder name did.
+  if (doing && kept.length < 2) return ''
   const out = kept.join(' ').slice(0, 26)
   if (out.length < 5) return ''
   return titleCase(out)
@@ -446,7 +551,8 @@ const TOPIC_STOP = new Set(
     'shall must some more most much many any all every each other another same thing things stuff ' +
     'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
     'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
-    'working works worked run runs running fix fixes fixed add adds added change changes changed'
+    'working works worked run runs running fix fixes fixed add adds added change changes changed ' +
+    'were able thats theyre youre gonna going already'
   ).split(' ').concat(SESSION_WORDS)
 )
 
@@ -489,7 +595,7 @@ export function repeatedTopic(asks: string[]): string {
   // comes off that one, and the repetition is only what earns the rename.
   for (let i = 0; i < recent.length; i++) {
     if (!words[i].some((w) => shared.has(w))) continue
-    const phrase = topicTitle(recent[i])
+    const phrase = topicTitle(recent[i], shared)
     if (phrase) return phrase
   }
   return ''

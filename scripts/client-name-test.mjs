@@ -175,17 +175,17 @@ is(clientFromText('angie wants a call', solo)?.slug, 'angie-c', 'one client, its
 
 // -------------------------------------------------------------- the subject of a first ask
 
-is(topicTitle('check the rental car booking'), 'Rental Car Booking', 'the runway comes off')
+is(topicTitle('check the rental car booking'), 'Checking Rental Car', 'the runway comes off, the verb stays')
 is(
   topicTitle('can you please help me fix the invoice template'),
-  'Fix Invoice Template',
+  'Fixing Invoice Template',
   'politeness and articles both come off'
 )
 // A label may not end on the word that joined it to the half that was cut off:
 // `pizzasrus and the invoice template` used to name a pane `Pizzasrus And`.
-is(topicTitle('pizzasrus and the invoice template'), 'Pizzasrus And Invoice', 'never half a word')
-is(topicTitle('fix the deploy script and'), 'Fix Deploy Script', 'trailing and trimmed')
-is(topicTitle('rename the invoice folder with'), 'Rename Invoice Folder', 'trailing with trimmed')
+is(topicTitle('pizzasrus and the invoice template'), 'Pizzasrus', 'one clause, never a joining word')
+is(topicTitle('fix the deploy script and'), 'Fixing Deploy Script', 'trailing and trimmed')
+is(topicTitle('rename the invoice folder with'), 'Renaming Invoice Folder', 'trailing with trimmed')
 is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder', 'a real four-word subject survives')
 is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
 is(
@@ -195,7 +195,7 @@ is(
 )
 is(
   topicTitle('we need to set up meta ads for the new offer'),
-  'Set Up Meta Ads',
+  'Setting Up Meta Ads',
   'the runway comes off a real errand too'
 )
 
@@ -209,6 +209,23 @@ is(mayTopicName('/Users/r/Projects/clients'), true, 'the client tree root')
 is(mayTopicName('/Users/r/Projects/clients/pizzasrus/menu'), true, 'anywhere inside it')
 is(mayTopicName('C:\\Users\\Gamer\\Desktop\\Projects\\clients\\angie'), true, 'either separator')
 is(mayTopicName(''), false, 'no folder, no rename')
+
+// A card says what the pane is DOING. `R Is It Okay` and `See This Error Can` (2026-09-02)
+// were the runway of a sentence, cut mid-thought; the verb at the front is the name.
+is(
+  topicTitle('can you help fix issue with this remote screen looking weird for a bit until it changes'),
+  'Fixing Remote Screen',
+  'the verb leads, the hollow words after it come off, one clause only'
+)
+is(topicTitle('see this error, can you check why it happens'), 'Checking Error', 'punctuation ends the clause')
+is(topicTitle('r is it okay to delete the old worktrees?'), 'Removing Old Worktrees', 'a stray letter is runway')
+is(topicTitle('is it okay if we ship today'), '', 'a question with no subject names nothing')
+is(topicTitle('the login page is broken on safari'), 'Fixing Login Page', 'a thing said to be broken is being fixed')
+is(topicTitle('why is the build so slow'), 'Fixing Build', 'a complaint is a fix')
+is(topicTitle('what does this function do'), 'Explaining Function', 'a question is an explanation')
+is(topicTitle('speed up the test suite please'), 'Speeding Up Test Suite', 'the particle stays with its verb')
+is(topicTitle('update all the dependencies and run the tests'), 'Updating Dependencies', 'the second ask is not the name')
+is(topicTitle('fix'), '', 'a verb with nothing after it is not a subject')
 
 is(topicTitle('/clear'), '', 'a slash command is a command, not a subject')
 is(topicTitle('ok'), '', 'too short to identify a pane')
@@ -258,6 +275,19 @@ is(
 )
 is(say('/clear', '/clear', '/clear'), '', 'slash commands say nothing')
 is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'runway and verbs drop out')
+// The phrase must hold a word the asks agreed on. This named a toolstash pane
+// `Were Able To Switch` on 2026-09-01: the runway of a question, subject still ahead.
+{
+  const named = say(
+    'so you were able to switch models for me? thats good but does fable have cached now',
+    'is fable cheaper than opus for these models',
+    'switch the default models back to fable'
+  )
+  ok(/Fable|Models/.test(named), `the phrase carries the repeated word, got "${named}"`)
+  ok(!/Were|Able/.test(named), `and never the runway, got "${named}"`)
+  is(topicTitle('so you were able to switch models for me'), 'Switch Models For Me', 'the runway is cut even without an anchor')
+  is(topicTitle('please look at this again', new Set(['invoice'])), '', 'an ask holding no anchor names nothing')
+}
 
 // Housekeeping the desk does to itself between jobs is not the job. A pane in
 // `Projects/PaneForge` came back from a `/clear` wearing the name `Handoff`.
@@ -317,7 +347,7 @@ is(
   // says `clients` - but it says so as a GUESS, so it cannot overwrite anything later.
   const tree = '/Users/r/Projects/clients'
   const guess = topicReading(tree, ['check the rental car booking'], 'check the rental car booking')
-  is(guess.title, 'Rental Car Booking', 'a client-tree pane is still named off its first ask')
+  is(guess.title, 'Checking Rental Car', 'a client-tree pane is still named off its first ask')
   is(guess.strong, false, '...as a guess, which never replaces a subject already earned')
 
   // ...and once the tree pane has repeated itself, that reading outranks the first-ask one.

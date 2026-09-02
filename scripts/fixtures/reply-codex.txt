@@ -1,0 +1,36 @@
+
+╭─────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.149.1)              │
+│                                         │
+│ model:       loading   /model to change │
+│ directory:   ~/Projects/taskdriver.ai-a │
+│ permissions: YOLO mode                  │
+╰─────────────────────────────────────────╯
+
+⚠ Ignored invalid status line item: "git-sync".
+
+╭──────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.149.1)                       │
+│                                                  │
+│ model:       gpt-5.6-sol high   /model to change │
+│ directory:   ~/Projects/taskdriver.ai-a          │
+│ permissions: YOLO mode                           │
+╰──────────────────────────────────────────────────╯
+
+  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true
+
+
+› hey
+
+
+• SessionStart hook (completed)
+  hook context: SHARED CODEX MEMORY (git-synced; durable context, verify time-sensitive facts):
+    # Codex Shared Memory Index
+    … +76 lines (ctrl + t to view transcript)
+
+• SessionStart hook (completed)
+  hook context: SESSION HANDOFF (shared project memory; prior-task state, verify time-sensitive details):
+    # Handoff 2026-08-24 — auto-saved on /clear
+    … +5 lines (ctrl + t to view transcript)
+
+  gpt-5.6-sol high · ~/Projects/taskdriver.ai-a · lane-a · Context 6% used · 20.3K used · weekly 90% left

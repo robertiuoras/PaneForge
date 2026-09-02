@@ -40,7 +40,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
-import { laneOfCheckout } from '../shared/place'
+import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -87,7 +87,7 @@ import {
   newSubmitLine,
   typeLine
 } from '../shared/slashTurn'
-import type { DraftState } from '../shared/draft'
+import { feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, hasAgent, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
@@ -96,6 +96,7 @@ import { anchoredStart, readsBusy, type BusyReason } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
@@ -425,6 +426,15 @@ interface Live {
    * only question it is asked: did this Enter send anything at all.
    */
   submitLine: DraftState
+  /**
+   * The SAME keystrokes a third time, and this one keeps everything: paste decoded, no
+   * cap worth hitting. The rail's prompt tags are built from keystrokes in the RENDERER,
+   * which means a prompt this app typed (an autoclear's resume, `pf open --prompt`) or a
+   * phone typed never got one - "there was a prompt but no tag to scroll to it". Main is
+   * the one place every byte into the pty passes, so the line is rebuilt here too and
+   * handed to the window as `typed` when it did not come from the window itself.
+   */
+  draft: DraftState
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -449,6 +459,12 @@ interface Live {
    */
   runEndedAt?: number
 }
+
+/**
+ * Who typed the bytes. `desk` is this machine's window, which tags its own prompts;
+ * `app` is this process (`queuePrompt`); `phone` is a browser client over `phone.ts`.
+ */
+export type WriteOrigin = 'desk' | 'app' | 'phone'
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
@@ -616,7 +632,11 @@ export class SessionManager extends EventEmitter {
 
     const meta: Session = {
       id,
-      title: req.title ?? basename(req.cwd),
+      // The PROJECT, never the folder: a pane opened in the `PaneForge-a` worktree is
+      // still working on PaneForge, and the `-a` is a slot id this app invented. The
+      // copy is already said by the chip beside the name (`copy 2`), so the folder
+      // spelling here was the machinery leaking onto the card twice.
+      title: req.title ?? projectOf(req.cwd, req.lane),
       cwd: req.cwd,
       agent,
       model: req.model || undefined,
@@ -681,6 +701,7 @@ export class SessionManager extends EventEmitter {
       lastTail: '',
       typed: '',
       submitLine: newSubmitLine(),
+      draft: newDraft(),
       slashAt: 0,
       slashQuietUntil: 0,
       stallRaised: false
@@ -691,6 +712,14 @@ export class SessionManager extends EventEmitter {
     if (back.text) {
       live.buffer.set(back.text)
       if (back.cols > 0) meta.replayCols = back.cols
+      // ...and into THIS session's own log, because the next desk will name this id, not
+      // the one it was read from (`scrollbackId: s.meta.id` in `snapshot`). A pane that
+      // came back asleep prints nothing, so its log held only the marks, and the restart
+      // after that one replayed an empty file: measured 2026-09-02, pane 2's log 1,222
+      // bytes with a 2.3 MB predecessor on disk. Robert: "cant scroll up session 2 and
+      // see the history of it". Bounded by `BUFFER_LIMIT`, the same cap `tail` reads.
+      recordData(id, back.text)
+      if (back.cols > 0) noteCols(id, back.cols)
     }
     this.sessions.set(id, live)
     if (born) {
@@ -830,7 +859,7 @@ export class SessionManager extends EventEmitter {
     if (!live) return
     live.meta.clientOff = true
     live.meta.clientSlug = undefined
-    live.meta.title = basename(live.meta.cwd)
+    live.meta.title = projectOf(live.meta.cwd, live.meta.lane)
     this.emitSessions()
   }
 
@@ -853,6 +882,11 @@ export class SessionManager extends EventEmitter {
       if (!lane || !now || now.meta.lane) return
       now.meta.lane = lane
       now.req = { ...now.req, lane }
+      // The title was written before the lane was known, so a pane opened straight into
+      // a worktree this app did not create was called `PaneForge-a`. Only a title that
+      // is still the bare folder name is rewritten - a typed name or a client name is
+      // somebody's answer and is never argued with.
+      if (now.meta.title === folderName(cwd)) now.meta.title = projectOf(cwd, lane)
       this.emitSessions()
     })
   }
@@ -1183,7 +1217,7 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, text)
   }
 
-  write(id: string, data: string): void {
+  write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return
     live.proc.write(data)
@@ -1191,6 +1225,18 @@ export class SessionManager extends EventEmitter {
     // "typing" to the gate below, but it still has to erase from this record.
     live.typed = typeLine(live.typed, data)
     live.submitLine = feedSubmitLine(live.submitLine, data)
+    // The whole line, for the rail. The window builds its own tags from the keystrokes it
+    // relays, so a line that came FROM the window is already tagged there; only a line
+    // typed by this app or by a phone needs telling. `Live.draft` says why.
+    const whole = feedDraft(live.draft, data)
+    live.draft = whole.state
+    if (origin !== 'desk') {
+      // The origin travels with the line. A person typed it on a phone or on a paired
+      // machine; the APP typed `/clear` and an autoclear's resume text, and those must not
+      // arm the keeper a second time or be archived as an ask somebody made.
+      for (const line of whole.submitted)
+        if (line.trim().length > 1) this.emit('typed', id, line, origin)
+    }
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
@@ -1237,6 +1283,15 @@ export class SessionManager extends EventEmitter {
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
+      // A7: how often a person had to step in. Counted here because this is the one place
+      // that knows all four readings at once - who did it, whether anything was sent,
+      // whether the pane was holding a question, and whether a turn was running.
+      // `shared/interventions.ts` decides; an `app` write never counts.
+      live.meta.interventions = countIntervention(
+        { hand: origin, submitted: true, bare, asking: Boolean(live.meta.ask), running: Boolean(live.meta.runSince) },
+        live.meta.interventions ?? 0,
+        { id, project: basename(live.meta.cwd || '') }
+      )
       live.submitLine = newSubmitLine()
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a
@@ -1701,7 +1756,7 @@ export class SessionManager extends EventEmitter {
    * that gap somebody at the desk may have answered it - at which point the keys would
    * land in a composer, as an arrow through history and a return that submits it.
    */
-  choose(id: string, n: number): boolean {
+  choose(id: string, n: number, hand: WriteOrigin = 'desk'): boolean {
     const live = this.sessions.get(id)
     const ask = live?.meta.ask
     if (!live || !ask) return false
@@ -1722,7 +1777,10 @@ export class SessionManager extends EventEmitter {
       setTimeout(() => {
         const now = this.sessions.get(id)
         if (!now || !sameAsk(now.meta.ask, ask)) return
-        this.write(id, k)
+        // The hand travels with the keys. `autoAnswer` presses through this same method,
+        // and a question the APP answered must not read as one a person answered - that
+        // is the whole difference A7's number is made of.
+        this.write(id, k, hand)
       }, i * CHOOSE_GAP_MS)
     )
     return true
@@ -2107,7 +2165,7 @@ export class SessionManager extends EventEmitter {
       const t = setTimeout(() => {
         if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
-        this.write(id, clearCmd)
+        this.write(id, clearCmd, 'app')
         // Everything after the clear goes through the machinery that already knows how to
         // put text into a CLI's composer: it waits for the composer to be IDLE rather than
         // guessing at a settle time, sends the return as its own write a beat later, and
@@ -2138,7 +2196,7 @@ export class SessionManager extends EventEmitter {
         this.queuePrompt(id, switchCmd, 0, CLEAR_PROMPT_START_MS, () => {
           const c = setTimeout(() => {
             if (!this.sessions.get(id)) return acLog(`${id} model switch confirm skipped: pane gone`)
-            this.write(id, '\r')
+            this.write(id, '\r', 'app')
             typeResume()
           }, SUBMIT_GAP_MS)
           c.unref?.()
@@ -2528,7 +2586,7 @@ export class SessionManager extends EventEmitter {
     // re-stamp the mark so the confirm returns never read as somebody else.
     let mark = this.sessions.get(id)?.meta.lastKeyboard ?? Date.now()
     const ourWrite = (data: string): void => {
-      this.write(id, data)
+      this.write(id, data, 'app')
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
     }
@@ -2766,7 +2824,7 @@ export class SessionManager extends EventEmitter {
     console.info(
       `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`
     )
-    this.choose(live.meta.id, pick.n)
+    this.choose(live.meta.id, pick.n, 'app')
   }
 
   /**

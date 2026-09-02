@@ -1,0 +1,62 @@
+  upsell pattern), Alison, Settle Ease, Prospect Finance, Level 8, plus the other-sites and prospects rosters. Rule now written into CLAUDE.md: a file only
+  exists for stack, traps, decisions and off-platform commercial terms. Everything transactional is a board query.
+
+  Em dashes: banned in the repo rules, and I stripped all 67 from the files already written.
+
+  Watermarks: no. There is nothing hidden in text I give you. I scanned every file I wrote for zero-width spaces, directional marks, word joiners, BOMs and
+  soft hyphens, and found none. No steganographic marker exists in my output, so nothing survives a copy-paste that could flag it.
+
+  What does give it away is stylistic, and that is what your em-dash instinct was picking up on. The other tells: "it's not just X, it's Y" constructions,
+  rule-of-three lists in every paragraph, "delve", "moreover", "I'd be happy to", and openers that restate the question before answering. I have added those to
+  the repo rule alongside the em dash ban.
+
+✻ Brewed for 1m 31s
+
+※ recap: Built the clients repo into your quoting brain: real rate card from 149 paid jobs, files only where taskdriver's CRM can't hold the detail. Next
+  action is yours, send the Angie $800 chase and the Angelo reply. (disable recaps in /config)
+
+❯ can you check my other memory files for em dashes too and give me angelo draft again a bit shorter with maybe price should we mention or can just tell me    
+  him to do those steps so we dont waste time on him                                                                                                           
+
+⏺ Bash(cd /Users/robertiuoras/Projects/claude-memory
+      echo "=== existing em dash rule ==="; cat ai-viral-content-intelligence/no-emdashes.md 2>/dev/null; cat shared/cop…)
+  ⎿  === existing em dash rule ===
+     ---
+     name: no-emdashes
+     … +65 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /Users/robertiuoras/Projects/clients
+
+⏺ 15,054 em dashes across claude-memory, and the rule already exists: ai-viral-content-intelligence/no-emdashes.md (2026-06-14, "never, forever") plus
+  shared/copy-style-no-ai-tells.md. So this is not a missing rule, it is a rule that has been ignored for two months.
+
+  I am not mass-stripping them, and I want to be clear that is a judgement call rather than laziness. The bulk sits in archived research notes:
+  brain/wiki/tools-radar.md (328), reminders-triage-2026-07.md (325), the AI-coding wiki pages. Nobody reads those but me, a blind sed would mangle table cells
+  where "—" means an empty column, and it would produce a many-thousand-line diff across every project's history for zero benefit. The em dash only costs you
+  something when it reaches a client. The clients repo is clean, which is the part that ships.
+
+  Angelo, shorter, with the price:
+
+  Hi Angelo,
+
+  This is doable, but not through the Gemini in your Workspace.
+
+  Lucid connects over MCP, and Gemini only supports MCP in the Gemini CLI, the command-line tool installed on a machine. The Gemini inside Workspace (Docs,
+  Gmail, the sidebar) has no MCP support, so there is no way to switch this on for the whole team today. It is a per-person setup.
+
+  Porter Metrics is a reporting connector for your ad data into Looker Studio, so nothing to reuse there.
+
+  If it is just you, it is about an hour: install Gemini CLI, point it at Lucid's MCP server, authorise with your Lucid login. It only ever sees documents you
+  already have access to. Happy to set it up and walk you through it for $150, or if you want to try it yourself the two links you sent cover it.
+
+  One thing to check first: which Lucid plan are you on? Free and Individual connect directly. On Team or Enterprise a Lucid admin has to enable MCP access
+  before anything will work.
+
+  Robert
+
+  The $150 sits in your configure-it-for-me band, where you have billed $160 (LinkedIn Navigator, 1 hour) and $180 (OpenClaw). Offering the DIY route in the
+  same breath costs you nothing: if he takes it you have spent one email, and if he does not, you have anchored the price without a negotiation.
+
+✻ Worked for 42s
+
+※ recap: Built the clients repo into your pricing and scoping brain, with taskdriver holding all CRM facts. Angelo's reply is drafted at $150 and ready to
+  send; the Angie $800 chase text is also waiting on you. (disable recaps in /config)

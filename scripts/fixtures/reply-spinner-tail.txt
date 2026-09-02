@@ -1,0 +1,30 @@
+
+⚠ There was a network issue connecting to the server, please try again.
+Error ID: 93c1b79c-a405-4a03-bd15-211fcadede44-870
+
+● Bash(git status)
+● Bash(git log -n 2)
+● Bash(git tag v0.8.166 && git push origin v0.8.166)
+● Bash(gh run list --limit 3) (ctrl+o to expand)
+
+  Yes. The version has been bumped to v0.8.166, tagged, and pushed to origin.
+
+  Release Pipeline Status
+
+  • Tag: v0.8.166
+  • Workflow: GitHub Actions Release #33037739791 https://github.com/robertiuoras/PaneForge/actions/runs/33037739791 is currently running to build and
+  publish the Mac and Windows installers.
+
+  Included in v0.8.166
+
+  • Smart Markdown Auto-Merge: Added lane-merge.mjs:75-120 so distinct section and bullet log appends in markdown files merge cleanly without stalling lanes
+  in conflict.
+  • 24-Hour Lane Retention: Clean or merged worktree folders are preserved for at least 24 hours in laneWork.ts:550-558 before sweeping, and missing lane
+  folders automatically fall back to the base repo in history.ts:246-253 and sessions.ts:472-485.
+  • Antigravity History & Conversation Resumption: Added full Antigravity support in transcripts.ts:34-90 so conversation IDs are saved to history and
+  reopening restores the actual conversation state instead of starting fresh from /clear.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[CAVEMAN] ◆ Gemini 3.7 Flash (High) | PaneForge |  master | ✓ synced | █░░░░░░░░░ 15% 149.9k/1.0M | Quota 76% (~3h27m reset)

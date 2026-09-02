@@ -86,3 +86,29 @@ export function seedPrompts(lines: string[]): SeededPrompt[] {
   }
   return [...seen.values()].sort((a, b) => a.line - b.line)
 }
+
+/**
+ * What the CLI says a slash command was, once it has run it.
+ *
+ * The rail tags what was TYPED, and for a slash command that is not what was sent:
+ * Claude Code's completion menu takes the first return, so `/mode` plus Enter runs
+ * `/model`, and the tag then reads `/mode` - "that was never typed". Measured in this
+ * desk's own history logs (34 echoes of `❯ /model`, none of `❯ /mode`): the CLI draws
+ * the command it ran on its own echo line, the same `❯` line `seedPrompts` reads.
+ *
+ * `rows` are the rows painted since the tag's line. Answers the echoed command when it
+ * completes the typed token (same first word, or the typed word is a prefix of it);
+ * `null` while no such echo has been drawn. A slash echo for some OTHER command is not
+ * this tag's, so it is `null` too - the tag keeps what was typed rather than guessing.
+ */
+export function completedSlash(typed: string, rows: string[]): string | null {
+  const want = typed.trim().split(/\s+/)[0] ?? ''
+  if (!want.startsWith('/') || want.length < 2) return null
+  for (const row of rows) {
+    const text = promptEcho(row)
+    if (!text.startsWith('/')) continue
+    const got = text.split(/\s+/)[0]
+    if (got.startsWith(want)) return text
+  }
+  return null
+}

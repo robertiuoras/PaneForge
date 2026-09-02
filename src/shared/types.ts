@@ -350,6 +350,15 @@ export interface Session {
     /** what that device calls itself, for the pane badge */
     name: string
   }
+  /**
+   * How many times a person has had to step in on this pane - answered a question the app
+   * would not answer, typed into a turn that was running, or said what to do next.
+   *
+   * A7 of the autonomous-task milestone: the target is a NUMBER (0-2 per feature) and
+   * nothing measured it. `shared/interventions.ts` decides what counts; an `app` write -
+   * a queued prompt, an autoclear, an auto-answered question - never does.
+   */
+  interventions?: number
   /** This pane's output is being teed to a file as it runs. See `main/pipe.ts`. */
   piping?: PipeInfo
   /**
@@ -793,6 +802,12 @@ export interface UpdateState {
   error?: string
   /** release page to open by hand, used where in-place update is not possible */
   url?: string
+  /**
+   * This build is ready and two earlier ones were already thrown away unused, so the app
+   * has stopped waiting to be asked and will restart itself once no pane is in use.
+   * See shared/updateStale.ts.
+   */
+  ignored?: boolean
 }
 
 /**
@@ -1138,6 +1153,8 @@ export interface RemotePeerState extends RemotePeer {
   status: 'off' | 'connecting' | 'online' | 'error'
   /** why it is not connected, in words meant for the person reading them */
   error?: string
+  /** the PaneForge version that device reported at handshake, known only while connected */
+  version?: string
   /** panes mirrored from it right now */
   sessions: number
   /** every pane it has, mirrored or not, so the panel can offer the pick */
@@ -1183,6 +1200,8 @@ export interface RemoteState {
     addresses: string[]
     /** a device on this network may raise an Approve card here instead of typing the code */
     pairByAsking: boolean
+    /** this app's own version - so the renderer never needs to import Electron to read it */
+    version: string
   }
   peers: RemotePeerState[]
   found: RemoteFound[]
@@ -2049,6 +2068,13 @@ export interface Api {
   logReclaim(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
   listActivity(): Promise<ActivityFeed>
+  /**
+   * The prompt a pane opened on a backlog task starts with, or why there is none.
+   *
+   * Reading only - the backlog has one writer (`claude-config/backlog.mjs`). Reached by
+   * `pf open --task <id>`, which refuses BEFORE opening a pane when the id names nothing.
+   */
+  taskBrief(ref: string): Promise<{ prompt: string } | { error: string }>
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
   killSession(id: string): Promise<void>
@@ -2647,6 +2673,8 @@ export interface Api {
    * screen into the scrollback now, exactly as it does for a clear somebody typed.
    */
   onPaneArmClear(cb: (id: string) => void): () => void
+  /** A line submitted into this pane by the app or a phone - not by this window. */
+  onPaneTyped(cb: (id: string, line: string, origin: 'person' | 'app') => void): () => void
   /**
    * The pane is mid-autoclear-handover until `until` (epoch ms), or free again at 0.
    *

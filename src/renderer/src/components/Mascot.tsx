@@ -42,15 +42,18 @@ import {
   DEFAULT_MASCOT,
   isDestructive,
   notice,
+  paneWord,
   parse,
   type ActedPane,
   type Intent,
   type MascotConfig,
   type MascotPane
 } from '@shared/mascot'
+import { firstMood, nextMoodAt, petMood, type MoodState } from '@shared/petMood'
 import type { RunningDev } from '@shared/devList'
 import { appVisible, onAppVisible } from '../appVisible'
 import { setMascotRect } from '../mascotSpot'
+import './mascotMood.css'
 
 /* ---- the card's own icons ---------------------------------------------------
    These were emoji - ⧉ 🔊 🔇 📍 ✕ - and an emoji is the one glyph in this window that
@@ -279,6 +282,29 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
 
   const panes = props.panes
   const soon = props.closeSoon
+
+  /**
+   * What the desk looks like, on the sprite - `shared/petMood.ts` decides, this draws it.
+   *
+   * Two holders, deliberately: the ref is what the next reading is judged against (a mood
+   * is the difference between two readings, so it must never be a render behind), and the
+   * state is what is on screen. Re-read when the pane list changes and at nothing else
+   * except ONE timer to the next moment the mood could change with the desk standing
+   * still - a cheer running out, a quiet desk crossing into a nap, a change the anti-
+   * flicker hold is refusing. `nextMoodAt` returns null the rest of the time, which is
+   * most of it, and then no timer is armed at all.
+   */
+  const moodRef = useRef<MoodState>(firstMood(Date.now()))
+  const [mood, setMood] = useState<MoodState>(moodRef.current)
+  const [moodAt, setMoodAt] = useState(0)
+  // When the list was last rebuilt, so `idleMs` - which is a snapshot, not a clock - can
+  // be aged forward when the nap timer wakes us with an unchanged list. Without it the
+  // desk crosses two minutes of quiet, the timer fires, and the reading still says the
+  // quiet was however long it was two minutes ago: the pet would never sleep.
+  const listAt = useRef(Date.now())
+  useMemo(() => {
+    listAt.current = Date.now()
+  }, [panes])
   // Ten of them, one drawing machine (shared/pets.ts). Only THIS one's layers are ever
   // mounted, and each layer is walked into horizontal runs once per app run and cached by
   // identity - so switching pet costs one walk and changing nothing costs none.
@@ -549,6 +575,37 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
     setBubbleSize((b) => (b.w === w && b.h === h ? b : { w, h }))
   })
 
+  useEffect(() => {
+    if (!cfg.enabled || !drawn) {
+      // The record of what was working goes with the pet. Left standing, it is a reading
+      // of the desk from whenever it was last drawn - so switching the pet back on
+      // compares live panes against a set from minutes ago and cheers for work that
+      // finished while nobody was being told about it.
+      moodRef.current = firstMood(Date.now())
+      return
+    }
+    const now = Date.now()
+    const age = now - listAt.current
+    const read = age > 500 ? panes.map((p) => ({ ...p, idleMs: p.idleMs + age })) : panes
+    const next = petMood(read, now, moodRef.current)
+    moodRef.current = next
+    setMood((m) => (m.mood === next.mood && m.goto === next.goto ? m : next))
+    const at = nextMoodAt(read, now, next)
+    if (at === null) return
+    const t = window.setTimeout(() => setMoodAt(Date.now()), Math.max(50, at - now))
+    return () => window.clearTimeout(t)
+  }, [panes, moodAt, cfg.enabled, drawn])
+
+  /**
+   * The pane a press on the sprite should go to: the one that is asking, and only while
+   * the pet is alert about it. With several asking it is the one that has been waiting
+   * longest, which `petMood` already picked.
+   */
+  const asker = useMemo(
+    () => (mood.mood === 'alert' && mood.goto ? (panes.find((p) => p.id === mood.goto) ?? null) : null),
+    [mood.mood, mood.goto, panes]
+  )
+
   const run = useCallback(
     (i: Intent) => {
       if (i.kind === 'close') props.onClose(i.ids)
@@ -790,9 +847,20 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
         <button
           ref={body}
           className={
-            'mascot-body' + (blink ? ' blink' : '') + (dragging ? ' dragging' : '') + (soon ? ' alert' : '')
+            'mascot-body' +
+            // A question holds the eyes open: the lid is dropped here rather than in CSS
+            // so the two rules cannot end up at equal specificity in two stylesheets and
+            // have the bundler's ordering decide which one a blink obeys.
+            (blink && mood.mood !== 'alert' ? ' blink' : '') +
+            (dragging ? ' dragging' : '') +
+            (soon ? ' alert' : '') +
+            ` mood-${mood.mood}`
           }
-          title="Ask about this machine - drag to move it"
+          title={
+            asker
+              ? `${paneWord(asker)} is asking you something - click to go`
+              : 'Ask about this machine - drag to move it'
+          }
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
@@ -812,6 +880,17 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
             // sprite, which reads as the press not working. A countdown is NOT dismissed
             // by it - that bubble has two named answers and neither of them is a stray
             // click on the sprite.
+            // A pane is waiting on an answer, so the press is worth more as a way to GET
+            // there than as a way to open a box about memory. It reveals the pane and
+            // walks to it, and it deliberately does not open the bubble: the sentence a
+            // bubble would carry is already on screen, in the pane it just went to.
+            if (asker) {
+              walkTo(asker.id)
+              props.onReveal(asker.id)
+              setBubble(null)
+              setOpen(false)
+              return
+            }
             if (open || bubble) {
               setOpen(false)
               setBubble(null)

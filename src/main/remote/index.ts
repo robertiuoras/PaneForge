@@ -317,7 +317,8 @@ export class Remote extends EventEmitter {
         hosting: this.host.listening,
         error: this.host.error || undefined,
         addresses: localAddresses(),
-        pairByAsking: pairAskingOn(c)
+        pairByAsking: pairAskingOn(c),
+        version: this.me().version
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
@@ -326,6 +327,7 @@ export class Remote extends EventEmitter {
           ...p,
           status: client?.status ?? 'off',
           error: client?.error || undefined,
+          version: client?.peerVersion || undefined,
           // Everything `shared/fleet.ts` reads travels, so a pane on that machine can be
           // ranked and drawn here without being mirrored. This map used to keep six
           // fields, which was enough for the Devices pick list and left the sidebar with

@@ -21,8 +21,8 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { spawn } from 'node:child_process'
-import { cpus } from 'node:os'
+import { execFileSync, spawn } from 'node:child_process'
+import { cpus, loadavg } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,6 +33,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TESTS = [
   ['shipimports', 'ship-imports-test.mjs'],
   ['power', 'power-test.mjs'],
+  ['killguard', 'kill-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
@@ -52,6 +53,9 @@ const TESTS = [
   ['dropimage', 'drop-image-test.mjs'],
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['promptforge', 'prompt-forge-test.mjs'],
+  ['taskbrief', 'task-brief-test.mjs'],
+  ['interventions', 'interventions-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
@@ -76,21 +80,25 @@ const TESTS = [
   ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
+  ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
   ['devlist', 'devlist-test.mjs'],
   ['backjobs', 'backjobs-test.mjs'],
   ['orcatalogue', 'or-catalogue-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
+  ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
   ['promptecho', 'promptecho-test.mjs'],
   ['winfeed', 'winfeed-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
-  ['turncopy', 'turncopy-test.mjs'],
+  ['replytext', 'replytext-test.mjs'],
+  ['reviewfixes', 'review-fixes-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],
   ['glass', 'glass-test.mjs'],
   ['phonetouch', 'phone-touch-test.mjs'],
+  ['phonetop', 'phone-top-test.mjs'],
   ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
   ['stashtheme', 'stash-theme-test.mjs'],
@@ -99,6 +107,7 @@ const TESTS = [
   // Was on disk and in no list, so it went red at two renames and nobody heard: it still
   // wanted `lane a` and `main checkout` months after both were replaced.
   ['laneholder', 'lane-holder-test.mjs'],
+  ['laneoverlap', 'lane-overlap-test.mjs'],
   ['laneplain', 'lane-plain-test.mjs'],
   // A copy of a project is out of Finder, and a project that merely ends in `-a` is not.
   ['lanehidden', 'lane-hidden-test.mjs'],
@@ -116,6 +125,7 @@ const TESTS = [
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device
   // that freezes instead of reporting itself gone is too costly to catch by hand.
   ['deadlink', 'deadlink-test.mjs'],
+  ['remoteversion', 'remote-version-test.mjs'],
   // Four short child processes, ~3s: the incident it covers left this desk unable to
   // update for 28 hours while every surface read as healthy.
   ['blindlist', 'updater-blindlist-test.mjs'],
@@ -163,7 +173,10 @@ const TESTS = [
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
+  ['openurl', 'open-url-test.mjs'],
+  ['spawnquiet', 'spawn-quiet-test.mjs'],
   ['updatehold', 'update-hold-test.mjs'],
+  ['updatestale', 'update-stale-test.mjs'],
   ['gitpoll', 'git-poll-test.mjs'],
   ['recall', 'prompt-recall-test.mjs'],
   ['draft', 'prompt-draft-test.mjs'],
@@ -216,7 +229,32 @@ if (!run.length) {
  * below rather than forcing the whole run back into a queue.
  */
 const jobsArg = /^--jobs=(\d+)$/.exec(process.argv.slice(2).find((a) => a.startsWith('--jobs=')) ?? '')
-const JOBS = Math.max(1, Number(jobsArg?.[1] ?? process.env.PF_TEST_JOBS ?? Math.min(8, cpus().length)))
+/**
+ * A busy desk gets a narrower pool. 2026-09-02: three panes ran this suite at once, 8 jobs
+ * each, beside taskdriver's next workers - node alone swung to 6.4 GB on a 16 GB machine
+ * already at kernel pressure level 2 with 129 MB unused, load 70 on 10 cores. The suite
+ * was the biggest single mover of the lag, not the app it tests. So the width is read off
+ * the machine at start: pressure 2+ (warn) or a load past the core count means 2 jobs.
+ * An explicit `--jobs=` or PF_TEST_JOBS is a decision and is never overridden.
+ */
+export const BUSY_JOBS = 2
+export function deskBusy({ pressure, load, cores }) {
+  return pressure >= 2 || load > cores
+}
+function pressureLevel() {
+  if (process.platform !== 'darwin') return 0
+  try {
+    return Number(execFileSync('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { encoding: 'utf8' }).trim()) || 0
+  } catch {
+    return 0
+  }
+}
+const asked = jobsArg?.[1] ?? process.env.PF_TEST_JOBS
+const desk = { pressure: pressureLevel(), load: loadavg()[0], cores: cpus().length }
+const JOBS = Math.max(1, Number(asked ?? (deskBusy(desk) ? BUSY_JOBS : Math.min(8, desk.cores))))
+if (asked == null && JOBS === BUSY_JOBS) {
+  console.log(`desk busy (pressure ${desk.pressure}, load ${desk.load.toFixed(1)} on ${desk.cores} cores): ${JOBS} jobs`)
+}
 
 /**
  * Suites that may not share the machine, each with the reason it cannot.

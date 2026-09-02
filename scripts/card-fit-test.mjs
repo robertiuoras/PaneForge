@@ -55,6 +55,15 @@ function page(rowSub, remote = false, titleChips = '', name = 'PaneForge') {
   return `<!doctype html><meta charset="utf-8"><style>
   html,body{margin:0;background:#111;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px}
   ${css}
+  /* Every measurement here is a WIDTH, and an animation that moves a box is width noise.
+     The clock pill's sheen (.elapsed::after) is absolutely positioned, inset 0, and
+     translated to plus/minus 120% of the pill. The pill is overflow:hidden, so it is a
+     scroll container and scrollWidth counts that overflowing sheen: the clock reported
+     anywhere between 53px and 116px of wanted width for the same fixed text, depending
+     on which frame of a 3.6s loop the measurement landed on. Nothing about the card was
+     wrong; the ruler was moving. Same trick as npm run test:contrast, which kills
+     animation before it samples pixels. */
+  *, *::before, *::after { animation: none !important; transition: none !important; }
   </style>
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">

@@ -165,11 +165,11 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   }
   html.handheld.handheld-list .panes { display: none; }
   /* Room for the Back chip, and a finger's worth of edge. */
-  html.handheld .panes { padding: 44px 4px max(4px, env(safe-area-inset-bottom)); }
-  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 4px; }
+  html.handheld .panes { padding: calc(44px + env(safe-area-inset-top)) 4px max(4px, env(safe-area-inset-bottom)); }
+  html.handheld .panes:not(.grid) .pane { inset: calc(44px + env(safe-area-inset-top)) 4px 4px; }
   .handheld-back {
     position: absolute;
-    top: 6px;
+    top: max(6px, calc(env(safe-area-inset-top) + 2px));
     left: 6px;
     z-index: 40;
     display: flex;
@@ -194,8 +194,32 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   /* The list is the home screen, so the 282px sidebar's rows become finger-sized cards:
      every row at least Apple's 44px, real borders so each card reads as one tap target,
      and the desktop's hover-density type stepped up to phone size. */
-  html.handheld.handheld-list .sidebar { padding: 14px 12px; }
+  /* The padding-bottom above is the home indicator's, and a shorthand here would put
+     12px back over it - so the shorthand is not used. */
+  /* A phone opened from the home screen paints under the status bar (`viewport-fit=cover`),
+     so the brand row - PaneForge, the settings and help buttons - sat behind the clock and
+     could not be seen or pressed. The inset is 0 in a browser tab and the row does not move. */
+  html.handheld.handheld-list .sidebar {
+    padding-top: max(14px, calc(env(safe-area-inset-top) + 6px));
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  /* A phone's home screen is the list, and it was getting 477px of an 844px screen:
+     250px of chrome above it and 108px below. What goes is what a phone cannot act on -
+     `Focus / Grid / Save` arrange panes side by side, which this screen never does; the
+     build number is the desk's; and `SESSIONS (n)` labels a screen that holds nothing
+     else. The count itself is not lost: it is on the section heading of each group. */
+  html.handheld.handheld-list .foot,
+  html.handheld.handheld-list .version,
+  html.handheld.handheld-list .sidebar > .section { display: none; }
+  /* The one button on this screen that starts something, at a finger's size. */
+  html.handheld.handheld-list .primary { min-height: 44px; }
   html.handheld.handheld-list .list { gap: 8px; }
+  /* The browser scrolls this list, not the drag handler: a press on a card must be
+     allowed to become a vertical scroll, and the pointercancel that comes with it is
+     already read as "not a tap". */
+  html.handheld.handheld-list .list,
+  html.handheld.handheld-list .list .row { touch-action: pan-y; }
   html.handheld.handheld-list .list .row {
     min-height: 52px;
     padding: 11px 13px;
@@ -617,6 +641,13 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .keephere-x { opacity: 0.6; }
 .keephere-chip:hover .keephere-x { opacity: 1; }
 
+/* Three words, one of them chosen - where a switch would need two rows to say the same
+   thing. Same chip as everywhere else, so nothing new is being learned here. */
+.pickrow { display: flex; gap: 6px; margin: 4px 0 2px; }
+button.chip.pick { cursor: pointer; font: inherit; font-size: 11px; padding: 3px 10px; }
+button.chip.pick:hover { color: var(--text); border-color: var(--line-strong); }
+button.chip.pick.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
 /* A pane taken off the idle clock, where its countdown would have been. Green rather than
    amber: nothing is about to happen to this pane, which is the whole point of it. */
 .chip.kept { color: var(--ok); border-color: #35d07f33; background: #35d07f14; }
@@ -640,7 +671,19 @@ button.chip.kept:hover { filter: brightness(1.3); }
 /* Amber is the colour of "this wants you". Work in progress is not a summons, so it
    borrows the green a working pane's status dot already uses. */
 .badge.run { background: #35d07f1f; color: var(--ok); border-color: #35d07f33; }
-.list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+/* `overscroll-behavior: contain` stops a flick that reaches the end of the list from
+   being handed to the page behind it, which on a phone is the browser's own pull-to-
+   refresh; `-webkit-overflow-scrolling` is iOS's momentum scroll. */
+.list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .presets { display: flex; flex-direction: column; gap: 3px; max-height: 22vh; overflow-y: auto; }
 
 .row {
@@ -2022,44 +2065,49 @@ body.sizing * { user-select: none !important; }
   background: var(--panel); border: 1px solid var(--line);
 }
 
-/* One turn's two copy icons: the prompt, and the answer it got. Drawn for every prompt on
-   screen at the row it was sent on, in the gutter left of the marker rail, so reaching for
-   one is a straight move to a button that is already there - see the comment on `geom` in
-   TerminalPane.tsx for what the hover version cost.
+/* The copy menu, opened by the pane header's copy button or by right-clicking a prompt
+   tag on the rail. It replaced a pair of icons that floated beside every prompt on screen
+   and moved whenever the pane scrolled.
 
-   Faint until the pointer is in the pane, for the same reason the mic float is: they live
-   on top of the agent's output and must not compete with it. TURN_COPY_H in TerminalPane
-   .tsx is the height of this stack - two 22px buttons and the 4px gap - and it decides
-   which pairs are drawn at all, so change it with these numbers. */
-.turn-copy {
-  position: absolute; right: 40px; z-index: 10;
-  display: flex; flex-direction: column; gap: 4px;
-  opacity: 0.35;
-  transition: opacity var(--fast);
-}
-/* Full strength as soon as the pointer is in the pane, not 0.6. Measured on a live pane:
-   a 17px icon at 0.22 over the agent's own output is not a control anybody can see they
-   are allowed to press, and the middle step meant reaching for one was still aiming at
-   something faint - "the icons are not showing up when I hover over it". Faint is for a
-   pane nobody is pointing at; the moment there IS a pointer in the pane, they are real
-   buttons. */
-.pane:hover .turn-copy { opacity: 1; }
-.turn-copy button {
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 0;
-  background: var(--surface-3); color: var(--muted);
-  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
-  cursor: pointer;
+   Following the design vault's linear.app entry: one surface step above the panel it sits
+   on, a hairline border rather than a heavy one, no drop-shadow theatre, and the only
+   motion is the same 120ms `--fast` the rest of the app uses. Every row carries a dim
+   preview of what it would copy, in the muted colour the vault reserves for secondary
+   text - held to 3:1 against the menu's own surface by `npm run test:contrast`. */
+.copy-menu-back { position: fixed; inset: 0; z-index: 70; }
+.copy-menu {
+  position: fixed;
+  min-width: 240px; max-width: 380px;
+  padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
   box-shadow: var(--shadow);
-  transition: color var(--fast), border-color var(--fast), background var(--fast);
+  animation: fade var(--fast) ease-out;
 }
-.turn-copy button:hover { color: var(--text); border-color: var(--accent); }
-/* A finger needs 44px and the icons are 17px, so on a phone the pair is a bigger target
-   and always at full strength: there is no pointer to hover with. */
+.copy-row {
+  display: flex; flex-direction: column; gap: 1px;
+  align-items: flex-start; text-align: left;
+  padding: 6px 10px;
+  background: none; border: 0; border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit; cursor: pointer;
+  transition: background var(--fast);
+}
+.copy-row.on, .copy-row:hover { background: var(--surface-3); }
+.copy-label { font-size: 12px; }
+/* The preview is ONE line and it is elided rather than wrapped: it is there to say which
+   text this row means, and a three-line preview is the text itself. */
+.copy-preview {
+  font-size: 11px; color: var(--muted);
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A finger needs 44px, and on a handheld this menu is the only way to any of it. */
 @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
-  html.handheld .turn-copy { opacity: 0.75; right: 44px; gap: 6px; }
-  html.handheld .turn-copy button { width: 30px; height: 30px; }
+  html.handheld .copy-menu { min-width: 260px; }
+  html.handheld .copy-row { min-height: 44px; justify-content: center; padding: 8px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sel-copy { animation: none; }

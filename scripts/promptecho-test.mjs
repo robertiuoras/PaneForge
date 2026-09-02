@@ -26,7 +26,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { promptEcho, seedPrompts } = createRequire(import.meta.url)(outfile)
+const { promptEcho, seedPrompts, completedSlash } = createRequire(import.meta.url)(outfile)
 
 // Captured verbatim, trailing padding included - the terminal pads every row to the pane's
 // width, and a reader written against a trimmed line passes here and finds nothing live.
@@ -129,3 +129,18 @@ console.log('promptecho: ok')
   assert.equal(naive, 4, 'CONTROL: reading each row on its own tags four times')
 }
 
+
+// ---- completedSlash: a slash tag reads what the CLI ran, off its own echo ----------
+// Measured 2026-09-02 in this desk's history logs: 34 rows of `❯ /model`, none of `❯ /mode`.
+{
+  const rows = ['', '  ❯ /model', '', '  ⎿  Exited /model command']
+  assert.equal(completedSlash('/mode', rows), '/model', 'the echoed command completes the typed token')
+  assert.equal(completedSlash('/model', rows), '/model', 'an exact echo settles the tag')
+  assert.equal(completedSlash('/mode', ['', 'still painting']), null, 'no echo yet: keep waiting')
+  assert.equal(completedSlash('/mode', ['', '  ❯ /clear']), null, 'another command\'s echo is not this tag')
+  assert.equal(completedSlash('/mode', ['', '  ❯ /model opus']), '/model opus', 'arguments come with it')
+  assert.equal(completedSlash('hello', ['', '  ❯ /model']), null, 'a prose prompt never adopts a slash echo')
+  assert.equal(completedSlash('/', ['', '  ❯ /model']), null, 'a lone slash is a menu key, not a token')
+  assert.equal(completedSlash('/mode', ['  │ ❯ /model']), null, 'the live composer box is not an echo')
+  console.log('completedSlash: 8 ok')
+}

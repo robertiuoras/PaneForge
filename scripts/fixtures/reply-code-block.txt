@@ -1,0 +1,4 @@
+    const rows = read(
+    foo(
+    bar)
+    return rows
