@@ -278,9 +278,15 @@ export interface ReclaimPane {
    * The pane is ASLEEP: its agent has already been given back and the card is what
    * somebody is keeping (`shared/sleep.ts`).
    *
-   * It arrives here wearing `state: 'exited'`, which is in `CLOSEABLE` - so without this
-   * both sweeps would close the very pane sleeping exists to keep, and buy nothing at all
-   * for it. There is no memory left in a sleeping pane to reclaim.
+   * It arrives here wearing `state: 'exited'`, which is in `CLOSEABLE`. The PRESSURE
+   * sweep and the SLEEP clock refuse it: there is no memory left in a sleeping pane to
+   * reclaim, and it is already the sleep clock's outcome. The idle CLOSE clock does not:
+   * a sleeping pane nobody has touched for the close window is closed like any other,
+   * reopenable from History. It used to be refused there too, and after every update
+   * restart most panes come back asleep (`restoreAsleep`) - measured 2026-09-02: 5 of 7
+   * panes on the desk asleep since a 04:37 restart, none ever closing. Robert: "sessions
+   * aren't closing by themselves ... id rather them to close than sleep". A pane somebody
+   * KEPT (`pinned`) is the one that sleeps instead of closing.
    */
   asleep?: number
 }
@@ -569,7 +575,11 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
     // is ever read, so an unread refusal would switch the feature off on the one machine
     // that needs it.
-    !(personHere && unread(p)) && keepable(p)
+    // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
+    // its screen was there when it was put to sleep - and a restored pane comes back
+    // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
+    // hold it on the desk for ever, exactly as the `asleep` refusal used to.
+    !(personHere && !p.asleep && unread(p)) && keepable(p)
   )
 }
 
@@ -599,7 +609,9 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
  * verbatim, `asleep` included - a sleeping pane is the outcome, not a candidate.
  */
 function sleepable(p: ReclaimPane): boolean {
-  return keepable({ ...p, pinned: false })
+  // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
+  // no longer refuses one - the close clock takes it - so the refusal lives here.
+  return !p.asleep && keepable({ ...p, pinned: false })
 }
 
 function keepable(p: ReclaimPane): boolean {
@@ -612,7 +624,6 @@ function keepable(p: ReclaimPane): boolean {
     !p.job &&
     !p.backJob &&
     !p.pinned &&
-    !p.asleep &&
     CLOSEABLE.has(p.state)
   )
 }
