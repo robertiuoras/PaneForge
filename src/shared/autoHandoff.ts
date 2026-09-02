@@ -47,6 +47,7 @@ import type { OffloadCandidate, Verdict } from './capacity'
 export { keepLocalOf } from './capacity'
 import type { FleetState } from './fleet'
 import { quietSince } from './reclaim'
+import type { PreferRemote } from './offloadFirst'
 
 export interface AutoHandoffConfig {
   /** Move finished panes to a paired device when this machine runs out of memory. */
@@ -151,6 +152,15 @@ export interface AutoHandoffConfig {
    * A changed default cannot reach an existing desk on its own.
    */
   budgetDefaultsV2?: boolean
+  /**
+   * Where a NEW pane's agent starts, before anything is spawned - see
+   * `shared/offloadFirst.ts`, which is the only reader.
+   *
+   * Every rung in this file is reactive: a pane is opened here, costs its ~190 MB here,
+   * and is moved once a reading says this desk is in trouble. That is a recovery, and the
+   * decision it is recovering from was free at launch. `'auto'` takes it there instead.
+   */
+  preferRemote?: PreferRemote
 }
 
 /**
@@ -192,7 +202,11 @@ export const DEFAULT_AUTO_HANDOFF: AutoHandoffConfig = {
   budgetMinCpu: 50,
   // Empty: nothing is Mac-only until somebody says so, and the only thing that says so is
   // "Keep it here" on the pressure card.
-  keepHere: []
+  keepHere: [],
+  // Auto: the desk decides. See `shared/offloadFirst.ts` for what it reads and what it
+  // refuses. Nothing here can fire without a paired device that is online and holds the
+  // same project, so on a laptop with nothing paired this is the behaviour it always had.
+  preferRemote: 'auto'
 }
 
 

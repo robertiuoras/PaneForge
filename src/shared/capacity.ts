@@ -536,10 +536,29 @@ export function offloadTarget(
   projectName: string,
   enabled = true
 ): Offload | null {
-  if (!enabled || !v.offload || !projectName) return null
+  if (!enabled || !v.offload) return null
+  return projectOn(candidates, projectName)
+}
+
+/**
+ * The online device that has this project, by ITS name for it and ITS path, or null.
+ *
+ * Split out of `offloadTarget` so `shared/offloadFirst.ts` can ask the same question
+ * without a capacity verdict: that decision is taken at launch, before this machine is in
+ * any trouble at all, and faking a verdict to reach the matcher would have made "is the
+ * desk full" and "where does this project live" one answer when they are two.
+ */
+export function projectOn(candidates: OffloadCandidate[], projectName: string): Offload | null {
+  if (!projectName) return null
+  // Case-folded, and that is not a nicety: this desk's folder is `toolstash` and the PC's
+  // is `Toolstash`, so an exact match answered "no other machine has this project" for a
+  // project both machines have had for months - measured 2026-09-02, in offload.log. A
+  // project name IS a folder name, and Windows does not distinguish the two anyway, so two
+  // that differ only in case are one project on every desk this can reach.
+  const want = projectName.toLowerCase()
   for (const c of candidates) {
     if (!c.online) continue
-    const hit = c.projects.find((p) => p.name === projectName)
+    const hit = c.projects.find((p) => p.name.toLowerCase() === want)
     if (!hit) continue
     return { device: c.device, deviceName: c.deviceName, cwd: hit.path }
   }

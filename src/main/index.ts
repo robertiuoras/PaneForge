@@ -176,7 +176,10 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { logActivation, logReclaim } from './activationLog'
+import { logActivation, logOffload, logReclaim } from './activationLog'
+import { placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
+import { projectNameOf, projectOn } from '../shared/capacity'
+import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
 import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
 import { hookDenyNames } from './hookDeny'
@@ -1382,14 +1385,110 @@ async function laneFor(
   }
 }
 
+/**
+ * Where a new pane's agent starts - the other machine, or this one.
+ *
+ * Above `laneFor` on purpose, and that ordering is the whole point: a lane is a WORKTREE
+ * created on this disk, so asking for one first would leave a folder here for a pane that
+ * was never going to run here. The far end makes its own lane for the pane it opens.
+ *
+ * Here rather than in the renderer, because `pf open` and the phone reach `sessions:start`
+ * directly and never touch a window - a decision written beside the + button would be a
+ * policy that automation, the one launcher that opens panes while nobody is watching, was
+ * exempt from. The pressure path in App.tsx (`offloadReqs`) is unchanged and still runs
+ * after this one: it is the same move made late, once this machine is already full.
+ *
+ * The decision itself is `shared/offloadFirst.ts`, testable without a paired machine. This
+ * reads the desk, carries out the answer, and writes it down.
+ */
+async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promise<Session> {
+  // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
+  // lane rather than what was asked for: two panes launched together for one project must
+  // land in different lanes, and it is `laneFor` that decides which. A pane that goes to
+  // the other machine claims nothing here - it takes no folder on this disk.
+  const here = async (): Promise<Session> => {
+    const lane = await laneFor(req, claimed)
+    claimed?.push(lane.cwd)
+    return manager.start(lane)
+  }
+  const cfg = getConfig()
+  const mode = preferRemoteOf(cfg.autoHandoff)
+  // Set to keep everything here: no round trip over the link, no line in the log.
+  if (mode === 'never') return here()
+
+  const project = projectNameOf(req.cwd)
+  let target: ReturnType<typeof projectOn> = null
+  let peerPanes: number | undefined
+  try {
+    const peers = remote.state().peers.filter((p) => p.status === 'online')
+    const candidates = await Promise.all(
+      peers.map(async (p) => ({
+        device: p.id,
+        deviceName: p.name,
+        online: true,
+        projects: await remote.projectsOn(p.id).catch(() => [] as { name: string; path: string }[])
+      }))
+    )
+    target = projectOn(candidates, project)
+    peerPanes = peers.find((p) => p.id === target?.device)?.panes.length
+  } catch {
+    // A peer that cannot be asked is a peer that cannot be used. `placeNewPane` says so
+    // in words below rather than this catch inventing a sentence.
+  }
+
+  const place = placeNewPane({
+    // A folder nobody has measured is `undefined` and stays here - never guessed.
+    shareable: await shareable(req.cwd, projectsRoot()).catch(() => undefined),
+    peerAlive: !!target,
+    peerBusyPanes: peerPanes,
+    localPanes: manager.list().filter((s) => !s.asleep).length,
+    onBattery: await onBatteryNow().catch(() => false),
+    keepHere: cfg.autoHandoff ? staysHere(cfg.autoHandoff, project) : false,
+    mode
+  })
+  const note = (extra?: string): void =>
+    logOffload({
+      where: place.where,
+      reason: extra ? `${place.reason} - ${extra}` : place.reason,
+      project,
+      device: place.where === 'remote' ? target?.deviceName : undefined
+    })
+  if (place.where === 'local' || !target) {
+    note()
+    return here()
+  }
+  try {
+    // Online is not the same as answering: a wedged window over there, or a link that has
+    // gone quiet since `state()` was read. Falling back is always safe - it is what would
+    // have happened anyway - and it must SAY so, or the pane simply appears in the wrong
+    // place with nothing on screen to explain it.
+    const started = await Promise.race([
+      remote.startOn(target.device, { ...req, cwd: target.cwd }),
+      new Promise<never>((_ok, no) =>
+        setTimeout(() => no(new Error('it did not answer')), REMOTE_START_ACK_MS)
+      )
+    ])
+    note()
+    send(
+      'handoff:moved',
+      `${project} opened on ${target.deviceName} - ${place.reason}. You watch it and type into ` +
+        `it from here.`
+    )
+    return started
+  } catch (e) {
+    const why = String((e as Error)?.message ?? '').replace(/^Error:\s*/, '')
+    note(`failed: ${why || 'no answer'}`)
+    send('handoff:moved', `${target.deviceName}: ${why || 'no answer'}. Opening it here instead.`)
+    return here()
+  }
+}
+
 // A pane opened on a backlog task is briefed from the task rather than by hand - A3 of
 // the milestone, and the last hand-typed step in the loop `next-action.mjs` and
 // `backlog.mjs done --gate` already close at both ends. Reading only: this app never
 // writes to the backlog, which has one writer.
 ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
-ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) =>
-  manager.start(await laneFor(req))
-)
+ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => startOrSend(req))
 ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
   const out: Session[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
@@ -1398,9 +1497,7 @@ ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => 
   const claimed: string[] = []
   for (const r of reqs) {
     try {
-      const req = await laneFor(r, claimed)
-      claimed.push(req.cwd)
-      out.push(manager.start(req))
+      out.push(await startOrSend(r, claimed))
     } catch {
       // One missing folder should not abort the rest of a workspace launch.
     }

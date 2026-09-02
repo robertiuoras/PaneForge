@@ -86,6 +86,7 @@ const TESTS = [
   ['backjobs', 'backjobs-test.mjs'],
   ['orcatalogue', 'or-catalogue-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
+  ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
   ['promptecho', 'promptecho-test.mjs'],
