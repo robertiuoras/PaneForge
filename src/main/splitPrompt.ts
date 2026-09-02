@@ -18,6 +18,7 @@ import { specFor } from './agents'
 import { getConfig } from './config'
 import { resolveEnv } from '../shared/agents'
 import { parseSplit, splitInstruction, MAX_TASKS, type SplitAnswer } from '../shared/splitPlan'
+import { loadTemplate } from './promptForge'
 import { which } from './which'
 
 /**
@@ -33,7 +34,26 @@ import { which } from './which'
  * done with `CLAUDE_CONFIG_DIR` - pointing that elsewhere answers `Not logged in`.
  */
 const HEADLESS: Record<string, string[]> = {
-  claude: ['-p', '--strict-mcp-config', '--settings', '{"hooks":{},"outputStyle":"default"}'],
+  claude: [
+    '-p',
+    // `--settings` is not enough on its own, and the proof is a measurement rather than a
+    // reading of the flag: with only `--settings '{"hooks":{}}'` this desk answered the
+    // very split brief below with `Noted. JSON above stands - 2 parallel tasks, no file
+    // overlap.` and `JSON delivered above. No further output needed.` Two `iterations` in
+    // the run's own usage block, 57k of cache read: the JSON WAS written, a Stop hook then
+    // blocked, and `-p` prints only the last message - so the plan was thrown away and the
+    // app reported "did not answer with a plan". `--settings` merges INTO the user's
+    // settings; it does not replace them, and it never covered CLAUDE.md at all.
+    //
+    // `--setting-sources ""` loads none of user, project or local, which is the only flag
+    // that stops both. `--bare` also stops them and cannot be used: it answers `Not logged
+    // in - Please run /login`, because the subscription login is part of what it skips.
+    '--setting-sources',
+    '',
+    '--strict-mcp-config',
+    '--settings',
+    '{"hooks":{},"outputStyle":"default"}'
+  ],
   codex: ['exec']
 }
 
@@ -95,7 +115,15 @@ export async function splitPrompt(text: string): Promise<SplitAnswer> {
   } catch {
     return { error: `${spec.label} is not installed on this machine.` }
   }
-  const args = [...(spec.alwaysArgs ?? []), ...HEADLESS[id], splitInstruction(body, MAX_TASKS)]
+  // The exemplar comes from Robert's own library on disk. `multi-item-opener` is the
+  // template for exactly this shape - several unrelated asks in one message - and about
+  // half his openers are one. A machine with no promptlib gets the built-in copy, which
+  // carries the judgement and no example; nothing about the split depends on it.
+  const args = [
+    ...(spec.alwaysArgs ?? []),
+    ...HEADLESS[id],
+    splitInstruction(body, MAX_TASKS, loadTemplate('multi-item-opener'))
+  ]
   const raw = await new Promise<{ out: string; err?: string }>((resolve) => {
     execFile(
       bin,

@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, resumeOf, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
@@ -205,7 +205,7 @@ console.log('keystrokes')
   )
   ok(
     "a model switch is typed through queuePrompt before the prompt, then confirmed with one CR",
-    /this\.queuePrompt\(id, switchCmd, 0, CLEAR_PROMPT_START_MS/.test(fire) && /this\.write\(id, .\\r.\)\s*\n\s*typeResume\(\)/.test(fire)
+    /this\.queuePrompt\(id, switchCmd, 0, CLEAR_PROMPT_START_MS/.test(fire) && /this\.write\(id, .\\r., 'app'\)\s*\n\s*typeResume\(\)/.test(fire)
   )
   // The curtain over the pane goes UP with the clear and DOWN when the prompt settles.
   // Raising it without passing the settle callback is a pane that never takes keys again.
@@ -213,7 +213,9 @@ console.log('keystrokes')
   // longer than a launch prompt's: the pane must say a prompt is still coming rather than
   // looking like somebody walked away mid-sentence.
   ok('the handover curtain is raised before the prompt is queued', /this\.setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(fire))
-  ok('the clear itself is still typed first, after the armclear lead', /this\.emit\('armclear', id\)/.test(fire) && /this\.write\(id, clearCmd\)/.test(fire))
+  // The `'app'` hand on both writes is load-bearing beyond tidiness: A7 counts how often a
+  // PERSON stepped in, and an autoclear typing `/clear` into a pane must not read as one.
+  ok('the clear itself is still typed first, after the armclear lead', /this\.emit\('armclear', id\)/.test(fire) && /this\.write\(id, clearCmd, 'app'\)/.test(fire))
   // The beat before the wait BEGINS, not the wait: it must be short, or the adaptive path
   // costs exactly what the blind one did.
   ok('the start beat is short', CLEAR_PROMPT_START_MS > 0 && CLEAR_PROMPT_START_MS < CLEAR_SETTLE_MS / 2)
@@ -449,5 +451,31 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
 }
 
 rmSync(out, { recursive: true, force: true })
+
+console.log('the resume prompt is forged, so it names the handoff and what done means')
+{
+  const ask = readAsk({
+    paneId: 'p1',
+    prompt: 'Continue the handoff: work its Next steps in order, and do not re-do finished items.',
+    steps: ['Ship the offload switch.', 'Run npm run test:settingsearch.'],
+    seconds: 30
+  })
+  const brief = resumeBrief(ask, '/Users/x/Projects/claude-memory/PaneForge/handoffs/session.md')
+  ok('the handoff path is the anchor', brief.includes('/handoffs/session.md'))
+  ok('the hook words survive', brief.includes('Continue the handoff'))
+  ok('every open step becomes a done line', brief.includes('- Ship the offload switch.') && brief.includes('- Run npm run test:settingsearch.'))
+  ok('no work beyond the handoff is invited', brief.includes('add no work it does not name'))
+
+  const noPath = resumeBrief(ask, null)
+  ok('an unknown handoff draws no anchor', !noPath.includes('Start from:'))
+  ok('and still says what done means', noPath.includes('Done means:'))
+
+  const noSteps = resumeBrief(readAsk({ paneId: 'p1', prompt: 'Continue the handoff.', seconds: 30 }), null)
+  ok('a handoff with no steps still gets a done line', noSteps.includes('is finished, or is named as blocked'))
+
+  const quiet = resumeBrief(readAsk({ paneId: 'p1', noResume: true, seconds: 30 }), '/x/h.md')
+  ok('a noResume clear forges nothing - it types nothing on purpose', quiet === '')
+}
+
 console.log(`\n${checks - failures}/${checks} checks passed`)
 process.exit(failures ? 1 : 0)

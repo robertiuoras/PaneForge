@@ -105,7 +105,9 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
-import { clearCommandFor, readAsk as readAutoClearAsk } from '../shared/autoclear'
+import { clearCommandFor, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
+import { handoffFor } from './handoffSteps'
+import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
@@ -1380,6 +1382,11 @@ async function laneFor(
   }
 }
 
+// A pane opened on a backlog task is briefed from the task rather than by hand - A3 of
+// the milestone, and the last hand-typed step in the loop `next-action.mjs` and
+// `backlog.mjs done --gate` already close at both ends. Reading only: this app never
+// writes to the backlog, which has one writer.
+ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
 ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) =>
   manager.start(await laneFor(req))
 )
@@ -2413,14 +2420,20 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // that can name any pane on the desk. `/clear` typed into a CLI with no such command is
   // a prompt sent to a model. Same invariant as the watcher, in the one other place that
   // can type into a pane nobody is watching.
-  const command = clearCommandFor(manager.list().find((s) => s.id === ask.paneId)?.agent)
+  const pane = manager.list().find((s) => s.id === ask.paneId)
+  const command = clearCommandFor(pane?.agent)
   if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
   // A pane that left work running in the background reads as finished from every other
   // angle - the turn ended, the footer stopped, `engaged` dropped - and clearing it
   // restarts the CLI on top of a build that is still going. The hook asks again later.
   const job = backJobOf(ask.paneId)
   if (job) return { ok: false, reason: `that pane is still running ${job}` }
-  return manager.armAutoClear(ask.paneId, { ...ask, command })
+  // The hook's 23-word resume prompt names no file and says nothing about what finished
+  // looks like. Both halves are on THIS side: `handoffSteps.ts` knows which file the
+  // handoff is, and the ask carries the steps it says are still open. A `noResume` clear
+  // is left alone - it types nothing on purpose.
+  const handoff = pane?.cwd ? handoffFor(pane.cwd, ask.paneId).path : null
+  return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, handoff), command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
