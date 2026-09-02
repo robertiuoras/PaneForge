@@ -168,6 +168,13 @@ function main() {
   }
 
   console.log(`${tag}: publishing - ${plan.why}`)
+  console.log(`${tag}: running test suite...`)
+  try {
+    execFileSync('npm', ['test'], { cwd: ROOT, stdio: 'inherit' })
+  } catch (e) {
+    console.error(`${tag}: tests failed - refusing to publish.`)
+    process.exit(1)
+  }
   execFileSync('npx', ['electron-vite', 'build'], { cwd: ROOT, stdio: 'inherit' })
   execFileSync('npx', ['electron-builder', '--publish', 'always'], {
     cwd: ROOT,
