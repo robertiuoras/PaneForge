@@ -50,9 +50,8 @@ import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
-import { cleanReply, previewOf } from '../../../shared/replyText'
+import { cleanReply, draftBlock, previewOf } from '../../../shared/replyText'
 import CopyMenu, { type CopyChoice } from './CopyMenu'
-import { HANDHELD_MAX } from '../handheld'
 import { useNow } from './Elapsed'
 import './TerminalPane.css'
 
@@ -1716,6 +1715,14 @@ function TerminalPane({
       if (!text.trim()) return
       out.push({ key, label, preview: previewOf(text), run: () => putOnClipboard(text, what) })
     }
+    // The drafted message goes FIRST when there is one. A reply that carries a drafted
+    // email, DM or quote is a reply somebody is about to paste somewhere, and the message
+    // alone is what they want - not the sentence introducing it and not the tool line
+    // above that. `draftBlock` reads the left margin the CLI draws around a draft.
+    const draft = turn
+      ? draftBlock(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end))
+      : ''
+    add('draft', 'The drafted message', 'Drafted message', draft)
     if (one) {
       add('prompt', 'Copy this prompt', 'Prompt', prompt)
       add('reply', 'Copy its reply', 'Reply', reply)
@@ -2133,6 +2140,8 @@ function TerminalPane({
      * inside a state updater would be a side effect in a function React is free to re-run.
      */
     const MARK_CAP = 80
+    /** How long a slash tag may wait to be told what the CLI ran before it gives up. */
+    const SLASH_PENDING_MS = 30_000
     const list: Mark[] = []
     paneMarks.set(sessionId, list)
     let pending: DraftState = newDraft()
@@ -2284,8 +2293,14 @@ function TerminalPane({
      * phone typed never passes through here as keystrokes, so main says it on
      * `pane:typed` and it lands in the same place - the tag, the archive, the keeper.
      */
-    const noteSubmitted = (line: string): void => {
+    const noteSubmitted = (line: string, by: 'person' | 'app' = 'person'): void => {
       {
+        // A line the APP typed is not an ask and was not a keystroke. `/clear` from the
+        // countdown already armed the keeper on `pane:armClear`, so arming again here
+        // files a second copy of the screen; and archiving autoclear's resume text puts a
+        // row in the prompt archive as though somebody had asked for it. The TAG stays -
+        // the rail is a record of what was sent, whoever sent it.
+        const person = by === 'person'
         // `/clear` and friends are the one moment the screen is meant to be thrown away
         // rather than repainted, and this is the only place that knows it: Claude Code
         // v2.1.233 clears by drawing its banner straight over the last turn, with no erase
@@ -2293,7 +2308,7 @@ function TerminalPane({
         // of the CLI's first byte - see keepScrollback. `mayClearScreen` rather than
         // `clearsScreen`, because what was typed is not what was sent: `/cle` plus Enter
         // runs the `/clear` the CLI's own menu had highlighted.
-        if (mayClearScreen(line)) {
+        if (person && mayClearScreen(line)) {
           const away = keep.arm()
           if (away) t.write(away)
         }
@@ -2308,7 +2323,8 @@ function TerminalPane({
         // is dropped on the other side (MIN_PROMPT_TOKENS), not here.
         // `id` so History can say what this session was working on - the same keystrokes,
         // one more consumer, and the only feed that reads the same for every agent.
-        if (text.length > 1) api.promptUsed(line, { cwd: cwdRef.current, id: sessionId })
+        if (person && text.length > 1)
+          api.promptUsed(line, { cwd: cwdRef.current, id: sessionId })
       }
     }
     const feedInput = (d: string): void => {
@@ -2329,6 +2345,15 @@ function TerminalPane({
       let changed = false
       for (const m of list) {
         if (!m.pending) continue
+        // A marker whose line has fallen out of scrollback reports -1 and stops moving, so
+        // `m.line` is a stale number that can sit at or past the cursor - the row distance
+        // below then never grows and the tag stays pending for the life of the pane, which
+        // means this scan runs on every painted frame for ever. Age is the backstop: a
+        // slash command that has not said what it ran within half a minute never will.
+        if (m.marker.line < 0 || (m.at > 0 && Date.now() - m.at > SLASH_PENDING_MS)) {
+          m.pending = false
+          continue
+        }
         const from = Math.max(0, m.line)
         // Sixty rows on is a screenful past the command: whatever it printed, it is done.
         if (cursor - from > 60) {
@@ -3388,9 +3413,9 @@ function TerminalPane({
     })
 
     // A prompt typed by the app or by a phone: main saw the bytes, this window did not.
-    const offTyped = api.onPaneTyped((id, line) => {
+    const offTyped = api.onPaneTyped((id, line, origin) => {
       if (id !== sessionId) return
-      noteSubmitted(line)
+      noteSubmitted(line, origin === 'app' ? 'app' : 'person')
     })
 
     const offHandover = api.onPaneHandover((id, until) => {
@@ -4434,15 +4459,23 @@ function TerminalPane({
           })}
         </div>
       )}
-      {tagMenu && (
-        <CopyMenu
-          title="this pane"
-          x={tagMenu.x}
-          y={tagMenu.y}
-          items={copyChoices(tagMenu.mark)}
-          onClose={() => setTagMenu(null)}
-        />
-      )}
+      {(() => {
+        if (!tagMenu) return null
+        // A tag whose prompt has aged out of the rail's list can copy nothing, and an
+        // empty menu is a box that opens onto nothing. Same refusal as the header's copy
+        // button in App.
+        const items = copyChoices(tagMenu.mark)
+        if (!items.length) return null
+        return (
+          <CopyMenu
+            title="this pane"
+            x={tagMenu.x}
+            y={tagMenu.y}
+            items={items}
+            onClose={() => setTagMenu(null)}
+          />
+        )
+      })()}
       {scrolledUp && (
         <button
           className="jump-newest"

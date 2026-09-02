@@ -2648,7 +2648,7 @@ export interface Api {
    */
   onPaneArmClear(cb: (id: string) => void): () => void
   /** A line submitted into this pane by the app or a phone - not by this window. */
-  onPaneTyped(cb: (id: string, line: string) => void): () => void
+  onPaneTyped(cb: (id: string, line: string, origin: 'person' | 'app') => void): () => void
   /**
    * The pane is mid-autoclear-handover until `until` (epoch ms), or free again at 0.
    *

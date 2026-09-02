@@ -27,7 +27,7 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
-import CopyMenu from './components/CopyMenu'
+import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
@@ -724,7 +724,17 @@ export default function App(): JSX.Element {
    * the pane's header, which App draws - the ROWS come from the pane, which is the only
    * thing that can read its own buffer.
    */
-  const [copyMenu, setCopyMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  //
+  // The ROWS are held here beside the position, read once at the moment it opens. Reading
+  // them per render is what this replaced, and that call `cleanReply`s the whole last turn
+  // plus an eighty-row head - on every `sessions:changed`, which is every printed frame on
+  // the desk, for as long as the menu stands open.
+  const [copyMenu, setCopyMenu] = useState<{
+    id: string
+    x: number
+    y: number
+    items: CopyChoice[]
+  } | null>(null)
   /**
    * Run one of a pane's copy rows by name, for the surfaces that offer a single row
    * rather than the whole menu - the phone's sheet and the right-click menu on a card.
@@ -5797,7 +5807,8 @@ export default function App(): JSX.Element {
                       const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
                       // Under the button's left edge, so the menu hangs off the control
                       // that opened it rather than off the pointer.
-                      setCopyMenu({ id: s.id, x: r.left, y: r.bottom + 4 })
+                      const rows = paneCopyMenu.get(s.id)?.() ?? []
+                      if (rows.length) setCopyMenu({ id: s.id, x: r.left, y: r.bottom + 4, items: rows })
                     }}
                   >
                     <CopyIcon size={13} />
@@ -6249,9 +6260,10 @@ export default function App(): JSX.Element {
       {(() => {
         if (!copyMenu) return null
         const s = sessions.find((x) => x.id === copyMenu.id)
-        const items = paneCopyMenu.get(copyMenu.id)?.() ?? []
         // A pane nobody has typed into yet can copy nothing, and an empty menu is a box
-        // that opens onto nothing. Say so and stay closed.
+        // that opens onto nothing - the opener refuses to set one, and a pane that has
+        // gone away takes the menu with it.
+        const items = copyMenu.items
         if (!s || !items.length) return null
         return (
           <CopyMenu

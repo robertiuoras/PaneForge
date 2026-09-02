@@ -62,13 +62,19 @@ export default function CopyMenu({
     const key = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        e.stopPropagation()
+        // `stopPropagation` is not enough: App listens on `window` in the capture phase
+        // too, and stopping propagation only keeps the event off the phases BELOW - both
+        // handlers are on the same target, so App's ran anyway and Escape closed Settings,
+        // History or a rename underneath this menu. This menu mounts after App, so it is
+        // called second on that target, and only `stopImmediatePropagation` keeps the rest
+        // of the list from running.
+        e.stopImmediatePropagation()
         onClose()
         return
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        e.stopPropagation()
+        e.stopImmediatePropagation()
         setCursor((c) => {
           const n = items.length
           if (!n) return 0
@@ -79,7 +85,7 @@ export default function CopyMenu({
       }
       if (e.key === 'Enter' && items[cursor]) {
         e.preventDefault()
-        e.stopPropagation()
+        e.stopImmediatePropagation()
         const it = items[cursor]
         onClose()
         it.run()

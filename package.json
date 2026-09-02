@@ -129,6 +129,7 @@
     "test:markanchor": "node scripts/mark-anchor-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:replytext": "node scripts/replytext-test.mjs",
+    "test:reviewfixes": "node scripts/review-fixes-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
     "test:glass": "node scripts/glass-test.mjs",
     "test:phonetouch": "node scripts/phone-touch-test.mjs",

@@ -1213,7 +1213,11 @@ export class SessionManager extends EventEmitter {
     const whole = feedDraft(live.draft, data)
     live.draft = whole.state
     if (origin !== 'desk') {
-      for (const line of whole.submitted) if (line.trim().length > 1) this.emit('typed', id, line)
+      // The origin travels with the line. A person typed it on a phone or on a paired
+      // machine; the APP typed `/clear` and an autoclear's resume text, and those must not
+      // arm the keeper a second time or be archived as an ask somebody made.
+      for (const line of whole.submitted)
+        if (line.trim().length > 1) this.emit('typed', id, line, origin)
     }
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane

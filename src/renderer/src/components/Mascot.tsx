@@ -576,7 +576,14 @@ export default function Mascot(props: MascotProps): JSX.Element | null {
   })
 
   useEffect(() => {
-    if (!cfg.enabled || !drawn) return
+    if (!cfg.enabled || !drawn) {
+      // The record of what was working goes with the pet. Left standing, it is a reading
+      // of the desk from whenever it was last drawn - so switching the pet back on
+      // compares live panes against a set from minutes ago and cheers for work that
+      // finished while nobody was being told about it.
+      moodRef.current = firstMood(Date.now())
+      return
+    }
     const now = Date.now()
     const age = now - listAt.current
     const read = age > 500 ? panes.map((p) => ({ ...p, idleMs: p.idleMs + age })) : panes

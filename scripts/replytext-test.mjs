@@ -28,7 +28,7 @@ buildSync({
   format: 'esm',
   platform: 'neutral'
 })
-const { cleanReply, previewOf } = await import(pathToFileURL(out).href)
+const { cleanReply, draftBlock, previewOf } = await import(pathToFileURL(out).href)
 
 let n = 0
 const ok = (what, cond) => {
@@ -120,5 +120,52 @@ eq('a long row starting on a spinner glyph is kept', cleanReply([prose]), prose)
 eq('a preview is one short line', previewOf(bodyOut).length <= 48, true)
 ok('a preview has no newline', !previewOf(bodyOut).includes('\n'))
 eq('nothing readable previews as nothing', previewOf('\n  \n'), '')
+
+
+// ---------------------------------------------------------------------------
+// The footer rule is ANCHORED. `rowsOf` hands in unwrapped logical lines, so a sentence of
+// an answer that quotes one of those phrases used to be dropped whole - the one drop this
+// file says it must never make.
+const quoting = [
+  'The pane draws its own footer, so the row saying esc to interrupt is the CLI talking,',
+  'and the same goes for the ? for shortcuts hint underneath it.'
+]
+const quoteOut = cleanReply(quoting)
+ok('a sentence quoting the footer survives', quoteOut.includes('the row saying esc to interrupt is'))
+ok('and so does the second one', quoteOut.includes('? for shortcuts hint underneath'))
+eq('nothing was dropped', quoteOut.split('\n').length, 2)
+// Short prose is the case the length cap alone cannot save: this row is well under the
+// cap, and only the anchor keeps it.
+const shortQuote = 'Press esc to interrupt it.'
+eq('a short sentence quoting the footer survives', cleanReply([shortQuote]), shortQuote)
+// The footer itself still goes.
+eq('a real footer row is still dropped', cleanReply(['  esc to interrupt']), '')
+eq('and one with its own furniture on it', cleanReply(['  ? for shortcuts · ctrl+t for todos']), '')
+
+// ---------------------------------------------------------------------------
+// The drafted message inside a reply - the part that gets pasted into Mail.
+const withDraft = [
+  '⏺ Here is the draft:',
+  '',
+  '  Hi Darren,',
+  '',
+  '  Yes, but only on LinkedIn.',
+  '',
+  'Want me to send it?'
+]
+eq(
+  'the drafted message is the block alone',
+  draftBlock(withDraft),
+  'Hi Darren,\n\nYes, but only on LinkedIn.'
+)
+ok('the sentence before it is gone', !draftBlock(withDraft).includes('Here is the draft'))
+ok('and the question after it', !draftBlock(withDraft).includes('Want me to send'))
+eq('a reply with no drafted block offers nothing', draftBlock(['Just a plain answer.']), '')
+// A revised draft: the LAST block is the one being asked for.
+eq(
+  'the newest draft wins',
+  draftBlock(['  first go', '  at it', 'Revised:', '  second go', '  at it']),
+  'second go\nat it'
+)
 
 console.log(`replytext: ${n} checks passed`)

@@ -1041,7 +1041,11 @@ function raiseAttention(s: Session): void {
 const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
-  write: (id, data) => manager.write(id, data),
+  // A person typed this on the paired machine's mirror, and this desk never saw the
+  // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
+  // Without an origin here it defaulted to `desk`, and a pane driven from another
+  // machine got no rail tag and no row in the prompt archive.
+  write: (id, data) => manager.write(id, data, 'phone'),
   // `viewer` is who is asking, and it MUST be forwarded rather than named here: this one
   // object is the phone's surface AND the remote host's backend, so hardcoding a name
   // filed every paired device's borrow under the phone's own slot - two viewers writing
@@ -1519,7 +1523,15 @@ function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void
 ipcMain.on('pty:write', (e, id: string, data: string) =>
   writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
 )
-manager.on('typed', (id: string, line: string) => send('pane:typed', id, line))
+// The DESK window only, never `send()`. `send` broadcasts to the phone first, and a
+// phone's own submitted line already ran through its renderer's `feedInput` on the way
+// out - so a broadcast handed the phone that line a second time and it drew two rail tags
+// and archived two prompt rows for every phone prompt. The desk is the one surface that
+// did NOT see the keystrokes, which is the whole point of this channel.
+manager.on('typed', (id: string, line: string, origin: string) => {
+  if (!alive()) return
+  win!.webContents.send('pane:typed', id, line, origin === 'app' ? 'app' : 'person')
+})
 
 // ---- and keeping the system awake while a pane works ---------------------------------
 const displayAwake = startDisplayAwake({

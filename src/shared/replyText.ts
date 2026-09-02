@@ -37,8 +37,15 @@ const BOXED_INPUT = /^\s*│\s*[❯>›]\s/
  * The status footer under the composer. Matched on the PHRASE rather than the position,
  * because every CLI here puts its own row there and a positional rule would take the last
  * line of an answer with it.
+ *
+ * ANCHORED, and capped, because the rows handed in are unwrapped logical lines: the phrase
+ * on its own matched a sentence of an answer that happened to quote `esc to interrupt` or
+ * `? for shortcuts` - and dropping a row of somebody's reply is the one thing this file
+ * says it must never do. A real footer is a short row holding the phrase and terminal
+ * punctuation, nothing else.
  */
-const FOOTER = /(esc to interrupt|\? for shortcuts|bypass permissions on|shift\+tab to cycle)/
+const FOOTER =
+  /^[\s·•⏵⏺⎿()[\]?─━✻✽✳✶✢✱∗⠀-⣿]*(esc to interrupt|\? for shortcuts|bypass permissions on|shift\+tab to cycle)/
 
 /** The permission mode line, which starts with its own glyph. */
 const MODE = /^\s*⏵⏵/
@@ -53,6 +60,8 @@ const MODE = /^\s*⏵⏵/
  */
 const SPINNER = /^\s*([✻✽✳✶✢✱∗]|[⠀-⣿])[\s⠀-⣿]/
 const SPINNER_MAX = 60
+/** A footer row is short by construction, the same way a spinner row is. */
+const FOOTER_MAX = SPINNER_MAX
 
 /** The markers in front of an agent's own tool calls and their output. */
 const MARKER = /^(\s*)[⏺⎿]\s?/
@@ -66,7 +75,7 @@ function drop(row: string): boolean {
   if (COMPOSER.test(row)) return true
   if (BOXED_INPUT.test(row)) return true
   if (MODE.test(row)) return true
-  if (FOOTER.test(row)) return true
+  if (FOOTER.test(row) && row.trim().length <= FOOTER_MAX) return true
   if (SPINNER.test(row) && row.trim().length <= SPINNER_MAX) return true
   return false
 }
@@ -110,4 +119,42 @@ export function previewOf(text: string, max = 48): string {
     .find((l) => l !== '')
   if (!line) return ''
   return line.length > max ? line.slice(0, max - 1) + '…' : line
+}
+
+/**
+ * The drafted message inside a reply: an email, a DM, a quote - the thing an agent wrote
+ * FOR somebody else, which is the one part of the answer that gets pasted somewhere.
+ *
+ * Claude Code sets a draft off from the sentences around it by giving it a left margin, so
+ * that margin is the tell. The LAST such block is the one wanted: a reply that revises a
+ * draft holds the old one above the new one, and the new one is what is being asked for.
+ * Blank rows inside a block belong to it - a message has paragraphs - but a row back at
+ * the left edge ends it, because that is the agent talking again.
+ *
+ * Empty when there is no such block, and the caller then offers no row for it.
+ */
+export function draftBlock(rows: string[]): string {
+  const lines = cleanReply(rows).split('\n')
+  const indented = (l: string): boolean => /^ {2,}\S/.test(l)
+  let best: string[] | null = null
+  let run: string[] = []
+  const close = (): void => {
+    // Trailing blanks belong to whatever came after the block, not to the message.
+    while (run.length && run[run.length - 1].trim() === '') run.pop()
+    if (run.filter((l) => l.trim() !== '').length >= 2) best = run
+    run = []
+  }
+  for (const line of lines) {
+    if (indented(line) || (run.length && line.trim() === '')) run.push(line)
+    else close()
+  }
+  close()
+  if (!best) return ''
+  // The margin comes off here rather than being left to the unwrap: the point of the row
+  // is that what lands on the clipboard is the message on its own.
+  const block = best as string[]
+  const margin = Math.min(
+    ...block.filter((l) => l.trim() !== '').map((l) => (l.match(/^ */) as RegExpMatchArray)[0].length)
+  )
+  return block.map((l) => l.slice(margin)).join('\n')
 }

@@ -89,6 +89,7 @@ const TESTS = [
   ['winfeed', 'winfeed-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
   ['replytext', 'replytext-test.mjs'],
+  ['reviewfixes', 'review-fixes-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],
   ['glass', 'glass-test.mjs'],
   ['phonetouch', 'phone-touch-test.mjs'],
