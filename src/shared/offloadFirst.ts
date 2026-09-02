@@ -29,6 +29,15 @@
 //   3. The other machine has to be alive AND have room. A peer already running a desk
 //      full of agents is not an offload target; it is the next machine to fall over.
 //
+//   4. The pane has to be WORK, and work the other machine can do. A pane opened with no
+//      prompt is a person about to type into it - Robert on the Mac pressing +, which is
+//      how he works (2026-09-02: "my way of working is mainly on mac") - and it stays
+//      under his hands. A pane continuing a conversation stored on this disk stays with
+//      that conversation. A prompt naming a file outside the project, a dev server, a
+//      port, a browser, a screenshot, or this machine by name is about things the other
+//      machine does not have (`pinnedByPrompt`), and so is a project whose dev server is
+//      already serving from this desk.
+//
 // Then `auto` asks whether this desk should be collecting agents at all: past
 // `REMOTE_FROM_PANES` running here, or on battery at any count, the answer is no.
 //
@@ -87,6 +96,17 @@ export interface PlaceInput {
   onBattery?: boolean
   /** This project is on the "never leaves this machine" list. */
   keepHere?: boolean
+  /**
+   * The brief typed into the agent once it is ready. Absent for a pane a person opened to
+   * work in themselves, which is the one pane that must never appear on another screen.
+   */
+  prompt?: string
+  /** The pane's own folder, so a path the prompt names can be told inside from outside. */
+  cwd?: string
+  /** Continuing a conversation that lives on this disk (`resume`, `resumeId`, a restore). */
+  resumes?: boolean
+  /** The script name of a dev server already serving this project from THIS machine. */
+  devServer?: string
   mode: PreferRemote
 }
 
@@ -110,12 +130,59 @@ export function preferRemoteOf(cfg?: { preferRemote?: unknown }): PreferRemote {
   return m === 'always' || m === 'never' || m === 'auto' ? m : 'auto'
 }
 
+/**
+ * A path the other machine cannot have: outside this pane's folder. Mac and Windows homes,
+ * a tilde, a volume, a temp dir. A path INSIDE the project is in git and travels; the
+ * others are the person's own files on this disk, which no push carries over.
+ */
+const LOCAL_PATH = /(?:^|[\s"'`(=])(?:~\/|\$HOME\/|\/Users\/|\/Volumes\/|\/private\/|\/tmp\/|[A-Za-z]:\\)[^\s"'`)]*/g
+/** Something serving on this machine, or the shape of a port on it. */
+const LOCAL_SERVER =
+  /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|dev[- ]server|npm run (?:dev|start|serve)|(?:on |at )?port \d{2,5}|:\d{4,5}\b)/i
+/** This screen: a browser or a picture of something drawn on it. */
+const LOCAL_SCREEN = /\b(?:screenshot|screen ?shot|browser|chrome|safari|cdp|devtools|on (?:the )?screen)\b/i
+/** The person naming this machine. */
+const LOCAL_WORD = /\b(?:on (?:my|this) (?:mac|macbook|machine|laptop|computer)|locally|local(?:ly)? only|here)\b/i
+
+/**
+ * Why this brief is about things the other machine does not have, or undefined.
+ *
+ * Pinning local is the cheap mistake - it is what the app did all along - so every rule
+ * here errs that way. The expensive one is a pane on the PC told to open a file that is
+ * only on the Mac, or to look at a dev server that is serving on it.
+ */
+export function pinnedByPrompt(prompt: string | undefined, cwd?: string): string | undefined {
+  const p = (prompt ?? '').trim()
+  if (!p) return undefined
+  const inside = (cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  for (const m of p.matchAll(LOCAL_PATH)) {
+    const path = m[0].trim().replace(/^["'`(=]/, '').replace(/\\/g, '/')
+    if (inside && path.toLowerCase().startsWith(inside + '/')) continue
+    return `it names a file on this machine (${path.length > 40 ? path.slice(0, 37) + '...' : path})`
+  }
+  const server = LOCAL_SERVER.exec(p)
+  if (server) return `it is about something serving on this machine (${server[0]})`
+  const screen = LOCAL_SCREEN.exec(p)
+  if (screen) return `it is about this screen (${screen[0]})`
+  const word = LOCAL_WORD.exec(p)
+  if (word) return `it asks for this machine (${word[0]})`
+  return undefined
+}
+
 export function placeNewPane(i: PlaceInput): Placement {
   const local = (reason: string): Placement => ({ where: 'local', reason })
 
   if (i.mode === 'never') return local('set to always start work on this machine')
   if (i.keepHere) return local('this project is kept on this machine')
   if (i.machineBound) return local(`this work is driving ${i.machineBound} on this screen`)
+  // The person's own pane. No brief means somebody is about to type into it, and a pane
+  // that appears on another screen the moment + is pressed is the app taking the desk
+  // away from the one working at it. Above `always`: the switch is about WORK.
+  if (!i.prompt?.trim()) return local('you opened this pane to work in it yourself')
+  if (i.resumes) return local('it continues a conversation stored on this machine')
+  const pinned = pinnedByPrompt(i.prompt, i.cwd)
+  if (pinned) return local(pinned)
+  if (i.devServer) return local(`this project's dev server (${i.devServer}) is already serving from this machine`)
   // Not `!== true` written as a truthiness check on purpose: `undefined` and `false` are
   // both local, and they are different sentences. One is a folder nobody has measured, the
   // other is a folder that was measured and cannot be reached from the other machine.

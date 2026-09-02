@@ -215,6 +215,21 @@ closes only on far end's ack, reappears as a mirror. Dirty/unpushed checkout ref
 name; paths graft onto receiver's root (`shared/handoff.ts`). `npm run test:handoff`, `npm run
 test:handofffit`.
 
+## A new pane starts where the work can run
+
+`shared/offloadFirst.ts` decides BEFORE a pty exists, in `startOrSend` above `laneFor`
+(`main/index.ts`), for + button, `pf open`, split and phone alike. Every answer is a sentence in
+`offload.log`; a fallback says so in a toast. Nothing asks - `offloadAsk` is the pressure path's
+dialog, off by default. `npm run test:offloadfirst`.
+
+- Refusals first, above `always`: `never`, `keepHere`, `machineBound`; NO PROMPT (a person about
+  to type - the Mac is the desk, a bare + never leaves it); `resumes`; `pinnedByPrompt` (a path
+  outside the project, localhost/port/dev server, screenshot/browser, "on my mac"/"locally"/"here");
+  a dev server already serving the project here; unmeasured or unshareable folder; no live peer;
+  peer at `PEER_FULL_PANES` (8).
+- Then `auto`: remote past `REMOTE_FROM_PANES` (2) running here, or on battery.
+- Pinning local is the cheap mistake; a pane on the PC told to open a Mac-only file is the dear one.
+
 ## The phone is this window, served
 
 Renderer imports nothing from Electron/Node — pure UI over `window.api`, so phone client = that

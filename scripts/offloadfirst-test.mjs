@@ -32,7 +32,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { placeNewPane, preferRemoteOf, REMOTE_FROM_PANES, PEER_FULL_PANES, REMOTE_START_ACK_MS } =
+const { placeNewPane, pinnedByPrompt, preferRemoteOf, REMOTE_FROM_PANES, PEER_FULL_PANES, REMOTE_START_ACK_MS } =
   require(out)
 
 let checks = 0
@@ -46,9 +46,11 @@ const is = (actual, expected, what) => {
 }
 const ok = (cond, what) => is(!!cond, true, what)
 
-/** A shareable repo, a live peer with room, one pane here. Everything else varies. */
+/** A shareable repo, a live peer with room, one pane here, a brief. Everything else varies. */
 const at = (over) => ({
   shareable: true,
+  prompt: 'add a unit test for the date parser and make it pass',
+  cwd: '/Users/robert/Projects/taskdriver',
   peerAlive: true,
   peerBusyPanes: 0,
   localPanes: 1,
@@ -73,6 +75,76 @@ is(
 ok(
   placeNewPane(at({ machineBound: 'Chrome' })).reason.includes('Chrome'),
   '...and the refusal names what pinned it'
+)
+
+// --- the person's own pane ---------------------------------------------------------------
+//
+// 2026-09-02: Robert pressed + on the Mac with two panes running and the pane opened on
+// the PC. A pane with no brief is somebody about to type into it, and it stays under
+// their hands whatever the desk says and whatever the switch says.
+
+is(placeNewPane(at({ prompt: undefined, localPanes: 9 })).where, 'local', 'a bare + stays here')
+is(placeNewPane(at({ prompt: '   ', localPanes: 9 })).where, 'local', '...blank is bare')
+is(placeNewPane(at({ prompt: undefined, mode: 'always' })).where, 'local', '...even set to always')
+is(
+  placeNewPane(at({ prompt: undefined, onBattery: true, localPanes: 9 })).where,
+  'local',
+  '...even on battery, full'
+)
+ok(/yourself/.test(placeNewPane(at({ prompt: undefined })).reason), '...and says whose pane it is')
+is(placeNewPane(at({ localPanes: 9 })).where, 'remote', 'the same desk with a brief still sends it')
+
+is(
+  placeNewPane(at({ resumes: true, localPanes: 9 })).where,
+  'local',
+  'a resumed conversation stays with its transcript'
+)
+is(placeNewPane(at({ resumes: true, mode: 'always' })).where, 'local', '...even set to always')
+
+is(
+  placeNewPane(at({ devServer: 'dev', localPanes: 9 })).where,
+  'local',
+  'a project already serving from here stays here'
+)
+ok(placeNewPane(at({ devServer: 'dev' })).reason.includes('dev'), '...and names the server')
+
+// --- a brief about things the other machine does not have ---------------------------------
+
+const cwd = '/Users/robert/Projects/taskdriver'
+const pinned = (p) => pinnedByPrompt(p, cwd)
+ok(pinned('look at /Users/robert/Downloads/spec.pdf and build it'), 'a file in Downloads pins')
+ok(pinned('read ~/Desktop/notes.md first'), 'a tilde path pins')
+ok(pinned('open C:\\Users\\Gamer\\brief.txt'), 'a Windows home path pins')
+ok(pinned('check /Volumes/Data/export.csv'), 'a volume pins')
+is(pinned('fix /Users/robert/Projects/taskdriver/src/app.ts'), undefined, 'a path INSIDE the project travels')
+is(pinned('fix /users/ROBERT/projects/taskdriver/src/app.ts'), undefined, '...whatever its case')
+ok(pinned('the page on localhost:3006 is blank'), 'localhost pins')
+ok(pinned('hit http://127.0.0.1:3000/api'), 'a loopback address pins')
+ok(pinned('the dev server keeps crashing'), 'a dev server pins')
+ok(pinned('run npm run dev and check the console'), 'npm run dev pins')
+ok(pinned('take a screenshot of the settings page'), 'a screenshot pins')
+ok(pinned('drive chrome through cdp and click the button'), 'a browser pins')
+ok(pinned('do this on my mac please'), 'naming this machine pins')
+ok(pinned('run it locally'), 'locally pins')
+ok(pinned('fix it here'), 'here pins')
+is(pinned('add a unit test for the date parser'), undefined, 'plain work travels')
+is(pinned('refactor the auth middleware and update the README'), undefined, '...and so does this')
+is(pinned('write a migration for the users table'), undefined, '...and this')
+is(pinned(''), undefined, 'an empty brief pins nothing - the bare rule owns it')
+is(pinned(undefined), undefined, '...and so does undefined')
+is(
+  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png', localPanes: 9 })).where,
+  'local',
+  'a pinned brief stays here'
+)
+ok(
+  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png' })).reason.includes('Desktop/old.png'),
+  '...and the reason names the file'
+)
+is(
+  placeNewPane(at({ prompt: 'the page on localhost:3006 is blank', mode: 'always' })).where,
+  'local',
+  '...even set to always'
 )
 
 // The control: an unmeasured folder is a folder nobody has asked about, and guessing
@@ -148,7 +220,12 @@ const cases = [
   at({ machineBound: 'Chrome' }),
   at({ localPanes: 9 }),
   at({ onBattery: true }),
-  at({ peerBusyPanes: 99 })
+  at({ peerBusyPanes: 99 }),
+  at({ prompt: undefined }),
+  at({ resumes: true }),
+  at({ devServer: 'dev' }),
+  at({ prompt: 'look at ~/Downloads/x.pdf' }),
+  at({ prompt: 'localhost:3000 is down' })
 ]
 for (const c of cases) {
   const p = placeNewPane(c)

@@ -1436,9 +1436,25 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
     // in words below rather than this catch inventing a sentence.
   }
 
+  // A dev server already serving this project from this desk pins the work here: the
+  // prompt will be about what it serves. Only read when there is a brief at all - the
+  // process table is not free, and a bare pane is staying here regardless.
+  let devServer: string | undefined
+  if (req.prompt?.trim()) {
+    try {
+      const found = await devServersOf(process.pid, req.cwd)
+      devServer = found.servers[0]?.script
+    } catch {
+      // No reading is not a dev server. The other refusals still stand.
+    }
+  }
   const place = placeNewPane({
     // A folder nobody has measured is `undefined` and stays here - never guessed.
     shareable: await shareable(req.cwd, projectsRoot()).catch(() => undefined),
+    prompt: req.prompt,
+    cwd: req.cwd,
+    resumes: !!(req.resume || req.resumeId || req.asleep || req.scrollbackId),
+    devServer,
     peerAlive: !!target,
     peerBusyPanes: peerPanes,
     localPanes: manager.list().filter((s) => !s.asleep).length,
