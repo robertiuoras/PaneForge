@@ -396,6 +396,13 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * A phone or the other desk's mirror is drawing this pane right now - a live size borrow
+   * (`shared/paneSize.ts`), renewed every 30s and dropped at `BORROW_TTL_MS`. The idle
+   * sweeps refuse it (`ReclaimPane.watched`): on a desk nobody sits at it is the only
+   * reading of "somebody is looking at this".
+   */
+  watched?: boolean
+  /**
    * How many steps this pane's handoff still lists as open, or undefined when it has no
    * handoff at all.
    *

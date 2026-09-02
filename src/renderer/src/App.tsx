@@ -289,6 +289,8 @@ function reclaimPaneOf(
     // does not, or a desk with the grid on could never close anything.
     visible: false,
     remote: !!s.remote,
+    // A phone or the other desk is drawing it right now. See `ReclaimPane.watched`.
+    watched: !!s.watched,
     asking: !!s.ask,
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
@@ -2908,7 +2910,10 @@ export default function App(): JSX.Element {
         // The same frozen clock every other sweep reads: time somebody could have acted
         // in, never wall time. No `personHere`: this rung has no unread refusal to gate
         // on - see `keepable` in shared/reclaim.ts.
-        deskNow(Date.now(), awayRef.current)
+        deskNow(Date.now(), awayRef.current),
+        // ...and whether `focused` means anything: on a desk nobody has touched the app
+        // focused that pane by itself. See `keepable` in shared/reclaim.ts.
+        personRef.current
       )
       for (const p of plan) void api.sleepSession(p.id)
     }

@@ -2970,6 +2970,15 @@ export class SessionManager extends EventEmitter {
         meta.backJobSince = back?.since
         changed = true
       }
+      // ...and whether a screen elsewhere is drawing it. Read off the borrow map the phone
+      // and the mirror already keep alive, expired here on the same TTL `resize` uses, so a
+      // viewer that vanished stops counting within `BORROW_TTL_MS` and not never.
+      if (live.borrows) dropStale(live.borrows, now)
+      const watched = !!live.borrows && live.borrows.size > 0
+      if (watched !== !!meta.watched) {
+        meta.watched = watched || undefined
+        changed = true
+      }
       // ...and what this pane's HANDOFF says is left. Same seam and the same contract as
       // `backJob`: it decorates and ranks nothing that could close a pane. It is cached for
       // CACHE_MS inside `handoffFor`, so the sweep is a Map lookup on all but one tick in

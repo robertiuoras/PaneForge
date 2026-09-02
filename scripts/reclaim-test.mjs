@@ -202,6 +202,21 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     'seen'
   )
   eq('never the last pane', idleClosePlan([pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })], CLOCKED, NOW).length, 0)
+  // ...on the desk somebody sits at. The second desk - no person has touched it this run,
+  // `personHere` false - is the machine this clock was built for, and there the app focuses
+  // a pane by itself and an empty window is the saving. Measured 2026-09-03: the PC's only
+  // pane, `Emory Claude Config Skills`, sat ten hours with no `armed` line in reclaim.log
+  // because it was both the focused pane and the last one.
+  {
+    const only = [pane({ id: 'only', focused: true, lastKeyboard: NOW - 9 * HOUR })]
+    eq('on a desk nobody has touched, the last pane goes too', ids(idleClosePlan(only, CLOCKED, NOW, false)), 'only')
+    eq('...even though the app focused it by itself', idleClosePlan([pane({ id: 'f', focused: true, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], CLOCKED, NOW, false).map((r) => r.id).join(), 'f')
+    check('...and its card counts down', idleCloseAt(only[0], CLOCKED, NOW, false, only) === NOW)
+    eq('but a pane a phone or the other desk is drawing right now stays', idleClosePlan([pane({ id: 'w', watched: true, lastKeyboard: NOW - 9 * HOUR })], CLOCKED, NOW, false).length, 0)
+    eq('...and is not slept either', idleSleepPlan([pane({ id: 'w', watched: true, lastKeyboard: NOW - 9 * HOUR })], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW, false).length, 0)
+    eq('...while the focused pane on that desk is', ids(idleSleepPlan([pane({ id: 'f', focused: true, lastKeyboard: NOW - 9 * HOUR })], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW, false)), 'f')
+    eq('with a person here the focused pane is still never touched', idleClosePlan([pane({ id: 'f', focused: true, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], CLOCKED, NOW, true).length, 0)
+  }
   // A pane that fell asleep (or came back asleep after a restart) is on the close clock
   // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
   // refused them. Robert: "id rather them to close than sleep".
@@ -569,9 +584,9 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 
   // ...and on a machine no person has touched this run, nothing is ever read, so the
   // refusal would switch the whole feature off on the one desk it exists for.
-  // Both are eligible there, and the last-pane rule keeps one back - so the answer is the
-  // unread one, which is exactly the pane the refusal above was holding.
-  eq('a desk with nobody at it closes it anyway', ids(idleClosePlan([fresh, seen], CLOCKED, NOW, false)), 'unread')
+  // Both are eligible there, and nothing is kept back: the last-pane rule is a person's
+  // (see `dueForIdleClose`), and on that desk an empty window is the point.
+  eq('a desk with nobody at it closes it anyway', ids(idleClosePlan([fresh, seen], CLOCKED, NOW, false)), 'unread,seen')
   eq('...and its card counts down', idleCloseAt(fresh, CLOCKED, NOW, false), NOW)
 }
 

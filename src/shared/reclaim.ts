@@ -76,7 +76,9 @@ export interface ReclaimConfig {
    * hours ago and has no person to close them. So the clock exists, it is off unless
    * somebody sets it, and every refusal that keeps the pressure sweep timid is shared with
    * it verbatim: never a pane that is working, starting, stalled or waiting for a person,
-   * never a mirror of some other machine's pty, never the focused pane, never the last one.
+   * never a mirror of some other machine's pty, never a pane a phone or the other desk is
+   * drawing, and - only while a person has been at this machine - never the focused pane
+   * and never the last one.
    *
    * The cost of closing too early is somebody reopening from History - one click, with the
    * conversation and the screen both intact - and the cost of never closing is a machine
@@ -216,6 +218,19 @@ export interface ReclaimPane {
   visible: boolean
   /** Another device's pty, mirrored here. Closing it frees no agent on this machine. */
   remote: boolean
+  /**
+   * A screen somewhere else - a phone, or the other desk's mirror - is drawing this pane
+   * right now (a live size borrow, `shared/paneSize.ts`). Never closed and never slept:
+   * this is the one reading a headless desk has of "somebody is looking at it".
+   *
+   * It exists because `focused` is meaningless there. The app focuses SOME pane on its own,
+   * so on a desk no person has touched the focused pane was simply the last one opened -
+   * and on the PC that was the ONLY pane, held for ten hours by a refusal written for a
+   * person reading it (2026-09-03, `Emory Claude Config Skills`, no `armed` line in
+   * reclaim.log). The person who might be reading it is on the other machine, and this is
+   * how the other machine says so.
+   */
+  watched?: boolean
   /**
    * The agent has a question on screen that nobody has answered.
    *
@@ -459,7 +474,11 @@ export function dueForIdleClose(
     // Oldest quiet first, so the one held back is the one that went quiet most recently.
     .sort((a, b) => quietSince(a) - quietSince(b))
 
-  const keepAtLeastOne = panes.length - eligible.length < 1 ? 1 : 0
+  // ...on the desk somebody sits at. A desk no person has touched this run is the second
+  // desk: its panes came to be RUN, not read, and an empty window there is the whole
+  // saving - ~190 MB of agent per pane, and the other machine's Devices row saying
+  // `0 panes there`. Holding one back kept the PC's only pane open for ten hours.
+  const keepAtLeastOne = personHere && panes.length - eligible.length < 1 ? 1 : 0
   return eligible.slice(0, Math.max(0, eligible.length - keepAtLeastOne))
 }
 
@@ -536,14 +555,15 @@ export function idleClosePlan(
 export function idleSleepPlan(
   panes: ReclaimPane[],
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
-  now = 0
+  now = 0,
+  personHere = true
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
   if (!minutes) return []
   const minIdle = minutes * 60_000
   return panes
-    .filter(sleepable)
+    .filter((p) => sleepable(p, personHere))
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
@@ -579,7 +599,7 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     // its screen was there when it was put to sleep - and a restored pane comes back
     // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
     // hold it on the desk for ever, exactly as the `asleep` refusal used to.
-    !(personHere && !p.asleep && unread(p)) && keepable(p)
+    !(personHere && !p.asleep && unread(p)) && keepable(p, personHere)
   )
 }
 
@@ -608,15 +628,21 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
  * still sleep ... otherwise uses lots of resources". Every other refusal is shared
  * verbatim, `asleep` included - a sleeping pane is the outcome, not a candidate.
  */
-function sleepable(p: ReclaimPane): boolean {
+function sleepable(p: ReclaimPane, personHere = true): boolean {
   // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
   // no longer refuses one - the close clock takes it - so the refusal lives here.
-  return !p.asleep && keepable({ ...p, pinned: false })
+  return !p.asleep && keepable({ ...p, pinned: false }, personHere)
 }
 
-function keepable(p: ReclaimPane): boolean {
+/**
+ * `personHere` decides whether `focused` means anything. A person reading a pane is the
+ * whole reason it is refused; on a desk no person has touched this run the app focused that
+ * pane by itself, and the only honest "somebody is looking" reading is `watched`.
+ */
+function keepable(p: ReclaimPane, personHere = true): boolean {
   return (
-    !p.focused &&
+    !(p.focused && personHere) &&
+    !p.watched &&
     !p.remote &&
     !p.handingOff &&
     !p.asking &&
