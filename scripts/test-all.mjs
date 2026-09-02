@@ -32,6 +32,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
   ['power', 'power-test.mjs'],
+  ['killguard', 'kill-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
@@ -75,6 +76,7 @@ const TESTS = [
   ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
+  ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
   ['devservers', 'devservers-test.mjs'],
   ['devlist', 'devlist-test.mjs'],
@@ -86,7 +88,7 @@ const TESTS = [
   ['promptecho', 'promptecho-test.mjs'],
   ['winfeed', 'winfeed-test.mjs'],
   ['copychip', 'copychip-test.mjs'],
-  ['turncopy', 'turncopy-test.mjs'],
+  ['replytext', 'replytext-test.mjs'],
   ['overlayfilter', 'overlay-filter-test.mjs'],
   ['glass', 'glass-test.mjs'],
   ['phonetouch', 'phone-touch-test.mjs'],

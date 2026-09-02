@@ -1,0 +1,6 @@
+  If it is just you, it is about an hour: install Gemini CLI, point it at Lucid's MCP server, authorise with your Lucid login. It only ever seescdocumentsnyou
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [CAVEMAN] ◆ Opus 5 | clients |  main | ✓ synced | █░░░░░░░░░ 19% 195.0k | +0/-0 | 5h 6% · wk 74% · Fable 4% · Σ 5.8M                                    /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents                                                                                            

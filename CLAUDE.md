@@ -433,13 +433,19 @@ nothing.
 
 ## Copying a prompt, or the answer it got
 
-Two copy icons beside every prompt on screen: prompt and reply. Drawn per VISIBLE turn, never
-hovered. `shared/turnCopy.ts` (`npm run test:turncopy`), fed by rail's prompt marks.
+One copy button in the pane header beside ⌕, never a floating one: it opens a menu -
+`Last reply`, `Last prompt`, `Last prompt + reply`, `Everything on screen` - each row with a
+one-line preview of what it would put on the clipboard. Right-click on a rail tag gives the
+same menu for THAT turn (`Copy this prompt / Copy its reply / Copy both / Go to it`); the tag is
+the turn's stable handle. `CopyMenu.tsx`; `.copy-menu` follows `design-vault/linear.app.md`.
 
-- Icons not words; 22px pointer, 30px finger (`TURN_COPY_H` in `TerminalPane.tsx`).
-- `mark.text` is what RAIL draws; `mark.full` is what was typed whole — button/clipboard get
-  `mark.full`, placed from the drawn frame (`syncGeom`), keyed on the mark not buffer row.
-- Reply = rows after prompt to row before next. `npm run test:turncopyview`.
+- `shared/replyText.ts` `cleanReply` drops the CLI's chrome before the clipboard: composer box,
+  rules, `esc to interrupt`/`? for shortcuts` footers, spinner rows; `⏺`/`⎿` rows keep their
+  text, marker stripped. Fixtures are real history-log rows. `npm run test:replytext`.
+- Reply = rows after the prompt tag to the row before the next tag (`rowsOf`), then
+  `unwrapCopy`'s join.
+- Ctrl/Cmd+Shift+C (`copyReply`) copies a live highlight first, else the last reply; phone's
+  ⋯ sheet and the card's right-click carry `Copy last reply`.
 
 Every copy reports in toast with line count (`sayCopied`): Ctrl/Cmd+C, right-click, copy `y`,
 selection chip. Copy on select is silent.

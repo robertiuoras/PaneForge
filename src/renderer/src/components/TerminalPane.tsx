@@ -50,9 +50,9 @@ import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
-import { placeTurnCopies } from '../../../shared/turnCopy'
+import { cleanReply, previewOf } from '../../../shared/replyText'
+import CopyMenu, { type CopyChoice } from './CopyMenu'
 import { HANDHELD_MAX } from '../handheld'
-import { CopyIcon, CopyReplyIcon } from './Icons'
 import { useNow } from './Elapsed'
 import './TerminalPane.css'
 
@@ -363,16 +363,6 @@ const paneFeed = new Map<string, (d: string) => void>()
 const CHIP_W = 76
 const CHIP_H = 26
 
-/**
- * How tall one turn's pair of copy icons is, in pixels - two 22px buttons and the gap.
- * It is a constant rather than a measurement because it decides which pairs are drawn at
- * all, and measuring would need them on screen first. `.turn-copy` in styles.css is these
- * numbers; change one and change both.
- */
-const TURN_COPY_H = 48
-/** The same stack at finger size, which is what the `handheld` rules draw. */
-const TURN_COPY_H_TOUCH = 66
-
 /** Each pane's live prompt-mark list, for the debug handle. */
 const paneMarks = new Map<string, { marker: { line: number }; text: string }[]>()
 
@@ -421,6 +411,27 @@ export const paneFocus = new Map<string, () => void>()
 export const paneFind = new Map<string, () => void>()
 /** Enter keyboard copy mode in this pane (Ctrl Shift U, or the palette). */
 export const paneCopyMode = new Map<string, () => void>()
+
+/**
+ * What this pane can copy right now, as rows for `CopyMenu`.
+ *
+ * Asked at the moment the menu opens rather than kept in state: every row carries a
+ * preview of the text it would copy, and that text only exists once the buffer is read.
+ * `mark` picks a turn - the id of a prompt tag - and without one the answer is about the
+ * newest turn, which is what the header button offers.
+ */
+export const paneCopyMenu = new Map<string, (mark?: number) => CopyChoice[]>()
+
+/**
+ * Copy the newest reply out of this pane (Ctrl/Cmd Shift C, the phone's sheet, and the
+ * right-click menu on a session card). Same shape as `paneFind`: App decides which pane,
+ * the pane knows how.
+ *
+ * A live highlight wins - Ctrl/Cmd Shift C has always been "copy the selection" inside a
+ * terminal, and taking that away to hand back a whole reply instead is the chord doing
+ * something nobody asked it to.
+ */
+export const paneCopyReply = new Map<string, () => void>()
 
 /**
  * The live terminals, for scripts/probe.mjs to ask questions of.
@@ -819,7 +830,7 @@ function TerminalPane({
 }: Props): JSX.Element {
   // How many times each pane has rendered, where a probe can read it.
   //
-  // A pane's render is not cheap - it re-measures the turn-copy pairs and the rail against
+  // A pane's render is not cheap - it re-measures the prompt rail against
   // the live xterm buffer - and the sessions list arrives from main as a fresh array on
   // every change, so before `memo` below EVERY pane re-rendered whenever ANY pane's
   // question moved by one arrow. This counter is what makes that statement a measurement
@@ -1152,7 +1163,7 @@ function TerminalPane({
    *
    * A minute, never a second: `whenWords` draws nothing finer than a minute under an hour,
    * so a second-by-second wakeup would re-render the whole pane - which re-measures the
-   * turn-copy pairs and the rail against the live xterm buffer - to write out an identical
+   * prompt rail against the live xterm buffer - to write out an identical
    * string. `Infinity` on a pane with no tags subscribes to nothing at all.
    *
    * The offset is the NEWEST tag's own moment, so its minute turns over exactly when it
@@ -1190,6 +1201,15 @@ function TerminalPane({
   const [track, setTrack] = useState({ top: 7, height: 0 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
+  /**
+   * The copy menu a right-click on a prompt tag opens, at the pointer.
+   *
+   * The tag is that turn's stable handle - it does not move when the pane scrolls and it
+   * is already the thing somebody presses to go back to a prompt - so it is where "copy
+   * this turn" belongs. Held here rather than in App because only this component knows
+   * which tags there are.
+   */
+  const [tagMenu, setTagMenu] = useState<{ mark: number; x: number; y: number } | null>(null)
   const flashTimer = useRef<number | undefined>(undefined)
   /** Phone re-wraps this pane has been through. Read by `npm run test:phoneview`. */
   const rewraps = useRef(0)
@@ -1521,10 +1541,16 @@ function TerminalPane({
     return { x: a.left - b.left, y: a.top - b.top }
   }
 
-  /** Plain text of an absolute buffer row range, trailing blank lines off. */
-  const textOf = (from: number, to: number): string => {
+  /**
+   * An absolute buffer row range, as the LINES a person saw - the terminal's own wrapping
+   * undone, trailing blanks off.
+   *
+   * Rows rather than one string, because everything downstream decides per row: what is
+   * the composer, what is a rule, what is the spinner (`shared/replyText.ts`).
+   */
+  const rowsOf = (from: number, to: number): string[] => {
     const t = term.current
-    if (!t) return ''
+    if (!t) return []
     const buf = t.buffer.active
     const out: string[] = []
     for (let i = from; i <= to; i++) {
@@ -1544,7 +1570,7 @@ function TerminalPane({
     for (let i = 0; i < out.length; i++) out[i] = out[i].replace(/\s+$/, '')
     while (out.length && !out[out.length - 1]) out.pop()
     while (out.length && !out[0]) out.shift()
-    return out.join('\n')
+    return out
   }
 
   /**
@@ -1651,6 +1677,95 @@ function TerminalPane({
     window.clearTimeout(flashTimer.current)
     flashTimer.current = window.setTimeout(() => setFlash(-1), 600)
   }
+
+  /**
+   * Where a prompt tag is NOW. A marker's own line is the live answer; xterm sets it to
+   * -1 the moment before it announces the disposal, and `line` is the last place it was
+   * seen, which is the only thing left to go on.
+   */
+  const lineOf = (m: Mark): number => (m.marker.line >= 0 ? m.marker.line : m.line)
+
+  /**
+   * What can be copied out of this pane, and what each of those would put on the clipboard.
+   *
+   * `mark` is a prompt tag's id and picks one turn; without it the answer is about the
+   * NEWEST turn, which is what the header button offers. A turn is the prompt row through
+   * to the row before the next prompt - the same boundary the rail already draws - and the
+   * last one runs to the end of the buffer.
+   *
+   * Rows for things that do not exist are not returned at all: a pane nobody has typed
+   * into yet has no prompt and no reply, and a menu of two disabled rows says less than a
+   * menu of one live one.
+   */
+  const copyChoices = (mark?: number): CopyChoice[] => {
+    const t = term.current
+    if (!t) return []
+    const end = Math.max(0, t.buffer.active.length - 1)
+    const i = mark === undefined ? marks.length - 1 : marks.findIndex((m) => m.id === mark)
+    const turn = i >= 0 ? marks[i] : undefined
+    const next = i >= 0 ? marks[i + 1] : undefined
+    const one = mark !== undefined
+    const prompt = turn ? turn.full || turn.text : ''
+    const reply = turn ? cleanReply(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end)) : ''
+    const both = prompt && reply ? prompt + '\n\n' + reply : ''
+    const out: CopyChoice[] = []
+    // The row's LABEL and the word the toast says are not the same thing: a receipt
+    // reading "Copy its reply copied - 1 line" is the button's name read back, and it says
+    // less than "Reply copied - 1 line" about what is now on the clipboard.
+    const add = (key: string, label: string, what: string, text: string): void => {
+      if (!text.trim()) return
+      out.push({ key, label, preview: previewOf(text), run: () => putOnClipboard(text, what) })
+    }
+    if (one) {
+      add('prompt', 'Copy this prompt', 'Prompt', prompt)
+      add('reply', 'Copy its reply', 'Reply', reply)
+      add('both', 'Copy both', 'Prompt and reply', both)
+      if (turn) out.push({ key: 'go', label: 'Go to it', preview: '', run: () => jumpTo(turn) })
+      return out
+    }
+    add('reply', 'Last reply', 'Reply', reply)
+    add('prompt', 'Last prompt', 'Prompt', prompt)
+    add('both', 'Last prompt + reply', 'Prompt and reply', both)
+    // The preview is read off the TOP of the buffer rather than off the whole of it: this
+    // row copies everything the pane is holding, which can be twenty thousand lines, and
+    // cleaning all of them to draw one dim sentence would freeze the menu open.
+    const head = cleanReply(rowsOf(0, Math.min(end, 80)))
+    if (head.trim())
+      out.push({
+        key: 'screen',
+        label: 'Everything on screen',
+        preview: previewOf(head),
+        run: () => putOnClipboard(cleanReply(rowsOf(0, end)), 'Everything on screen')
+      })
+    return out
+  }
+
+  /**
+   * The live `copyChoices`, for the two maps below.
+   *
+   * They are registered once, on mount, so that App can reach a pane it is not rendering -
+   * but the answer depends on `marks`, which changes every turn. A ref is the join: the
+   * map holds one function for the life of the pane and that function always asks this
+   * render's version.
+   */
+  const choicesRef = useRef(copyChoices)
+  choicesRef.current = copyChoices
+  /** Copy the highlight instead, when there is one. Filled in by the terminal effect. */
+  const copySelRef = useRef<() => boolean>(() => false)
+
+  useEffect(() => {
+    paneCopyMenu.set(sessionId, (mark) => choicesRef.current(mark))
+    paneCopyReply.set(sessionId, () => {
+      if (copySelRef.current()) return
+      const row = choicesRef.current().find((c) => c.key === 'reply')
+      if (row) row.run()
+      else say('Nothing to copy there')
+    })
+    return () => {
+      paneCopyMenu.delete(sessionId)
+      paneCopyReply.delete(sessionId)
+    }
+  }, [sessionId])
 
   useEffect(() => () => window.clearTimeout(flashTimer.current), [])
 
@@ -2364,6 +2479,10 @@ function TerminalPane({
       lastSelection.current = ''
       return true
     }
+
+    // The chord path (Ctrl/Cmd Shift C) asks this before it copies a reply: a visible
+    // highlight is what the person is looking at, and it wins.
+    copySelRef.current = () => copySelection()
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
@@ -4044,37 +4163,6 @@ function TerminalPane({
   })
 
   /**
-   * A copy button beside every prompt that is on screen, and one under it for the reply.
-   *
-   * The turn boundaries are the prompt marks the rail already keeps - a turn is a prompt
-   * row up to the row before the next prompt. The placement itself is `shared/turnCopy.ts`
-   * so it can be checked without a window (`npm run test:turncopy`); all that happens here
-   * is looking each row's prompt text back up.
-   *
-   * A finger's pair is 66px tall and a pointer's is 38, and that number decides which
-   * pairs are drawn at all - so it is read from the same query the stylesheet switches on
-   * rather than assumed, per render, which is what makes rotating a phone or dragging a
-   * window past 720px land on the right one.
-   */
-  const stackH =
-    typeof window !== 'undefined' && window.matchMedia(`(max-width: ${HANDHELD_MAX}px)`).matches
-      ? TURN_COPY_H_TOUCH
-      : TURN_COPY_H
-  const turnCopies = geom
-    ? placeTurnCopies(
-        marks.map((m) => m.marker.line),
-        geom,
-        stackH,
-        Math.max(0, total - 1)
-      ).map((c) => {
-        const m = marks.find((x) => x.marker.line === c.row)
-        // `full`, never `text`: the rail's label is flattened and capped, and copying that
-        // hands back a prompt with its line breaks gone and its tail missing.
-        return { ...c, key: m?.id ?? c.row, prompt: m?.full ?? m?.text ?? '' }
-      })
-    : []
-
-  /**
    * Run the search and land on a match.
    *
    * `incremental` on the forward search is what makes typing feel like a browser's find
@@ -4257,42 +4345,18 @@ function TerminalPane({
           </button>
         </div>
       )}
-      {/* The two copy affordances. Both are drawn on the wrap rather than inside the
+      {/* The copy affordances. Both are drawn on the wrap rather than inside the
           terminal, because the terminal is a canvas and has nothing to hang a button off,
           and both preventDefault their mousedown for the reason every control in this pane
           does: a mousedown inside the pane takes focus off the terminal and starts a
-          selection drag, which would clear the very highlight the button is there to copy. */}
-      {/* The copy affordances. All of them are drawn on the wrap rather than inside the
-          terminal, because the terminal is a canvas and has nothing to hang a button off,
-          and all of them preventDefault their mousedown for the reason every control in
-          this pane does: a mousedown inside the pane takes focus off the terminal and
-          starts a selection drag, which would clear the very highlight the button is there
-          to copy. The pair per turn is icons and not words on purpose - it is drawn for
-          every prompt on screen rather than for one hovered turn, and eight "Prompt /
-          Reply" buttons down the side of a pane is a second sidebar. */}
-      {turnCopies.map((c) => (
-        // Keyed on the MARK and not on the row: a marker's line moves whenever scrollback
-        // is trimmed, and a changed key unmounts the pair - which throws away the :hover
-        // and the half-finished click of the button somebody was reaching for.
-        <div className="turn-copy" key={c.key} style={{ top: c.top }}>
-          <button
-            title="Copy this prompt"
-            aria-label="Copy this prompt"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => putOnClipboard(c.prompt, 'Prompt')}
-          >
-            <CopyIcon size={13} />
-          </button>
-          <button
-            title="Copy what the agent answered"
-            aria-label="Copy what the agent answered"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => putOnClipboard(textOf(c.row + 1, c.to), 'Reply')}
-          >
-            <CopyReplyIcon size={13} />
-          </button>
-        </div>
-      ))}
+          selection drag, which would clear the very highlight the button is there to copy.
+
+          There used to be a THIRD: a pair of copy icons floating beside every prompt on
+          screen, placed off the drawn frame. It moved whenever the pane scrolled, sat on
+          top of the agent's own output, and there were as many pairs as there were prompts
+          - "not randomly positioned, it's not good". Copying a turn now hangs off two
+          things that hold still: the button in the pane's header, and the prompt tag on
+          the rail, which is that turn's own handle. */}
       {selChip && (
         <button
           className="sel-copy"
@@ -4358,12 +4422,26 @@ function TerminalPane({
                 // the terminal and start a selection drag.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => jumpTo(m)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setTagMenu({ mark: m.id, x: e.clientX, y: e.clientY })
+                }}
               >
                 <span className="mark-tip">{label}</span>
               </button>
             )
           })}
         </div>
+      )}
+      {tagMenu && (
+        <CopyMenu
+          title="this pane"
+          x={tagMenu.x}
+          y={tagMenu.y}
+          items={copyChoices(tagMenu.mark)}
+          onClose={() => setTagMenu(null)}
+        />
       )}
       {scrolledUp && (
         <button
@@ -4494,7 +4572,7 @@ function sameGrid(a?: { cols: number; rows: number } | null, b?: { cols: number;
  * frame. Without this, a pane's render is work every other pane pays for: measured on
  * 2026-08-20 against a real chooser in a dev copy, five arrow moves cost **34 renders of
  * every pane on the desk**, four of which had no question on them at all. A render is not
- * free either - it re-measures the turn-copy pairs and the prompt rail against the live
+ * free either - it re-measures the prompt rail against the live
  * xterm buffer - which is what made arrowing through an agent's answers feel heavy.
  *
  * Every prop is compared, and the object-shaped ones are compared by VALUE, because

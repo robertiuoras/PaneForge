@@ -45,6 +45,9 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: 'syncTyping', label: 'Type into every pane at once', chord: { key: 'y', shift: true } },
   { id: 'find', label: 'Find in this pane', chord: { key: 'f' } },
   { id: 'copyMode', label: 'Copy from this pane with the keyboard', chord: { key: 'u', shift: true } },
+  // A highlight still wins: with something selected this copies the selection, which is
+  // what Ctrl/Cmd Shift C has always done inside a terminal.
+  { id: 'copyReply', label: 'Copy the last reply', chord: { key: 'c', shift: true } },
   { id: 'history', label: 'History of closed sessions', chord: { key: 'h' } },
   { id: 'stash', label: 'The Stash', chord: { key: 'v', shift: true } },
   { id: 'board', label: "This project's board", chord: { key: 'k', shift: true } },

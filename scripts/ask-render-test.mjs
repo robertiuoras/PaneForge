@@ -7,7 +7,7 @@
 //     sessions list is one array for every pane, rebuilt in main on every frame of a
 //     question, so before `memo` in TerminalPane.tsx five arrow moves cost **34 renders
 //     of every pane on the desk** - four of which had no question on them at all. A
-//     render re-measures the turn-copy pairs and the prompt rail against the live xterm
+//     render re-measures the prompt rail against the live xterm
 //     buffer, which is why that was felt as lag rather than seen as a number.
 //     The load-bearing assertion is the BYSTANDER's count, not the question pane's: a
 //     memo that skipped the pane holding the question would pass a "renders went down"

@@ -27,6 +27,7 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import CopyMenu from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
@@ -48,6 +49,7 @@ import {
   BoardIcon,
   HistoryIcon,
   LinkIcon,
+  CopyIcon,
   SearchIcon,
   RemoteIcon,
   SwarmIcon,
@@ -62,7 +64,9 @@ import { reconnectNow, useLink } from './linkStore'
 import { linkIconWords, linkLost, linkNote, linkWords } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
 import TerminalPane, {
+  paneCopyMenu,
   paneCopyMode,
+  paneCopyReply,
   paneDraft,
   paneFind,
   paneFocus,
@@ -713,6 +717,25 @@ export default function App(): JSX.Element {
   const [info, setInfo] = useState<string | null>(null)
   /** the pane whose ⋯ sheet is open, which is the only way to its actions at phone width */
   const [paneMenu, setPaneMenu] = useState<string | null>(null)
+  /**
+   * The copy menu the header's copy button opens, anchored under the button.
+   *
+   * It is opened from App rather than from inside the pane because the button lives in
+   * the pane's header, which App draws - the ROWS come from the pane, which is the only
+   * thing that can read its own buffer.
+   */
+  const [copyMenu, setCopyMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  /**
+   * Run one of a pane's copy rows by name, for the surfaces that offer a single row
+   * rather than the whole menu - the phone's sheet and the right-click menu on a card.
+   * The pane is the one authority on what it can copy, so the row is looked up there
+   * rather than spelled out twice.
+   */
+  const copyFromPane = (id: string, key: string): void => {
+    const row = paneCopyMenu.get(id)?.().find((c) => c.key === key)
+    if (row) row.run()
+    else flash('Nothing to copy there yet.')
+  }
 
   /**
    * Take a pane off the move queue, from the card, the context menu or the phone's sheet.
@@ -3213,6 +3236,21 @@ export default function App(): JSX.Element {
         // which walks the focus and leaves the grid alone.
         e.preventDefault()
         movePane(e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1)
+      } else if (hit('copyReply')) {
+        /**
+         * The agent's last answer, on the clipboard, without the terminal round it.
+         *
+         * The pane answers this, not App: a highlight beats a reply (Ctrl/Cmd Shift C has
+         * always been copy-the-selection inside a terminal, and this must not take that
+         * away), and only the pane can read its own buffer. This handler is on the window
+         * in the CAPTURE phase, so it sees the chord before xterm's own key handler does -
+         * which is why the selection question has to be asked over there rather than here.
+         */
+        e.preventDefault()
+        e.stopPropagation()
+        const copy = activeId ? paneCopyReply.get(activeId) : null
+        if (copy) copy()
+        else flash('Open a pane first - there is nothing to copy.')
       } else if (
         hit('find') &&
         (!typing ||
@@ -5742,6 +5780,29 @@ export default function App(): JSX.Element {
                     <SearchIcon size={13} />
                   </button>
                 )}
+                {/* Copying a turn, from a control that holds still.
+                    Beside find because it is the same kind of thing: a question asked of
+                    this pane's own scrollback. What it replaced was a pair of icons
+                    floating beside every prompt on screen, which moved whenever the pane
+                    scrolled and sat on top of the agent's output. On a phone the two rows
+                    are in the ⋯ sheet instead. */}
+                {!handheld.handheld && (
+                  <button
+                    className="icon pt-copy"
+                    title="Copy the last reply, the last prompt, or the whole pane"
+                    aria-label={`Copy from ${s.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setActiveId(s.id)
+                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                      // Under the button's left edge, so the menu hangs off the control
+                      // that opened it rather than off the pointer.
+                      setCopyMenu({ id: s.id, x: r.left, y: r.bottom + 4 })
+                    }}
+                  >
+                    <CopyIcon size={13} />
+                  </button>
+                )}
                 {/* The header is 404px on a phone and this picker alone is ~150 of it, so
                     on a touch-sized screen it moves into the ⋯ sheet with the actions -
                     where it is a labelled control rather than the reason Close is drawn
@@ -6185,6 +6246,23 @@ export default function App(): JSX.Element {
           />
         )
       })()}
+      {(() => {
+        if (!copyMenu) return null
+        const s = sessions.find((x) => x.id === copyMenu.id)
+        const items = paneCopyMenu.get(copyMenu.id)?.() ?? []
+        // A pane nobody has typed into yet can copy nothing, and an empty menu is a box
+        // that opens onto nothing. Say so and stay closed.
+        if (!s || !items.length) return null
+        return (
+          <CopyMenu
+            title={s.title}
+            x={copyMenu.x}
+            y={copyMenu.y}
+            items={items}
+            onClose={() => setCopyMenu(null)}
+          />
+        )
+      })()}
       {/* The pane header's six actions, at finger size. Rendered here rather than inside
           the pane so the sheet is over the whole screen and not clipped by it. */}
       {(() => {
@@ -6205,6 +6283,20 @@ export default function App(): JSX.Element {
               />
             }
             actions={[
+              {
+                key: 'copy-reply',
+                label: 'Copy last reply',
+                hint: 'what the agent answered, without the terminal round it',
+                icon: '⧉',
+                run: () => copyFromPane(s.id, 'reply')
+              },
+              {
+                key: 'copy-prompt',
+                label: 'Copy last prompt',
+                hint: 'the last thing you asked, whole',
+                icon: '⧉',
+                run: () => copyFromPane(s.id, 'prompt')
+              },
               {
                 key: 'copy',
                 label: 'Copy output',
@@ -6471,6 +6563,7 @@ export default function App(): JSX.Element {
                     }
                   ]
                 : []),
+              { key: 'copy-reply', label: 'Copy last reply', hint: 'what the agent answered, without the terminal round it', run: () => copyFromPane(s.id, 'reply') },
               { key: 'copy', label: 'Copy output', hint: 'the whole terminal', run: () => copyPaneOutput(s) },
               { key: 'text', label: 'Select text', run: () => setTextPane(s.id) },
               { key: 'fix', label: 'Fix the display', hint: 'refit and repaint, keeping the run', run: () => fixUi(s.id) },

@@ -1970,7 +1970,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 
 Needing a real window up (`npm run build && npm run try -- --keep --show
 --remote-debugging-port=9333`): `test:view` (grid + find bar), `test:stashdrag`,
-`test:activate`, `test:turncopyview` (which is happy minimized),
+`test:activate`, (turncopyview removed 2026-09-02) (which is happy minimized),
 `test:restorefix` (two launches of the dev copy - one to leave a desk, one to take it
 back), `test:askclick`, `test:askrender` (the countdown on a real question, and what
 arrowing through it costs every OTHER pane), and `test:phoneview` (a real headless Chrome at
@@ -4310,7 +4310,7 @@ pins**; `npm run` lists the commands. Read that table before changing or deletin
 you add one.
 
 Needing a real window (`npm run build && npm run try -- --keep --show --remote-debugging-port=9333`):
-`test:view`, `test:stashdrag`, `test:activate`, `test:turncopyview`, `test:restorefix` (two launches),
+`test:view`, `test:stashdrag`, `test:activate`, (turncopyview removed 2026-09-02), `test:restorefix` (two launches),
 `test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast` (~90s, both themes),
 `test:renderwatchlive` (spins the renderer on purpose, ~25s).
 

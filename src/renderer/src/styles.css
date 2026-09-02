@@ -2022,44 +2022,49 @@ body.sizing * { user-select: none !important; }
   background: var(--panel); border: 1px solid var(--line);
 }
 
-/* One turn's two copy icons: the prompt, and the answer it got. Drawn for every prompt on
-   screen at the row it was sent on, in the gutter left of the marker rail, so reaching for
-   one is a straight move to a button that is already there - see the comment on `geom` in
-   TerminalPane.tsx for what the hover version cost.
+/* The copy menu, opened by the pane header's copy button or by right-clicking a prompt
+   tag on the rail. It replaced a pair of icons that floated beside every prompt on screen
+   and moved whenever the pane scrolled.
 
-   Faint until the pointer is in the pane, for the same reason the mic float is: they live
-   on top of the agent's output and must not compete with it. TURN_COPY_H in TerminalPane
-   .tsx is the height of this stack - two 22px buttons and the 4px gap - and it decides
-   which pairs are drawn at all, so change it with these numbers. */
-.turn-copy {
-  position: absolute; right: 40px; z-index: 10;
-  display: flex; flex-direction: column; gap: 4px;
-  opacity: 0.35;
-  transition: opacity var(--fast);
-}
-/* Full strength as soon as the pointer is in the pane, not 0.6. Measured on a live pane:
-   a 17px icon at 0.22 over the agent's own output is not a control anybody can see they
-   are allowed to press, and the middle step meant reaching for one was still aiming at
-   something faint - "the icons are not showing up when I hover over it". Faint is for a
-   pane nobody is pointing at; the moment there IS a pointer in the pane, they are real
-   buttons. */
-.pane:hover .turn-copy { opacity: 1; }
-.turn-copy button {
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 0;
-  background: var(--surface-3); color: var(--muted);
-  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
-  cursor: pointer;
+   Following the design vault's linear.app entry: one surface step above the panel it sits
+   on, a hairline border rather than a heavy one, no drop-shadow theatre, and the only
+   motion is the same 120ms `--fast` the rest of the app uses. Every row carries a dim
+   preview of what it would copy, in the muted colour the vault reserves for secondary
+   text - held to 3:1 against the menu's own surface by `npm run test:contrast`. */
+.copy-menu-back { position: fixed; inset: 0; z-index: 70; }
+.copy-menu {
+  position: fixed;
+  min-width: 240px; max-width: 380px;
+  padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
   box-shadow: var(--shadow);
-  transition: color var(--fast), border-color var(--fast), background var(--fast);
+  animation: fade var(--fast) ease-out;
 }
-.turn-copy button:hover { color: var(--text); border-color: var(--accent); }
-/* A finger needs 44px and the icons are 17px, so on a phone the pair is a bigger target
-   and always at full strength: there is no pointer to hover with. */
+.copy-row {
+  display: flex; flex-direction: column; gap: 1px;
+  align-items: flex-start; text-align: left;
+  padding: 6px 10px;
+  background: none; border: 0; border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit; cursor: pointer;
+  transition: background var(--fast);
+}
+.copy-row.on, .copy-row:hover { background: var(--surface-3); }
+.copy-label { font-size: 12px; }
+/* The preview is ONE line and it is elided rather than wrapped: it is there to say which
+   text this row means, and a three-line preview is the text itself. */
+.copy-preview {
+  font-size: 11px; color: var(--muted);
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A finger needs 44px, and on a handheld this menu is the only way to any of it. */
 @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
-  html.handheld .turn-copy { opacity: 0.75; right: 44px; gap: 6px; }
-  html.handheld .turn-copy button { width: 30px; height: 30px; }
+  html.handheld .copy-menu { min-width: 260px; }
+  html.handheld .copy-row { min-height: 44px; justify-content: center; padding: 8px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sel-copy { animation: none; }

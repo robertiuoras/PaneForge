@@ -62,7 +62,7 @@ export const SHOW_MS = 26 * 1000
 export const TIPS: Tip[] = [
   { id: 'select-delete', say: 'Highlight text you typed in a pane and press Backspace - it deletes the whole selection, not one character. Typing over it works too.' },
   { id: 'click-cursor', say: 'Click inside what you have typed to put the cursor there. Alt-click reaches other lines.' },
-  { id: 'turn-copy', say: 'Every prompt on screen has two small copy buttons beside it: one copies what you asked, the other copies the answer.' },
+  { id: 'turn-copy', say: 'The copy button in a pane’s header copies the last reply, the last prompt, or both - and right-clicking a prompt tag on the rail copies that turn.' },
   { id: 'phone', say: 'Open Devices and scan the code - your phone becomes this window. Same panes, same keyboard, from anywhere.' },
   { id: 'handoff', say: 'Hand off on a pane moves the whole thing to another machine: the repo, the conversation, the screen and the dev server.' },
   { id: 'ask-buttons', say: 'When an agent asks "which of these?", the options become buttons on the pane - and the card in the list turns red so you can see it from across the room.' },

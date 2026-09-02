@@ -149,7 +149,6 @@ const KEYS: Key[] = [
   [isMac ? '⌃ Shift Tab' : 'Ctrl Shift Tab', 'Previous session'],
   ['Ctrl + / Ctrl -', 'Terminal font bigger / smaller'],
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
-  ['Ctrl Shift C', 'Always copy, never interrupt'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
   // Called out: "how do I open the Stash" is the question this dialog gets asked for
   // most, and there are two answers depending on which window you are in.
