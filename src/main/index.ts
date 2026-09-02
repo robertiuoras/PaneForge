@@ -85,6 +85,7 @@ import {
 } from './profile'
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
+import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
@@ -187,6 +188,7 @@ import {
   installUpdate,
   setAutoCheck,
   setDevChannel,
+  onUpdateIgnored,
   stagedInstallable,
   updateLog,
   bootMs
@@ -243,6 +245,13 @@ let quietUntil = 0
 // modal message box that steals focus from whatever you are typing in. Logged instead.
 installCrashGuard()
 onCrashReport((message) => send('app:error', message))
+// A link or a folder that would not open is not a crash, but it is exactly as invisible:
+// the button does nothing and says nothing. Same toast, its own words. See main/openUrl.ts.
+onOpenProblem((message) => send('app:error', message))
+// Two staged builds thrown away unused means nobody is going to press Restart. The
+// restart-when-idle path below already refuses to take anyone's panes away; until now
+// only a failed install ever started it. See shared/updateStale.ts.
+onUpdateIgnored(() => autoInstall())
 
 // Runs before anything reads userData: a named profile (`--profile=dev`) moves the
 // whole profile aside so a second PaneForge can run beside the live one. It also sets
@@ -696,7 +705,7 @@ function createWindow(): void {
     // A rejected openExternal is an UNHANDLED REJECTION, which crash.ts then records as a
     // fault: four `Failed to open URL` lines in paneforge-errors.log came from these two
     // calls. There is nothing to do about a link the OS would not open.
-    void shell.openExternal(url).catch((err) => logProblem('open url', String(err)))
+    openLink(url, 'a link in a pane')
     return { action: 'deny' }
   })
   // The menu is gone, so devtools needs its own key.
@@ -1817,7 +1826,7 @@ ipcMain.on('shell:reveal', (_e, path: string) => {
     return /* gone: pointing Explorer at it would just raise an error dialog */
   }
   if (file) shell.showItemInFolder(path)
-  else shell.openPath(path)
+  else openLocal(path, 'reveal')
 })
 
 /**
@@ -1875,7 +1884,7 @@ ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) =>
     /* no roster, or a slug whose folder has gone: the title match above is the answer */
   }
   const target = revealTarget({ root, cwd: cwd ?? '', title, subdirs, clientDir, sep })
-  shell.openPath(target)
+  openLocal(target, 'open in file manager')
   return target
 })
 ipcMain.handle('shell:editor', async (_e, path: string) => {
@@ -1898,7 +1907,7 @@ ipcMain.handle('shell:editor', async (_e, path: string) => {
       /* try the next one */
     }
   }
-  shell.openPath(path)
+  openLocal(path, 'no editor on PATH')
   return 'No `cursor` or `code` on PATH - opened the folder instead.'
 })
 
@@ -2775,7 +2784,7 @@ ipcMain.handle('stash:pick', async () => {
   })
   return r.canceled ? 0 : addRecentFiles(r.filePaths)
 })
-ipcMain.on('stash:reveal', () => shell.openPath(recentsDir()))
+ipcMain.on('stash:reveal', () => openLocal(recentsDir(), 'stash:reveal'))
 // Ctrl+Shift+V from inside the app. There is one Stash, so this opens the floating one
 // rather than a second list in the window.
 ipcMain.on('shelf:toggle', () => toggleShelf())
@@ -2888,7 +2897,7 @@ ipcMain.on('shell:external', (_e, url: string) => {
   // Only ever open real web links: a file:// or custom scheme from the renderer
   // would be a way to launch arbitrary local programs.
   if (/^https?:\/\//i.test(url)) {
-    void shell.openExternal(url).catch((err) => logProblem('open url', String(err)))
+    openLink(url, 'shell:external')
   }
 })
 

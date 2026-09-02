@@ -793,6 +793,12 @@ export interface UpdateState {
   error?: string
   /** release page to open by hand, used where in-place update is not possible */
   url?: string
+  /**
+   * This build is ready and two earlier ones were already thrown away unused, so the app
+   * has stopped waiting to be asked and will restart itself once no pane is in use.
+   * See shared/updateStale.ts.
+   */
+  ignored?: boolean
 }
 
 /**
