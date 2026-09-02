@@ -106,4 +106,21 @@ ok('standing alone is in the instruction', instruction.includes('stand alone'))
 ok('adding work is refused in the instruction', instruction.includes('ADD NO WORK'))
 ok('the ask itself is in the instruction', instruction.includes('do a and b'))
 
+
+// The brief is forged (`shared/promptForge.ts`), so it carries the two things it never
+// carried before: a block saying what a finished answer is, and - when this machine has
+// the library - one example of a good ask of this kind.
+ok('the brief says what done means', instruction.includes('Done means:'))
+ok('the done block is the last thing on the page', instruction.trimEnd().endsWith('at most six words'))
+const withExample = splitInstruction('do a and b', 3, {
+  id: 'multi-item-opener',
+  guidance: ['each item finished on its own'],
+  examples: ['AN EXAMPLE ASK']
+})
+ok('an exemplar is carried when one is handed in', withExample.includes('AN EXAMPLE ASK'))
+ok('the example sits above the done block', withExample.indexOf('AN EXAMPLE ASK') < withExample.indexOf('Done means:'))
+// The feature exists for LONG asks; the pane-typing ceiling must not truncate one.
+const long = 'x'.repeat(20000)
+ok('a 20k-char ask survives the brief whole', splitInstruction(long, 4).includes(long))
+
 console.log(`split-plan: ${n} assertions passed`)

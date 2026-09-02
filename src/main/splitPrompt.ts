@@ -10,15 +10,21 @@
 // for the reason it is absent from `shared/agents.ts`' own headless table - its flags are
 // unverified, and refusing beats a guess that opens a window nobody asked for.
 
-import { execFile } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { app } from 'electron'
-import { specFor } from './agents'
-import { getConfig } from './config'
-import { resolveEnv } from '../shared/agents'
-import { parseSplit, splitInstruction, MAX_TASKS, type SplitAnswer } from '../shared/splitPlan'
-import { which } from './which'
+import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { app } from "electron";
+import { specFor } from "./agents";
+import { getConfig } from "./config";
+import { resolveEnv } from "../shared/agents";
+import {
+  parseSplit,
+  splitInstruction,
+  MAX_TASKS,
+  type SplitAnswer,
+} from "../shared/splitPlan";
+import { loadTemplate } from "./promptForge";
+import { which } from "./which";
 
 /**
  * How each CLI is asked one question with no TUI. The prompt is appended as one arg.
@@ -33,9 +39,14 @@ import { which } from './which'
  * done with `CLAUDE_CONFIG_DIR` - pointing that elsewhere answers `Not logged in`.
  */
 const HEADLESS: Record<string, string[]> = {
-  claude: ['-p', '--strict-mcp-config', '--settings', '{"hooks":{},"outputStyle":"default"}'],
-  codex: ['exec']
-}
+  claude: [
+    "-p",
+    "--strict-mcp-config",
+    "--settings",
+    '{"hooks":{},"outputStyle":"default"}',
+  ],
+  codex: ["exec"],
+};
 
 /**
  * How long a split may take.
@@ -45,7 +56,7 @@ const HEADLESS: Record<string, string[]> = {
  * budget exists at all because a CLI waiting for an auth prompt nobody can see never
  * returns on its own.
  */
-export const SPLIT_BUDGET_MS = 120_000
+export const SPLIT_BUDGET_MS = 120_000;
 
 /**
  * Which INSTALLED agent can answer a split, given the one Settings prefers.
@@ -54,26 +65,30 @@ export const SPLIT_BUDGET_MS = 120_000
  * gets a split, from one that has both the mode and a binary on this machine. `installed`
  * is passed in rather than probed here so the decision is testable without a PATH.
  */
-export function splitAgent(preferred: string | undefined, installed: (id: string) => boolean): string | null {
-  if (preferred && HEADLESS[preferred] && installed(preferred)) return preferred
-  return Object.keys(HEADLESS).find((id) => installed(id)) ?? null
+export function splitAgent(
+  preferred: string | undefined,
+  installed: (id: string) => boolean,
+): string | null {
+  if (preferred && HEADLESS[preferred] && installed(preferred))
+    return preferred;
+  return Object.keys(HEADLESS).find((id) => installed(id)) ?? null;
 }
 
 /** Is this agent's binary on this machine? */
 function onDisk(id: string): boolean {
   try {
-    which(specFor(id).bin)
-    return true
+    which(specFor(id).bin);
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
 /** An empty folder under userData for the headless run to start in. See the call below. */
 function quietDir(): string {
-  const dir = join(app.getPath('userData'), 'split')
-  mkdirSync(dir, { recursive: true })
-  return dir
+  const dir = join(app.getPath("userData"), "split");
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 /**
@@ -83,19 +98,28 @@ function quietDir(): string {
  * to read and press.
  */
 export async function splitPrompt(text: string): Promise<SplitAnswer> {
-  const body = text.trim()
-  if (!body) return { error: 'Nothing to split.' }
-  const cfg = getConfig()
-  const id = splitAgent(cfg.defaultAgent, onDisk)
-  if (!id) return { error: 'No installed agent can answer a split on its own.' }
-  const spec = specFor(id)
-  let bin: string
+  const body = text.trim();
+  if (!body) return { error: "Nothing to split." };
+  const cfg = getConfig();
+  const id = splitAgent(cfg.defaultAgent, onDisk);
+  if (!id)
+    return { error: "No installed agent can answer a split on its own." };
+  const spec = specFor(id);
+  let bin: string;
   try {
-    bin = which(spec.bin)
+    bin = which(spec.bin);
   } catch {
-    return { error: `${spec.label} is not installed on this machine.` }
+    return { error: `${spec.label} is not installed on this machine.` };
   }
-  const args = [...(spec.alwaysArgs ?? []), ...HEADLESS[id], splitInstruction(body, MAX_TASKS)]
+  // The exemplar comes from Robert's own library on disk. `multi-item-opener` is the
+  // template for exactly this shape - several unrelated asks in one message - and about
+  // half his openers are one. A machine with no promptlib gets the built-in copy, which
+  // carries the judgement and no example; nothing about the split depends on it.
+  const args = [
+    ...(spec.alwaysArgs ?? []),
+    ...HEADLESS[id],
+    splitInstruction(body, MAX_TASKS, loadTemplate("multi-item-opener")),
+  ];
   const raw = await new Promise<{ out: string; err?: string }>((resolve) => {
     execFile(
       bin,
@@ -111,24 +135,26 @@ export async function splitPrompt(text: string): Promise<SplitAnswer> {
         timeout: SPLIT_BUDGET_MS,
         maxBuffer: 4 * 1024 * 1024,
         env: { ...process.env, ...resolveEnv(spec, cfg.providerKeys ?? {}) },
-        windowsHide: true
+        windowsHide: true,
       },
       (err, stdout, stderr) => {
         // A non-zero exit with usable output is still an answer: several CLIs exit 1 on a
         // warning they printed to stderr. The parser is what decides, not the exit code.
-        if (err && !stdout.trim()) resolve({ out: '', err: stderr.trim() || err.message })
-        else resolve({ out: stdout })
-      }
-    )
-  })
-  if (!raw.out.trim()) return { error: raw.err || `${spec.label} answered nothing.` }
-  const plan = parseSplit(raw.out, MAX_TASKS)
+        if (err && !stdout.trim())
+          resolve({ out: "", err: stderr.trim() || err.message });
+        else resolve({ out: stdout });
+      },
+    );
+  });
+  if (!raw.out.trim())
+    return { error: raw.err || `${spec.label} answered nothing.` };
+  const plan = parseSplit(raw.out, MAX_TASKS);
   // The head of what it DID say, because "not a plan" on its own is unactionable: the two
   // real causes look nothing alike on screen (a refusal sentence, or this desk's own hooks
   // answering for it) and the first 160 characters separate them.
   if (!plan)
     return {
-      error: `${spec.label} did not answer with a plan: ${raw.out.trim().slice(0, 160)}`
-    }
-  return plan
+      error: `${spec.label} did not answer with a plan: ${raw.out.trim().slice(0, 160)}`,
+    };
+  return plan;
 }
