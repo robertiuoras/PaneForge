@@ -14,7 +14,7 @@
 // CUTS one: a release is Robert's call and stays his.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,20 +48,40 @@ export function installedVersion() {
       return null
     }
   }
-  // Windows: electron-builder's per-user install, whose folder is the only place the
-  // version is written down without reading the registry.
-  const dir = join(
-    process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'),
-    'Programs',
-    'PaneForge'
-  )
-  const asar = join(dir, 'resources', 'app-update.yml')
-  if (!existsSync(asar)) return null
+  // Windows: electron-builder's per-user install. The folder is named after package.json's
+  // `name` (claude-orchestrator), not the product; app-update.yml carries no version, so the
+  // version is read off package.json inside app.asar (header JSON + offset, no dependency).
+  const programs = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Programs')
+  for (const name of ['claude-orchestrator', 'PaneForge']) {
+    const asar = join(programs, name, 'resources', 'app.asar')
+    if (!existsSync(asar)) continue
+    try {
+      return asarPackageVersion(asar)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/** package.json's version inside an asar archive, or null. */
+export function asarPackageVersion(asar) {
+  const fd = openSync(asar, 'r')
   try {
-    const m = /version:\s*([0-9][^\s]*)/.exec(readFileSync(asar, 'utf8'))
-    return m ? m[1] : null
-  } catch {
-    return null
+    const head = Buffer.alloc(16)
+    readSync(fd, head, 0, 16, 0)
+    const headerSize = head.readUInt32LE(4)
+    const jsonLen = head.readUInt32LE(12)
+    const json = Buffer.alloc(jsonLen)
+    readSync(fd, json, 0, jsonLen, 16)
+    const entry = JSON.parse(json.toString('utf8')).files['package.json']
+    if (!entry || entry.size == null) return null
+    const body = Buffer.alloc(entry.size)
+    readSync(fd, body, 0, entry.size, 8 + headerSize + Number(entry.offset))
+    const v = JSON.parse(body.toString('utf8')).version
+    return typeof v === 'string' ? v : null
+  } finally {
+    closeSync(fd)
   }
 }
 

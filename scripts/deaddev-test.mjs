@@ -167,7 +167,10 @@ ok(/SWEEP_MS/.test(mainSrc) && !/setInterval\(\s*\(\) => \{\s*void sweepDeadDevs
   'the expensive sweep runs on SWEEP_MS, not every second')
 ok(/stopDevServer/.test(mainSrc), 'the kill goes through the re-validating stopDevServer, never a raw process.kill')
 
-const appSrc = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+// Line endings are the machine's, not the repo's: the anchor below carries a literal
+// \n, every source file in this checkout is CRLF, and indexOf answered -1 - so this
+// read as a product failure on Windows while passing on the Mac.
+const appSrc = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8').replace(/\r\n/g, '\n')
 ok(/<StopServer/.test(appSrc), 'the card is rendered')
 const stack = appSrc.slice(appSrc.indexOf("'corner-stack'"))
 ok(stack.indexOf('<StopServer') < stack.indexOf('</div>\n      {activityAt'), 'it lives INSIDE the corner stack, never fixed on its own')

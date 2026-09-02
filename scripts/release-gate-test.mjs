@@ -235,8 +235,11 @@ writeFileSync(
 git(repo, 'add', '-A')
 git(repo, 'commit', '-qm', 'a suite that fails')
 // Nothing may be waiting on a chat, and the cooldown must be spent, or the refusal we
-// read back could be either of those instead.
-lane('ready', '--session', 'sess-work')
+// read back could be either of those instead. `work` is already ready and clean from the
+// section above and stays untouched here on purpose: re-declaring it would run `ready`'s
+// own `catchUp`, merging this section's master commits into it - which would make it a
+// candidate the new gate-fix check below tries on every red answer, folding ITS suite
+// runs into the counts these assertions pin on master's alone.
 lane('ready', '--session', 'sess-main')
 patchState((s) => {
   s.lastShip = { version: '0.0.1', at: Date.now() - 24 * 60 * 60 * 1000, lanes: [] }
@@ -319,8 +322,103 @@ ok(
   JSON.stringify(state().conflicts)
 )
 
+// -------------------------------------------------- a lane that fixes what master breaks
+//
+// The deadlock this exists for: `autoship` only ever asks MASTER whether the suite is
+// green, so a lane whose entire reason to exist is fixing that suite could never merge -
+// master stays red until the merge that only happens once the gate says yes. `ready()`
+// already merges master into a lane before marking it, so a ready lane whose branch
+// contains master's HEAD is the ordinary state a fixing lane sits in.
+//
+// This repo's own `lane.mjs` runs the tests you are reading, so `OWN` (see loadProfile)
+// reads true here and the default release mode is "version" - the one that tags, pushes
+// and builds. A real merge/push needs a real destination, and a real version release
+// would also try to build an installer for a fixture that is not an Electron app, so this
+// block runs its own commands with `PF_RELEASE=merge` (the per-invocation override the
+// code already has for exactly this) against a throwaway bare "origin", proving the thing
+// PaneForge itself actually configures - finish at the merge, no version, no build - and
+// removes the remote again so every assertion after this block sees the same repo it
+// always has.
+
+const originBare = join(root, 'origin.git')
+mkdirSync(originBare, { recursive: true })
+execFileSync('git', ['init', '-q', '--bare', originBare], { encoding: 'utf8' })
+git(repo, 'remote', 'add', 'origin', originBare)
+git(repo, 'push', '-q', '-u', 'origin', 'master')
+
+const laneMerge = (...args) =>
+  execFileSync(process.execPath, [join(repo, 'scripts', 'lane.mjs'), ...args], {
+    cwd: repo,
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: { ...process.env, PF_RELEASE: 'merge' }
+  }).trim()
+
+writeFileSync(exitFile, '1')
+git(repo, 'commit', '-qm', 'master is red before the lane fix lands', '--allow-empty')
+laneMerge('ready', '--session', 'sess-main')
+const redBeforeFix = laneMerge('autoship')
+ok('master is red before the lane fix lands', /fails its own test suite/.test(redBeforeFix), redBeforeFix)
+
+// A fresh lane, branched from CURRENT (red) master, that changes the suite itself so its
+// own tree is green - the deadlock only bites when the fix is stuck behind the very gate
+// it fixes.
+const fixer = JSON.parse(laneMerge('claim', '--session', 'sess-fixer'))
+writeFileSync(join(fixer.dir, 'scripts', 'fake-test.mjs'), `console.log('ok    fixed')\n`)
+git(fixer.dir, 'add', '-A')
+git(fixer.dir, 'commit', '-qm', 'fix: the suite passes here')
+// `ready` ends with its own `autoship`, so the release happens right here - a second,
+// separate `autoship` call after this would find nothing left (fixer's work, and its
+// ready mark, are already on master) and print nothing at all.
+const fixedOut = laneMerge('ready', '--session', 'sess-fixer')
+ok('a lane that fixes the suite ships even though master itself is still red', /merged into/.test(fixedOut), fixedOut)
+ok(
+  'and the fix actually landed on master',
+  /fixed/.test(readFileSync(join(repo, 'scripts', 'fake-test.mjs'), 'utf8')),
+  readFileSync(join(repo, 'scripts', 'fake-test.mjs'), 'utf8')
+)
+
+// ------------------------------------------------------------------------ and the control
+//
+// A ready lane that is ALSO red is not the fix - it must not be believed just because it
+// is ready, and master's own reason is what a person still needs to see.
+
+writeFileSync(
+  join(repo, 'package.json'),
+  JSON.stringify({ name: 'demo', version: '0.0.1', scripts: { test: 'node -e "process.exit(1)"' } }, null, 2) + '\n'
+)
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'master breaks the suite a different way')
+laneMerge('ready', '--session', 'sess-main')
+const redAgainOut = laneMerge('autoship')
+ok('master is red again, a different way', /fails its own test suite/.test(redAgainOut), redAgainOut)
+
+const notFixed = JSON.parse(laneMerge('claim', '--session', 'sess-notfixed'))
+writeFileSync(join(notFixed.dir, 'unrelated.js'), 'export const q = 1\n')
+git(notFixed.dir, 'add', '-A')
+git(notFixed.dir, 'commit', '-qm', 'not a fix, still red')
+laneMerge('ready', '--session', 'sess-notfixed')
+const stillRefused = laneMerge('autoship')
+ok('a ready lane that is also red does not ship', /fails its own test suite/.test(stillRefused), stillRefused)
+ok('and it says the finished work was tried too', /tried the same way/.test(stillRefused), stillRefused)
+
+writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1', scripts: { test: 'node scripts/fake-test.mjs' } }, null, 2) + '\n')
+writeFileSync(exitFile, '0')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'master is green again')
+// `ready` ends with its own `autoship`, and master being green is now the whole story -
+// this single call both marks main done and ships everything waiting, lane c included.
+// A second `ready --session sess-notfixed` after this would find nothing left to mark:
+// its commit is on master already.
+const clearedOut = laneMerge('ready', '--session', 'sess-main')
+ok('and clears once master is really green', /merged into|Finished work/.test(clearedOut), clearedOut)
+
+git(repo, 'remote', 'remove', 'origin')
+
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')
+lane('release', '--session', 'sess-fixer')
+lane('release', '--session', 'sess-notfixed')
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

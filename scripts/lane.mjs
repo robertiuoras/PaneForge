@@ -2346,6 +2346,75 @@ function suiteFailure(state) {
 }
 
 /**
+ * The same run/retry/classify `suiteFailure` does, aimed at a lane's OWN checkout instead
+ * of master, and never touching `state.suite` - that cache is keyed on master's commit and
+ * would otherwise hold a verdict about a tree that was never master's.
+ *
+ * Returns null when green (or the checkout has no suite), a short reason when red. Never
+ * shown to a person on its own - see `readyLaneFix`, which is what asks.
+ */
+function suiteFailureInLane(dir) {
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  const script = pkg.scripts?.test
+  if (!script || /no test specified/i.test(script)) return null
+  const runSuite = () =>
+    spawnSync('npm test --silent', { cwd: dir, encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, shell: true })
+  let r = runSuite()
+  if (r.status === 0) return null
+  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (!cannotRun(first)) {
+    r = runSuite()
+    if (r.status === 0) return null
+  }
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (cannotRun(all)) return `could not run - ${firstLine(all)}`
+  const failed = all
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
+    .slice(0, 4)
+    .join('; ')
+  return r.signal || (r.status == null && !all.trim())
+    ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
+    : failed || firstLine(all)
+}
+
+/**
+ * Whether the deadlock the gate would otherwise be is actually a lane already carrying
+ * the fix.
+ *
+ * `suiteFailure` above only ever asks master, and a lane whose whole reason to exist is
+ * fixing master's own red suite can never pass that question - master stays red until the
+ * merge that only happens once the gate says yes. `ready()` already merges master into a
+ * lane before marking it, so a ready lane whose branch contains master's HEAD is the
+ * ordinary state a fixing lane sits in, not a special case: try each ready lane's OWN tree,
+ * in the order `ship()` would merge them, and if one is green there, that is the answer -
+ * `ship()` will merge it and master inherits the fix.
+ *
+ * Returns the id of the first ready lane whose own suite passes, or null when none does
+ * (with `tried` naming whether one was even eligible to ask, so the refusal can say so).
+ */
+function readyLaneFix(state) {
+  const masterHead = gitSafe(MAIN, 'rev-parse', MB)
+  if (!masterHead.ok) return { lane: null, tried: false }
+  let tried = false
+  for (const id of Object.keys(state.ready)) {
+    if (id === 'main') continue
+    const dir = laneDir(id)
+    if (!existsSync(dir)) continue
+    if (!gitSafe(MAIN, 'merge-base', '--is-ancestor', masterHead.out, laneBranch(id)).ok) continue
+    tried = true
+    if (!suiteFailureInLane(dir)) return { lane: id, tried }
+  }
+  return { lane: null, tried }
+}
+
+/**
  * The release nobody has to ask for. Called at the end of `ready` and of `release`, so
  * the version goes out the moment the last chat with unfinished work finishes it - and
  * silently does nothing while any chat is still mid-edit.
@@ -2447,7 +2516,22 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // ...and then whether it WORKS, which the typecheck never answered. Second because it
   // is ten times the cost and a tree that does not compile cannot pass it anyway.
   const red = suiteFailure(state)
-  if (red) return { shipped: false, reason: red }
+  if (red) {
+    // The lane that fixes a red master can never merge if the gate only ever asks
+    // master, because master stays red until the merge that only happens once the gate
+    // says yes - the deadlock this exists for. A ready lane already carries master's
+    // HEAD (`ready()` merges it in before marking), so its own tree passing is the fix,
+    // not a second bug: let `ship()` merge it and master inherits the fix.
+    const fix = readyLaneFix(state)
+    if (!fix.lane) {
+      return {
+        shipped: false,
+        reason: fix.tried
+          ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
+          : red
+      }
+    }
+  }
   try {
     return ship(kind, session)
   } catch (e) {
