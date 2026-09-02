@@ -201,7 +201,11 @@ console.log('keystrokes')
   // composer, sends the return as its own write, and re-sends only after reading the pane.
   ok(
     'the resume prompt goes through queuePrompt',
-    /this\.queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS, \(\) => this\.setHandover\(id, 0\), CLEAR_RESUME_BUDGET_MS\)/.test(fire)
+    /this\.queuePrompt\(id, resume, 0, switchCmd \? SUBMIT_GAP_MS : CLEAR_PROMPT_START_MS/.test(fire)
+  )
+  ok(
+    "a model switch is typed through queuePrompt before the prompt, then confirmed with one CR",
+    /this\.queuePrompt\(id, switchCmd, 0, CLEAR_PROMPT_START_MS/.test(fire) && /this\.write\(id, .\\r.\)\s*\n\s*typeResume\(\)/.test(fire)
   )
   // The curtain over the pane goes UP with the clear and DOWN when the prompt settles.
   // Raising it without passing the settle callback is a pane that never takes keys again.
