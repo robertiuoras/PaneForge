@@ -136,6 +136,12 @@ interface Props {
    */
   booting?: boolean
   /**
+   * This pane came back with no process at all - `sleep()` stopped the agent and kept the
+   * screen. Nothing here may ask that pane's CLI to do anything, because there is no CLI:
+   * see `runRestoreFix`.
+   */
+  asleep?: boolean
+  /**
    * The four colours the terminal's own chrome is drawn in, from the app's theme.
    *
    * Handed over as strings because xterm renders to a canvas and cannot read a CSS
@@ -819,6 +825,7 @@ function TerminalPane({
   pty = null,
   replayCols,
   booting,
+  asleep,
   termTheme,
   ask = null,
   autoAnswerAt,
@@ -871,6 +878,8 @@ function TerminalPane({
   const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  const asleepRef = useRef(asleep)
+  asleepRef.current = asleep
   // The width this pane's replayed history was painted at, where the effect that owns the
   // terminal can read it. See `Props.replayCols`.
   const replayColsRef = useRef(replayCols)
@@ -1228,6 +1237,21 @@ function TerminalPane({
    * on this desk get. The pane now presses Fix for itself, once.
    */
   const needRestoreFix = useRef(false)
+  /** When this pane last had a byte printed at it. See `restoreFixLag`. */
+  const lastByteAt = useRef(0)
+  /**
+   * How long after the last printed byte the restore repair landed, in ms. Read by the
+   * probe: "it repaired itself" and "it repaired itself while the agent was still
+   * painting, and the next frame undid it" look identical from a count alone, and the
+   * second one is the whole bug.
+   */
+  const fixLag = useRef<number | null>(null)
+  /**
+   * `armRestoreFix` from the mount effect, so a pane that becomes measurable can SETTLE
+   * its repair instead of spending it on the spot. A pane usually becomes visible at the
+   * moment it is woken or opened, which is the moment its CLI starts painting.
+   */
+  const armFix = useRef<(() => void) | null>(null)
   /**
    * Give a restored pane that repair, once. Deliberately not a plain timer from the
    * replay: a hidden pane cannot be measured and its agent has nothing to redraw against,
@@ -1242,8 +1266,18 @@ function TerminalPane({
       return
     }
     if (!host.current?.offsetParent) return
+    // A pane with no process cannot be repaired, and must not be counted as repaired.
+    // `repair()` asks the pane's CLI to redraw its whole frame; a pane that came back
+    // ASLEEP has no CLI, so `api.redraw` reaches nothing and the torn replay stays on
+    // screen - with the one restore repair spent. Most of a restored desk comes back
+    // asleep (`restoreAsleep`), which is the launch every update gets, so this was the
+    // common case: the pane was woken later, drew over a screen nobody had repaired, and
+    // still needed Fix pressed by hand. Left FLAGGED instead: waking prints, printing
+    // arms the fix, and the repair lands 1.2s after the woken agent stops painting.
+    if (asleepRef.current) return
     needRestoreFix.current = false
     restoreFixes.current++
+    fixLag.current = lastByteAt.current ? Date.now() - lastByteAt.current : null
     paneRepair.get(sessionId)?.()
   }
 
@@ -2063,6 +2097,13 @@ function TerminalPane({
         // only reads the buffer cannot tell "the frame came back clean" from "the path
         // never ran", and the second is how a regression here would pass unnoticed.
         restoreFixes: () => restoreFixes.current,
+        // ...and whether one is still OWED. A pane that was hidden or asleep when the
+        // replay landed keeps the flag, and "never repaired" and "repair still pending"
+        // are the two halves of this bug that a count alone cannot tell apart.
+        restorePending: () => needRestoreFix.current,
+        // ...and how long after the last byte that repair landed. Under RESTORE_FIX_MS
+        // means it was made mid-paint, which the next frame undoes.
+        restoreFixLag: () => fixLag.current,
         // What the mouse handlers have typed into the pty, newest last. See `clickKeys`.
         clickKeys: () => [...clickKeys.current],
         // What this pane believes is being TYPED right now - the rows of the CLI's own
@@ -3154,6 +3195,7 @@ function TerminalPane({
       window.clearTimeout(fixTimer)
       fixTimer = window.setTimeout(runRestoreFix, RESTORE_FIX_MS)
     }
+    armFix.current = armRestoreFix
 
     // Replay whatever the pty printed before this pane existed (new pane on an
     // existing session, or a remount).
@@ -3447,6 +3489,7 @@ function TerminalPane({
       if (id !== sessionId) return
       if (!sawOutput) setBlank(false)
       sawOutput = true
+      lastByteAt.current = Date.now()
       // The resume prints for a second or two after the replay. Repair once it stops.
       armRestoreFix()
       // Once per burst while output is flowing, and once more after it stops: the frame
@@ -3968,7 +4011,16 @@ function TerminalPane({
               syncTotal()
               // A restored pane that was hidden until now could not be measured, so its
               // repair was left pending rather than spent on a 0x0 host.
-              runRestoreFix()
+              //
+              // ARMED, not fired. A pane becomes measurable at the moment somebody opens
+              // it - and opening an asleep pane WAKES it, so the agent is starting up and
+              // painting its whole frame right then. A repair spent on that beat is undone
+              // by the next frame the CLI draws, and the flag is gone, which is "after the
+              // update restart it still looks broken until I press Fix". Arming gives it
+              // the same settle the output path uses: every burst pushes the timer out, and
+              // the repair lands once the painting stops. With nothing printing at all the
+              // timer still fires RESTORE_FIX_MS later, so a quiet pane is repaired too.
+              armFix.current?.()
             }
           }
         } catch {
@@ -4628,6 +4680,7 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.mouseSelect === b.mouseSelect &&
     a.clickMovesCursor === b.clickMovesCursor &&
     a.autoFixUi === b.autoFixUi &&
+    a.asleep === b.asleep &&
     a.agent === b.agent &&
     a.onToast === b.onToast &&
     a.autoAnswerAt === b.autoAnswerAt &&

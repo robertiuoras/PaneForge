@@ -6042,6 +6042,7 @@ export default function App(): JSX.Element {
                  without this it sat there wearing yesterday's screen and saying nothing
                  for the seconds the agent spends booting. */
               booting={!s.printed && !s.asleep && s.status !== 'exited'}
+              asleep={Boolean(s.asleep)}
             />
             {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
                 it types into, instead of hiding in a row of six header icons. Nothing
