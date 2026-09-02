@@ -135,6 +135,33 @@ package.json and no tag matching it, and `v0.1.0..HEAD` is a fatal "ambiguous ar
 that surfaced as `No release yet: Command failed` - a repo that could never cut its first
 release and never said why.
 
+### A conflict is cheapest at the first edit
+
+2026-09-02: lane c (offload-first) and lane d (task brief) both inserted at `laneFor`, line
+1371 of `src/main/index.ts`, the same afternoon. Neither chat knew about the other. d shipped
+first; c sat conflicted on master and a pane spent its turn on the merge. CLAUDE.md's
+peer-announce rule ("message the other chat naming the files before the first edit") had been
+there for a week and nobody did it, because nothing told them there was anything to announce.
+
+The engine cannot stop two chats editing one region, and it should not try: index.ts is
+4,072 lines and 88 of the last 923 commits touch it, so refusing overlap would refuse most
+work. What it can do is say so at the first edit, the one moment it is cheap. `lane.mjs
+guard` now exits 0 WITH TEXT when the file being edited has hunks in another lane's working
+tree that master does not carry - lane letter, folder, whether a chat is in it, line ranges -
+and the hook folds it into the edit's context. Once per session, file and ten minutes; a file
+nobody else changed is re-read at most once a minute.
+
+The reading is `git diff <merge-base with master> -- <file>` per lane: a COMMIT against the
+WORKING TREE. `git diff master... -- <file>` reads the same and is not: with one side omitted
+it diffs to HEAD, so the uncommitted edit a live chat is making right now never showed. The
+test fixture also has to `realpathSync(tmpdir())` - macOS's `/var` is a symlink to
+`/private/var`, and the engine answers in resolved paths, so nothing prefix-matched and every
+guard call, refusals included, passed. `scripts/lane-overlap-test.mjs`.
+
+The structural fix is splitting index.ts into per-feature IPC modules, and it is a job for a
+quiet moment with every lane merged: done while four lanes are live it conflicts with all of
+them.
+
 ## Releasing happens by itself
 
 There is one command, and it is not a release:
