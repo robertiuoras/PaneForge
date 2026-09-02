@@ -18,7 +18,7 @@ import {
 } from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
-import { app } from 'electron'
+import { app, net } from 'electron'
 import { updateIgnored } from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
@@ -147,6 +147,8 @@ function set(patch: Partial<UpdateState>): void {
   if (state.phase !== before) {
     if (state.phase === 'ready') noteReady()
     else if (state.ignored) state = { ...state, ignored: false }
+    phaseNet = budgetFor(state.phase) ? netWord() : ''
+    armUnwedge()
   }
   if (state.phase !== before || patch.error) {
     log('state', state.phase, state.version ?? '', state.error ?? '')
@@ -176,6 +178,29 @@ const PROBE_BUDGET_MS = Number(process.env.PF_PROBE_BUDGET_MS) || 5 * 60_000
 /** When the current phase began. Only a CHANGE restamps it - a percent tick must not. */
 let phaseAt = Date.now()
 
+/**
+ * What the network looked like when the current phase began.
+ *
+ * A wedge cannot explain itself: the promise that never settled is inside
+ * electron-updater and the only thing it leaves behind is a phase and a clock. Two on
+ * this Mac on 2026-09-02 (00:31:06 after 999s, 00:44:12 after 784s) said nothing at all
+ * about why, so there was no way to tell a dead wifi from a hung socket from a feed that
+ * accepted the connection and never answered. One word, sampled at the start, is the
+ * difference between "the laptop was asleep on the train" and "look at this properly".
+ */
+let phaseNet = ''
+
+function netWord(): string {
+  try {
+    const online = (net as { isOnline?: () => boolean } | undefined)?.isOnline?.()
+    if (online === undefined) return 'network unknown'
+    return online ? 'online' : 'OFFLINE'
+  } catch {
+    // Off the main process, or an electron old enough not to have it. Not worth a throw.
+    return 'network unknown'
+  }
+}
+
 function budgetFor(phase: UpdateState['phase']): number {
   if (phase === 'checking') return CHECK_BUDGET_MS
   if (phase === 'downloading') return DOWNLOAD_BUDGET_MS
@@ -186,12 +211,74 @@ function budgetFor(phase: UpdateState['phase']): number {
 function unwedge(): void {
   const held = `${state.phase} ${state.version ?? ''}`.trim()
   const secs = Math.round((Date.now() - phaseAt) / 1000)
-  log('wedged', `${held} never finished after ${secs}s - dropping it and looking again`)
-  noteWedge(held)
+  const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
+  log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
+  noteWedge(`${held} after ${secs}s, ${cause}`)
   macStaging = ''
   // Not 'error': nothing the user asked for failed, and the next check is one tick away.
   // 'error' would put a red badge in the corner for a fault that has already been undone.
   set({ phase: 'idle', version: undefined, percent: undefined, error: undefined })
+}
+
+/**
+ * Undo a wedge on its own clock, not on somebody else's.
+ *
+ * `busy()` is only asked when something starts a check, and the next thing to do that is
+ * the background poll - so a phase that wedged was held for a poll interval, not for its
+ * budget. That is the whole gap between a 2 minute CHECK_BUDGET_MS and the 999s and 784s
+ * two wedges actually lasted here on 2026-09-02. The budget is only a budget if something
+ * is watching it.
+ *
+ * `busy()` keeps its own check: this timer is the one that fires without being asked, and
+ * a recovery must not depend on a single timer being alive.
+ */
+let wedgeTimer: NodeJS.Timeout | null = null
+
+function armUnwedge(): void {
+  if (wedgeTimer) {
+    clearTimeout(wedgeTimer)
+    wedgeTimer = null
+  }
+  const budget = budgetFor(state.phase)
+  if (!budget) return
+  const left = budget - (Date.now() - phaseAt)
+  // Scale-free rather than a fixed grace, so the test can shrink the budgets to
+  // milliseconds through their env vars and still measure the same rule.
+  wedgeTimer = setTimeout(() => {
+    wedgeTimer = null
+    if (!budgetFor(state.phase)) return
+    // A timer may fire a tick early; the clock, not the timer, decides.
+    if (Date.now() - phaseAt > budgetFor(state.phase)) unwedge()
+    else armUnwedge()
+  }, Math.max(1, left + 1))
+  wedgeTimer.unref?.()
+}
+
+/**
+ * A promise that has to answer or say it did not.
+ *
+ * electron-updater's own check has no timeout of its own that reaches us, and its default
+ * http timeouts did not stop the two wedges above from lasting 13 and 16 minutes. Racing
+ * it settles the promise, which is the difference that matters: `pollOnce`'s `finally`
+ * runs, the poll re-arms at its ordinary cadence, and the next check starts clean.
+ */
+function failFast<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let t: NodeJS.Timeout | null = null
+  // Deliberately NOT unref'd, unlike every other timer here: the others are background
+  // watchdogs that must not hold the app open, and this one is the only thing that ends
+  // an await somebody is sitting on. It is cleared the moment the work settles, so a
+  // check that answers in 300ms does not hold anything for the rest of the budget.
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      t = setTimeout(
+        () => reject(new Error(`${what} did not answer within ${Math.round(ms / 1000)}s (${netWord()})`)),
+        ms
+      )
+    })
+  ]).finally(() => {
+    if (t) clearTimeout(t)
+  })
 }
 
 /** A check or a download is already running - starting a second one is what breaks it. */
@@ -1161,7 +1248,9 @@ async function supersede(): Promise<void> {
     // Same stand-down as the main check: this is the path that logged the crash every
     // minute for 28 hours, because a ready build keeps it running forever.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
-    const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
+    const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
+      updateInfo?: { version?: string }
+    } | null
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
@@ -1217,9 +1306,18 @@ export async function checkForUpdates(): Promise<UpdateState> {
     // the same question by construction, so the flag is stood down under it.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
     set({ phase: 'checking', error: undefined })
-    await u.checkForUpdates()
+    await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update check')
   } catch (e) {
-    set({ phase: 'error', error: (e as Error)?.message ?? String(e) })
+    const message = (e as Error)?.message ?? String(e)
+    if (/did not answer within/.test(message)) {
+      // The same event as a wedge the timer caught, reached a different way, so it is
+      // recorded the same way and greps the same: `wedged` is the word in the log.
+      // Deliberately not 'error' - nothing the user asked for failed, and the next check
+      // is one poll away. A red badge for a check the network ate is a lie.
+      unwedge()
+      return state
+    }
+    set({ phase: 'error', error: message })
   }
   return state
 }

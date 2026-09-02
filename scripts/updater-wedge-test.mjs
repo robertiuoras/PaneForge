@@ -115,6 +115,13 @@ const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
 const skip=(n,why)=>console.log('SKIP '+n+' - '+why)
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms))
+// Every timer inside updater.ts is unref'd on purpose - a background poll may not hold
+// the app open. Under test that means node runs out of ref'd handles at the first await
+// and EXITS 0, mid-suite, looking exactly like a pass: this file reported OK for months
+// while running one of its eleven checks. One ref'd interval, and a sentinel the outer
+// half insists on seeing, is what tells a finished run from an abandoned one.
+const alive=setInterval(()=>{},20)
+const done=(n)=>{clearInterval(alive);console.log('DRIVE DONE '+n);process.exit(n?1:0)}
 const logFile=path.join(el.__dir,'updater.log')
 const logged=()=>{try{return fs.readFileSync(logFile,'utf8')}catch{return ''}}
 `
@@ -134,15 +141,24 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   stub.__hang(true)
   let b=at()
   void u.checkForUpdates()
+  // A tick, not none: the phase is set after an await inside checkForUpdates (the
+  // prerelease flag is re-asserted first), so reading it synchronously reads the phase
+  // from before the call.
+  await sleep(0)
   ok(u.getUpdateState().phase==='checking','a hung check leaves the badge checking')
   b=at(); await u.checkForUpdates()
   ok(at()===b,'a second check is refused while the first is genuinely in flight')
 
+  // Nobody asks again. This is the half that was missing on 2026-09-02: busy() is only
+  // consulted when something starts a check, so a 2-minute budget was enforced at the
+  // POLL interval - two wedges here lasted 999s and 784s.
   await sleep(260)
+  ok(u.getUpdateState().phase!=='checking','a hung check is dropped on its own clock, with nobody asking')
+  ok(/wedged/.test(logged()),'the wedge is written down rather than recovered in silence')
+  ok(/network unknown|online|OFFLINE/.test(logged()),'and it says what the network was doing when it started')
   stub.__hang(false)
   b=at(); await u.checkForUpdates()
-  ok(at()===b+1,'past its budget the hung check is dropped and a new one runs')
-  ok(/wedged/.test(logged()),'the wedge is written down rather than recovered in silence')
+  ok(at()===b+1,'and the next check runs clean')
 
   // The reported symptom itself: a percentage that stops moving. 33% is 30 MiB of the
   // 95.8 MB v0.4.62 zip - the exact number this Mac sat on.
@@ -150,14 +166,29 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   ok(u.getUpdateState().phase==='downloading'&&u.getUpdateState().percent===33,'a stalled download shows 33%')
   b=at(); await u.checkForUpdates()
   ok(at()===b,'no check while a download could still be alive')
+  // A download is not a promise this app awaits, so failFast cannot reach it: this is
+  // the timer on its own, and the only thing that ends a stalled download at its budget
+  // rather than at the next poll.
   await sleep(260)
+  ok(u.getUpdateState().phase!=='downloading','a download that never finishes is dropped with nobody asking')
   b=at(); await u.checkForUpdates()
-  ok(at()===b+1,'a download that never finishes stops blocking every later check')
-  ok(u.getUpdateState().phase!=='downloading','and the badge is no longer stuck on it')
+  ok(at()===b+1,'and stops blocking every later check')
+
+  // The other half, and the one the timer cannot do: a caller AWAITING the check has to
+  // get control back. The timer resets the badge, but whoever was awaiting - pollOnce,
+  // whose finally re-arms the background poll - is still sitting on a promise with no
+  // ending. Racing the check inside updater.ts is what settles it.
+  h['update-not-available']()
+  stub.__hang(true)
+  const raced=await Promise.race([u.checkForUpdates().then(()=>'returned'),sleep(600).then(()=>'still hanging')])
+  ok(raced==='returned','a check that never answers hands control back to whoever awaited it')
+  stub.__hang(false)
 
   // The deeper half. arm() is called from pollOnce's finally, and finally is not reached
   // while an await hangs - so one unsettled promise used to end the background poll for
   // the life of the process. Nothing was then left to notice the wedge above at all.
+  // The check now fails fast, so the ordinary path is a turn that RETURNS and re-arms
+  // itself; the watchdog behind it is the second line, for a hang failFast cannot reach.
   // Settle the badge first, or the poll below never reaches the hang at all: it would be
   // refused by the still-fresh phase above, return at once and re-arm normally. That is
   // correct behaviour and the opposite of what is being tested here.
@@ -168,7 +199,8 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   b=at()
   void u.pollOnce()
   await sleep(800)
-  ok(at()>b+1,'the poll keeps its own clock through a turn that never returns ('+(at()-b)+' turns)')
+  ok(at()>b,'the poll comes back from a turn that used to never return ('+(at()-b)+' turns)')
+  ok(u.getUpdateState().phase!=='checking','and it is not left holding the badge')
   u.setAutoCheck(false)
   stub.__hang(false)
 
@@ -186,8 +218,9 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   const health=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8'))
   ok(health.wedges>=3,'every recovered wedge is counted ('+health.wedges+')')
   ok(typeof health.lastWedge==='string','and the last one is named for whoever reads it later')
+  ok(/after [0-9]+s/.test(health.lastWedge),'with how long it was held, so a log review can size it')
 
-  process.exit(fail.length?1:0)
+  done(fail.length)
 })()
 `
 )
@@ -210,7 +243,7 @@ const h=stub.__handlers
 const mac=process.platform==='darwin'
 if(!mac){
   ok(u.stagedInstallable()==='','off macOS there is no bundle to swap in')
-  process.exit(fail.length?1:0)
+  done(fail.length)
 }
 ok(u.getUpdateState().phase==='ready','a bundle staged by an earlier run is adopted at launch')
 ok(u.stagedInstallable()==='0.9.0','and is installable on the way out')
@@ -218,7 +251,7 @@ ok(u.stagedInstallable()==='0.9.0','and is installable on the way out')
 h['download-progress']({percent:33})
 ok(u.getUpdateState().phase==='downloading','a newer version starts downloading over it')
 ok(u.stagedInstallable()==='0.9.0','quitting still installs the staged bundle - the disk wins over the badge')
-process.exit(fail.length?1:0)
+done(fail.length)
 `
 )
 
@@ -232,9 +265,18 @@ const env = {
 
 let bad = 0
 for (const script of [drive, stagedDrive]) {
+  // Captured rather than inherited so the sentinel can be insisted on. A drive that
+  // exits 0 without printing it did not pass - it stopped.
+  let out = ''
   try {
-    execFileSync(process.execPath, [script], { stdio: 'inherit', cwd: work, env })
-  } catch {
+    out = execFileSync(process.execPath, [script], { encoding: 'utf8', cwd: work, env })
+  } catch (e) {
+    out = String(e.stdout ?? '')
+    bad++
+  }
+  process.stdout.write(out)
+  if (!/DRIVE DONE/.test(out)) {
+    console.log(`FAIL ${script} stopped before the end of its checks`)
     bad++
   }
 }
