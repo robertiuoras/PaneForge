@@ -3401,10 +3401,6 @@ ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory
 
 // --- history ---------------------------------------------------------------
 
-// Where a new pane's agent started, and why. Not an activity row: nothing was done TO a
-// pane somebody had open, and a line per launch would drown the bell.
-ipcMain.on('offload:log', (_e, entry: Record<string, unknown>) => logOffload(entry))
-
 ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
   logReclaim(entry)
   // Same line, twice: the file stays the place a week-old close is reconstructed from,

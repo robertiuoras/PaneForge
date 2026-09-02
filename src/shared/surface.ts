@@ -56,7 +56,6 @@ export const SURFACE: Surface = {
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],
   logReclaim: ['send', 'reclaim:log'],
-  logOffload: ['send', 'offload:log'],
   listActivity: ['invoke', 'activity:list'],
   markActivitySeen: ['send', 'activity:seen'],
   clearAttention: ['send', 'sessions:attention-clear'],

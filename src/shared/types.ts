@@ -2047,8 +2047,6 @@ export interface Api {
   reorderSessions(ids: string[]): void
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
-  /** Record where a new pane's agent was started and why, into `offload.log`. */
-  logOffload(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
   listActivity(): Promise<ActivityFeed>
   /** The list has been opened: everything in it stops counting as new. */
