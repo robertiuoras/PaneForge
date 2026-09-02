@@ -2049,6 +2049,13 @@ export interface Api {
   logReclaim(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
   listActivity(): Promise<ActivityFeed>
+  /**
+   * The prompt a pane opened on a backlog task starts with, or why there is none.
+   *
+   * Reading only - the backlog has one writer (`claude-config/backlog.mjs`). Reached by
+   * `pf open --task <id>`, which refuses BEFORE opening a pane when the id names nothing.
+   */
+  taskBrief(ref: string): Promise<{ prompt: string } | { error: string }>
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
   killSession(id: string): Promise<void>

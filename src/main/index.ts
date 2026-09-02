@@ -106,6 +106,7 @@ import {
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
 import { clearCommandFor, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor } from './handoffSteps'
+import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
@@ -1372,6 +1373,11 @@ async function laneFor(
   }
 }
 
+// A pane opened on a backlog task is briefed from the task rather than by hand - A3 of
+// the milestone, and the last hand-typed step in the loop `next-action.mjs` and
+// `backlog.mjs done --gate` already close at both ends. Reading only: this app never
+// writes to the backlog, which has one writer.
+ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
 ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) =>
   manager.start(await laneFor(req))
 )

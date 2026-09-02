@@ -9,7 +9,7 @@
  * app (repo rule: channels are added to surface.ts, not to a transport).
  *
  *   node scripts/pf-ctl.mjs list
- *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P] [--model M] [--agent A]
+ *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
@@ -131,7 +131,20 @@ if (cmd === 'list') {
   for (const s of list) console.log([s.id, s.status, s.title, s.cwd].join('\t'))
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
-  const prompt = flag(rest, '--prompt')
+  // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt
+  // out of the row - what it is, why, the acceptance criterion it will be judged by, and
+  // what the last failed attempt said - through the same forge every other prompt in the
+  // app goes through. The lookup happens BEFORE the pane exists, so an id naming nothing
+  // (or two things) refuses and opens no pane. Proved against the installed 0.8.188, which
+  // does not carry the channel yet: `unknown channel backlog:task`, exit 1, no pane opened.
+  const task = flag(rest, '--task')
+  let prompt = flag(rest, '--prompt')
+  if (task) {
+    if (prompt) fail(1, 'open takes --task or --prompt, not both')
+    const brief = await call('backlog:task', [task])
+    if (!brief || brief.error) fail(1, brief?.error ?? 'the app could not read the backlog')
+    prompt = brief.prompt
+  }
   const model = flag(rest, '--model')
   const agent = flag(rest, '--agent')
   // A pane opened by automation has nobody sitting in it to close it when the job is

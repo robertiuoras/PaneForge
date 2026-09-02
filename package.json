@@ -251,7 +251,8 @@
     "test:agyconv": "node scripts/agy-conversation-test.mjs",
     "unreleased": "node scripts/unreleased.mjs",
     "test:unreleased": "node scripts/unreleased-test.mjs",
-    "test:promptforge": "node scripts/prompt-forge-test.mjs"
+    "test:promptforge": "node scripts/prompt-forge-test.mjs",
+    "test:taskbrief": "node scripts/task-brief-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
