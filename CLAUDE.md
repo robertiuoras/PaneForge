@@ -255,8 +255,11 @@ Add channels there only.
 
 - The reading is an agent CLI run ONCE, headlessly; the only agent this app starts outside a pane.
   `HEADLESS` holds only CLIs measured answering a one-shot prompt; one without is refused.
-- Runs in an EMPTY folder under userData, with `--settings '{"hooks":{},"outputStyle":"default"}'` and
-  `--strict-mcp-config` — `--settings` cannot cover a project file.
+- Runs in an EMPTY folder under userData, with `--setting-sources ""`, `--strict-mcp-config` and
+  `--settings '{"hooks":{},"outputStyle":"default"}'`. `--settings` MERGES into the user's settings
+  and never covered CLAUDE.md: with it alone the desk's Stop hook blocked, the CLI answered again,
+  and `-p` printed only that second message — the plan was thrown away. `--setting-sources ""` loads
+  none of user/project/local. `--bare` also works and cannot be used: it answers `Not logged in`.
 - An answer that is not a plan is `null`, never an empty plan — refusal quotes the first 160 chars said.
 - Every `{` is tried when reading the object out of the answer, not only the first.
 - `MAX_TASKS` is 4 — the lane pool; everything over it is NAMED in `dropped`.

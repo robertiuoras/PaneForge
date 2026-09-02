@@ -34,7 +34,26 @@ import { which } from './which'
  * done with `CLAUDE_CONFIG_DIR` - pointing that elsewhere answers `Not logged in`.
  */
 const HEADLESS: Record<string, string[]> = {
-  claude: ['-p', '--strict-mcp-config', '--settings', '{"hooks":{},"outputStyle":"default"}'],
+  claude: [
+    '-p',
+    // `--settings` is not enough on its own, and the proof is a measurement rather than a
+    // reading of the flag: with only `--settings '{"hooks":{}}'` this desk answered the
+    // very split brief below with `Noted. JSON above stands - 2 parallel tasks, no file
+    // overlap.` and `JSON delivered above. No further output needed.` Two `iterations` in
+    // the run's own usage block, 57k of cache read: the JSON WAS written, a Stop hook then
+    // blocked, and `-p` prints only the last message - so the plan was thrown away and the
+    // app reported "did not answer with a plan". `--settings` merges INTO the user's
+    // settings; it does not replace them, and it never covered CLAUDE.md at all.
+    //
+    // `--setting-sources ""` loads none of user, project or local, which is the only flag
+    // that stops both. `--bare` also stops them and cannot be used: it answers `Not logged
+    // in - Please run /login`, because the subscription login is part of what it skips.
+    '--setting-sources',
+    '',
+    '--strict-mcp-config',
+    '--settings',
+    '{"hooks":{},"outputStyle":"default"}'
+  ],
   codex: ['exec']
 }
 
