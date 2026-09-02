@@ -40,7 +40,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
-import { folderName, laneOfCheckout, projectOf } from '../shared/place'
+import { laneOfCheckout } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
@@ -632,11 +632,7 @@ export class SessionManager extends EventEmitter {
 
     const meta: Session = {
       id,
-      // The PROJECT, never the folder: a pane opened in the `PaneForge-a` worktree is
-      // still working on PaneForge, and the `-a` is a slot id this app invented. The
-      // copy is already said by the chip beside the name (`copy 2`), so the folder
-      // spelling here was the machinery leaking onto the card twice.
-      title: req.title ?? projectOf(req.cwd, req.lane),
+      title: req.title ?? basename(req.cwd),
       cwd: req.cwd,
       agent,
       model: req.model || undefined,
@@ -859,7 +855,7 @@ export class SessionManager extends EventEmitter {
     if (!live) return
     live.meta.clientOff = true
     live.meta.clientSlug = undefined
-    live.meta.title = projectOf(live.meta.cwd, live.meta.lane)
+    live.meta.title = basename(live.meta.cwd)
     this.emitSessions()
   }
 
@@ -882,11 +878,6 @@ export class SessionManager extends EventEmitter {
       if (!lane || !now || now.meta.lane) return
       now.meta.lane = lane
       now.req = { ...now.req, lane }
-      // The title was written before the lane was known, so a pane opened straight into
-      // a worktree this app did not create was called `PaneForge-a`. Only a title that
-      // is still the bare folder name is rewritten - a typed name or a client name is
-      // somebody's answer and is never argued with.
-      if (now.meta.title === folderName(cwd)) now.meta.title = projectOf(cwd, lane)
       this.emitSessions()
     })
   }

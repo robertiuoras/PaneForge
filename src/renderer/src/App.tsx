@@ -1362,13 +1362,7 @@ export default function App(): JSX.Element {
   // not also select whatever card is now under the cursor.
   const draggedRef = useRef(false)
 
-  // `reorder` is false where dragging a card would do nothing - the list grouped by
-  // state puts every row back where its state says, so a card that followed the finger
-  // and snapped back reads as a broken list. The press still comes through here rather
-  // than selecting on pointerdown, because a FINGER's first press is how you start a
-  // scroll: picking on pointerdown opened a pane every time the list was scrolled.
-  const beginDrag = useCallback(
-    (e: React.PointerEvent, id: string, tap?: () => void, reorder = true) => {
+  const beginDrag = useCallback((e: React.PointerEvent, id: string, tap?: () => void) => {
     if (e.button !== 0) return
     // The close/restart buttons and the rename box own their own presses.
     if ((e.target as HTMLElement).closest('button, input')) return
@@ -1424,7 +1418,6 @@ export default function App(): JSX.Element {
       if (!dragging) {
         if (Math.abs(ev.clientY - startY) >= TAP_SLOP || Math.abs(ev.clientX - startX) >= TAP_SLOP)
           drifted = true
-        if (!reorder) return
         if (Math.abs(ev.clientY - startY) < DRAG_SLOP) return
         dragging = true
         disarm()
@@ -1500,9 +1493,7 @@ export default function App(): JSX.Element {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
-    },
-    []
-  )
+  }, [])
 
   const patchConfig = useCallback((patch: Partial<Config>) => {
     // Apply locally first so sliders and checkboxes feel instant; main echoes back.
@@ -4776,12 +4767,8 @@ export default function App(): JSX.Element {
                 // Dragging reorders `order`, and `order` decides nothing while the list is
                 // grouped by state - the row would follow the pointer and snap back to
                 // wherever its state puts it, which reads as a list that is broken.
-                // A mouse press selects at once, as it always has. A finger goes through
-                // `beginDrag` either way: it is the thing that knows a press which
-                // travelled was a scroll and not a tap, and selecting on pointerdown
-                // opened a pane on every attempt to scroll this list on a phone.
-                if (byState && e.pointerType !== 'touch') pick()
-                else beginDrag(e, s.id, pick, !byState)
+                if (byState) pick()
+                else beginDrag(e, s.id, pick)
               }}
               onClick={() => {
                 if (draggedRef.current) return

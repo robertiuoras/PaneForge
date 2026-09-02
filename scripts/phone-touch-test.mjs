@@ -47,27 +47,6 @@ ok(/iPhone\|iPad\|iPod/.test(platform), 'phone: isMac refuses an iOS user agent'
 ok(/maxTouchPoints/.test(platform), 'phone: isMac refuses a touch device an iPad calls a Macintosh')
 ok(/html\.handheld \.kbd\s*\{[^}]*display:\s*none/.test(src), 'phone: no keyboard hints on a handheld')
 
-// --- the home screen is the list ---------------------------------------------
-// Measured at 390x844 before this: the list had 605px of the screen only after 250px of
-// chrome above it and 108px below came off. What went is what a phone cannot act on -
-// the Focus / Grid / Save row arranges panes side by side, the build number is the
-// desk's, and `SESSIONS (n)` labels a screen that holds nothing else.
-ok(
-  /html\.handheld\.handheld-list \.foot,[\s\S]{0,200}?display:\s*none/.test(src),
-  'phone: the pane-layout row is off the list screen'
-)
-ok(
-  /html\.handheld\.handheld-list \.sidebar > \.section/.test(src),
-  'phone: the SESSIONS heading is dropped by a rule that names the sidebar, not <html>'
-)
-// A press on a card has to be allowed to become a scroll. Without this the browser gives
-// the gesture to the drag handler and the list is unscrollable on a phone.
-ok(
-  /html\.handheld\.handheld-list \.list,[\s\S]{0,120}?touch-action:\s*pan-y/.test(src),
-  'phone: a card lets the finger scroll the list'
-)
-ok(/\.list \{[^}]*overscroll-behavior:\s*contain/.test(src), 'phone: a flick past the end is not the browser\'s')
-
 // --- every control a finger uses ---------------------------------------------
 // One line each rather than a loop, so a control dropped from this list is a deliberate
 // edit somebody has to write down.
