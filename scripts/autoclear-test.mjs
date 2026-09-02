@@ -399,6 +399,11 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
   // answers `execvpe(/bin/bash) failed` and the whole suite reads as a code failure. The
   // shape assertions above hold everywhere; only the execution is skipped, out loud, so
   // nobody mistakes a machine without bash for a passing tee.
+  // The tee reads its own folder off BASH_SOURCE[0] by cutting at the last '/'. Git Bash
+  // hands back the argv it was given, so a Windows path holds no '/', the block falls back
+  // to '.', and the log lands in the cwd instead of beside the hook - the derivation itself
+  // going untested. Give bash a path it can cut and the same assertion holds on both.
+  const posix = (p) => p.replace(/\\/g, '/')
   let hasBash = true
   try {
     execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' })
@@ -407,7 +412,7 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
   }
   if (!hasBash) console.log('skip  no bash on this machine - the statusline tee is not run')
   if (hasBash) {
-  const printed = execFileSync('bash', [sl], { input: feed, encoding: 'utf8' })
+  const printed = execFileSync('bash', [posix(sl)], { input: feed, encoding: 'utf8' })
   ok('the original output is untouched', printed === `model | ${feed.length}\n`)
   const log = join(home, 'pf-context.jsonl')
   ok('a row landed', existsSync(log))
@@ -415,10 +420,10 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
   ok('with the tokens on it', row.context_window?.total_input_tokens === 190_000)
   ok('and with the folder, which is how two panes are told apart', row.workspace?.current_dir === '/tmp/demo')
   ok('and a timestamp of our own', typeof row.pf_ts === 'number' && row.pf_ts > 0)
-  execFileSync('bash', [sl], { input: feed, encoding: 'utf8' })
+  execFileSync('bash', [posix(sl)], { input: feed, encoding: 'utf8' })
   ok('rows accumulate', readFileSync(log, 'utf8').trim().split('\n').length === 2)
   // An empty object is the one input that would otherwise produce `{"pf_ts":1,}`.
-  execFileSync('bash', [sl], { input: '{}', encoding: 'utf8' })
+  execFileSync('bash', [posix(sl)], { input: '{}', encoding: 'utf8' })
   ok('an empty object is still valid JSON', typeof JSON.parse(readFileSync(log, 'utf8').trim().split('\n').pop()).pf_ts === 'number')
   }
 

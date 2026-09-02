@@ -42,7 +42,25 @@ const slug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 const trunk = join(projects, slug(CWD))
 mkdirSync(trunk, { recursive: true })
 // The shape this went wrong on: a lane's project folder is a symlink to the trunk's.
-for (const lane of ['-a', '-b']) symlinkSync(trunk, join(projects, slug(CWD + lane)))
+// Windows refuses symlinkSync with EPERM unless Developer Mode is on or the shell is
+// elevated. The whole point of this suite is the symlinked shape, so there is nothing
+// left to assert without one: skip out loud rather than pass a weaker test.
+try {
+  // Windows refuses symlinkSync with EPERM unless Developer Mode is on or the shell is
+// elevated. The symlinked shape IS this suite, so nothing weaker is left to assert
+// without one: skip out loud rather than pass a test of something else.
+try {
+  for (const lane of ['-a', '-b']) symlinkSync(trunk, join(projects, slug(CWD + lane)))
+} catch (err) {
+  if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err
+  console.log('skip  this machine cannot create symlinks (' + err.code + ') - lane project folders are symlinks, so there is nothing to test')
+  process.exit(0)
+}
+} catch (err) {
+  if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err
+  console.log('skip  this machine cannot create symlinks (' + err.code + ') - lane folders are symlinks, so there is nothing to test')
+  process.exit(0)
+}
 
 process.env.PF_CLAUDE_HOME = home
 
