@@ -255,8 +255,11 @@ Add channels there only.
 
 - The reading is an agent CLI run ONCE, headlessly; the only agent this app starts outside a pane.
   `HEADLESS` holds only CLIs measured answering a one-shot prompt; one without is refused.
-- Runs in an EMPTY folder under userData, with `--settings '{"hooks":{},"outputStyle":"default"}'` and
-  `--strict-mcp-config` — `--settings` cannot cover a project file.
+- Runs in an EMPTY folder under userData, with `--setting-sources ""`, `--strict-mcp-config` and
+  `--settings '{"hooks":{},"outputStyle":"default"}'`. `--settings` MERGES into the user's settings
+  and never covered CLAUDE.md: with it alone the desk's Stop hook blocked, the CLI answered again,
+  and `-p` printed only that second message — the plan was thrown away. `--setting-sources ""` loads
+  none of user/project/local. `--bare` also works and cannot be used: it answers `Not logged in`.
 - An answer that is not a plan is `null`, never an empty plan — refusal quotes the first 160 chars said.
 - Every `{` is tried when reading the object out of the answer, not only the first.
 - `MAX_TASKS` is 4 — the lane pool; everything over it is NAMED in `dropped`.
@@ -817,9 +820,51 @@ rows, since a clamp wraps rather than deletes.
   at `max(pane now, replayCols, START_COLS)`, hands width back. User-initiated only.
   `window.__pf[id].redraw()` for a probe.
 
+## Every prompt this app writes says what done means
+
+`src/shared/promptForge.ts` is the one place a prompt is built - task, anchors, scope, done,
+exemplars. The `Done means:` block is unconditional and LAST; over `MAX_PROMPT_CHARS` (6000) the
+examples go first, then the guidance, then the task tail, never the done block. Exemplars come from
+`claude-config/promptlib` (`main/promptForge.ts` reads it, `PF_PROMPTLIB` overrides), at most
+`MAX_EXAMPLES` (2) of `EXAMPLE_CHARS` (600). No library = a prompt with no example, never no prompt.
+`npm run test:promptforge`.
+
+- Who uses it: `splitInstruction` (`SPLIT_BUDGET_CHARS` 40,000 - a headless CLI arg, not a pane),
+  `paneBrief` (the row SplitDialog draws, idempotent - a model's own `Done means:` is lifted, not
+  doubled), `resumeBrief` (`shared/autoclear.ts`, anchored on the handoff's own path, done = its
+  open steps; a `noResume` clear forges nothing).
+- `claude-config/promptlib/harvest.mjs` feeds the library back: prompts from runs the ledger
+  MEASURED as shipped, `MIN_FIELDS` 3 of promptlib's four, and no promptlab `no_anchor`/`multi_item`.
+  Today that is 0 of 215, which is the finding.
+- Which prompt sites carry which item, and the numbers: `docs/prompt-review-2026-09-02.md`.
+
+## A pane opened on a task is briefed from the task
+
+`pf open <cwd> --task <backlog-id>`. `shared/taskBrief.ts` decides, `main/backlogStore.ts` reads
+`claude-config/ledger/backlog.jsonl` (`PF_BACKLOG` overrides). READ ONLY - the backlog has one
+writer. `npm run test:taskbrief`.
+
+- The `Done means:` block is the item's own `success` line plus its gates, so the pane is judged by
+  the criterion it was given.
+- Attempts and the last refusal are carried; three refusals say the approach is what to change, the
+  same reading `next-action.mjs` takes.
+- Refusals open NO pane, because the lookup is before the pane: unknown id, ambiguous prefix (named),
+  finished item, no title, no backlog, `--task` with `--prompt`.
+
+## ...and the app counts how often a person had to step in
+
+`shared/interventions.ts` judges, `main/interventions.ts` tallies onto `Session.interventions` and
+appends `interventions.log`. One line on `SessionInfo.tsx`. No dashboard.
+`npm run test:interventions`.
+
+- An `app` write NEVER counts, refused first: a queued prompt, an autoclear, an auto-answered
+  question. `choose()` takes the hand and passes it to `write()`; the auto-answer path sends `'app'`.
+- Typing without sending is not a separate intervention; a bare return sent nothing.
+- What is next on this ladder, and what is refused by name: `docs/agentic-backlog-2026-09-02.md`.
+
 ## Checks
 
-`npm run typecheck`, `npm test` — 81 checks, no window/network/real CLI (`scripts/test-all.mjs`); release
+`npm run typecheck`, `npm test` — 149 checks, no window/network/real CLI (`scripts/test-all.mjs`); release
 gate step 3 (`agentGate.ts`) needs a script named `test`.
 
 Suite pin table: `docs/design-notes.md`, **Checks — what each suite pins**.

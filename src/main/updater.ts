@@ -18,7 +18,8 @@ import {
 } from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
-import { app } from 'electron'
+import { app, net } from 'electron'
+import { updateIgnored } from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -140,6 +141,15 @@ function set(patch: Partial<UpdateState>): void {
   const before = state.phase
   state = { ...state, ...patch, current: app.getVersion() }
   if (state.phase !== before) phaseAt = Date.now()
+  // A build that has reached 'ready' while two earlier ones were thrown away unused is
+  // one nobody is going to press Restart for. Decided here rather than at each of the
+  // three places that reach 'ready' (adopt at launch, mac stage, update-downloaded).
+  if (state.phase !== before) {
+    if (state.phase === 'ready') noteReady()
+    else if (state.ignored) state = { ...state, ignored: false }
+    phaseNet = budgetFor(state.phase) ? netWord() : ''
+    armUnwedge()
+  }
   if (state.phase !== before || patch.error) {
     log('state', state.phase, state.version ?? '', state.error ?? '')
   }
@@ -168,6 +178,29 @@ const PROBE_BUDGET_MS = Number(process.env.PF_PROBE_BUDGET_MS) || 5 * 60_000
 /** When the current phase began. Only a CHANGE restamps it - a percent tick must not. */
 let phaseAt = Date.now()
 
+/**
+ * What the network looked like when the current phase began.
+ *
+ * A wedge cannot explain itself: the promise that never settled is inside
+ * electron-updater and the only thing it leaves behind is a phase and a clock. Two on
+ * this Mac on 2026-09-02 (00:31:06 after 999s, 00:44:12 after 784s) said nothing at all
+ * about why, so there was no way to tell a dead wifi from a hung socket from a feed that
+ * accepted the connection and never answered. One word, sampled at the start, is the
+ * difference between "the laptop was asleep on the train" and "look at this properly".
+ */
+let phaseNet = ''
+
+function netWord(): string {
+  try {
+    const online = (net as { isOnline?: () => boolean } | undefined)?.isOnline?.()
+    if (online === undefined) return 'network unknown'
+    return online ? 'online' : 'OFFLINE'
+  } catch {
+    // Off the main process, or an electron old enough not to have it. Not worth a throw.
+    return 'network unknown'
+  }
+}
+
 function budgetFor(phase: UpdateState['phase']): number {
   if (phase === 'checking') return CHECK_BUDGET_MS
   if (phase === 'downloading') return DOWNLOAD_BUDGET_MS
@@ -178,12 +211,74 @@ function budgetFor(phase: UpdateState['phase']): number {
 function unwedge(): void {
   const held = `${state.phase} ${state.version ?? ''}`.trim()
   const secs = Math.round((Date.now() - phaseAt) / 1000)
-  log('wedged', `${held} never finished after ${secs}s - dropping it and looking again`)
-  noteWedge(held)
+  const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
+  log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
+  noteWedge(`${held} after ${secs}s, ${cause}`)
   macStaging = ''
   // Not 'error': nothing the user asked for failed, and the next check is one tick away.
   // 'error' would put a red badge in the corner for a fault that has already been undone.
   set({ phase: 'idle', version: undefined, percent: undefined, error: undefined })
+}
+
+/**
+ * Undo a wedge on its own clock, not on somebody else's.
+ *
+ * `busy()` is only asked when something starts a check, and the next thing to do that is
+ * the background poll - so a phase that wedged was held for a poll interval, not for its
+ * budget. That is the whole gap between a 2 minute CHECK_BUDGET_MS and the 999s and 784s
+ * two wedges actually lasted here on 2026-09-02. The budget is only a budget if something
+ * is watching it.
+ *
+ * `busy()` keeps its own check: this timer is the one that fires without being asked, and
+ * a recovery must not depend on a single timer being alive.
+ */
+let wedgeTimer: NodeJS.Timeout | null = null
+
+function armUnwedge(): void {
+  if (wedgeTimer) {
+    clearTimeout(wedgeTimer)
+    wedgeTimer = null
+  }
+  const budget = budgetFor(state.phase)
+  if (!budget) return
+  const left = budget - (Date.now() - phaseAt)
+  // Scale-free rather than a fixed grace, so the test can shrink the budgets to
+  // milliseconds through their env vars and still measure the same rule.
+  wedgeTimer = setTimeout(() => {
+    wedgeTimer = null
+    if (!budgetFor(state.phase)) return
+    // A timer may fire a tick early; the clock, not the timer, decides.
+    if (Date.now() - phaseAt > budgetFor(state.phase)) unwedge()
+    else armUnwedge()
+  }, Math.max(1, left + 1))
+  wedgeTimer.unref?.()
+}
+
+/**
+ * A promise that has to answer or say it did not.
+ *
+ * electron-updater's own check has no timeout of its own that reaches us, and its default
+ * http timeouts did not stop the two wedges above from lasting 13 and 16 minutes. Racing
+ * it settles the promise, which is the difference that matters: `pollOnce`'s `finally`
+ * runs, the poll re-arms at its ordinary cadence, and the next check starts clean.
+ */
+function failFast<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let t: NodeJS.Timeout | null = null
+  // Deliberately NOT unref'd, unlike every other timer here: the others are background
+  // watchdogs that must not hold the app open, and this one is the only thing that ends
+  // an await somebody is sitting on. It is cleared the moment the work settles, so a
+  // check that answers in 300ms does not hold anything for the rest of the budget.
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      t = setTimeout(
+        () => reject(new Error(`${what} did not answer within ${Math.round(ms / 1000)}s (${netWord()})`)),
+        ms
+      )
+    })
+  ]).finally(() => {
+    if (t) clearTimeout(t)
+  })
 }
 
 /** A check or a download is already running - starting a second one is what breaks it. */
@@ -203,14 +298,19 @@ function busy(): boolean {
 // like nothing to do. One small file survives the restart and turns that into a number.
 const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
 
-type Health = { lastGood: number; wedges: number; lastWedge?: string }
+type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number }
 
 function readHealth(): Health {
   try {
     const raw = JSON.parse(readFileSync(HEALTH(), 'utf8')) as Partial<Health>
-    return { lastGood: Number(raw.lastGood) || 0, wedges: Number(raw.wedges) || 0, lastWedge: raw.lastWedge }
+    return {
+      lastGood: Number(raw.lastGood) || 0,
+      wedges: Number(raw.wedges) || 0,
+      lastWedge: raw.lastWedge,
+      superseded: Number(raw.superseded) || 0
+    }
   } catch {
-    return { lastGood: 0, wedges: 0 }
+    return { lastGood: 0, wedges: 0, superseded: 0 }
   }
 }
 
@@ -233,6 +333,51 @@ function noteGood(): void {
 function noteWedge(what: string): void {
   const h = readHealth()
   writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
+}
+
+// --- a staged build nobody ever installs ------------------------------------
+//
+// See shared/updateStale.ts for what this counts and why. The count lives in the health
+// file rather than in memory because the app it is about is one that keeps running: two
+// hours of being ignored is well inside one session, but a machine that is left up for
+// days must not have the count reset by a stray restart that installed nothing.
+
+/** A staged build was replaced by a newer one without ever being installed. */
+function noteSuperseded(): void {
+  const h = readHealth()
+  writeHealth({ ...h, superseded: h.superseded + 1 })
+}
+
+/** How many staged builds have been thrown away since the last install attempt. */
+export function supersededCount(): number {
+  return readHealth().superseded
+}
+
+let ignoredListener: (() => void) | null = null
+
+/**
+ * Somebody who wants to know the update path has stopped being noticed.
+ *
+ * A listener rather than a call, for the same reason `crash.ts` uses one: the thing that
+ * acts on this is the restart-when-idle path in `main/index.ts`, which reads the pane
+ * list - and this module may not know what a pane is.
+ */
+export function onUpdateIgnored(fn: () => void): void {
+  ignoredListener = fn
+}
+
+/** A build has just become installable. Is it the third one nobody has pressed? */
+function noteReady(): void {
+  const superseded = readHealth().superseded
+  const ignored = updateIgnored(superseded)
+  state = { ...state, ignored }
+  if (!ignored) return
+  log('stale', `${superseded} staged build(s) thrown away unused - restarting into v${state.version ?? ''} as soon as no pane is in use`)
+  try {
+    ignoredListener?.()
+  } catch {
+    /* a listener must never cost the build that is ready */
+  }
 }
 
 /** At launch, say how long it has been since the feed last answered this machine. */
@@ -273,6 +418,10 @@ function readAttempt(): Attempt | null {
 }
 
 function recordInstallAttempt(version: string): void {
+  // The count is about builds thrown away with no attempt made. An attempt - successful
+  // or not - is the user (or the idle restart) being noticed, so the tally starts again.
+  const h = readHealth()
+  if (h.superseded) writeHealth({ ...h, superseded: 0 })
   const prior = readAttempt()
   const tries = (prior?.version === version ? prior.tries : 0) + 1
   try {
@@ -1099,10 +1248,13 @@ async function supersede(): Promise<void> {
     // Same stand-down as the main check: this is the path that logged the crash every
     // minute for 28 hours, because a ready build keeps it running forever.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
-    const result = (await u.checkForUpdates()) as { updateInfo?: { version?: string } } | null
+    const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
+      updateInfo?: { version?: string }
+    } | null
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
+    noteSuperseded()
     probing = false
     u.autoDownload = restore
     if (process.platform === 'darwin') {
@@ -1154,9 +1306,18 @@ export async function checkForUpdates(): Promise<UpdateState> {
     // the same question by construction, so the flag is stood down under it.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
     set({ phase: 'checking', error: undefined })
-    await u.checkForUpdates()
+    await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update check')
   } catch (e) {
-    set({ phase: 'error', error: (e as Error)?.message ?? String(e) })
+    const message = (e as Error)?.message ?? String(e)
+    if (/did not answer within/.test(message)) {
+      // The same event as a wedge the timer caught, reached a different way, so it is
+      // recorded the same way and greps the same: `wedged` is the word in the log.
+      // Deliberately not 'error' - nothing the user asked for failed, and the next check
+      // is one poll away. A red badge for a check the network ate is a lie.
+      unwedge()
+      return state
+    }
+    set({ phase: 'error', error: message })
   }
   return state
 }

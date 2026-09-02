@@ -10,6 +10,7 @@
 // every reading is one the app already has - nothing here polls anything.
 
 import type { AgentInfo } from '@shared/agents'
+import { interventionWords } from '@shared/interventions'
 import type { Session } from '@shared/types'
 import type { PaneUsage } from '@shared/usage'
 import { describePlace } from '@shared/place'
@@ -92,6 +93,13 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
             />
             <span className="si-dim"> · opened {new Date(s.openedAt ?? s.createdAt).toLocaleString()}</span>
           </Row>
+          {/* A7: how often a person had to step in. The number the autonomous-task
+              milestone aims at (0-2 per feature) and the only thing that makes any claim
+              about autonomy falsifiable. `interventions.log` under userData carries the
+              same count per pane for arithmetic afterwards. */}
+          {s.interventions !== undefined && (
+            <Row label="Your help">{interventionWords(s.interventions)}</Row>
+          )}
           <Row label="State">
             {state}
             {s.runSince && (

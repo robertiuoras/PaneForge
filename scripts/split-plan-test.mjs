@@ -25,7 +25,7 @@ buildSync({
   platform: 'node',
   outfile: file
 })
-const { parseSplit, splitInstruction, splitWords, MAX_TASKS } = await import(
+const { parseSplit, splitInstruction, splitWords, paneBrief, liftDone, MAX_TASKS } = await import(
   pathToFileURL(file).href
 )
 
@@ -105,5 +105,52 @@ ok('the ceiling is in the instruction', instruction.includes('At most 3'))
 ok('standing alone is in the instruction', instruction.includes('stand alone'))
 ok('adding work is refused in the instruction', instruction.includes('ADD NO WORK'))
 ok('the ask itself is in the instruction', instruction.includes('do a and b'))
+
+
+// The brief is forged (`shared/promptForge.ts`), so it carries the two things it never
+// carried before: a block saying what a finished answer is, and - when this machine has
+// the library - one example of a good ask of this kind.
+ok('the brief says what done means', instruction.includes('Done means:'))
+ok('the done block is the last thing on the page', instruction.trimEnd().endsWith('at most six words'))
+const withExample = splitInstruction('do a and b', 3, {
+  id: 'multi-item-opener',
+  guidance: ['each item finished on its own'],
+  examples: ['AN EXAMPLE ASK']
+})
+ok('an exemplar is carried when one is handed in', withExample.includes('AN EXAMPLE ASK'))
+ok('the example sits above the done block', withExample.indexOf('AN EXAMPLE ASK') < withExample.indexOf('Done means:'))
+// The feature exists for LONG asks; the pane-typing ceiling must not truncate one.
+const long = 'x'.repeat(20000)
+ok('a 20k-char ask survives the brief whole', splitInstruction(long, 4).includes(long))
+
+// ---------------------------------------------------------------------------
+// The brief a pane is opened with. `parseSplit` keeps the model's text; this is the step
+// after it, and it is the one that guarantees a definition of done.
+
+const brief = paneBrief({ title: 'T', prompt: 'Group the sidebar by state', project: 'PaneForge' })
+ok('a pane brief says what done means', brief.includes('Done means:'))
+ok('a pane brief keeps the model\'s own words', brief.includes('Group the sidebar by state'))
+ok('a named project becomes the anchor', brief.includes('the PaneForge repo'))
+ok('the other panes are fenced off', brief.includes('other panes and other checkouts'))
+ok('a brief with no project draws no anchor', !paneBrief({ title: 'T', prompt: 'do it' }).includes('Start from:'))
+
+// Idempotent: forging a forged brief must not stack a second done block.
+const twice = paneBrief({ title: 'T', prompt: brief })
+ok('forging a forged brief adds no second done block', twice.split('Done means:').length === 2)
+ok('forging twice keeps the words', twice.includes('Group the sidebar by state'))
+
+const modelWroteOne = paneBrief({
+  title: 'T',
+  prompt: 'Do the thing.\n\nDone means:\n- the suite is green\n- the page loads'
+})
+ok('a model that wrote its own done block keeps those lines', modelWroteOne.includes('- the suite is green'))
+ok('and gets exactly one done block', modelWroteOne.split('Done means:').length === 2)
+
+// A heading in the middle of prose is not a block.
+ok(
+  'Done means: inside a sentence is left alone',
+  liftDone('Done means: whatever you decide, then keep going').done.length === 0
+)
+ok('a block with a prose line under it is not a block', liftDone('x\n\nDone means:\n- a\nand also b').done.length === 0)
 
 console.log(`split-plan: ${n} assertions passed`)
