@@ -41,6 +41,9 @@ scripts/lane.mjs status --repo <dir>` shows who holds what.
 - Shipped only once `landedOnOrigin` proves it; failed lane stays out of `lastShip.lanes`.
 - `state.passed[id]` logs a passed lane. Empty kept a day (`SWEEP_GRACE_MS` 24h).
 - `npm run test:lanes`.
+- Your first edit of a file another lane has already changed is told so, with that lane's
+  line ranges (`guard` exits 0 with text). Same region: message that chat before editing.
+  `npm run test:laneoverlap`.
 
 ## Two desks, one repository
 
