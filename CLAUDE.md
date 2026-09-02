@@ -824,7 +824,7 @@ gate step 3 (`agentGate.ts`) needs a script named `test`.
 
 Suite pin table: `docs/design-notes.md`, **Checks — what each suite pins**.
 
-Needs a window: `test:view`, `test:stashdrag`, `test:activate`, `test:turncopyview`, `test:restorefix`,
+Needs a window: `test:view`, `test:stashdrag`, `test:activate`, `test:restorefix`,
 `test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast`,
 `test:renderwatchlive`.
 
