@@ -96,6 +96,7 @@ import { anchoredStart, readsBusy, type BusyReason } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
@@ -1265,6 +1266,15 @@ export class SessionManager extends EventEmitter {
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
+      // A7: how often a person had to step in. Counted here because this is the one place
+      // that knows all four readings at once - who did it, whether anything was sent,
+      // whether the pane was holding a question, and whether a turn was running.
+      // `shared/interventions.ts` decides; an `app` write never counts.
+      live.meta.interventions = countIntervention(
+        { hand: origin, submitted: true, bare, asking: Boolean(live.meta.ask), running: Boolean(live.meta.runSince) },
+        live.meta.interventions ?? 0,
+        { id, project: basename(live.meta.cwd || '') }
+      )
       live.submitLine = newSubmitLine()
       // `/clear` and `/resume` are the two ways a pane changes which conversation it is
       // in without restarting. The pane keeps its transcript until told otherwise (a
@@ -1729,7 +1739,7 @@ export class SessionManager extends EventEmitter {
    * that gap somebody at the desk may have answered it - at which point the keys would
    * land in a composer, as an arrow through history and a return that submits it.
    */
-  choose(id: string, n: number): boolean {
+  choose(id: string, n: number, hand: WriteOrigin = 'desk'): boolean {
     const live = this.sessions.get(id)
     const ask = live?.meta.ask
     if (!live || !ask) return false
@@ -1750,7 +1760,10 @@ export class SessionManager extends EventEmitter {
       setTimeout(() => {
         const now = this.sessions.get(id)
         if (!now || !sameAsk(now.meta.ask, ask)) return
-        this.write(id, k)
+        // The hand travels with the keys. `autoAnswer` presses through this same method,
+        // and a question the APP answered must not read as one a person answered - that
+        // is the whole difference A7's number is made of.
+        this.write(id, k, hand)
       }, i * CHOOSE_GAP_MS)
     )
     return true
@@ -2135,7 +2148,7 @@ export class SessionManager extends EventEmitter {
       const t = setTimeout(() => {
         if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
-        this.write(id, clearCmd)
+        this.write(id, clearCmd, 'app')
         // Everything after the clear goes through the machinery that already knows how to
         // put text into a CLI's composer: it waits for the composer to be IDLE rather than
         // guessing at a settle time, sends the return as its own write a beat later, and
@@ -2166,7 +2179,7 @@ export class SessionManager extends EventEmitter {
         this.queuePrompt(id, switchCmd, 0, CLEAR_PROMPT_START_MS, () => {
           const c = setTimeout(() => {
             if (!this.sessions.get(id)) return acLog(`${id} model switch confirm skipped: pane gone`)
-            this.write(id, '\r')
+            this.write(id, '\r', 'app')
             typeResume()
           }, SUBMIT_GAP_MS)
           c.unref?.()
@@ -2794,7 +2807,7 @@ export class SessionManager extends EventEmitter {
     console.info(
       `autoAnswer: ${live.meta.id} answering ${pick.n} (${live.autoRun}/${cfg.maxRun}) - ${pick.why}`
     )
-    this.choose(live.meta.id, pick.n)
+    this.choose(live.meta.id, pick.n, 'app')
   }
 
   /**

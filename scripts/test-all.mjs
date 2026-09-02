@@ -54,6 +54,7 @@ const TESTS = [
   ['promptbox', 'prompt-box-test.mjs'],
   ['promptforge', 'prompt-forge-test.mjs'],
   ['taskbrief', 'task-brief-test.mjs'],
+  ['interventions', 'interventions-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],

@@ -350,6 +350,15 @@ export interface Session {
     /** what that device calls itself, for the pane badge */
     name: string
   }
+  /**
+   * How many times a person has had to step in on this pane - answered a question the app
+   * would not answer, typed into a turn that was running, or said what to do next.
+   *
+   * A7 of the autonomous-task milestone: the target is a NUMBER (0-2 per feature) and
+   * nothing measured it. `shared/interventions.ts` decides what counts; an `app` write -
+   * a queued prompt, an autoclear, an auto-answered question - never does.
+   */
+  interventions?: number
   /** This pane's output is being teed to a file as it runs. See `main/pipe.ts`. */
   piping?: PipeInfo
   /**
