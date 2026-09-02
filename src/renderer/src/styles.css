@@ -617,6 +617,13 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .keephere-x { opacity: 0.6; }
 .keephere-chip:hover .keephere-x { opacity: 1; }
 
+/* Three words, one of them chosen - where a switch would need two rows to say the same
+   thing. Same chip as everywhere else, so nothing new is being learned here. */
+.pickrow { display: flex; gap: 6px; margin: 4px 0 2px; }
+button.chip.pick { cursor: pointer; font: inherit; font-size: 11px; padding: 3px 10px; }
+button.chip.pick:hover { color: var(--text); border-color: var(--line-strong); }
+button.chip.pick.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
 /* A pane taken off the idle clock, where its countdown would have been. Green rather than
    amber: nothing is about to happen to this pane, which is the whole point of it. */
 .chip.kept { color: var(--ok); border-color: #35d07f33; background: #35d07f14; }

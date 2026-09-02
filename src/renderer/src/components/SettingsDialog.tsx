@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { findSettings } from '@shared/settingsIndex'
 import { DEFAULT_AUTO_ANSWER } from '@shared/autoAnswer'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '@shared/autoHandoff'
+import { preferRemoteOf } from '@shared/offloadFirst'
 import { DEFAULT_MASCOT, HIDE_SECONDS } from '@shared/mascot'
 import { DEFAULT_TIPS } from '@shared/tips'
 import PetPicker from './PetPicker'
@@ -513,6 +514,49 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   label="Ask first, rather than moving it"
                   hint="On, and on is the default: a pane starting on the other machine is something you can say no to in the moment, rather than something the app decides and reports afterwards. It recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off restores the silent move, decided by the budget below."
                 />
+                <div className="setting">
+                  <label>Start new work on the other machine when the project is on GitHub</label>
+                  <div className="pickrow">
+                    {(
+                      [
+                        ['auto', 'Auto'],
+                        ['always', 'Always'],
+                        ['never', 'Never']
+                      ] as const
+                    ).map(([value, word]) => (
+                      <button
+                        key={value}
+                        className={`chip pick${preferRemoteOf(config.autoHandoff) === value ? ' on' : ''}`}
+                        onClick={() =>
+                          onChange({
+                            autoHandoff: {
+                              ...DEFAULT_AUTO_HANDOFF,
+                              ...config.autoHandoff,
+                              preferRemote: value
+                            }
+                          })
+                        }
+                      >
+                        {word}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="hint">
+                    Everything below waits for something to go wrong - this machine running
+                    out of memory, or a pane sitting untouched for a quarter of an hour -
+                    and by then it has already paid for the agent it is about to move. This
+                    is the same answer given at the moment it is free: a pane that has not
+                    started yet has no conversation and nothing on screen to lose, so if the
+                    project is one the other machine also has, the agent starts over there
+                    and this screen gets the picture of it. Auto keeps the first two panes
+                    here and sends the rest, and sends everything while you are on battery.
+                    Always sends whatever it can; Never keeps it all here. A folder that is
+                    not on GitHub, one the other machine does not have, a project you have
+                    kept here, and anything driving a browser on this screen all stay,
+                    whichever you pick - and if the other machine does not answer within
+                    eight seconds the pane opens here and says so.
+                  </p>
+                </div>
                 <Switch
                   checked={config.autoHandoff?.enabled !== false}
                   onChange={(v) =>
