@@ -4,23 +4,36 @@
 //
 //   node scripts/unwrap-copy-test.mjs
 
-import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { buildSync } from 'esbuild'
 import assert from 'node:assert/strict'
 
 const here = dirname(fileURLToPath(import.meta.url))
-// Same trick as grid-layout-test: strip the annotations and run the real source, so the
-// test cannot drift from what the app imports.
-const src = readFileSync(join(here, '..', 'src', 'renderer', 'src', 'unwrapCopy.ts'), 'utf8')
-const js = src.replace(/: (string|number|boolean)(\[\])?/g, '').replace(/<(string|number)(\[\])?>/g, '')
-const dir = join(tmpdir(), 'paneforge-unwrap-test')
-rmSync(dir, { recursive: true, force: true })
-mkdirSync(dir, { recursive: true })
-const mod = join(dir, 'unwrapCopy.mjs')
-writeFileSync(mod, js)
-const { unwrapForClipboard } = await import(`file://${mod}`)
+const root = join(here, '..')
+// esbuild rather than a regex over the source: the file carries real generics now
+// (`Map<number, number>`, `number[][]`), and the strip-the-annotations trick this used to
+// do turned those into something that would not parse. The real source still runs.
+const built = join(mkdtempSync(join(tmpdir(), 'pf-unwrap-')), 'unwrapCopy.mjs')
+buildSync({
+  entryPoints: [join(root, 'src/renderer/src/unwrapCopy.ts')],
+  outfile: built,
+  bundle: true,
+  format: 'esm',
+  platform: 'neutral'
+})
+const { unwrapForClipboard } = await import(pathToFileURL(built).href)
+
+// Split on either line ending and drop the trailing empty - these files are checked in and
+// git hands them back with CRLF on Windows.
+const fixture = (name) =>
+  readFileSync(join(root, 'scripts/fixtures', name), 'utf8')
+    .split(/\r?\n/)
+    .filter((l, i, all) => i < all.length - 1 || l !== '')
+    .join('\n')
 
 // A paragraph the CLI wrapped at 92 columns, which is what the reported bug looks like.
 const wrapped = [
@@ -79,4 +92,38 @@ assert.equal(unwrapForClipboard(box), box, 'box drawing is layout')
 assert.equal(unwrapForClipboard('one line only'), 'one line only')
 assert.equal(unwrapForClipboard(''), '')
 
-console.log('unwrap copy: 13 assertions passed')
+// ---------------------------------------------------------------------------
+// A drafted email, exactly as it arrived in Mail when Robert pasted a copy of one.
+//
+// Two things were wrong with it and both are in this file. The block carries the two-space
+// left margin Claude Code draws around a draft, and only SOME of the wrapped rows carry it
+// - so `BLOCK_START` read every one of those as its own block and nothing joined. And the
+// paragraphs are three rows each, which the whole-selection "most rows are full" reading
+// called not-prose because the greeting and the sign-off are one word.
+const draft = fixture('reply-email-draft.txt')
+const want = [
+  'Hi Darren,',
+  '',
+  'Yes, but only on LinkedIn. It sells job title targeting; Meta stopped in 2022, so on Facebook you can only buy loose interest guesses.',
+  '',
+  'Physios, pharmacists and care workers are all clean on LinkedIn. Defence works but not many serving ADF are on there. The Nepalese one is not targetable as an ethnicity anywhere, so that part of his email is wrong.',
+  '',
+  'Good news is it costs us nothing to test. Your LinkedIn posts and graphics are already built, so it is the same offer with a different headline. Pick one and we run it for two weeks.',
+  '',
+  'Robert'
+].join('\n')
+assert.equal(unwrapForClipboard(draft), want, 'a drafted message pastes as the message')
+
+// The control: a real indent is on EVERY row, so it is the author's and stays - and rows
+// that read as code are never joined however they end.
+const codeBlock = fixture('reply-code-block.txt')
+assert.equal(unwrapForClipboard(codeBlock), codeBlock, 'a consistent indent is layout, not rendering')
+
+// A signature is short deliberate breaks, and the lowercase domain under the company name
+// is exactly the shape the sentence-continuation rule would join if it had no length floor.
+assert.equal(
+  unwrapForClipboard(['Property Investors Alliance', 'piateam.com.au'].join('\n')),
+  ['Property Investors Alliance', 'piateam.com.au'].join('\n')
+)
+
+console.log('unwrap copy: 16 assertions passed')
