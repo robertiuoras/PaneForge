@@ -165,11 +165,11 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
   }
   html.handheld.handheld-list .panes { display: none; }
   /* Room for the Back chip, and a finger's worth of edge. */
-  html.handheld .panes { padding: 44px 4px max(4px, env(safe-area-inset-bottom)); }
-  html.handheld .panes:not(.grid) .pane { inset: 44px 4px 4px; }
+  html.handheld .panes { padding: calc(44px + env(safe-area-inset-top)) 4px max(4px, env(safe-area-inset-bottom)); }
+  html.handheld .panes:not(.grid) .pane { inset: calc(44px + env(safe-area-inset-top)) 4px 4px; }
   .handheld-back {
     position: absolute;
-    top: 6px;
+    top: max(6px, calc(env(safe-area-inset-top) + 2px));
     left: 6px;
     z-index: 40;
     display: flex;
@@ -196,7 +196,14 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
      and the desktop's hover-density type stepped up to phone size. */
   /* The padding-bottom above is the home indicator's, and a shorthand here would put
      12px back over it - so the shorthand is not used. */
-  html.handheld.handheld-list .sidebar { padding-top: 14px; padding-right: 12px; padding-left: 12px; }
+  /* A phone opened from the home screen paints under the status bar (`viewport-fit=cover`),
+     so the brand row - PaneForge, the settings and help buttons - sat behind the clock and
+     could not be seen or pressed. The inset is 0 in a browser tab and the row does not move. */
+  html.handheld.handheld-list .sidebar {
+    padding-top: max(14px, calc(env(safe-area-inset-top) + 6px));
+    padding-right: 12px;
+    padding-left: 12px;
+  }
   /* A phone's home screen is the list, and it was getting 477px of an 844px screen:
      250px of chrome above it and 108px below. What goes is what a phone cannot act on -
      `Focus / Grid / Save` arrange panes side by side, which this screen never does; the
