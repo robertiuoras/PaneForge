@@ -52,6 +52,7 @@ const TESTS = [
   ['dropimage', 'drop-image-test.mjs'],
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['promptforge', 'prompt-forge-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
