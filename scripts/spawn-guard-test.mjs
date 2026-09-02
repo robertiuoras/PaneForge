@@ -97,11 +97,18 @@ for (const [file, what] of [
 }
 
 // The other half of the same log: four `unhandledRejection: Error: Failed to open URL`
-// lines, from two openExternal calls whose promise nobody took.
+// lines, from two openExternal calls whose promise nobody took. Both now go through
+// main/openUrl.ts, which catches, logs the URL and puts the failure on screen - so the
+// regression to guard against is a bare shell.openExternal or shell.openPath coming back
+// into index.ts, not the shape of the call inside the wrapper.
 const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-const opens = index.match(/shell\.openExternal\([^)]*\)[^\n]*/g) ?? []
-ok(opens.length >= 2, `both openExternal call sites are still there (${opens.length})`)
-for (const line of opens) ok(/\.catch\(/.test(line), `openExternal is caught: ${line.trim().slice(0, 60)}`)
+const bareOpens = index.match(/shell\.(openExternal|openPath)\(/g) ?? []
+ok(bareOpens.length === 0, `no bare shell.openExternal/openPath left in index.ts (${bareOpens.length})`)
+ok(/openLink\(/.test(index) && /openLocal\(/.test(index), 'index.ts opens links and folders through main/openUrl.ts')
+const opener = readFileSync(join(root, 'src/main/openUrl.ts'), 'utf8')
+ok(/openExternal\([^)]*\)\s*\.catch\(/.test(opener), 'and that wrapper takes the promise openExternal rejects with')
+// openPath is the one a .catch cannot save: it RESOLVES with the error string.
+ok(/openPath\(/.test(opener) && /if \(!why\) return/.test(opener), 'and reads openPath\'s answer, which is a string and not a rejection')
 
 console.log(`spawn-guard: ${checks - failed}/${checks} checks passed`)
 if (failed) process.exit(1)

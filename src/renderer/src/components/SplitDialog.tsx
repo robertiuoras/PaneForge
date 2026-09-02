@@ -15,7 +15,7 @@
 
 import { useState } from 'react'
 import type { Project, StartSessionRequest } from '@shared/types'
-import { MIN_CHARS, splitWords, type SplitTask } from '@shared/splitPlan'
+import { MIN_CHARS, paneBrief, splitWords, type SplitTask } from '@shared/splitPlan'
 import Blurb from './Blurb'
 import Select from './Select'
 
@@ -80,7 +80,16 @@ export default function SplitDialog({
     }
     const plan = answer as { tasks: SplitTask[]; dropped: string[] }
     setNote(splitWords(plan))
-    setRows(plan.tasks.map((t) => ({ ...t, path: pathFor(t.project, projects, fallback) })))
+    // The brief drawn in the row is the FORGED one, not the model's own - so the text
+    // somebody reads and edits is the text the pane gets, and it carries a definition of
+    // done whether the model wrote one or not. Editing works exactly as before.
+    setRows(
+      plan.tasks.map((t) => ({
+        ...t,
+        prompt: paneBrief(t),
+        path: pathFor(t.project, projects, fallback)
+      }))
+    )
   }
 
   const edit = (i: number, patch: Partial<Row>): void =>
