@@ -303,6 +303,7 @@
           "lane-peers.mjs",
           "lane-merge.mjs",
           "test-app.mjs",
+          "dev-profile.mjs",
           "release-notes.mjs",
           "pf-telegram.mjs"
         ]
