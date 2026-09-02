@@ -146,6 +146,22 @@ Zero sites show an example. Robert's corpus of good prompts
 (`claude-config/promptlib`, 12 templates over 1,482 mined prompts) is on disk on both
 machines and is read by nothing the app does.
 
+## What the review turned up while proving it
+
+Site 1 did not work at all, and had not for some time. Running the planner brief through
+the real CLI from a `npm run try` copy came back `Claude Code did not answer with a plan:
+JSON above stands - 2 parallel tasks, no file overlap.` The run's own usage block shows
+**two `iterations` and 57k of cache read**: the JSON was written, this desk's Stop hook
+then blocked, the CLI answered a second time, and `-p` prints only the last message. The
+old brief does exactly the same, so it is not a regression - `--settings
+'{"hooks":{},"outputStyle":"default"}'` MERGES into the user's settings rather than
+replacing them, and never covered CLAUDE.md at all.
+
+`--setting-sources ""` loads none of user, project or local and fixes it. `--bare` also
+stops the hooks and cannot be used: it answers `Not logged in - Please run /login`,
+because the subscription login is part of what it skips. Proved live: the same ask now
+returns 2 tasks, `Fix NSIS desktop shortcut guard` and `Group sidebar sessions by state`.
+
 ## What this review produced
 
 `src/shared/promptForge.ts` — one pure function every site composes through, which
@@ -153,3 +169,22 @@ cannot emit a prompt without a `Done means:` block, carries anchors and scope wh
 caller has them, and can borrow at most two promptlib exemplars. Sites 1, 3 and 5 are
 moved onto it; site 2 is forged from the model's own rows, so a pane brief now has a
 `Done means:` block whether the model wrote one or not.
+
+| item | before | after |
+|---|---|---|
+| anchor | 2 of 6 | 5 of 6 |
+| done | 1 of 6 | 5 of 6 |
+| scope | 4 of 6 | 5 of 6 |
+| output | 2 of 6 | 2 of 6 |
+| an example | 0 of 6 | 1 of 6 (the planner, from promptlib) |
+
+Site 6 (`pf-ctl --prompt`) is the one left at zero on purpose: it must stay a passthrough
+for a hand-typed prompt, so the shaping belongs at its callers.
+
+And the learning loop, `claude-config/promptlib/harvest.mjs`: it joins the prompt log to
+the run ledger and appends prompts from runs that MEASURABLY shipped as exemplars. Over
+8,302 prompts and 94 shipped runs, 215 prompts fall inside a shipped run and **none of
+them clears the bar** - 23 with no bar at all (9 of those carrying 0 of 4 fields), 3 with
+promptlib's four-field floor, 0 once promptlab's trained `no_anchor`/`multi_item`
+diagnosis is applied too. That zero is the finding: a run shipping is evidence about the
+session, not about the prompt.
