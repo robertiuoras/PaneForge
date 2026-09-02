@@ -11,6 +11,7 @@
 // file - so every one of the five clears logged on 2026-08-23 (03:23, 03:33, 06:13, 07:13,
 // 08:07) silently did nothing and could never retry. Hence the two rules below.
 
+import { forgePrompt } from './promptForge'
 import { BUILTIN_AGENTS } from './agents'
 
 /**
@@ -204,6 +205,30 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
     noResume,
     ...(model && !noResume ? { model } : {})
   }
+}
+
+/**
+ * The prompt the fresh session is actually given.
+ *
+ * The hook sends 23 words - `Continue the handoff: work its Next steps in order, and do
+ * not re-do finished items.` - and that is a whole session's continuation with no path in
+ * it and nothing saying what finished looks like (`docs/prompt-review-2026-09-02.md`).
+ * Both of the missing halves are already on THIS side at the moment the prompt is typed:
+ * `main/handoffSteps.ts` knows which file the handoff is, and the ask carries the steps
+ * that file says are still open.
+ *
+ * A `noResume` clear forges nothing - it types no prompt at all, deliberately.
+ */
+export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): string {
+  if (ask.noResume || !ask.prompt) return ''
+  return forgePrompt({
+    task: ask.prompt,
+    ...(handoffPath ? { anchors: [handoffPath] } : {}),
+    scope: ['the steps that handoff already lists - add no work it does not name'],
+    // The steps ARE the definition of done here: the handoff was written by the session
+    // that did the work, and these are the lines it said were still open.
+    done: ask.steps.length ? ask.steps : ['every Next step in that handoff is finished, or is named as blocked']
+  })
 }
 
 /**

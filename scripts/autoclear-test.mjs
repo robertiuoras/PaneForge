@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, resumeOf, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
@@ -449,5 +449,31 @@ console.log('the antigravity statusline tee - somebody else\'s file, on their ma
 }
 
 rmSync(out, { recursive: true, force: true })
+
+console.log('the resume prompt is forged, so it names the handoff and what done means')
+{
+  const ask = readAsk({
+    paneId: 'p1',
+    prompt: 'Continue the handoff: work its Next steps in order, and do not re-do finished items.',
+    steps: ['Ship the offload switch.', 'Run npm run test:settingsearch.'],
+    seconds: 30
+  })
+  const brief = resumeBrief(ask, '/Users/x/Projects/claude-memory/PaneForge/handoffs/session.md')
+  ok('the handoff path is the anchor', brief.includes('/handoffs/session.md'))
+  ok('the hook words survive', brief.includes('Continue the handoff'))
+  ok('every open step becomes a done line', brief.includes('- Ship the offload switch.') && brief.includes('- Run npm run test:settingsearch.'))
+  ok('no work beyond the handoff is invited', brief.includes('add no work it does not name'))
+
+  const noPath = resumeBrief(ask, null)
+  ok('an unknown handoff draws no anchor', !noPath.includes('Start from:'))
+  ok('and still says what done means', noPath.includes('Done means:'))
+
+  const noSteps = resumeBrief(readAsk({ paneId: 'p1', prompt: 'Continue the handoff.', seconds: 30 }), null)
+  ok('a handoff with no steps still gets a done line', noSteps.includes('is finished, or is named as blocked'))
+
+  const quiet = resumeBrief(readAsk({ paneId: 'p1', noResume: true, seconds: 30 }), '/x/h.md')
+  ok('a noResume clear forges nothing - it types nothing on purpose', quiet === '')
+}
+
 console.log(`\n${checks - failures}/${checks} checks passed`)
 process.exit(failures ? 1 : 0)
