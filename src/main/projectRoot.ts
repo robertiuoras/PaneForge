@@ -59,18 +59,26 @@ export async function projectRoot(cwd: string): Promise<string> {
   // timed out on a cold disk, a folder whose worktree registration was pruned. Without it
   // those all quietly answered "this folder", which is the copy - the one folder this
   // button exists to keep people out of.
-  const read1 = await read(cwd)
-  const root = read1 === cwd ? (trunkBeside(cwd) ?? cwd) : read1
+  const answer = await read(cwd)
+  const root = answer ?? trunkBeside(cwd) ?? cwd
   cache.set(cwd, { at: Date.now(), root })
   return root
 }
 
-async function read(cwd: string): Promise<string> {
+/**
+ * git's answer, or null when git could not be asked.
+ *
+ * The two are not the same and the difference decides whether the name below is allowed a
+ * say: git ANSWERING "this is a plain checkout" is the reading that keeps `service-a` -
+ * a real project that happens to end in a copy letter - opening itself even when a repo
+ * called `service` sits beside it.
+ */
+async function read(cwd: string): Promise<string | null> {
   // Absolute on both sides or the comparison below is a path-format bug, not a reading.
   const common = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
-  if (!common) return cwd
+  if (!common) return null
   const top = await git(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel'])
-  if (!top) return cwd
+  if (!top) return null
 
   const trunk = dirname(resolve(common))
   // A trunk checkout's own common dir is `<top>/.git`, so this says "same folder" and the

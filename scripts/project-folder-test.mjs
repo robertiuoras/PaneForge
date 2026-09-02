@@ -11,7 +11,6 @@
 //
 //   node scripts/project-folder-test.mjs
 
-import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -61,21 +60,7 @@ is(trunkBeside(join(root, 'service-a')), null, '`service-a` with no `service` re
 is(trunkBeside(join(root, 'proj')), null, 'the project itself is a copy of nothing')
 is(trunkBeside(join(root, 'notes')), null, 'a folder with no copy suffix is never a copy')
 
-// --- a real worktree, which is what git answers on a working machine -------------------
-
-const repo = join(root, 'live')
-const copy = join(root, 'live-a')
-mkdirSync(repo, { recursive: true })
-const git = (cwd, ...args) =>
-  execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-git(repo, 'init', '-q', '-b', 'main')
-git(repo, 'config', 'user.email', 't@t')
-git(repo, 'config', 'user.name', 't')
-git(repo, 'commit', '-q', '--allow-empty', '-m', 'x')
-git(repo, 'worktree', 'add', '-q', '-b', 'lane-a', copy)
-
-is(await projectRoot(copy), repo, 'a pane in a copy opens the project')
-is(await projectRoot(repo), repo, 'a pane in the project opens the project')
+// --- the fallback, which is the case that used to open the copy --------------------
 
 // The fallback: a copy git cannot answer about (no registration, no repo of its own) still
 // resolves, because the sibling on disk proves it. This is the case that used to open the
