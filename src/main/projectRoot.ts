@@ -13,8 +13,9 @@
 // worktree it points OUT of the folder being asked about and its parent is the trunk.
 
 import { execFile } from 'node:child_process'
-import { dirname, resolve } from 'node:path'
-import { statSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { copySuffixOf } from '../shared/place'
 
 /** How long one folder keeps its answer. A checkout does not become a worktree. */
 const TTL = 60_000
@@ -52,7 +53,14 @@ export async function projectRoot(cwd: string): Promise<string> {
   const hit = cache.get(cwd)
   if (hit && Date.now() - hit.at < TTL) return hit.root
 
-  const root = await read(cwd)
+  // git first, always - it is the only reading that can see `worktree-<slug>`, and the
+  // only one that knows `service-a` is a project rather than a copy of `service`. The name
+  // is the FALLBACK, for the times git cannot be asked at all: no git on PATH, a call that
+  // timed out on a cold disk, a folder whose worktree registration was pruned. Without it
+  // those all quietly answered "this folder", which is the copy - the one folder this
+  // button exists to keep people out of.
+  const read1 = await read(cwd)
+  const root = read1 === cwd ? (trunkBeside(cwd) ?? cwd) : read1
   cache.set(cwd, { at: Date.now(), root })
   return root
 }
@@ -72,4 +80,21 @@ async function read(cwd: string): Promise<string> {
   // bare `.git` folder's parent - which may hold nothing anybody wants to look at.
   if (!isDir(trunk) || !isDir(resolve(trunk, '.git'))) return cwd
   return trunk
+}
+
+/**
+ * The project folder a COPY sits beside, proved off the disk rather than off the name.
+ *
+ * `place.ts` names the copy shapes (`-a`, legacy `-w2`) and refuses to guess beyond them,
+ * because `service-a` is a legitimate project. The second leg is the one that decides:
+ * a sibling folder by the un-suffixed name that is really a git repository. That is the
+ * same two-legged test `ensureLaneFolder` and `detectLane` make before touching a folder.
+ *
+ * Null for everything else, so every caller falls through to the path it was handed.
+ */
+export function trunkBeside(dir: string): string | null {
+  const project = copySuffixOf(basename(dir))
+  if (!project) return null
+  const trunk = join(dirname(dir), project)
+  return existsSync(join(trunk, '.git')) ? trunk : null
 }

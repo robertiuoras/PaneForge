@@ -1860,7 +1860,12 @@ ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) =>
   shell.openPath(target)
   return target
 })
-ipcMain.handle('shell:editor', (_e, path: string) => {
+ipcMain.handle('shell:editor', async (_e, path: string) => {
+  // A pane in a copy of a project means the project. The copy is scratch the app made -
+  // its branch is merged back and its untracked files are swept - so opening an editor on
+  // it is opening a folder that will not be there, under a name (`clients-b`) that says
+  // nothing to the person who pressed the button. Same reading as the folder button.
+  path = await projectRoot(path ?? '')
   // VS Code / Cursor ship a `code`-style launcher on PATH; without one, fall back to
   // Explorer so the button still does something useful.
   for (const bin of ['cursor', 'code']) {
