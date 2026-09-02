@@ -575,7 +575,11 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
     // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
     // is ever read, so an unread refusal would switch the feature off on the one machine
     // that needs it.
-    !(personHere && unread(p)) && keepable(p)
+    // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
+    // its screen was there when it was put to sleep - and a restored pane comes back
+    // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
+    // hold it on the desk for ever, exactly as the `asleep` refusal used to.
+    !(personHere && !p.asleep && unread(p)) && keepable(p)
   )
 }
 

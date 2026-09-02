@@ -211,7 +211,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
     check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
     check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
-    eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], SLEEPY, NOW)), '')
+    eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW)), '')
   }
   // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
   // sweep that closes a pane in order to change a reading of the machine. Here it only
