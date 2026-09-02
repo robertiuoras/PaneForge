@@ -347,7 +347,7 @@ rmSync(work, { recursive: true, force: true })
   const launchBudget = Number((src.match(/PROMPT_WAIT_MAX_MS = ms\('PF_PROMPT_WAIT_MAX_MS', (\d[\d_]*)\)/) || [])[1]?.replace(/_/g, '') || 0)
   ok(clearBudget > launchBudget, 'and it is longer than a launch prompt gets',
     `${clearBudget} vs ${launchBudget}`)
-  ok(/queuePrompt\(id, resume, 0, CLEAR_PROMPT_START_MS,[\s\S]{0,80}?CLEAR_RESUME_BUDGET_MS\)/.test(src),
+  ok(/queuePrompt\(id, resume, 0, switchCmd \? SUBMIT_GAP_MS : CLEAR_PROMPT_START_MS,[\s\S]{0,80}?CLEAR_RESUME_BUDGET_MS\)/.test(src),
     'the autoclear resume is the call that uses it')
   ok(/setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(src),
     'and the curtain outlives that wait, so the pane says a prompt is still coming')
