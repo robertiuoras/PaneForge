@@ -348,6 +348,31 @@ const laneBranch = (id) => (id === 'main' ? MB : `lane-${id}`)
 const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
 
 /**
+ * Take a lane's folder out of Finder, on macOS.
+ *
+ * `clients-a` .. `clients-c` sat beside `clients` in every Finder window, four rows of
+ * near-identical names above the one folder a person means - and opening the wrong one is
+ * editing work a merge throws away. The `hidden` flag is Finder's own answer, and git,
+ * `ls`, `cd` and every path in this file ignore it completely, so nothing else changes.
+ *
+ * Called on creation and again on every `status`, which is what makes lanes created before
+ * this existed catch up without anybody typing: setting the flag twice is a no-op. Never
+ * waited on and never fatal - a copy that could not be hidden is a copy somebody can see.
+ * `main` is never hidden: that is the project itself. Mirrors src/main/hideCopy.ts, which
+ * does the same for lanes the app makes; this file cannot import TypeScript.
+ */
+function hideLane(id) {
+  if (process.platform !== 'darwin' || id === 'main') return
+  const dir = laneDir(id)
+  if (!existsSync(dir)) return
+  try {
+    spawnSync('chflags', ['hidden', dir], { stdio: 'ignore', timeout: 10000 })
+  } catch {
+    /* no chflags: the folder stays visible, which is where it was anyway */
+  }
+}
+
+/**
  * Close the `npm run try` copies a lane left running - PaneForge's own, and nobody else's.
  *
  * The sweep matches processes by the folder they were launched from, so pointing it at
@@ -1319,6 +1344,7 @@ function ensureWorktree(id) {
     }
   }
   excludeModules(dir)
+  hideLane(id)
   return dir
 }
 
@@ -3212,6 +3238,10 @@ function status(session) {
     mode: RELEASE,
     own: OWN,
     lanes: POOL.map((id) => {
+      // The catch-up: a copy made before this hid them, or one a person un-hid, goes back
+      // out of Finder here. Setting a flag that is already set costs one no-op call and
+      // means nobody ever has to run a command to tidy their own Projects folder.
+      hideLane(id)
       const w = laneWork(id)
       return {
         lane: id,

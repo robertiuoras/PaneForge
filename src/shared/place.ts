@@ -119,6 +119,25 @@ export function copyNumber(slot: string): number | null {
   return null
 }
 
+/**
+ * The project name a folder is a COPY of, read off its name alone - or null.
+ *
+ * `copyNumber` decides what counts as a copy label, so this and the chip on the card can
+ * never disagree about which folders are copies: a single letter (`clients-a`) or the
+ * legacy `w<digits>` (`clients-w2`).
+ *
+ * A NAME is not proof, and this function is deliberately not allowed to be treated as
+ * proof: `service-a` is a legitimate project. Every caller pairs it with a look at the
+ * disk - a sibling folder by the returned name that is really a git repository - which is
+ * the same two-legged test `ensureLaneFolder` and `detectLane` make before they touch a
+ * folder. On its own it answers "could this be a copy", never "this is one".
+ */
+export function copySuffixOf(name: string): string | null {
+  const m = /^(.+)-([a-z]|w\d+)$/i.exec(name.trim())
+  if (!m) return null
+  return copyNumber(m[2]) === null ? null : m[1]
+}
+
 export interface PlaceInput {
   /** the folder the pane is open in */
   cwd: string

@@ -99,6 +99,8 @@ const TESTS = [
   // wanted `lane a` and `main checkout` months after both were replaced.
   ['laneholder', 'lane-holder-test.mjs'],
   ['laneplain', 'lane-plain-test.mjs'],
+  // A copy of a project is out of Finder, and a project that merely ends in `-a` is not.
+  ['lanehidden', 'lane-hidden-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],

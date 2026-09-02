@@ -35,6 +35,7 @@ import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
 import { execFile, execFileSync } from 'node:child_process' // sync-on-purpose: ensureLaneFolder only
 import { createServer } from 'node:net'
+import { hideCopyFolder } from './hideCopy'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -838,6 +839,9 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       if (!(await isWorktreeOf(path, repo))) continue
       seedLane(repo, path)
       const head = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      // Reusing a copy is the catch-up path: one made before this app hid them, or one a
+      // person un-hid, goes back out of Finder here rather than needing a command.
+      hideCopyFolder(path)
       return {
         cwd: path,
         lane: label,
@@ -854,6 +858,7 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       return { cwd, note: `Could not create a worktree lane: ${made.out.split('\n')[0]}` }
     }
     seedLane(repo, path)
+    hideCopyFolder(path)
     return { cwd: path, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
@@ -905,6 +910,7 @@ export function ensureLaneFolder(cwd: string): void {
   run(['worktree', 'prune'])
   if (!run(['worktree', 'add', cwd, branch]) && !run(['worktree', 'add', '-b', branch, cwd])) return
   seedLane(repo, cwd)
+  hideCopyFolder(cwd)
 }
 
 /**
