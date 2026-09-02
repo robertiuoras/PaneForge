@@ -18,16 +18,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
-import { copySuffixOf } from '../shared/place'
-
-/** The project folder a copy is a copy of, when the disk proves it is one. */
-export function trunkBeside(dir: string): string | null {
-  const project = copySuffixOf(basename(dir))
-  if (!project) return null
-  const trunk = join(dirname(dir), project)
-  return existsSync(join(trunk, '.git')) ? trunk : null
-}
+import { trunkBeside } from './projectRoot'
 
 /**
  * Take a copy folder out of Finder, on macOS. Silent, never awaited, never throws: a flag

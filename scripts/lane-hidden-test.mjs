@@ -41,7 +41,7 @@ buildSync({
   outfile: out,
   logLevel: 'silent'
 })
-const { hideCopyFolder, trunkBeside } = await import(pathToFileURL(out).href)
+const { hideCopyFolder } = await import(pathToFileURL(out).href)
 
 // --- the reading, on every platform -----------------------------------------------
 
@@ -50,15 +50,6 @@ mkdirSync(join(root, 'proj-a'), { recursive: true })
 mkdirSync(join(root, 'proj-w2'), { recursive: true })
 mkdirSync(join(root, 'service-a'), { recursive: true }) // a real project, no sibling repo
 mkdirSync(join(root, 'notes'), { recursive: true })
-
-ok(
-  trunkBeside(join(root, 'proj-a')) === join(root, 'proj'),
-  'a copy beside a git repository is a copy of it'
-)
-ok(trunkBeside(join(root, 'proj-w2')) === join(root, 'proj'), 'a legacy w2 copy counts too')
-ok(trunkBeside(join(root, 'service-a')) === null, '`service-a` with no `service` repo is a project')
-ok(trunkBeside(join(root, 'proj')) === null, 'the project itself is never a copy of anything')
-ok(trunkBeside(join(root, 'notes')) === null, 'a folder with no copy suffix is never a copy')
 
 // --- the flag, where there is one ---------------------------------------------------
 

@@ -243,6 +243,7 @@
     "test:spawnguard": "node scripts/spawn-guard-test.mjs",
     "test:laneplain": "node scripts/lane-plain-test.mjs",
     "test:lanehidden": "node scripts/lane-hidden-test.mjs",
+    "test:projectfolder": "node scripts/project-folder-test.mjs",
     "test:power": "node scripts/power-test.mjs",
     "test:agytrust": "node scripts/agy-trust-test.mjs",
     "test:agyconv": "node scripts/agy-conversation-test.mjs",

@@ -8,13 +8,24 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { register } from 'node:module'
-
-register('data:text/javascript,export function load(u,c,n){return n(u,c)}')
-
-const { projectRoot } = await import('../src/main/projectRoot.ts')
+import { buildSync } from 'esbuild'
+import { dirname } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = mkdtempSync(join(tmpdir(), 'pf-projroot-'))
+// Bundled rather than imported: projectRoot.ts reads the copy shapes out of src/shared,
+// and node's own type stripping wants every import to carry its extension.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const bundleOut = join(root, 'projectRoot.mjs')
+buildSync({
+  entryPoints: [join(repoRoot, 'src/main/projectRoot.ts')],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: bundleOut,
+  logLevel: 'silent'
+})
+const { projectRoot } = await import(pathToFileURL(bundleOut).href)
 const git = (cwd, ...args) =>
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString().trim()
 
@@ -65,6 +76,12 @@ try {
   git(plain, 'add', '-A')
   git(plain, 'commit', '-qm', 'first')
   eq('a project really called -a is left alone', await projectRoot(plain), plain)
+  // ...even with a repo by the un-suffixed name beside it, which is the one shape the
+  // name fallback would get wrong. git answers here, so the name never gets a say.
+  const sibling = join(root, 'service')
+  mkdirSync(sibling)
+  git(sibling, 'init', '-q', '-b', 'main')
+  eq('and still left alone with a `service` repo beside it', await projectRoot(plain), plain)
 
   const bare = join(root, 'notes')
   mkdirSync(bare)
