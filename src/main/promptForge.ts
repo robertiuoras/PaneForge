@@ -6,17 +6,13 @@
 // failure: `builtInTemplate` answers instead and the prompt is forged with no example in
 // it, which is exactly what every prompt in this app did before today.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { projectsRoot } from "./config";
-import {
-  builtInTemplate,
-  readPromptlibTemplate,
-  type ForgeTemplate,
-} from "../shared/promptForge";
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { projectsRoot } from './config'
+import { builtInTemplate, readPromptlibTemplate, type ForgeTemplate } from '../shared/promptForge'
 
 /** How long a template reading is trusted. The library changes when Robert edits it. */
-const CACHE_MS = 5 * 60_000;
+const CACHE_MS = 5 * 60_000
 
 /**
  * Where the library lives.
@@ -26,13 +22,10 @@ const CACHE_MS = 5 * 60_000;
  * test points at a fixture rather than at whatever this machine happens to have.
  */
 export function promptlibDir(): string {
-  return (
-    process.env.PF_PROMPTLIB ||
-    join(projectsRoot(), "claude-memory", "claude-config", "promptlib")
-  );
+  return process.env.PF_PROMPTLIB || join(projectsRoot(), 'claude-memory', 'claude-config', 'promptlib')
 }
 
-const cache = new Map<string, { at: number; template: ForgeTemplate | null }>();
+const cache = new Map<string, { at: number; template: ForgeTemplate | null }>()
 
 /**
  * The template with this id, from disk, or the copy this app ships.
@@ -40,27 +33,23 @@ const cache = new Map<string, { at: number; template: ForgeTemplate | null }>();
  * The parse is `readPromptlibTemplate` in shared, so it is a node test away rather than
  * behind an electron import. This file is the path, the read and the cache.
  */
-export function loadTemplate(
-  id: string,
-  now = Date.now(),
-): ForgeTemplate | null {
-  const hit = cache.get(id);
-  if (hit && now - hit.at < CACHE_MS) return hit.template;
-  let template = builtInTemplate(id);
-  const file = join(promptlibDir(), "templates", `${id}.md`);
+export function loadTemplate(id: string, now = Date.now()): ForgeTemplate | null {
+  const hit = cache.get(id)
+  if (hit && now - hit.at < CACHE_MS) return hit.template
+  let template = builtInTemplate(id)
+  const file = join(promptlibDir(), 'templates', `${id}.md`)
   try {
     if (existsSync(file) && statSync(file).isFile()) {
-      template =
-        readPromptlibTemplate(id, readFileSync(file, "utf8")) ?? template;
+      template = readPromptlibTemplate(id, readFileSync(file, 'utf8')) ?? template
     }
   } catch {
     /* unreadable is not evidence about the prompt - the built-in copy answers */
   }
-  cache.set(id, { at: now, template });
-  return template;
+  cache.set(id, { at: now, template })
+  return template
 }
 
 /** Forget what was read. `config:set` moving the projects root invalidates every path. */
 export function forgetTemplates(): void {
-  cache.clear();
+  cache.clear()
 }
