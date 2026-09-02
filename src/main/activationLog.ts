@@ -49,6 +49,19 @@ export function logReclaim(entry: Record<string, unknown>): void {
   write('reclaim.log', entry)
 }
 
+/**
+ * Where a new pane's agent was sent, and why - one line per launch.
+ *
+ * Same shape and same reason as `logReclaim` above: the decision is taken silently, at
+ * the one moment there is nothing on screen to explain it, and "why did this open on the
+ * PC" has to be answerable afterwards without a DevTools window that was never open. It
+ * carries the answer, the reason sentence and the folder's basename - never the path,
+ * which is the one field that would make this file worth reading to somebody else.
+ */
+export function logOffload(entry: Record<string, unknown>): void {
+  write('offload.log', entry)
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }

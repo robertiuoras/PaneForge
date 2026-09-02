@@ -32,7 +32,8 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { placeNewPane, REMOTE_FROM_PANES, PEER_FULL_PANES, REMOTE_START_ACK_MS } = require(out)
+const { placeNewPane, preferRemoteOf, REMOTE_FROM_PANES, PEER_FULL_PANES, REMOTE_START_ACK_MS } =
+  require(out)
 
 let checks = 0
 let failed = 0
@@ -154,6 +155,17 @@ for (const c of cases) {
   ok(p.reason.length > 8, `every answer carries a reason (${JSON.stringify(c.mode)})`)
   ok(!/\b(lane|worktree|trunk|checkout|origin|repo|commit)\b/i.test(p.reason), `plain words: "${p.reason}"`)
 }
+
+// --- the switch read off disk, where it may be anything ---------------------------------
+
+is(preferRemoteOf(undefined), 'auto', 'no config at all is auto')
+is(preferRemoteOf({}), 'auto', 'an unset switch is auto')
+is(preferRemoteOf({ preferRemote: 'always' }), 'always', 'always is read')
+is(preferRemoteOf({ preferRemote: 'never' }), 'never', 'never is read')
+// The control: a boolean written by hand where a string was expected must not become the
+// loudest answer - see `offloadMinutes` in autoHandoff.ts for the same trap.
+is(preferRemoteOf({ preferRemote: true }), 'auto', 'a hand-written true is auto, not always')
+is(preferRemoteOf({ preferRemote: 'remote' }), 'auto', 'a word nobody defined is auto')
 
 ok(REMOTE_START_ACK_MS >= 1000, 'the far end gets a real window to answer in')
 

@@ -96,6 +96,20 @@ export interface Placement {
   reason: string
 }
 
+/**
+ * The switch, read off config.json, where it may be anything.
+ *
+ * `preferRemote` reaches disk through `pf-ctl call config:set` as well as the dialog, and
+ * a value that is not one of the three is not a policy anybody chose - so it reads as
+ * `auto`, which is the default rather than the loudest answer. Same reason
+ * `offloadMinutes` exists in autoHandoff.ts: a boolean written by hand where a string was
+ * expected must never become "send everything to the other machine".
+ */
+export function preferRemoteOf(cfg?: { preferRemote?: unknown }): PreferRemote {
+  const m = cfg?.preferRemote
+  return m === 'always' || m === 'never' || m === 'auto' ? m : 'auto'
+}
+
 export function placeNewPane(i: PlaceInput): Placement {
   const local = (reason: string): Placement => ({ where: 'local', reason })
 
@@ -107,7 +121,7 @@ export function placeNewPane(i: PlaceInput): Placement {
   // other is a folder that was measured and cannot be reached from the other machine.
   if (i.shareable === undefined) return local('nobody has checked whether this project is on GitHub yet')
   if (!i.shareable) return local('this folder is not a GitHub project the other machine has')
-  if (!i.peerAlive) return local('the other machine is not answering')
+  if (!i.peerAlive) return local('no other machine is online with this project')
   if ((i.peerBusyPanes ?? 0) >= PEER_FULL_PANES) {
     return local(`the other machine is already running ${i.peerBusyPanes} panes`)
   }
