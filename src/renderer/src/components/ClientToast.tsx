@@ -12,8 +12,9 @@
 // thing on screen and is gone before either of them arms. When there is a pet in that
 // corner it moves up rather than sitting on the sprite.
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { ClientNamed } from '@shared/types'
+import CardX from './CardX'
 
 export interface ClientToastProps {
   /** the newest rename, or nothing */
@@ -45,18 +46,23 @@ export default function ClientToast({
   // Keyed on the pane AND the title, so a pane renamed twice (a topic, then the client it
   // turned out to be) restarts the clock rather than vanishing mid-read.
   const key = named ? `${named.id}:${named.title}` : ''
+  const [gone, setGone] = useState(false)
+  useEffect(() => {
+    setGone(false)
+  }, [key])
   useEffect(() => {
     if (!key) return
     const t = window.setTimeout(onDone, CLIENT_TOAST_MS)
     return () => window.clearTimeout(t)
   }, [key])
-  if (!named) return null
+  if (!named || gone) return null
   return (
     <div
       className={'client-toast' + (besidePet ? ' beside-pet' : '')}
       role="status"
       data-testid="client-toast"
     >
+      <CardX onDismiss={() => setGone(true)} />
       <div className="client-toast-say">
         Renamed this pane <strong>{named.title}</strong>
       </div>

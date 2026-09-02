@@ -12,6 +12,7 @@
 import React, { useEffect, useState } from 'react'
 import { stopSoonWhy, stopSoonWords, type StopSoon } from '../../../shared/deadDev'
 import { nextTickMs } from '../../../shared/elapsed'
+import CardX from './CardX'
 
 export interface StopServerProps {
   soon?: StopSoon | null
@@ -42,6 +43,7 @@ export default function StopServer({ soon, onKeep, onNow }: StopServerProps): Re
   const left = secondsLeft(soon.deadline, now)
   return (
     <div className="move-soon stop-server" role="status" data-testid="stop-server">
+      <CardX onDismiss={() => onKeep(soon.dev.pid)} />
       <div className="move-soon-say">
         {stopSoonWords(soon.dev)} in <span className="move-soon-count">{left}s</span>
       </div>

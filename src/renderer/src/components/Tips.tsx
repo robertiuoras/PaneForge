@@ -19,6 +19,7 @@ import {
   type TipsConfig
 } from '@shared/tips'
 import { appVisible } from '../appVisible'
+import CardX from './CardX'
 
 interface Props {
   cfg: TipsConfig
@@ -88,6 +89,7 @@ export default function Tips(props: Props): JSX.Element | null {
 
   return (
     <div className="tip-toast" role="status">
+      <CardX onDismiss={() => setTip(null)} />
       <div className="tip-head">
         <span className="tip-dot" />
         Did you know

@@ -4508,13 +4508,35 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 .corner-stack > .client-toast,
 .corner-stack > .update-toast,
 .corner-stack > .tip-toast {
-  position: static; right: auto; bottom: auto; z-index: auto;
+  /* relative, not static: `.card-x` anchors to its own card, not the whole stack. */
+  position: relative; right: auto; bottom: auto; z-index: auto;
 }
 /* A sprite sits in this corner too, and a card drawn over an animal is the old bug with
    a nicer name. The whole stack steps up, once, rather than each card guessing. */
 .corner-stack.beside-pet { bottom: 108px; }
 /* Superseded: the stack now owns this, and a card doing it too would step up twice. */
 .corner-stack > .client-toast.beside-pet { bottom: auto; }
+
+/* Room for the dismiss button in the top-right of every corner card, so it never
+   overlaps the card's first line. */
+.autoclear-card, .move-soon, .client-toast, .update-toast, .tip-toast {
+  padding-right: 32px;
+}
+/* The one dismiss button every corner card draws first, top-right. Follows
+   design-vault/linear.app.md: hairline border only on hover, no fill at rest,
+   pill radius, the two-duration hover system (0.1s ease). */
+.card-x {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid transparent; background: transparent;
+  color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer;
+  transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
+}
+.card-x:hover, .card-x:focus-visible {
+  color: var(--text); border-color: var(--line); background: color-mix(in oklab, var(--text) 6%, transparent);
+}
+.card-x:focus-visible { outline: none; }
+html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 20px; }
 
 /* --------------------------------------------------------------------------
    What the app did on its own, behind the bell in the sidebar.

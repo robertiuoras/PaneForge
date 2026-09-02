@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Session } from '../../../shared/types'
 import { useNow } from './Elapsed'
+import CardX from './CardX'
 
 /**
  * A session is about to clear ITSELF - say so, and let somebody stop it.
@@ -91,6 +92,7 @@ function ClearingCard({
   const freeing = Math.round((pane.autoClearTokens ?? 0) / 1000)
   return (
     <div className="autoclear-card" role="status">
+      <CardX onDismiss={() => onKeep(pane.id)} />
       <div className="autoclear-top">
         {/* Seconds first and biggest: read from across the desk, or not at all. */}
         <span className="autoclear-left">{left > 0 ? `${left}s` : 'now'}</span>

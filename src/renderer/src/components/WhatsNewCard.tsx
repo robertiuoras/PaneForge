@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { WhatsNew } from '@shared/whatsNew'
+import CardX from './CardX'
 
 const api = window.api
 
@@ -40,6 +41,7 @@ export default function WhatsNewCard(): JSX.Element | null {
 
   return (
     <div className="update-toast whatsnew">
+      <CardX onDismiss={() => setGone(true)} />
       <div className="ut-text">
         <strong>What changed in {news.version}</strong>
         <ul className="wn-list">

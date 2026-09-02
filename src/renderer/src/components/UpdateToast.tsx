@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { InstallOutcome, UpdateState } from '@shared/types'
 import { ignoredHint } from '@shared/updateStale'
+import CardX from './CardX'
 
 const api = window.api
 
@@ -55,6 +56,7 @@ export default function UpdateToast(): JSX.Element | null {
 
   return (
     <div className="update-toast">
+      <CardX onDismiss={() => setDismissed(state.version as string)} />
       <div className="ut-text">
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">

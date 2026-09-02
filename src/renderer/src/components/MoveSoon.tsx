@@ -42,6 +42,7 @@
 import React, { useEffect, useState } from 'react'
 import type { CloseSoon } from './Mascot'
 import { nextTickMs } from '../../../shared/elapsed'
+import CardX from './CardX'
 
 export interface MoveSoonProps {
   soons: CloseSoon[]
@@ -120,6 +121,7 @@ export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React
     <>
       {soons.map((soon) => (
         <div className="move-soon" role="status" data-testid="move-soon" key={soonKey(soon)}>
+          <CardX onDismiss={() => onKeep(soon.ids)} />
           <div className="move-soon-say">
             {moveSoonWords(soon)} in{' '}
             <span className="move-soon-count">{secondsLeft(soon.deadline, now)}s</span>

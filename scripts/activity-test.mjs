@@ -180,7 +180,8 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   // cards in one place again, whatever the stack does around them.
   const rule = css.match(/\.corner-stack > \.move-soon,[\s\S]*?\{([^}]*)\}/)
   check('the stack un-fixes its children', Boolean(rule))
-  check('...by making them static', /position:\s*static/.test(rule[1]), rule && rule[1])
+  // relative, not static: `.card-x` inside each card anchors to its own card.
+  check('...by making them relative', /position:\s*relative/.test(rule[1]), rule && rule[1])
   for (const sel of ['.autoclear-card', '.move-soon', '.client-toast', '.update-toast', '.tip-toast']) {
     check(`${sel} is un-fixed inside the stack`, css.includes(`.corner-stack > ${sel}`), sel)
   }
@@ -208,6 +209,27 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   const back = css.match(/\.act-back\s*\{([^}]*)\}/)
   check('the backdrop is drawn', Boolean(back))
   check('the backdrop does not dim', !/background/.test(back[1]), back && back[1])
+}
+
+{
+  // Every corner card carries the one shared dismiss button, top-right - never a
+  // one-off X hand-drawn per card.
+  for (const file of [
+    'AutoClearToast.tsx',
+    'MoveSoon.tsx',
+    'StopServer.tsx',
+    'ClientToast.tsx',
+    'UpdateToast.tsx',
+    'WhatsNewCard.tsx',
+    'Tips.tsx'
+  ]) {
+    const src = readFileSync(join(root, 'src/renderer/src/components', file), 'utf8')
+    check(`${file} imports CardX`, /import CardX from ['"]\.\/CardX['"]/.test(src), file)
+    check(`${file} renders <CardX`, src.includes('<CardX'), file)
+  }
+  const cardX = readFileSync(join(root, 'src/renderer/src/components/CardX.tsx'), 'utf8')
+  check('CardX is a button, not a link or a div', /<button/.test(cardX))
+  check('CardX names itself for a screen reader', /aria-label="Dismiss"/.test(cardX))
 }
 
 rmSync(work, { recursive: true, force: true })
