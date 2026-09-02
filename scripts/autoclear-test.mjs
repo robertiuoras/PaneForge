@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+const { clearChunks, resumeOf, clampSeconds, readAsk, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
@@ -162,6 +162,17 @@ console.log('keystrokes')
   // same split, different first word.
   ok('the command is the CLI\'s own', JSON.stringify(clearChunks('carry on', '/new')) === JSON.stringify(['/new\r', 'carry on', '\r']))
   ok('a promptless codex clear is one chunk', JSON.stringify(clearChunks('', '/new')) === JSON.stringify(['/new\r']))
+  ok(
+    'a model switch sits between the clear and the prompt, with its confirm CR',
+    JSON.stringify(clearChunks('carry on', '/clear', 'opus')) ===
+      JSON.stringify(['/clear\r', '/model opus\r', '\r', 'carry on', '\r'])
+  )
+  ok('a promptless clear never switches models', JSON.stringify(clearChunks('', '/clear', 'opus')) === JSON.stringify(['/clear\r']))
+  ok('resumeOf finds the prompt behind a switch', JSON.stringify(resumeOf(clearChunks('carry on', '/clear', 'opus'))) === JSON.stringify({ switchCmd: '/model opus', resume: 'carry on' }))
+  ok('resumeOf without a switch', JSON.stringify(resumeOf(clearChunks('carry on'))) === JSON.stringify({ switchCmd: '', resume: 'carry on' }))
+  ok('readAsk keeps a clean model alias', readAsk({ paneId: 'p', prompt: 'x', seconds: 15, model: 'opus' })?.model === 'opus')
+  ok('readAsk drops a model that is not an alias', readAsk({ paneId: 'p', prompt: 'x', seconds: 15, model: 'opus; rm -rf' })?.model === undefined)
+  ok('readAsk drops the model on a cost clear', readAsk({ paneId: 'p', noResume: true, seconds: 15, model: 'opus' })?.model === undefined)
 
   // The SCHEDULE the HOOK's own fallback typing path still runs on (2026-08-27, s2): flat
   // 400ms gaps typed the prompt fine and lost the submit CR, because /clear restarts the
@@ -229,6 +240,11 @@ console.log('keystrokes')
       'the promptless clear matches the hook too',
       JSON.stringify(hook.paneChunks('')) === JSON.stringify(clearChunks('')),
       JSON.stringify(hook.paneChunks(''))
+    )
+    ok(
+      'the hook and the app type the same model-switch list',
+      JSON.stringify(hook.paneChunks('carry on', 'opus')) === JSON.stringify(clearChunks('carry on', '/clear', 'opus')),
+      JSON.stringify(hook.paneChunks('carry on', 'opus'))
     )
   }
 }

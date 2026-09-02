@@ -44,7 +44,7 @@ import { laneOfCheckout } from '../shared/place'
 import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, armDecision, clearChunks, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 
 /**
@@ -55,6 +55,8 @@ import { acLog } from './autoclearLog'
  * which knows neither, is unchanged.
  */
 export interface AutoClearArm {
+  /** Model alias typed into the fresh session between the clear and the resume prompt. */
+  model?: string
   steps: string[]
   prompt: string
   seconds: number
@@ -2022,7 +2024,7 @@ export class SessionManager extends EventEmitter {
     // countdown, so there is nothing to gain from re-deriving it at the last moment - and
     // one thing to lose, which is the two copies of one contract this feature was buried
     // by the first time.
-    s.meta.autoClearChunks = clearChunks(plan.prompt, plan.command ?? '/clear')
+    s.meta.autoClearChunks = clearChunks(plan.prompt, plan.command ?? '/clear', plan.model ?? '')
     if (ask.noResume) s.meta.autoClearNoResume = true
     if (ask.tokens) s.meta.autoClearTokens = ask.tokens
     acLog(`${id} armed: fires at ${new Date(at).toISOString()} (${plan.seconds}s, ${JSON.stringify(s.meta.autoClearChunks[0])})`)
@@ -2101,7 +2103,7 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} armclear emitted, ${ARM_CLEAR_LEAD_MS}ms before the clear`)
       this.emit('armclear', id)
       const clearCmd = chunks[0]
-      const resume = chunks.length > 1 ? chunks[1] : ''
+      const { switchCmd, resume } = resumeOf(chunks)
       const t = setTimeout(() => {
         if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
@@ -2126,7 +2128,21 @@ export class SessionManager extends EventEmitter {
         // which stops the collision but still costs the handoff. So the pane says out
         // loud that it is mid-handover and swallows keys until it is not, with a way out.
         this.setHandover(id, Date.now() + handoverMaxMs(CLEAR_RESUME_BUDGET_MS))
-        this.queuePrompt(id, resume, 0, CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0), CLEAR_RESUME_BUDGET_MS)
+        const typeResume = (): void =>
+          this.queuePrompt(id, resume, 0, switchCmd ? SUBMIT_GAP_MS : CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0), CLEAR_RESUME_BUDGET_MS)
+        if (!switchCmd) return typeResume()
+        // The model switch first, through the same idle-composer wait, then a bare CR a
+        // beat later: leaving Fable opens a confirm dialog that the Enter accepts, and on
+        // an empty composer the Enter is a no-op. Only then the resume prompt.
+        acLog(`${id} model switch queued: ${JSON.stringify(switchCmd)}`)
+        this.queuePrompt(id, switchCmd, 0, CLEAR_PROMPT_START_MS, () => {
+          const c = setTimeout(() => {
+            if (!this.sessions.get(id)) return acLog(`${id} model switch confirm skipped: pane gone`)
+            this.write(id, '\r')
+            typeResume()
+          }, SUBMIT_GAP_MS)
+          c.unref?.()
+        }, CLEAR_RESUME_BUDGET_MS)
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
     }

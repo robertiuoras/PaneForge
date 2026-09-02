@@ -31,9 +31,24 @@ import { BUILTIN_AGENTS } from './agents'
  * Codex starts a fresh conversation with `/new`. It is a parameter rather than a lookup
  * so this stays the pure keystroke function the parity check can compare.
  */
-export function clearChunks(prompt: string, command = '/clear'): string[] {
+export function clearChunks(prompt: string, command = '/clear', model = ''): string[] {
   if (!prompt.trim()) return [command + '\r']
+  // A model switch goes BETWEEN the clear and the prompt: `/model X` and then a bare
+  // CR, because leaving Fable opens a confirm dialog and without the Enter the CLI prints
+  // "Kept model as Fable 5". Typed onto the empty post-clear context the switch is free;
+  // one turn later it re-writes the whole handoff context into a new per-model cache.
+  // The Stop hook asks for it when the session it clears runs on Fable ("Fable plans,
+  // Opus builds"): 2026-09-02 a cleared session resumed and built a whole phase on Fable
+  // because the switch it was told to make found no pane.
+  const m = model.trim()
+  if (m) return [command + '\r', `/model ${m}\r`, '\r', prompt, '\r']
   return [command + '\r', prompt, '\r']
+}
+
+/** Where the resume prompt sits in a `clearChunks` list, with or without a model switch. */
+export function resumeOf(chunks: readonly string[]): { switchCmd: string; resume: string } {
+  if (chunks.length > 3) return { switchCmd: chunks[1].replace(/\r$/, ''), resume: chunks[3] }
+  return { switchCmd: '', resume: chunks.length > 1 ? chunks[1] : '' }
 }
 
 /**
@@ -149,6 +164,8 @@ export interface AutoClearAsk {
    * using. Clearing those costs nothing, because there was nothing to carry.
    */
   noResume?: boolean
+  /** Model alias the FRESH session is switched to between the clear and the prompt. */
+  model?: string
 }
 
 /**
@@ -168,6 +185,10 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
   // from the phone server carrying `noResume: "no"` or `noResume: 1` must land on the old
   // rule rather than on a prompt-less clear nobody asked for.
   const noResume = o.noResume === true
+  // An alias only - this is typed into a live pty, so anything else is refused rather
+  // than sent.
+  const model =
+    typeof o.model === 'string' && /^[a-z0-9.-]{2,40}$/i.test(o.model.trim()) ? o.model.trim() : ''
   if (!paneId) return null
   if (!prompt && !noResume) return null
   const steps = Array.isArray(o.steps)
@@ -180,7 +201,8 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
     steps: noResume ? [] : steps,
     prompt: noResume ? '' : prompt,
     seconds: clampSeconds(o.seconds),
-    noResume
+    noResume,
+    ...(model && !noResume ? { model } : {})
   }
 }
 
