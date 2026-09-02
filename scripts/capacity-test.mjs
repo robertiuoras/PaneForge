@@ -303,6 +303,19 @@ ok(
   offloadTarget(full, [PEER()], 'secondtonone') === null
 )
 ok('an offline peer is never used', offloadTarget(full, [PEER({ online: false })], 'toolstash') === null)
+// The real desks: this Mac's folder is `toolstash`, the PC's is `Toolstash`, and an exact
+// match answered "no other machine has this project" for a project both have had for
+// months (offload.log, 2026-09-02). A project name is a folder name.
+ok(
+  'a project spelled with a different capital on the other machine is the same project',
+  offloadTarget(full, [PEER({ projects: [{ name: 'Toolstash', path: 'C:\\Toolstash' }] })], 'toolstash')
+    ?.cwd === 'C:\\Toolstash'
+)
+ok(
+  'and a project it really does not have is still refused',
+  offloadTarget(full, [PEER({ projects: [{ name: 'Toolstash', path: 'C:\\Toolstash' }] })], 'secondtonone') ===
+    null
+)
 ok('no peers at all is not an offload', offloadTarget(full, [], 'toolstash') === null)
 ok('the setting turns it off outright', offloadTarget(full, [PEER()], 'toolstash', false) === null)
 ok('an empty project name never matches', offloadTarget(full, [PEER({ projects: [{ name: '', path: 'C:\\x' }] })], '') === null)
