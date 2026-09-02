@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { StartSessionRequest } from '../shared/types'
+import { emptyDeskStands } from '../shared/restoreTurn'
 
 /** Why the desk was written. Only `update` restores without asking. */
 export type DeskReason = 'quit' | 'update' | 'live'
@@ -50,6 +51,13 @@ let timer: NodeJS.Timeout | null = null
  */
 let hold = false
 /**
+ * A pane has been open at some point since the offer went up. See `emptyDeskStands`:
+ * on the PC the offer sat unanswered from a 23:13 relaunch, a pane opened over it by
+ * `pf open`, was closed at 01:36 - and the empty desk was never written, so desk.json
+ * still listed the closed pane an hour later (2026-09-03).
+ */
+let usedSinceOffer = false
+/**
  * The desk this run leaves has been written. Nothing may write after it.
  *
  * The two quit paths overlap: `before-quit` fires, tears the panes down, and then
@@ -61,6 +69,7 @@ let sealed = false
 
 export function setDeskHold(on: boolean): void {
   hold = on
+  if (on) usedSinceOffer = false
 }
 
 export function readDesk(): Desk | null {
@@ -80,7 +89,8 @@ export function readDesk(): Desk | null {
 
 export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void {
   if (sealed) return
-  if (hold && !specs.length) return
+  if (specs.length) usedSinceOffer = true
+  if (emptyDeskStands(hold, usedSinceOffer)) return
   const desk: Desk = { specs, at: Date.now(), clean: reason !== 'live', reason }
   const sig = JSON.stringify({ specs, reason })
   // An unchanged desk is only worth rewriting when the reason changed - "the app

@@ -36,7 +36,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { restoredClock, continueAfterRestore, restoreAsleep } = createRequire(import.meta.url)(outfile)
+const { restoredClock, continueAfterRestore, restoreAsleep, emptyDeskStands } = createRequire(import.meta.url)(outfile)
 
 let n = 0
 const ok = (what, cond) => {
@@ -169,6 +169,13 @@ ok('and every press writes them back', /patchConfig\(\{ pinnedPanes: Object\.key
 
 const info = readFileSync(join(root, 'src/renderer/src/components/SessionInfo.tsx'), 'utf8')
 ok('"Open for" counts from when the pane opened, not from this process', /s\.openedAt \?\? s\.createdAt/.test(info))
+
+// An empty desk is not written while the offer is up and nothing has been opened since -
+// and IS written once a pane has been used, because on the PC the offer stood unanswered
+// for hours, a pane opened over it was closed, and desk.json kept listing it (2026-09-03).
+ok('offer up, nothing opened yet: an empty desk is not written', emptyDeskStands(true, false))
+ok('offer up, but a pane has been open since: empty is the truth', !emptyDeskStands(true, true))
+ok('no offer: empty is always written', !emptyDeskStands(false, false))
 
 rmSync(work, { recursive: true, force: true })
 console.log(`restore-turn: ${n} checks passed`)

@@ -106,3 +106,17 @@ export function restoreAsleep(
   if (continueAfterRestore(req, recoverEnabled)) return false
   return true
 }
+
+/**
+ * Whether an EMPTY desk may not be written yet.
+ *
+ * While the restore offer is up and unanswered, the app has no panes and that is not
+ * news: writing `[]` would delete the panes still being offered. But the offer can stay
+ * up for ever on a desk nobody sits at - the PC's stood from a 23:13 relaunch, a pane was
+ * opened over it by `pf open` and closed two hours later, and the empty desk that close
+ * left was never written, so desk.json still listed the closed pane (2026-09-03). Once a
+ * pane has been open since the offer went up, the desk is in use and empty is the truth.
+ */
+export function emptyDeskStands(offerPending: boolean, usedSinceOffer: boolean): boolean {
+  return offerPending && !usedSinceOffer
+}
