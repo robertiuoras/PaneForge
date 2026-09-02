@@ -31,6 +31,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['shipimports', 'ship-imports-test.mjs'],
   ['power', 'power-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
