@@ -166,6 +166,7 @@ const TESTS = [
   ['reveal', 'reveal-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
   ['updatehold', 'update-hold-test.mjs'],
+  ['updatestale', 'update-stale-test.mjs'],
   ['gitpoll', 'git-poll-test.mjs'],
   ['recall', 'prompt-recall-test.mjs'],
   ['draft', 'prompt-draft-test.mjs'],

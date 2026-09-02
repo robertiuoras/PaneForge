@@ -187,6 +187,7 @@ import {
   installUpdate,
   setAutoCheck,
   setDevChannel,
+  onUpdateIgnored,
   stagedInstallable,
   updateLog,
   bootMs
@@ -243,6 +244,10 @@ let quietUntil = 0
 // modal message box that steals focus from whatever you are typing in. Logged instead.
 installCrashGuard()
 onCrashReport((message) => send('app:error', message))
+// Two staged builds thrown away unused means nobody is going to press Restart. The
+// restart-when-idle path below already refuses to take anyone's panes away; until now
+// only a failed install ever started it. See shared/updateStale.ts.
+onUpdateIgnored(() => autoInstall())
 
 // Runs before anything reads userData: a named profile (`--profile=dev`) moves the
 // whole profile aside so a second PaneForge can run beside the live one. It also sets

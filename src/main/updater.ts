@@ -19,6 +19,7 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { updateIgnored } from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -140,6 +141,13 @@ function set(patch: Partial<UpdateState>): void {
   const before = state.phase
   state = { ...state, ...patch, current: app.getVersion() }
   if (state.phase !== before) phaseAt = Date.now()
+  // A build that has reached 'ready' while two earlier ones were thrown away unused is
+  // one nobody is going to press Restart for. Decided here rather than at each of the
+  // three places that reach 'ready' (adopt at launch, mac stage, update-downloaded).
+  if (state.phase !== before) {
+    if (state.phase === 'ready') noteReady()
+    else if (state.ignored) state = { ...state, ignored: false }
+  }
   if (state.phase !== before || patch.error) {
     log('state', state.phase, state.version ?? '', state.error ?? '')
   }
@@ -203,14 +211,19 @@ function busy(): boolean {
 // like nothing to do. One small file survives the restart and turns that into a number.
 const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
 
-type Health = { lastGood: number; wedges: number; lastWedge?: string }
+type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number }
 
 function readHealth(): Health {
   try {
     const raw = JSON.parse(readFileSync(HEALTH(), 'utf8')) as Partial<Health>
-    return { lastGood: Number(raw.lastGood) || 0, wedges: Number(raw.wedges) || 0, lastWedge: raw.lastWedge }
+    return {
+      lastGood: Number(raw.lastGood) || 0,
+      wedges: Number(raw.wedges) || 0,
+      lastWedge: raw.lastWedge,
+      superseded: Number(raw.superseded) || 0
+    }
   } catch {
-    return { lastGood: 0, wedges: 0 }
+    return { lastGood: 0, wedges: 0, superseded: 0 }
   }
 }
 
@@ -233,6 +246,51 @@ function noteGood(): void {
 function noteWedge(what: string): void {
   const h = readHealth()
   writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
+}
+
+// --- a staged build nobody ever installs ------------------------------------
+//
+// See shared/updateStale.ts for what this counts and why. The count lives in the health
+// file rather than in memory because the app it is about is one that keeps running: two
+// hours of being ignored is well inside one session, but a machine that is left up for
+// days must not have the count reset by a stray restart that installed nothing.
+
+/** A staged build was replaced by a newer one without ever being installed. */
+function noteSuperseded(): void {
+  const h = readHealth()
+  writeHealth({ ...h, superseded: h.superseded + 1 })
+}
+
+/** How many staged builds have been thrown away since the last install attempt. */
+export function supersededCount(): number {
+  return readHealth().superseded
+}
+
+let ignoredListener: (() => void) | null = null
+
+/**
+ * Somebody who wants to know the update path has stopped being noticed.
+ *
+ * A listener rather than a call, for the same reason `crash.ts` uses one: the thing that
+ * acts on this is the restart-when-idle path in `main/index.ts`, which reads the pane
+ * list - and this module may not know what a pane is.
+ */
+export function onUpdateIgnored(fn: () => void): void {
+  ignoredListener = fn
+}
+
+/** A build has just become installable. Is it the third one nobody has pressed? */
+function noteReady(): void {
+  const superseded = readHealth().superseded
+  const ignored = updateIgnored(superseded)
+  state = { ...state, ignored }
+  if (!ignored) return
+  log('stale', `${superseded} staged build(s) thrown away unused - restarting into v${state.version ?? ''} as soon as no pane is in use`)
+  try {
+    ignoredListener?.()
+  } catch {
+    /* a listener must never cost the build that is ready */
+  }
 }
 
 /** At launch, say how long it has been since the feed last answered this machine. */
@@ -273,6 +331,10 @@ function readAttempt(): Attempt | null {
 }
 
 function recordInstallAttempt(version: string): void {
+  // The count is about builds thrown away with no attempt made. An attempt - successful
+  // or not - is the user (or the idle restart) being noticed, so the tally starts again.
+  const h = readHealth()
+  if (h.superseded) writeHealth({ ...h, superseded: 0 })
   const prior = readAttempt()
   const tries = (prior?.version === version ? prior.tries : 0) + 1
   try {
@@ -1103,6 +1165,7 @@ async function supersede(): Promise<void> {
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
+    noteSuperseded()
     probing = false
     u.autoDownload = restore
     if (process.platform === 'darwin') {
