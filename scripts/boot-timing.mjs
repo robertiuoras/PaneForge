@@ -17,6 +17,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { profileData } from './dev-profile.mjs'
+import { ELECTRON_PATTERN, refuseSelfKill } from './kill-guard.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -44,12 +45,16 @@ if (!existsSync(join(root, 'out', 'renderer', 'index.html'))) {
 
 // A dev copy still holding the profile's single-instance lock makes the new launch exit
 // with no window, which reads exactly like "the app did not start". Wait for it to be gone.
+// ...unless this script is being run from INSIDE one of those copies, in which case the
+// close below is the session reading this sentence. Ancestry, not the pattern, is what
+// tells the two apart - see scripts/kill-guard.mjs.
+refuseSelfKill(ELECTRON_PATTERN)
 spawnSync('node', [join(root, 'scripts/try.mjs'), '--close'], { stdio: 'ignore' })
 // Only a checkout's own node_modules/electron - never /Applications/PaneForge.app, which
 // is the app this session is running inside.
-spawnSync('pkill', ['-f', 'PaneForge[^/]*/node_modules/electron'])
+spawnSync('pkill', ['-f', ELECTRON_PATTERN])
 for (let i = 0; i < 30; i++) {
-  const r = spawnSync('pgrep', ['-f', 'PaneForge[^/]*/node_modules/electron'], { encoding: 'utf8' })
+  const r = spawnSync('pgrep', ['-f', ELECTRON_PATTERN], { encoding: 'utf8' })
   if (!r.stdout.trim()) break
   await new Promise((r) => setTimeout(r, 500))
 }
