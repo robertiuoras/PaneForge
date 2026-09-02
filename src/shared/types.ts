@@ -350,6 +350,15 @@ export interface Session {
     /** what that device calls itself, for the pane badge */
     name: string
   }
+  /**
+   * How many times a person has had to step in on this pane - answered a question the app
+   * would not answer, typed into a turn that was running, or said what to do next.
+   *
+   * A7 of the autonomous-task milestone: the target is a NUMBER (0-2 per feature) and
+   * nothing measured it. `shared/interventions.ts` decides what counts; an `app` write -
+   * a queued prompt, an autoclear, an auto-answered question - never does.
+   */
+  interventions?: number
   /** This pane's output is being teed to a file as it runs. See `main/pipe.ts`. */
   piping?: PipeInfo
   /**
@@ -793,6 +802,12 @@ export interface UpdateState {
   error?: string
   /** release page to open by hand, used where in-place update is not possible */
   url?: string
+  /**
+   * This build is ready and two earlier ones were already thrown away unused, so the app
+   * has stopped waiting to be asked and will restart itself once no pane is in use.
+   * See shared/updateStale.ts.
+   */
+  ignored?: boolean
 }
 
 /**
@@ -2049,6 +2064,13 @@ export interface Api {
   logReclaim(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
   listActivity(): Promise<ActivityFeed>
+  /**
+   * The prompt a pane opened on a backlog task starts with, or why there is none.
+   *
+   * Reading only - the backlog has one writer (`claude-config/backlog.mjs`). Reached by
+   * `pf open --task <id>`, which refuses BEFORE opening a pane when the id names nothing.
+   */
+  taskBrief(ref: string): Promise<{ prompt: string } | { error: string }>
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
   killSession(id: string): Promise<void>

@@ -666,7 +666,11 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Reviewed 2026-09-01. One boolean off `powerMonitor`: is this machine on battery.
     // It starts nothing, changes nothing, and names nothing that is not already on the
     // lid of the laptop the asker is holding.
-    'app:batteryNow'
+    'app:batteryNow',
+    // Reviewed 2026-09-02. Reads A1's backlog and answers a compiled prompt. It types
+    // nothing and writes nothing - the backlog has one writer, and it is
+    // claude-config/backlog.mjs. Opening the pane is `sessions:start`, gated on its own.
+    'backlog:task'
   ])
   const unclassified = channels.filter((c) => !gated.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE.has(c))
   ok(

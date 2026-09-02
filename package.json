@@ -21,7 +21,10 @@
     "test:blindlist": "node scripts/updater-blindlist-test.mjs",
     "test:wedge": "node scripts/updater-wedge-test.mjs",
     "test:pickrelease": "node scripts/pickrelease-test.mjs",
+    "test:openurl": "node scripts/open-url-test.mjs",
+    "test:spawnquiet": "node scripts/spawn-quiet-test.mjs",
     "test:updatehold": "node scripts/update-hold-test.mjs",
+    "test:updatestale": "node scripts/update-stale-test.mjs",
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:handoffsteps": "node scripts/handoff-steps-test.mjs",
@@ -250,7 +253,10 @@
     "test:agytrust": "node scripts/agy-trust-test.mjs",
     "test:agyconv": "node scripts/agy-conversation-test.mjs",
     "unreleased": "node scripts/unreleased.mjs",
-    "test:unreleased": "node scripts/unreleased-test.mjs"
+    "test:unreleased": "node scripts/unreleased-test.mjs",
+    "test:promptforge": "node scripts/prompt-forge-test.mjs",
+    "test:taskbrief": "node scripts/task-brief-test.mjs",
+    "test:interventions": "node scripts/interventions-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

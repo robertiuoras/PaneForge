@@ -99,6 +99,9 @@ const h = require_(history)
 
 const RAW = '\x1b[32mgreen\x1b[0m line one\nline two\n\x1b[1mbold tail\x1b[0m'
 writeFileSync(join(histDir, 'old.log'), RAW)
+// The width those bytes were painted at, on DISK: the manager is a separate bundle from
+// the history module this file holds, so an in-memory noteCols here would never reach it.
+writeFileSync(join(histDir, 'old.json'), JSON.stringify({ id: 'old', cols: 96 }))
 
 ok(h.tail('old', 1_000) === RAW, 'a whole log under the cap comes back byte for byte', JSON.stringify(h.tail('old', 1_000)))
 ok(h.tail('old', 1_000).includes('\x1b[32m'), 'and it is RAW - a stripped tail would replay as plain text')
@@ -133,7 +136,7 @@ ok(back.includes('\x1b[0m\r\n\x1b[2m'), 'the mark resets first, so a colour left
 h.flush()
 const chained = manager.start({ cwd: work, agent: 'claude', scrollbackId: restored.id })
 ok(manager.buffer(chained.id).startsWith(RAW), 'a pane restored from a restored pane still starts with the original screen', JSON.stringify(manager.buffer(chained.id).slice(0, 40)))
-ok(h.colsOf(restored.id) === h.colsOf('old'), 'and the painted width travels with it', String(h.colsOf(restored.id)))
+ok(restored.replayCols === 96, 'and the painted width travels with it', String(restored.replayCols))
 
 const missing = manager.start({ cwd: work, agent: 'claude', scrollbackId: 'a-pane-whose-log-was-pruned' })
 ok(manager.buffer(missing.id) === '', 'a desk naming a transcript that has been pruned restores nothing', JSON.stringify(manager.buffer(missing.id)))

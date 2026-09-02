@@ -56,6 +56,7 @@ const DESK_SIDE = {
   // on every submitted line and is still the answer to "have I asked this", so the lookup
   // stays reachable from outside the window.
   priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
+  taskBrief: 'pf-ctl open --task - the app compiles the brief, no control in the window',
 }
 
 function walk(dir, out = []) {

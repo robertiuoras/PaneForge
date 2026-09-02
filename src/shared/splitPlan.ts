@@ -12,7 +12,15 @@
 // in THIS file is the part that must not depend on the model behaving: what it is asked
 // for, and what is done with an answer that is wrong.
 //
-// `npm run test:splitplan`.
+// Both briefs this file produces - the one the planner is asked, and the one each pane is
+// opened with - are forged by `shared/promptForge.ts`, so they carry a scope fence, a
+// definition of done, and (when this machine has Robert's promptlib) an example of a good
+// ask of this kind. Before today the planner brief had four of those five and the PANE
+// brief had none of them guaranteed at all.
+//
+// `npm run test:splitplan`, `npm run test:promptforge`.
+
+import { DONE_HEAD, forgePrompt, type ForgeTemplate } from './promptForge'
 
 /** One pane the split proposes: a brief, and where it runs. */
 export interface SplitTask {
@@ -51,6 +59,16 @@ export const MAX_TASKS = 4
 export const MIN_CHARS = 120
 
 /**
+ * The ceiling on the whole planner brief.
+ *
+ * Deliberately far above `MAX_PROMPT_CHARS`, which is sized for a prompt typed into a pane
+ * one chunk at a time. This one is a single argument to a headless CLI, and the thing it
+ * carries is a LONG ask - the feature does not exist for short ones - so the pane ceiling
+ * would truncate the request the planner was asked to read.
+ */
+export const SPLIT_BUDGET_CHARS = 40_000
+
+/**
  * What the headless agent is asked.
  *
  * Three things it must be told and one it must be refused. Told: the shape of the answer
@@ -60,25 +78,34 @@ export const MIN_CHARS = 120
  * "and write tests for all of it" is scope nobody asked for, running in a pane nobody is
  * watching.
  */
-export function splitInstruction(text: string, max = MAX_TASKS): string {
-  return [
-    'Split the request below into the parts that can be worked on AT THE SAME TIME by',
-    'separate agents in separate checkouts - parts that do not need each other\'s output',
-    'and do not edit the same files.',
-    '',
-    `Answer with JSON only, no prose, no code fence: {"tasks":[{"title":"","prompt":"","project":""}]}`,
-    '',
-    `- At most ${max} tasks. If the request is really one job, answer with one task.`,
-    '- Each "prompt" must stand alone: it is the ONLY thing its agent will be given, so it',
-    '  repeats whatever context it needs and never refers to the other tasks.',
-    '- Rewrite each prompt to be specific about what done looks like, but ADD NO WORK: no',
-    '  task, file, test or refactor that the request did not ask for.',
-    '- "project" is the repo name the part names, or "" when it names none.',
-    '- "title" is at most six words.',
-    '',
-    'The request:',
-    text
-  ].join('\n')
+export function splitInstruction(
+  text: string,
+  max = MAX_TASKS,
+  template?: ForgeTemplate | null
+): string {
+  return forgePrompt({
+    task: [
+      'Split the request below into the parts that can be worked on AT THE SAME TIME by',
+      "separate agents in separate checkouts - parts that do not need each other's output",
+      'and do not edit the same files.',
+      '',
+      'The request:',
+      text
+    ].join('\n'),
+    template,
+    budget: SPLIT_BUDGET_CHARS,
+    scope: [
+      `At most ${max} tasks - if the request is really one job, answer with one task`,
+      'ADD NO WORK: no task, file, test or refactor that the request did not ask for',
+      'each "prompt" must stand alone: it is the ONLY thing its agent will be given, so it repeats whatever context it needs and never refers to the other tasks'
+    ],
+    done: [
+      'the answer is JSON only, no prose, no code fence: {"tasks":[{"title":"","prompt":"","project":""}]}',
+      'every "prompt" names the file, folder or repo to start from, and says what finished looks like',
+      '"project" is the repo name the part names, or "" when it names none',
+      '"title" is at most six words'
+    ]
+  })
 }
 
 /**
@@ -161,6 +188,48 @@ export function parseSplit(raw: string, max = MAX_TASKS): SplitPlan | null {
   }
   if (!tasks.length) return null
   return { tasks, dropped }
+}
+
+/**
+ * The brief a pane is actually opened with.
+ *
+ * `parseSplit` returns what the MODEL wrote, unchanged, because that is what the parser's
+ * refusals are about. This is the step after it, and it exists because of the count in
+ * `docs/prompt-review-2026-09-02.md`: of the six places this app writes a prompt, the pane
+ * brief was the only one with none of the five definition-of-done items guaranteed - and
+ * it is the one that opens up to four CLIs at once, ~190 MB each, on text nothing read.
+ *
+ * Idempotent: a model that already ended its brief with a `Done means:` block has that
+ * block LIFTED and re-used rather than a second one added under it, so forging a forged
+ * brief changes nothing.
+ */
+export function paneBrief(task: SplitTask): string {
+  const { body, done } = liftDone(task.prompt)
+  return forgePrompt({
+    task: body,
+    ...(task.project ? { anchors: [`the ${task.project} repo`] } : {}),
+    scope: [
+      'only what this brief asks for - the other parts of the split are other panes and other checkouts'
+    ],
+    done
+  })
+}
+
+/**
+ * Split a brief into its body and the done lines it already carried.
+ *
+ * The block has to be the LAST thing in the text to count, and every line under the
+ * heading has to be a bullet. A `Done means:` in the middle of a brief is the brief
+ * talking about something else, and lifting that would move a sentence out of the ask.
+ */
+export function liftDone(prompt: string): { body: string; done: string[] } {
+  const text = String(prompt || '').trim()
+  const at = text.lastIndexOf(DONE_HEAD)
+  if (at < 0) return { body: text, done: [] }
+  const tail = text.slice(at + DONE_HEAD.length)
+  const rows = tail.split('\n').filter((l) => l.trim())
+  if (!rows.length || rows.some((l) => !/^\s*[-*]\s/.test(l))) return { body: text, done: [] }
+  return { body: text.slice(0, at).trimEnd(), done: rows.map((l) => l.replace(/^\s*[-*]\s*/, '').trim()) }
 }
 
 /** Why a split could not run, in the words the dialog shows. */
