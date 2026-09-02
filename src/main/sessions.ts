@@ -707,6 +707,14 @@ export class SessionManager extends EventEmitter {
     if (back.text) {
       live.buffer.set(back.text)
       if (back.cols > 0) meta.replayCols = back.cols
+      // ...and into THIS session's own log, because the next desk will name this id, not
+      // the one it was read from (`scrollbackId: s.meta.id` in `snapshot`). A pane that
+      // came back asleep prints nothing, so its log held only the marks, and the restart
+      // after that one replayed an empty file: measured 2026-09-02, pane 2's log 1,222
+      // bytes with a 2.3 MB predecessor on disk. Robert: "cant scroll up session 2 and
+      // see the history of it". Bounded by `BUFFER_LIMIT`, the same cap `tail` reads.
+      recordData(id, back.text)
+      if (back.cols > 0) noteCols(id, back.cols)
     }
     this.sessions.set(id, live)
     if (born) {

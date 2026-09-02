@@ -258,6 +258,19 @@ is(
 )
 is(say('/clear', '/clear', '/clear'), '', 'slash commands say nothing')
 is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'runway and verbs drop out')
+// The phrase must hold a word the asks agreed on. This named a toolstash pane
+// `Were Able To Switch` on 2026-09-01: the runway of a question, subject still ahead.
+{
+  const named = say(
+    'so you were able to switch models for me? thats good but does fable have cached now',
+    'is fable cheaper than opus for these models',
+    'switch the default models back to fable'
+  )
+  ok(/Fable|Models/.test(named), `the phrase carries the repeated word, got "${named}"`)
+  ok(!/Were|Able/.test(named), `and never the runway, got "${named}"`)
+  is(topicTitle('so you were able to switch models for me'), 'Switch Models For Me', 'the runway is cut even without an anchor')
+  is(topicTitle('please look at this again', new Set(['invoice'])), '', 'an ask holding no anchor names nothing')
+}
 
 // Housekeeping the desk does to itself between jobs is not the job. A pane in
 // `Projects/PaneForge` came back from a `/clear` wearing the name `Handoff`.

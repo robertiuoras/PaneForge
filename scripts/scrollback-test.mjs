@@ -127,6 +127,13 @@ ok(back.startsWith(RAW), 'a pane restored from a desk starts with what was on it
 ok(/above: this pane before the restart/.test(back), 'and says where the old output ends', JSON.stringify(back.slice(-80)))
 ok(back.includes('\x1b[0m\r\n\x1b[2m'), 'the mark resets first, so a colour left mid-run does not bleed into it')
 
+// The restored pane's OWN log carries what it was given, so the restart after this one
+// (which names THIS id) has something to replay. An asleep pane prints nothing, and its
+// log used to hold only the marks.
+h.flush()
+const chained = manager.start({ cwd: work, agent: 'claude', scrollbackId: restored.id })
+ok(manager.buffer(chained.id).startsWith(RAW), 'a pane restored from a restored pane still starts with the original screen', JSON.stringify(manager.buffer(chained.id).slice(0, 40)))
+
 const missing = manager.start({ cwd: work, agent: 'claude', scrollbackId: 'a-pane-whose-log-was-pruned' })
 ok(manager.buffer(missing.id) === '', 'a desk naming a transcript that has been pruned restores nothing', JSON.stringify(manager.buffer(missing.id)))
 

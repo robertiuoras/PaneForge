@@ -335,13 +335,13 @@ export function mayTopicName(cwd: string): boolean {
   return NO_IDENTITY.has(last)
 }
 
-export function topicTitle(prompt: string): string {
+export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string {
   const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
   if (!line || line.startsWith('/')) return ''
   let s = normalise(line)
   for (;;) {
     const cut = s.replace(
-      /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|check|make|now)\s+/,
+      /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|check|make|now|were|was|able|been|have|has|had|will|gonna|going|thats|its|im|ive|weve|youre|still|already|yes|yeah|no|not|that|this)\s+/,
       ''
     )
     if (cut === s) break
@@ -349,14 +349,25 @@ export function topicTitle(prompt: string): string {
   }
   // Articles anywhere, not only at the front: `Fix The Invoice Template` spends a quarter
   // of a four-word label on a word that identifies nothing.
-  const words = s
+  let words = s
     .split(' ')
     // Articles anywhere, and the single letters `normalise` leaves behind when it splits
     // `i'm` and `we've` - a card called `M Looking For Cheap` spends its first word on
     // half a contraction.
     // ...and never a word about the session itself: see `SESSION_WORDS`.
     .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w) && !SESSION_WORDS.includes(w))
-    .slice(0, 4)
+  // A phrase earned by REPETITION must contain a word that was repeated. The first four
+  // words of "so you were able to switch models for me? ... does fable have cached now"
+  // named a toolstash pane `Were Able To Switch` (2026-09-01) - the sentence's runway,
+  // with the subject the three asks agreed on ("fable", "models") still ahead. So when
+  // the opening words hold no anchor, the phrase starts one word before the first anchor
+  // and reads on from there, and an ask with no anchor at all names nothing.
+  if (anchor) {
+    const at = words.findIndex((w) => anchor.has(w))
+    if (at < 0) return ''
+    if (!words.slice(0, 4).some((w) => anchor.has(w))) words = words.slice(Math.max(0, at - 1))
+  }
+  words = words.slice(0, 4)
   // A label may not end on a word that is only there to join it to the words that were
   // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
   // card called `Pizzasrus And`, which reads as an unfinished sentence rather than a name
@@ -446,7 +457,8 @@ const TOPIC_STOP = new Set(
     'shall must some more most much many any all every each other another same thing things stuff ' +
     'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
     'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
-    'working works worked run runs running fix fixes fixed add adds added change changes changed'
+    'working works worked run runs running fix fixes fixed add adds added change changes changed ' +
+    'were able thats theyre youre gonna going already'
   ).split(' ').concat(SESSION_WORDS)
 )
 
@@ -489,7 +501,7 @@ export function repeatedTopic(asks: string[]): string {
   // comes off that one, and the repetition is only what earns the rename.
   for (let i = 0; i < recent.length; i++) {
     if (!words[i].some((w) => shared.has(w))) continue
-    const phrase = topicTitle(recent[i])
+    const phrase = topicTitle(recent[i], shared)
     if (phrase) return phrase
   }
   return ''
