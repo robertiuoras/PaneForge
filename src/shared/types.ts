@@ -1153,6 +1153,8 @@ export interface RemotePeerState extends RemotePeer {
   status: 'off' | 'connecting' | 'online' | 'error'
   /** why it is not connected, in words meant for the person reading them */
   error?: string
+  /** the PaneForge version that device reported at handshake, known only while connected */
+  version?: string
   /** panes mirrored from it right now */
   sessions: number
   /** every pane it has, mirrored or not, so the panel can offer the pick */
@@ -1198,6 +1200,8 @@ export interface RemoteState {
     addresses: string[]
     /** a device on this network may raise an Approve card here instead of typing the code */
     pairByAsking: boolean
+    /** this app's own version - so the renderer never needs to import Electron to read it */
+    version: string
   }
   peers: RemotePeerState[]
   found: RemoteFound[]
