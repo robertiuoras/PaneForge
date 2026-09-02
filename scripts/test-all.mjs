@@ -21,8 +21,8 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { spawn } from 'node:child_process'
-import { cpus } from 'node:os'
+import { execFileSync, spawn } from 'node:child_process'
+import { cpus, loadavg } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -224,7 +224,32 @@ if (!run.length) {
  * below rather than forcing the whole run back into a queue.
  */
 const jobsArg = /^--jobs=(\d+)$/.exec(process.argv.slice(2).find((a) => a.startsWith('--jobs=')) ?? '')
-const JOBS = Math.max(1, Number(jobsArg?.[1] ?? process.env.PF_TEST_JOBS ?? Math.min(8, cpus().length)))
+/**
+ * A busy desk gets a narrower pool. 2026-09-02: three panes ran this suite at once, 8 jobs
+ * each, beside taskdriver's next workers - node alone swung to 6.4 GB on a 16 GB machine
+ * already at kernel pressure level 2 with 129 MB unused, load 70 on 10 cores. The suite
+ * was the biggest single mover of the lag, not the app it tests. So the width is read off
+ * the machine at start: pressure 2+ (warn) or a load past the core count means 2 jobs.
+ * An explicit `--jobs=` or PF_TEST_JOBS is a decision and is never overridden.
+ */
+export const BUSY_JOBS = 2
+export function deskBusy({ pressure, load, cores }) {
+  return pressure >= 2 || load > cores
+}
+function pressureLevel() {
+  if (process.platform !== 'darwin') return 0
+  try {
+    return Number(execFileSync('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { encoding: 'utf8' }).trim()) || 0
+  } catch {
+    return 0
+  }
+}
+const asked = jobsArg?.[1] ?? process.env.PF_TEST_JOBS
+const desk = { pressure: pressureLevel(), load: loadavg()[0], cores: cpus().length }
+const JOBS = Math.max(1, Number(asked ?? (deskBusy(desk) ? BUSY_JOBS : Math.min(8, desk.cores))))
+if (asked == null && JOBS === BUSY_JOBS) {
+  console.log(`desk busy (pressure ${desk.pressure}, load ${desk.load.toFixed(1)} on ${desk.cores} cores): ${JOBS} jobs`)
+}
 
 /**
  * Suites that may not share the machine, each with the reason it cannot.
