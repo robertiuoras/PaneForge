@@ -215,6 +215,7 @@ export const SURFACE: Surface = {
   listRemoteJobs: ['invoke', 'jobs:remote'],
   onPaneReset: ['on', 'pane:reset'],
   onPaneArmClear: ['on', 'pane:armClear'],
+  onPaneTyped: ['on', 'pane:typed'],
   onPaneHandover: ['on', 'pane:handover'],
   onVoiceHotkey: ['on', 'voice:hotkey'],
   onRecents: ['on', 'recents:changed'],

@@ -17,7 +17,7 @@ import {
   protocol,
   screen,
   shell } from 'electron'
-import { SessionManager, setSilenceAlert } from './sessions'
+import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
@@ -1499,7 +1499,7 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
-function writePane(id: string, data: string): void {
+function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
   if (remote.owns(id)) return remote.send(id, { t: 'write', data })
   watchForClear(id, data)
   // Nothing typed here stands a countdown down any more. It used to: a write carrying one
@@ -1510,10 +1510,16 @@ function writePane(id: string, data: string): void {
   // session". The one thing typing must still prevent is being typed OVER, and that is
   // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
   // unsent draft, so the timer asks again rather than the countdown disappearing.
-  manager.write(id, data)
+  manager.write(id, data, origin)
 }
 
-ipcMain.on('pty:write', (_e, id: string, data: string) => writePane(id, data))
+// A phone's write arrives through `ipcTap`'s stand-in event, whose sender reports itself
+// gone; the window's own sender is live. That one bit decides whether the rail in this
+// window already tagged the line (it typed it) or needs telling (`pane:typed`).
+ipcMain.on('pty:write', (e, id: string, data: string) =>
+  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
+)
+manager.on('typed', (id: string, line: string) => send('pane:typed', id, line))
 
 // ---- and keeping the system awake while a pane works ---------------------------------
 const displayAwake = startDisplayAwake({

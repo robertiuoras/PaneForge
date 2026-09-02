@@ -45,7 +45,7 @@ import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
-import { seedPrompts } from '../../../shared/promptEcho'
+import { completedSlash, seedPrompts } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
@@ -715,6 +715,12 @@ interface Mark {
    * needs. Refreshed every render; a marker keeps its own line right in between.
    */
   line: number
+  /**
+   * A slash token whose real command the CLI has not echoed yet. `/mode` plus Enter runs
+   * `/model` off the completion menu, and only the CLI's own `❯ /model` line says so -
+   * see `completedSlash`. Cleared once the echo is read or the screen has moved on.
+   */
+  pending?: boolean
   /** The rail's label: one line, flattened, capped at RAIL_LABEL_CHARS. */
   text: string
   /**
@@ -2145,6 +2151,7 @@ function TerminalPane({
       const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
       const entry: Mark = { id: marker.id, marker, line: marker.line, text, full, at: Date.now() }
+      if (/^\s*\/\S/.test(full)) entry.pending = true
       anchor(entry, marker)
       list.push(entry)
       // Past this many the tags are a solid bar and stop being aimable, so the oldest go.
@@ -2156,11 +2163,14 @@ function TerminalPane({
     // One reconstruction, in `shared/draft.ts`, rather than the copy that used to live
     // here. The rail wants a short flattened label and the improver wants the whole thing,
     // so both read one state and take what they need from it.
-    const feedInput = (d: string): void => {
-      const r = feedDraft(pending, d)
-      pending = r.state
-      publishDraft(sessionId, r.state)
-      for (const line of r.submitted) {
+    /**
+     * One submitted line, whoever typed it. The window's own keystrokes come through
+     * `feedInput`; a line this app typed (an autoclear's resume, `pf open --prompt`) or a
+     * phone typed never passes through here as keystrokes, so main says it on
+     * `pane:typed` and it lands in the same place - the tag, the archive, the keeper.
+     */
+    const noteSubmitted = (line: string): void => {
+      {
         // `/clear` and friends are the one moment the screen is meant to be thrown away
         // rather than repainted, and this is the only place that knows it: Claude Code
         // v2.1.233 clears by drawing its banner straight over the last turn, with no erase
@@ -2185,6 +2195,43 @@ function TerminalPane({
         // one more consumer, and the only feed that reads the same for every agent.
         if (text.length > 1) api.promptUsed(line, { cwd: cwdRef.current, id: sessionId })
       }
+    }
+    const feedInput = (d: string): void => {
+      const r = feedDraft(pending, d)
+      pending = r.state
+      publishDraft(sessionId, r.state)
+      for (const line of r.submitted) noteSubmitted(line)
+    }
+    /**
+     * A slash tag reads what the CLI RAN, not what was typed - once the CLI has said so.
+     * Only rows painted since the tag are read, and only while a tag is waiting: the scan
+     * is a few dozen rows and runs on the frame that drew them.
+     */
+    const settleSlashMarks = (): void => {
+      if (!list.some((m) => m.pending)) return
+      const b = t.buffer.active
+      const cursor = b.baseY + b.cursorY
+      let changed = false
+      for (const m of list) {
+        if (!m.pending) continue
+        const from = Math.max(0, m.line)
+        // Sixty rows on is a screenful past the command: whatever it printed, it is done.
+        if (cursor - from > 60) {
+          m.pending = false
+          continue
+        }
+        const rows: string[] = []
+        for (let i = from; i <= cursor; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
+        const said = completedSlash(m.full, rows)
+        if (said === null) continue
+        m.pending = false
+        if (said !== m.full) {
+          m.full = said
+          m.text = flatDraft(said, RAIL_LABEL_CHARS)
+          changed = true
+        }
+      }
+      if (changed) publish()
     }
 
     // The rail's scale changes as output arrives and as the view moves, but a write only
@@ -2220,6 +2267,7 @@ function TerminalPane({
     // nothing next to the repaint that fires this.
     t.onRender(() => {
       for (const m of list) if (m.marker.line >= 0) m.line = m.marker.line
+      settleSlashMarks()
       // The frame that has just been drawn is where the rows ARE, so the copy pairs are
       // placed off it rather than off a reading up to 250ms old. See `syncGeom`.
       syncGeom()
@@ -3220,6 +3268,12 @@ function TerminalPane({
       if (away) t.write(away)
     })
 
+    // A prompt typed by the app or by a phone: main saw the bytes, this window did not.
+    const offTyped = api.onPaneTyped((id, line) => {
+      if (id !== sessionId) return
+      noteSubmitted(line)
+    })
+
     const offHandover = api.onPaneHandover((id, until) => {
       if (id !== sessionId) return
       setHandoverUntil(until > Date.now() ? until : 0)
@@ -3589,6 +3643,7 @@ function TerminalPane({
       off()
       offReset()
       offArmClear()
+      offTyped()
       offHandover()
       coarse.removeEventListener('change', oneComposer)
       ro.disconnect()

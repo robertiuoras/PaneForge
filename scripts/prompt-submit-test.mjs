@@ -265,6 +265,22 @@ ok(
 )
 ok(manager.takeOver('no-such-pane') === false, 'takeOver on a dead id is false, not a throw')
 
+// A prompt the app or a phone typed is said to the window as `typed`, so the rail can tag
+// it; the window's own keystrokes are not, because it tagged those itself.
+{
+  const typedInto = manager.start({ cwd: root, agent: 'shell' })
+  const said = []
+  manager.on('typed', (id, line) => id === typedInto.id && said.push(line))
+  manager.write(typedInto.id, 'typed by hand\r')
+  manager.write(typedInto.id, 'from a phone\r', 'phone')
+  manager.write(typedInto.id, '\x1b[200~pasted\nby app\x1b[201~\r', 'app')
+  manager.write(typedInto.id, '\r', 'app')
+  ok(said.length === 2, 'desk keystrokes are not announced; app and phone lines are', JSON.stringify(said))
+  ok(said[0] === 'from a phone', 'the phone line arrives whole', said[0])
+  ok(said[1] === 'pasted\nby app', 'a pasted prompt keeps its newlines and is not the 200-char tail', said[1])
+  manager.kill(typedInto.id)
+}
+
 // And the settle path fires for a prompt that goes in normally, which is what lowers the
 // curtain on the happy path.
 const settling = manager.start({ cwd: root, agent: 'shell' })

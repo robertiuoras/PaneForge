@@ -87,7 +87,7 @@ import {
   newSubmitLine,
   typeLine
 } from '../shared/slashTurn'
-import type { DraftState } from '../shared/draft'
+import { feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, hasAgent, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
@@ -425,6 +425,15 @@ interface Live {
    * only question it is asked: did this Enter send anything at all.
    */
   submitLine: DraftState
+  /**
+   * The SAME keystrokes a third time, and this one keeps everything: paste decoded, no
+   * cap worth hitting. The rail's prompt tags are built from keystrokes in the RENDERER,
+   * which means a prompt this app typed (an autoclear's resume, `pf open --prompt`) or a
+   * phone typed never got one - "there was a prompt but no tag to scroll to it". Main is
+   * the one place every byte into the pty passes, so the line is rebuilt here too and
+   * handed to the window as `typed` when it did not come from the window itself.
+   */
+  draft: DraftState
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -449,6 +458,12 @@ interface Live {
    */
   runEndedAt?: number
 }
+
+/**
+ * Who typed the bytes. `desk` is this machine's window, which tags its own prompts;
+ * `app` is this process (`queuePrompt`); `phone` is a browser client over `phone.ts`.
+ */
+export type WriteOrigin = 'desk' | 'app' | 'phone'
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
@@ -681,6 +696,7 @@ export class SessionManager extends EventEmitter {
       lastTail: '',
       typed: '',
       submitLine: newSubmitLine(),
+      draft: newDraft(),
       slashAt: 0,
       slashQuietUntil: 0,
       stallRaised: false
@@ -1183,7 +1199,7 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, text)
   }
 
-  write(id: string, data: string): void {
+  write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return
     live.proc.write(data)
@@ -1191,6 +1207,14 @@ export class SessionManager extends EventEmitter {
     // "typing" to the gate below, but it still has to erase from this record.
     live.typed = typeLine(live.typed, data)
     live.submitLine = feedSubmitLine(live.submitLine, data)
+    // The whole line, for the rail. The window builds its own tags from the keystrokes it
+    // relays, so a line that came FROM the window is already tagged there; only a line
+    // typed by this app or by a phone needs telling. `Live.draft` says why.
+    const whole = feedDraft(live.draft, data)
+    live.draft = whole.state
+    if (origin !== 'desk') {
+      for (const line of whole.submitted) if (line.trim().length > 1) this.emit('typed', id, line)
+    }
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
@@ -2528,7 +2552,7 @@ export class SessionManager extends EventEmitter {
     // re-stamp the mark so the confirm returns never read as somebody else.
     let mark = this.sessions.get(id)?.meta.lastKeyboard ?? Date.now()
     const ourWrite = (data: string): void => {
-      this.write(id, data)
+      this.write(id, data, 'app')
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
     }
