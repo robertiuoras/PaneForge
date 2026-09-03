@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { StartSessionRequest } from '../shared/types'
-import { emptyDeskStands } from '../shared/restoreTurn'
+import { deskToWrite } from '../shared/restoreTurn'
 
 /** Why the desk was written. Only `update` restores without asking. */
 export type DeskReason = 'quit' | 'update' | 'live'
@@ -36,6 +36,15 @@ const TICK_MS = 15_000
 function file(): string {
   return join(app.getPath('userData'), 'desk.json')
 }
+/**
+ * The desk before the last `clearDesk`. One generation, never read by the app: a
+ * "Start fresh" click or a bug that empties the desk is then a rename away from undone
+ * instead of gone, which is what the 2026-09-03 loss of eleven panes needed and did not
+ * have.
+ */
+function prevFile(): string {
+  return join(app.getPath('userData'), 'desk.prev.json')
+}
 
 /**
  * Signature of the last write. An idle desk must not touch the disk every 15
@@ -45,18 +54,13 @@ function file(): string {
 let lastWritten = ''
 let timer: NodeJS.Timeout | null = null
 /**
- * An offer is on screen and unanswered. Until it is answered, an empty desk is
- * not news - the app simply has no panes yet - and must not overwrite the panes
- * still being offered. Answering "Start fresh" clears the desk explicitly.
+ * The desk being offered, while the offer is on screen and unanswered. Every write
+ * until then carries these panes in front of the live ones (`deskToWrite`), under the
+ * offered desk's own reason and age: a dismissed dialog, a pane opened over it and a
+ * self-restart for an update must all leave the offer standing. Answering clears it -
+ * "Start fresh" through `clearDesk`, "Restore" through `restorePanes`.
  */
-let hold = false
-/**
- * A pane has been open at some point since the offer went up. See `emptyDeskStands`:
- * on the PC the offer sat unanswered from a 23:13 relaunch, a pane opened over it by
- * `pf open`, was closed at 01:36 - and the empty desk was never written, so desk.json
- * still listed the closed pane an hour later (2026-09-03).
- */
-let usedSinceOffer = false
+let pending: Desk | null = null
 /**
  * The desk this run leaves has been written. Nothing may write after it.
  *
@@ -67,9 +71,8 @@ let usedSinceOffer = false
  */
 let sealed = false
 
-export function setDeskHold(on: boolean): void {
-  hold = on
-  if (on) usedSinceOffer = false
+export function setDeskHold(offered: Desk | null): void {
+  pending = offered
 }
 
 export function readDesk(): Desk | null {
@@ -89,10 +92,15 @@ export function readDesk(): Desk | null {
 
 export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void {
   if (sealed) return
-  if (specs.length) usedSinceOffer = true
-  if (emptyDeskStands(hold, usedSinceOffer)) return
-  const desk: Desk = { specs, at: Date.now(), clean: reason !== 'live', reason }
-  const sig = JSON.stringify({ specs, reason })
+  const all = deskToWrite(pending?.specs ?? null, specs)
+  // While an offer stands the file stays the offered desk - same reason, so the next
+  // launch asks again rather than reopening unasked as an `update` would, and the same
+  // `at`, so the offer still ages out at seven days instead of being renewed by every
+  // write.
+  const desk: Desk = pending
+    ? { specs: all, at: pending.at, clean: pending.clean, reason: pending.reason }
+    : { specs: all, at: Date.now(), clean: reason !== 'live', reason }
+  const sig = JSON.stringify({ specs: all, reason: desk.reason })
   // An unchanged desk is only worth rewriting when the reason changed - "the app
   // left cleanly" is the one bit a crash cannot forge.
   if (sig === lastWritten) return
@@ -109,11 +117,17 @@ export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void
   }
 }
 
-/** Forget the desk. Called once the panes have been handed back, or turned down. */
+/**
+ * Forget the desk. Called once the panes have been handed back, or turned down.
+ * The file is kept one generation back as `desk.prev.json`, never deleted outright.
+ */
 export function clearDesk(): void {
   lastWritten = ''
   try {
-    rmSync(file(), { force: true })
+    if (existsSync(file())) {
+      rmSync(prevFile(), { force: true })
+      renameSync(file(), prevFile())
+    }
   } catch {
     /* nothing to clear */
   }

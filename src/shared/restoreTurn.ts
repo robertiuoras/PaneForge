@@ -108,15 +108,22 @@ export function restoreAsleep(
 }
 
 /**
- * Whether an EMPTY desk may not be written yet.
+ * What the desk file holds while a restore offer is up and unanswered.
  *
- * While the restore offer is up and unanswered, the app has no panes and that is not
- * news: writing `[]` would delete the panes still being offered. But the offer can stay
- * up for ever on a desk nobody sits at - the PC's stood from a 23:13 relaunch, a pane was
- * opened over it by `pf open` and closed two hours later, and the empty desk that close
- * left was never written, so desk.json still listed the closed pane (2026-09-03). Once a
- * pane has been open since the offer went up, the desk is in use and empty is the truth.
+ * The offered panes are not open, so a snapshot of the live desk does not contain them,
+ * and writing that snapshot alone deletes them from disk. Measured 2026-09-03: a forced
+ * logout (WindowServer watchdog) killed eleven panes, the relaunch offered them, the app
+ * restarted itself four times in four minutes for staged updates, the dialog was dismissed
+ * by a click that landed on its overlay, one pane was opened, and the next autosave wrote
+ * that one pane over the eleven. Nothing was left to offer. The earlier rule here only
+ * guarded an EMPTY write ("a pane has been open since the offer") and the PC's stale-pane
+ * complaint that shaped it is answered the same way: the closed pane drops out of the live
+ * half, the offered panes stay in the pending half.
+ *
+ * So until the offer is answered the file is the offered panes PLUS whatever is open now.
+ * Dismissing keeps them, a restart re-offers them, and "Start fresh" is the one thing that
+ * removes them - through `clearDesk`, explicitly.
  */
-export function emptyDeskStands(offerPending: boolean, usedSinceOffer: boolean): boolean {
-  return offerPending && !usedSinceOffer
+export function deskToWrite<T>(pending: T[] | null, live: T[]): T[] {
+  return pending?.length ? [...pending, ...live] : live
 }

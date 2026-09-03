@@ -3862,14 +3862,26 @@ function offerRestore(): void {
   const legacy = cfg.restoreSessions ?? []
   if (legacy.length) setConfig({ restoreSessions: [] })
   const desk = readDesk() ?? (legacy.length ? { specs: legacy, at: Date.now(), clean: true, reason: 'update' as const } : null)
-  if (!desk?.specs.length) return
+  // Every branch below says what it did with the desk. 2026-09-03: eleven panes were lost
+  // across four self-restarts and nothing on the machine could say at which one, because
+  // this function wrote no line at all.
+  if (!desk?.specs.length) {
+    updateLog('desk', 'nothing to restore')
+    return
+  }
+  updateLog(
+    'desk',
+    `${desk.specs.length} pane(s) left ${desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
+  )
   // Panes from last week are not the desk anyone remembers leaving.
   if (desk.at && Date.now() - desk.at > MAX_DESK_AGE_MS) {
+    updateLog('desk', 'forgotten: older than a week')
     clearDesk()
     return
   }
   if (desk.reason === 'update') {
     if (!cfg.restoreAfterUpdate) {
+      updateLog('desk', 'forgotten: restore after update is off')
       clearDesk()
       return
     }
@@ -3878,6 +3890,7 @@ function offerRestore(): void {
     // times a day, so asking every time costs more than the inconsistency it removes.
     // On, this falls through to the same offer a quit or a crash gets.
     if (!cfg.askAfterUpdate) {
+      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the update without asking`)
       restorePanes(desk.specs)
       return
     }
@@ -3894,18 +3907,22 @@ function offerRestore(): void {
     .trim()
     .toLowerCase()
   if (forced === 'fresh') {
+    updateLog('desk', `forgotten: ${process.env.PANEFORGE_RESTORE ? 'PANEFORGE_RESTORE=fresh' : 'unpackaged run'}`)
     clearDesk()
     return
   }
   if (forced === 'always') {
+    updateLog('desk', `reopened ${desk.specs.length} pane(s): PANEFORGE_RESTORE=always`)
     restorePanes(desk.specs)
     return
   }
   if (cfg.restoreAfterRestart === 'never') {
+    updateLog('desk', 'forgotten: restore after restart is off')
     clearDesk()
     return
   }
   if (cfg.restoreAfterRestart === 'always') {
+    updateLog('desk', `reopened ${desk.specs.length} pane(s): restore after restart is always`)
     restorePanes(desk.specs)
     return
   }
@@ -3929,9 +3946,11 @@ function offerRestore(): void {
     memoryNote: plan.note
   }
   // Until the question is answered the desk stands, even though the app currently
-  // has no panes: an unanswered offer must survive a second restart, and a mis-click
-  // that closes the dialog must not delete the panes it was offering.
-  setDeskHold(true)
+  // has no panes: an unanswered offer must survive a second restart, a pane opened
+  // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
+  // front of the live ones until `setDeskHold(null)`.
+  setDeskHold(desk)
+  updateLog('desk', `offered ${panes.length} pane(s)${all.length > panes.length ? ` (+${all.length - panes.length} more not offered)` : ''}`)
 }
 
 ipcMain.handle('restore:pending', () => offer)
@@ -3939,12 +3958,14 @@ ipcMain.handle('restore:pending', () => offer)
 ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const pending = offer
   offer = null
-  setDeskHold(false)
+  setDeskHold(null)
   if (answer?.always) setConfig({ restoreAfterRestart: 'always' })
   if (!pending) return
   if (!answer?.accept) {
-    // Turned down on purpose - the desk goes. Dismissing the dialog instead sends
-    // nothing at all, so those panes are offered again next launch.
+    // Turned down on purpose - the desk goes (kept one generation back as desk.prev.json).
+    // Dismissing the dialog instead sends nothing at all, so those panes are offered
+    // again next launch.
+    updateLog('desk', 'answer: start fresh')
     clearDesk()
     saveDesk(manager.snapshot(), 'live')
     return

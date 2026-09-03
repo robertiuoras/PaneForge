@@ -197,7 +197,7 @@ try {
   // ...and out of the folder again, so the cases after this one see the two panes and the
   // two chats they were written for.
   rmSync(join(projects, 'chat-lane.jsonl'), { force: true })
-  rmSync(join(homedir(), '.claude', 'projects', slug(lane)), { force: true })
+  rmSync(join(homedir(), '.claude', 'projects', slug(lane)), { force: true, recursive: true })
   rmSync(lane, { recursive: true, force: true })
 
   // /clear starts a new transcript inside the same pane, and being re-noted is NOT
