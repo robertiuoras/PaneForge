@@ -113,7 +113,7 @@ export function holderName(lane: LaneBoardEntry, pane?: number): string {
     // rule says the reader does not have. `a chat in this copy` names the same fact
     // without asking the reader to resolve a pronoun back onto a heading, and it is the
     // one phrase here that does NOT print a number, which is what keeps it from repeating
-    // the title. The chat's own NAME is not used: the row already draws it (`laneWho`),
+    // the title. The chat's own NAME is not used: the row already draws it (`laneHeadline`),
     // and a row that says the name twice is the defect this replaced.
     if (samePath(lane.from, lane.dir)) return 'a chat in this copy'
     const from = folderName(lane.from)
@@ -243,13 +243,25 @@ export function holdWords(hold: { reason: string; at: number } | null, now = Dat
 }
 
 /**
- * What the chat in this copy was called and what it was asked to do.
+ * The row's first line: the JOB when the chat left a name behind, else the copy.
  *
- * Empty for a copy whose chat left no history, which is the point: a row that cannot say
- * what it was says nothing instead of inventing a name for it.
+ * "Which job" is the question a list of seven copies is asking, and the name answered it
+ * second, in quotes, after a project and a number that mean nothing to the reader
+ * (`taskdriver copy 4 "idea #675 Confirm..."`). A copy whose chat left no history keeps
+ * the folder up top: a row that cannot say what it was says where it is instead of
+ * inventing a name.
  */
-export function laneWho(lane: LaneBoardEntry): string {
-  return lane.chatTitle ? `"${lane.chatTitle}"` : ''
+export function laneHeadline(lane: LaneBoardEntry): string {
+  return lane.chatTitle ?? laneLabel(lane)
+}
+
+/**
+ * The row's second line. When the job took the first line the copy comes down here, in
+ * front of the state, so the row still says which folder it is about; when the first line
+ * is already the copy, this is the state alone rather than the same words twice.
+ */
+export function laneUnder(lane: LaneBoardEntry, state: string): string {
+  return lane.chatTitle ? `${laneLabel(lane)} - ${state}` : state
 }
 
 /** The holder, spelled out in full: the tooltip is where the whole path and id belong. */

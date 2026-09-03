@@ -8,11 +8,11 @@ import {
   holdWords,
   laneBusy,
   laneChipLabel,
-  laneLabel,
+  laneHeadline,
   laneProject,
   laneState,
   laneTip,
-  laneWho,
+  laneUnder,
   RELEASE_STUCK_MS
 } from '../laneWords'
 
@@ -210,6 +210,10 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
   const orphans = boards.flatMap((b) =>
     b.lanes
       .filter((l) => !laneOwner(l, sessions))
+      // A hold whose chat is dead is a ledger entry the next sweep gives back, not a copy
+      // anyone is in; five of them with old chat names on were the whole strip on
+      // 2026-09-03. Conflicted or finished work is still somebody's to see.
+      .filter((l) => !l.gone || l.conflicted || l.ready)
       // `here` travels with the row because a board is one machine's reading of one repo,
       // and a row may be about the other machine - see LaneRow's device tag.
       .map((l) => ({ repo: b.repo, lane: l, here: b.device, hold: b.hold }))
@@ -345,15 +349,13 @@ function LaneRow({
         {/* Was `lane.branch`, which is the single word this whole change exists to stop
             printing: several rows saying `master`, for different repositories, with
             nothing on any of them naming one. */}
-        {/* The folder, then what the chat in it was called. The folder alone answered
-            "which copy" and never "which job", which is the question a list of seven is
-            asking. Nothing is drawn for a copy whose chat left no name behind. */}
-        <div className="row-title">
-          {laneLabel(lane)}
-          {laneWho(lane) && <span className="row-who"> {laneWho(lane)}</span>}
-        </div>
+        {/* The JOB first, when the chat left a name behind - "which job" is the question
+            a list of seven is asking, and `taskdriver copy 4 "idea #675"` answered it
+            second, after a number that means nothing to the reader. The copy moves down
+            to the state line. A copy whose chat left no name keeps the folder up top. */}
+        <div className="row-title">{laneHeadline(lane)}</div>
         <div className="row-sub">
-          {laneState(lane, false, Date.now(), holderPane, hold)}
+          {laneUnder(lane, laneState(lane, false, Date.now(), holderPane, hold))}
           {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
         </div>
       </div>

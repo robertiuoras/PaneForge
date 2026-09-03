@@ -643,6 +643,12 @@ export interface LaneBoardEntry {
   chatAbout?: string
   /** a live chat holds it right now */
   held: boolean
+  /**
+   * Held by a chat that no running copy of the app is hosting and that has been silent
+   * past the reclaim window - the next sweep gives it back. The strip draws no row for it
+   * unless it is also conflicted or ready (main/laneBoard.ts `markGone`).
+   */
+  gone?: boolean
   /** epoch ms the holding chat was last seen doing something */
   seen: number
   /** marked shippable, waiting for the batched release */

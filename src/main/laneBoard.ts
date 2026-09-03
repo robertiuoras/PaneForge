@@ -14,7 +14,7 @@
 // renderer draws nothing.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
@@ -253,6 +253,50 @@ function resolveRepos(panes: LanePane[]): string[] {
   return [...votes.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([k]) => spelling.get(k) as string)
+}
+
+/** Where projects live on this machine - the same roots `resolveRepo` guesses in. */
+function projectRoots(): string[] {
+  return process.platform === 'darwin'
+    ? [join(homedir(), 'Projects')]
+    : [join(homedir(), 'Desktop', 'Projects'), join(homedir(), 'Projects')]
+}
+
+/** One readdir per root, this often. A ledger appears when a repo first gets a lane. */
+const SCAN_MS = 5 * 60 * 1000
+let scanned: { at: number; key: string; repos: string[] } = { at: 0, key: '', repos: [] }
+
+/**
+ * Every repo on this machine with a lane ledger, whether or not a pane here is in it.
+ *
+ * `laneReclaim` walked only the repos this window's panes were in, so a hold left by a
+ * chat that died in a repo nobody had open here was given back by nothing. 2026-09-03:
+ * three taskdriver rows under "Other copies" - `idea #1103`, `#284`, `#675`, panes an
+ * automated run had opened in `taskdriver.ai-b`/`-d`/`-e` and an app restart killed at
+ * 09:01:03 - sat there most of a day with their worktrees already deleted, waiting on
+ * lane.mjs's twelve-hour staleness because no lane command ran in that repo meanwhile.
+ * The ledger is one file per repo under a known root, so the whole list is one readdir.
+ */
+export function ledgerRepos(panes: LanePane[], roots = projectRoots()): string[] {
+  const lanes = (main: string): boolean => existsSync(join(main, '.git', 'paneforge-lanes.json'))
+  const now = Date.now()
+  const key = roots.join('|')
+  if (now - scanned.at > SCAN_MS || scanned.key !== key) {
+    const found: string[] = []
+    for (const root of roots) {
+      let names: string[] = []
+      try {
+        names = readdirSync(root)
+      } catch {
+        continue
+      }
+      for (const n of names) if (lanes(join(root, n))) found.push(join(root, n))
+    }
+    scanned = { at: now, key, repos: found }
+  }
+  const out = new Map<string, string>()
+  for (const r of [...resolveRepos(panes), ...scanned.repos]) if (!out.has(samePath(r))) out.set(samePath(r), r)
+  return [...out.values()]
 }
 
 /**
@@ -637,6 +681,27 @@ function heartbeat(main: string, chats: string[]): Set<string> {
 
 let reclaiming = false
 
+/** What the last reclaim sweep learned about which chats are alive, for `markGone`. */
+let lastLiving: Set<string> | null = null
+
+/**
+ * Flag the rows the next sweep will give back, so the strip need not draw them.
+ *
+ * A hold whose chat is nowhere is not a copy anybody is working in; it is a ledger entry
+ * on its way out, and a row saying `"idea #675" has it, quiet 4h` about it is a lie with
+ * a name on it. Conflicted and ready lanes are not flagged - `goneLanes` never names
+ * them, and they are work somebody still has to see. Before the first sweep nothing is
+ * known and nothing is flagged; `living` is injectable for the test.
+ */
+export function markGone(board: LaneBoard | null, now = Date.now(), living = lastLiving): LaneBoard | null {
+  if (!board || !living) return board
+  const gone = new Set(goneLanes(board, living, now))
+  return {
+    ...board,
+    lanes: board.lanes.map((l) => (l.session && gone.has(l.session) ? { ...l, gone: true } : l))
+  }
+}
+
 /**
  * Give back a lane whose chat died without ending.
  *
@@ -659,11 +724,24 @@ export function laneReclaim(panes: LanePane[]): void {
   // every chat that opened there was told another chat had the lane. For 12h, which is
   // when staleness finally reaps it.
   const chats = panes.map((p) => p.resumeId).filter((c): c is string => Boolean(c))
+  // Every ledger on the machine, not only the repos with a pane here: a hold in a repo no
+  // pane is in is exactly the one nothing else will ever give back (see `ledgerRepos`).
   const groups = new Map<string, LanePane[]>()
+  const spelling = new Map<string, string>()
+  for (const main of ledgerRepos(panes)) {
+    spelling.set(samePath(main), main)
+    groups.set(main, [])
+  }
   for (const p of panes) {
     const main = p.cwd && mainCheckout(p.cwd)
     if (!main || !existsSync(join(main, '.git', 'paneforge-lanes.json'))) continue
-    groups.set(main, [...(groups.get(main) ?? []), p])
+    const k = samePath(main)
+    if (!spelling.has(k)) {
+      spelling.set(k, main)
+      groups.set(main, [])
+    }
+    const at = spelling.get(k) as string
+    groups.set(at, [...(groups.get(at) ?? []), p])
   }
   // Our own panes are in this list too, so a chat is never judged dead by the window it
   // is running in - only by every window agreeing it is nowhere. The list is the whole
@@ -671,6 +749,7 @@ export function laneReclaim(panes: LanePane[]): void {
   // project: a chat is alive if any copy is hosting it, wherever that copy's panes are.
   const living = new Set<string>()
   for (const main of groups.keys()) for (const chat of heartbeat(main, chats)) living.add(chat)
+  lastLiving = living
 
   for (const [main, own] of groups) {
     const board = attachLaneOwners(readRepo(main), own)

@@ -290,6 +290,54 @@ const twoDead = {
   delete process.env.PANEFORGE_REPO
 }
 
+{
+  // The reclaim only ever walked the repos this window's panes were in, so a hold left by
+  // a chat that died in a repo nobody had open here was given back by nothing: three
+  // taskdriver rows sat under "Other copies" most of 2026-09-03 with their worktrees
+  // already deleted, waiting on lane.mjs's twelve-hour staleness. Every ledger under the
+  // projects root is walked now, with or without a pane in it.
+  const root = join(work, 'root')
+  const quiet = join(root, 'quiet')
+  const plain = join(root, 'plain')
+  mkdirSync(join(quiet, '.git'), { recursive: true })
+  mkdirSync(join(plain, '.git'), { recursive: true })
+  writeFileSync(join(quiet, '.git', 'paneforge-lanes.json'), JSON.stringify({ lanes: {}, ready: {}, conflicts: {} }))
+  process.env.PANEFORGE_REPO = repo
+  const { ledgerRepos } = await load()
+  const repos = ledgerRepos([], [root])
+  check('a ledger in a repo with no pane here is still walked', repos.includes(quiet), JSON.stringify(repos))
+  check('a repo with no ledger is not', !repos.includes(plain), JSON.stringify(repos))
+  check('and the repos the panes are in stay first', repos[0] === repo, JSON.stringify(repos))
+  check('a root that does not exist is skipped, not fatal', ledgerRepos([], [join(work, 'nowhere')]).length >= 1)
+  delete process.env.PANEFORGE_REPO
+}
+
+{
+  // A row about a dead chat is a ledger entry on its way out, not a copy anyone is in.
+  // The strip drew five of them, each with an old chat name on, as the whole of "Other
+  // copies". `markGone` flags what the next sweep will hand back, so the strip can skip
+  // it - and never a conflicted or finished lane, which is still somebody's to see.
+  process.env.PANEFORGE_REPO = repo
+  state({
+    main: { session: CHAT_MAIN, cwd: repo, claimed: now - 4 * 3600_000, seen: now - 3 * 3600_000 },
+    a: { session: CHAT_A, cwd: repo, claimed: now - 3 * 3600_000, seen: now - 2 * 3600_000 },
+    b: { session: CHAT_B, cwd: repo, claimed: now - 60_000, seen: now - 60_000 }
+  })
+  const { attachLaneOwners, laneBoard, markGone } = await load()
+  const board = attachLaneOwners(laneBoard(), [{ id: 'pane1', cwd: repo, resumeId: CHAT_A }])
+  const marked = markGone(board, now, new Set([CHAT_A]))
+  const by = (id) => marked.lanes.find((l) => l.lane === id)
+  check('a dead chat’s hold is marked gone', by('main').gone === true)
+  check('a hold a pane here owns is not', !by('a').gone)
+  check('a hold that spoke a minute ago is not', !by('b').gone)
+  check('before any sweep has run nothing is marked', markGone(board, now, null).lanes.every((l) => !l.gone))
+  const conflicted = { ...board, lanes: board.lanes.map((l) => (l.lane === 'main' ? { ...l, conflicted: true } : l)) }
+  // goneLanes names it, so the flag is set; the strip's own filter keeps a conflicted row.
+  check('the flag never widens: a ready or conflicted lane is the strip’s call, still listed',
+    markGone(conflicted, now, new Set()).lanes.find((l) => l.lane === 'main').conflicted === true)
+  delete process.env.PANEFORGE_REPO
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(failures ? `\n${failures} failed` : '\nall good')
 process.exit(failures ? 1 : 0)
