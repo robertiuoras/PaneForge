@@ -275,6 +275,54 @@ try {
       ok(m.name.w >= 30, `${c.name}: the pane still says which pane it is`, `name ${m.name.w.toFixed(1)}px of ${m.name.want}px`)
     }
   }
+
+  /**
+   * The grid pass, 2026-09-03: a 4-pane tiled grid at 1280x800 with the sidebar at
+   * 190px draws each cell at 536px, and the header still wanted 12 buttons' worth of
+   * room in it - which is where the 760px/560px thresholds below came from. These pin
+   * the thresholds themselves, not just "does it fit" (the loop above already proves
+   * that at every width): above 760 the git badge and hand-off stay, below it they go
+   * behind ⋯; above 560 the agent picker stays, below it it goes too.
+   */
+  const thresholdCase = async (width, above) => {
+    await send(
+      'Page.navigate',
+      { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(page(width)) },
+      sessionId
+    )
+    await evaluate('document.fonts.ready.then(() => 1)')
+    return await evaluate(`(() => {
+      const bar = document.querySelector('.pane-title')
+      const shown = (sel) => getComputedStyle(bar.querySelector(sel)).display !== 'none'
+      const n = bar.querySelector('.pt-name')
+      return {
+        gitBadge: shown('.git-badge'),
+        handoff: shown('.pt-handoff'),
+        agentPick: shown('.agent-pick'),
+        more: shown('.pt-more'),
+        nameClipped: n.scrollWidth > n.clientWidth
+      }
+    })()`)
+  }
+
+  const above760 = await thresholdCase(800, true)
+  ok(above760.gitBadge, '800px: the git badge is still on the line', JSON.stringify(above760))
+  ok(above760.handoff, '800px: hand-off is still on the line', JSON.stringify(above760))
+  ok(!above760.more, '800px: ⋯ is not needed yet', JSON.stringify(above760))
+
+  const at536 = await thresholdCase(536, false)
+  ok(!at536.gitBadge, '536px grid cell: the git badge is behind ⋯', JSON.stringify(at536))
+  ok(!at536.handoff, '536px grid cell: hand-off is behind ⋯', JSON.stringify(at536))
+  ok(at536.more, '536px grid cell: ⋯ holds what the line dropped', JSON.stringify(at536))
+  ok(!at536.nameClipped, '536px grid cell: the name is not clipped', JSON.stringify(at536))
+
+  // `page()` sets the pane's STYLE width, but `* { box-sizing: border-box }` and the
+  // pane's 1px border mean the container query (which measures the content box) sees
+  // 2px less than that - so the boundary is dialled in at style width + 2.
+  const above560 = await thresholdCase(563, false)
+  ok(above560.agentPick, '561px content (563px style): the agent picker still fits', JSON.stringify(above560))
+  const at560 = await thresholdCase(562, false)
+  ok(!at560.agentPick, '560px content (562px style): the agent picker goes too (max-width is inclusive)', JSON.stringify(at560))
 } finally {
   try {
     ws?.close()

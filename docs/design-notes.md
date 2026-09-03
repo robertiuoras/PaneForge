@@ -4611,3 +4611,60 @@ mascot's own bubble otherwise. The mascot is on by default here and gets parked 
 corner, so the commonest desk got a small bubble beside an animal. `MoveSoon` is now
 always drawn and the mascot no longer draws the count at all - it still walks to the pane
 and wears `.alert` while one is running.
+
+## A password gets typed on the machine that needs it
+
+Robert's scheduled work runs on the PC so it keeps running while the Mac is asleep. That
+was fine until a sweep hit a login wall: the job stops, nothing says so, and the only way
+back was RDP into a machine nobody sits at.
+
+The feature is one sentence - a script that cannot type asks for a person, and gets one -
+and every decision below follows from wanting it to feel local rather than from wanting a
+remote desktop.
+
+**Why CDP and not VNC.** The thing that needs a password is a browser, not a desktop. A
+screencast of the page is a fraction of a screen's pixels, it already knows its own size
+so nothing is letterboxed, and the input side is `Input.dispatch*` - the same events the
+page would have had from a real keyboard, with no OS focus involved. It also means the PC
+never shows a window: headless Chrome has no window to show, and the standing rule that no
+background job puts a window on that desktop is kept by construction.
+
+**Why an ssh tunnel and not an open port.** Chrome's debugger refuses a request whose Host
+header is not loopback or a bare IP, and it binds 127.0.0.1. `-L <free>:127.0.0.1:9333`
+keeps both ends on loopback, so nothing on the PC is reconfigured, no firewall rule is
+added, and the debugger never reaches an interface. `ExitOnForwardFailure=yes` is what
+makes a forward that cannot be made fail loudly instead of sitting there; `BatchMode=yes`
+is what stops ssh asking a question nobody will ever see.
+
+**Why the ack is the flow control.** The obvious build - push every frame at the window -
+is exactly how a remote desktop becomes a recording: the link goes slow, the frames queue,
+and the picture people are looking at is ten seconds old while their typing lands
+somewhere they cannot see. Chrome will not send the next screencast frame until the last
+is acked, so the ack is a free backpressure valve if it is spent in the right place: after
+the renderer has PAINTED, never on receipt. One frame in flight, and a frame that arrives
+mid-paint replaces whatever was waiting rather than joining a line behind it. A slow link
+therefore loses frame RATE, and the picture is always the present.
+
+That is also why every path out of the paint ends in `loginPainted` - a frame that will
+not decode, a canvas that has gone away, a torn JPEG. A view that forgets once goes black
+and stays black, and the failure looks exactly like a dead connection.
+
+**Why the ladder is asymmetric.** Stepping down is immediate, because the person is
+already looking at a late picture. Stepping up costs twenty consecutive quick frames,
+because each change restarts the screencast - a visible hitch - and a link that recovers
+for one frame and then does not would spend two hitches buying nothing.
+
+**Where the coordinates are converted.** In main, off the frame metadata, because the
+metadata is the only thing that knows the page's real size: the JPEG is whatever the rung
+allows and the canvas is whatever the pane is, and neither is the page. The renderer sends
+the point on its own canvas and the canvas size. That also means a phone watching the same
+view would get the same answer without the metadata being mirrored across the wire.
+
+**The one dependency.** Electron 33's main process is Node 20, which has no global
+`WebSocket` - it typechecked, built, and failed at runtime with `WebSocket is not defined`
+on the first real connection, which is the whole reason the dev-window proof is a required
+step and not a formality. `ws` was added for it.
+
+**What stays behind.** Closing the view stops the screencast and kills the ssh child.
+Chrome and the tab stay up on the far machine: the signed-in session is the entire
+deliverable, and tidying it away would undo the work the person just did.

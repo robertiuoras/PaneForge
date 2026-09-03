@@ -47,6 +47,7 @@ import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } f
 import { findPathTokens } from '../../../shared/pathToken'
 import { completedSlash, seedPrompts } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
+import { fixSignature } from '../../../shared/fixSign'
 import { splitReplay } from '../../../shared/replayWidth'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
@@ -1240,6 +1241,15 @@ function TerminalPane({
   /** When this pane last had a byte printed at it. See `restoreFixLag`. */
   const lastByteAt = useRef(0)
   /**
+   * What ran Fix, and when this pane last changed shape - both only read by `noteFix`.
+   * Fix works; what was never known is what the pane looked like BEFORE it, so every run
+   * writes one line to `fix.log` (`shared/fixSign.ts`) with the screen's signature and
+   * how long since the last byte, the last resize and the mount.
+   */
+  const fixWhy = useRef<'pressed' | 'restore' | 'wipe'>('pressed')
+  const lastResizeAt = useRef(0)
+  const mountAt = useRef(Date.now())
+  /**
    * How long after the last printed byte the restore repair landed, in ms. Read by the
    * probe: "it repaired itself" and "it repaired itself while the agent was still
    * painting, and the next frame undid it" look identical from a count alone, and the
@@ -1278,6 +1288,7 @@ function TerminalPane({
     needRestoreFix.current = false
     restoreFixes.current++
     fixLag.current = lastByteAt.current ? Date.now() - lastByteAt.current : null
+    fixWhy.current = 'restore'
     paneRepair.get(sessionId)?.()
   }
 
@@ -1885,6 +1896,7 @@ function TerminalPane({
       const bytes = fileRows(lost, t.rows)
       if (!bytes) return
       t.write(bytes)
+      fixWhy.current = 'wipe'
       paneRepair.get(sessionId)?.()
     }
     /** How long the redraw after a wipe is given to stop before it is judged. */
@@ -3519,7 +3531,36 @@ function TerminalPane({
      * size, make the agent repaint its whole frame, then repaint our side and land on the
      * newest line. Everything a manual restart used to be needed for, without losing the run.
      */
+    /** One line to `fix.log` with what the screen holds now. Never in the way of the repair. */
+    const noteFix = (step: 'repair' | 'redraw'): void => {
+      try {
+        const b = t.buffer.active
+        const lines: string[] = []
+        for (let i = 0; i < b.length; i++) lines.push(b.getLine(i)?.translateToString(true) ?? '')
+        const now = Date.now()
+        api.logFix({
+          id: sessionId,
+          step,
+          why: fixWhy.current,
+          agent,
+          cols: t.cols,
+          grid: t.rows,
+          replayCols: replayColsRef.current ?? null,
+          mirror: mirrorRef.current,
+          asleep: asleepRef.current,
+          sinceByteMs: lastByteAt.current ? now - lastByteAt.current : null,
+          sinceResizeMs: lastResizeAt.current ? now - lastResizeAt.current : null,
+          sinceMountMs: now - mountAt.current,
+          restoreFixes: restoreFixes.current,
+          ...fixSignature(lines, t.cols)
+        })
+      } catch {
+        /* a reading, and the repair goes ahead without it */
+      }
+      fixWhy.current = 'pressed'
+    }
     const repair = (): void => {
+      noteFix('repair')
       try {
         pinned.current = true
         reshape(t, f)
@@ -3575,6 +3616,7 @@ function TerminalPane({
       if (mirrorRef.current) return false
       const b = (await api.paneLog(sessionId, REDRAW_BYTES)) || (await api.getBuffer(sessionId))
       if (!b) return false
+      noteFix('redraw')
       const back = t.cols
       const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
       try {
@@ -3757,6 +3799,7 @@ function TerminalPane({
       // at a size the terminal already has. That is not a resize and must not queue a
       // repaint - the repaint is the flash the user sees on every session switch.
       if (!changed) return
+      lastResizeAt.current = Date.now()
       // A phone that opened this pane just bent the pty from the desk's width to its own,
       // and everything on screen was drawn at the OLD one. The CLI hard-wrapped those
       // lines itself - its box drawing, its input frame, its paragraphs are all 157

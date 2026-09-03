@@ -654,6 +654,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // A read of the process table, filtered to dev servers. `devs:stop` is the other half
     // and is GATED - it kills a process on this desk.
     'devs:list',
+    // Reviewed 2026-09-03. A read of the sign-in requests waiting on the desk - site,
+    // which computer, and whether one is open. The two that ACT (`login:need` puts the
+    // card up, `login:open` opens the connection) are GATED, as is `login:input`.
+    'login:list',
     // Reviewed 2026-08-23. A read of the /clear countdowns in flight - what is pending and
     // when it is due. The two channels that START or SKIP one (`autoclear:ask`,
     // `autoclear:answer`) are GATED: both end in keystrokes reaching a pane.
@@ -701,10 +705,16 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // or was not closed. It starts nothing and answers nothing - the worst a phone reaches
     // is a bigger log file.
     'reclaim:log',
+    'pane:fixlog',
     // Reviewed 2026-09-01: "leave that dev server alone". It writes one pid into a
     // never-offer-again set for this app run. It starts nothing and stops nothing - the
     // worst a phone reaches is that a leaked dev server keeps leaking.
-    'devs:keep'
+    'devs:keep',
+    // Reviewed 2026-09-03. The sign-in view's own housekeeping: `login:ack` says a frame
+    // is on screen (and is what asks for the next one), `login:size` says how big the view
+    // is, and the two closers put the view away. None of them types, and none of them
+    // opens a connection - `login:open` does that and is gated, as is `login:input`.
+    'login:ack', 'login:size', 'login:close', 'login:dismiss'
   ])
   const unclassifiedSend = sends.filter(
     (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)

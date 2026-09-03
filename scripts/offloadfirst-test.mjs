@@ -248,15 +248,17 @@ ok(REMOTE_START_ACK_MS >= 1000, 'the far end gets a real window to answer in')
 
 // SOURCE: the app never asks where a pane runs.
 //
-// 2026-09-03: `offloadAsk` was a config key and a dialog on the pressure path
-// (`App.tsx`'s `offloadReqs`, unrelated to this file) that put "start it here or on the
-// paired device?" on screen. Removed - a card nobody presses is a decision nobody made,
-// and where a pane runs is `offloadFirst.ts`'s call alone. Pinned as a grep over the built
+// 2026-09-03: there was a config key and a dialog on the pressure path (`App.tsx`'s
+// `offloadReqs`, unrelated to this file) that put "start it here or on the paired
+// device?" on screen. Removed - a card nobody presses is a decision nobody made, and
+// where a pane runs is `offloadFirst.ts`'s call alone. Pinned as a grep over the built
 // source rather than only this file's own decision function, because the whole point is
-// that NOTHING in the app asks any more, not just this one.
+// that NOTHING in the app asks any more, not just this one. The needle is built from two
+// halves rather than written whole, so this line itself never trips the same grep.
+const askKeyGone = new RegExp(['offload', 'Ask'].join(''))
 for (const rel of ['src/renderer/src/App.tsx', 'src/shared/capacity.ts', 'src/main/config.ts', 'src/shared/types.ts']) {
   const src = readFileSync(join(root, rel), 'utf8')
-  ok(!/offloadAsk/.test(src), `${rel} carries no offloadAsk`)
+  ok(!askKeyGone.test(src), `${rel} carries no offload-ask key`)
 }
 
 rmSync(work, { recursive: true, force: true })

@@ -113,6 +113,9 @@ const DESK_ONLY = new Set([
  * construction rather than by a flag.
  */
 const GATED_SEND = new Set([
+  // It types into a browser that is signed in to somebody's accounts, on a machine the
+  // person holding the phone may not be near. Strictly worse than `pty:write`.
+  'login:input',
   // It kills a process: the countdown card's `Close now`. The invoke half, `devs:stop`,
   // is gated for the same reason.
   'devs:stopNow',
@@ -133,6 +136,10 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // `login:need` puts a card on the desk that offers to open a browser; `login:open`
+  // opens an ssh forward and drives a browser through it. Both start something.
+  'login:need',
+  'login:open',
   // Reviewed 2026-08-31. `projects:create` writes a directory into the projects root from
   // a name somebody typed. `shared/projectName.ts` refuses every name that could mean a
   // folder somewhere else, so the worst case is an empty folder with an odd name - but it

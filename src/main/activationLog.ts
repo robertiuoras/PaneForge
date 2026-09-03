@@ -50,6 +50,15 @@ export function logReclaim(entry: Record<string, unknown>): void {
 }
 
 /**
+ * What a pane looked like when Fix ran on it, one line per run. The reading itself is
+ * `shared/fixSign.ts`; this is the file it goes to, so that the next "panes break more
+ * often than they should" can be answered off the screens people were looking at.
+ */
+export function logFix(entry: Record<string, unknown>): void {
+  write('fix.log', entry)
+}
+
+/**
  * Where a new pane's agent was sent, and why - one line per launch.
  *
  * Same shape and same reason as `logReclaim` above: the decision is taken silently, at
