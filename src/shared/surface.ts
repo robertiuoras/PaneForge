@@ -99,6 +99,8 @@ export const SURFACE: Surface = {
   mergeLane: ['invoke', 'lanes:merge'],
   onLaneMoved: ['on', 'lane:moved'],
   onHandoffMoved: ['on', 'handoff:moved'],
+  onOffloadSoon: ['on', 'offload:soon'],
+  answerOffload: ['invoke', 'offload:answer'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],
   adminEnable: ['invoke', 'admin:enable'],

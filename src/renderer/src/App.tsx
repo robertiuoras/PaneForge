@@ -33,6 +33,7 @@ import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
+import OffloadSoon from './components/OffloadSoon'
 import StopServer from './components/StopServer'
 import type { LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
@@ -1826,7 +1827,8 @@ export default function App(): JSX.Element {
         req,
         target: offloadTarget(capacity, candidates, projectNameOf(req.cwd))
       }))
-      const movable = pairs.filter((p) => p.target)
+      // A pane the person already placed by hand is not asked about again.
+      const movable = pairs.filter((p) => p.target && !p.req.where)
       if (!movable.length) return reqs
       // ONE device per question, and the question names it. A launch whose panes belong
       // to different projects can have two different peers offering, and a dialog saying
@@ -6170,6 +6172,7 @@ export default function App(): JSX.Element {
           }
           onCancel={() => setPicking(false)}
           onStart={start}
+          peers={(remote?.peers ?? []).filter((p) => p.status === 'online').map((p) => ({ id: p.id, name: p.name }))}
           onProjectsChanged={() => void api.listProjects().then(setProjects)}
           onSaveWorkspace={(name, reqs) => {
             saveWorkspace(name, reqs)
@@ -6858,6 +6861,8 @@ export default function App(): JSX.Element {
           doSoonNow(ids)
         }
       />
+      {/* A new pane the app decided to start on the other machine, before it does. */}
+      <OffloadSoon />
       {/* A pane that has just worked out whose work it is doing. */}
       <ClientToast
         named={clientNamed}
