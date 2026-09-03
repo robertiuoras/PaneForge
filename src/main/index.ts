@@ -211,6 +211,7 @@ import {
   updateLog,
   bootMs
 } from './updater'
+import { unattendedInstall } from '../shared/updateStale'
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
@@ -330,6 +331,8 @@ let panesAtQuit = -1
  */
 let lastFocusAt = 0
 let focused = false
+/** When this process came up: the floor for "nobody has focused the window since". */
+const launchedAt = Date.now()
 /**
  * How many panes were open when leaving started.
  *
@@ -3396,6 +3399,43 @@ function autoInstall(): void {
 }
 
 /**
+ * The desk with nobody at it - see shared/updateStale.ts for the day this was written.
+ *
+ * A build that has been ready for a while on a window nobody has focused for half an
+ * hour is taken, through `autoInstall` and its deskBusy hold, so two linked desks end up
+ * on the same version without a person pressing anything on the one that has no person.
+ * Once a minute, like the hold's own recheck; `autoInstall` is only entered when it is
+ * not already looping, so the log says "held" once a minute and not twice.
+ */
+let readyAt = 0
+let readyVersion = ''
+let unattendedSaid = ''
+function noteReadyState(s: UpdateState): void {
+  if (s.phase !== 'ready') {
+    readyAt = 0
+    readyVersion = ''
+    return
+  }
+  if (s.version === readyVersion) return
+  readyVersion = s.version ?? ''
+  readyAt = Date.now()
+}
+function unattendedTick(): void {
+  if (installStarted || autoInstallTimer) return
+  const s = getUpdateState()
+  if (s.phase !== 'ready') return
+  const now = Date.now()
+  if (!unattendedInstall({ now, readyAt, focused, lastFocusAt, launchedAt })) return
+  if (unattendedSaid !== readyVersion) {
+    unattendedSaid = readyVersion
+    const mins = Math.round((now - Math.max(lastFocusAt, launchedAt)) / 60_000)
+    updateLog('install', `nobody at this desk for ${mins}m - restarting into v${readyVersion} as soon as no pane is in use`)
+  }
+  autoInstall()
+}
+setInterval(unattendedTick, AUTO_INSTALL_RECHECK_MS).unref?.()
+
+/**
  * A restart the user clicked while a pane was mid-turn, waiting for the panes to finish.
  *
  * The wait ends on the pane list changing, which is what a turn ending emits, so the
@@ -4087,6 +4127,7 @@ app.whenReady().then(() => {
     // with the same build downloaded and ready again. Finish the user's click instead
     // of showing them the same toast - once; updater.ts stops the loop at two tries.
     if (s.phase === 'ready' && consumeInstallRetry(s.version)) autoInstall()
+    noteReadyState(s)
   }, cfg.autoUpdate)
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,

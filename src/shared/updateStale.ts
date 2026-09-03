@@ -46,3 +46,47 @@ export function updateIgnored(superseded: number): boolean {
 export function ignoredHint(current: string): string {
   return `You are still on ${current}, and newer builds keep being downloaded and thrown away unused. PaneForge will restart into this one by itself as soon as no pane is in use.`
 }
+
+// --- a desk nobody sits at -----------------------------------------------------
+//
+// 2026-09-03, the PC: 0.8.196 was downloaded and ready at 17:08 and the app went on
+// running 0.8.177 - nineteen releases behind the Mac it was linked to - until somebody
+// pressed Restart over ssh at 19:38. The supersede rule above never fired because the PC
+// was running a build older than the rule. Nothing else fires either: the card asks a
+// person, and that desk has no person. Every remote feature (handoff, mirror, restart
+// over the link, the autoclear hook that ships with the newer app) then runs between two
+// builds that disagree, and the failure reads as "remote sessions broke".
+//
+// The rule that makes two desks converge on one version: a desk nobody has focused for
+// half an hour treats a ready build as accepted, and restarts into it once no pane is in
+// use (the `deskBusy` hold in main/index.ts, unchanged). A desk with a person at it keeps
+// the card and the supersede rule; this only covers the desk with nobody to ask.
+
+/** How long a window must go unfocused before the desk counts as nobody's. */
+export const UNATTENDED_MS = 30 * 60_000
+/**
+ * How long a build stays ready before an unattended desk takes it. Releases here go out
+ * in bursts (a fix follows its release by minutes); five minutes lets the fix supersede
+ * the build rather than restarting into the one it fixes.
+ */
+export const UNATTENDED_READY_MS = 5 * 60_000
+
+/**
+ * Should a desk with nobody at it restart into the build it has ready?
+ *
+ * `focused` wins outright: a person is looking at the window right now. `lastFocusAt`
+ * is 0 until the first focus, so a desk never focused since launch is measured from
+ * `launchedAt` - a freshly (re)started app is not proof of absence.
+ */
+export function unattendedInstall(opts: {
+  now: number
+  readyAt: number
+  focused: boolean
+  lastFocusAt: number
+  launchedAt: number
+}): boolean {
+  if (opts.focused) return false
+  if (!opts.readyAt || opts.now - opts.readyAt < UNATTENDED_READY_MS) return false
+  const lastSeen = Math.max(opts.lastFocusAt, opts.launchedAt)
+  return opts.now - lastSeen >= UNATTENDED_MS
+}

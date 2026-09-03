@@ -25,7 +25,8 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STALE_SUPERSEDES, ignoredHint, updateIgnored } = await import(pathToFileURL(outfile).href)
+const { STALE_SUPERSEDES, UNATTENDED_MS, UNATTENDED_READY_MS, ignoredHint, unattendedInstall, updateIgnored } =
+  await import(pathToFileURL(outfile).href)
 
 const fail = []
 const ok = (c, n) => {
@@ -53,6 +54,25 @@ ok(hint.includes('no pane is in use'), 'and when: once nothing is being used')
 for (const word of ['superseded', 'staged', 'stale', 'feed', 'install attempt']) {
   ok(!hint.toLowerCase().includes(word), `the card does not say "${word}"`)
 }
+
+// --- a desk nobody sits at ------------------------------------------------------
+//
+// 2026-09-03, the PC: 0.8.196 ready at 17:08, the app still on 0.8.177 at 19:38, nineteen
+// releases behind the Mac linked to it. Nobody focuses that window, so nothing that asks
+// a person ever fires. This rule takes a ready build on a desk nobody has focused for
+// half an hour; the deskBusy hold in main/index.ts still keeps it off a working pane.
+const MIN = 60_000
+const base = { now: 100 * MIN, readyAt: 90 * MIN, focused: false, lastFocusAt: 0, launchedAt: 0 }
+ok(unattendedInstall(base), 'ready ten minutes, never focused, up for ages: the desk takes it')
+ok(!unattendedInstall({ ...base, focused: true }), 'a window with focus right now is somebody\'s desk - never')
+ok(!unattendedInstall({ ...base, lastFocusAt: 80 * MIN }), 'focused twenty minutes ago is still attended')
+ok(unattendedInstall({ ...base, lastFocusAt: 70 * MIN }), 'focused thirty minutes ago is not')
+ok(!unattendedInstall({ ...base, launchedAt: 80 * MIN }), 'a fresh launch never focused is not proof of absence yet')
+ok(unattendedInstall({ ...base, launchedAt: 70 * MIN }), 'but half an hour after launch it is')
+ok(!unattendedInstall({ ...base, readyAt: 97 * MIN }), 'a build ready three minutes is left for its own fix to supersede')
+ok(unattendedInstall({ ...base, readyAt: 95 * MIN }), 'five minutes ready is taken')
+ok(!unattendedInstall({ ...base, readyAt: 0 }), 'nothing ready, nothing to take')
+ok(UNATTENDED_MS === 30 * MIN && UNATTENDED_READY_MS === 5 * MIN, 'both thresholds are named, not written into the rule')
 
 // --- and the same rule, driven through the real updater ----------------------
 //
